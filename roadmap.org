@@ -1,0 +1,8 @@
+* TODO proof of concept (daemon + simples scripts)
+* TODO benchmarks
+* TODO specifications for the daemon
+* TODO specifications for the Rust commandes
+* TODO specifications for the GUI
+* TODO first version of the daemon
+* TODO first version of the Rust commandes
+* TODO first version of the GUI

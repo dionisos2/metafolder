@@ -1,0 +1,90 @@
+* Proof of Concept
+
+Objectif : valider les choix techniques fondamentaux (SQLite, API HTTP, modèle EAV) avant d'investir dans les spécifications complètes. Le PoC est considéré terminé quand les benchmarks peuvent être exécutés.
+
+** État actuel
+
+- [x] Daemon HTTP (axum + tokio)
+- [x] Base SQLite avec schéma EAV (tables =metadata=, =field=)
+- [x] Stockage des UUIDs en BLOB 16 octets
+- [x] CRUD basique : créer, lire, supprimer une entrée
+- [x] Watcher inotify : création d'entrée sur Create, path → Nothing sur Remove
+- [x] API =POST /entries=, =GET /entries/:uuid=
+
+** Ce qui manque
+
+*** Endpoints daemon manquants
+
+- [ ] =GET /entries= — lister toutes les entrées
+- [ ] =PATCH /entries/:uuid= — ajouter ou modifier un champ
+- [ ] =POST /entries/query= — rechercher des entrées par prédicat (voir ci-dessous)
+- [ ] =DELETE /entries/:uuid= — supprimer une entrée manuellement
+
+*** Requêtes nécessaires pour les benchmarks
+
+Sous-ensemble minimal du système de requêtes (decisions.md) :
+
+- [ ] Champ présent : =path IS PRESENT=
+- [ ] Égalité : =label = "jazz"=
+- [ ] Comparaison : =rating > 3=
+- [ ] Indirection simple : =tag → (label = "jazz")=
+- [ ] Indirection transitive : =tag → parent →* (label = "music")=
+- [ ] Combinateurs : =AND=, =OR=, =NOT=
+
+Format JSON pour l'API HTTP, DSL textuel pour les scripts bash (compilé vers JSON par la commande CLI).
+
+*** Commandes CLI minimales
+
+Pour pouvoir écrire les scripts de benchmark en bash :
+
+- [ ] =metafolder entries create [--field name:type:value ...]= — créer une entrée
+- [ ] =metafolder entries get <uuid>= — lire une entrée
+- [ ] =metafolder entries list= — lister toutes les entrées
+- [ ] =metafolder entries set <uuid> <field> <value>= — modifier un champ
+- [ ] =metafolder entries set --query <prédicat> <field> <value>= — modifier un champ sur toutes les entrées qui correspondent
+- [ ] =metafolder entries delete <uuid>= — supprimer une entrée
+- [ ] =metafolder query <prédicat>= — chercher des entrées, retourne les UUIDs (une par ligne)
+
+** Scénarios de benchmark
+
+Mesures : temps d'exécution wall-clock et mémoire RSS. Exécutés séquentiellement depuis bash, sur N = 1 000 / 10 000 / 100 000 fichiers.
+
+*** Ingestion initiale
+Créer N entrées avec les champs =path=, =hash=, =rating= (Int), =tag= (Ref).
+
+*** Lecture simple
+Lire N entrées une par une via =GET /entries/:uuid=.
+
+*** Recherche par champ scalaire
+=rating > 3= sur N entrées — mesure l'efficacité de l'index EAV.
+
+*** Recherche avec indirection simple
+=tag → (label = "jazz")= — un JOIN via =value_ref=.
+
+*** Recherche avec indirection transitive
+=tag → parent →* (label = "music")= — CTE récursive SQLite.
+
+*** Modification en masse
+Modifier un champ sur toutes les entrées retournées par un prédicat.
+
+*** Ingestion partielle (réconciliation)
+Simuler un arrêt du daemon pendant lequel N fichiers sont créés, puis redémarrer et déclencher la réconciliation. Mesurer le temps pour retrouver et ingérer les fichiers manquants.
+
+*** Stress watcher — déplacements en masse
+Déplacer N fichiers individuellement dans le répertoire surveillé, puis mesurer le temps de traitement des événements inotify et la consommation mémoire/CPU du daemon pendant la rafale.
+
+*** Stress watcher — déplacement de dossier
+Déplacer un dossier contenant N fichiers en une seule opération. Vérifier que le daemon traite correctement la rafale d'événements sans perte ni ralentissement majeur.
+
+** Critères de succès
+
+Les décisions techniques sont validées si, pour N = 100 000 fichiers :
+
+- La recherche par champ scalaire s'exécute en moins de 500 ms.
+- La recherche avec indirection transitive s'exécute en moins de 2 s.
+- La mémoire RSS du daemon reste sous 300 Mo en fonctionnement courant.
+- L'ingestion initiale (sans optimisation batch) reste sous 10 min.
+- La réconciliation après arrêt (ingestion partielle) reste sous 5 min.
+- Le daemon reste réactif (temps de réponse HTTP < 100 ms) pendant un stress watcher.
+
+Si un critère échoue, revoir la décision correspondante avant de continuer (ex : socket Unix si HTTP est le goulot, cache mémoire si SQLite est trop lent).

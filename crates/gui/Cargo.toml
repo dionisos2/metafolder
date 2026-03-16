@@ -1,0 +1,10 @@
+[package]
+name = "metafolder-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+metafolder-core = { path = "../core" }
+eframe = "0.27"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }
