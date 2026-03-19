@@ -8,42 +8,24 @@ Objectif : valider les choix techniques fondamentaux (SQLite, API HTTP, modèle 
 - [x] Base SQLite avec schéma EAV (tables =metadata=, =field=)
 - [x] Stockage des UUIDs en BLOB 16 octets
 - [x] CRUD basique : créer, lire, supprimer une entrée
-- [x] Watcher inotify : création d'entrée sur Create, path → Nothing sur Remove
-- [x] API =POST /entries=, =GET /entries/:uuid=
+- [x] Watcher inotify : création d'entrée sur Create, path → Nothing sur Remove/From, mise à jour du path sur Rename
+- [x] Configuration du dépôt dans =.metafolder/config.json= (=repo_uuid= stable entre redémarrages)
+- [x] Multi-dépôts : daemon démarre sans dépôt chargé, les dépôts sont créés/chargés via l'API
+- [x] API =POST /repos/init=, =POST /repos/load=, =GET /repos=
+- [x] API =POST /repos/:repo_uuid/entries=, =GET /repos/:repo_uuid/entries/:uuid=
+- [x] API =GET /repos/:repo_uuid/entries= — lister toutes les entrées
+- [x] API =PATCH /repos/:repo_uuid/entries/:uuid= — remplacer la valeur d'un champ
+- [x] API =DELETE /repos/:repo_uuid/entries/:uuid= — supprimer une entrée
+- [x] API =POST /repos/:repo_uuid/query= — rechercher des entrées par prédicat (Query JSON)
+- [x] API =POST /repos/:repo_uuid/reconcile= — scanner le répertoire, ingérer les fichiers manquants, effacer les chemins obsolètes
+- [x] Compilateur Query → SQL avec CTEs (=query_exec.rs=)
+- [x] Tous les prédicats nécessaires aux benchmarks : =IS PRESENT/ABSENT/UNKNOWN=, ==/=!=/</<=/>/>==, =AND/OR/NOT=, =Follows=, =FollowsTransitive= (CTE récursive)
+- [x] CLI =metafolder repo init/load/list=
+- [x] CLI =metafolder entries create/get/list/set/delete=
+- [x] CLI =metafolder query <prédicat>= — DSL textuel compilé vers Query JSON
+- [x] CLI =metafolder reconcile=
 
-** Ce qui manque
-
-*** Endpoints daemon manquants
-
-- [ ] =GET /entries= — lister toutes les entrées
-- [ ] =PATCH /entries/:uuid= — ajouter ou modifier un champ
-- [ ] =POST /entries/query= — rechercher des entrées par prédicat (voir ci-dessous)
-- [ ] =DELETE /entries/:uuid= — supprimer une entrée manuellement
-
-*** Requêtes nécessaires pour les benchmarks
-
-Sous-ensemble minimal du système de requêtes (decisions.md) :
-
-- [ ] Champ présent : =path IS PRESENT=
-- [ ] Égalité : =label = "jazz"=
-- [ ] Comparaison : =rating > 3=
-- [ ] Indirection simple : =tag → (label = "jazz")=
-- [ ] Indirection transitive : =tag → parent →* (label = "music")=
-- [ ] Combinateurs : =AND=, =OR=, =NOT=
-
-Format JSON pour l'API HTTP, DSL textuel pour les scripts bash (compilé vers JSON par la commande CLI).
-
-*** Commandes CLI minimales
-
-Pour pouvoir écrire les scripts de benchmark en bash :
-
-- [ ] =metafolder entries create [--field name:type:value ...]= — créer une entrée
-- [ ] =metafolder entries get <uuid>= — lire une entrée
-- [ ] =metafolder entries list= — lister toutes les entrées
-- [ ] =metafolder entries set <uuid> <field> <value>= — modifier un champ
-- [ ] =metafolder entries set --query <prédicat> <field> <value>= — modifier un champ sur toutes les entrées qui correspondent
-- [ ] =metafolder entries delete <uuid>= — supprimer une entrée
-- [ ] =metafolder query <prédicat>= — chercher des entrées, retourne les UUIDs (une par ligne)
+- [x] CLI =metafolder entries set --query <prédicat> <field> <type> <value>= — modifier un champ sur toutes les entrées correspondant à un prédicat
 
 ** Scénarios de benchmark
 

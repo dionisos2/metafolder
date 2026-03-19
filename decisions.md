@@ -14,10 +14,10 @@ Charger tout ou partie d'une base en RAM pour accélérer les lectures est faisa
 
 ## Modèle de métadonnées
 
-### Structure fondamentale : tout est un MetadataEntry
+### Structure fondamentale : tout est une Metadata
 
 ```
-MetadataEntry {
+Metadata {
   uuid:   UUID,
   db_id:  DatabaseId,                           // attribut système — pas un field utilisateur
   fields: [(field_name: String, value: Value)]  // multi-map : clés dupliquées autorisées
@@ -26,7 +26,7 @@ MetadataEntry {
 Value = Nothing | String | Int | Float | Bool | Date | DateTime | Duration | Ref(UUID)
 ```
 
-**Un seul concept universel.** Fichiers, tags, relations de préférence, groupes — tout est un `MetadataEntry`. Pas de type spécial pour les fichiers ou les tags.
+**Un seul concept universel.** Fichiers, tags, relations de préférence, groupes — tout est une `Metadata`. Pas de type spécial pour les fichiers ou les tags.
 
 - **Fichier** : entrée avec des champs `path` et `hash`. Le daemon surveille (inotify) les entrées qui ont un champ `path`.
 - **Tag** : entrée avec un champ `label` et optionnellement `parent: Ref(→ autre tag)`.
@@ -58,21 +58,37 @@ Intégrée naturellement dans le modèle :
 
 Les champs sont un **multi-map** : plusieurs champs avec le même nom sont autorisés.
 - **Pourquoi** : solution naturelle du modèle EAV, la plus rapide en requêtes.
-- "Tous les tags du fichier X" → `WHERE entry_uuid=X AND field_name='tag'` (lookup indexé)
+- "Tous les tags du fichier X" → `WHERE metadata_uuid=X AND field_name='tag'` (lookup indexé)
 - "Tous les fichiers avec le tag jazz" → `WHERE field_name='tag' AND value_ref='jazz-uuid'` (lookup indexé)
+
+### Configuration du dépôt
+
+La configuration de chaque dépôt est stockée dans `.metafolder/config.json` (pas dans SQLite) :
+
+```json
+{
+  "repo_uuid": "<uuid>",
+  "version": 1,
+  "root": "/path/to/root",
+  "created_at": 1234567890
+}
+```
+
+**Pourquoi un fichier JSON plutôt qu'une table SQLite ?** Le numéro de version doit être lisible *avant* d'ouvrir la base (pour appliquer les migrations éventuelles). Stocker la version dans SQLite crée un problème de bootstrap circulaire.
 
 ### Stockage SQLite (EAV)
 
 ```sql
-CREATE TABLE entry (uuid TEXT PRIMARY KEY);
+CREATE TABLE metadata (uuid BLOB PRIMARY KEY, db_id BLOB NOT NULL);  -- UUIDs en 16 octets
 CREATE TABLE field (
-  entry_uuid  TEXT REFERENCES entry(uuid),
-  field_name  TEXT,
-  value_type  TEXT,   -- "nothing"|"string"|"int"|"float"|"bool"|"date"|"duration"|"ref"
-  value_str   TEXT,   value_int  INTEGER,  value_real REAL,  value_ref  TEXT
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  metadata_uuid  BLOB NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+  field_name     TEXT NOT NULL,
+  value_type     TEXT NOT NULL,  -- "nothing"|"string"|"int"|"float"|"bool"|"date"|"duration"|"ref"
+  value_str      TEXT,   value_int  INTEGER,  value_real REAL,  value_ref  BLOB REFERENCES metadata(uuid)
 );
-CREATE INDEX idx_entry   ON field(entry_uuid, field_name);
-CREATE INDEX idx_reverse ON field(field_name, value_ref);
+CREATE INDEX idx_field_entry   ON field(metadata_uuid, field_name);
+CREATE INDEX idx_field_reverse ON field(field_name, value_ref);
 ```
 
 Les requêtes hiérarchiques ("tous les descendants de 'music'") utilisent des CTEs récursifs SQLite (`WITH RECURSIVE`).

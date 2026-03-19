@@ -2402,12 +2402,14 @@ dependencies = [
 name = "metafolder"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "clap",
  "metafolder-core",
  "reqwest",
  "serde",
  "serde_json",
  "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -3,9 +3,9 @@ mod tests {
     use super::*;
     use rusqlite::Connection;
 
-    fn test_db() -> Connection {
+    pub fn test_db() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn).unwrap();
+        init_db(&conn).unwrap();
         conn
     }
 
@@ -19,6 +19,45 @@ mod tests {
             Field { name: "duration".to_string(),value: Value::Duration(210_000) },
             Field { name: "note".to_string(),    value: Value::Nothing },
         ]
+    }
+
+    // ── TDD : update_path ─────────────────────────────────────────────────────
+
+    #[test]
+    fn test_update_path_renames_path_field() {
+        let conn = test_db();
+        create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(), value: Value::String("/tmp/old.mp3".to_string()) },
+            Field { name: "rating".to_string(), value: Value::Int(5) },
+        ]).unwrap();
+
+        let found = update_path(&conn, "/tmp/old.mp3", "/tmp/new.mp3").unwrap();
+        assert!(found, "should return true when entry was found");
+
+        assert!(find_entry_by_path(&conn, "/tmp/old.mp3").unwrap().is_none());
+        assert!(find_entry_by_path(&conn, "/tmp/new.mp3").unwrap().is_some());
+    }
+
+    #[test]
+    fn test_update_path_returns_false_when_not_found() {
+        let conn = test_db();
+        let found = update_path(&conn, "/nonexistent.mp3", "/tmp/new.mp3").unwrap();
+        assert!(!found);
+    }
+
+    #[test]
+    fn test_update_path_preserves_other_fields() {
+        let conn = test_db();
+        let created = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(),   value: Value::String("/tmp/old.mp3".to_string()) },
+            Field { name: "rating".to_string(), value: Value::Int(5) },
+        ]).unwrap();
+
+        update_path(&conn, "/tmp/old.mp3", "/tmp/new.mp3").unwrap();
+
+        let retrieved = get_entry(&conn, created.uuid).unwrap();
+        let rating = retrieved.fields.iter().find(|f| f.name == "rating").unwrap();
+        assert_eq!(rating.value, Value::Int(5));
     }
 
     // ── Existing functions ────────────────────────────────────────────────────
@@ -42,7 +81,6 @@ mod tests {
         let conn = test_db();
         let db_id = Uuid::new_v4();
 
-        // Insert a target entry so that the value_ref FK is valid
         let target = create_entry(&conn, db_id, vec![
             Field { name: "label".to_string(), value: Value::String("target".to_string()) }
         ]).unwrap();
@@ -135,6 +173,129 @@ mod tests {
         assert_eq!(rating_field.value, Value::Int(5), "other fields should be unchanged");
     }
 
+    // ── TDD : list_entries ────────────────────────────────────────────────────
+
+    #[test]
+    fn test_list_entries_empty() {
+        let conn = test_db();
+        let db_id = Uuid::new_v4();
+        let result = list_entries(&conn, db_id).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_entries_returns_all() {
+        let conn = test_db();
+        let db_id = Uuid::new_v4();
+        let e1 = create_entry(&conn, db_id, vec![]).unwrap();
+        let e2 = create_entry(&conn, db_id, vec![]).unwrap();
+        let result = list_entries(&conn, db_id).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&e1.uuid));
+        assert!(result.contains(&e2.uuid));
+    }
+
+    #[test]
+    fn test_list_entries_filters_by_db_id() {
+        let conn = test_db();
+        let db1 = Uuid::new_v4();
+        let db2 = Uuid::new_v4();
+        let e1 = create_entry(&conn, db1, vec![]).unwrap();
+        let _e2 = create_entry(&conn, db2, vec![]).unwrap();
+        let result = list_entries(&conn, db1).unwrap();
+        assert_eq!(result, vec![e1.uuid]);
+    }
+
+    // ── TDD : set_field ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_set_field_inserts_when_absent() {
+        let conn = test_db();
+        let entry = create_entry(&conn, Uuid::new_v4(), vec![]).unwrap();
+        set_field(&conn, entry.uuid, "rating", Value::Int(5)).unwrap();
+        let retrieved = get_entry(&conn, entry.uuid).unwrap();
+        assert_eq!(retrieved.get("rating"), Some(&Value::Int(5)));
+    }
+
+    #[test]
+    fn test_set_field_replaces_existing() {
+        let conn = test_db();
+        let entry = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "rating".to_string(), value: Value::Int(3) },
+        ]).unwrap();
+        set_field(&conn, entry.uuid, "rating", Value::Int(9)).unwrap();
+        let retrieved = get_entry(&conn, entry.uuid).unwrap();
+        let ratings: Vec<_> = retrieved.fields.iter().filter(|f| f.name == "rating").collect();
+        assert_eq!(ratings.len(), 1);
+        assert_eq!(ratings[0].value, Value::Int(9));
+    }
+
+    #[test]
+    fn test_set_field_replaces_multimap() {
+        let conn = test_db();
+        let entry = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "tag".to_string(), value: Value::String("jazz".to_string()) },
+            Field { name: "tag".to_string(), value: Value::String("live".to_string()) },
+        ]).unwrap();
+        set_field(&conn, entry.uuid, "tag", Value::String("blues".to_string())).unwrap();
+        let retrieved = get_entry(&conn, entry.uuid).unwrap();
+        let tags: Vec<_> = retrieved.fields.iter().filter(|f| f.name == "tag").collect();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].value, Value::String("blues".to_string()));
+    }
+
+    #[test]
+    fn test_set_field_preserves_other_fields() {
+        let conn = test_db();
+        let entry = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(), value: Value::String("/a.mp3".to_string()) },
+            Field { name: "rating".to_string(), value: Value::Int(3) },
+        ]).unwrap();
+        set_field(&conn, entry.uuid, "rating", Value::Int(7)).unwrap();
+        let retrieved = get_entry(&conn, entry.uuid).unwrap();
+        assert_eq!(retrieved.get("path"), Some(&Value::String("/a.mp3".to_string())));
+        assert_eq!(retrieved.get("rating"), Some(&Value::Int(7)));
+    }
+
+    // ── TDD : list_path_entries ───────────────────────────────────────────────
+
+    #[test]
+    fn test_list_path_entries_empty() {
+        let conn = test_db();
+        let result = list_path_entries(&conn).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_path_entries_string_only() {
+        let conn = test_db();
+        let e1 = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(), value: Value::String("/a.mp3".to_string()) },
+        ]).unwrap();
+        let e2 = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(), value: Value::String("/b.mp3".to_string()) },
+        ]).unwrap();
+        let result = list_path_entries(&conn).unwrap();
+        assert_eq!(result.len(), 2);
+        assert!(result.contains(&(e1.uuid, "/a.mp3".to_string())));
+        assert!(result.contains(&(e2.uuid, "/b.mp3".to_string())));
+    }
+
+    #[test]
+    fn test_list_path_entries_ignores_no_path() {
+        let conn = test_db();
+        // Entry with Nothing path should not appear
+        let _e1 = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "path".to_string(), value: Value::Nothing },
+        ]).unwrap();
+        // Entry with no path field should not appear
+        let _e2 = create_entry(&conn, Uuid::new_v4(), vec![
+            Field { name: "rating".to_string(), value: Value::Int(5) },
+        ]).unwrap();
+        let result = list_path_entries(&conn).unwrap();
+        assert!(result.is_empty());
+    }
+
     // ── TDD : delete_entry ────────────────────────────────────────────────────
 
     #[test]
@@ -143,17 +304,14 @@ mod tests {
         let db_id = Uuid::new_v4();
         let created = create_entry(&conn, db_id, sample_fields()).unwrap();
 
-        // Before: the entry exists
         assert!(get_entry(&conn, created.uuid).is_ok());
 
         delete_entry(&conn, created.uuid).unwrap();
 
-        // After: the entry no longer exists
         assert!(get_entry(&conn, created.uuid).is_err(), "the entry should have been deleted");
 
-        // Fields too (CASCADE)
         let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM field WHERE metadata_uuid = ?1", // field FK refs metadata
+            "SELECT COUNT(*) FROM field WHERE metadata_uuid = ?1",
             rusqlite::params![created.uuid.as_bytes().to_vec()],
             |row| row.get(0),
         ).unwrap();
@@ -169,51 +327,51 @@ use metafolder_core::entry::{DatabaseId, EntryId, Field, Metadata, Value};
 
 // ── UUID ↔ BLOB helpers ───────────────────────────────────────────────────────
 
-fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
+pub fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
     uuid.as_bytes().to_vec()
 }
 
-fn bytes_to_uuid(bytes: Vec<u8>) -> anyhow::Result<Uuid> {
+pub fn bytes_to_uuid(bytes: Vec<u8>) -> anyhow::Result<Uuid> {
     let arr: [u8; 16] = bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid UUID blob: expected 16 bytes"))?;
     Ok(Uuid::from_bytes(arr))
 }
 
-// ── Schema initialization ─────────────────────────────────────────────────────
+// ── Database initialization ───────────────────────────────────────────────────
 
-pub fn init_schema(conn: &Connection) -> anyhow::Result<()> {
+/// Initializes the SQLite schema for a new repository.
+/// Fails if tables already exist — call only on a fresh database.
+pub fn init_db(conn: &Connection) -> anyhow::Result<()> {
     conn.execute_batch(
         "
         PRAGMA journal_mode = WAL;
         PRAGMA foreign_keys = ON;
 
-        CREATE TABLE IF NOT EXISTS metadata (
+        CREATE TABLE metadata (
             uuid   BLOB PRIMARY KEY NOT NULL,  -- 16-byte UUID
-            db_id  BLOB NOT NULL               -- 16-byte UUID
+            db_id  BLOB NOT NULL               -- 16-byte UUID (repo identifier)
         );
 
-        -- Each row is one field of a metadata (multi-map: multiple rows
-        -- can share the same metadata_uuid + field_name).
-        CREATE TABLE IF NOT EXISTS field (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        CREATE TABLE field (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
             metadata_uuid  BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
-            field_name  TEXT    NOT NULL,
-            value_type  TEXT    NOT NULL,  -- see Value discriminant
-            value_str   TEXT,              -- String, Date, DateTime
-            value_int   INTEGER,           -- Int, Bool (0/1), Duration (ms)
-            value_real  REAL,              -- Float
-            value_ref   BLOB    REFERENCES metadata(uuid)  -- Ref (16-byte UUID)
+            field_name     TEXT    NOT NULL,
+            value_type     TEXT    NOT NULL,  -- see Value discriminant
+            value_str      TEXT,              -- String, Date, DateTime
+            value_int      INTEGER,           -- Int, Bool (0/1), Duration (ms)
+            value_real     REAL,              -- Float
+            value_ref      BLOB    REFERENCES metadata(uuid)  -- Ref (16-byte UUID)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_field_entry
+        CREATE INDEX idx_field_entry
             ON field(metadata_uuid, field_name);
 
-        CREATE INDEX IF NOT EXISTS idx_field_reverse
+        CREATE INDEX idx_field_reverse
             ON field(field_name, value_ref);
         ",
     )
-    .context("Failed to initialize the SQLite schema")
+    .context("Failed to initialize the database schema")
 }
 
 // ── Value ↔ SQLite conversions ────────────────────────────────────────────────
@@ -354,6 +512,16 @@ pub fn delete_entry(conn: &Connection, uuid: Uuid) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Updates the `path` field from `old_path` to `new_path`. Returns true if an entry was found.
+pub fn update_path(conn: &Connection, old_path: &str, new_path: &str) -> anyhow::Result<bool> {
+    let rows = conn.execute(
+        "UPDATE field SET value_str = ?1
+         WHERE field_name = 'path' AND value_type = 'string' AND value_str = ?2",
+        params![new_path, old_path],
+    )?;
+    Ok(rows > 0)
+}
+
 /// Sets the `path` field of an entry to `Nothing`, preserving all other fields.
 pub fn clear_path(conn: &Connection, metadata_uuid: Uuid) -> anyhow::Result<()> {
     conn.execute(
@@ -375,6 +543,58 @@ pub fn find_entry_by_path(conn: &Connection, path: &str) -> anyhow::Result<Optio
     rows.next()?
         .map(|r| r.get::<_, Vec<u8>>(0).map_err(Into::into).and_then(bytes_to_uuid))
         .transpose()
+}
+
+/// Lists all entry UUIDs belonging to the given database.
+pub fn list_entries(conn: &Connection, db_id: Uuid) -> anyhow::Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare("SELECT uuid FROM metadata WHERE db_id = ?1")?;
+    let uuids = stmt
+        .query_map(params![uuid_to_bytes(db_id)], |row| row.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<anyhow::Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
+/// Replaces all field rows for `(uuid, name)` with a single new value.
+pub fn set_field(conn: &Connection, uuid: Uuid, name: &str, value: Value) -> anyhow::Result<()> {
+    conn.execute(
+        "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
+        params![uuid_to_bytes(uuid), name],
+    )?;
+    let field = Field { name: name.to_string(), value };
+    insert_field(conn, uuid, &field)
+}
+
+/// Returns all (uuid, path_string) pairs where path is a non-Nothing string field.
+pub fn list_path_entries(conn: &Connection) -> anyhow::Result<Vec<(Uuid, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT metadata_uuid, value_str FROM field
+         WHERE field_name = 'path' AND value_type = 'string'",
+    )?;
+    let entries = stmt
+        .query_map([], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)))?
+        .map(|r| {
+            let (bytes, path) = r?;
+            Ok((bytes_to_uuid(bytes)?, path))
+        })
+        .collect::<anyhow::Result<Vec<(Uuid, String)>>>()?;
+    Ok(entries)
+}
+
+/// Executes a pre-compiled SQL query (with CTEs) and returns matching UUIDs.
+pub fn query_entries(
+    conn: &Connection,
+    sql: &str,
+    params: &[rusqlite::types::Value],
+) -> anyhow::Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(sql)?;
+    let uuids = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            row.get::<_, Vec<u8>>(0)
+        })?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<anyhow::Result<Vec<Uuid>>>()?;
+    Ok(uuids)
 }
 
 /// Retrieves an entry and all its fields by UUID.
@@ -400,12 +620,12 @@ pub fn get_entry(conn: &Connection, uuid: Uuid) -> anyhow::Result<Metadata> {
     let fields: Vec<Field> = stmt
         .query_map(params![uuid_to_bytes(uuid)], |row| {
             Ok((
-                row.get::<_, String>(0)?,           // field_name
-                row.get::<_, String>(1)?,           // value_type
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
                 row.get::<_, Option<i64>>(3)?,
                 row.get::<_, Option<f64>>(4)?,
-                row.get::<_, Option<Vec<u8>>>(5)?,  // value_ref (BLOB)
+                row.get::<_, Option<Vec<u8>>>(5)?,
             ))
         })
         .context("Error reading fields")?
