@@ -202,13 +202,19 @@ fn cli_run(bin: &Path, url: &str, repo: Option<Uuid>, args: &[&str]) -> Result<D
     if let Some(r) = repo {
         cmd.arg("--repo").arg(r.to_string());
     }
-    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.args(args).stdout(Stdio::null()).stderr(Stdio::piped());
     let t = Instant::now();
-    let status = cmd.spawn()?.wait()?;
-    if !status.success() {
-        anyhow::bail!("CLI command failed: {:?}", args);
+    let output = cmd.spawn()?.wait_with_output()?;
+    let elapsed = t.elapsed();
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!(
+            "CLI command failed: {:?}\nstderr: {}",
+            args,
+            stderr.trim()
+        );
     }
-    Ok(t.elapsed())
+    Ok(elapsed)
 }
 
 fn bench_loop<T>(
@@ -245,7 +251,7 @@ fn print_section(title: &str, rows: &[(String, usize, Duration)]) {
     println!("└{}", "─".repeat(w + 42));
 }
 
-// ─── Bench 1 : CLI latence (boucle sur une seule entrée) ──────────────────────
+// ─── Bench 1: CLI latency (single-entry loop) ─────────────────────────────────
 
 async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     let n = LOOP_N;
@@ -283,7 +289,7 @@ async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
             bin,
             url,
             Some(repo),
-            &["entries", "set", &entry_s, "rating", "int", "9"],
+            &["entries", "set", "--uuid", &entry_s, "rating", "int", "9"],
         )
     })?);
 
@@ -312,24 +318,24 @@ async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     })?);
 
     print_section(
-        &format!("CLI — latence par commande  (×{n}, DB ~{n} entrées)"),
+        &format!("CLI — latency per command  (×{n}, DB ~{n} entries)"),
         &rows,
     );
     Ok(())
 }
 
-// ─── Bench 2 : CLI volume (grand nombre d'entrées) ────────────────────────────
+// ─── Bench 2: CLI bulk (large number of entries) ──────────────────────────────
 
 async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     let mut rows: Vec<(String, usize, Duration)> = Vec::new();
     let mut total_entries = 0usize;
 
     for &n in BULK_SIZES {
-        print!("  pré-peuplement +{n} entrées… ");
+        print!("  pre-populating +{n} entries... ");
         let t = Instant::now();
         api_create_n(url, repo, n).await?;
         total_entries += n;
-        println!("fait en {:.0} ms  (DB = {} entrées)", ms(t.elapsed()), total_entries);
+        println!("done in {:.0} ms  (DB = {} entries)", ms(t.elapsed()), total_entries);
 
         let db = total_entries;
 
@@ -350,17 +356,26 @@ async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
         rows.push((format!("reconcile      (DB={db})"), 1, t.elapsed()));
     }
 
-    print_section("CLI — volume (commandes sur grand nombre d'entrées)", &rows);
+    print_section("CLI — bulk (commands on large number of entries)", &rows);
     Ok(())
 }
 
-// ─── Bench 3 : Watcher — déplacements de fichiers individuels ─────────────────
+// ─── Bench 3: Watcher — individual file moves ─────────────────────────────────
 
-async fn bench_watcher_moves(url: &str, repo: Uuid, root: &Path, n: usize) -> Result<()> {
+async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
+    let tmp = tempfile::TempDir::new()?;
+    let root = tmp.path();
     let src = root.join("src");
     let dst = root.join("dst");
+
+    // Create subdirectories BEFORE init so the watcher starts already watching them.
+    // If we created them after init, inotify might not have registered the new dirs
+    // before we start creating files inside them, causing events to be missed.
     std::fs::create_dir_all(&src)?;
     std::fs::create_dir_all(&dst)?;
+
+    let repo = api_init_repo(url, root).await?;
+    println!("  repo: {repo}");
 
     // Create N files; the last one serves as the sentinel
     for i in 0..n {
@@ -371,7 +386,7 @@ async fn bench_watcher_moves(url: &str, repo: Uuid, root: &Path, n: usize) -> Re
     let sentinel_str = sentinel_new.to_string_lossy().into_owned();
 
     // Wait for the watcher to register all files before timing the moves
-    print!("  attente enregistrement de {n} fichiers par le watcher… ");
+    print!("  waiting for watcher to register {n} files... ");
     wait_for_entries(url, repo, n).await?;
     println!("ok");
 
@@ -387,52 +402,52 @@ async fn bench_watcher_moves(url: &str, repo: Uuid, root: &Path, n: usize) -> Re
     let elapsed = match wait_for_path(url, repo, &sentinel_str, t).await {
         Some(d) => d,
         None => {
-            println!(
-                "  ⚠  Timeout ({TIMEOUT:?}) — sentinel non détecté après {} renames",
-                n
-            );
+            println!("  ⚠  Timeout ({TIMEOUT:?}) — sentinel not detected after {n} renames");
             TIMEOUT
         }
     };
     // ── Timer end ──
 
     let per_file = elapsed / n as u32;
-    let mut rows = vec![(
-        format!("{n} fichiers déplacés individuellement"),
-        1,
-        elapsed,
-    )];
-    rows.push((format!("  → par fichier"), 1, per_file));
+    let rows = vec![
+        (format!("{n} files moved individually"), 1, elapsed),
+        (format!("  → per file"), 1, per_file),
+    ];
     print_section(
-        &format!("Watcher — déplacements individuels ({n} fichiers)"),
+        &format!("Watcher — individual moves ({n} files)"),
         &rows,
     );
 
     // Verify: check that the sentinel entry was actually updated
     let updated = api_path_exists(url, repo, &sentinel_str).await?;
-    let still_old =
-        api_path_exists(url, repo, &sentinel_old.to_string_lossy()).await?;
+    let still_old = api_path_exists(url, repo, &sentinel_old.to_string_lossy()).await?;
     println!(
-        "  Vérification sentinelle : nouveau chemin={} ancien chemin={}",
-        updated, still_old
+        "  Sentinel check: new path found={updated}  old path still present={still_old}"
     );
 
     Ok(())
 }
 
-// ─── Bench 4 : Watcher — déplacement d'un dossier entier ─────────────────────
+// ─── Bench 4: Watcher — folder rename ─────────────────────────────────────────
 
-async fn bench_watcher_folder(url: &str, repo: Uuid, root: &Path, n: usize) -> Result<()> {
+async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
+    let tmp = tempfile::TempDir::new()?;
+    let root = tmp.path();
     let subdir = root.join("subdir");
     let subdir_moved = root.join("subdir_moved");
+
+    // Create subdirectory BEFORE init so the watcher starts already watching it.
     std::fs::create_dir_all(&subdir)?;
+
+    let repo = api_init_repo(url, root).await?;
+    println!("  repo: {repo}");
 
     for i in 0..n {
         std::fs::write(subdir.join(format!("file_{i:05}.txt")), b"")?;
     }
 
     // Wait for the watcher to register all N files
-    print!("  attente enregistrement de {n} fichiers par le watcher… ");
+    print!("  waiting for watcher to register {n} files... ");
     wait_for_entries(url, repo, n).await?;
     println!("ok");
 
@@ -460,7 +475,7 @@ async fn bench_watcher_folder(url: &str, repo: Uuid, root: &Path, n: usize) -> R
 
     // Check whether the folder rename was actually handled by the watcher.
     // If handled: entries should have new paths (subdir_moved/...).
-    // If not:    entries still have old paths (subdir/...) or Nothing.
+    // If not:     entries still have old paths (subdir/...) or Nothing.
     let first_old = subdir.join("file_00000.txt").to_string_lossy().into_owned();
     let first_new = subdir_moved
         .join("file_00000.txt")
@@ -469,23 +484,19 @@ async fn bench_watcher_folder(url: &str, repo: Uuid, root: &Path, n: usize) -> R
     let old_exists = api_path_exists(url, repo, &first_old).await?;
     let new_exists = api_path_exists(url, repo, &first_new).await?;
 
-    let status = match (old_exists, new_exists) {
-        (false, true) => "✓ chemin mis à jour",
-        (true, false) => "✗ vieux chemin conservé (rename dossier non géré)",
-        (false, false) => "✗ chemin effacé (Nothing)",
-        (true, true) => "? état incohérent",
+    let update_status = match (old_exists, new_exists) {
+        (false, true) => "✓ path updated",
+        (true, false) => "✗ old path retained (folder rename not handled)",
+        (false, false) => "✗ path cleared (Nothing)",
+        (true, true) => "? inconsistent state",
     };
 
-    let rows = vec![(
-        format!("{n} fichiers dans un dossier renommé"),
-        1,
-        elapsed,
-    )];
+    let rows = vec![(format!("{n} files inside a renamed folder"), 1, elapsed)];
     print_section(
-        &format!("Watcher — déplacement de dossier ({n} fichiers)"),
+        &format!("Watcher — folder rename ({n} files)"),
         &rows,
     );
-    println!("  État entrées après rename : {status}");
+    println!("  Entry state after rename: {update_status}");
 
     Ok(())
 }
@@ -501,42 +512,38 @@ async fn main() -> Result<()> {
     println!("cli    : {}\n", cli_bin.display());
 
     // Start daemon
-    println!("Démarrage du daemon sur le port {PORT}…");
+    println!("Starting daemon on port {PORT}...");
     let daemon = daemon_start()?;
     daemon_wait_ready(&daemon.url).await?;
-    println!("Daemon prêt.\n");
+    println!("Daemon ready.\n");
 
     // ── CLI benchmarks ────────────────────────────────────────────────────────
     let tmp_cli = tempfile::TempDir::new()?;
     let repo_cli = api_init_repo(&daemon.url, tmp_cli.path()).await?;
-    println!("Repo CLI : {repo_cli}");
+    println!("CLI repo: {repo_cli}");
 
     bench_cli_loop(&daemon.url, &cli_bin, repo_cli).await?;
 
     let tmp_bulk = tempfile::TempDir::new()?;
     let repo_bulk = api_init_repo(&daemon.url, tmp_bulk.path()).await?;
-    println!("\nRepo bulk : {repo_bulk}");
+    println!("\nBulk repo: {repo_bulk}");
 
     bench_cli_bulk(&daemon.url, &cli_bin, repo_bulk).await?;
 
     // ── Watcher benchmarks ────────────────────────────────────────────────────
     println!("\n--- Watcher benchmarks ---");
-    println!("(les fichiers sont créés puis déplacés dans un dossier surveillé)\n");
+    println!("(files are created then moved inside a watched directory)\n");
 
     for &n in WATCHER_SIZES {
-        let tmp = tempfile::TempDir::new()?;
-        let repo = api_init_repo(&daemon.url, tmp.path()).await?;
-        println!("Repo watcher moves ({n}) : {repo}");
-        bench_watcher_moves(&daemon.url, repo, tmp.path(), n).await?;
+        println!("Watcher moves ({n} files):");
+        bench_watcher_moves(&daemon.url, n).await?;
     }
 
     for &n in WATCHER_SIZES {
-        let tmp = tempfile::TempDir::new()?;
-        let repo = api_init_repo(&daemon.url, tmp.path()).await?;
-        println!("\nRepo watcher folder ({n}) : {repo}");
-        bench_watcher_folder(&daemon.url, repo, tmp.path(), n).await?;
+        println!("\nWatcher folder rename ({n} files):");
+        bench_watcher_folder(&daemon.url, n).await?;
     }
 
-    println!("\n=== fin ===");
+    println!("\n=== done ===");
     Ok(())
 }

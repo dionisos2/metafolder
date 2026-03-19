@@ -70,7 +70,7 @@ enum EntriesCmd {
     /// Set a field value on one entry (uuid) or all matching entries (--query)
     Set {
         /// UUID of the entry to update (mutually exclusive with --query)
-        #[arg(value_name = "UUID", conflicts_with = "query_pred")]
+        #[arg(long, value_name = "UUID", conflicts_with = "query_pred")]
         uuid: Option<Uuid>,
         /// DSL predicate: update all matching entries (mutually exclusive with UUID)
         #[arg(long = "query", value_name = "PREDICATE", conflicts_with = "uuid")]
@@ -196,4 +196,23 @@ fn require_repo(repo: Option<Uuid>) -> anyhow::Result<Uuid> {
     repo.ok_or_else(|| {
         anyhow::anyhow!("--repo <UUID> (or METAFOLDER_REPO env var) is required for this command")
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_entries_set_uuid_flag() {
+        // After fix: `entries set --uuid <uuid> <field> <type> <value>` should parse correctly.
+        // Before fix: clap panics because optional positional precedes required positionals.
+        let result = Cli::try_parse_from([
+            "metafolder",
+            "--repo", "47247c18-e16b-4935-8582-3bd13c9ecb9f",
+            "entries", "set",
+            "--uuid", "f319bd20-60f2-425f-8270-c269f7d77210",
+            "rating", "int", "9",
+        ]);
+        assert!(result.is_ok(), "entries set --uuid <uuid> should parse successfully");
+    }
 }

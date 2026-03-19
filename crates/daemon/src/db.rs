@@ -522,6 +522,31 @@ pub fn update_path(conn: &Connection, old_path: &str, new_path: &str) -> anyhow:
     Ok(rows > 0)
 }
 
+/// Update all entries whose path starts with `old_prefix/`, replacing the
+/// prefix with `new_prefix`. Used when a directory is renamed.
+/// Returns the number of updated rows.
+pub fn update_path_prefix(
+    conn: &Connection,
+    old_prefix: &str,
+    new_prefix: &str,
+) -> anyhow::Result<usize> {
+    // Match paths that are exactly `old_prefix/...` (never just `old_prefix` alone,
+    // which would be a file rename handled by `update_path`).
+    let old_with_sep = format!("{old_prefix}/");
+    let rows = conn.execute(
+        "UPDATE field
+         SET value_str = ?1 || SUBSTR(value_str, ?2)
+         WHERE field_name = 'path' AND value_type = 'string'
+           AND value_str LIKE ?3 ESCAPE '\\'",
+        params![
+            new_prefix,
+            old_with_sep.len() as i64,    // 1-based SUBSTR offset (length without +1 = skip prefix, keep '/')
+            format!("{}/%", old_prefix.replace('%', "\\%").replace('_', "\\_")),
+        ],
+    )?;
+    Ok(rows)
+}
+
 /// Sets the `path` field of an entry to `Nothing`, preserving all other fields.
 pub fn clear_path(conn: &Connection, metadata_uuid: Uuid) -> anyhow::Result<()> {
     conn.execute(

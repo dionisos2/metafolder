@@ -110,9 +110,19 @@ fn on_file_renamed(old: &Path, new: &Path, conn: &Arc<Mutex<Connection>>, db_id:
     let old_str = old.to_string_lossy().into_owned();
     let new_str = new.to_string_lossy().into_owned();
     let conn = conn.lock().unwrap();
+
+    // First try an exact path match (file rename).
     match crate::db::update_path(&conn, &old_str, &new_str) {
-        Ok(true) => {}
-        Ok(false) => {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(e) => { eprintln!("[watcher] update_path failed for {:?} → {:?}: {e}", old, new); return; }
+    }
+
+    // No exact match — try a prefix update (directory rename).
+    match crate::db::update_path_prefix(&conn, &old_str, &new_str) {
+        Ok(n) if n > 0 => return,
+        Ok(_) => {
+            // Unknown source: create a new entry (file moved in from outside the root).
             let fields = vec![Field {
                 name: "path".to_string(),
                 value: Value::String(new_str),
@@ -121,7 +131,7 @@ fn on_file_renamed(old: &Path, new: &Path, conn: &Arc<Mutex<Connection>>, db_id:
                 eprintln!("[watcher] create_entry failed for {:?}: {e}", new);
             }
         }
-        Err(e) => eprintln!("[watcher] update_path failed for {:?} → {:?}: {e}", old, new),
+        Err(e) => eprintln!("[watcher] update_path_prefix failed for {:?} → {:?}: {e}", old, new),
     }
 }
 
@@ -299,6 +309,44 @@ mod tests {
         let entry = crate::db::get_entry(&conn_guard, uuid).unwrap();
         let path_field = entry.fields.iter().find(|f| f.name == "path").unwrap();
         assert_eq!(path_field.value, Value::Nothing);
+    }
+
+    #[test]
+    fn test_handle_directory_rename_updates_child_paths() {
+        // When a directory is renamed, all entries whose paths are inside it
+        // should have their paths updated to reflect the new directory name.
+        let conn = test_db();
+        let db_id = Uuid::new_v4();
+        let root = PathBuf::from("/tmp/root");
+
+        // Create entries for files inside the directory
+        for name in &["file_a.mp3", "file_b.mp3"] {
+            let event = Event {
+                kind: EventKind::Create(CreateKind::File),
+                paths: vec![PathBuf::from(format!("/tmp/root/subdir/{name}"))],
+                attrs: Default::default(),
+            };
+            handle_event(event, &conn, db_id, &root);
+        }
+
+        // Rename the directory
+        let rename_event = Event {
+            kind: EventKind::Modify(ModifyKind::Name(notify::event::RenameMode::Both)),
+            paths: vec![
+                PathBuf::from("/tmp/root/subdir"),
+                PathBuf::from("/tmp/root/subdir_moved"),
+            ],
+            attrs: Default::default(),
+        };
+        handle_event(rename_event, &conn, db_id, &root);
+
+        let conn_guard = conn.lock().unwrap();
+        // Old paths must no longer exist
+        assert!(crate::db::find_entry_by_path(&conn_guard, "/tmp/root/subdir/file_a.mp3").unwrap().is_none());
+        assert!(crate::db::find_entry_by_path(&conn_guard, "/tmp/root/subdir/file_b.mp3").unwrap().is_none());
+        // New paths must exist
+        assert!(crate::db::find_entry_by_path(&conn_guard, "/tmp/root/subdir_moved/file_a.mp3").unwrap().is_some());
+        assert!(crate::db::find_entry_by_path(&conn_guard, "/tmp/root/subdir_moved/file_b.mp3").unwrap().is_some());
     }
 
     #[test]
