@@ -1,0 +1,15 @@
+[package]
+name = "metafolder-bench"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "metafolder-bench"
+
+[dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+tempfile = "3"
