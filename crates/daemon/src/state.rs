@@ -6,6 +6,23 @@ use anyhow::Context;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+fn setup_conn(conn: &Connection) -> anyhow::Result<()> {
+    conn.create_scalar_function(
+        "REGEXP",
+        2,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let text: String = ctx.get(0)?;
+            let pattern: String = ctx.get(1)?;
+            regex::Regex::new(&pattern)
+                .map(|re| re.is_match(&text))
+                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
+        },
+    )?;
+    Ok(())
+}
+
 use crate::config::RepoConfig;
 use crate::watcher::WatcherHandle;
 
@@ -45,6 +62,7 @@ impl AppState {
         let conn = Connection::open(&db_path)
             .context("Failed to open SQLite database")?;
         crate::db::init_db(&conn)?;
+        setup_conn(&conn)?;
 
         let conn = Arc::new(Mutex::new(conn));
         let watcher = crate::watcher::start(root, conn.clone(), config.repo_uuid);
@@ -77,6 +95,7 @@ impl AppState {
             .context("Failed to open SQLite database")?;
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
             .context("Failed to configure SQLite")?;
+        setup_conn(&conn)?;
 
         let conn = Arc::new(Mutex::new(conn));
         let watcher = crate::watcher::start(root, conn.clone(), config.repo_uuid);

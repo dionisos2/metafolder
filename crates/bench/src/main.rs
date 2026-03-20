@@ -263,47 +263,32 @@ async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
 
     let mut rows: Vec<(String, usize, Duration)> = Vec::new();
 
-    rows.push(bench_loop("repo list", n, || {
-        cli_run(bin, url, None, &["repo", "list"])
+    rows.push(bench_loop("repos", n, || {
+        cli_run(bin, url, None, &["repos"])
     })?);
 
-    rows.push(bench_loop("entries list", n, || {
-        cli_run(bin, url, Some(repo), &["entries", "list"])
+    rows.push(bench_loop("list", n, || {
+        cli_run(bin, url, Some(repo), &["list"])
     })?);
 
-    rows.push(bench_loop("entries get", n, || {
-        cli_run(bin, url, Some(repo), &["entries", "get", &entry_s])
+    rows.push(bench_loop("get", n, || {
+        cli_run(bin, url, Some(repo), &["get", &entry_s])
     })?);
 
-    rows.push(bench_loop("entries create", n, || {
-        cli_run(
-            bin,
-            url,
-            Some(repo),
-            &["entries", "create", "--field", "rating:int:5"],
-        )
+    rows.push(bench_loop("create", n, || {
+        cli_run(bin, url, Some(repo), &["create", "--field", "rating:int=5"])
     })?);
 
-    rows.push(bench_loop("entries set", n, || {
-        cli_run(
-            bin,
-            url,
-            Some(repo),
-            &["entries", "set", "--uuid", &entry_s, "rating", "int", "9"],
-        )
+    rows.push(bench_loop("set", n, || {
+        cli_run(bin, url, Some(repo), &["set", &entry_s, "rating:int=9"])
     })?);
 
     // Delete: consume the pre-created UUIDs one by one
     let t = Instant::now();
     for u in &to_delete {
-        cli_run(
-            bin,
-            url,
-            Some(repo),
-            &["entries", "delete", &u.to_string()],
-        )?;
+        cli_run(bin, url, Some(repo), &["delete", &u.to_string()])?;
     }
-    rows.push(("entries delete".to_string(), n, t.elapsed()));
+    rows.push(("delete".to_string(), n, t.elapsed()));
 
     rows.push(bench_loop("query IS PRESENT", n, || {
         cli_run(bin, url, Some(repo), &["query", "rating IS PRESENT"])
@@ -340,8 +325,8 @@ async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
         let db = total_entries;
 
         let t = Instant::now();
-        cli_run(bin, url, Some(repo), &["entries", "list"])?;
-        rows.push((format!("entries list   (DB={db})"), 1, t.elapsed()));
+        cli_run(bin, url, Some(repo), &["list"])?;
+        rows.push((format!("list           (DB={db})"), 1, t.elapsed()));
 
         let t = Instant::now();
         cli_run(bin, url, Some(repo), &["query", "rating IS PRESENT"])?;

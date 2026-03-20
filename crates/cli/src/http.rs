@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::Context;
-use metafolder_core::entry::Metadata;
+use metafolder_core::entry::{Field, Metadata, Value};
 use metafolder_core::query::Query;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 // ── Local response types ───────────────────────────────────────────────────────
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RepoInfo {
     pub repo_uuid: Uuid,
     pub root: PathBuf,
@@ -17,7 +17,7 @@ pub struct RepoInfo {
     pub created_at: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ReconcileResult {
     pub created: usize,
     pub cleared: usize,
@@ -80,24 +80,16 @@ pub async fn list_repos(base: &str) -> anyhow::Result<Vec<RepoInfo>> {
 // ── Entry endpoints ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
-struct FieldReq {
-    name: String,
-    value: metafolder_core::entry::Value,
-}
-
-#[derive(Serialize)]
 struct CreateEntryReq {
-    fields: Vec<FieldReq>,
+    fields: Vec<Field>,
 }
 
 pub async fn create_entry(
     base: &str,
     repo: Uuid,
-    fields: Vec<(String, metafolder_core::entry::Value)>,
+    fields: Vec<Field>,
 ) -> anyhow::Result<Metadata> {
-    let body = CreateEntryReq {
-        fields: fields.into_iter().map(|(name, value)| FieldReq { name, value }).collect(),
-    };
+    let body = CreateEntryReq { fields };
     let m: Metadata = Client::new()
         .post(format!("{base}/repos/{repo}/entries"))
         .json(&body)
@@ -161,7 +153,7 @@ pub async fn set_field(
     #[derive(Serialize)]
     struct Req<'a> {
         name: &'a str,
-        value: &'a metafolder_core::entry::Value,
+        value: &'a Value,
     }
     let m: Metadata = Client::new()
         .patch(format!("{base}/repos/{repo}/entries/{entry}"))

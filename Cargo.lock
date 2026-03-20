@@ -2442,6 +2442,7 @@ dependencies = [
  "clap",
  "metafolder-core",
  "notify",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

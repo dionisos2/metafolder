@@ -28,6 +28,7 @@ enum Token {
     Present,  // PRESENT
     Absent,   // ABSENT
     Unknown,  // UNKNOWN
+    Matches,  // MATCHES
     Eof,
 }
 
@@ -192,6 +193,7 @@ impl Lexer {
             "PRESENT" => Token::Present,
             "ABSENT" => Token::Absent,
             "UNKNOWN" => Token::Unknown,
+            "MATCHES" => Token::Matches,
             "true" => Token::Bool(true),
             "false" => Token::Bool(false),
             _ => Token::Ident(s),
@@ -340,6 +342,13 @@ impl Parser {
             Token::Gte => {
                 self.advance();
                 Ok(Query::Gte { field: ident, value: self.parse_value()? })
+            }
+            Token::Matches => {
+                self.advance();
+                match self.advance() {
+                    Token::Str(s) => Ok(Query::Matches { field: ident, pattern: s }),
+                    other => bail!("Expected string pattern after MATCHES, got {other:?}"),
+                }
             }
             other => bail!("Unexpected token {other:?} after identifier '{ident}'"),
         }

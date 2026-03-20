@@ -40,4 +40,11 @@ pub enum Query {
         field: String,
         condition: Box<Query>,
     },
+
+    // --- Pattern matching ---
+    /// `field MATCHES "pattern"`: the field has a string value matching the regex.
+    Matches {
+        field: String,
+        pattern: String,
+    },
 }

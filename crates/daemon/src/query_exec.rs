@@ -212,6 +212,19 @@ impl Compiler {
                 Ok(name)
             }
 
+            Query::Matches { field, pattern } => {
+                let name = self.fresh_name();
+                self.push_text(field);
+                self.push_text(pattern);
+                self.add_cte(
+                    name.clone(),
+                    "SELECT metadata_uuid AS uuid FROM field \
+                     WHERE field_name = ? AND value_type = 'string' AND value_str REGEXP ?"
+                        .to_string(),
+                );
+                Ok(name)
+            }
+
             Query::FollowsTransitive { field, condition } => {
                 let cond_name = self.compile_node(condition)?;
                 let reach_name = self.fresh_name();
