@@ -13,8 +13,10 @@ fn setup_conn(conn: &Connection) -> anyhow::Result<()> {
         rusqlite::functions::FunctionFlags::SQLITE_UTF8
             | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
         |ctx| {
-            let text: String = ctx.get(0)?;
-            let pattern: String = ctx.get(1)?;
+            // SQLite: X REGEXP Y  →  regexp(Y, X)
+            // so arg 0 = pattern (Y), arg 1 = string to search (X)
+            let pattern: String = ctx.get(0)?;
+            let text: String = ctx.get(1)?;
             regex::Regex::new(&pattern)
                 .map(|re| re.is_match(&text))
                 .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))

@@ -47,7 +47,7 @@ DAEMON_PID=""
 
 DAEMON_BIN=""
 CLI_BIN=""
-for dir in "$WORKSPACE_ROOT/target/release" "$WORKSPACE_ROOT/target/debug"; do
+for dir in "$WORKSPACE_ROOT/target/debug" "$WORKSPACE_ROOT/target/release"; do
     [[ -x "$dir/metafolder-daemon" ]] && DAEMON_BIN="$dir/metafolder-daemon"
     [[ -x "$dir/metafolder"        ]] && CLI_BIN="$dir/metafolder"
 done
