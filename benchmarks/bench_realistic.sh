@@ -245,6 +245,58 @@ time_query 'NOT (ext = "mp3" OR ext = "flac" OR ext = "jpg" OR ext = "png")' \
 time_query 'path MATCHES "\.pdf$"'           'path MATCHES "\.pdf$"'
 time_query 'path MATCHES "music/.*\.mp3$"'   'path MATCHES "music/.*\.mp3$"'
 
+# ── Phase 6: Tag hierarchy + ->* traversal ───────────────────────────────────
+#
+# Build a 4-level tag tree:
+#   media  (L1)
+#     audio   (L2, parent->media)
+#       jazz       (L3, parent->audio)   ← mp3, flac tagged here
+#       classical  (L3, parent->audio)
+#     visual  (L2, parent->media)
+#       photo      (L3, parent->visual)  ← jpg, png tagged here
+#       video      (L3, parent->visual)  ← mkv, mp4 tagged here
+#   docs   (L1)
+#     book    (L2, parent->docs)         ← pdf, epub tagged here
+#     article (L2, parent->docs)         ← txt tagged here
+
+section "Tag hierarchy (4 levels) + ->* traversal"
+
+t=$(date +%s%N)
+tag_media=$(cli_repo create --field "label:string=media" 2>/dev/null)
+tag_docs=$(cli_repo create --field "label:string=docs" 2>/dev/null)
+tag_audio=$(cli_repo create --field "label:string=audio" --field "parent:ref=$tag_media" 2>/dev/null)
+tag_visual=$(cli_repo create --field "label:string=visual" --field "parent:ref=$tag_media" 2>/dev/null)
+tag_jazz=$(cli_repo create --field "label:string=jazz" --field "parent:ref=$tag_audio" 2>/dev/null)
+tag_classical=$(cli_repo create --field "label:string=classical" --field "parent:ref=$tag_audio" 2>/dev/null)
+tag_photo=$(cli_repo create --field "label:string=photo" --field "parent:ref=$tag_visual" 2>/dev/null)
+tag_video=$(cli_repo create --field "label:string=video" --field "parent:ref=$tag_visual" 2>/dev/null)
+tag_book=$(cli_repo create --field "label:string=book" --field "parent:ref=$tag_docs" 2>/dev/null)
+tag_article=$(cli_repo create --field "label:string=article" --field "parent:ref=$tag_docs" 2>/dev/null)
+row "create 10 tags (4 levels)" "$(ms_since "$t")"
+
+# Assign tags to file entries via batch set (reuses ext field from phase 3)
+t_phase=$(date +%s%N)
+cli_repo set 'ext = "mp3" OR ext = "flac"' "tag:ref=$tag_jazz"    >/dev/null
+cli_repo set 'ext = "jpg" OR ext = "png"'  "tag:ref=$tag_photo"   >/dev/null
+cli_repo set 'ext = "mkv" OR ext = "mp4"'  "tag:ref=$tag_video"   >/dev/null
+cli_repo set 'ext = "pdf" OR ext = "epub"' "tag:ref=$tag_book"    >/dev/null
+cli_repo set 'ext = "txt"'                 "tag:ref=$tag_article"  >/dev/null
+elapsed=$(ms_since "$t_phase")
+row "assign tags to $N_ENTRIES entries — 5 batch ops" "$elapsed" "   ($((elapsed/5)) ms/op)"
+printf "  daemon RSS : %s\n" "$(daemon_rss "$DAEMON_PID")"
+
+section "->* traversal queries"
+
+time_query 'tag -> (label = "jazz")  [direct 1-hop]'                   'tag -> (label = "jazz")'
+time_query 'tag -> (parent -> (label = "audio"))  [2-hop]'             'tag -> (parent -> (label = "audio"))'
+time_query 'tag -> (parent ->* (label = "audio"))  [transitive L2]'    'tag -> (parent ->* (label = "audio"))'
+time_query 'tag -> (parent ->* (label = "media"))  [transitive L1]'    'tag -> (parent ->* (label = "media"))'
+time_query 'tag -> (parent ->* (label = "docs"))   [transitive L1]'    'tag -> (parent ->* (label = "docs"))'
+echo "  --"
+time_query 'tag -> (parent ->* (label = "media")) AND ext = "mp3"'     'tag -> (parent ->* (label = "media")) AND ext = "mp3"'
+time_query 'NOT (tag -> (parent ->* (label = "media")))'               'NOT (tag -> (parent ->* (label = "media")))'
+printf "  daemon RSS : %s\n" "$(daemon_rss "$DAEMON_PID")"
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 section "Summary"
@@ -256,3 +308,5 @@ printf "  %-26s %s\n"  "bench_data:"              "$BENCH_DIR"
 
 echo
 echo "=== done ==="
+
+trash ./bench_data/.metafolder/

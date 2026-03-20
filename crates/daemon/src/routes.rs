@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -46,6 +47,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             get(get_entry).delete(delete_entry).patch(patch_entry),
         )
         .route("/repos/:repo_uuid/query", post(query_handler))
+        .route("/repos/:repo_uuid/set", post(batch_set_handler))
         .route("/repos/:repo_uuid/reconcile", post(reconcile_handler))
         .with_state(state)
 }
@@ -217,6 +219,42 @@ pub async fn query_handler(
     Ok(Json(uuids))
 }
 
+// ── Batch set ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct BatchSetRequest {
+    pub query: Query,
+    pub name: String,
+    pub value: Value,
+}
+
+#[derive(Serialize)]
+pub struct BatchSetResult {
+    pub updated: usize,
+}
+
+/// `POST /repos/:repo_uuid/set` — run a query, set a field on every matching entry.
+pub async fn batch_set_handler(
+    State(state): State<Arc<AppState>>,
+    AxumPath(repo_uuid): AxumPath<Uuid>,
+    Json(req): Json<BatchSetRequest>,
+) -> Result<Json<BatchSetResult>, AppError> {
+    let (conn, db_id) = state.get_repo_conn(repo_uuid)?;
+    let updated = tokio::task::spawn_blocking(move || {
+        let compiled = crate::query_exec::compile(&req.query, db_id)?;
+        let conn = conn.lock().unwrap();
+        let uuids = crate::db::query_entries(&conn, &compiled.sql, &compiled.params)?;
+        conn.execute_batch("BEGIN")?;
+        for uuid in &uuids {
+            crate::db::set_field(&conn, *uuid, &req.name, req.value.clone())?;
+        }
+        conn.execute_batch("COMMIT")?;
+        Ok::<usize, anyhow::Error>(uuids.len())
+    })
+    .await??;
+    Ok(Json(BatchSetResult { updated }))
+}
+
 // ── Reconcile ─────────────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -244,33 +282,46 @@ pub fn reconcile_repo(
     db_id: Uuid,
     root: &Path,
 ) -> anyhow::Result<ReconcileResult> {
-    // 1. Walk filesystem, create entries for unknown files
-    let files = walk_files(root)?;
+    // Load all known paths from DB in one query.
+    let known: HashMap<String, Uuid> = crate::db::list_path_entries(conn)?
+        .into_iter()
+        .map(|(uuid, path)| (path, uuid))
+        .collect();
+
+    // Walk filesystem and collect all paths.
+    let fs_paths: HashSet<String> = walk_files(root)?
+        .into_iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+
+    // Create entries for new files in a single transaction.
+    conn.execute_batch("BEGIN")?;
     let mut created = 0usize;
-    for path in &files {
-        let path_str = path.to_string_lossy().to_string();
-        if crate::db::find_entry_by_path(conn, &path_str)?.is_none() {
+    for path_str in &fs_paths {
+        if !known.contains_key(path_str) {
             crate::db::create_entry(
                 conn,
                 db_id,
                 vec![Field {
                     name: "path".to_string(),
-                    value: Value::String(path_str),
+                    value: Value::String(path_str.clone()),
                 }],
             )?;
             created += 1;
         }
     }
+    conn.execute_batch("COMMIT")?;
 
-    // 2. Clear path for entries whose files no longer exist
-    let path_entries = crate::db::list_path_entries(conn)?;
+    // Clear path for entries whose files no longer exist, in a single transaction.
+    conn.execute_batch("BEGIN")?;
     let mut cleared = 0usize;
-    for (uuid, path_str) in path_entries {
-        if !std::path::Path::new(&path_str).exists() {
-            crate::db::clear_path(conn, uuid)?;
+    for (path_str, uuid) in &known {
+        if !fs_paths.contains(path_str) {
+            crate::db::clear_path(conn, *uuid)?;
             cleared += 1;
         }
     }
+    conn.execute_batch("COMMIT")?;
 
     Ok(ReconcileResult { created, cleared })
 }

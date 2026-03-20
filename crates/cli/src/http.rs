@@ -169,6 +169,41 @@ pub async fn set_field(
     Ok(m)
 }
 
+// ── Batch set ─────────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct BatchSetResult {
+    pub updated: usize,
+}
+
+/// Sets a field on all entries matching `query` in a single server-side transaction.
+pub async fn batch_set(
+    base: &str,
+    repo: Uuid,
+    query: &Query,
+    name: &str,
+    value: Value,
+) -> anyhow::Result<BatchSetResult> {
+    #[derive(Serialize)]
+    struct Req<'a> {
+        query: &'a Query,
+        name: &'a str,
+        value: Value,
+    }
+    let r: BatchSetResult = Client::new()
+        .post(format!("{base}/repos/{repo}/set"))
+        .json(&Req { query, name, value })
+        .send()
+        .await
+        .context("batch_set request")?
+        .error_for_status()
+        .context("batch_set status")?
+        .json()
+        .await
+        .context("batch_set parse")?;
+    Ok(r)
+}
+
 // ── Query / Reconcile ─────────────────────────────────────────────────────────
 
 pub async fn query(base: &str, repo: Uuid, q: &Query) -> anyhow::Result<Vec<Uuid>> {

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 OUTPUT="./bench_data"
-COUNT=1000
+COUNT=50000
 SIZE=4096
 
 usage() {

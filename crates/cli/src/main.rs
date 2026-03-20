@@ -142,9 +142,15 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Set { query, field_spec: spec } => {
             let repo = require_repo(cli.repo)?;
             let field = field_spec::parse(&spec)?;
-            let uuids = resolve_uuids(base, repo, &query).await?;
-            for uuid in uuids {
-                http::set_field(base, repo, uuid, &field.name, field.value.clone()).await?;
+            if let Ok(uuid) = query.parse::<Uuid>() {
+                // Single-entry shortcut: direct PATCH, no query round-trip
+                http::set_field(base, repo, uuid, &field.name, field.value).await?;
+            } else {
+                // DSL query: one server-side transaction for all matches
+                let q = dsl::parse(&query).map_err(|e| {
+                    anyhow::anyhow!("Invalid query (not a UUID and failed to parse as DSL): {e}")
+                })?;
+                http::batch_set(base, repo, &q, &field.name, field.value).await?;
             }
         }
 
