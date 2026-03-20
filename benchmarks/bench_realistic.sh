@@ -87,19 +87,6 @@ daemon_rss() {
 # section TITLE
 section() { echo; echo "--- $1 ---"; }
 
-# Extract a string field value from the JSON output of `get`.
-# Usage: get_field_value <json> <field_name>
-get_field_value() {
-    python3 -c "
-import json, sys
-data = json.loads(sys.argv[1])
-for f in (data[0]['fields'] if data else []):
-    if f['name'] == sys.argv[2] and f['value']['type'] == 'string':
-        print(f['value']['value'])
-        break
-" "$1" "$2" 2>/dev/null
-}
-
 # ── Phase 0: File generation ──────────────────────────────────────────────────
 
 N_FILES=$(find "$BENCH_DIR" -type f | wc -l)
@@ -144,59 +131,45 @@ printf "  daemon RSS : %s\n" "$(daemon_rss "$DAEMON_PID")"
 
 # ── Phase 3: Tag entries (ext + category) ─────────────────────────────────────
 #
-# For each entry: read its path, derive ext and category, then set both fields.
-# We also cache uuid→category locally to avoid re-querying in Phase 4.
+# One batch `set` call per extension/category value via MATCHES predicate.
+# E.g.  set 'path MATCHES "\.mp3$"'  "ext:string=mp3"
+#        set 'path MATCHES "/music/"' "category:string=music"
 
-section "Tagging: ext + category (one CLI round-trip per entry)"
+section "Tagging: ext + category (batch set via MATCHES)"
 
-ALL_UUIDS=$(cli_repo list 2>/dev/null)
-N_ENTRIES=$(echo "$ALL_UUIDS" | grep -c .)
+FILE_EXTS=(mp3 flac jpg png pdf txt epub mkv mp4 zip)
+TOP_DIRS=(music images books videos documents archives misc)
 
-declare -A ENTRY_CATEGORY   # uuid -> category (used in Phase 4)
+N_ENTRIES=$(cli_repo list 2>/dev/null | grep -c . || true)
 
 t_phase=$(date +%s%N)
-tagged=0
+n_ops=0
 
-while IFS= read -r uuid; do
-    [[ -z "$uuid" ]] && continue
+for ext in "${FILE_EXTS[@]}"; do
+    cli_repo set "path MATCHES \"\.${ext}\$\"" "ext:string=$ext" >/dev/null
+    n_ops=$((n_ops + 1))
+done
 
-    # Fetch entry path via JSON output
-    entry_json=$(cli_repo get "$uuid" --fields path 2>/dev/null)
-    raw_path=$(get_field_value "$entry_json" "path")
-    [[ -z "$raw_path" ]] && continue     # entry has no string path (deleted file)
-
-    # Extension: last component after the last '.'
-    filename="${raw_path##*/}"
-    ext="${filename##*.}"
-    [[ "$ext" == "$filename" ]] && ext="none"    # file has no extension
-
-    # Category: first path component below bench_data
-    rel="${raw_path#"$BENCH_DIR"/}"
-    category="${rel%%/*}"
-    [[ "$category" == "$rel" ]] && category="root"   # file directly at repo root
-
-    cli_repo set "$uuid" "ext:string=$ext"           >/dev/null
-    cli_repo set "$uuid" "category:string=$category" >/dev/null
-
-    ENTRY_CATEGORY[$uuid]=$category
-    tagged=$((tagged + 1))
-done <<< "$ALL_UUIDS"
+for cat in "${TOP_DIRS[@]}"; do
+    [[ -d "$BENCH_DIR/$cat" ]] || continue
+    cli_repo set "path MATCHES \"/$cat/\"" "category:string=$cat" >/dev/null
+    n_ops=$((n_ops + 1))
+done
 
 elapsed=$(ms_since "$t_phase")
-per_entry=0
-[[ $tagged -gt 0 ]] && per_entry=$(( elapsed / tagged ))
-row "tag $tagged entries (ext + category)" "$elapsed" "   ($per_entry ms/entry)"
+per_op=0
+[[ $n_ops -gt 0 ]] && per_op=$(( elapsed / n_ops ))
+row "tag $N_ENTRIES entries — $n_ops batch set ops" "$elapsed" "   ($per_op ms/op)"
 printf "  daemon RSS : %s\n" "$(daemon_rss "$DAEMON_PID")"
 
 # ── Phase 4: Collection entries + parent Ref ──────────────────────────────────
 #
 # Create one "collection" entry per top-level directory that actually exists
-# in bench_data, then link every file entry to its collection via a Ref field.
-# This enables graph-traversal queries: parent -> (kind = "music")
+# in bench_data, then link every file entry to its collection via a single
+# batch `set` call per directory (using MATCHES).
 
 section "Collection entries + parent Ref links"
 
-TOP_DIRS=(music images books videos documents archives misc)
 declare -A COLLECTION_UUID   # category -> collection entry uuid
 
 t=$(date +%s%N)
@@ -213,23 +186,20 @@ done
 row "create $n_col collection entries" "$(ms_since "$t")"
 
 t_phase=$(date +%s%N)
-linked=0
+n_ops=0
 
-while IFS= read -r uuid; do
-    [[ -z "$uuid" ]] && continue
-    category="${ENTRY_CATEGORY[$uuid]:-}"
-    [[ -z "$category" ]] && continue
-    col_uuid="${COLLECTION_UUID[$category]:-}"
+for dir in "${TOP_DIRS[@]}"; do
+    [[ -d "$BENCH_DIR/$dir" ]] || continue
+    col_uuid="${COLLECTION_UUID[$dir]:-}"
     [[ -z "$col_uuid" ]] && continue
-
-    cli_repo set "$uuid" "parent:ref=$col_uuid" >/dev/null
-    linked=$((linked + 1))
-done <<< "$ALL_UUIDS"
+    cli_repo set "path MATCHES \"/$dir/\"" "parent:ref=$col_uuid" >/dev/null
+    n_ops=$((n_ops + 1))
+done
 
 elapsed=$(ms_since "$t_phase")
-per_entry=0
-[[ $linked -gt 0 ]] && per_entry=$(( elapsed / linked ))
-row "link $linked entries to collections" "$elapsed" "   ($per_entry ms/entry)"
+per_op=0
+[[ $n_ops -gt 0 ]] && per_op=$(( elapsed / n_ops ))
+row "link $N_ENTRIES entries — $n_ops batch set ops" "$elapsed" "   ($per_op ms/op)"
 printf "  daemon RSS : %s\n" "$(daemon_rss "$DAEMON_PID")"
 
 # ── Phase 5: Query suite ──────────────────────────────────────────────────────
