@@ -155,7 +155,8 @@ impl Lexer {
                     Some('\\') => s.push('\\'),
                     Some('"') => s.push('"'),
                     Some('\'') => s.push('\''),
-                    other => bail!("Invalid escape: {other:?}"),
+                    None => bail!("Unexpected end of string after '\\'"),
+                    Some(c) => { s.push('\\'); s.push(c); }
                 },
                 Some(c) if c == quote => break,
                 Some(c) => s.push(c),
@@ -543,5 +544,17 @@ mod tests {
     #[test]
     fn test_parse_error_unclosed_paren() {
         assert!(parse("(path IS PRESENT").is_err());
+    }
+
+    #[test]
+    fn test_parse_matches() {
+        let q = parse(r#"path MATCHES "\.mp3$""#).unwrap();
+        match q {
+            Query::Matches { field, pattern } => {
+                assert_eq!(field, "path");
+                assert_eq!(pattern, r"\.mp3$");
+            }
+            other => panic!("Expected Matches, got {other:?}"),
+        }
     }
 }

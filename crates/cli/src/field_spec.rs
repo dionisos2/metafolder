@@ -97,7 +97,8 @@ fn parse_string_value(s: &str) -> anyhow::Result<String> {
                     Some('\\') => result.push('\\'),
                     Some('"') => result.push('"'),
                     Some('\'') => result.push('\''),
-                    other => bail!("Invalid escape: {other:?}"),
+                    None => bail!("Unexpected end of string after '\\'"),
+                    Some(c) => { result.push('\\'); result.push(c); }
                 },
                 Some(c) if c == quote => break,
                 Some(c) => result.push(c),
