@@ -309,4 +309,4 @@ printf "  %-26s %s\n"  "bench_data:"              "$BENCH_DIR"
 echo
 echo "=== done ==="
 
-trash ./bench_data/.metafolder/
+# trash ./bench_data/.metafolder/

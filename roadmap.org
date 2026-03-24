@@ -1,5 +1,5 @@
-* TODO proof of concept (daemon + simples scripts)
-* TODO benchmarks
+* DONE proof of concept (daemon + simples scripts)
+* DONE benchmarks
 * TODO specifications for the daemon
 * TODO specifications for the Rust commandes
 * TODO specifications for the GUI

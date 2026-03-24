@@ -1,0 +1,844 @@
+#+TITLE: Metafolder Daemon — Specification
+#+AUTHOR:
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+The daemon is a long-running background HTTP server that manages one or more
+/repositories/. A repository is a directory tree on the filesystem whose
+entries are tracked in a local SQLite database. The daemon exposes a REST API
+consumed by the CLI and GUI.
+
+The daemon is local-only (binds to =127.0.0.1= by default) and handles no
+authentication; access control is left to the OS.
+
+** Non-goals
+
+- No built-in remote protocol: the daemon is local-only and makes no network
+  calls. Cross-machine synchronisation is handled at the CLI/script level (e.g.
+  loading a remote repo over an SSH-mounted filesystem into the local daemon).
+- No authentication or multi-user access control.
+- No conflict resolution between concurrent daemon instances on the same repo.
+
+** Key invariants
+
+- Every filesystem entry in a watched repository has exactly one corresponding
+  metadata entry in the database.
+- When a file or directory is deleted, its metadata entry is preserved; the
+  =path= field is set to =Nothing= rather than deleting the row.
+- =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
+  fields to a single value.
+- A metadata entry whose =db_ids= contains more than one repository UUID (a
+  /link entry/) can only be created or modified when every listed repository is
+  simultaneously loaded in the same daemon instance.
+- The =version= counter on a metadata entry is managed exclusively by the
+  daemon; it is incremented on every write to =fields= and cannot be set
+  directly by users.
+- A repository database must be held under an exclusive SQLite lock for the
+  entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
+  This prevents a second daemon instance from loading the same repo
+  simultaneously, which would cause version drift and watcher conflicts (e.g.
+  one daemon's watcher updating =path= and bumping =version= while the other
+  is committing a sync).
+
+* Data Model
+
+** Repository
+
+Persisted as =.metafolder/config.json= inside the watched directory.
+
+| Field        | Type     | Description                             |
+|--------------+----------+-----------------------------------------|
+| =repo_uuid=  | UUID     | Stable identifier for this repository   |
+| =version=    | string   | Config schema version                   |
+| =root=       | path     | Absolute path to the watched directory  |
+| =created_at= | datetime | ISO-8601 creation timestamp             |
+
+** Metadata
+
+An entry represents one tracked object (typically a file, but can be any
+user-created record such as a tag, collection, or cross-repo link).
+
+| Field     | Type       | Description                                              |
+|-----------+------------+----------------------------------------------------------|
+| =uuid=    | UUID       | Stable identifier for this entry                         |
+| =db_ids=  | list<UUID> | Repositories that own this entry (usually one)           |
+| =version= | u64        | Monotonic write counter, managed by the daemon           |
+| =fields=  | list       | Ordered list of =Field= values                           |
+
+Fields form a *multi-map*: multiple fields with the same name are allowed.
+
+=db_ids= normally contains a single repository UUID (the owning repo). When it
+contains two UUIDs the entry is a /link entry/ shared between two repositories
+(see [[*Cross-repo Synchronisation]]).
+
+By default, queries return only entries whose =db_ids= equals exactly
+={current_repo}=. Entries with multiple =db_ids= are excluded unless explicitly
+requested.
+
+** Field and Value
+
+A field is a =(name, value)= pair. Value is one of:
+
+| Variant    | Rust type       | Semantics                                    |
+|------------+-----------------+----------------------------------------------|
+| =Nothing=  | —               | Explicit absence ("this field does not apply") |
+| =String=   | =String=        | UTF-8 text                                   |
+| =Int=      | =i64=           | 64-bit signed integer                        |
+| =Float=    | =f64=           | 64-bit float                                 |
+| =Bool=     | =bool=          |                                              |
+| =Date=     | =String=        | ISO-8601 date (=YYYY-MM-DD=)                 |
+| =DateTime= | =String=        | ISO-8601 datetime (=YYYY-MM-DDTHH:MM:SSZ=)   |
+| =Duration= | =i64= (ms)      | Duration in milliseconds                     |
+| =Ref=          | =UUID=         | Reference to another entry's UUID (same repo)              |
+| =RecursiveRef= | =String=       | Materialized chain root-to-entry: =/root/.../parent/entry/= |
+| =RefBase=      | =UUID=         | Reference to a repository UUID                             |
+| =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, entry UUID)              |
+
+A =RecursiveRef= stores two parallel materialized chains for a given field,
+kept in the =value_path= and =value_uuid_path= columns of the =field= table
+(see [[*SQLite Schema]]):
+
+- =path=: the chain of field *values* from root to entry, e.g. =/music/jazz/file.mp3/=
+- =uuid_path=: the chain of *UUIDs* from root to entry, e.g. =/Abc1.../Xyz7.../Qr3k.../=
+
+Both chains include the entry itself as the last component (leaf). This makes
+both directions of navigation efficient:
+- =uuid_path → path=: join on the =recursive_ref= table, no recursion needed.
+- =path → uuid=: direct indexed lookup on =(field_name, path)=.
+
+The daemon maintains both chains on every write. When an entry is moved (its
+direct parent changes), the daemon updates all descendants via a prefix-replace:
+
+#+BEGIN_SRC sql
+UPDATE field
+SET value_path      = replace(value_path,      :old_path_prefix, :new_path_prefix),
+    value_uuid_path = replace(value_uuid_path, :old_uuid_prefix, :new_uuid_prefix)
+WHERE field_name = :fname AND value_type = 'recursive_ref'
+  AND value_uuid_path LIKE :old_uuid_prefix || '%';
+#+END_SRC
+
+This is O(n) on the number of descendants — unavoidable regardless of the
+storage strategy for tree structures.
+
+*** Path component encoding
+
+Values stored inside =path= are percent-encoded per component to eliminate
+characters that would interfere with the =/= separator or SQL =LIKE= wildcards.
+Only three characters are encoded; everything else is stored as-is:
+
+| Character | Encoded form |
+|-----------+--------------|
+| =%=       | =%25=        |
+| =_=       | =%5F=        |
+| /         | =%2F=        |
+
+Decoding is standard percent-decoding applied to each component between the
+=/= separators. =uuid_path= requires no encoding since base62 UUIDs contain
+only =[A-Za-z0-9]=.
+
+=Nothing= is distinct from the field simply not existing:
+- field present with =Nothing= value → "this field does not apply" (IsAbsent)
+- field absent entirely → "unknown" (IsUnknown)
+
+All values serialize to JSON as ={"type": "<variant>", "value": <json_value>}=.
+
+** File fingerprint
+
+Used by reconcile and the watcher to detect identity across renames/moves.
+*mtime is never used as a criterion* because it can change without the content
+changing (e.g. =touch=, copies without =--preserve=).
+
+Fingerprint is computed lazily in cascading steps — each step is only reached
+when the previous one is insufficient:
+
+1. *File size* (from =stat=, free during directory walk) — eliminates most
+   non-matches without opening any file.
+2. *Partial hash* — xxHash3 of the first 4 KB + last 4 KB of the file.
+   Computed on first open; stored in the database alongside the entry.
+3. *Full hash* — xxHash3 of the entire file content.
+   Computed only when size and partial hash both match and a definitive
+   identity check is required (e.g. deduplication confirmation).
+
+Files and directories are both tracked as first-class entries. Directories can
+carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
+the =value_uuid_path= chain of their =path= field.
+
+The root directory entry has =path= with =value_path= = =""= (empty string).
+All other entries have paths starting with =/=. This makes parent derivation
+uniform: stripping the last component of =/dir1/= gives =""=, which resolves to
+the root — no special case needed. The root is looked up by
+=WHERE field_name = 'path' AND value_path = ''=.
+
+The stored fields for a file entry are:
+
+| Field          | Value type              | Description                                       |
+|----------------+-------------------------+---------------------------------------------------|
+| =path=         | RecursiveRef / Nothing  | Full path; =Nothing= if deleted/moved (IsAbsent); absent if location unknown (IsUnknown) |
+| =size=         | Int                     | File size in bytes at last reconcile              |
+| =partial_hash= | String                  | Hex xxHash3 of first+last 4 KB                    |
+| =full_hash=    | String                  | Hex xxHash3 of full content (optional)            |
+
+The =path= RecursiveRef stores two parallel chains in the =field= table:
+- =value_path=: the full filesystem path, e.g. =/music/jazz/file.mp3/=
+- =value_uuid_path=: the UUID chain of ancestors + entry, e.g. =/uuid_music/uuid_jazz/uuid_file/=
+
+Direct lookup by path:
+#+BEGIN_SRC sql
+SELECT metadata_uuid FROM field
+WHERE field_name = 'path' AND value_type = 'recursive_ref'
+  AND value_path = '/music/jazz/file.mp3/';
+#+END_SRC
+
+Inherited property lookup (e.g. nearest ancestor with =sync_method=):
+#+BEGIN_SRC sql
+SELECT f.value_str FROM field f
+JOIN field rr ON rr.metadata_uuid = f.metadata_uuid
+WHERE f.field_name = 'sync_method'
+  AND rr.field_name = 'path' AND rr.value_type = 'recursive_ref'
+  AND '/uuid_music/uuid_jazz/uuid_file/' LIKE rr.value_uuid_path || '%'
+ORDER BY length(rr.value_uuid_path) DESC LIMIT 1;
+#+END_SRC
+
+* SQLite Schema
+
+Each repository uses its own =.metafolder/db.sqlite= file (WAL mode, foreign
+keys enabled). Exception: when a repository is loaded from a network filesystem
+(e.g. SSHFS), the daemon switches to =DELETE= journal mode (=PRAGMA
+journal_mode=DELETE=) at connection time. WAL requires POSIX shared memory
+(=.wal-shm=) which network filesystems do not support. This switch is applied
+per-connection and does not modify the database permanently — the next local
+connection resumes WAL mode normally. A benchmark should be run once sync is
+implemented to verify that DELETE journal mode is acceptable for large syncs.
+
+** UUID encoding
+
+All UUIDs (entry UUIDs and repository UUIDs) are stored as =TEXT= in base62
+(=[A-Za-z0-9]=, 22 characters). This applies uniformly to every UUID column in
+the schema and to UUID values in the HTTP API.
+
+Rationale: base62 avoids SQL wildcard characters (=%= and =_=), which allows
+UUIDs embedded in materialized path strings to be queried with =LIKE= without
+escaping. In SQLite, =TEXT= and =BLOB= use the same variable-length storage
+format; the only cost compared to 16-byte BLOBs is 6 extra bytes per UUID,
+which is negligible.
+
+#+BEGIN_SRC sql
+CREATE TABLE metadata (
+    uuid     TEXT    PRIMARY KEY NOT NULL,  -- 22-char base62 UUID
+    version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
+);
+
+-- One row per owning repository (usually one; two for link entries).
+CREATE TABLE metadata_db (
+    metadata_uuid  TEXT NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    db_id          TEXT NOT NULL,           -- 22-char base62 repo UUID
+    PRIMARY KEY (metadata_uuid, db_id)
+);
+
+CREATE INDEX idx_metadata_db ON metadata_db(db_id);
+
+CREATE TABLE field (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    metadata_uuid   TEXT    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    field_name      TEXT    NOT NULL,
+    value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
+                                       -- date | datetime | duration | ref |
+                                       -- recursive_ref | refbase | externalref
+    value_str       TEXT,              -- string, date, datetime
+    value_int       INTEGER,           -- int, bool (0/1), duration (ms)
+    value_real      REAL,              -- float
+    value_ref       TEXT,              -- ref | externalref: entry UUID (base62, no FK)
+    value_ref_repo  TEXT,              -- externalref only: repo UUID (base62)
+    value_path      TEXT,              -- recursive_ref: percent-encoded value chain
+                                       --   e.g. /music/jazz/file.mp3/
+    value_uuid_path TEXT               -- recursive_ref: base62 UUID chain
+                                       --   e.g. /Abc1.../Xyz7.../Qr3k.../
+);
+
+CREATE INDEX idx_field_entry        ON field(metadata_uuid, field_name);
+CREATE INDEX idx_field_reverse      ON field(field_name, value_ref, value_ref_repo);
+CREATE UNIQUE INDEX idx_field_rr_path      ON field(field_name, value_path)
+    WHERE value_type = 'recursive_ref';
+CREATE INDEX        idx_field_rr_uuid_path ON field(field_name, value_uuid_path)
+    WHERE value_type = 'recursive_ref';
+#+END_SRC
+
+* HTTP API
+
+The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
+All request and response bodies are JSON. Errors return a JSON object
+={"error": "<message>"}= with an appropriate HTTP status code.
+
+** Health
+
+#+BEGIN_SRC
+GET /health
+#+END_SRC
+
+Response: =200 OK=, body ={"status": "ok"}=.
+
+** Repository management
+
+#+BEGIN_SRC
+GET  /repos
+POST /repos/init
+POST /repos/load
+#+END_SRC
+
+*** =GET /repos=
+
+Returns the list of currently loaded repositories.
+
+Response body:
+#+BEGIN_SRC json
+[
+  {
+    "repo_uuid": "...",
+    "root": "/path/to/dir",
+    "created_at": "2024-01-01T00:00:00Z"
+  }
+]
+#+END_SRC
+
+*** =POST /repos/init=
+
+Initialises a new repository in an existing directory. Creates
+=.metafolder/config.json= and =.metafolder/db.sqlite=. Fails if a repository
+already exists there.
+
+Request body: ={"root": "/absolute/path"}=
+
+Response body: ={"repo_uuid": "..."}=
+
+*** =POST /repos/load=
+
+Loads an existing repository (already has a =.metafolder/= directory) into the
+daemon's in-memory state, starts the file watcher.
+
+Request body: ={"root": "/absolute/path"}=
+
+Response body: ={"repo_uuid": "..."}=
+
+** Metadata CRUD
+
+#+BEGIN_SRC
+GET    /repos/:repo_uuid/metadata
+POST   /repos/:repo_uuid/metadata
+GET    /repos/:repo_uuid/metadata/:metadata_uuid
+DELETE /repos/:repo_uuid/metadata/:metadata_uuid
+PATCH  /repos/:repo_uuid/metadata/:metadata_uuid
+#+END_SRC
+
+*** =GET /repos/:repo_uuid/metadata=
+
+Returns all metadata UUIDs in the repository.
+
+Response body: =["uuid1", "uuid2", ...]=
+
+*** =POST /repos/:repo_uuid/metadata=
+
+Creates a new metadata record with the given fields.
+
+Request body:
+#+BEGIN_SRC json
+{
+  "fields": [
+    {"name": "path", "value": {"type": "recursive_ref", "value": "/foo/bar.mp3/"}},
+    {"name": "rating", "value": {"type": "int", "value": 5}}
+  ]
+}
+#+END_SRC
+
+For =RecursiveRef= fields, the client supplies only the =value_path= string
+(e.g. ="/foo/bar.mp3/"=). The daemon computes =value_uuid_path= automatically
+by looking up the parent entry: it strips the last component to obtain the
+parent path (="/foo/"=) and queries =field= for a =recursive_ref= row with that
+=value_path=. If no parent entry is found, the request is rejected with =400
+Bad Request=. The root entry (=value_path = ""=) is the only entry with no
+parent; it is created at =repo init= time.
+
+A metadata record may have multiple =path= fields (multi-map), indicating the
+record is accessible at several locations (e.g. a file with copies in different
+directories). Each =value_path= is looked up independently. =set_field= on
+=path= replaces all existing =path= rows with a single new one.
+
+Response body: full metadata object (see =GET .../metadata/:uuid= below).
+
+*** =GET /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Returns a single metadata record with all its fields.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "uuid": "...",
+  "db_ids": ["<repo_uuid>"],
+  "version": 3,
+  "fields": [
+    {"name": "path", "value": {"type": "recursive_ref", "value": "/foo/bar.mp3/"}},
+    {"name": "rating", "value": {"type": "int", "value": 5}}
+  ]
+}
+#+END_SRC
+
+*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Deletes the metadata record and all its fields. Returns =204 No Content=.
+
+*** =PATCH /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Sets a single field on a metadata record (replaces all existing rows for that
+field name).
+
+Request body:
+#+BEGIN_SRC json
+{"name": "rating", "value": {"type": "int", "value": 9}}
+#+END_SRC
+
+Response body: updated full metadata object.
+
+** Query
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/query
+#+END_SRC
+
+Executes a query and returns matching metadata UUIDs.
+
+Request body: a =Query= JSON object (see [[*Query Language]]).
+
+Response body: =["uuid1", "uuid2", ...]=
+
+** Batch set
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/set
+#+END_SRC
+
+Runs a query server-side and sets a field on every matching entry in a single
+transaction. More efficient than issuing individual PATCH requests from the
+client.
+
+Request body:
+#+BEGIN_SRC json
+{
+  "query": <Query>,
+  "name": "rating",
+  "value": {"type": "int", "value": 5}
+}
+#+END_SRC
+
+Response body: ={"updated": <count>}=
+
+** Reconcile
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/reconcile
+#+END_SRC
+
+Walks the repository root on the filesystem and synchronises the database:
+
+- Files/directories present on disk but without a database entry → create entry;
+  create parent directory entries if missing.
+- Files whose path has changed but whose content is recognisable by fingerprint
+  (size → partial hash) → update =path= RecursiveRef field.
+- Entries whose path no longer exists and cannot be matched by fingerprint →
+  set =path= to =Nothing=.
+
+*Directory identification*: directories have no fingerprint and are matched only
+by their path string. A directory entry whose path no longer exists on disk
+cannot be relocated — it is set to =Nothing= directly.
+
+*Cascading Nothing*: whenever any entry's =path= is set to =Nothing= (by the
+watcher, reconcile, or manually), all entries whose =field.value_uuid_path=
+(for =field_name = 'path'=) contains this entry's UUID are also set to =Nothing=
+in the same transaction. No entry can have a valid path if one of its ancestors
+is gone.
+
+All creates and updates execute inside a single transaction.
+
+Response body: ={"created": N, "moved": N, "cleared": N}=
+
+* File Watcher
+
+The daemon watches each loaded repository root with inotify (Linux). Events
+outside =.metafolder/= are processed as follows:
+
+| inotify event   | Action                                                                         |
+|-----------------+--------------------------------------------------------------------------------|
+| =Create=        | Look up parent UUID via =recursive_ref=; create entry with =path= RecursiveRef |
+| =Remove=        | Set =path= to =Nothing= (entry preserved)                                      |
+| =Rename(Both)=  | Update =path= RecursiveRef (O(1) for files; O(n) prefix-replace for dirs)      |
+| =Rename(From)=  | Set =path= to =Nothing= (rename target not yet known)                          |
+| =Rename(To)=    | Create entry if no matching fingerprint; else update =path= RecursiveRef       |
+| =Modify=        | Ignored (content changes do not affect =path=)                                 |
+
+Parent directory lookup on =Create= or =Rename(To)= uses a single indexed query:
+=SELECT metadata_uuid, value_uuid_path FROM field WHERE field_name = 'path' AND value_type = 'recursive_ref' AND value_path = :parent_path=.
+No in-memory cache needed.
+
+Events inside =.metafolder/= are always ignored.
+
+* Query Language
+
+Queries are represented as a recursive JSON structure (the =Query= enum). The
+CLI provides a DSL that compiles to this representation.
+
+** Variants
+
+| Variant             | JSON =type= key       | Description                                    |
+|---------------------+-----------------------+------------------------------------------------|
+| IsPresent           | =is_present=          | Field exists and is not =Nothing=              |
+| IsAbsent            | =is_absent=           | Field exists and is =Nothing=                  |
+| IsUnknown           | =is_unknown=          | Field does not exist at all                    |
+| Eq / Neq            | =eq= / =neq=          | Equality / inequality comparison               |
+| Lt / Lte / Gt / Gte | =lt= / =lte= / ...    | Ordered comparison                             |
+| And                 | =and=                 | All operands must match                        |
+| Or                  | =or=                  | At least one operand must match                |
+| Not                 | =not=                 | Operand must not match                         |
+| Follows             | =follows=             | Ref field points to an entry matching condition                |
+| FollowsTransitive   | =follows_transitive=  | Transitive version of Follows                                  |
+| Matches             | =matches=             | String field matches a regex pattern                           |
+
+** Compilation
+
+Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
+the final SELECT is filtered via =metadata_db= to isolate the repository and
+exclude link entries by default.
+
+=FollowsTransitive= behaviour depends on the field type:
+- On a =Ref= field: uses a recursive CTE (=WITH RECURSIVE=) for backward
+  reachability, walking all entries that transitively point to the target.
+- On a =RecursiveRef= field: uses a =LIKE= predicate on =value_uuid_path=
+  — no recursion needed. "All entries that transitively point to X via field =f="
+  compiles to:
+  =WHERE field_name = 'f' AND value_type = 'recursive_ref' AND value_uuid_path LIKE '%/' || X_uuid || '/%'=.
+
+=Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
+setup) backed by the =regex= crate. On a =RecursiveRef= field, =MATCHES=
+applies the regex to =value_path= (the value chain string, e.g. =/music/jazz/file.mp3/=).
+
+* Error Handling
+
+| Situation                              | HTTP status | Notes                          |
+|----------------------------------------+-------------+--------------------------------|
+| Repository not found                   | 404         |                                |
+| Metadata record not found              | 404         |                                |
+| Repository already initialised         | 409         |                                |
+| Malformed JSON body                    | 400         |                                |
+| Invalid query                          | 400         |                                |
+| RecursiveRef parent path not found     | 400         |                                |
+| Internal error (DB, I/O)               | 500         | Error message in body          |
+
+* Cross-repo Synchronisation
+
+The daemon provides low-level primitives for cross-repo sync. Orchestration
+(deciding what to link, in which order, with which method) lives in CLI
+commands and user scripts.
+
+** Design principles
+
+- The daemon never touches files. File transfers are always performed by the
+  CLI command or script.
+- Sync intentions (which entries to link, with what method) are expressed as
+  queries in the sync script, not stored in the database.
+- Both repos must be loaded in the same daemon instance to create or modify
+  link entries or to commit a sync.
+- For cross-machine sync, the recommended approach is to mount the remote
+  repository root over SSH (e.g. SSHFS) and load it into the local daemon.
+  The daemon itself makes no network calls.
+
+*** Directory linking during sync
+
+Links are always UUID-based. For directory entries, the initial link is
+established by matching path strings across repos:
+
+1. A directory exists in both repos with the same =path= value → create a link
+   between them.
+2. A directory exists in repo A but has no corresponding entry (same path) in
+   repo B → create the directory entry in repo B, then link it.
+3. A linked directory is later moved on one side → the link persists by UUID;
+   the path divergence is detectable as a version change and treated as a
+   field conflict on the =path= field.
+
+** Link entries
+
+A link entry is a metadata entry with =db_ids = [repo_A_uuid, repo_B_uuid]=.
+It records that one entry in repo A corresponds to one entry in repo B.
+
+All fields are managed by the sync script, not by the daemon:
+
+| Field              | Type        | Description                                              |
+|--------------------+-------------+----------------------------------------------------------|
+| =link_a=           | ExternalRef | (repo A UUID, entry UUID) — self-contained cross-repo ref |
+| =link_b=           | ExternalRef | (repo B UUID, entry UUID) — self-contained cross-repo ref |
+| =snapshot=         | Ref         | Shared metadata entry capturing the common state at last sync |
+| =version_a=        | Int         | =E_A.version= recorded at last sync                     |
+| =version_b=        | Int         | =E_B.version= recorded at last sync                     |
+| =last_sync_method= | String      | Method used during the last sync (informational)         |
+
+Link entries are stored identically in both repos (same UUID, same fields,
+same =version=). They are hidden from normal queries (=db_ids ≠ {current_repo}=)
+but can be queried explicitly.
+
+** Version-based change detection
+
+After a successful sync of entries =E_A= (repo A) and =E_B= (repo B), the
+sync script writes the current versions of both entries into the link:
+
+- =version_a= ← =E_A.version= at time of sync
+- =version_b= ← =E_B.version= at time of sync
+
+On the next sync, for each linked pair:
+
+| =E_A.version= vs =version_a= | =E_B.version= vs =version_b= | Meaning          | Action          |
+|------------------------------+------------------------------+------------------+-----------------|
+| equal                        | equal                        | No changes       | Nothing to do   |
+| greater                      | equal                        | Only A changed   | Propagate A → B |
+| equal                        | greater                      | Only B changed   | Propagate B → A |
+| greater                      | greater                      | Both changed     | Conflict        |
+
+Conflict resolution is left to the sync command (user prompt or declared
+policy in the script).
+
+When a link is created for the first time, if =E_A= and =E_B= already have
+divergent fields, this is treated as an immediate conflict to resolve before
+=version_a=, =version_b=, and =snapshot= can be recorded.
+
+The =snapshot= entry has =db_ids = [repo_A, repo_B]= and captures the common
+field state after each successful sync. It is updated at every sync-commit
+alongside =version_a= and =version_b=. During conflict resolution (both sides
+changed), the sync command computes:
+
+- Fields changed only in A = diff(E_A, snapshot)
+- Fields changed only in B = diff(E_B, snapshot)
+- Fields changed in both   = conflict → manual resolution
+
+Fields changed on only one side are propagated automatically.
+
+*** Ref and RecursiveRef fields in the snapshot
+
+For non-Ref fields, E_A and E_B hold identical values after sync, so the
+snapshot is unambiguous. For =Ref= and =RecursiveRef= fields, the same logical
+reference has different local UUIDs in each repo.
+
+The snapshot always stores these values from the perspective of =link_a='s
+repository (repo A). This is a fixed canonical choice that does not change
+over time:
+
+- =Ref=: stores repo A's local UUID.
+- =RecursiveRef=: stores both the =path= string (portable, identical across
+  repos) and the =uuid_path= using repo A's local UUIDs for every component.
+
+Consequences:
+- =diff(E_A, snapshot)=: direct field comparison, no translation needed.
+- =diff(E_B, snapshot)=:
+  - For =Ref=: translate the snapshot UUID A→B via the link table.
+  - For =RecursiveRef=: translate each UUID in =uuid_path= A→B via the link
+    table; the =path= string can be compared directly without translation.
+  - Translation found → compare translated value with E_B's value.
+  - Translation not found (referenced entry not linked) → conservative
+    treatment: flag as potential conflict and warn.
+
+** Watcher suspension during sync
+
+The file watcher must be suspended on both repos during the execution phase
+of a sync (and similarly for rollback and other multi-step operations).
+Without suspension, watcher events (e.g. a file rename) would increment
+=version= on an entry mid-sync, corrupting change detection.
+
+The daemon exposes two distinct watcher control modes:
+
+*** pause / resume (buffered)
+
+The daemon continues reading the inotify file descriptor but queues events
+in an in-memory buffer rather than processing them. The kernel inotify
+queue has a fixed limit (=/proc/sys/fs/inotify/max_queued_events=, default
+16384); continuing to read prevents it from overflowing.
+
+On resume, buffered events are replayed against the current database state:
+
+- Events for paths already consistent with the database (e.g. sync updated
+  the metadata before resuming) → no-op.
+- Events for paths that diverge from the database (user-driven changes
+  during the pause) → processed normally (path update, =version= bump, etc.).
+
+Used by: sync execution phase, rollback, and other multi-step operations
+where filesystem changes should not interrupt the operation but must not
+be silently discarded.
+
+Degraded modes:
+- *Buffer overflow*: daemon detects overflow, falls back to =reconcile= on
+  resume.
+- *Crash or SIGKILL*: buffer lost; =reconcile= required before retrying.
+
+*** stop / start (clean slate)
+
+The daemon stops reading the inotify file descriptor entirely. No events
+are buffered. On start, a fresh watcher is registered with no backlog to
+replay.
+
+Used by: bulk imports or any operation where the user explicitly wants all
+filesystem changes during the stopped window to be ignored, and will run
+=reconcile= manually afterward if needed.
+
+** Entry deletion propagation
+
+- =path= set to =Nothing= (file deleted, entry preserved) → link is kept;
+  the entry still exists and its metadata remains meaningful.
+- Entry fully deleted → the sync command propagates the deletion to the
+  corresponding entry in the other repo, then deletes the link.
+
+** Link deletion
+
+When a link entry is deleted, its associated =snapshot= entry must be deleted
+at the same time (both repos loaded). The snapshot has no other owner and
+becomes unreachable once the link is gone.
+
+** Link discovery on repo load
+
+When a repo is loaded into the daemon, the daemon scans its =metadata_db=
+table for entries whose =db_ids= includes the newly loaded repo's UUID and at
+least one other already-loaded repo's UUID. These are cross-repo link (and
+snapshot) entries.
+
+For each such entry, the daemon runs the crash-recovery check (see below):
+compare the =version= of each copy across repos and overwrite the older copy
+with the newer one if they diverge.
+
+** Link entry consistency after crash
+
+A sync-commit writes to the link entry in both repos sequentially. If the
+daemon crashes between the two writes, the two copies of the link entry
+diverge.
+
+Recovery is automatic: when both repos are loaded, the daemon compares the
+=version= system counter of each copy of every link entry (same UUID, both
+repos). The copy with the higher =version= is authoritative and overwrites
+the other. This works because the daemon guarantees that a higher =version=
+always reflects a more recent completed write within a single repo.
+
+** Two-phase sync process
+
+Sync is split into two distinct phases:
+
+1. *Planning* (watcher running): query both repos, compute all operations to
+   perform (file transfers, metadata propagations, conflicts). Produce a plan
+   that includes, for each repo involved, the =PRAGMA data_version= value at
+   planning time. The user can inspect the plan before proceeding.
+
+2. *Execution* (watcher paused): validate that =PRAGMA data_version= still
+   matches the value recorded at planning time for each repo. If any DB has
+   changed — even by a single write — the plan is invalidated and the user
+   must re-plan. This is intentional: detecting *what* changed is complex,
+   and even a single change could mean the plan would overwrite recent
+   modifications. If valid, execute operations in order: file transfers first
+   (all idempotent), then metadata commits in batches.
+
+After execution: resume watcher + run =reconcile= to catch any filesystem
+changes that occurred during the paused window.
+
+** Sync intentions
+
+Sync intentions are declared in the sync script as a mapping from sync method
+to a query. Example:
+
+#+BEGIN_SRC
+rsync  ←  tag = "sync_pc_b"
+git    ←  path MATCHES "^/projects/"
+rsync  ←  tag = "image" AND tag = "family"
+#+END_SRC
+
+At sync time the script:
+
+1. Evaluates each query on both repos to determine which entries should be
+   linked (and with what method).
+2. Compares the result with the existing link entries to identify links to
+   create, delete, or update.
+3. Resolves any intent conflicts between the two repos (e.g. different methods
+   declared on each side).
+4. Executes file transfers for file entries (using the declared method).
+5. Propagates changed fields for all linked entries (metadata sync).
+6. Calls the sync-commit primitive to set common versions and record
+   =last_sync_method= on each updated link.
+
+** Ref translation during sync
+
+=Ref= and =RecursiveRef= fields store local UUIDs that must be translated when
+writing to the target repo.
+
+Sync order for a given repo pair:
+
+1. Update the link table first (create, delete, update =last_sync_method=).
+2. Sync entry fields:
+   - For each =Ref= field: look up the link table to find the corresponding
+     UUID in the target repo.
+   - For each =RecursiveRef= field: translate each UUID in =uuid_path= A→B via
+     the link table to build the target repo's =uuid_path=; the =path= string
+     (value chain) is portable and written as-is.
+   - Translation found → write the translated value.
+   - Translation not found → skip the field and emit a warning. Since the link
+     table is complete at this point, a missing translation means the
+     referenced entry is genuinely out of sync scope.
+
+=Ref= values have no foreign-key constraint on =value_ref= (see schema). The
+system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
+results. Circular references (A → B → A) are likewise permitted; the daemon
+handles them via non-recursive =Follows= and cycle-safe recursive CTEs for
+=FollowsTransitive=.
+
+** Required daemon primitives
+
+The following endpoints are needed to support sync scripts (exact HTTP shapes
+TBD):
+
+- List link entries for a given pair of loaded repos.
+- Detect link candidates by matching fingerprint (=partial_hash= / =full_hash=)
+  across two loaded repos.
+- Create / delete a link entry (both repos must be loaded).
+- Pause / resume the file watcher (buffered mode).
+- Stop / start the file watcher (clean-slate mode).
+- Query sync status: for each link, return the change/conflict state derived
+  from =version= comparisons.
+- Sync-commit: write =version_a=, =version_b=, and =last_sync_method= to the
+  link entry in both repos.
+
+* Performance concerns (sync)
+
+Questions to resolve before implementing sync:
+
+1. *Sequential writes without batching*: the sync-commit writes to the link and
+   snapshot in both databases, one record at a time. Over SSHFS each write is
+   slow. Accumulating changes in batch transactions reduces this cost at the
+   price of more re-work after a crash (at most one batch to redo). The optimal
+   batch size is to be determined by benchmark. For file entries, batches should
+   be smaller than for pure metadata entries, since each batch corresponds to
+   file transfers (idempotent, but slow to re-transfer if the batch is large).
+
+2. *Watcher pause duration*: resolved by buffering (see §Watcher suspension
+   during sync). The pause covers only the execution phase; events are buffered
+   rather than lost and replayed intelligently on resume. =reconcile= remains
+   the fallback in case of overflow or crash.
+
+* Open Questions
+
+** Full-text / regex index
+=MATCHES= currently performs a full table scan with the REGEXP UDF (~650 ms for
+50 k entries). Options: FTS5 virtual table, or a precomputed hash index for
+exact-match patterns.
+
+** Pagination
+=GET /metadata= and =POST /query= return all results in one response. For very
+large repositories this may be unacceptable. A cursor-based pagination API
+should be designed.
+
+** Watcher reliability on edge cases
+Behaviour when the watched root is unmounted, moved, or deleted while the
+daemon is running is undefined. The daemon should detect this and mark the
+repository as unavailable.
+
+** Daemon lifecycle
+No mechanism yet for cleanly unloading a repository (stopping its watcher,
+releasing its DB connection) without restarting the whole daemon.
+
