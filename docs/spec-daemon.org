@@ -25,7 +25,7 @@ authentication; access control is left to the OS.
 - Every filesystem entry in a watched repository has exactly one corresponding
   metadata entry in the database.
 - When a file or directory is deleted, its metadata entry is preserved; the
-  =path= field is set to =Nothing= rather than deleting the row.
+  =mf_path= field is set to =Nothing= rather than deleting the row.
 - =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
   fields to a single value.
 - A metadata entry whose =db_ids= contains more than one repository UUID (a
@@ -38,8 +38,12 @@ authentication; access control is left to the OS.
   entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
   This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
-  one daemon's watcher updating =path= and bumping =version= while the other
+  one daemon's watcher updating =mf_path= and bumping =version= while the other
   is committing a sync).
+- =TreeRef= references must form a forest (no cycles per =field_name=) with a
+  maximum depth of 1000. The daemon rejects any write that would create a cycle
+  or exceed this depth. The check walks the parent chain iteratively using the
+  tree cache (fetching missing nodes from the DB step by step as needed).
 
 * Data Model
 
@@ -47,12 +51,13 @@ authentication; access control is left to the OS.
 
 Persisted as =.metafolder/config.json= inside the watched directory.
 
-| Field        | Type     | Description                             |
-|--------------+----------+-----------------------------------------|
-| =repo_uuid=  | UUID     | Stable identifier for this repository   |
-| =version=    | string   | Config schema version                   |
-| =root=       | path     | Absolute path to the watched directory  |
-| =created_at= | datetime | ISO-8601 creation timestamp             |
+| Field       | Type   | Description                            |
+|-------------+--------+----------------------------------------|
+| =repo_uuid= | UUID   | Stable identifier for this repository  |
+| =name=      | string | Name of the repository                 |
+| =port=      | int    | The port the daemon listen to          |
+| =version=   | string | Config schema version                  |
+| =root=      | path   | Absolute path to the watched directory |
 
 ** Metadata
 
@@ -87,55 +92,26 @@ A field is a =(name, value)= pair. Value is one of:
 | =Int=      | =i64=           | 64-bit signed integer                        |
 | =Float=    | =f64=           | 64-bit float                                 |
 | =Bool=     | =bool=          |                                              |
-| =Date=     | =String=        | ISO-8601 date (=YYYY-MM-DD=)                 |
 | =DateTime= | =String=        | ISO-8601 datetime (=YYYY-MM-DDTHH:MM:SSZ=)   |
-| =Duration= | =i64= (ms)      | Duration in milliseconds                     |
 | =Ref=          | =UUID=         | Reference to another entry's UUID (same repo)              |
-| =RecursiveRef= | =String=       | Materialized chain root-to-entry: =/root/.../parent/entry/= |
+| =TreeRef=      | =(UUID?, String)= | Position in a named tree: =(parent_uuid, name)=             |
 | =RefBase=      | =UUID=         | Reference to a repository UUID                             |
 | =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, entry UUID)              |
 
-A =RecursiveRef= stores two parallel materialized chains for a given field,
-kept in the =value_path= and =value_uuid_path= columns of the =field= table
+A =TreeRef= stores the position of an entry in a named tree as =(parent_uuid, name)=,
+kept in the =value_uuid= and =value_name= columns of the =field= table
 (see [[*SQLite Schema]]):
 
-- =path=: the chain of field *values* from root to entry, e.g. =/music/jazz/file.mp3/=
-- =uuid_path=: the chain of *UUIDs* from root to entry, e.g. =/Abc1.../Xyz7.../Qr3k.../=
+- =value_uuid=: UUID of the parent entry (zero UUID =x'00...00'= for root nodes).
+- =value_name=: the name component contributed by this entry (e.g. filename, tag name).
 
-Both chains include the entry itself as the last component (leaf). This makes
-both directions of navigation efficient:
-- =uuid_path → path=: join on the =recursive_ref= table, no recursion needed.
-- =path → uuid=: direct indexed lookup on =(field_name, path)=.
+Multiple independent trees can coexist within the same repository by using different
+field names (e.g. =mf_path= for the filesystem tree, =parent= for a tag hierarchy).
 
-The daemon maintains both chains on every write. When an entry is moved (its
-direct parent changes), the daemon updates all descendants via a prefix-replace:
+Rename (same parent, new name): update =value_name= of one row — O(1).
+Move (different parent): update =value_uuid= of one row — O(1).
 
-#+BEGIN_SRC sql
-UPDATE field
-SET value_path      = replace(value_path,      :old_path_prefix, :new_path_prefix),
-    value_uuid_path = replace(value_uuid_path, :old_uuid_prefix, :new_uuid_prefix)
-WHERE field_name = :fname AND value_type = 'recursive_ref'
-  AND value_uuid_path LIKE :old_uuid_prefix || '%';
-#+END_SRC
-
-This is O(n) on the number of descendants — unavoidable regardless of the
-storage strategy for tree structures.
-
-*** Path component encoding
-
-Values stored inside =path= are percent-encoded per component to eliminate
-characters that would interfere with the =/= separator or SQL =LIKE= wildcards.
-Only three characters are encoded; everything else is stored as-is:
-
-| Character | Encoded form |
-|-----------+--------------|
-| =%=       | =%25=        |
-| =_=       | =%5F=        |
-| /         | =%2F=        |
-
-Decoding is standard percent-decoding applied to each component between the
-=/= separators. =uuid_path= requires no encoding since base62 UUIDs contain
-only =[A-Za-z0-9]=.
+Path-to-UUID resolution is accelerated by the *Tree Cache* (see [[*Tree Cache]]).
 
 =Nothing= is distinct from the field simply not existing:
 - field present with =Nothing= value → "this field does not apply" (IsAbsent)
@@ -160,45 +136,129 @@ when the previous one is insufficient:
    Computed only when size and partial hash both match and a definitive
    identity check is required (e.g. deduplication confirmation).
 
+Hash functions are provided by the =xxhash-rust= crate. For content-based
+similarity between files that do not share an exact hash (e.g. slightly
+modified files), the =fast-tlsh= crate provides a TLSH locality-sensitive hash
+that can be used as an additional signal in the similarity phase (see
+[[*File Similarity]]).
+
 Files and directories are both tracked as first-class entries. Directories can
 carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
-the =value_uuid_path= chain of their =path= field.
+the =value_uuid= chain of their =mf_path= TreeRef field.
 
-The root directory entry has =path= with =value_path= = =""= (empty string).
-All other entries have paths starting with =/=. This makes parent derivation
-uniform: stripping the last component of =/dir1/= gives =""=, which resolves to
-the root — no special case needed. The root is looked up by
-=WHERE field_name = 'path' AND value_path = ''=.
+The root directory entry has =mf_path= with =value_uuid = x'00...00'= and
+=value_name = ""=. All other entries reference their direct parent directory via
+=value_uuid=. The root is looked up by
+=WHERE field_name = 'path' AND value_uuid = x'00...00' AND value_name = ''=.
 
 The stored fields for a file entry are:
 
-| Field          | Value type              | Description                                       |
-|----------------+-------------------------+---------------------------------------------------|
-| =path=         | RecursiveRef / Nothing  | Full path; =Nothing= if deleted/moved (IsAbsent); absent if location unknown (IsUnknown) |
-| =size=         | Int                     | File size in bytes at last reconcile              |
-| =partial_hash= | String                  | Hex xxHash3 of first+last 4 KB                    |
-| =full_hash=    | String                  | Hex xxHash3 of full content (optional)            |
+| Field              | Value type | Protected | Description                                                                                                |
+|--------------------+------------+-----------+------------------------------------------------------------------------------------------------------------|
+| =mf_path=             | TreeRef    | yes       | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
+| =mf_type=          | String     | yes       | ="file"= or ="dir"=                                                                                        |
+| =mf_size=          | Int        | yes       | File size in bytes at last watcher/reconcile update                                                        |
+| =mf_mtime=         | DateTime   | yes       | Last content modification time (from =stat=)                                                               |
+| =mf_btime=         | DateTime   | yes       | Creation time (from =statx= =btime=); absent if filesystem does not support it                             |
+| =mf_permissions=   | String     | yes       | Unix permission bits as octal string, e.g. ="0644"=                                                        |
+| =mf_uid=           | Int        | yes       | Owner user ID                                                                                              |
+| =mf_gid=           | Int        | yes       | Owner group ID                                                                                             |
+| =mf_mime=          | String     | yes       | MIME type from =libmagic= content analysis; absent if not yet computed                                     |
+| =mf_partial_hash=  | String     | yes       | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
+| =mf_full_hash=     | String     | yes       | Hex xxHash3 of full content; absent if not yet computed                                                    |
 
-The =path= RecursiveRef stores two parallel chains in the =field= table:
-- =value_path=: the full filesystem path, e.g. =/music/jazz/file.mp3/=
-- =value_uuid_path=: the UUID chain of ancestors + entry, e.g. =/uuid_music/uuid_jazz/uuid_file/=
+The =mf_path= TreeRef stores =(value_uuid, value_name)= for each entry.
 
-Direct lookup by path:
-#+BEGIN_SRC sql
-SELECT metadata_uuid FROM field
-WHERE field_name = 'path' AND value_type = 'recursive_ref'
-  AND value_path = '/music/jazz/file.mp3/';
+The three states of the =mf_path= field have distinct semantics:
+- =mf_path= present (valid TreeRef) → the entry is at that location.
+- =mf_path= stale (TreeRef whose path no longer exists on disk) → location
+  uncertain; reconcile will attempt to find a match via fingerprint or
+  similarity and return it as a candidate.
+- =mf_path= =Nothing= (IsAbsent) → file was explicitly removed (watcher
+  =Remove= / =Rename(From)= event); no search needed. *Only the watcher sets
+  =mf_path= to =Nothing=; reconcile never does.*
+- =mf_path= absent (IsUnknown) → no path was ever assigned.
+
+** Protected fields
+
+All =mf_*= fields are managed by the daemon (watcher and reconcile) and are
+*protected*. Attempting to write a protected field via any API write endpoint
+(=PATCH=, =POST .../fields=, =PUT .../fields/:id=, =DELETE .../fields/:id=,
+batch =set=) without the =force= flag returns =400 Bad Request=.
+
+To override, add ="force": true= at the top level of the request body:
+
+#+BEGIN_SRC json
+{"name": "mf_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
 #+END_SRC
 
-Inherited property lookup (e.g. nearest ancestor with =sync_method=):
-#+BEGIN_SRC sql
-SELECT f.value_str FROM field f
-JOIN field rr ON rr.metadata_uuid = f.metadata_uuid
-WHERE f.field_name = 'sync_method'
-  AND rr.field_name = 'path' AND rr.value_type = 'recursive_ref'
-  AND '/uuid_music/uuid_jazz/uuid_file/' LIKE rr.value_uuid_path || '%'
-ORDER BY length(rr.value_uuid_path) DESC LIMIT 1;
-#+END_SRC
+*Warning*: daemon operations (watcher events and reconcile) always overwrite
+=mf_*= fields unconditionally, regardless of whether the value was previously
+set with =force=. Using =force= is an explicit acknowledgement that the value
+may be overwritten by the daemon at any time.
+
+Typical legitimate use-cases for =force=: restoring a backed-up value after an
+erroneous =chmod -R=; manually correcting a MIME type misdetected by =libmagic=;
+resolving an =mf_path= conflict that the watcher cannot handle automatically.
+
+Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
+miss, the daemon resolves each component iteratively via the
+=(field_name, value_uuid, value_name)= index.
+
+Inherited property lookup (e.g. nearest ancestor with =sync_method=) is performed
+in two steps: first, walk the parent chain via the tree cache (fetching missing
+nodes from the DB step by step) to collect the ordered list of ancestor UUIDs;
+then issue a single query =WHERE metadata_uuid IN (...)= to retrieve the desired
+field across all ancestors at once, keeping the closest result.
+
+** File Similarity
+
+Used by reconcile as a fallback when fingerprint matching fails — either because
+no =mf_partial_hash= is stored for the orphaned entry, or because the file was both
+moved and modified (so hashes no longer match).
+
+*Orphaned entry*: an entry whose =mf_path= TreeRef points to a filesystem location
+that no longer exists on disk (stale path), and that was not matched by
+fingerprint during the current reconcile run.
+
+*Unmatched new file*: a file present on disk that has no corresponding database
+entry and was not claimed by fingerprint matching.
+
+Similarity between an orphaned entry and an unmatched new file is computed from
+four signals:
+
+| Signal           | Formula                                                                  | Weight |
+|------------------+--------------------------------------------------------------------------+--------|
+| =name_sim=       | Trigram Jaccard similarity of basename without extension                 |    0.5 |
+| =ext_match=      | 1 if extensions are identical, 0 otherwise                               |    0.2 |
+| =size_proximity= | =max(0, 1 − |sz_a − sz_b| / max(sz_a, sz_b))=; 0 if either size unknown |    0.2 |
+| =path_sim=       | Longest common directory prefix length / max directory depth             |    0.1 |
+
+Final score = weighted sum of the four signals (range [0, 1]).
+
+*Candidate selection with MinHash banding* (crate: =probabilistic-collections=):
+
+Repositories can contain millions of files; O(n²) pair evaluation is
+impractical. Instead, a MinHash banding scheme is used to find candidate pairs
+in O(n) expected time:
+
+1. Each filename (basename without extension) is decomposed into character
+   trigrams. A MinHash signature of =k= hash values is computed over the trigram
+   set (=k= ≈ 128 in practice).
+2. The signature is split into =b= bands of =r= rows each (=k = b × r=). For
+   each band, the =r= hash values are combined into a single bucket key. Two
+   files are candidate pairs if and only if they share at least one bucket —
+   i.e. their MinHash signatures are identical on at least one band.
+3. The probability that two files with Jaccard similarity =s= become candidates
+   is =1 − (1 − sʳ)ᵇ=. Choosing =b= and =r= controls the recall/precision
+   trade-off independently of =n=.
+
+After candidate selection via banding, the full four-signal score is computed
+only for surviving pairs. The size range pre-filter (range scan on a
+size-sorted list, O(n log n)) is applied first to further reduce the candidate
+set before banding.
+
+Only pairs with =score ≥ threshold= are included in the reconcile response.
 
 * SQLite Schema
 
@@ -213,26 +273,31 @@ implemented to verify that DELETE journal mode is acceptable for large syncs.
 
 ** UUID encoding
 
-All UUIDs (entry UUIDs and repository UUIDs) are stored as =TEXT= in base62
-(=[A-Za-z0-9]=, 22 characters). This applies uniformly to every UUID column in
-the schema and to UUID values in the HTTP API.
+All UUIDs (entry UUIDs and repository UUIDs) are stored as =BLOB= (16 bytes,
+raw binary). This applies uniformly to every UUID column in the schema.
 
-Rationale: base62 avoids SQL wildcard characters (=%= and =_=), which allows
-UUIDs embedded in materialized path strings to be queried with =LIKE= without
-escaping. In SQLite, =TEXT= and =BLOB= use the same variable-length storage
-format; the only cost compared to 16-byte BLOBs is 6 extra bytes per UUID,
-which is negligible.
+The HTTP API encodes UUIDs as 32-char lowercase hex strings (no hyphens) for
+readability and interoperability.
+
+Rationale: 16-byte BLOBs enable fast binary comparison in SQLite indexes and
+are the most compact representation. Hex encoding in the API is standard and
+unambiguous.
+
+The zero UUID (=x'00000000000000000000000000000000'=) is reserved as a sentinel
+for =TreeRef= root nodes and must never be assigned to a real entry. UUID v4
+has 122 random bits (2¹²² ≈ 5×10³⁶ possible values); the probability of
+collision among 1 billion entries is ≈ 10⁻¹⁹ — negligible in practice.
 
 #+BEGIN_SRC sql
 CREATE TABLE metadata (
-    uuid     TEXT    PRIMARY KEY NOT NULL,  -- 22-char base62 UUID
+    uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
     version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
 );
 
 -- One row per owning repository (usually one; two for link entries).
 CREATE TABLE metadata_db (
-    metadata_uuid  TEXT NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
-    db_id          TEXT NOT NULL,           -- 22-char base62 repo UUID
+    metadata_uuid  BLOB NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    db_id          BLOB NOT NULL,           -- 16-byte repo UUID
     PRIMARY KEY (metadata_uuid, db_id)
 );
 
@@ -240,28 +305,24 @@ CREATE INDEX idx_metadata_db ON metadata_db(db_id);
 
 CREATE TABLE field (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    metadata_uuid   TEXT    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    metadata_uuid   BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
     field_name      TEXT    NOT NULL,
     value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
-                                       -- date | datetime | duration | ref |
-                                       -- recursive_ref | refbase | externalref
-    value_str       TEXT,              -- string, date, datetime
+                                       -- datetime | ref |
+                                       -- tree_ref | refbase | externalref
+    value_text      TEXT,              -- string, datetime
     value_int       INTEGER,           -- int, bool (0/1), duration (ms)
     value_real      REAL,              -- float
-    value_ref       TEXT,              -- ref | externalref: entry UUID (base62, no FK)
-    value_ref_repo  TEXT,              -- externalref only: repo UUID (base62)
-    value_path      TEXT,              -- recursive_ref: percent-encoded value chain
-                                       --   e.g. /music/jazz/file.mp3/
-    value_uuid_path TEXT               -- recursive_ref: base62 UUID chain
-                                       --   e.g. /Abc1.../Xyz7.../Qr3k.../
+    value_uuid      BLOB,              -- ref/externalref: entry UUID; tree_ref: parent UUID (zero UUID for root)
+    value_ref_repo  BLOB,              -- externalref only: repo UUID
+    value_name      TEXT               -- tree_ref: name component contributed by this entry
 );
 
 CREATE INDEX idx_field_entry        ON field(metadata_uuid, field_name);
-CREATE INDEX idx_field_reverse      ON field(field_name, value_ref, value_ref_repo);
-CREATE UNIQUE INDEX idx_field_rr_path      ON field(field_name, value_path)
-    WHERE value_type = 'recursive_ref';
-CREATE INDEX        idx_field_rr_uuid_path ON field(field_name, value_uuid_path)
-    WHERE value_type = 'recursive_ref';
+CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_repo)
+    WHERE value_type IN ('ref', 'externalref');
+CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
+    WHERE value_type = 'tree_ref';
 #+END_SRC
 
 * HTTP API
@@ -292,13 +353,14 @@ Returns the list of currently loaded repositories.
 
 Response body:
 #+BEGIN_SRC json
-[
+  [
   {
-    "repo_uuid": "...",
-    "root": "/path/to/dir",
-    "created_at": "2024-01-01T00:00:00Z"
+  "repo_uuid": "...",
+  "name": "...",
+  "root": "/path/to/dir",
+  [...]
   }
-]
+  ]
 #+END_SRC
 
 *** =POST /repos/init=
@@ -328,6 +390,9 @@ POST   /repos/:repo_uuid/metadata
 GET    /repos/:repo_uuid/metadata/:metadata_uuid
 DELETE /repos/:repo_uuid/metadata/:metadata_uuid
 PATCH  /repos/:repo_uuid/metadata/:metadata_uuid
+POST   /repos/:repo_uuid/metadata/:metadata_uuid/fields
+PUT    /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
+DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
 #+END_SRC
 
 *** =GET /repos/:repo_uuid/metadata=
@@ -344,26 +409,25 @@ Request body:
 #+BEGIN_SRC json
 {
   "fields": [
-    {"name": "path", "value": {"type": "recursive_ref", "value": "/foo/bar.mp3/"}},
+    {"name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
     {"name": "rating", "value": {"type": "int", "value": 5}}
   ]
 }
 #+END_SRC
 
-For =RecursiveRef= fields, the client supplies only the =value_path= string
-(e.g. ="/foo/bar.mp3/"=). The daemon computes =value_uuid_path= automatically
-by looking up the parent entry: it strips the last component to obtain the
-parent path (="/foo/"=) and queries =field= for a =recursive_ref= row with that
-=value_path=. If no parent entry is found, the request is rejected with =400
-Bad Request=. The root entry (=value_path = ""=) is the only entry with no
-parent; it is created at =repo init= time.
+For =TreeRef= fields, the client supplies =(parent_uuid, name)= directly.
+The daemon validates that the given =parent_uuid= either is =null= (creating a
+root node) or refers to an existing entry that has a =TreeRef= field of the same
+name. The filesystem root (=value_uuid = x'00...00'=, =value_name = ""=) is
+created at =repo init= time and is unique per field name (enforced by the
+=idx_field_tree= UNIQUE index). Other roots can be created freely.
 
-A metadata record may have multiple =path= fields (multi-map), indicating the
+A metadata record may have multiple =mf_path= fields (multi-map), indicating the
 record is accessible at several locations (e.g. a file with copies in different
-directories). Each =value_path= is looked up independently. =set_field= on
-=path= replaces all existing =path= rows with a single new one.
+directories). =set_field= on =mf_path= replaces all existing =mf_path= rows with a
+single new one.
 
-Response body: full metadata object (see =GET .../metadata/:uuid= below).
+Response body: full metadata object with =id= on each field (see =GET .../metadata/:uuid= below).
 
 *** =GET /repos/:repo_uuid/metadata/:metadata_uuid=
 
@@ -376,11 +440,15 @@ Response body:
   "db_ids": ["<repo_uuid>"],
   "version": 3,
   "fields": [
-    {"name": "path", "value": {"type": "recursive_ref", "value": "/foo/bar.mp3/"}},
-    {"name": "rating", "value": {"type": "int", "value": 5}}
+    {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+    {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
   ]
 }
 #+END_SRC
+
+Each field carries an =id= (the internal DB row id) that uniquely identifies
+it within the repository. This id is used to target individual fields in
+multi-map operations (see below).
 
 *** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid=
 
@@ -388,15 +456,53 @@ Deletes the metadata record and all its fields. Returns =204 No Content=.
 
 *** =PATCH /repos/:repo_uuid/metadata/:metadata_uuid=
 
-Sets a single field on a metadata record (replaces all existing rows for that
-field name).
+Replaces *all* existing rows for a given field name with a single new value
+(=set_field= semantics — collapses multi-map to one entry).
 
 Request body:
 #+BEGIN_SRC json
 {"name": "rating", "value": {"type": "int", "value": 9}}
 #+END_SRC
 
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
 Response body: updated full metadata object.
+
+*** =POST /repos/:repo_uuid/metadata/:metadata_uuid/fields=
+
+Appends one field value without touching existing rows for that name (multi-map
+append). Use this to add a second =tag= without removing the first.
+
+Request body:
+#+BEGIN_SRC json
+{"name": "tag", "value": {"type": "string", "value": "jazz"}}
+#+END_SRC
+
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
+Response body: updated full metadata object.
+
+*** =PUT /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+
+Replaces the single field row identified by =field_id=. Returns =404= if the id
+does not belong to this metadata record.
+
+Request body:
+#+BEGIN_SRC json
+{"value": {"type": "string", "value": "blues"}}
+#+END_SRC
+
+If the targeted field row is protected, omitting =force= returns =400=. See [[*Protected fields]].
+
+Response body: updated full metadata object.
+
+*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+
+Removes the single field row identified by =field_id=. Returns =404= if the id
+does not belong to this metadata record.
+
+If the targeted field row is protected, the request body must contain
+={"force": true}=; otherwise returns =400=. Returns =204 No Content= on success.
 
 ** Query
 
@@ -404,11 +510,40 @@ Response body: updated full metadata object.
 POST /repos/:repo_uuid/query
 #+END_SRC
 
-Executes a query and returns matching metadata UUIDs.
+Executes a query and returns matching entries.
 
-Request body: a =Query= JSON object (see [[*Query Language]]).
+Request body:
+#+BEGIN_SRC json
+{
+  "query": <Query>,
+  "select": ["path", "rating"]
+}
+#+END_SRC
 
-Response body: =["uuid1", "uuid2", ...]=
+=query= is a =Query= JSON object (see [[*Query Language]]).
+
+=select= is optional:
+- Absent → response is =["uuid1", "uuid2", ...]=
+- =["field1", "field2", ...]= → response is a list of metadata objects
+  containing only the requested fields.
+- ="*"= → response is a list of full metadata objects (all fields).
+
+Example response with =select=:
+#+BEGIN_SRC json
+[
+  {
+    "uuid": "...",
+    "version": 3,
+    "fields": [
+      {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+      {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
+    ]
+  }
+]
+#+END_SRC
+
+Fields absent from the entry (not present in the DB for that entry) are simply
+omitted from the response — they are not included as =Nothing=.
 
 ** Batch set
 
@@ -429,6 +564,8 @@ Request body:
 }
 #+END_SRC
 
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
 Response body: ={"updated": <count>}=
 
 ** Reconcile
@@ -437,48 +574,185 @@ Response body: ={"updated": <count>}=
 POST /repos/:repo_uuid/reconcile
 #+END_SRC
 
-Walks the repository root on the filesystem and synchronises the database:
+Walks the repository root on the filesystem and synchronises the database.
 
-- Files/directories present on disk but without a database entry → create entry;
-  create parent directory entries if missing.
-- Files whose path has changed but whose content is recognisable by fingerprint
-  (size → partial hash) → update =path= RecursiveRef field.
-- Entries whose path no longer exists and cannot be matched by fingerprint →
-  set =path= to =Nothing=.
+Request body (all fields optional):
+#+BEGIN_SRC json
+{
+  "threshold": 0.5
+}
+#+END_SRC
+
+=threshold= (default 0.5, range [0, 1]) controls the minimum similarity score
+for a pair to appear in =candidates=. A higher value reduces noise; a lower
+value surfaces more speculative matches.
+
+*Steps:*
+
+1. Load all entries with a non-Nothing =mf_path= TreeRef from the DB; separate
+   them into /active/ (path exists on disk) and /orphaned/ (path no longer
+   exists on disk, i.e. stale path).
+2. Walk the filesystem; collect all file and directory paths.
+3. *Fingerprint phase* — for each orphaned entry that has a stored =mf_size= (and
+   optionally =mf_partial_hash=), search unmatched filesystem paths for a
+   fingerprint match (mf_size → mf_partial_hash). Matches → update =mf_path= TreeRef.
+4. *Similarity phase* — for each still-unmatched orphaned entry and each still-
+   unmatched new path, compute the similarity score (see [[*File Similarity]]).
+   Pairs with =score ≥ threshold= are collected as candidates. New files that
+   appear as a candidate for at least one orphaned entry are *not* auto-created
+   as new entries; they wait for explicit confirmation.
+5. *Create* — new files not claimed by fingerprint or similarity → create entry
+   with =mf_path= TreeRef and all =mf_*= fields (=mf_size=, =mf_mtime=,
+   =mf_permissions=, =mf_uid=, =mf_gid=, =mf_btime= if available,
+   =mf_type=, =mf_mime= if computed); create missing parent directory entries
+   if needed.
+   For fingerprint-matched or similarity-confirmed entries, refresh their =mf_*=
+   fields from the new file's =stat= result.
+6. Orphaned entries not matched by fingerprint and not present in any candidate
+   pair keep their stale =mf_path= TreeRef unchanged. *Reconcile never sets =mf_path=
+   to =Nothing=.*
 
 *Directory identification*: directories have no fingerprint and are matched only
 by their path string. A directory entry whose path no longer exists on disk
-cannot be relocated — it is set to =Nothing= directly.
+is left with its stale path (like any other orphan); it may appear in candidates
+if a new directory with a similar name exists.
 
-*Cascading Nothing*: whenever any entry's =path= is set to =Nothing= (by the
-watcher, reconcile, or manually), all entries whose =field.value_uuid_path=
-(for =field_name = 'path'=) contains this entry's UUID are also set to =Nothing=
-in the same transaction. No entry can have a valid path if one of its ancestors
-is gone.
+*Cascading Nothing*: whenever any entry's =mf_path= is set to =Nothing= (by the
+watcher or manually), all entries whose =value_uuid=
+(directly or transitively, for =field_name = 'path'=) points to this entry are
+also set to =Nothing= in the same transaction. Descendants are collected
+iteratively using the tree cache (fetching missing nodes from the DB step by
+step), then cleared in a single batched UPDATE. No entry can have a valid path
+if one of its ancestors is gone.
 
 All creates and updates execute inside a single transaction.
 
-Response body: ={"created": N, "moved": N, "cleared": N}=
+*Confirming a candidate*: the client sends a =PATCH= request to update the
+orphaned entry's =mf_path= field to the chosen new location. The new file is then
+considered matched; if the client calls =reconcile= again without the candidate
+having been confirmed, the same candidate will be returned again.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "created": 2,
+  "moved": 1,
+  "candidates": [
+    {
+      "entry_uuid": "abc...",
+      "stale_path": "/music/jazz/old.mp3",
+      "matches": [
+        {"path": "/archive/old_renamed.mp3", "score": 0.82},
+        {"path": "/backup/file.mp3",         "score": 0.51}
+      ]
+    }
+  ]
+}
+#+END_SRC
 
 * File Watcher
 
-The daemon watches each loaded repository root with inotify (Linux). Events
+The daemon watches each loaded repository root with inotify (Linux). *The
+watcher is the only component that sets =mf_path= to =Nothing=*; reconcile and
+manual writes leave =mf_path= stale rather than setting it to =Nothing=. Events
 outside =.metafolder/= are processed as follows:
 
-| inotify event   | Action                                                                         |
-|-----------------+--------------------------------------------------------------------------------|
-| =Create=        | Look up parent UUID via =recursive_ref=; create entry with =path= RecursiveRef |
-| =Remove=        | Set =path= to =Nothing= (entry preserved)                                      |
-| =Rename(Both)=  | Update =path= RecursiveRef (O(1) for files; O(n) prefix-replace for dirs)      |
-| =Rename(From)=  | Set =path= to =Nothing= (rename target not yet known)                          |
-| =Rename(To)=    | Create entry if no matching fingerprint; else update =path= RecursiveRef       |
-| =Modify=        | Ignored (content changes do not affect =path=)                                 |
+| inotify event   | Action                                                                                                   |
+|-----------------+----------------------------------------------------------------------------------------------------------|
+| =Create=        | Look up parent UUID via tree cache; create entry with =mf_path= TreeRef and all =mf_*= fields               |
+| =Remove=        | Set =mf_path= to =Nothing= (entry preserved)                                                                |
+| =Rename(Both)=  | Update =mf_path= TreeRef: =value_name= (rename) or =value_uuid= (move) — O(1)                              |
+| =Rename(From)=  | Set =mf_path= to =Nothing= (rename target not yet known)                                                    |
+| =Rename(To)=    | Create entry if no matching fingerprint; else update =mf_path= TreeRef and refresh =mf_*= fields            |
+| =Modify=        | Refresh =mf_size=, =mf_mtime=, =mf_permissions=, =mf_uid=, =mf_gid= from =stat=; delete =mf_partial_hash= and =mf_full_hash= (content changed); =mf_mime= is also deleted and recomputed lazily |
 
-Parent directory lookup on =Create= or =Rename(To)= uses a single indexed query:
-=SELECT metadata_uuid, value_uuid_path FROM field WHERE field_name = 'path' AND value_type = 'recursive_ref' AND value_path = :parent_path=.
-No in-memory cache needed.
+=Modify= events are *debounced*: the daemon waits until no further =Modify=
+event has been received for the same file within 200 ms before processing.
+This avoids redundant stat/DB writes during a long sequential write.
+
+Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
+(see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
+on =(field_name, value_uuid, value_name)=.
 
 Events inside =.metafolder/= are always ignored.
+
+* Tree Cache
+
+The daemon maintains one in-memory tree per loaded repository for resolving path
+strings to entry UUIDs without issuing recursive SQL queries. The cache is shared
+across all =TreeRef= field names within a repository; the field name forms the
+first level of the tree.
+
+** Path string format
+
+A path string is the ordered list of =value_name= components from the root down
+to an entry, joined by =/=. There is no trailing =/=.
+
+The root's own =value_name= determines whether paths in the tree have a leading
+=/=:
+
+| Tree type                    | Entry                     | Path string        |
+|------------------------------+---------------------------+--------------------|
+| filesystem (root: name=""=, parent=NULL)   | root           | =""=               |
+| filesystem                   | child ="projects"= of root | ="/projects"=      |
+| filesystem                   | child ="rust"= of above   | ="/projects/rust"= |
+| tags (root: name="tag1", parent=NULL)     | root ="tag1"= | ="tag1"=           |
+| tags                         | child ="tag2"= of ="tag1"=| ="tag1/tag2"=      |
+
+For the filesystem tree the root has =value_name = ""=, so all paths naturally
+start with =/=. For other trees (e.g. tags) the roots have non-empty names and
+there is no leading =/=. Multiple roots are allowed within the same field name.
+The uniqueness of the filesystem root =(field_name='path', value_uuid=x'00...00',
+value_name='')= is enforced by the =idx_field_tree= UNIQUE index.
+
+** Structure
+
+#+BEGIN_SRC
+root (virtual)
+├── "path"
+│   └── [root entry, parent=NULL]
+│       └── "music"  → uuid_music
+│           └── "jazz"  → uuid_jazz
+│               └── "file.mp3"  → uuid_file
+└── "parent"
+    └── "animaux"  → uuid_animaux
+        └── "félins"  → uuid_felins
+#+END_SRC
+
+Each node stores:
+- =children=: map of name → child node
+- =uuid=: the entry UUID at this position (=None= for the virtual root and field-name nodes)
+- =last_used=: logical clock updated on every traversal of this node
+- =heap_handle=: reference into the LRU heap (leaf nodes only)
+
+** Eviction
+
+A *min-heap of leaf nodes* (nodes with no children), keyed by =last_used=,
+drives eviction when the cache exceeds its configured size limit (default: 100 MB).
+
+On eviction of a leaf:
+1. Remove the leaf node from the tree and the heap.
+2. If its parent has no remaining children, the parent becomes a new leaf —
+   insert it into the heap with its own =last_used=.
+
+Only leaves are evicted; internal nodes are kept as long as they have children.
+Because every traversal updates =last_used= on all nodes along the path, a newly
+promoted leaf always carries the correct recency timestamp.
+
+** Operations
+
+| Operation              | Complexity       | Notes                                                        |
+|------------------------+------------------+--------------------------------------------------------------|
+| Path → UUID (hit)      | O(depth)         | Traverse tree; update =last_used= on each node              |
+| Path → UUID (miss)     | O(depth × log n) | Iterative indexed DB queries; populate tree on the way      |
+| Rename (same parent)   | O(1)             | Update label of one node                                     |
+| Move (different parent)| O(1)             | Detach node, reattach under new parent; descendants follow   |
+| Evict leaf             | O(log k)         | Heap pop; k = number of leaves in cache                     |
+
+** Startup
+
+The cache starts empty; entries are populated lazily on first access. No
+pre-loading from the database is required.
 
 * Query Language
 
@@ -497,8 +771,8 @@ CLI provides a DSL that compiles to this representation.
 | And                 | =and=                 | All operands must match                        |
 | Or                  | =or=                  | At least one operand must match                |
 | Not                 | =not=                 | Operand must not match                         |
-| Follows             | =follows=             | Ref field points to an entry matching condition                |
-| FollowsTransitive   | =follows_transitive=  | Transitive version of Follows                                  |
+| Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
+| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: entry is a descendant of the entry at the given path |
 | Matches             | =matches=             | String field matches a regex pattern                           |
 
 ** Compilation
@@ -507,17 +781,27 @@ Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
 the final SELECT is filtered via =metadata_db= to isolate the repository and
 exclude link entries by default.
 
-=FollowsTransitive= behaviour depends on the field type:
-- On a =Ref= field: uses a recursive CTE (=WITH RECURSIVE=) for backward
-  reachability, walking all entries that transitively point to the target.
-- On a =RecursiveRef= field: uses a =LIKE= predicate on =value_uuid_path=
-  — no recursion needed. "All entries that transitively point to X via field =f="
-  compiles to:
-  =WHERE field_name = 'f' AND value_type = 'recursive_ref' AND value_uuid_path LIKE '%/' || X_uuid || '/%'=.
+Exception: =FollowsTransitive= on a =TreeRef= field is executed as a hybrid
+operation — the daemon first collects the descendant UUID set iteratively via
+the tree cache, then injects it as an =IN= clause into the surrounding SQL query
+rather than emitting a CTE.
+
+=Follows= on a =Ref= field takes a condition (sub-query) as right-hand side and
+matches entries whose =value_uuid= points to an entry satisfying that condition.
+On a =TreeRef= field, the right-hand side is a path string (e.g. ="/music/jazz"=)
+resolved to a UUID via the tree cache; it matches entries whose direct parent
+(=value_uuid=) is that entry. DSL syntax: =field -> "path"=.
+
+=FollowsTransitive= is restricted to =TreeRef= fields; applying it to a =Ref=
+field is rejected with =400=. The right-hand side is a path string (e.g.
+="/projects"=) that is resolved to a UUID via the tree cache. All descendants of
+that entry are then collected iteratively via the tree cache (fetching missing
+nodes from the DB step by step), and the resulting UUID set is used to filter
+the query results.
 
 =Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
-setup) backed by the =regex= crate. On a =RecursiveRef= field, =MATCHES=
-applies the regex to =value_path= (the value chain string, e.g. =/music/jazz/file.mp3/=).
+setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
+regex to =value_name= (the single name component).
 
 * Error Handling
 
@@ -528,7 +812,9 @@ applies the regex to =value_path= (the value chain string, e.g. =/music/jazz/fil
 | Repository already initialised         | 409         |                                |
 | Malformed JSON body                    | 400         |                                |
 | Invalid query                          | 400         |                                |
-| RecursiveRef parent path not found     | 400         |                                |
+| TreeRef parent entry not found         | 400         |                                |
+| TreeRef write would create a cycle     | 400         |                                |
+| TreeRef depth exceeds 1000             | 400         |                                |
 | Internal error (DB, I/O)               | 500         | Error message in body          |
 
 * Cross-repo Synchronisation
@@ -552,15 +838,16 @@ commands and user scripts.
 *** Directory linking during sync
 
 Links are always UUID-based. For directory entries, the initial link is
-established by matching path strings across repos:
+established by matching reconstructed path strings across repos:
 
-1. A directory exists in both repos with the same =path= value → create a link
-   between them.
+1. A directory exists in both repos with the same reconstructed path string
+   (assembled from =value_name= components via =value_uuid= chain) →
+   create a link between them.
 2. A directory exists in repo A but has no corresponding entry (same path) in
    repo B → create the directory entry in repo B, then link it.
 3. A linked directory is later moved on one side → the link persists by UUID;
    the path divergence is detectable as a version change and treated as a
-   field conflict on the =path= field.
+   field conflict on the =mf_path= field.
 
 ** Link entries
 
@@ -617,10 +904,10 @@ changed), the sync command computes:
 
 Fields changed on only one side are propagated automatically.
 
-*** Ref and RecursiveRef fields in the snapshot
+*** Ref and TreeRef fields in the snapshot
 
 For non-Ref fields, E_A and E_B hold identical values after sync, so the
-snapshot is unambiguous. For =Ref= and =RecursiveRef= fields, the same logical
+snapshot is unambiguous. For =Ref= and =TreeRef= fields, the same logical
 reference has different local UUIDs in each repo.
 
 The snapshot always stores these values from the perspective of =link_a='s
@@ -628,15 +915,15 @@ repository (repo A). This is a fixed canonical choice that does not change
 over time:
 
 - =Ref=: stores repo A's local UUID.
-- =RecursiveRef=: stores both the =path= string (portable, identical across
-  repos) and the =uuid_path= using repo A's local UUIDs for every component.
+- =TreeRef=: stores =(value_uuid_A, name)= using repo A's local UUID for the
+  parent. The =name= component is portable (identical across repos).
 
 Consequences:
 - =diff(E_A, snapshot)=: direct field comparison, no translation needed.
 - =diff(E_B, snapshot)=:
   - For =Ref=: translate the snapshot UUID A→B via the link table.
-  - For =RecursiveRef=: translate each UUID in =uuid_path= A→B via the link
-    table; the =path= string can be compared directly without translation.
+  - For =TreeRef=: translate =value_uuid= A→B via the link table;
+    =value_name= can be compared directly without translation.
   - Translation found → compare translated value with E_B's value.
   - Translation not found (referenced entry not linked) → conservative
     treatment: flag as potential conflict and warn.
@@ -685,7 +972,7 @@ filesystem changes during the stopped window to be ignored, and will run
 
 ** Entry deletion propagation
 
-- =path= set to =Nothing= (file deleted, entry preserved) → link is kept;
+- =mf_path= set to =Nothing= (file deleted, entry preserved) → link is kept;
   the entry still exists and its metadata remains meaningful.
 - Entry fully deleted → the sync command propagates the deletion to the
   corresponding entry in the other repo, then deletes the link.
@@ -746,7 +1033,7 @@ to a query. Example:
 
 #+BEGIN_SRC
 rsync  ←  tag = "sync_pc_b"
-git    ←  path MATCHES "^/projects/"
+git    ←  path →* "/projects"
 rsync  ←  tag = "image" AND tag = "family"
 #+END_SRC
 
@@ -765,28 +1052,28 @@ At sync time the script:
 
 ** Ref translation during sync
 
-=Ref= and =RecursiveRef= fields store local UUIDs that must be translated when
+=Ref= and =TreeRef= fields store local UUIDs that must be translated when
 writing to the target repo.
 
 Sync order for a given repo pair:
 
 1. Update the link table first (create, delete, update =last_sync_method=).
 2. Sync entry fields:
+   - Any UUID value that is =NULL= / =Nothing= is written as-is — no translation
+     needed.
    - For each =Ref= field: look up the link table to find the corresponding
      UUID in the target repo.
-   - For each =RecursiveRef= field: translate each UUID in =uuid_path= A→B via
-     the link table to build the target repo's =uuid_path=; the =path= string
-     (value chain) is portable and written as-is.
+   - For each =TreeRef= field: translate =value_uuid= A→B via the link
+     table; =value_name= is portable and written as-is.
    - Translation found → write the translated value.
    - Translation not found → skip the field and emit a warning. Since the link
      table is complete at this point, a missing translation means the
      referenced entry is genuinely out of sync scope.
 
-=Ref= values have no foreign-key constraint on =value_ref= (see schema). The
+=Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
-results. Circular references (A → B → A) are likewise permitted; the daemon
-handles them via non-recursive =Follows= and cycle-safe recursive CTEs for
-=FollowsTransitive=.
+results. Circular references (A → B → A) are likewise permitted; =Follows= is
+non-recursive so cycles are not a concern.
 
 ** Required daemon primitives
 
@@ -794,7 +1081,7 @@ The following endpoints are needed to support sync scripts (exact HTTP shapes
 TBD):
 
 - List link entries for a given pair of loaded repos.
-- Detect link candidates by matching fingerprint (=partial_hash= / =full_hash=)
+- Detect link candidates by matching fingerprint (=mf_partial_hash= / =mf_full_hash=)
   across two loaded repos.
 - Create / delete a link entry (both repos must be loaded).
 - Pause / resume the file watcher (buffered mode).
