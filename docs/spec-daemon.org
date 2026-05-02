@@ -25,7 +25,7 @@ authentication; access control is left to the OS.
 - Every filesystem entry in a watched repository has exactly one corresponding
   metadata entry in the database.
 - When a file or directory is deleted, its metadata entry is preserved; the
-  =mf_path= field is set to =Nothing= rather than deleting the row.
+  =mfr_path= field is set to =Nothing= rather than deleting the row.
 - =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
   fields to a single value.
 - A metadata entry whose =db_ids= contains more than one repository UUID (a
@@ -38,7 +38,7 @@ authentication; access control is left to the OS.
   entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
   This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
-  one daemon's watcher updating =mf_path= and bumping =version= while the other
+  one daemon's watcher updating =mfr_path= and bumping =version= while the other
   is committing a sync).
 - =TreeRef= references must form a forest (no cycles per =field_name=) with a
   maximum depth of 1000. The daemon rejects any write that would create a cycle
@@ -106,7 +106,7 @@ kept in the =value_uuid= and =value_name= columns of the =field= table
 - =value_name=: the name component contributed by this entry (e.g. filename, tag name).
 
 Multiple independent trees can coexist within the same repository by using different
-field names (e.g. =mf_path= for the filesystem tree, =parent= for a tag hierarchy).
+field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
 
 Rename (same parent, new name): update =value_name= of one row — O(1).
 Move (different parent): update =value_uuid= of one row — O(1).
@@ -144,62 +144,74 @@ that can be used as an additional signal in the similarity phase (see
 
 Files and directories are both tracked as first-class entries. Directories can
 carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
-the =value_uuid= chain of their =mf_path= TreeRef field.
+the =value_uuid= chain of their =mfr_path= TreeRef field.
 
-The root directory entry has =mf_path= with =value_uuid = x'00...00'= and
+The root directory entry has =mfr_path= with =value_uuid = x'00...00'= and
 =value_name = ""=. All other entries reference their direct parent directory via
 =value_uuid=. The root is looked up by
 =WHERE field_name = 'path' AND value_uuid = x'00...00' AND value_name = ''=.
 
-The stored fields for a file entry are:
+Two categories of reserved field names exist, distinguished by prefix:
 
-| Field              | Value type | Protected | Description                                                                                                |
-|--------------------+------------+-----------+------------------------------------------------------------------------------------------------------------|
-| =mf_path=             | TreeRef    | yes       | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
-| =mf_type=          | String     | yes       | ="file"= or ="dir"=                                                                                        |
-| =mf_size=          | Int        | yes       | File size in bytes at last watcher/reconcile update                                                        |
-| =mf_mtime=         | DateTime   | yes       | Last content modification time (from =stat=)                                                               |
-| =mf_btime=         | DateTime   | yes       | Creation time (from =statx= =btime=); absent if filesystem does not support it                             |
-| =mf_permissions=   | String     | yes       | Unix permission bits as octal string, e.g. ="0644"=                                                        |
-| =mf_uid=           | Int        | yes       | Owner user ID                                                                                              |
-| =mf_gid=           | Int        | yes       | Owner group ID                                                                                             |
-| =mf_mime=          | String     | yes       | MIME type from =libmagic= content analysis; absent if not yet computed                                     |
-| =mf_partial_hash=  | String     | yes       | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
-| =mf_full_hash=     | String     | yes       | Hex xxHash3 of full content; absent if not yet computed                                                    |
+- =mfr_*= (*metafolder restricted*) — written by the daemon; require =force= to
+  override via the API (see [[*Reserved fields]]).
+- =mf_*= (*metafolder*) — read by the daemon to control its behaviour; written
+  freely by the user without =force=.
 
-The =mf_path= TreeRef stores =(value_uuid, value_name)= for each entry.
+The stored fields for a file/directory entry are:
 
-The three states of the =mf_path= field have distinct semantics:
-- =mf_path= present (valid TreeRef) → the entry is at that location.
-- =mf_path= stale (TreeRef whose path no longer exists on disk) → location
+| Field              | Prefix | Value type | Description                                                                                                |
+|--------------------+--------+------------+------------------------------------------------------------------------------------------------------------|
+| =mfr_path=         | mfr    | TreeRef    | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
+| =mfr_type=         | mfr    | String     | ="file"= or ="dir"=                                                                                        |
+| =mfr_size=         | mfr    | Int        | File size in bytes at last watcher/reconcile update                                                        |
+| =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =stat=)                                                               |
+| =mfr_btime=        | mfr    | DateTime   | Creation time (from =statx= =btime=); absent if filesystem does not support it                             |
+| =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=                                                        |
+| =mfr_uid=          | mfr    | Int        | Owner user ID                                                                                              |
+| =mfr_gid=          | mfr    | Int        | Owner group ID                                                                                             |
+| =mfr_mime=         | mfr    | String     | MIME type from =libmagic= content analysis; absent if not yet computed                                     |
+| =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
+| =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
+| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this entry and its descendants are tracked (see [[*Watch and Ignore]])  |
+| =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
+
+The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each entry.
+
+The three states of the =mfr_path= field have distinct semantics:
+- =mfr_path= present (valid TreeRef) → the entry is at that location.
+- =mfr_path= stale (TreeRef whose path no longer exists on disk) → location
   uncertain; reconcile will attempt to find a match via fingerprint or
   similarity and return it as a candidate.
-- =mf_path= =Nothing= (IsAbsent) → file was explicitly removed (watcher
+- =mfr_path= =Nothing= (IsAbsent) → file was explicitly removed (watcher
   =Remove= / =Rename(From)= event); no search needed. *Only the watcher sets
-  =mf_path= to =Nothing=; reconcile never does.*
-- =mf_path= absent (IsUnknown) → no path was ever assigned.
+  =mfr_path= to =Nothing=; reconcile never does.*
+- =mfr_path= absent (IsUnknown) → no path was ever assigned.
 
-** Protected fields
+** Reserved fields
 
-All =mf_*= fields are managed by the daemon (watcher and reconcile) and are
-*protected*. Attempting to write a protected field via any API write endpoint
-(=PATCH=, =POST .../fields=, =PUT .../fields/:id=, =DELETE .../fields/:id=,
-batch =set=) without the =force= flag returns =400 Bad Request=.
+Both =mfr_*= and =mf_*= field names are reserved for daemon use and cannot be
+written via the API without explicit opt-in.
 
-To override, add ="force": true= at the top level of the request body:
+*=mfr_*= fields* are written by the daemon (watcher and reconcile). Attempting
+to write them without =force= returns =400 Bad Request=:
 
 #+BEGIN_SRC json
-{"name": "mf_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
+{"name": "mfr_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
 #+END_SRC
 
-*Warning*: daemon operations (watcher events and reconcile) always overwrite
-=mf_*= fields unconditionally, regardless of whether the value was previously
-set with =force=. Using =force= is an explicit acknowledgement that the value
-may be overwritten by the daemon at any time.
+*Warning*: daemon operations always overwrite =mfr_*= fields unconditionally,
+regardless of whether the value was previously set with =force=. =force= is an
+explicit acknowledgement that the value may be overwritten at any time.
 
-Typical legitimate use-cases for =force=: restoring a backed-up value after an
-erroneous =chmod -R=; manually correcting a MIME type misdetected by =libmagic=;
-resolving an =mf_path= conflict that the watcher cannot handle automatically.
+Typical legitimate use-cases: restoring permissions after an erroneous
+=chmod -R=; correcting a MIME type misdetected by =libmagic=; resolving an
+=mfr_path= conflict the watcher cannot handle automatically.
+
+*=mf_*= fields* are read by the daemon to control its behaviour and written
+freely by the user (no =force= required). They are still reserved: any unknown
+=mf_*= field name is rejected with =400= to prevent typos from silently having
+no effect.
 
 Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
 miss, the daemon resolves each component iteratively via the
@@ -211,13 +223,107 @@ nodes from the DB step by step) to collect the ordered list of ancestor UUIDs;
 then issue a single query =WHERE metadata_uuid IN (...)= to retrieve the desired
 field across all ancestors at once, keeping the closest result.
 
+** Watch and Ignore
+
+The daemon uses two =mf_*= fields on directory entries to determine which
+files and directories to track. Both are inherited from the nearest ancestor
+that defines them; the root entry always defines both.
+
+*** Fields
+
+- =mf_watch= (Bool): whether this entry is eligible for tracking. Set on
+  directory entries to control whole subtrees; can also be set on individual
+  files for per-file override. Default on root: =false= (opt-in by default —
+  nothing is tracked until explicitly whitelisted).
+- =mf_ignore= (String, multi-map): each row is a regex pattern tested against
+  the path of a candidate, *relative to the repository root* (e.g.
+  =/music/.git/config=). All paths in metadata are repo-root-relative so that
+  the repository can be moved without invalidating stored patterns. The nearest
+  ancestor that has at least one =mf_ignore= row provides the effective pattern
+  set; patterns from different ancestors are *not* merged.
+
+At =repo init=, the root entry is created with =mf_watch = false= and the
+following default =mf_ignore= rows:
+
+#+BEGIN_SRC
+\.git(/.*)?$
+node_modules(/.*)?$
+__pycache__(/.*)?$
+#+END_SRC
+
+*** Eligibility algorithm
+
+For a given repo-root-relative path =p= with direct entry =e=:
+
+1. Walk the ancestor chain (including =e= itself) to find =watch_ancestor= —
+   the nearest entry that has an =mf_watch= field.
+2. If =mf_watch= on =watch_ancestor= is =false= → *skip*.
+3. If =watch_ancestor= is =e= itself (=mf_watch= is set directly on =e=, not
+   inherited) → *track unconditionally*; skip steps 4–5.
+4. Walk the ancestor chain (*excluding* =e= itself) to find =ignore_ancestor= —
+   the nearest ancestor that has at least one =mf_ignore= row.
+5. If any pattern in =ignore_ancestor='s =mf_ignore= rows matches =p= → *skip*.
+6. Otherwise → *track*.
+
+Step 3 is the per-entry override: setting =mf_watch = true= directly on an
+entry forces it to be tracked regardless of any ancestor's ignore patterns.
+This applies only to the entry itself — its descendants are still subject to
+normal eligibility evaluation (they inherit =mf_watch = true= but it is not
+"direct" on them, so they go through the ignore check). To also track the
+contents of a directly-watched directory, set =mf_ignore= on that directory
+to replace the ancestor's patterns (including removing unwanted ones).
+
+*Replacing ignore patterns*: because patterns are not merged, a directory that
+needs a different pattern set must re-declare all desired patterns in its own
+=mf_ignore= rows. The recommended workflow is: query the effective =mf_ignore=
+rows for the target directory (via inherited property lookup), copy them, write
+them to the directory entry, then remove the unwanted pattern.
+
+*** Cascading skip
+
+When a directory is skipped (=mf_watch = false= or matched by an ignore
+pattern), all of its descendants are also skipped without further evaluation.
+The tree cache is used to collect descendants efficiently.
+
+*** Interaction with reconcile and watcher
+
+Both reconcile and the watcher evaluate eligibility before creating, updating,
+or clearing any entry. Ineligible paths are silently ignored.
+
+*** Behaviour when =mf_watch= or =mf_ignore= changes
+
+Changing =mf_watch= or =mf_ignore= on an entry does *not* automatically
+modify any existing database entries. The changes take effect only on the next
+event (watcher or reconcile) for each affected path:
+
+- *=mf_watch= set to =true=* on a previously-unwatched directory: existing
+  files under that directory have no entries yet. A subsequent reconcile is
+  required to create them.
+- *=mf_watch= set to =false=* (or a new =mf_ignore= pattern now matches
+  existing entries): those entries are preserved as-is. They will no longer be
+  updated by the watcher or reconcile, but their metadata (including
+  =mfr_path=) remains unchanged until the user explicitly removes them.
+
+This is intentional: existing metadata is never silently discarded. To clean
+up after a watch scope change, the client should use targeted delete
+operations:
+
+| Goal                                                    | Mechanism                                              |
+|---------------------------------------------------------+--------------------------------------------------------|
+| Remove all entries under a directory recursively        | Query =mfr_path follows_transitive "/dir"=, batch delete |
+| Remove entries whose =mfr_path= is =Nothing= (deleted)  | Query =mfr_path is_absent=, batch delete               |
+| Remove entries no longer in the watch scope             | Query the untracked subtree, batch delete              |
+
+These operations are available through the existing query + delete API
+primitives. No data is ever lost implicitly; the user remains in control.
+
 ** File Similarity
 
 Used by reconcile as a fallback when fingerprint matching fails — either because
-no =mf_partial_hash= is stored for the orphaned entry, or because the file was both
+no =mfr_partial_hash= is stored for the orphaned entry, or because the file was both
 moved and modified (so hashes no longer match).
 
-*Orphaned entry*: an entry whose =mf_path= TreeRef points to a filesystem location
+*Orphaned entry*: an entry whose =mfr_path= TreeRef points to a filesystem location
 that no longer exists on disk (stale path), and that was not matched by
 fingerprint during the current reconcile run.
 
@@ -422,9 +528,9 @@ name. The filesystem root (=value_uuid = x'00...00'=, =value_name = ""=) is
 created at =repo init= time and is unique per field name (enforced by the
 =idx_field_tree= UNIQUE index). Other roots can be created freely.
 
-A metadata record may have multiple =mf_path= fields (multi-map), indicating the
+A metadata record may have multiple =mfr_path= fields (multi-map), indicating the
 record is accessible at several locations (e.g. a file with copies in different
-directories). =set_field= on =mf_path= replaces all existing =mf_path= rows with a
+directories). =set_field= on =mfr_path= replaces all existing =mfr_path= rows with a
 single new one.
 
 Response body: full metadata object with =id= on each field (see =GET .../metadata/:uuid= below).
@@ -589,27 +695,27 @@ value surfaces more speculative matches.
 
 *Steps:*
 
-1. Load all entries with a non-Nothing =mf_path= TreeRef from the DB; separate
+1. Load all entries with a non-Nothing =mfr_path= TreeRef from the DB; separate
    them into /active/ (path exists on disk) and /orphaned/ (path no longer
    exists on disk, i.e. stale path).
 2. Walk the filesystem; collect all file and directory paths.
-3. *Fingerprint phase* — for each orphaned entry that has a stored =mf_size= (and
-   optionally =mf_partial_hash=), search unmatched filesystem paths for a
-   fingerprint match (mf_size → mf_partial_hash). Matches → update =mf_path= TreeRef.
+3. *Fingerprint phase* — for each orphaned entry that has a stored =mfr_size= (and
+   optionally =mfr_partial_hash=), search unmatched filesystem paths for a
+   fingerprint match (mfr_size → mfr_partial_hash). Matches → update =mfr_path= TreeRef.
 4. *Similarity phase* — for each still-unmatched orphaned entry and each still-
    unmatched new path, compute the similarity score (see [[*File Similarity]]).
    Pairs with =score ≥ threshold= are collected as candidates. New files that
    appear as a candidate for at least one orphaned entry are *not* auto-created
    as new entries; they wait for explicit confirmation.
 5. *Create* — new files not claimed by fingerprint or similarity → create entry
-   with =mf_path= TreeRef and all =mf_*= fields (=mf_size=, =mf_mtime=,
-   =mf_permissions=, =mf_uid=, =mf_gid=, =mf_btime= if available,
-   =mf_type=, =mf_mime= if computed); create missing parent directory entries
+   with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
+   =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_btime= if available,
+   =mfr_type=, =mfr_mime= if computed); create missing parent directory entries
    if needed.
-   For fingerprint-matched or similarity-confirmed entries, refresh their =mf_*=
+   For fingerprint-matched or similarity-confirmed entries, refresh their =mfr_*=
    fields from the new file's =stat= result.
 6. Orphaned entries not matched by fingerprint and not present in any candidate
-   pair keep their stale =mf_path= TreeRef unchanged. *Reconcile never sets =mf_path=
+   pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
    to =Nothing=.*
 
 *Directory identification*: directories have no fingerprint and are matched only
@@ -617,7 +723,7 @@ by their path string. A directory entry whose path no longer exists on disk
 is left with its stale path (like any other orphan); it may appear in candidates
 if a new directory with a similar name exists.
 
-*Cascading Nothing*: whenever any entry's =mf_path= is set to =Nothing= (by the
+*Cascading Nothing*: whenever any entry's =mfr_path= is set to =Nothing= (by the
 watcher or manually), all entries whose =value_uuid=
 (directly or transitively, for =field_name = 'path'=) points to this entry are
 also set to =Nothing= in the same transaction. Descendants are collected
@@ -628,7 +734,7 @@ if one of its ancestors is gone.
 All creates and updates execute inside a single transaction.
 
 *Confirming a candidate*: the client sends a =PATCH= request to update the
-orphaned entry's =mf_path= field to the chosen new location. The new file is then
+orphaned entry's =mfr_path= field to the chosen new location. The new file is then
 considered matched; if the client calls =reconcile= again without the candidate
 having been confirmed, the same candidate will be returned again.
 
@@ -653,18 +759,18 @@ Response body:
 * File Watcher
 
 The daemon watches each loaded repository root with inotify (Linux). *The
-watcher is the only component that sets =mf_path= to =Nothing=*; reconcile and
-manual writes leave =mf_path= stale rather than setting it to =Nothing=. Events
+watcher is the only component that sets =mfr_path= to =Nothing=*; reconcile and
+manual writes leave =mfr_path= stale rather than setting it to =Nothing=. Events
 outside =.metafolder/= are processed as follows:
 
 | inotify event   | Action                                                                                                   |
 |-----------------+----------------------------------------------------------------------------------------------------------|
-| =Create=        | Look up parent UUID via tree cache; create entry with =mf_path= TreeRef and all =mf_*= fields               |
-| =Remove=        | Set =mf_path= to =Nothing= (entry preserved)                                                                |
-| =Rename(Both)=  | Update =mf_path= TreeRef: =value_name= (rename) or =value_uuid= (move) — O(1)                              |
-| =Rename(From)=  | Set =mf_path= to =Nothing= (rename target not yet known)                                                    |
-| =Rename(To)=    | Create entry if no matching fingerprint; else update =mf_path= TreeRef and refresh =mf_*= fields            |
-| =Modify=        | Refresh =mf_size=, =mf_mtime=, =mf_permissions=, =mf_uid=, =mf_gid= from =stat=; delete =mf_partial_hash= and =mf_full_hash= (content changed); =mf_mime= is also deleted and recomputed lazily |
+| =Create=        | Look up parent UUID via tree cache; create entry with =mfr_path= TreeRef and all =mfr_*= fields              |
+| =Remove=        | Set =mfr_path= to =Nothing= (entry preserved)                                                                |
+| =Rename(Both)=  | Update =mfr_path= TreeRef: =value_name= (rename) or =value_uuid= (move) — O(1)                              |
+| =Rename(From)=  | Set =mfr_path= to =Nothing= (rename target not yet known)                                                    |
+| =Rename(To)=    | Create entry if no matching fingerprint; else update =mfr_path= TreeRef and refresh =mfr_*= fields           |
+| =Modify=        | Refresh =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= from =stat=; delete =mfr_partial_hash= and =mfr_full_hash= (content changed); =mfr_mime= is also deleted and recomputed lazily |
 
 =Modify= events are *debounced*: the daemon waits until no further =Modify=
 event has been received for the same file within 200 ms before processing.
@@ -847,7 +953,7 @@ established by matching reconstructed path strings across repos:
    repo B → create the directory entry in repo B, then link it.
 3. A linked directory is later moved on one side → the link persists by UUID;
    the path divergence is detectable as a version change and treated as a
-   field conflict on the =mf_path= field.
+   field conflict on the =mfr_path= field.
 
 ** Link entries
 
@@ -972,7 +1078,7 @@ filesystem changes during the stopped window to be ignored, and will run
 
 ** Entry deletion propagation
 
-- =mf_path= set to =Nothing= (file deleted, entry preserved) → link is kept;
+- =mfr_path= set to =Nothing= (file deleted, entry preserved) → link is kept;
   the entry still exists and its metadata remains meaningful.
 - Entry fully deleted → the sync command propagates the deletion to the
   corresponding entry in the other repo, then deletes the link.
@@ -1081,7 +1187,7 @@ The following endpoints are needed to support sync scripts (exact HTTP shapes
 TBD):
 
 - List link entries for a given pair of loaded repos.
-- Detect link candidates by matching fingerprint (=mf_partial_hash= / =mf_full_hash=)
+- Detect link candidates by matching fingerprint (=mfr_partial_hash= / =mfr_full_hash=)
   across two loaded repos.
 - Create / delete a link entry (both repos must be loaded).
 - Pause / resume the file watcher (buffered mode).
