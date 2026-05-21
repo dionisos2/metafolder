@@ -95,12 +95,42 @@ command input with autocomplete. Every user-visible behaviour is a command.
 Keybindings map key combos to command invocation strings (command name plus
 optional parameters).
 
+Each command has a *scope* that determines when it is active (see [[*Keybinding]]).
+Built-in commands default to =global=; commands registered by a panel type
+default to =local=.
+
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
 sequence) to a command invocation string (e.g. =entry-list:set-mode grid=).
 Keybindings are loaded from a configuration file and can be edited at runtime.
 No keybinding is hard-coded; the defaults ship in the default config file.
+
+Each keybinding has an optional =when= clause that restricts when it fires.
+Four scope levels exist, in decreasing priority:
+
+| Scope     | =when= value          | Active when                                               |
+|-----------+-----------------------+-----------------------------------------------------------|
+| =always=  | =always=              | Everywhere, including inside text inputs. Use sparingly.  |
+| =editing= | =editing=             | A text input is focused (command input or field editor).  |
+| =local=   | =<panel-type-name>=   | The named panel type is focused; no text input focused.   |
+| =global=  | absent                | No text input focused; no panel-type restriction.         |
+
+When multiple bindings match the same key, =always= wins over =editing=/=local=,
+which win over =global=.
+
+Config file examples:
+
+#+BEGIN_SRC toml
+"escape"  = { command = "editing:unfocus",          when = "always"     }
+"ctrl+a"  = { command = "editing:goto-line-start",  when = "editing"    }
+"j"       = { command = "entry-list:next",           when = "entry-list" }
+"ctrl+t"  = { command = "tab:new"                                        }
+#+END_SRC
+
+The =editing= scope covers all text inputs uniformly: the command input and
+every field editor in =entry-detail=, so text-editing keybindings are defined
+once and work everywhere.
 
 Panel types may suggest default keybindings via =metafolder.addKeybinding=;
 these are applied only when the user has no conflicting binding configured.
@@ -258,6 +288,10 @@ Behaviours:
 | =log:prune=          | Prune the event log                            |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =quit=               | Exit the GUI                                   |
+| =editing:unfocus=    | Remove focus from the active text input (scope: =always=) |
+| =editing:confirm=    | Confirm the current text input (scope: =editing=) |
+| =editing:goto-line-start= | Move cursor to start of line (scope: =editing=) |
+| =editing:goto-line-end=   | Move cursor to end of line (scope: =editing=)   |
 
 ** Keyboard navigation
 
@@ -276,8 +310,9 @@ Within =entry-detail=:
   cancels.
 - =d= (configurable) deletes the focused field row (with confirmation).
 
-Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=. The
-=config:open= command opens a settings view where they can be edited
+Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
+(see [[*Keybinding]] for the =when= clause syntax and the four scope levels).
+The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.
 
 ** Style and theming
@@ -348,18 +383,31 @@ Panel types may use namespaced custom keys (e.g. =my-panel:state=).
 **** =metafolder.commands= and =metafolder.addKeybinding=
 
 #+BEGIN_SRC js
+// scope defaults to 'local' for panel-type-registered commands
 metafolder.commands.register('my-panel:change-mode', {
   label: 'My Panel: Change display mode',
+  scope: 'local',    // 'always' | 'editing' | 'local' | 'global'
   handler: ({ mode }) => { ... }
 })
 
-// Suggest default keybindings (applied only if no conflict in user config)
+metafolder.commands.register('my-panel:global-action', {
+  label: 'My Panel: Global action',
+  scope: 'global',
+  handler: () => { ... }
+})
+
+// Suggest default keybindings (applied only if no conflict in user config).
+// The optional third argument overrides the when clause; defaults to the
+// command's scope.
 metafolder.addKeybinding('my-panel:change-mode list', 'ctrl+l')
 metafolder.addKeybinding('my-panel:change-mode grid', 'ctrl+g')
+metafolder.addKeybinding('editing:my-text-action',    'ctrl+e', 'editing')
+metafolder.addKeybinding('my-panel:urgent',           'ctrl+u', 'always')
 #+END_SRC
 
 Registered commands appear in the command input autocomplete alongside
-built-in commands.
+built-in commands. The autocomplete shows global commands always, plus local
+commands for the currently focused panel type.
 
 **** =metafolder.statusBar=
 
