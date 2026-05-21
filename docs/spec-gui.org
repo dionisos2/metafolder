@@ -30,7 +30,13 @@ The complete state of one tab: panel count (1 or 2), each panel's current
 panel type and its internal state (scroll position, query draft, display mode,
 etc.), the panel width ratio, the command input content, and the workspace
 variables. Switching tabs swaps workspaces atomically; no state is lost. Each
-workspace is independent.
+workspace is independent. Workspace state is not persisted across sessions;
+the GUI starts fresh each time.
+
+The =active_repo= of a workspace is set when the workspace is created and
+cannot be changed. To work with a different repository, a new workspace (tab)
+is opened. This prevents =selected_entry= and other workspace variables from
+becoming invalid due to a repo switch.
 
 ** Panel
 
@@ -105,6 +111,11 @@ A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
 sequence) to a command invocation string (e.g. =entry-list:set-mode grid=).
 Keybindings are loaded from a configuration file and can be edited at runtime.
 No keybinding is hard-coded; the defaults ship in the default config file.
+
+The user's =keybindings.toml= contains only their customisations and
+overrides; it does not need to list every binding. The GUI engine supplies all
+defaults separately and merges them at startup, with the user file taking
+precedence.
 
 Each keybinding has an optional =when= clause that restricts when it fires.
 Four scope levels exist, in decreasing priority:
@@ -184,8 +195,11 @@ script session may hold the input-wait lock at a time.
 
 ** Repo selector
 
-A persistent UI element that sets =active_repo= in the current workspace.
-Populated from =GET /repos=.
+A UI element that shows the active repository of the current workspace.
+Selecting a different repository opens a new workspace tab with that repo as
+=active_repo=. If the current workspace has no active repo (=null=, e.g. at
+startup), the selection sets it in place without opening a new tab. Populated
+from =GET /repos=.
 
 * GUI
 
@@ -210,7 +224,7 @@ atomically: panels, their panel types, the panel divider position, and the
 command input are all restored.
 
 Tabs have a short user-editable name (default: ="Tab 1"=, ="Tab 2"=, etc.).
-Tab state (names, order, workspace contents) is persisted across sessions.
+Tab state is not persisted across sessions.
 
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
@@ -237,6 +251,11 @@ the first. =panel:close= closes the focused panel (not available when only
 one remains). The focused panel receives keyboard navigation; focus switches
 via =panel:focus-next=. The focused panel has a visible indicator (border
 highlight — controlled by the theme).
+
+Each panel has a thin header bar showing the active panel type name. The
+header contains a dropdown that lists all available panel types (built-in and
+custom); selecting one switches the panel. The same switch is available via
+the =panel:set-type <name>= command and configurable keybindings.
 
 ** Status bar
 
@@ -279,7 +298,7 @@ Behaviours:
 | =panel:close=        | Close focused panel                            |
 | =panel:focus-next=   | Move focus to the other panel                  |
 | =panel:set-type <name>= | Switch focused panel to the named panel type|
-| =entry:create=       | Open create-entry dialog                       |
+| =entry:create=       | Clear =entry-detail= to create a new entry     |
 | =entry:delete=       | Delete the selected entry                      |
 | =entry-list:set-mode <mode>= | Switch entry-list display mode        |
 | =entry-list:edit-query=  | Toggle the query editor in entry-list      |
@@ -424,15 +443,18 @@ Repo selector and the =repos= panel type.
 
 *** Init repo
 
-A form with =root= (required) and =metafolder= (optional, for external
-database). Submitting calls =POST /repos/init=. On success the repo is added
-to the Repo selector and selected as active. On =409= an error message appears
-in the status bar.
+The =repos:init= command transforms the focused panel to show an inline form
+with =root= (required) and =metafolder= (optional, for external database).
+Submitting calls =POST /repos/init=. On success a new workspace tab is opened
+with the new repo as =active_repo=. On =409= an error message appears in the
+status bar and the form remains open.
 
 *** Load repo
 
-A form with mutually exclusive =root= or =metafolder= inputs. Submitting calls
-=POST /repos/load=. On success the repo is added and selected.
+The =repos:load= command transforms the focused panel to show an inline form
+with mutually exclusive =root= or =metafolder= inputs. Submitting calls
+=POST /repos/load=. On success a new workspace tab is opened with the loaded
+repo as =active_repo=.
 
 ** Entry management
 
@@ -456,13 +478,18 @@ to =workspace.selected_entry=. Other panels update reactively (see
 
 *** =entry-detail= panel type
 
-Calls =GET .../metadata/:uuid= for the entry in =selected_entry=. Displays all
-fields. Each field row shows name, value, an edit button, and a delete button.
+Displays all fields of the entry in =selected_entry= (calls
+=GET .../metadata/:uuid=). Each field row shows name, value, an edit button,
+and a delete button.
 
 Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).
 
-At the bottom:
+At the bottom of the panel:
+- /New entry/ button (or =entry:create= command) → clears the form and
+  presents an empty field list for creating a new entry. Submitting calls
+  =POST .../metadata=; on success the new entry is set as =selected_entry=
+  and the list in the linked =entry-list= panel (if any) refreshes.
 - /Add field/ → =POST .../metadata/:uuid/fields=
 - /Set field/ → =PATCH .../metadata/:uuid=
 - /Delete entry/ → confirmation → =DELETE .../metadata/:uuid=
@@ -684,6 +711,13 @@ Panel types need access to =window.metafolder=. Two options:
   sharing the JS runtime directly.
 The choice affects isolation (iframes are sandboxed) vs. simplicity.
 
+** Panel type selector UX
+
+The current design uses a dropdown in the panel header. This may not be
+practical when many panel types are installed. Alternatives: a dedicated
+keybinding that opens an autocomplete picker (command-input style), or a
+floating palette. To be revisited once the panel type ecosystem grows.
+
 ** Media codec support
 
 The =file= panel type uses HTML5 =<audio>= / =<video>=; supported formats
@@ -695,6 +729,12 @@ depend on the system WebView (WebKit2GTK on Linux). H.264 may require
 Built-in panel types ship as editable examples. When the GUI updates, new
 default versions must not silently overwrite user edits. A diff/merge workflow
 is needed (exact mechanism TBD).
+
+** Inline form navigation
+
+=repos:init= and =repos:load= transform the focused panel into a form.
+Behaviour when the user switches panel type or closes the panel mid-form
+(unsaved data) is not yet specified.
 
 ** Pagination
 
