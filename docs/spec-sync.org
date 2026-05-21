@@ -1,0 +1,289 @@
+#+TITLE: Metafolder — Cross-repo Synchronisation Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview                                                               :v2:
+
+The daemon provides low-level primitives for cross-repo sync. Orchestration
+(deciding what to link, in which order, with which method) lives in CLI
+commands and user scripts.
+
+* Concepts
+
+** Design principles
+
+- The daemon never touches files. File transfers are always performed by the
+  CLI command or script.
+- Sync intentions (which entries to link, with what method) are expressed as
+  queries in the sync script, not stored in the database.
+- Both repos must be loaded in the same daemon instance to create or modify
+  link entries or to commit a sync.
+- For cross-machine sync, the recommended approach is to mount the remote
+  repository root over SSH (e.g. SSHFS) and load it into the local daemon.
+  The daemon itself makes no network calls.
+
+*** Directory linking during sync
+
+Links are always UUID-based. For directory entries, the initial link is
+established by matching reconstructed path strings across repos:
+
+1. A directory exists in both repos with the same reconstructed path string
+   (assembled from =value_name= components via =value_uuid= chain) →
+   create a link between them.
+2. A directory exists in repo A but has no corresponding entry (same path) in
+   repo B → create the directory entry in repo B, then link it.
+3. A linked directory is later moved on one side → the link persists by UUID;
+   the path divergence is detectable as a version change and treated as a
+   field conflict on the =mfr_path= field.
+
+** Link entries
+
+A link entry is a metadata entry with =db_ids = [repo_A_uuid, repo_B_uuid]=.
+It records that one entry in repo A corresponds to one entry in repo B.
+
+All fields are managed by the sync script, not by the daemon:
+
+| Field              | Type        | Description                                              |
+|--------------------+-------------+----------------------------------------------------------|
+| =link_a=           | ExternalRef | (repo A UUID, entry UUID) — self-contained cross-repo ref |
+| =link_b=           | ExternalRef | (repo B UUID, entry UUID) — self-contained cross-repo ref |
+| =snapshot=         | Ref         | Shared metadata entry capturing the common state at last sync |
+| =version_a=        | Int         | =E_A.version= recorded at last sync                     |
+| =version_b=        | Int         | =E_B.version= recorded at last sync                     |
+| =last_sync_method= | String      | Method used during the last sync (informational)         |
+
+Link entries are stored identically in both repos (same UUID, same fields,
+same =version=). They are hidden from normal queries (=db_ids ≠ {current_repo}=)
+but can be queried explicitly.
+
+** Version-based change detection
+
+After a successful sync of entries =E_A= (repo A) and =E_B= (repo B), the
+sync script writes the current versions of both entries into the link:
+
+- =version_a= ← =E_A.version= at time of sync
+- =version_b= ← =E_B.version= at time of sync
+
+On the next sync, for each linked pair:
+
+| =E_A.version= vs =version_a= | =E_B.version= vs =version_b= | Meaning          | Action          |
+|------------------------------+------------------------------+------------------+-----------------|
+| equal                        | equal                        | No changes       | Nothing to do   |
+| greater                      | equal                        | Only A changed   | Propagate A → B |
+| equal                        | greater                      | Only B changed   | Propagate B → A |
+| greater                      | greater                      | Both changed     | Conflict        |
+
+Conflict resolution is left to the sync command (user prompt or declared
+policy in the script).
+
+When a link is created for the first time, if =E_A= and =E_B= already have
+divergent fields, this is treated as an immediate conflict to resolve before
+=version_a=, =version_b=, and =snapshot= can be recorded.
+
+The =snapshot= entry has =db_ids = [repo_A, repo_B]= and captures the common
+field state after each successful sync. It is updated at every sync-commit
+alongside =version_a= and =version_b=. During conflict resolution (both sides
+changed), the sync command computes:
+
+- Fields changed only in A = diff(E_A, snapshot)
+- Fields changed only in B = diff(E_B, snapshot)
+- Fields changed in both   = conflict → manual resolution
+
+Fields changed on only one side are propagated automatically.
+
+*** Ref and TreeRef fields in the snapshot
+
+For non-Ref fields, E_A and E_B hold identical values after sync, so the
+snapshot is unambiguous. For =Ref= and =TreeRef= fields, the same logical
+reference has different local UUIDs in each repo.
+
+The snapshot always stores these values from the perspective of =link_a='s
+repository (repo A). This is a fixed canonical choice that does not change
+over time:
+
+- =Ref=: stores repo A's local UUID.
+- =TreeRef=: stores =(value_uuid_A, name)= using repo A's local UUID for the
+  parent. The =name= component is portable (identical across repos).
+
+Consequences:
+- =diff(E_A, snapshot)=: direct field comparison, no translation needed.
+- =diff(E_B, snapshot)=:
+  - For =Ref=: translate the snapshot UUID A→B via the link table.
+  - For =TreeRef=: translate =value_uuid= A→B via the link table;
+    =value_name= can be compared directly without translation.
+  - Translation found → compare translated value with E_B's value.
+  - Translation not found (referenced entry not linked) → conservative
+    treatment: flag as potential conflict and warn.
+
+** Entry deletion propagation
+
+- =mfr_path= set to =Nothing= (file deleted, entry preserved) → link is kept;
+  the entry still exists and its metadata remains meaningful.
+- Entry fully deleted → the sync command propagates the deletion to the
+  corresponding entry in the other repo, then deletes the link.
+
+** Link discovery on repo load
+
+When a repo is loaded into the daemon, the daemon scans its =metadata_db=
+table for entries whose =db_ids= includes the newly loaded repo's UUID and at
+least one other already-loaded repo's UUID. These are cross-repo link (and
+snapshot) entries.
+
+For each such entry, the daemon runs the crash-recovery check (see below):
+compare the =version= of each copy across repos and overwrite the older copy
+with the newer one if they diverge.
+
+** Link entry consistency after crash
+
+A sync-commit writes to the link entry in both repos sequentially. If the
+daemon crashes between the two writes, the two copies of the link entry
+diverge.
+
+Recovery is automatic: when both repos are loaded, the daemon compares the
+=version= system counter of each copy of every link entry (same UUID, both
+repos). The copy with the higher =version= is authoritative and overwrites
+the other. This works because the daemon guarantees that a higher =version=
+always reflects a more recent completed write within a single repo.
+
+** Two-phase sync process
+
+Sync is split into two distinct phases:
+
+1. *Planning* (watcher running): query both repos, compute all operations to
+   perform (file transfers, metadata propagations, conflicts). Produce a plan
+   that includes, for each repo involved, the =PRAGMA data_version= value at
+   planning time. The user can inspect the plan before proceeding.
+
+2. *Execution* (executor suspended): validate that =PRAGMA data_version= still
+   matches the value recorded at planning time for each repo. If any DB has
+   changed — even by a single write — the plan is invalidated and the user
+   must re-plan. This is intentional: detecting *what* changed is complex,
+   and even a single change could mean the plan would overwrite recent
+   modifications. If valid, suspend the pending operation executor on both
+   repos (see [[*Executor suspension during sync]]), then execute operations in
+   order: file transfers first (all idempotent), then metadata commits in
+   batches.
+
+After execution: resume the executor. Pending watcher events accumulated
+during the execution window are processed normally; events already consistent
+with the database (because sync updated the metadata) are no-ops. Running
+=reconcile= is recommended to catch any remaining filesystem drift.
+
+** Sync intentions
+
+Sync intentions are declared in the sync script as a mapping from sync method
+to a query. Example:
+
+#+BEGIN_SRC
+rsync  ←  tag = "sync_pc_b"
+git    ←  path →* "/projects"
+rsync  ←  tag = "image" AND tag = "family"
+#+END_SRC
+
+At sync time the script:
+
+1. Evaluates each query on both repos to determine which entries should be
+   linked (and with what method).
+2. Compares the result with the existing link entries to identify links to
+   create, delete, or update.
+3. Resolves any intent conflicts between the two repos (e.g. different methods
+   declared on each side).
+4. Executes file transfers for file entries (using the declared method).
+5. Propagates changed fields for all linked entries (metadata sync).
+6. Calls the sync-commit primitive to set common versions and record
+   =last_sync_method= on each updated link.
+
+** Ref translation during sync
+
+=Ref= and =TreeRef= fields store local UUIDs that must be translated when
+writing to the target repo.
+
+Sync order for a given repo pair:
+
+1. Update the link table first (create, delete, update =last_sync_method=).
+2. Sync entry fields:
+   - Any UUID value that is =NULL= / =Nothing= is written as-is — no translation
+     needed.
+   - For each =Ref= field: look up the link table to find the corresponding
+     UUID in the target repo.
+   - For each =TreeRef= field: translate =value_uuid= A→B via the link
+     table; =value_name= is portable and written as-is.
+   - Translation found → write the translated value.
+   - Translation not found → skip the field and emit a warning. Since the link
+     table is complete at this point, a missing translation means the
+     referenced entry is genuinely out of sync scope.
+
+=Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
+system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
+results. Circular references (A → B → A) are likewise permitted; =Follows= is
+non-recursive so cycles are not a concern.
+
+* Daemon
+
+** Executor suspension during sync
+
+The file watcher *always keeps running* during sync execution — it continues
+reading OS events and writing them to the =pending_operation= table (see
+[[spec-event-log.org]]). What is suspended is the *executor*: the component that
+reads from =pending_operation= and commits operations to the data tables.
+
+Without executor suspension, watcher events (e.g. a file rename during a file
+transfer) could increment =version= on an entry mid-sync, corrupting change
+detection and the =PRAGMA data_version= guard.
+
+The daemon exposes a suspend/resume primitive for the executor, used by the
+sync execution phase (and by the rollback lock — see [[spec-event-log.org]]).
+
+On resume, pending events accumulated in =pending_operation= are processed
+normally:
+
+- Events for paths already consistent with the database (e.g. sync updated
+  the metadata before resuming) → no-op.
+- Events for paths that diverge from the database (user-driven changes
+  during the suspended window) → processed normally (path update, =version=
+  bump, etc.).
+
+Crash safety: because =pending_operation= is a persistent table, events are
+never lost on crash or SIGKILL. The executor replays them automatically on
+daemon restart before accepting new requests.
+
+** Link deletion
+
+When a link entry is deleted, its associated =snapshot= entry must be deleted
+at the same time (both repos loaded). The snapshot has no other owner and
+becomes unreachable once the link is gone.
+
+** Required daemon primitives
+
+The following endpoints are needed to support sync scripts (exact HTTP shapes
+TBD):
+
+- List link entries for a given pair of loaded repos.
+- Detect link candidates by matching fingerprint (=mfr_partial_hash= / =mfr_full_hash=)
+  across two loaded repos.
+- Create / delete a link entry (both repos must be loaded).
+- Suspend / resume the pending operation executor (on one or both repos).
+- Query sync status: for each link, return the change/conflict state derived
+  from =version= comparisons.
+- Sync-commit: write =version_a=, =version_b=, and =last_sync_method= to the
+  link entry in both repos.
+
+** Performance concerns                                                   :v2:
+
+Questions to resolve before implementing sync:
+
+1. *Sequential writes without batching*: the sync-commit writes to the link and
+   snapshot in both databases, one record at a time. Over SSHFS each write is
+   slow. Accumulating changes in batch transactions reduces this cost at the
+   price of more re-work after a crash (at most one batch to redo). The optimal
+   batch size is to be determined by benchmark. For file entries, batches should
+   be smaller than for pure metadata entries, since each batch corresponds to
+   file transfers (idempotent, but slow to re-transfer if the batch is large).
+
+2. *Executor suspension duration*: the executor is suspended only during the
+   execution phase. Watcher events accumulate in =pending_operation= (crash-safe)
+   and are replayed on resume. =reconcile= remains the fallback for any
+   filesystem drift that the watcher missed (e.g. if the daemon was down).
+
+* CLI
+
+* Open questions

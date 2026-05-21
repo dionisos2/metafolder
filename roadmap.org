@@ -1,8 +1,20 @@
-* DONE proof of concept (daemon + simples scripts)
+* DONE proof of concept (daemon + simple scripts)
 * DONE benchmarks
-* TODO specifications for the daemon
-* TODO specifications for the Rust commandes
+* IN-PROGRESS specifications for the daemon
+** DONE basic data model, query language, tree cache, cross-repo sync
+** DONE review reconcile and fingerprint spec
+** DONE review file watcher spec
+** DONE event sourcing and rollback
+*** DONE tree ?
+*** DONE pruning
+*** DONE impossible rollback
+*** DONE tag
+*** DONE failure
+** TODO user schema
+** TODO cross-platform compatibility (abstract OS-specific references in spec)
+** TODO remaining open questions (pagination, regex index)
+* TODO specifications for the Rust commands
 * TODO specifications for the GUI
 * TODO first version of the daemon
-* TODO first version of the Rust commandes
+* TODO first version of the Rust commands
 * TODO first version of the GUI

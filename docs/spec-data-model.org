@@ -1,0 +1,351 @@
+#+TITLE: Metafolder — Data Model Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+The data model defines the core structures shared across all components:
+repositories, metadata entries, fields, and values.
+
+* Concepts
+
+** Repository
+
+Persisted as =config.json= inside the =.metafolder/= directory.
+
+By default, =.metafolder/= is a subdirectory of the watched root. It can also
+live at an arbitrary path (external database), useful when the data disk is
+read-only or when metadata should be kept on a separate, faster device.
+
+| Field       | Type   | Description                            |
+|-------------+--------+----------------------------------------|
+| =repo_uuid= | UUID   | Stable identifier for this repository  |
+| =name=      | string | Name of the repository                 |
+| =version=   | string | Config schema version                  |
+| =root=      | path   | Absolute path to the watched directory |
+
+** Metadata
+
+An entry represents one tracked object (typically a file, but can be any
+user-created record such as a tag, collection, or cross-repo link).
+
+| Field     | Type       | Description                                              |
+|-----------+------------+----------------------------------------------------------|
+| =uuid=    | UUID       | Stable identifier for this entry                         |
+| =db_ids=  | list<UUID> | Repositories that own this entry (usually one)           |
+| =version= | u64        | Monotonic write counter, managed by the daemon           |
+| =fields=  | list       | Ordered list of =Field= values                           |
+
+Fields form a *multi-map*: multiple fields with the same name are allowed.
+
+=db_ids= normally contains a single repository UUID (the owning repo). When it
+contains two UUIDs the entry is a /link entry/ shared between two repositories
+(see [[*Cross-repo Synchronisation]]).
+
+By default, queries return only entries whose =db_ids= equals exactly
+={current_repo}=. Entries with multiple =db_ids= are excluded unless explicitly
+requested.
+
+** Field and Value
+
+A field is a =(name, value)= pair. Value is one of:
+
+| Variant    | Rust type       | Semantics                                    |
+|------------+-----------------+----------------------------------------------|
+| =Nothing=  | —               | Explicit absence ("this field does not apply") |
+| =String=   | =String=        | UTF-8 text                                   |
+| =Int=      | =i64=           | 64-bit signed integer                        |
+| =Float=    | =f64=           | 64-bit float                                 |
+| =Bool=     | =bool=          |                                              |
+| =DateTime= | =String=        | ISO-8601 datetime (=YYYY-MM-DDTHH:MM:SSZ=)   |
+| =Ref=          | =UUID=         | Reference to another entry's UUID (same repo)              |
+| =TreeRef=      | =(UUID?, String)= | Position in a named tree: =(parent_uuid, name)=             |
+| =RefBase=      | =UUID=         | Reference to a repository UUID                             |
+| =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, entry UUID)              |
+
+A =TreeRef= stores the position of an entry in a named tree as =(parent_uuid, name)=,
+kept in the =value_uuid= and =value_name= columns of the =field= table
+(see [[*SQLite Schema]]):
+
+- =value_uuid=: UUID of the parent entry (zero UUID =x'00...00'= for root nodes).
+- =value_name=: the name component contributed by this entry (e.g. filename, tag name).
+
+Multiple independent trees can coexist within the same repository by using different
+field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
+
+Rename (same parent, new name): update =value_name= of one row — O(1).
+Move (different parent): update =value_uuid= of one row — O(1).
+
+Path-to-UUID resolution is accelerated by the *Tree Cache* (see [[*Tree Cache]]).
+
+=Nothing= is distinct from the field simply not existing:
+- field present with =Nothing= value → "this field does not apply" (IsAbsent)
+- field absent entirely → "unknown" (IsUnknown)
+
+All values serialize to JSON as ={"type": "<variant>", "value": <json_value>}=.
+
+** Reserved fields
+
+Two categories of reserved field names exist, distinguished by prefix:
+
+- =mfr_*= (*metafolder restricted*) — written by the daemon; require =force= to
+  override via the API (see [[*Reserved fields]]).
+- =mf_*= (*metafolder*) — read by the daemon to control its behaviour; written
+  freely by the user without =force=.
+
+The stored fields for a file/directory entry are:
+
+| Field              | Prefix | Value type | Description                                                                                                |
+|--------------------+--------+------------+------------------------------------------------------------------------------------------------------------|
+| =mfr_path=         | mfr    | TreeRef    | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
+| =mfr_type=         | mfr    | String     | ="file"= or ="dir"=                                                                                        |
+| =mfr_size=         | mfr    | Int        | File size in bytes at last watcher/reconcile update                                                        |
+| =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =stat=)                                                               |
+| =mfr_btime=        | mfr    | DateTime   | Creation time (from =statx= =btime=); absent if filesystem does not support it [v2]                        |
+| =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=                                                        |
+| =mfr_uid=          | mfr    | Int        | Owner user ID                                                                                              |
+| =mfr_gid=          | mfr    | Int        | Owner group ID                                                                                             |
+| =mfr_mime=         | mfr    | String     | MIME type from =libmagic= content analysis; absent if not yet computed [v2]                                |
+| =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
+| =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
+| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this entry and its descendants are tracked (see [[*Watch and Ignore]])  |
+| =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
+
+The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each entry.
+
+The three states of the =mfr_path= field have distinct semantics:
+- =mfr_path= present (valid TreeRef) → the entry is at that location.
+- =mfr_path= stale (TreeRef whose path no longer exists on disk) → location
+  uncertain; reconcile will attempt to find a match via fingerprint or
+  similarity and return it as a candidate.
+- =mfr_path= =Nothing= (IsAbsent) → file was explicitly removed (watcher
+  =Remove= / =Rename(From)= event); no search needed. *Only the watcher sets
+  =mfr_path= to =Nothing=; reconcile never does.*
+- =mfr_path= absent (IsUnknown) → no path was ever assigned.
+
+*=mfr_*= fields* are written by the daemon (watcher and reconcile). Attempting
+to modify them without =force= returns =400 Bad Request=:
+
+#+BEGIN_SRC json
+{"name": "mfr_permissions", "value": {"type": "string", "value": "0755"}, "force": true}
+#+END_SRC
+
+*Warning*: daemon operations always overwrite =mfr_*= fields unconditionally,
+regardless of whether the value was previously set with =force=. =force= is an
+explicit acknowledgement that the value may be overwritten at any time.
+
+Typical legitimate use-cases: restoring permissions after an erroneous
+=chmod -R=; correcting a MIME type misdetected by =libmagic=; resolving an
+=mfr_path= conflict the watcher cannot handle automatically.
+
+*=mf_*= fields* are read by the daemon to control its behaviour and written
+freely by the user (no =force= required). They are still reserved: any unknown
+=mf_*= field name is rejected with =400= to prevent typos from silently having
+no effect.
+
+Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
+miss, the daemon resolves each component iteratively via the
+=(field_name, value_uuid, value_name)= index.
+
+Inherited property lookup (e.g. nearest ancestor with =sync_method=) is performed
+in two steps: first, walk the parent chain via the tree cache (fetching missing
+nodes from the DB step by step) to collect the ordered list of ancestor UUIDs;
+then issue a single query =WHERE metadata_uuid IN (...)= to retrieve the desired
+field across all ancestors at once, keeping the closest result.
+
+* Daemon
+
+** SQLite Schema
+
+Each repository uses its own =.metafolder/db.sqlite= file (WAL mode, foreign
+keys enabled). Exception: when a repository is loaded from a network filesystem
+(e.g. SSHFS), the daemon switches to =DELETE= journal mode (=PRAGMA
+journal_mode=DELETE=) at connection time. WAL requires POSIX shared memory
+(=.wal-shm=) which network filesystems do not support. This switch is applied
+per-connection and does not modify the database permanently — the next local
+connection resumes WAL mode normally. A benchmark should be run once sync is
+implemented to verify that DELETE journal mode is acceptable for large syncs.
+
+*** UUID encoding
+
+All UUIDs (entry UUIDs and repository UUIDs) are stored as =BLOB= (16 bytes,
+raw binary). This applies uniformly to every UUID column in the schema.
+
+The HTTP API encodes UUIDs as 32-char lowercase hex strings (no hyphens) for
+readability and interoperability.
+
+Rationale: 16-byte BLOBs enable fast binary comparison in SQLite indexes and
+are the most compact representation. Hex encoding in the API is standard and
+unambiguous.
+
+The zero UUID (=x'00000000000000000000000000000000'=) is reserved as a sentinel
+for =TreeRef= root nodes and must never be assigned to a real entry. UUID v4
+has 122 random bits (2¹²² ≈ 5×10³⁶ possible values); the probability of
+collision among 1 billion entries is ≈ 10⁻¹⁹ — negligible in practice.
+
+#+BEGIN_SRC sql
+CREATE TABLE metadata (
+    uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
+    version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
+);
+
+-- One row per owning repository (usually one; two for link entries).
+CREATE TABLE metadata_db (
+    metadata_uuid  BLOB NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    db_id          BLOB NOT NULL,           -- 16-byte repo UUID
+    PRIMARY KEY (metadata_uuid, db_id)
+);
+
+CREATE INDEX idx_metadata_db ON metadata_db(db_id);
+
+CREATE TABLE field (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    metadata_uuid   BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    field_name      TEXT    NOT NULL,
+    value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
+                                       -- datetime | ref |
+                                       -- tree_ref | refbase | externalref
+    value_text      TEXT,              -- string, datetime
+    value_int       INTEGER,           -- int, bool (0/1), duration (ms)
+    value_real      REAL,              -- float
+    value_uuid      BLOB,              -- ref/externalref: entry UUID; tree_ref: parent UUID (zero UUID for root)
+    value_ref_repo  BLOB,              -- externalref only: repo UUID
+    value_name      TEXT               -- tree_ref: name component contributed by this entry
+);
+
+CREATE INDEX idx_field_entry        ON field(metadata_uuid, field_name);
+CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_repo)
+    WHERE value_type IN ('ref', 'externalref');
+CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
+    WHERE value_type = 'tree_ref';
+#+END_SRC
+
+** HTTP API
+
+#+BEGIN_SRC
+GET    /repos/:repo_uuid/metadata
+POST   /repos/:repo_uuid/metadata
+GET    /repos/:repo_uuid/metadata/:metadata_uuid
+DELETE /repos/:repo_uuid/metadata/:metadata_uuid
+PATCH  /repos/:repo_uuid/metadata/:metadata_uuid
+POST   /repos/:repo_uuid/metadata/:metadata_uuid/fields
+PUT    /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
+DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
+#+END_SRC
+
+*** =GET /repos/:repo_uuid/metadata=
+
+Returns all metadata UUIDs in the repository.
+
+Response body: =["uuid1", "uuid2", ...]=
+
+*** =POST /repos/:repo_uuid/metadata=
+
+Creates a new metadata record with the given fields.
+
+Request body:
+#+BEGIN_SRC json
+{
+  "fields": [
+    {"name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+    {"name": "rating", "value": {"type": "int", "value": 5}}
+  ]
+}
+#+END_SRC
+
+For =TreeRef= fields, the client supplies =(parent_uuid, name)= directly.
+The daemon validates that the given =parent_uuid= either is =null= (creating a
+root node) or refers to an existing entry that has a =TreeRef= field of the same
+name. The filesystem root (=value_uuid = x'00...00'=, =value_name = ""=) is
+created at =repo init= time and is unique per field name (enforced by the
+=idx_field_tree= UNIQUE index). Other roots can be created freely.
+
+A metadata record may have multiple =mfr_path= fields (multi-map), indicating the
+record is accessible at several locations (e.g. a file with copies in different
+directories). =set_field= on =mfr_path= replaces all existing =mfr_path= rows with a
+single new one.
+
+Response body: full metadata object with =id= on each field (see =GET .../metadata/:uuid= below).
+
+*** =GET /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Returns a single metadata record with all its fields.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "uuid": "...",
+  "db_ids": ["<repo_uuid>"],
+  "version": 3,
+  "fields": [
+    {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+    {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
+  ]
+}
+#+END_SRC
+
+Each field carries an =id= (the internal DB row id) that uniquely identifies
+it within the repository. This id is used to target individual fields in
+multi-map operations (see below).
+
+*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Deletes the metadata record and all its fields. Returns =204 No Content=.
+
+*** =PATCH /repos/:repo_uuid/metadata/:metadata_uuid=
+
+Replaces *all* existing rows for a given field name with a single new value
+(=set_field= semantics — collapses multi-map to one entry).
+
+Request body:
+#+BEGIN_SRC json
+{"name": "rating", "value": {"type": "int", "value": 9}}
+#+END_SRC
+
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
+Response body: updated full metadata object.
+
+*** =POST /repos/:repo_uuid/metadata/:metadata_uuid/fields=
+
+Appends one field value without touching existing rows for that name (multi-map
+append). Use this to add a second =tag= without removing the first.
+
+Request body:
+#+BEGIN_SRC json
+{"name": "tag", "value": {"type": "string", "value": "jazz"}}
+#+END_SRC
+
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
+Response body: updated full metadata object.
+
+*** =PUT /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+
+Replaces the single field row identified by =field_id=. Returns =404= if the id
+does not belong to this metadata record.
+
+Request body:
+#+BEGIN_SRC json
+{"value": {"type": "string", "value": "blues"}}
+#+END_SRC
+
+If the targeted field row is protected, omitting =force= returns =400=. See [[*Protected fields]].
+
+Response body: updated full metadata object.
+
+*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+
+Removes the single field row identified by =field_id=. Returns =404= if the id
+does not belong to this metadata record.
+
+If the targeted field row is protected, the request body must contain
+={"force": true}=; otherwise returns =400=. Returns =204 No Content= on success.
+
+* CLI
+
+* Open questions
+
+** Pagination
+=GET /metadata= and =POST /query= return all results in one response. For very
+large repositories this may be unacceptable. A cursor-based pagination API
+should be designed.

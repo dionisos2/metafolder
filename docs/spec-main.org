@@ -1,0 +1,161 @@
+#+TITLE: Metafolder — General Specification
+#+OPTIONS: toc:2 num:t
+
+* Project Overview
+
+Metafolder is a local metadata management system. It tracks files and
+directories in /repositories/ — watched directory trees — and associates
+arbitrary structured metadata with each entry. The system is split into
+four crates:
+
+- =core=: shared data model (entries, fields, values, queries)
+- =daemon=: background HTTP server managing repositories and exposing a REST API
+- =cli=: command-line tool that communicates with the daemon
+- =gui=: graphical interface (stub, not yet implemented)
+
+* Daemon
+
+** General description
+
+The daemon is a long-running background HTTP server that manages one or more
+/repositories/. A repository is a directory tree on the filesystem whose
+entries are tracked in a local SQLite database. The daemon exposes a REST API
+consumed by the CLI and GUI.
+
+The daemon is local-only (binds to =127.0.0.1= by default) and handles no
+authentication; access control is left to the OS.
+
+** Non-goals
+
+- No built-in remote protocol: the daemon is local-only and makes no network
+  calls. Cross-machine synchronisation is handled at the CLI/script level (e.g.
+  loading a remote repo over an SSH-mounted filesystem into the local daemon).
+- No authentication or multi-user access control.
+- No conflict resolution between concurrent daemon instances on the same repo.
+
+** Version scope
+
+Features tagged =:v2:= on headings or marked =[v2]= inline are deferred to
+version 2. Version 1 covers: CRUD, =TreeRef= / tree cache, file watcher (basic
+events), reconcile (fingerprint phase only), query language, reserved fields
+(=mfr_*= / =mf_*=), and the watch/ignore system.
+
+** Key invariants
+
+- Every filesystem entry in a watched repository has exactly one corresponding
+  metadata entry in the database.
+- When a file or directory is deleted, its metadata entry is preserved; the
+  =mfr_path= field is set to =Nothing= rather than deleting the row.
+- =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
+  fields to a single value.
+- A metadata entry whose =db_ids= contains more than one repository UUID (a
+  /link entry/) can only be created or modified when every listed repository is
+  simultaneously loaded in the same daemon instance. [v2]
+- The =version= counter on a metadata entry is managed exclusively by the
+  daemon; it is incremented on every write to =fields= and cannot be set
+  directly by users.
+- A repository database must be held under an exclusive SQLite lock for the
+  entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
+  This prevents a second daemon instance from loading the same repo
+  simultaneously, which would cause version drift and watcher conflicts (e.g.
+  one daemon's watcher updating =mfr_path= and bumping =version= while the other
+  is committing a sync).
+- =TreeRef= references must form a forest (no cycles per =field_name=) with a
+  maximum depth of 1000. The daemon rejects any write that would create a cycle
+  or exceed this depth. The check walks the parent chain iteratively using the
+  tree cache (fetching missing nodes from the DB step by step as needed).
+
+The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
+All request and response bodies are JSON. Errors return a JSON object
+={"error": "<message>"}= with an appropriate HTTP status code.
+
+** Health
+
+#+BEGIN_SRC
+GET /health
+#+END_SRC
+
+Response: =200 OK=, body ={"status": "ok"}=.
+
+** Repository management
+
+#+BEGIN_SRC
+GET  /repos
+POST /repos/init
+POST /repos/load
+#+END_SRC
+
+*** =GET /repos=
+
+Returns the list of currently loaded repositories.
+
+Response body:
+#+BEGIN_SRC json
+  [
+  {
+  "repo_uuid": "...",
+  "name": "...",
+  "root": "/path/to/dir",
+  [...]
+  }
+  ]
+#+END_SRC
+
+*** =POST /repos/init=
+
+Initialises a new repository. Creates =config.json= and =db.sqlite= inside the
+=.metafolder/= directory. Fails if a repository already exists there.
+
+Request body:
+#+BEGIN_SRC json
+{"root": "/absolute/path"}
+#+END_SRC
+
+Optional: =metafolder= overrides where =.metafolder/= is created (external
+database). Defaults to =<root>/.metafolder/=.
+#+BEGIN_SRC json
+{"root": "/data/music", "metafolder": "/ssd/meta/music"}
+#+END_SRC
+
+Response body: ={"repo_uuid": "..."}=
+
+*** =POST /repos/load=
+
+Loads an existing repository into the daemon's in-memory state, starts the
+file watcher.
+
+Standard form (=.metafolder/= is inside =root=):
+#+BEGIN_SRC json
+{"root": "/absolute/path"}
+#+END_SRC
+
+External database form (specify the =.metafolder/= path directly; =root= is
+read from =config.json= inside it):
+#+BEGIN_SRC json
+{"metafolder": "/ssd/meta/music"}
+#+END_SRC
+
+Response body: ={"repo_uuid": "..."}=
+
+** Error handling
+
+| Situation                              | HTTP status | Notes                          |
+|----------------------------------------+-------------+--------------------------------|
+| Repository not found                   | 404         |                                |
+| Metadata record not found              | 404         |                                |
+| Repository already initialised         | 409         |                                |
+| Malformed JSON body                    | 400         |                                |
+| Invalid query                          | 400         |                                |
+| TreeRef parent entry not found         | 400         |                                |
+| TreeRef write would create a cycle     | 400         |                                |
+| TreeRef depth exceeds 1000             | 400         |                                |
+| Internal error (DB, I/O)               | 500         | Error message in body          |
+
+** Open questions
+
+*** Daemon lifecycle
+No mechanism yet for cleanly unloading a repository (stopping its watcher,
+releasing its DB connection) without restarting the whole daemon.
+
+* CLI
+* GUI

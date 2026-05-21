@@ -1,0 +1,135 @@
+#+TITLE: Metafolder — Query Language Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+The query system allows filtering metadata entries by field values, presence,
+and graph relationships. Queries are represented as a recursive JSON structure
+and compiled to SQL on the daemon side. The CLI provides a human-friendly DSL
+that compiles to this representation.
+
+* Concepts
+
+Queries are represented as a recursive JSON structure (the =Query= enum). The
+CLI provides a DSL that compiles to this representation.
+
+** Variants
+
+| Variant             | JSON =type= key       | Description                                    |
+|---------------------+-----------------------+------------------------------------------------|
+| IsPresent           | =is_present=          | Field exists and is not =Nothing=              |
+| IsAbsent            | =is_absent=           | Field exists and is =Nothing=                  |
+| IsUnknown           | =is_unknown=          | Field does not exist at all                    |
+| Eq / Neq            | =eq= / =neq=          | Equality / inequality comparison               |
+| Lt / Lte / Gt / Gte | =lt= / =lte= / ...    | Ordered comparison                             |
+| And                 | =and=                 | All operands must match                        |
+| Or                  | =or=                  | At least one operand must match                |
+| Not                 | =not=                 | Operand must not match                         |
+| Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
+| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: entry is a descendant of the entry at the given path |
+| Matches             | =matches=             | String field matches a regex pattern                           |
+
+* Daemon
+
+** Compilation
+
+Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
+the final SELECT is filtered via =metadata_db= to isolate the repository and
+exclude link entries by default.
+
+Exception: =FollowsTransitive= on a =TreeRef= field is executed as a hybrid
+operation — the daemon first collects the descendant UUID set iteratively via
+the tree cache, then injects it as an =IN= clause into the surrounding SQL query
+rather than emitting a CTE.
+
+=Follows= on a =Ref= field takes a condition (sub-query) as right-hand side and
+matches entries whose =value_uuid= points to an entry satisfying that condition.
+On a =TreeRef= field, the right-hand side is a path string (e.g. ="/music/jazz"=)
+resolved to a UUID via the tree cache; it matches entries whose direct parent
+(=value_uuid=) is that entry. DSL syntax: =field -> "path"=.
+
+=FollowsTransitive= is restricted to =TreeRef= fields; applying it to a =Ref=
+field is rejected with =400=. The right-hand side is a path string (e.g.
+="/projects"=) that is resolved to a UUID via the tree cache. All descendants of
+that entry are then collected iteratively via the tree cache (fetching missing
+nodes from the DB step by step), and the resulting UUID set is used to filter
+the query results.
+
+=Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
+setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
+regex to =value_name= (the single name component).
+
+** HTTP API
+
+*** =POST /repos/:repo_uuid/query=
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/query
+#+END_SRC
+
+Executes a query and returns matching entries.
+
+Request body:
+#+BEGIN_SRC json
+{
+  "query": <Query>,
+  "select": ["path", "rating"]
+}
+#+END_SRC
+
+=query= is a =Query= JSON object (see [[*Query Language]]).
+
+=select= is optional:
+- Absent → response is =["uuid1", "uuid2", ...]=
+- =["field1", "field2", ...]= → response is a list of metadata objects
+  containing only the requested fields.
+- ="*"= → response is a list of full metadata objects (all fields).
+
+Example response with =select=:
+#+BEGIN_SRC json
+[
+  {
+    "uuid": "...",
+    "version": 3,
+    "fields": [
+      {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+      {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
+    ]
+  }
+]
+#+END_SRC
+
+Fields absent from the entry (not present in the DB for that entry) are simply
+omitted from the response — they are not included as =Nothing=.
+
+*** =POST /repos/:repo_uuid/set= (Batch set)
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/set
+#+END_SRC
+
+Runs a query server-side and sets a field on every matching entry in a single
+transaction. More efficient than issuing individual PATCH requests from the
+client.
+
+Request body:
+#+BEGIN_SRC json
+{
+  "query": <Query>,
+  "name": "rating",
+  "value": {"type": "int", "value": 5}
+}
+#+END_SRC
+
+Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+
+Response body: ={"updated": <count>}=
+
+* CLI
+
+* Open questions
+
+** Full-text / regex index
+=MATCHES= currently performs a full table scan with the REGEXP UDF (~650 ms for
+50 k entries). Options: FTS5 virtual table, or a precomputed hash index for
+exact-match patterns.

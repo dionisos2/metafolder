@@ -1,0 +1,447 @@
+#+TITLE: Metafolder — File Tracking Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+File tracking covers how the daemon discovers, monitors, and reconciles
+filesystem entries with their database representations. It encompasses the
+file watcher (real-time events), reconcile (on-demand synchronisation), the
+tree cache (efficient path resolution), and the watch/ignore system (scope
+control).
+
+* Concepts
+
+** File fingerprint
+
+Used by reconcile and the watcher to detect identity across renames/moves.
+*mtime is never used as a criterion* because it can change without the content
+changing (e.g. =touch=, copies without =--preserve=).
+
+Fingerprint is computed lazily in cascading steps — each step is only reached
+when the previous one is insufficient:
+
+1. *File size* (from =stat=, free during directory walk) — eliminates most
+   non-matches without opening any file.
+2. *Partial hash* — xxHash3 of the first 4 KB + last 4 KB of the file.
+   Computed on first open; stored in the database alongside the entry.
+3. *Full hash* — xxHash3 of the entire file content.
+   Computed only when size and partial hash both match and a definitive
+   identity check is required (e.g. deduplication confirmation).
+
+Hash functions are provided by the =xxhash-rust= crate. For content-based
+similarity between files that do not share an exact hash (e.g. slightly
+modified files), the =fast-tlsh= crate provides a TLSH locality-sensitive hash
+that can be used as an additional signal in the similarity phase (see
+[[*File Similarity]]).
+
+Files and directories are both tracked as first-class entries. Directories can
+carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
+the =value_uuid= chain of their =mfr_path= TreeRef field.
+
+The root directory entry has =mfr_path= with =value_uuid = x'00...00'= and
+=value_name = ""=. All other entries reference their direct parent directory via
+=value_uuid=. The root is looked up by
+=WHERE field_name = 'mfr_path' AND value_uuid = x'00...00' AND value_name = ''=.
+
+** File Similarity                                                        :v2:
+
+Used by reconcile as a fallback when fingerprint matching fails — either because
+no =mfr_partial_hash= is stored for the orphaned entry, or because the file was both
+moved and modified (so hashes no longer match).
+
+*Orphaned entry*: an entry whose =mfr_path= TreeRef points to a filesystem location
+that no longer exists on disk (stale path), and that was not matched by
+fingerprint during the current reconcile run.
+
+*Unmatched new file*: a file present on disk that has no corresponding database
+entry and was not claimed by fingerprint matching.
+
+Similarity between an orphaned entry and an unmatched new file is computed from
+four signals:
+
+| Signal           | Formula                                                                  | Weight |
+|------------------+--------------------------------------------------------------------------+--------|
+| =name_sim=       | Trigram Jaccard similarity of basename without extension                 |    0.5 |
+| =ext_match=      | 1 if extensions are identical, 0 otherwise                               |    0.2 |
+| =size_proximity= | =max(0, 1 − |sz_a − sz_b| / max(sz_a, sz_b))=; 0 if either size unknown |    0.2 |
+| =path_sim=       | Longest common directory prefix length / max directory depth             |    0.1 |
+
+Final score = weighted sum of the four signals (range [0, 1]).
+
+*Candidate selection with MinHash banding* (crate: =probabilistic-collections=):
+
+Repositories can contain millions of files; O(n²) pair evaluation is
+impractical. Instead, a MinHash banding scheme is used to find candidate pairs
+in O(n) expected time:
+
+1. Each filename (basename without extension) is decomposed into character
+   trigrams. A MinHash signature of =k= hash values is computed over the trigram
+   set (=k= ≈ 128 in practice).
+2. The signature is split into =b= bands of =r= rows each (=k = b × r=). For
+   each band, the =r= hash values are combined into a single bucket key. Two
+   files are candidate pairs if and only if they share at least one bucket —
+   i.e. their MinHash signatures are identical on at least one band.
+3. The probability that two files with Jaccard similarity =s= become candidates
+   is =1 − (1 − sʳ)ᵇ=. Choosing =b= and =r= controls the recall/precision
+   trade-off independently of =n=.
+
+After candidate selection via banding, the full four-signal score is computed
+only for surviving pairs. The size range pre-filter (range scan on a
+size-sorted list, O(n log n)) is applied first to further reduce the candidate
+set before banding.
+
+Only pairs with =score ≥ threshold= are included in the reconcile response.
+
+** Watch and Ignore
+
+The daemon uses two =mf_*= fields on directory entries to determine which
+files and directories to track. Both are inherited from the nearest ancestor
+that defines them; the root entry always defines both.
+
+*** Fields
+
+- =mf_watch= (Bool): whether this entry is eligible for tracking. Set on
+  directory entries to control whole subtrees; can also be set on individual
+  files for per-file override. Default on root: =false= (opt-in by default —
+  nothing is tracked until explicitly whitelisted).
+- =mf_ignore= (String, multi-map): each row is a regex pattern tested against
+  the path of a candidate, *relative to the repository root* (e.g.
+  =/music/.git/config=). All paths in metadata are repo-root-relative so that
+  the repository can be moved without invalidating stored patterns. The nearest
+  ancestor that has at least one =mf_ignore= row provides the effective pattern
+  set; patterns from different ancestors are *not* merged.
+
+At =repo init=, the root entry is created with =mf_watch = false= and the
+following default =mf_ignore= rows:
+
+#+BEGIN_SRC
+\.git(/.*)?$
+node_modules(/.*)?$
+__pycache__(/.*)?$
+#+END_SRC
+
+*** Eligibility algorithm
+
+For a given repo-root-relative path =p= with direct entry =e=:
+
+1. Walk the ancestor chain (including =e= itself) to find =watch_ancestor= —
+   the nearest entry that has an =mf_watch= field.
+2. If =mf_watch= on =watch_ancestor= is =false= → *skip*.
+3. If =watch_ancestor= is =e= itself (=mf_watch= is set directly on =e=, not
+   inherited) → *track unconditionally*; skip steps 4–5.
+4. Walk the ancestor chain (*excluding* =e= itself) to find =ignore_ancestor= —
+   the nearest ancestor that has at least one =mf_ignore= row.
+5. If any pattern in =ignore_ancestor='s =mf_ignore= rows matches =p= → *skip*.
+6. Otherwise → *track*.
+
+Step 3 is the per-entry override: setting =mf_watch = true= directly on an
+entry forces it to be tracked regardless of any ancestor's ignore patterns.
+This applies only to the entry itself — its descendants are still subject to
+normal eligibility evaluation (they inherit =mf_watch = true= but it is not
+"direct" on them, so they go through the ignore check). To also track the
+contents of a directly-watched directory, set =mf_ignore= on that directory
+to replace the ancestor's patterns (including removing unwanted ones).
+
+*Replacing ignore patterns*: because patterns are not merged, a directory that
+needs a different pattern set must re-declare all desired patterns in its own
+=mf_ignore= rows. The recommended workflow is: query the effective =mf_ignore=
+rows for the target directory (via inherited property lookup), copy them, write
+them to the directory entry, then remove the unwanted pattern.
+
+*** Cascading skip
+
+When a directory is skipped (=mf_watch = false= or matched by an ignore
+pattern), all of its descendants are also skipped without further evaluation.
+The tree cache is used to collect descendants efficiently.
+
+*** Interaction with reconcile and watcher
+
+Both reconcile and the watcher evaluate eligibility before creating, updating,
+or clearing any entry. Ineligible paths are silently ignored.
+
+*** Behaviour when =mf_watch= or =mf_ignore= changes
+
+Changing =mf_watch= or =mf_ignore= on an entry does *not* automatically
+modify any existing database entries. The changes take effect only on the next
+event (watcher or reconcile) for each affected path:
+
+- *=mf_watch= set to =true=* on a previously-unwatched directory: existing
+  files under that directory have no entries yet. A subsequent reconcile is
+  required to create them.
+- *=mf_watch= set to =false=* (or a new =mf_ignore= pattern now matches
+  existing entries): those entries are preserved as-is. They will no longer be
+  updated by the watcher or reconcile, but their metadata (including
+  =mfr_path=) remains unchanged until the user explicitly removes them.
+
+This is intentional: existing metadata is never silently discarded. To clean
+up after a watch scope change, the client should use targeted delete
+operations:
+
+| Goal                                                    | Mechanism                                              |
+|---------------------------------------------------------+--------------------------------------------------------|
+| Remove all entries under a directory recursively        | Query =mfr_path follows_transitive "/dir"=, batch delete |
+| Remove entries whose =mfr_path= is =Nothing= (deleted)  | Query =mfr_path is_absent=, batch delete               |
+| Remove entries no longer in the watch scope             | Query the untracked subtree, batch delete              |
+
+These operations are available through the existing query + delete API
+primitives. No data is ever lost implicitly; the user remains in control.
+
+* Daemon
+
+** Tree Cache
+
+The daemon maintains one in-memory tree per loaded repository for resolving path
+strings to entry UUIDs without issuing recursive SQL queries. The cache is shared
+across all =TreeRef= field names within a repository; the field name forms the
+first level of the tree.
+
+*** Path string format
+
+A path string is the ordered list of =value_name= components from the root down
+to an entry, joined by =/=. There is no trailing =/=.
+
+The root's own =value_name= determines whether paths in the tree have a leading
+=/=:
+
+| Tree type                    | Entry                     | Path string        |
+|------------------------------+---------------------------+--------------------|
+| filesystem (root: name=""=, parent=NULL)   | root           | =""=               |
+| filesystem                   | child ="projects"= of root | ="/projects"=      |
+| filesystem                   | child ="rust"= of above   | ="/projects/rust"= |
+| tags (root: name="tag1", parent=NULL)     | root ="tag1"= | ="tag1"=           |
+| tags                         | child ="tag2"= of ="tag1"=| ="tag1/tag2"=      |
+
+For the filesystem tree the root has =value_name = ""=, so all paths naturally
+start with =/=. For other trees (e.g. tags) the roots have non-empty names and
+there is no leading =/=. Multiple roots are allowed within the same field name.
+The uniqueness of the filesystem root =(field_name='mfr_path', value_uuid=x'00...00',
+value_name='')= is enforced by the =idx_field_tree= UNIQUE index.
+
+*** Structure
+
+#+BEGIN_SRC
+root (virtual)
+├── "mfr_path"
+│   └── [root entry, parent=NULL]
+│       └── "music"  → uuid_music
+│           └── "jazz"  → uuid_jazz
+│               └── "file.mp3"  → uuid_file
+└── "parent"
+    └── "animaux"  → uuid_animaux
+        └── "félins"  → uuid_felins
+#+END_SRC
+
+Each node stores:
+- =children=: map of name → child node
+- =uuid=: the entry UUID at this position (=None= for the virtual root and field-name nodes)
+- =last_used=: logical clock updated on every traversal of this node
+- =heap_handle=: reference into the LRU heap (leaf nodes only)
+
+*** Eviction
+
+A *min-heap of leaf nodes* (nodes with no children), keyed by =last_used=,
+drives eviction when the cache exceeds its configured size limit (default: 100 MB).
+
+On eviction of a leaf:
+1. Remove the leaf node from the tree and the heap.
+2. If its parent has no remaining children, the parent becomes a new leaf —
+   insert it into the heap with its own =last_used=.
+
+Only leaves are evicted; internal nodes are kept as long as they have children.
+Because every traversal updates =last_used= on all nodes along the path, a newly
+promoted leaf always carries the correct recency timestamp.
+
+*** Operations
+
+| Operation              | Complexity       | Notes                                                        |
+|------------------------+------------------+--------------------------------------------------------------|
+| Path → UUID (hit)      | O(depth)         | Traverse tree; update =last_used= on each node              |
+| Path → UUID (miss)     | O(depth × log n) | Iterative indexed DB queries; populate tree on the way      |
+| Rename (same parent)   | O(1)             | Update label of one node                                     |
+| Move (different parent)| O(1)             | Detach node, reattach under new parent; descendants follow   |
+| Evict leaf             | O(log k)         | Heap pop; k = number of leaves in cache                     |
+
+*** Startup
+
+The cache starts empty; entries are populated lazily on first access. No
+pre-loading from the database is required.
+
+** File Watcher
+
+The daemon watches each loaded repository root for filesystem events (inotify
+on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows, via the =notify=
+crate). *The watcher and manual writes with =force= are the only components
+that set =mfr_path= to =Nothing=*; reconcile leaves =mfr_path= stale rather
+than setting it to =Nothing=.
+
+The =notify= crate correlates raw =MOVED_FROM= / =MOVED_TO= pairs (matched by
+cookie) into a single =Rename(Both)= event when both paths are inside the same
+watched tree. =Rename(From)= alone means the file definitively left the
+repository (destination is outside the watched tree or in a different repo
+root). =Rename(To)= alone means the file arrived from outside.
+
+Before processing any event, the daemon evaluates eligibility for the affected
+path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
+inside =.metafolder/= are always ignored.
+
+*** Event batching
+
+The watcher does not process events one by one. Instead, it writes incoming
+events to the =pending_operation= table (see [[spec-event-log.org]]) and the
+executor commits the buffer once a quiet period of *500 ms* has elapsed with
+no new events. This default is configurable per repository.
+
+The =pending_operation= table persists across daemon restarts: any buffered
+events present at startup are replayed before the daemon accepts new requests.
+
+Rationale: a user pasting N files into a directory generates N =Create= events
+in rapid succession. Batching them into one revision makes the operation
+rollbackable as a unit.
+
+Processing the buffer happens in two steps:
+
+*Step 1 — Compaction.* Redundant sequences are simplified before any database
+write:
+
+| Sequence within the window         | Compacted result              |
+|------------------------------------+-------------------------------|
+| =Create A=, =Remove A=             | nothing (entry never written) |
+| =Create A=, =Rename A→B=           | =Create B=                    |
+| =Create A=, =Modify(Data) A=       | =Create A= (final state)      |
+| =Rename A→B=, =Rename B→C=         | =Rename A→C=                  |
+| =Modify(Data) A= × N               | one =Modify(Data) A=          |
+
+*Step 2 — Split by op_type.* After compaction, operations are grouped by their
+resulting =op_type= (see [[spec-event-log.org]]). Each group becomes its own
+revision, committed in order of the first event timestamp in that group.
+
+This guarantees that reversible and irreversible operations are never mixed in
+the same revision, and that semantically distinct event kinds remain separate
+and independently rollbackable.
+
+Example: if the buffer contains 5 =Create= events and 2 =Modify(Data)= events,
+two revisions are produced — one with 5 =create_entry= operations, one with 2
+=file_modified= operations.
+
+Note: for very large copies (slow media, network filesystems), events may
+arrive over a span longer than the batching window and be split across multiple
+revisions. This is acceptable — each revision is still rollbackable
+individually.
+
+*** Event semantics
+
+| Filesystem event   | Action                                                                                                     |
+|--------------------+------------------------------------------------------------------------------------------------------------|
+| =Create=           | Look up parent UUID via tree cache; create entry with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
+| =Remove=           | Set =mfr_path= to =Nothing= (entry preserved); if a directory, cascade =Nothing= to all descendants in the same transaction |
+| =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID) |
+| =Rename(From)=     | File definitively left the repository: set =mfr_path= to =Nothing=; if a directory, cascade =Nothing= to all descendants in the same transaction |
+| =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned entries (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new entry |
+| =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash= and =mfr_full_hash= |
+| =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
+
+On platforms where the =Data= / =Metadata= distinction is unavailable (e.g.
+some macOS or Windows backends), the daemon falls back to =Modify(Data)=
+semantics (full refresh + hash invalidation).
+
+Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
+(see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
+on =(field_name, value_uuid, value_name)=.
+
+** Reconcile
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/reconcile
+#+END_SRC
+
+Walks the repository root on the filesystem and synchronises the database.
+
+No request body required for v1. [v2] will add a =threshold= parameter
+(range [0, 1]) to control the minimum similarity score for the similarity phase.
+
+*Steps:*
+
+1. Load all entries with a non-Nothing =mfr_path= TreeRef from the DB; separate
+   them into /active/ (path exists on disk) and /orphaned/ (path no longer
+   exists on disk, i.e. stale path).
+2. Walk the filesystem; collect all file and directory paths.
+3. *Fingerprint phase* — for each orphaned entry, search unmatched filesystem
+   paths using stored fingerprint data:
+   - Pre-filter by =mfr_size= (if stored): discard paths with different size.
+   - Among size matches, if =mfr_partial_hash= is stored: compute partial hash
+     of the disk file and compare:
+     - Partial hash matches AND =mfr_full_hash= is stored: compute full hash of
+       disk file → if matches → *definitive identity* → auto-update =mfr_path=
+       TreeRef and refresh =mfr_*= fields (counted as =moved=).
+     - Partial hash matches but no =mfr_full_hash= stored: *strong candidate* →
+       added to =candidates=.
+     - Partial hash does not match: discard.
+   - Size matches but no =mfr_partial_hash= stored: *weak candidate* → added
+     to =candidates=.
+   - No =mfr_size= stored: entry skipped (no fingerprint available).
+   New files that appear as a fingerprint candidate are *not* auto-created;
+   they wait for explicit confirmation.
+4. *Similarity phase* [v2] — for each still-unmatched orphaned entry and each
+   still-unmatched new path, compute the similarity score (see [[*File Similarity]]).
+   Pairs with =score ≥ threshold= are appended to =candidates=. New files that
+   appear as a candidate for at least one orphaned entry are *not* auto-created
+   as new entries; they wait for explicit confirmation.
+5. *Create* — new files not claimed by fingerprint (or similarity [v2]) → create
+   entry with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
+   =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_type=); create missing parent
+   directory entries if needed.
+6. Orphaned entries not matched by fingerprint and not present in any candidate
+   pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
+   to =Nothing=.*
+
+*Directory identification*: directories have no fingerprint and are matched only
+by their path string. A directory entry whose path no longer exists on disk
+is left with its stale path (like any other orphan); it may appear in candidates
+if a new directory with a similar name exists.
+
+*Cascading Nothing*: whenever any entry's =mfr_path= is set to =Nothing= (by the
+watcher or manually), all entries whose =value_uuid=
+(directly or transitively, for =field_name = 'mfr_path'=) points to this entry are
+also set to =Nothing= in the same transaction. Descendants are collected
+iteratively using the tree cache (fetching missing nodes from the DB step by
+step), then cleared in a single batched UPDATE. No entry can have a valid path
+if one of its ancestors is gone.
+
+All creates and updates execute inside a single transaction.
+
+*Confirming a candidate*: the client sends a =PATCH= request to update the
+orphaned entry's =mfr_path= field to the chosen new location. The new file is then
+considered matched; if the client calls =reconcile= again without the candidate
+having been confirmed, the same candidate will be returned again.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "created": 2,
+  "moved": 1,
+  "candidates": [
+    {
+      "entry_uuid": "abc...",
+      "stale_path": "/music/jazz/old.mp3",
+      "matches": [
+        {"path": "/music2/jazz_copy.mp3", "fingerprint": "partial_hash"},
+        {"path": "/backup/unknown.mp3",   "fingerprint": "size"}
+      ]
+    }
+  ]
+}
+#+END_SRC
+
+[v2] Similarity-based candidates add a =score= field alongside =fingerprint=:
+#+BEGIN_SRC json
+{"path": "/archive/old_renamed.mp3", "fingerprint": "partial_hash", "score": 0.82}
+#+END_SRC
+
+* CLI
+
+* Open questions
+
+** Watcher reliability on edge cases
+Behaviour when the watched root is unmounted, moved, or deleted while the
+daemon is running is undefined. The daemon should detect this and mark the
+repository as unavailable.

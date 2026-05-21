@@ -1,0 +1,923 @@
+#+TITLE: Metafolder — Event Log and Rollback Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+Every write operation on metadata entries is recorded in an append-only event
+log stored in the same =db.sqlite= file. The log maintains a tree of /operations/
+that enables:
+
+- *Auditing*: full history of changes to any entry.
+- *Rollback*: navigating the history tree to any past or future state.
+- *Non-destructive branching*: after rolling back, any new write creates a new
+  branch — previously "future" operations are never lost.
+
+The current database state reflects exactly the operation pointed to by /HEAD/.
+Formally: replaying, in order, all operations on the path from the root to HEAD
+reproduces the current state of all data tables.
+
+* Concepts
+
+** Revision and operation
+
+An /operation/ is one atomic change (e.g. setting one field on one entry). It
+is the node of the history tree and the unit of crash-safe rollback.
+
+A /revision/ groups all operations produced by a single API call. It is a
+grouping annotation on operations, not a tree node. It is not possible to roll
+back a single operation within a multi-operation revision via the high-level
+rollback API — the revision remains the minimum unit of user-facing rollback.
+Direct operation-level navigation is available via =op_id=.
+
+In practice, most revisions contain a single operation (a user editing one
+field). Revisions with many operations arise from batch commands: a =batch_set=
+on K entries produces K operations; a =reconcile= creating M files produces M
+operations; a watcher =Remove= on a directory with N descendants produces N+1
+=file_deleted= operations. For large batches, operations are inserted in bulk.
+
+** History tree
+
+Operations form a tree: each operation has a =parent_id= pointing to the
+operation it was created from (=NULL= for the root). The /HEAD/ pointer records
+the current operation — the one whose state is reflected in the data tables.
+
+Operations within the same revision form a chain: the first operation's
+=parent_id= is the HEAD before the revision; each subsequent operation's
+=parent_id= is the previous operation in the revision. HEAD advances to the
+last operation of the revision on commit.
+
+Example (two revisions, =rev_1= with one op and =rev_2= with two ops):
+
+#+BEGIN_SRC
+op_1 [rev_1] ← op_2 [rev_2] ← op_3 [rev_2] ← HEAD
+#+END_SRC
+
+After rolling back to =op_1= and writing =op_4=:
+
+#+BEGIN_SRC
+op_1 ← op_2 ← op_3   ← branch (still reachable)
+     └─ op_4           ← HEAD
+#+END_SRC
+
+No history is ever lost unless explicitly pruned (see [[*Log pruning]]).
+
+** HEAD pointer
+
+A singleton table =log_head= records the current operation. All data tables
+(=metadata=, =metadata_db=, =field=) reflect exactly the state of the
+operation at HEAD.
+
+Invariant: HEAD and the data tables are always mutually consistent. Every HEAD
+update and every data change execute in a single SQLite transaction, so a crash
+leaves both in a consistent state.
+
+** Label
+
+A revision may carry an optional human-readable =label=. A label serves as a
+named rollback target: ={"label": "before-cleanup"}= navigates HEAD to the last
+operation of the most recent revision carrying that label.
+
+A label is set either at write time (passed in the API call that creates the
+revision) or post-hoc via =PATCH /log/revisions/:rev_id=. Labels are not
+unique; rollback to a label targets the most recent matching revision.
+
+** Operation types
+
+| =op_type=        | Description                                              | Filesystem coordination   |
+|------------------+----------------------------------------------------------+---------------------------|
+| =create_entry=   | New metadata entry created                               | None                      |
+| =delete_entry=   | Entry deleted (all fields cascade)                       | None                      |
+| =set_field=      | All rows for =(uuid, field_name)= replaced               | None                      |
+| =append_field=   | One field row appended (multi-map)                       | None                      |
+| =delete_field=   | One field row removed (by =field_id=)                    | None                      |
+| =file_deleted=   | Watcher: file removed; =mfr_path= → =Nothing=            | File is gone              |
+| =file_moved=     | Watcher: file renamed/moved; =mfr_path= TreeRef updated  | =mv= required (see below) |
+| =file_modified=  | Watcher: file content changed; hashes invalidated        | Content is gone           |
+| =unknown=        | Unlogged write; marks a weak root (see [[*Normal write flow]]) | None               |
+
+Reversibility is assessed dynamically at rollback time, not stored statically:
+
+- =create_entry= … =delete_field=: always fully reversible (pure metadata).
+- =file_deleted=, =file_modified=: never fully reversible at the filesystem
+  level — the file content is gone. The metadata can still be restored from
+  the snapshot rows, but this results in a stale or misleading =mfr_path=.
+- =file_moved=: reversible if and only if the file still exists at its current
+  location at rollback time. If the file has since been deleted or moved again,
+  the =mv= cannot be executed and only the metadata can be restored (stale
+  path).
+
+* Daemon
+
+** SQLite Schema
+
+#+BEGIN_SRC sql
+-- Grouping annotation for operations produced by a single API call.
+CREATE TABLE revision (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp  INTEGER NOT NULL,   -- Unix ms
+    label      TEXT               -- optional; see Label
+);
+
+-- Tree node: one row per atomic change.
+CREATE TABLE operation (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_id             INTEGER REFERENCES operation(id),  -- NULL for the root operation
+    rev_id                INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE,
+    seq                   INTEGER NOT NULL,    -- ordering within the revision (1-based, for display)
+    op_type               TEXT    NOT NULL,    -- see Operation types
+    entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata entry
+    entity_version_before INTEGER,             -- metadata.version before this op; restored on inverse
+    field_name            TEXT                 -- for field operations; NULL otherwise
+);
+
+-- Before/after snapshots for each operation, stored as normalized rows
+-- mirroring the field table. is_new=0: state before the op; is_new=1: after.
+-- field_id is the original field.id, restored exactly on inverse.
+CREATE TABLE op_snapshot (
+    op_id          INTEGER NOT NULL REFERENCES operation(id) ON DELETE CASCADE,
+    is_new         INTEGER NOT NULL CHECK (is_new IN (0, 1)),
+    field_id       INTEGER NOT NULL,   -- original field.id
+    field_name     TEXT    NOT NULL,
+    value_type     TEXT    NOT NULL,
+    value_text     TEXT,
+    value_int      INTEGER,
+    value_real     REAL,
+    value_uuid     BLOB,
+    value_ref_repo BLOB,
+    value_name     TEXT,
+    PRIMARY KEY (op_id, is_new, field_id)
+);
+
+-- Singleton: current position in the history tree.
+-- Inserted with op_id = NULL at repo init time.
+CREATE TABLE log_head (
+    singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+    op_id      INTEGER REFERENCES operation(id)
+);
+
+CREATE INDEX idx_operation_parent ON operation(parent_id);
+CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
+CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
+
+-- Pending operations buffer: watcher events and restoration ops awaiting
+-- commit. Execution is suspended during rollback lock; entries survive a
+-- daemon crash and are replayed on restart.
+CREATE TABLE pending_operation (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    op_type        TEXT NOT NULL,  -- watcher event type or restoration op type
+    entity_uuid    BLOB,           -- NULL for unresolved path-based watcher events
+    path           TEXT,           -- for watcher events: affected path
+    from_path      TEXT,           -- for file_moved watcher events
+    to_path        TEXT,           -- for file_moved watcher events
+    field_name     TEXT,           -- for restoration ops
+    value_type     TEXT,           -- for restoration ops: new value to set
+    value_text     TEXT,
+    value_int      INTEGER,
+    value_real     REAL,
+    value_uuid     BLOB,
+    value_ref_repo BLOB,
+    value_name     TEXT
+);
+#+END_SRC
+
+*** Snapshot rows (=op_snapshot=)
+
+Each operation stores its before/after state as rows in =op_snapshot=,
+mirroring the =field= table columns. =is_new=0= = state before the op;
+=is_new=1= = state after. =field_id= is the original =field.id= and is
+restored exactly on inverse (see [[*Field ID and version stability]]).
+
+Per operation type:
+
+| =op_type=       | =is_new=0= rows (before)                             | =is_new=1= rows (after)                          |
+|-----------------+------------------------------------------------------+--------------------------------------------------|
+| =create_entry=  | none                                                 | all field rows of the created entry              |
+| =delete_entry=  | all field rows of the deleted entry                  | none                                             |
+| =set_field=     | all previous rows for =(uuid, field_name)=           | the new single row                               |
+| =append_field=  | none                                                 | the appended row                                 |
+| =delete_field=  | the deleted row                                      | none                                             |
+| =file_deleted=  | the =mfr_path= row(s) before deletion                | one row: =value_type=nothing=                    |
+| =file_moved=    | the previous =mfr_path= row(s)                       | the new =mfr_path= row(s)                        |
+| =file_modified= | =mfr_size=, =mfr_mtime=, hash rows before            | new =mfr_size=, =mfr_mtime= rows                 |
+
+=create_entry= and =delete_entry= also require saving =metadata_db= rows
+(the =db_ids=). In v1, =db_ids= is always the single current repo UUID and
+is not stored explicitly; this is deferred to v2 (link entries).
+
+For =file_deleted= on a directory: each descendant entry receives its own
+=file_deleted= operation within the same revision. Operations and their
+snapshot rows are inserted in bulk for large cascades.
+
+*** Field ID and version stability
+
+=field.id= is =AUTOINCREMENT=. Snapshot rows in =op_snapshot= preserve the
+original =field_id=. On inverse, the daemon restores rows with their original
+primary key: =INSERT INTO field (id, …) VALUES (?, …)=. This ensures that
+operations on other branches that reference the same =field_id= remain valid
+after navigating across that operation's boundary.
+
+The =metadata.version= counter is likewise saved and restored via the
+=entity_version_before= column on =operation=. The inverse sets
+=metadata.version= back to this value exactly. This ensures that =version=
+remains a reliable cache key across rollback/redo cycles.
+
+** Normal write flow
+
+Every API call that modifies metadata:
+
+1. Opens a SQLite transaction.
+2. Inserts one =revision= row with the optional =label= from the request.
+3. For each change (first to last):
+   a. Records the before state: reads the affected =field= rows and the current
+      =metadata.version=, to be written as =op_snapshot= rows (=is_new=0=).
+   b. Applies the change to the data tables (increments =metadata.version=).
+   c. Records the after state: reads the resulting =field= rows, written as
+      =op_snapshot= rows (=is_new=1=).
+   d. Inserts one =operation= row with:
+      - =parent_id= = current =log_head.op_id= (the running HEAD within this transaction)
+      - =rev_id= = the revision created in step 2
+      - =seq= = incrementing from 1
+      - =entity_version_before= = the version recorded in step 3a
+   e. Inserts the =op_snapshot= rows for this operation.
+   f. Updates the running HEAD to this new operation's =id=.
+4. Writes the final =log_head.op_id= to the singleton row.
+5. Commits the transaction.
+
+For batch operations, all =operation= rows are inserted together in a single
+=INSERT= after computing all =parent_id= values.
+
+All write operations — including =reconcile= — follow this flow and produce
+log entries. If performance ever becomes a concern for large bulk operations,
+an optional =no_log= flag may be added to the relevant API endpoints. When
+used, a single =unknown= operation is inserted at HEAD instead of individual
+change records. It has no =op_snapshot= rows, acts as a weak root (navigation before
+it is impossible, like after Prune-before), and the =unknown= flag is noted
+in the response.
+
+** Navigation
+
+Navigation moves HEAD from its current position to any target operation in the
+tree. The target may be an ancestor (rollback), a descendant (redo), or any
+node on a different branch.
+
+*** Algorithm
+
+Given =current= (=log_head.op_id=) and =target=:
+
+1. Find the Lowest Common Ancestor (LCA) of =current= and =target=.
+2. Collect the /unapply path/: operations from =current= to LCA (LCA
+   excluded), ordered most-recent-first.
+3. Collect the /apply path/: operations from LCA to =target= (LCA excluded),
+   ordered oldest-first.
+4. Execute in a single SQLite transaction:
+   a. For each operation on the unapply path: execute its inverse (see below).
+   b. For each operation on the apply path: execute its forward action.
+   c. Update =log_head.op_id= to =target=.
+
+The entire navigation is atomic. A crash leaves HEAD and data tables in their
+pre-navigation state.
+
+If =target= is =NULL= (empty state), all =metadata=, =metadata_db=, and =field=
+rows owned by this repository are deleted and =log_head.op_id= is set to =NULL=.
+
+*** Inverse operations
+
+| =op_type=        | Inverse action                                                                                    |
+|------------------+---------------------------------------------------------------------------------------------------|
+| =create_entry=   | Delete the entry and all its =metadata_db= and =field= rows                                       |
+| =delete_entry=   | Recreate =metadata= (with =entity_version_before=), =metadata_db=, =field= rows from snapshots   |
+| =set_field=      | Delete current rows for =(uuid, field_name)=; insert =is_new=0= snapshot rows with original ids  |
+| =append_field=   | Delete the field row whose =id= matches the =is_new=1= snapshot =field_id=                        |
+| =delete_field=   | Insert the =is_new=0= snapshot row with its original =field_id=                                   |
+| =file_deleted=   | Delete the current =mfr_path= Nothing row; insert =is_new=0= snapshot rows with original ids     |
+| =file_moved=     | Delete current =mfr_path= row(s); insert =is_new=0= snapshot rows with original ids              |
+| =file_modified=  | Delete current =mfr_size=, =mfr_mtime=, hash rows; insert =is_new=0= snapshot rows               |
+| =unknown=        | Not possible — navigation before an =unknown= op is rejected with =400=                          |
+
+*** Filesystem coordination
+
+The daemon applies metadata changes as instructed and does not assess whether
+an operation is reversible in the current context. That responsibility belongs
+to the CLI, which has access to the filesystem state, user permissions, and
+interactive input.
+
+Three op types require attention at rollback time:
+
+- =file_moved=: the CLI checks whether the file still exists at its current
+  location before executing the =mv=. If the file is gone or inaccessible,
+  the CLI calls =step= with =skip: true=.
+- =file_deleted=, =file_modified=: no filesystem action is possible (content
+  is gone). The CLI calls =step= with =skip: true= when it does not want
+  the metadata left in a stale state.
+
+When =skip: true= is used, the daemon *still applies the metadata inverse*
+(maintaining the HEAD↔data invariant). It additionally enqueues a
+/restoration operation/ in the watcher buffer — a synthetic write that is
+replayed as a new branch after navigation completes, correcting the metadata
+to match the actual filesystem state:
+
+- =file_moved= skip: restoration sets =mfr_path= back to the file's current
+  location (derived from the =is_new=1= snapshot rows — no filesystem check needed).
+- =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-records
+  the deletion since the file is still absent).
+- =file_modified= skip: restoration clears =mfr_partial_hash= and
+  =mfr_full_hash= (→ =Nothing=); size and mtime are left stale until the
+  next reconcile.
+
+For the v1 atomic rollback (=POST /rollback=), the daemon always applies all
+metadata changes. The CLI should inspect the plan first (=GET /rollback/plan=)
+and use the coordinated navigation protocol [v2] if selective per-operation
+handling is needed.
+
+** Log pruning
+
+Two pruning operations are available. Both require the target to be an
+ancestor of HEAD (or HEAD itself). Targets are specified as ={"id": N}=,
+={"label": L}=, or ={"timestamp": T}=, with the same resolution rules as
+rollback targets.
+
+*** Prune-before(X)
+
+Makes operation X the new root (=X.parent_id= set to =NULL=). Deletes all
+operations strictly older than X, plus any branch whose entire ancestry lies
+before X.
+
+*Limitation*: after pruning, X is a /weak root/ — its predecessors are gone,
+so the database state at X cannot be reconstructed from the log alone. This
+does not affect navigation within the remaining tree (operations X→HEAD are
+intact), but a fresh replay from scratch is no longer possible. For disaster
+recovery, use a filesystem-level backup of =db.sqlite= rather than relying on
+log replay.
+
+*** Linearize(X)
+
+X must be an ancestor of HEAD. Deletes all branch operations that diverge from
+the HEAD path between the root and X. After this, the segment root→X is a
+straight line.
+
+** Coordinated navigation                                                 :v2:
+
+Coordinated navigation handles =file_moved= operations by coupling each
+metadata change with a CLI-executed =mv= command. It proceeds one operation at
+a time, so a crash leaves at most one file and one metadata entry in an
+inconsistent state.
+
+The target may be any operation in the tree: an ancestor (rollback), a
+descendant (redo), or a node on a different branch. The daemon computes the
+correct =from=/=to= paths for each =move_file= step based on the navigation
+direction (unapply vs. apply).
+
+*** Rollback lock
+
+=POST /rollback/start= enters /rollback lock/ mode:
+
+- The file watcher *continues to run normally*, enqueuing events into the
+  =pending_operation= table as usual.
+- *Execution of pending operations is suspended* — buffered events and
+  restoration ops from =skip= accumulate in =pending_operation= but are not
+  committed to the data tables.
+- All metadata write endpoints return =423 Locked= until the lock is released.
+- Read-only endpoints continue to work normally.
+
+The lock is released by the final =POST /rollback/step= (when HEAD reaches the
+target) or by =POST /rollback/abort=. On release, pending operations are
+processed and committed as a new revision on the current HEAD branch (applying
+the same compaction and batching rules as the normal watcher flush; see
+[[spec-file-tracking.org]]).
+
+The lock is *not* stored in the database. If the daemon crashes, it restarts
+unlocked. Pending operations accumulated in =pending_operation= are preserved
+and replayed automatically on restart before the daemon accepts new requests.
+
+*** Crash recovery
+
+If the daemon crashes during a coordinated navigation:
+
+- HEAD reflects the last committed =step= (SQLite ACID).
+- The rollback lock is not restored on restart.
+- Pending operations in =pending_operation= (watcher events + restoration ops
+  from =skip=) are replayed automatically on restart as a new revision.
+- Any file moves executed before the crash but after the last committed step
+  leave =mfr_path= stale until the replayed restoration ops correct them.
+  Running =reconcile= is still recommended to catch any remaining filesystem
+  drift.
+- To resume the navigation: call =POST /rollback/start= again with the same
+  target — it recomputes the plan from the current HEAD. File moves already
+  completed are idempotent (the =mv= may fail harmlessly or be skipped by the
+  CLI after checking).
+
+** HTTP API
+
+#+BEGIN_SRC
+GET   /repos/:repo_uuid/log
+GET   /repos/:repo_uuid/log/revisions/:rev_id
+PATCH /repos/:repo_uuid/log/revisions/:rev_id
+POST  /repos/:repo_uuid/log/prune
+POST  /repos/:repo_uuid/rollback
+#+END_SRC
+
+[v2] Coordinated navigation:
+#+BEGIN_SRC
+GET  /repos/:repo_uuid/rollback/plan
+GET  /repos/:repo_uuid/rollback/plan/summary
+POST /repos/:repo_uuid/rollback/start
+POST /repos/:repo_uuid/rollback/step
+POST /repos/:repo_uuid/rollback/abort
+#+END_SRC
+
+*** =GET /repos/:repo_uuid/log=
+
+Returns the history as a flat list of operations and revisions, with HEAD
+marked. The client reconstructs the tree from =parent_id=.
+
+Query parameters:
+
+| Parameter            | Default    | Description                                                                          |
+|----------------------+------------+--------------------------------------------------------------------------------------|
+| =mode=               | =linear=   | =linear=: HEAD ancestry path only (root → HEAD); =tree=: all branches               |
+| =entry_uuid=         | —          | Only operations whose =entity_uuid= matches this entry UUID                          |
+| =limit=              | —          | Maximum number of operations to return (applied after filtering; most recent first)  |
+| =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
+| =until=              | —          | Include only operations in revisions with timestamp ≤ T (Unix ms)                    |
+| =include_snapshots=  | =false=    | If =true=, each operation includes =snapshots_before= and =snapshots_after= arrays   |
+
+In =linear= mode, operations are ordered from root to HEAD (oldest first). In
+=tree= mode, operations are returned in insertion order (by =id=). The client
+reconstructs tree structure from =parent_id= in both cases.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "head": 3,
+  "operations": [
+    {"id": 1, "parent_id": null, "rev_id": 1, "seq": 1,
+     "op_type": "create_entry", "entity_uuid": "...", "field_name": null},
+    {"id": 2, "parent_id": 1, "rev_id": 2, "seq": 1,
+     "op_type": "set_field", "entity_uuid": "...", "field_name": "rating"},
+    {"id": 3, "parent_id": 2, "rev_id": 2, "seq": 2,
+     "op_type": "set_field", "entity_uuid": "...", "field_name": "genre"}
+  ],
+  "revisions": [
+    {"id": 1, "timestamp": 1700000000000, "label": null},
+    {"id": 2, "timestamp": 1700000001000, "label": "before-cleanup"}
+  ]
+}
+#+END_SRC
+
+Only revisions referenced by at least one returned operation are included in
+=revisions=.
+
+*** =GET /repos/:repo_uuid/log/revisions/:rev_id=
+
+Returns full details for a single revision, including all its operations and
+their before/after snapshots. Snapshots are always included (this endpoint is
+intended for the detail view).
+
+=:rev_id= may be a numeric id or the literal =head= to target the revision that
+contains the current HEAD operation.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "revision": {
+    "id": 12,
+    "timestamp": 1700000001000,
+    "label": "before-cleanup",
+    "is_head": true
+  },
+  "operations": [
+    {
+      "id": 22, "seq": 1,
+      "op_type": "set_field",
+      "entity_uuid": "...",
+      "field_name": "rating",
+      "snapshots_before": [
+        {"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 3}
+      ],
+      "snapshots_after": [
+        {"field_id": 43, "field_name": "rating", "value_type": "int", "value_int": 5}
+      ]
+    },
+    {
+      "id": 23, "seq": 2,
+      "op_type": "file_moved",
+      "entity_uuid": "...",
+      "field_name": null,
+      "snapshots_before": [
+        {"field_id": 1, "field_name": "mfr_path", "value_type": "tree_ref",
+         "value_uuid": "<parent_uuid>", "value_name": "old.mp3"}
+      ],
+      "snapshots_after": [
+        {"field_id": 1, "field_name": "mfr_path", "value_type": "tree_ref",
+         "value_uuid": "<parent_uuid>", "value_name": "new.mp3"}
+      ]
+    }
+  ]
+}
+#+END_SRC
+
+Returns =404= if the revision does not exist.
+
+*** =PATCH /repos/:repo_uuid/log/revisions/:rev_id=
+
+Sets or clears the label on an existing revision.
+
+Request body: ={"label": "before-cleanup"}= or ={"label": null}=
+
+*** =POST /repos/:repo_uuid/rollback=
+
+Metadata-only rollback: navigates HEAD to the target in a single atomic SQLite
+transaction. For =file_moved= operations in the path, only the metadata change
+is applied — the file is not moved. Use the coordinated navigation protocol [v2]
+if filesystem coordination is needed.
+
+Request body:
+#+BEGIN_SRC json
+{"target": {"id": 2} | {"timestamp": T} | {"label": "before-cleanup"} | {"prev_revision": true}}
+#+END_SRC
+
+- ={"id": N}=: navigate to operation N.
+- ={"timestamp": T}=: navigate to the most recent operation on the HEAD
+  ancestry path whose revision timestamp is ≤ T.
+- ={"label": L}=: navigate to the last operation of the most recent revision
+  carrying label L on the HEAD ancestry path.
+- ={"prev_revision": true}=: navigate to the parent of the first operation in
+  HEAD's current revision (i.e. undo the entire last revision). If HEAD's
+  revision has only one operation, this is equivalent to ={"id":
+  parent_id_of_HEAD}=. If HEAD has no parent (tree root), navigates to the
+  empty state.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "previous_head": 4,
+  "new_head": 2,
+  "operations_unapplied": 2,
+  "operations_applied": 0
+}
+#+END_SRC
+
+*** =POST /repos/:repo_uuid/log/prune=
+
+Request body:
+#+BEGIN_SRC json
+{"mode": "before" | "linearize",
+ "target": {"id": N} | {"timestamp": T} | {"label": "…"}}
+#+END_SRC
+
+Response body: ={"pruned_operations": 47, "pruned_revisions": 12}=
+
+*** =GET /repos/:repo_uuid/rollback/plan=                                 :v2:
+
+Returns the full ordered list of operations that would be processed to reach
+the target, without entering lock mode. Operations are listed in execution
+order (unapply path first, then apply path).
+
+Query parameters: =target_id=, =target_label=, =target_timestamp=,
+=target_prev_revision= (same semantics as =POST /rollback/start=).
+
+Example response:
+#+BEGIN_SRC json
+{
+  "operations": [
+    {"id": 101, "op_type": "move_file", "entity_uuid": "...",
+     "from": "/repo/B.mp3", "to": "/repo/A.mp3"},
+    {"id": 102, "op_type": "set_field", "entity_uuid": "..."},
+    {"id": 103, "op_type": "create_entry", "entity_uuid": "..."}
+  ],
+  "total": 3
+}
+#+END_SRC
+
+*** =GET /repos/:repo_uuid/rollback/plan/summary=                         :v2:
+
+Returns statistics for the navigation without entering lock mode.
+
+Query parameters: same as =GET /rollback/plan=.
+
+Example response:
+#+BEGIN_SRC json
+{
+  "total_operations": 157,
+  "by_type": {
+    "file_moved": 45,
+    "file_deleted": 3,
+    "create_entry": 89,
+    "set_field": 20
+  },
+  "revisions_affected": 12
+}
+#+END_SRC
+
+*** =POST /repos/:repo_uuid/rollback/start=                               :v2:
+
+Enters rollback lock, suspends pending operation execution, stores the target
+internally, and returns the first operation to process.
+
+If target == current HEAD there is nothing to do: the lock is not entered and
+the response is ={"op": null, "remaining": 0}= immediately.
+
+Request body:
+#+BEGIN_SRC json
+{"target": {"id": 42} | {"label": "before-cleanup"} | {"timestamp": T} | {"prev_revision": true}}
+#+END_SRC
+
+Response body:
+#+BEGIN_SRC json
+{
+  "op": {
+    "id": 101,
+    "op_type": "move_file",
+    "entity_uuid": "...",
+    "from": "/repo/music/B.mp3",
+    "to": "/repo/music/A.mp3"
+  },
+  "remaining": 156
+}
+#+END_SRC
+
+The daemon computes the inverse of each operation and returns what the CLI
+must execute. For =move_file=, =from= and =to= are the paths to pass to =mv=
+(already computed — the CLI executes them as-is). For all other operation
+types, =from= and =to= are absent — no filesystem action is required.
+
+Note: =op_type= in the coordinated navigation response reflects the *action to
+execute*, not the stored event. A =file_moved= record in the DB produces a
+=move_file= response op; all other DB op types appear unchanged.
+
+The daemon does not check the filesystem state. The CLI inspects it and
+decides whether to proceed with the =mv= or call =step= with =skip: true=.
+
+*** =POST /repos/:repo_uuid/rollback/step=                                :v2:
+
+Applies the inverse of the current operation atomically (SQLite transaction),
+advances HEAD, and returns the next operation to process. The daemon always
+knows the current position (=log_head.op_id=) and the target (stored at lock
+time) — no =op_id= is needed from the client.
+
+Request body (normal — apply inverse):
+#+BEGIN_SRC json
+{}
+#+END_SRC
+
+Request body (skip — apply metadata inverse + enqueue restoration op):
+#+BEGIN_SRC json
+{"skip": true}
+#+END_SRC
+
+Response body (more operations remain):
+#+BEGIN_SRC json
+{
+  "op": {
+    "id": 102,
+    "op_type": "set_field",
+    "entity_uuid": "..."
+  },
+  "remaining": 154
+}
+#+END_SRC
+
+Response body (navigation complete — =op= is =null=):
+#+BEGIN_SRC json
+{"op": null, "remaining": 0}
+#+END_SRC
+
+When =op= is =null=, HEAD has reached the target. The lock is automatically
+released and the watcher buffer is replayed.
+
+*** =POST /repos/:repo_uuid/rollback/abort=                               :v2:
+
+Releases the lock and replays the watcher buffer. HEAD remains at its current
+position — operations already applied by previous =step= calls are not undone.
+
+The caller is responsible for reversing any =mv= commands already executed
+(or running =reconcile= to re-sync the filesystem state).
+
+Response body: ={"head": <current_op_id>}=
+
+* CLI
+
+The log and rollback system is entirely v2. No v1 CLI commands are defined for
+this feature.
+
+** =mf log=                                                                   :v2:
+
+Displays the history of revisions or operations.
+
+*** Synopsis
+
+#+BEGIN_SRC
+mf log [options]
+#+END_SRC
+
+*** Behaviour
+
+Calls =GET /log= and formats the result. By default, displays the HEAD ancestry
+path (=mode=linear=) grouped by revision, most recent first. HEAD is marked with
+an asterisk.
+
+Default output (one line per revision):
+
+#+BEGIN_SRC
+> rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
+  rev 11  2024-01-15 14:30  (5 ops: create_entry ×3, file_moved ×2)
+  rev 10  2024-01-14 09:12
+#+END_SRC
+
+With =--ops=, each revision is expanded to show its individual operations:
+
+#+BEGIN_SRC
+> rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
+    op 23  set_field(rating)  on <uuid>
+    op 22  set_field(genre)   on <uuid>
+  rev 11  ...
+#+END_SRC
+
+With =--tree=, branches created by past rollbacks are shown. Branch points are
+indicated visually; the active branch (containing HEAD) is distinguished from
+inactive branches. Exact rendering is left to the implementation.
+
+*** Options
+
+| Flag                   | Description                                                                    |
+|------------------------+--------------------------------------------------------------------------------|
+| =--tree=               | Show all branches, not just the HEAD ancestry path (passes =mode=tree=)        |
+| =--ops=                | Expand each revision to show its individual operations                         |
+| =--entry <uuid>=       | Show only revisions/ops that affected this entry (passes =entry_uuid=)         |
+| =--limit N= / =-n N=   | Show at most N revisions (or operations with =--ops=); default: 20             |
+| =--since T=            | Include only revisions with timestamp ≥ T (ISO-8601 or Unix ms)               |
+| =--until T=            | Include only revisions with timestamp ≤ T (ISO-8601 or Unix ms)               |
+| =--all=                | Remove the default limit of 20 (equivalent to =--limit 0=)                    |
+
+=--tree= and =--limit= / =--since= / =--until= can be combined. =--tree= with
+=--entry= returns all branches that contain at least one operation touching the
+given entry.
+
+*** =mf log show <target>=                                                    :v2:
+
+Displays the full details of a single revision: its operations and the
+before/after field values for each one.
+
+**** Synopsis
+
+#+BEGIN_SRC
+mf log show <target>
+#+END_SRC
+
+Target forms:
+- =<N>=: revision id (the number shown in =mf log= output)
+- =HEAD=: the revision containing the current HEAD operation
+
+**** Behaviour
+
+Calls =GET /log/revisions/:rev_id= (using =head= for the =HEAD= target) and
+formats the result. Example output:
+
+#+BEGIN_SRC
+Revision 12  [2024-01-15 14:32:01]  "before-cleanup"  ← HEAD
+
+  op 22  set_field(rating)  on <entity_uuid>
+    before:  3
+    after:   5
+
+  op 23  set_field(genre)   on <entity_uuid>
+    before:  "rock"
+    after:   "jazz"
+
+  op 24  file_moved  on <entity_uuid>
+    mfr_path before:  .../old.mp3
+    mfr_path after:   .../new.mp3
+#+END_SRC
+
+For =TreeRef= values, the path displayed is the =value_name= component from the
+snapshot (not a fully resolved filesystem path — path resolution would require
+additional round-trips and is left to a future enhancement).
+
+For operations with no snapshot rows (=unknown= op type), a note is shown
+instead of before/after values.
+
+**** Options
+
+| Flag        | Description                          |
+|-------------+--------------------------------------|
+| =--raw=     | Print the raw JSON response body     |
+
+** =mf rollback [<target>]=
+
+Navigates the history tree to a target operation using the coordinated
+navigation protocol.
+
+*** Synopsis
+
+#+BEGIN_SRC
+mf rollback [<target>] [options]
+mf rollback plan [<target>]
+#+END_SRC
+
+Target forms:
+- omitted: undo the last revision (passes ={"prev_revision": true}= to the
+  daemon — navigates to the parent of the first op in HEAD's current revision)
+- =<label>=: most recent revision with this label on the HEAD ancestry path
+- =--id N=: operation by id
+- =--timestamp T=: most recent operation on the HEAD ancestry path whose
+  revision timestamp ≤ T (Unix ms)
+
+*** Behaviour
+
+1. Calls =GET /rollback/plan/summary= and displays a summary.
+2. Calls =POST /rollback/start= to enter lock mode.
+3. For each operation:
+   - =move_file=: checks whether the file exists at =from=, applies the
+     relevant policy (see below), then calls =step {}= or =step {"skip":true}=.
+   - =file_deleted=, =file_modified=: always calls =step {"skip": true}= — no
+     filesystem action is possible; the restoration op corrects the metadata
+     on the new branch after rollback completes.
+   - All other types: calls =step {}=.
+4. On completion (=op= is =null=): displays a summary and exits.
+5. On error or user interrupt: calls =POST /rollback/abort= before exiting.
+
+*** Policies for =move_file=
+
+| Situation           | Default  | Available                     |
+|---------------------+----------+-------------------------------|
+| File available      | =apply=  | =apply=, =skip=, =abort=, =ask= |
+| File unavailable    | =ask=    | =apply=, =skip=, =abort=, =ask= |
+
+- =apply=: execute =mv from to=, then call =step {}=
+- =skip=: call =step {"skip": true}= without moving the file (metadata
+  restored; restoration op re-records the file's actual location on the new
+  branch)
+- =abort=: call =POST /rollback/abort= and exit with a non-zero status
+- =ask=: prompt the user to choose between =apply=, =skip=, and =abort=
+
+Flags:
+- =--on-move-available [apply|skip|abort|ask]=
+- =--on-move-unavailable [apply|skip|abort|ask]=
+- =--silent=: suppress informational output and warnings; does not suppress
+  =ask= prompts
+
+*** =mf rollback plan [<target>]=
+
+Calls =GET /rollback/plan= and displays the full ordered list of operations
+that would be processed, without executing anything. Target is optional; omitted
+defaults to the previous revision (same as =mf rollback= with no target).
+
+** =mf prune=                                                                 :v2:
+
+Permanently removes operations from the history. Both sub-commands are
+*irreversible* — deleted operations cannot be recovered via rollback. Use
+=mf log --tree= beforehand to visualise what will be removed.
+
+Both sub-commands require the target to be an ancestor of HEAD (or HEAD
+itself); the daemon returns =400= otherwise.
+
+Target forms (same as =mf rollback=):
+- =<label>=: most recent revision with this label on the HEAD ancestry path
+- =--id N=: operation by id
+- =--timestamp T=: most recent operation on the HEAD ancestry path whose
+  revision timestamp ≤ T (Unix ms)
+
+Both sub-commands ask for confirmation before calling the daemon unless
+=--force= is passed.
+
+*** =mf prune before <target>=
+
+Makes the target operation the new root of the history tree. Deletes all
+operations strictly older than the target, plus any branch whose entire
+ancestry lies before the target.
+
+The target itself is preserved and becomes a /weak root/: navigation within
+the remaining tree works normally, but a full replay from scratch is no longer
+possible (see [[*Prune-before(X)]]).
+
+Calls =POST /log/prune= with ={"mode": "before", "target": ...}=.
+
+Output on success:
+
+#+BEGIN_SRC
+Pruned 47 operations across 3 revisions.
+New root: op 55 (rev 8, 2024-01-10 09:00)
+#+END_SRC
+
+*** =mf prune linearize <target>=
+
+Deletes all branch operations that diverge from the HEAD ancestry path between
+the root and the target. After this, the segment root→target is a straight
+line with no side branches.
+
+Calls =POST /log/prune= with ={"mode": "linearize", "target": ...}=.
+
+Output on success:
+
+#+BEGIN_SRC
+Pruned 12 operations across 4 revisions. History linearized up to op 55.
+#+END_SRC
+
+*** Common options
+
+| Flag        | Description                                                         |
+|-------------+---------------------------------------------------------------------|
+| =--force=   | Skip confirmation prompt                                            |
+| =--silent=  | Suppress informational output (confirmation prompt still shown)     |
+
+* Open questions
