@@ -159,3 +159,5 @@ releasing its DB connection) without restarting the whole daemon.
 
 * CLI
 * GUI
+
+See [[file:spec-gui.org][spec-gui.org]] for the full GUI specification.
