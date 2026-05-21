@@ -327,6 +327,7 @@ Behaviours:
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
+| =entry:batch-set=         | Set a field on all =selected_entries=                         |
 
 ** Keyboard navigation
 
@@ -346,7 +347,7 @@ Within =entry-detail=:
 - =d= (configurable) deletes the focused field row (with confirmation).
 
 Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
-(see [[*Keybinding]] for the =when= clause syntax and the four scope levels).
+(see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
 The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.
 
@@ -418,10 +419,12 @@ Panel types may use namespaced custom keys (e.g. =my-panel:state=).
 **** =metafolder.commands= and =metafolder.addKeybinding=
 
 #+BEGIN_SRC js
-// scope defaults to 'local' for panel-type-registered commands
+// scope: 'local' (default) | 'global'
+// text-input controls whether the command's default bindings fire in text inputs;
+// it is also used as the default for addKeybinding calls for this command.
 metafolder.commands.register('my-panel:change-mode', {
   label: 'My Panel: Change display mode',
-  scope: 'local',    // 'always' | 'editing' | 'local' | 'global'
+  scope: 'local',
   handler: ({ mode }) => { ... }
 })
 
@@ -454,11 +457,12 @@ metafolder.statusBar.message('Sync complete.', 5000)  // timeout_ms or null
 *** Repo list
 
 Calls =GET /repos= at startup and on explicit refresh. Results populate the
-Repo selector and the =repos= panel type.
+Repo indicator and the =repos= panel type.
 
 *** Init repo
 
-The =repos:init= command transforms the focused panel to show an inline form
+=repos:init= is a local command of the =repos= panel type (scope:
+=when = "repos"=). It transforms the =repos= panel to show an inline form
 with =root= (required) and =metafolder= (optional, for external database).
 Submitting calls =POST /repos/init=. On success a new workspace tab is opened
 with the new repo as =active_repo=. On =409= an error message appears in the
@@ -466,10 +470,14 @@ status bar and the form remains open.
 
 *** Load repo
 
-The =repos:load= command transforms the focused panel to show an inline form
+=repos:load= is a local command of the =repos= panel type (scope:
+=when = "repos"=). It transforms the =repos= panel to show an inline form
 with mutually exclusive =root= or =metafolder= inputs. Submitting calls
 =POST /repos/load=. On success a new workspace tab is opened with the loaded
 repo as =active_repo=.
+
+The intended flow is: =repos:open= (global) → navigate to the =repos= panel
+→ select a loaded repo or trigger =repos:init= / =repos:load= from there.
 
 ** Entry management
 
@@ -640,7 +648,9 @@ No keystrokes are suppressed; all normal shortcuts continue to work.
 The optional =keys= array installs temporary global keybindings for the
 duration of the wait: each listed key is bound to =answer:send <key>=
 (scope: global, =text-input = false=). These bindings are removed when the
-request resolves or times out.
+request resolves or times out. If =keys= is absent or empty, no temporary
+bindings are installed; the user can still resolve the wait by typing
+=answer:send <value>= manually in the command input.
 
 Only one =POST /gui/input= at a time; concurrent calls return =409=.
 
@@ -705,7 +715,7 @@ while true; do
   RESP=$(curl -s -X POST $GUI/gui/input \
               -H "Content-Type: application/json" \
               -d '{"keys":["left","right","escape"]}')
-  KEY=$(echo "$RESP" | jq -r .key)
+  KEY=$(echo "$RESP" | jq -r .value)
 
   [ "$KEY" = "escape" ] && break
 
