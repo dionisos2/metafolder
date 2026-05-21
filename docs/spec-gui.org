@@ -10,95 +10,123 @@ with an already-running daemon over HTTP and does not manage the daemon's
 lifecycle.
 
 Four cross-cutting design principles govern the GUI:
-- *Keyboard-first*: every action is reachable from the keyboard; all shortcuts
-  are configurable.
-- *Command-driven*: a persistent command zone (bottom bar) accepts named
-  commands and shell invocations, as in Emacs.
+- *Keyboard-first*: every command is reachable from the keyboard; all
+  keybindings are configurable.
+- *Command-driven*: a persistent status bar shows notifications; a command
+  input accepts named commands and shell invocations.
 - *Scriptable*: the GUI exposes its own local HTTP API so that external scripts
   can drive panels and wait for user input.
-- *Themeable*: colours, fonts, and layout parameters are configurable via a
-  style file; if a web renderer is used, a CSS file is the natural mechanism.
+- *Themeable*: appearance is controlled by a CSS file loaded at startup.
 
-The GUI framework is not yet decided; this spec focuses on behaviour and UX.
+The GUI is built with *Tauri*: a Rust backend communicating with a system
+WebView frontend. The JavaScript/TypeScript frontend framework is not yet
+decided.
 
 * Concepts
 
 ** Workspace
 
 The complete state of one tab: panel count (1 or 2), each panel's current
-view and its internal state (scroll position, selection, query draft, etc.),
-the panel width ratio, and the command zone content and mode (including any
-partial command being typed). Switching tabs swaps workspaces atomically;
-no state is lost. Each workspace is independent: the same view can be open
-simultaneously in two workspaces without interference.
+panel type and its internal state (scroll position, query draft, display mode,
+etc.), the panel width ratio, the command input content, and the workspace
+variables. Switching tabs swaps workspaces atomically; no state is lost. Each
+workspace is independent.
 
 ** Panel
 
-A resizable content area belonging to a workspace. Each workspace displays
-one or two panels side by side (a single panel at workspace creation; the
-user can open a second panel). Each panel independently displays one /view/.
-Panels are separated by a draggable divider; their relative width ratio is
-part of the workspace state.
+A resizable content area belonging to a workspace. Each workspace displays one
+or two panels side by side (single panel at creation; the user can open a
+second). Panels are separated by a draggable divider; their relative width
+ratio is part of the workspace state.
 
-** View
+** Panel type
 
-The content type displayed inside a panel. Built-in views:
+The content/functionality kind displayed inside a panel. Each panel type is
+implemented as a directory containing an =index.html= entry point; built-in
+types ship as default examples in the user's config directory so they can be
+inspected and modified. The panel type name is the directory name.
 
-| View name      | Description                                    |
-|----------------+------------------------------------------------|
-| =entry-list=   | Tabular list of metadata entries               |
-| =entry-detail= | All fields of a single entry                   |
-| =query=        | Query builder + results                        |
-| =reconcile=    | Reconcile trigger and result                   |
-| =log=          | Event log (revisions and operations)           |
-| =repos=        | Repository list, init, load                    |
-| =file=         | Preview a file from disk (image, text, …)      |
-| =html=         | Render an arbitrary HTML string (scripting use)|
+Built-in panel types:
 
-Scripts can display =file= and =html= views via the GUI API (see [[*Scripting / GUI API]]).
+| Name           | Description                                                  |
+|----------------+--------------------------------------------------------------|
+| =entry-list=   | Metadata entries filtered by an embedded query; primary selection source |
+| =entry-detail= | All fields of the selected entry; follows =selected_entry=   |
+| =file=         | Preview of the selected entry's file (image, audio, video, text); follows =selected_entry= |
+| =message=      | Persistent log of status bar messages, shell output, and reconcile results |
+| =log=          | Event log (revisions and operations)                         |
+| =repos=        | Repository list, init, load                                  |
 
-** Command zone
+Users can add custom panel types by creating a new directory under
+=~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside
+built-in types in the panel type selector.
 
-A single-line text input anchored to the bottom of the window, always visible.
-Its content and mode are part of the workspace state: switching tabs restores
-the exact text and cursor position that were active in that workspace (including
-a partial command being typed). It has two modes:
+** Display mode
 
-- *Status mode* (default): displays status messages, notifications, and the
-  last executed command. Not focused; does not capture keystrokes.
-- *Input mode*: focused by a configurable keybinding (default =:= or =M-x=
-  equivalent). Accepts command names with completion, shell commands prefixed
-  with =!=, and free-text prompts sent by scripts.
+The visual representation used within a panel type that supports several
+layouts. Stored as part of the panel's state in the workspace.
 
-** Action
+The =entry-list= panel type supports at minimum:
+- =table= — tabular list with configurable columns.
+- =grid= — thumbnail grid, useful for image collections.
 
-A named, invocable operation (e.g. =repos:init=, =panel:split=,
-=query:execute=, =entry:delete=). Every user-visible behaviour is an action.
-Actions can be invoked by keybinding or by typing the action name in the
-command zone.
+** Workspace variables
+
+A reactive, per-workspace key-value store shared across all panels in the
+workspace. Panel types read and write these variables to communicate without
+being directly coupled to each other.
+
+Standard variables:
+
+| Key                | Type                          | Description                        |
+|--------------------+-------------------------------+------------------------------------|
+| =active_repo=      | =string \vert null=           | UUID of the active repository      |
+| =selected_entry=   | =\{uuid, repo\} \vert null=   | Currently highlighted entry        |
+| =selected_entries= | =string[]=                    | UUIDs of all selected entries      |
+
+Panel types may define their own variables using namespaced keys (e.g.
+=my-panel:current-node=).
+
+** Command
+
+A named, invocable operation with an optional parameter string. Commands are
+registered by panel types (built-in or custom) and are available in the
+command input with autocomplete. Every user-visible behaviour is a command.
+Keybindings map key combos to command invocation strings (command name plus
+optional parameters).
 
 ** Keybinding
 
-A mapping from a key combo (or sequence) to an action. The full keybinding map
-is loaded from a configuration file and can be edited at runtime. No built-in
-shortcuts are hard-coded; the defaults ship in the default config file.
+A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
+sequence) to a command invocation string (e.g. =entry-list:set-mode grid=).
+Keybindings are loaded from a configuration file and can be edited at runtime.
+No keybinding is hard-coded; the defaults ship in the default config file.
 
-** Repo selector
+Panel types may suggest default keybindings via =metafolder.addKeybinding=;
+these are applied only when the user has no conflicting binding configured.
 
-A persistent UI element that sets the /active repository/. All entry, query,
-reconcile, and log operations target the active repository. Populated from
-=GET /repos=.
+** Status bar
 
-** Entry list
+A read-only line at the very bottom of the window, always visible and never
+focused. Displays status messages, error notifications, the name of the last
+executed command (dim text), and a spinner during long operations. Content is
+global (shared across all workspaces). Messages auto-clear after a
+configurable timeout (default 5 s).
 
-A tabular view of metadata entries. Each row is one entry; columns are field
-names chosen by the user or returned by a query. Rows are selectable; opening
-a row navigates to the entry detail view (in the same panel or the other).
+** Command input
 
-** Entry detail panel
+A single-line text input that appears just above the status bar when activated
+(configurable keybinding, default suggestion: =:=). Dismissed with =Escape=.
+Content (text and cursor position) is per-workspace: switching tabs restores
+the exact state that was active in that workspace, including a partial command
+being typed.
 
-Displays all fields of one entry. Supports inline field editing, adding new
-fields, and deleting individual field rows.
+Accepts:
+- A command name (with inline completion; =Tab= accepts the first suggestion)
+  optionally followed by space-separated parameters.
+- A shell command prefixed with =!= — executed as a subprocess; stdout/stderr
+  goes to the =message= panel type and to the terminal from which the GUI was
+  launched.
 
 ** Field editor
 
@@ -117,427 +145,440 @@ An inline editor for a single field value, adapting its widget to the type:
 | =RefBase=     | UUID text input                                |
 | =ExternalRef= | Repo UUID + entry UUID                         |
 
-** Query builder
-
-A visual tool for constructing a =Query= value. Supports the full =Query=
-enum (boolean combinators, predicates, comparisons, =Matches=, =Follows=,
-=FollowsTransitive=). The user may also type a raw DSL expression (same syntax
-as the CLI) in a text field; it is parsed client-side and reflected in the
-builder tree.
-
 ** Script session
 
 An external process communicating with the GUI over the GUI API. A script
-session can set panel views, display messages in the command zone, and block
-waiting for user key input. Only one script session may hold the input-wait
-lock at a time (subsequent sessions' =POST /gui/input= calls receive =409= until
-the lock is released).
+session can set panel types, display messages in the status bar, activate the
+command input with a prompt, and block waiting for user key input. Only one
+script session may hold the input-wait lock at a time.
+
+** Repo selector
+
+A persistent UI element that sets =active_repo= in the current workspace.
+Populated from =GET /repos=.
 
 * GUI
 
 ** Connection to the daemon
 
 The GUI connects to a daemon URL configured by the user (default
-=http://127.0.0.1:7523=). The URL is editable in a settings panel or via the
-=daemon:set-url= action.
+=http://127.0.0.1:7523=), editable via the =daemon:set-url= command.
 
 On startup (and whenever the URL changes) the GUI calls =GET /health=. If the
 daemon is unreachable or returns a non-200 response, a prominent error banner
-is shown and all daemon-dependent operations are disabled until the connection
-is re-established. The GUI itself (panels, command zone, keybindings, and the
-GUI API) remains functional so that scripts can still interact with it.
+is shown and all daemon-dependent commands are disabled. The GUI itself
+(panels, status bar, command input, keybindings, panel type system, and the
+GUI API) remains functional.
 
 No authentication: the daemon is local-only and requires none.
 
 ** Tab bar
 
-A row of tabs is displayed at the very top of the window, above all panels.
-Each tab represents one workspace. Clicking a tab (or pressing its keybinding)
-switches to that workspace; the window content — panels, their views, the panel
-divider position, and the command zone — is replaced atomically with the stored
-workspace state.
+A row of tabs at the very top of the window. Each tab represents one
+workspace. Clicking a tab (or pressing its keybinding) switches workspaces
+atomically: panels, their panel types, the panel divider position, and the
+command input are all restored.
 
 Tabs have a short user-editable name (default: ="Tab 1"=, ="Tab 2"=, etc.).
-The active tab is visually highlighted (exact appearance controlled by the
-theme).
+Tab state (names, order, workspace contents) is persisted across sessions.
 
-Tab-related actions:
-
-| Action            | Description                                               |
+| Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
-| =tab:new=         | Open a new workspace tab (default view: entry-list)       |
+| =tab:new=         | Open a new workspace tab (default panel type: entry-list) |
 | =tab:close=       | Close the active tab (not available when only one remains)|
-| =tab:rename=      | Rename the active tab (prompts via command zone)          |
-| =tab:next=        | Switch focus to the next tab (wraps around)               |
-| =tab:prev=        | Switch focus to the previous tab (wraps around)           |
-| =tab:goto-N=      | Switch directly to tab number N (e.g. =tab:goto-1=)      |
+| =tab:rename=      | Rename the active tab (prompts via command input)         |
+| =tab:next=        | Switch to the next tab (wraps around)                     |
+| =tab:prev=        | Switch to the previous tab (wraps around)                 |
+| =tab:goto-N=      | Switch directly to tab N                                  |
 
-Default keybinding suggestions: =Alt+T= for =tab:new=, =Alt+W= for
-=tab:close=, =Alt+1= … =Alt+9= for =tab:goto-N=. All are configurable.
-
-The GUI starts with one workspace tab. Tab state (names, order, and workspace
-contents) is persisted across sessions in the config file.
+Default keybinding suggestions: =alt+t= for =tab:new=, =alt+w= for
+=tab:close=, =alt+1= … =alt+9= for =tab:goto-N=.
 
 ** Layout and panels
 
-Each workspace's window area (below the tab bar) is divided vertically into:
+Each workspace's area (below the tab bar) is divided into:
 - *Main area*: one or two panels side by side.
-- *Command zone*: a single line at the very bottom.
+- *Command input*: a single line just above the status bar, visible only when
+  active.
+- *Status bar*: a single read-only line at the very bottom, always visible.
 
-At startup only one panel is shown. The =panel:split= action opens a second
-panel, mirroring the first panel's current view. The =panel:close= action
-closes the focused panel (not available when only one panel is open). Panel
-widths are separated by a draggable divider; the ratio is persisted across
-sessions in the config file.
+At startup one panel is shown. =panel:split= opens a second panel mirroring
+the first. =panel:close= closes the focused panel (not available when only
+one remains). The focused panel receives keyboard navigation; focus switches
+via =panel:focus-next=. The focused panel has a visible indicator (border
+highlight — controlled by the theme).
 
-The /focused panel/ is the one that receives keyboard navigation. Focus
-switches between panels via a configurable keybinding (default =Tab= or a
-two-key chord). The focused panel has a visible focus indicator (e.g. a
-highlighted border — exact appearance controlled by the theme).
+** Status bar
 
-** Command zone
+Always-visible read-only line at the bottom. Shows:
+- Status messages after commands (e.g. ="Entry deleted."=).
+- Error messages from failed operations.
+- The last executed command name (dim text).
+- A spinner during long-running operations (reconcile, shell commands).
 
-*** Status mode
+Content is global (not per-workspace).
 
-The command zone displays:
-- Brief status messages after actions (e.g. "Entry deleted.", "Reconcile: 3 created.").
-- Error messages from failed operations (e.g. "Error 409: repository already exists.").
-- The name of the last executed action (dim text).
+** Command input
 
-Messages auto-clear after a configurable timeout (default 5 s).
+Hidden by default; activated by a configurable keybinding (default: =:=).
+Shows a prompt character and a text field. Dismissed with =Escape=. Content
+is per-workspace.
 
-*** Input mode
+Behaviours:
+- Typing a command name + =Enter= → invokes the command (=Tab= completes).
+- Parameters follow the command name, separated by spaces.
+- =!shell-command= + =Enter= → runs in background; output goes to the
+  =message= panel type and the launching terminal.
+- When a script calls =POST /gui/prompt=, the command input activates with the
+  script-supplied prompt text.
 
-Activated by a configurable keybinding (default suggestion: =:=). In input mode:
+*** Command names (non-exhaustive default set)
 
-- Typing a word and pressing =Enter= invokes the matching action (completion
-  is shown inline; =Tab= accepts the first suggestion).
-- Typing =!= followed by a shell command and pressing =Enter= executes the
-  shell command. Its stdout/stderr appears in the command zone and the
-  terminal from which the GUI was launched. The GUI does not block during
-  execution; a spinner appears in the command zone.
-- When a script calls =POST /gui/prompt=, the GUI enters input mode with the
-  script-supplied prompt text; the user's response is returned to the script.
-- =Escape= cancels and returns to status mode.
+| Command              | Description                                    |
+|----------------------+------------------------------------------------|
+| =daemon:set-url=     | Change daemon URL                              |
+| =repos:init=         | Open init-repo form                            |
+| =repos:load=         | Open load-repo form                            |
+| =tab:new=            | Open a new workspace tab                       |
+| =tab:close=          | Close the active tab                           |
+| =tab:rename=         | Rename the active tab                          |
+| =tab:next=           | Switch to the next tab                         |
+| =tab:prev=           | Switch to the previous tab                     |
+| =tab:goto-N=         | Switch to tab N                                |
+| =panel:split=        | Open second panel                              |
+| =panel:close=        | Close focused panel                            |
+| =panel:focus-next=   | Move focus to the other panel                  |
+| =panel:set-type <name>= | Switch focused panel to the named panel type|
+| =entry:create=       | Open create-entry dialog                       |
+| =entry:delete=       | Delete the selected entry                      |
+| =entry-list:set-mode <mode>= | Switch entry-list display mode        |
+| =entry-list:edit-query=  | Toggle the query editor in entry-list      |
+| =reconcile:run=      | Trigger reconcile on the active repo           |
+| =log:rollback=       | Rollback to the selected revision              |
+| =log:prune=          | Prune the event log                            |
+| =config:open=        | Open settings (keybindings, style, daemon URL) |
+| =quit=               | Exit the GUI                                   |
 
-*** Action names (non-exhaustive default set)
+** Keyboard navigation
 
-| Action              | Description                                    |
-|---------------------+------------------------------------------------|
-| =daemon:set-url=    | Change daemon URL                              |
-| =repos:init=        | Open init-repo form                            |
-| =repos:load=        | Open load-repo form                            |
-| =tab:new=           | Open a new workspace tab                       |
-| =tab:close=         | Close the active tab                           |
-| =tab:rename=        | Rename the active tab                          |
-| =tab:next=          | Switch to the next tab                         |
-| =tab:prev=          | Switch to the previous tab                     |
-| =tab:goto-N=        | Switch to tab N (replace N with a number)      |
-| =panel:split=       | Open second panel in the active workspace      |
-| =panel:close=       | Close focused panel                            |
-| =panel:focus-next=  | Move focus to the other panel                  |
-| =view:entry-list=   | Switch focused panel to entry list             |
-| =view:query=        | Switch focused panel to query builder          |
-| =view:log=          | Switch focused panel to event log              |
-| =view:repos=        | Switch focused panel to repos view             |
-| =entry:create=      | Open create-entry dialog                       |
-| =entry:delete=      | Delete currently selected entry                |
-| =query:execute=     | Execute the current query                      |
-| =reconcile:run=     | Trigger reconcile on active repo               |
-| =config:open=       | Open settings (keybindings, style, daemon URL) |
-| =quit=              | Exit the GUI                                   |
+Every command is reachable from the keyboard. No command requires the mouse.
 
-** Keyboard navigation and shortcuts
+Within =entry-list=:
+- =Up= / =Down= move the selection (updates =selected_entry=).
+- =Enter= or =Right= opens the entry in the other panel (or opens the other
+  panel if it was closed), changing its panel type to =entry-detail= (or =file=
+  if the entry has a known file path). See [[*Cross-panel selection]].
+- =Space= toggles selection for multi-select (updates =selected_entries=).
 
-*** Principle
-
-Every UI action is reachable from the keyboard. No action requires the mouse.
-Mouse interaction is supported everywhere but is never the only path.
-
-Within the entry list:
-- =Up= / =Down= (or =k= / =j= in a Vim-style config) move the selection.
-- =Enter= or =Right= opens the entry detail view.
-- =Left= or =Backspace= navigates back.
-- =Space= toggles selection for multi-select operations.
-
-Within the entry detail:
+Within =entry-detail=:
 - =Tab= / =Shift-Tab= move focus between field rows.
 - =Enter= on a field starts inline editing; =Enter= again confirms, =Escape=
   cancels.
-- =d= (or a configured key) deletes the focused field row (with confirmation).
+- =d= (configurable) deletes the focused field row (with confirmation).
 
-*** Configuration
-
-Keybindings are stored in a TOML/JSON configuration file (path configurable,
-default =~/.config/metafolder-gui/keybindings.toml=). Each entry maps a key
-combo (e.g. =ctrl+k=, =alt+x=, =g g= for sequences) to an action name.
-
-The =config:open= action opens a settings view where keybindings can be edited
-interactively; changes take effect immediately without restarting.
+Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=. The
+=config:open= command opens a settings view where they can be edited
+interactively; changes take effect immediately.
 
 ** Style and theming
 
-The GUI loads a style configuration at startup (default
-=~/.config/metafolder-gui/style.css= or a structured theme file, depending on
-the chosen framework):
+The GUI loads =~/.config/metafolder-gui/style.css= at startup and applies it
+globally to the WebView. The GUI ships a default stylesheet the user copies
+and modifies. The =config:open= settings view shows the active CSS path and
+offers a reload button; the GUI also auto-reloads on file change via inotify.
 
-- If a web renderer is used (e.g. Tauri/WebView): the style file is CSS,
-  applied globally to the rendered HTML. The user can override any property.
-- If a native renderer is used (e.g. egui, Iced): the style file is a
-  structured format (TOML/JSON) with named variables: background colour,
-  foreground colour, accent colour, font family, font size, border radius,
-  panel divider width, etc.
+** Panel type system
 
-In both cases the GUI ships a default style file that the user copies and
-modifies. The =config:open= settings view shows the path to the active style
-file and offers a /reload/ button (or the GUI auto-reloads on file change via
-inotify).
+*** Directory layout
+
+Panel types live under =~/.config/metafolder-gui/panel-types/=:
+
+#+BEGIN_SRC
+~/.config/metafolder-gui/panel-types/
+  entry-list/
+    index.html        ← entry point
+  entry-detail/
+    index.html
+  file/
+    index.html
+  message/
+    index.html
+  log/
+    index.html
+  repos/
+    index.html
+  my-custom-panel/    ← user-defined
+    index.html
+#+END_SRC
+
+Built-in types ship as pre-populated examples. The user can edit them freely;
+the GUI does not overwrite them on update (the update ships new defaults to a
+separate location the user can diff against).
+
+*** The =metafolder= API
+
+The GUI injects a =window.metafolder= object into every panel type's JS
+context. It provides three namespaces:
+
+**** =metafolder.daemon=
+
+Typed async wrappers around the daemon HTTP API. Examples:
+
+#+BEGIN_SRC js
+await metafolder.daemon.query(repo, query, select)
+await metafolder.daemon.getEntry(repo, uuid)
+await metafolder.daemon.setField(repo, uuid, name, value)
+await metafolder.daemon.reconcile(repo)
+// ... mirrors the full daemon REST API
+#+END_SRC
+
+**** =metafolder.workspace=
+
+Reactive per-workspace key-value store.
+
+#+BEGIN_SRC js
+metafolder.workspace.set('selected_entry', { uuid, repo })
+const entry = metafolder.workspace.get('selected_entry')
+metafolder.workspace.onChange('selected_entry', ({ uuid, repo }) => { ... })
+#+END_SRC
+
+Standard keys: =active_repo=, =selected_entry=, =selected_entries=.
+Panel types may use namespaced custom keys (e.g. =my-panel:state=).
+
+**** =metafolder.commands= and =metafolder.addKeybinding=
+
+#+BEGIN_SRC js
+metafolder.commands.register('my-panel:change-mode', {
+  label: 'My Panel: Change display mode',
+  handler: ({ mode }) => { ... }
+})
+
+// Suggest default keybindings (applied only if no conflict in user config)
+metafolder.addKeybinding('my-panel:change-mode list', 'ctrl+l')
+metafolder.addKeybinding('my-panel:change-mode grid', 'ctrl+g')
+#+END_SRC
+
+Registered commands appear in the command input autocomplete alongside
+built-in commands.
+
+**** =metafolder.statusBar=
+
+#+BEGIN_SRC js
+metafolder.statusBar.message('Sync complete.', 5000)  // timeout_ms or null
+#+END_SRC
 
 ** Repository management
 
 *** Repo list
 
-The GUI calls =GET /repos= at startup and on explicit refresh. Results
-populate the Repo selector and the =repos= view, listing each repository with
-its =repo_uuid=, =name=, and =root= path.
+Calls =GET /repos= at startup and on explicit refresh. Results populate the
+Repo selector and the =repos= panel type.
 
 *** Init repo
 
-A form with two fields:
-- =root= (required) — absolute path to the directory to watch.
-- =metafolder= (optional) — override for the =.metafolder/= location.
-
-Submitting calls =POST /repos/init=. On success the new repo is added to the
-Repo selector and selected as active. On =409= an error message is shown in
-the command zone.
+A form with =root= (required) and =metafolder= (optional, for external
+database). Submitting calls =POST /repos/init=. On success the repo is added
+to the Repo selector and selected as active. On =409= an error message appears
+in the status bar.
 
 *** Load repo
 
-A form with two mutually exclusive inputs:
-- =root= — standard form.
-- =metafolder= — external database form.
-
-Submitting calls =POST /repos/load=. On success the repo is added and selected.
+A form with mutually exclusive =root= or =metafolder= inputs. Submitting calls
+=POST /repos/load=. On success the repo is added and selected.
 
 ** Entry management
 
-*** Entry list view
+*** =entry-list= panel type
 
-Lists entries for the active repo. Default columns: =mfr_path= (resolved path
-string), =mfr_type=, =version=. The user can add/remove columns (arbitrary
-field names, fetched via a query with =select=).
+Displays entries for the active repo (=active_repo= workspace variable)
+filtered by an embedded query. The query editor is shown/hidden by the
+=entry-list:edit-query= command; it uses the same DSL as the CLI. An empty
+query matches all entries.
 
-Supports: sorting by column, a free-text filter (=Matches= query on
-=mfr_path= server-side), multi-selection, and full keyboard navigation.
+Default display mode: =table= with columns =mfr_path= (resolved path),
+=mfr_type=, =version=. Columns are configurable. The =entry-list:set-mode=
+command switches between display modes.
 
-*** Create entry
+Supports sorting by column, multi-selection (=selected_entries=), and full
+keyboard navigation.
 
-The =entry:create= action opens a dialog pre-populated with an empty field
-list. The user adds fields using the Field editor. Submitting calls
-=POST .../metadata=. On success the new entry is inserted and selected.
+When the user moves the selection, =entry-list= writes the highlighted entry
+to =workspace.selected_entry=. Other panels update reactively (see
+[[*Cross-panel selection]]).
 
-*** Entry detail view
+*** =entry-detail= panel type
 
-Calls =GET .../metadata/:uuid=. Each field row shows name, value (rendered
-by type), an edit button, and a delete button. Keyboard: =Tab= moves between
-rows, =Enter= edits, =d= deletes (with confirmation).
+Calls =GET .../metadata/:uuid= for the entry in =selected_entry=. Displays all
+fields. Each field row shows name, value, an edit button, and a delete button.
+
+Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
+confirmation).
 
 At the bottom:
 - /Add field/ → =POST .../metadata/:uuid/fields=
-- /Set field/ (replaces all rows for a name) → =PATCH .../metadata/:uuid=
+- /Set field/ → =PATCH .../metadata/:uuid=
 - /Delete entry/ → confirmation → =DELETE .../metadata/:uuid=
 
-Protected =mfr_*= fields are read-only by default. An advanced toggle exposes
-a =force= checkbox that sends ={"force": true}= in the request body.
+Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
+a =force= checkbox.
+
+*** =file= panel type
+
+Displays a preview of the file at the path stored in =selected_entry='s
+=mfr_path= field, using the HTML5 =<img>=, =<audio>=, or =<video>= element
+depending on the file type. Falls back to a plain-text view for text files.
+Shows a "no preview available" message for unsupported formats.
+
+*** Cross-panel selection
+
+Selecting an entry in =entry-list= (keyboard or mouse) sets =selected_entry=
+in the workspace. Any other panel displaying =entry-detail= or =file=
+subscribes to this variable and updates its content automatically.
+
+*Double-click* (or =Enter= / =Right= keybinding) in =entry-list=: if the other
+panel is closed, it is opened; its panel type is set to =entry-detail= (or
+=file= if the entry has a valid =mfr_path=).
+
+*Edit guard*: before =entry-detail= replaces its content with a new entry, it
+checks whether any field is being edited. If so, an alert is shown:
+="Unsaved changes — discard and switch entry? [Confirm / Cancel]"=. The switch
+proceeds only if the user confirms.
+
+*** Create entry
+
+=entry:create= opens a dialog with an empty field list. The user adds fields
+via the Field editor. Submitting calls =POST .../metadata=. On success the new
+entry is inserted into the active =entry-list= and selected.
 
 *** Batch set
 
-Available when one or more entries are selected. A dialog prompts for field
-name and value; submitting calls =POST .../set= with the active query (or an
-=Or= of the selected entry UUIDs).
+When =selected_entries= is non-empty, =entry:batch-set= opens a dialog for
+field name and value and calls =POST .../set= with an =Or= of the selected
+UUIDs.
 
-** Query
+** Message view
 
-*** Query builder view
+The =message= panel type is a scrollable, append-only log. It receives:
+- All messages posted to the status bar (with timestamp).
+- stdout/stderr of shell commands run via =!=.
+- Reconcile progress and results.
+- Any message posted by a script via =POST /gui/message= (also shown in the
+  status bar as a transient notification).
 
-A panel that lets the user construct a query visually (tree of nodes: leaf
-predicates, combinators, graph traversals) or by typing a DSL expression.
-Pressing the =query:execute= action calls =POST .../query= with =select: "*"=;
-results replace the entry list in the focused (or other) panel.
-
-*** Batch set from query results
-
-A /Set field on results/ button (or action =query:set-field=) opens the
-batch-set dialog and calls =POST .../set= with the current query object.
+The log is cleared by the =message:clear= command. It is not persisted across
+sessions.
 
 ** Reconcile
 
-The =reconcile:run= action calls =POST .../reconcile=. A spinner appears in
-the command zone while the request is pending. On completion a result summary
-is shown:
-- Command zone message: ="Reconcile: N created, M updated, P unchanged."=
-- A detailed result view opens in the focused panel listing candidate matches
-  for stale =mfr_path= entries, each with an /Accept/ or /Ignore/ action [v2].
+=reconcile:run= calls =POST .../reconcile=. A spinner appears in the status
+bar. On completion:
+- Status bar: ="Reconcile: N created, M updated, P unchanged."=
+- Full output (per-file actions and candidate stale matches) is appended to the
+  =message= panel type.
 
 ** Event log
 
-*** Log view
+*** Log view (=log= panel type)
 
 Calls =GET .../log= and displays revisions in reverse chronological order.
 Columns: =rev_id=, timestamp, operation count, =status=.
 
-Selecting a revision (keyboard: =Enter=) expands it to show individual
-operations.
+Selecting a revision (=Enter=) expands it to show individual operations.
 
-*** Revision actions
+*** Revision commands
 
-- /Rollback to here/ (action =log:rollback=) → confirmation → =POST .../rollback=.
-  After success the entry list is refreshed.
-- /Mark as checkpoint/ [v2] → =PATCH .../log/revisions/:rev_id=.
+- =log:rollback= → confirmation → =POST .../rollback=. Refreshes =entry-list=
+  afterwards.
+- =log:mark-checkpoint= [v2] → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log
 
-The =log:prune= action opens a dialog (target revision or "keep last N
-revisions count") and calls =POST .../log/prune=.
+=log:prune= opens a dialog (target revision or "keep last N revisions") and
+calls =POST .../log/prune=.
 
 ** Scripting / GUI API
 
 The GUI exposes a local HTTP API on =127.0.0.1:7524= (configurable via
-=--gui-port=). This API allows external scripts to drive the GUI: set panel
-content, display messages, and wait for user input. Scripts use any HTTP
-client; the API returns JSON.
+=--gui-port=). External scripts can drive the GUI: set panel types, display
+messages, wait for user input.
 
 All endpoints are available as long as the GUI is running, regardless of
 daemon connectivity.
 
 *** =PUT /gui/panels/:id/view=
 
-Sets the view displayed in panel =:id= (=1= or =2=) in the active workspace.
-An optional =tab= query parameter targets a specific workspace by its 1-based
-index (e.g. =?tab=2=); defaults to the active tab. If panel =2= does not
-exist yet in the target workspace, it is opened automatically.
+Sets the panel type of panel =:id= (=1= or =2=) in the active workspace.
+Optional =?tab=N= query parameter targets a specific workspace by 1-based
+index. If panel =2= does not exist, it is opened automatically.
 
-Request body — examples by view type:
+Request body examples:
 
 #+BEGIN_SRC json
 {"type": "entry-list"}
-{"type": "entry-detail", "uuid": "<metadata_uuid>"}
-{"type": "file",  "path": "/absolute/path/to/image.jpg"}
-{"type": "html",  "html": "<h1>Hello</h1><p>World</p>"}
-{"type": "query", "query": <Query>}
+{"type": "entry-detail"}
+{"type": "file", "path": "/absolute/path/to/image.jpg"}
+{"type": "message"}
+{"type": "log"}
+{"type": "my-custom-panel", "state": { ... }}
 #+END_SRC
 
-Response: =200 OK=, body ={}=.
-
-If the requested panel does not exist and cannot be opened (e.g. panels
-are at maximum), returns =400=.
+Response: =200 OK=, body ={}\=.
 
 *** =GET /gui/panels/:id/view=
 
-Returns the current view descriptor of panel =:id=.
-
-Response body mirrors the =PUT= request body, plus a =status= field
-(e.g. ="loading"= / ="ready"=).
+Returns the current panel type descriptor of panel =:id=, including a =status=
+field (="loading"= / ="ready"=).
 
 *** =POST /gui/message=
 
-Displays a message in the command zone (status mode).
+Posts a message to the status bar (transient) and appends it to the =message=
+panel type log.
 
 Request body:
 #+BEGIN_SRC json
-{"text": "← left image better, → right image better, Esc to stop",
- "timeout_ms": null}
+{"text": "← left  → right  Esc to stop", "timeout_ms": null}
 #+END_SRC
 
-=timeout_ms=: null → message persists until the next message or explicit
-clear; integer → auto-clears after that many milliseconds.
-
-Response: =200 OK=, body ={}=.
+=timeout_ms=: null → status bar message persists until the next message;
+integer → auto-clears after that many milliseconds.
 
 *** =POST /gui/input=
 
-Waits for the user to press one of the listed keys and returns it. This call
-*blocks* until a matching key is pressed or the timeout expires. The GUI
-enters a modal input-wait state: only the listed keys (plus =Escape= which
-always cancels) are forwarded; all other keystrokes are suppressed and shown
-as ignored in the command zone.
+Waits for the user to press one of the listed keys. *Blocks* until a match or
+timeout. The GUI enters a modal input-wait state; non-listed keys are
+suppressed and noted in the status bar.
 
-Only one =POST /gui/input= can be in flight at a time. A second concurrent
-call returns =409 Conflict= with body ={"error": "input lock held"}=.
+Only one =POST /gui/input= at a time; concurrent calls return =409=.
 
 Request body:
 #+BEGIN_SRC json
-{
-  "keys": ["left", "right", "escape"],
-  "timeout_ms": null
-}
+{"keys": ["left", "right", "escape"], "timeout_ms": null}
 #+END_SRC
 
-Key names follow the same format as the keybinding config (e.g. ="left"=,
-="right"=, ="up"=, ="down"=, ="enter"=, ="escape"=, ="a"=, ="ctrl+z"=).
-
-=timeout_ms=: null → wait indefinitely; integer → return after that many ms.
-
-Response (key pressed):
-#+BEGIN_SRC json
-{"event": "key", "key": "left"}
-#+END_SRC
-
-Response (timeout):
-#+BEGIN_SRC json
-{"event": "timeout"}
-#+END_SRC
-
-Response (GUI closing during wait):
-#+BEGIN_SRC json
-{"event": "closed"}
-#+END_SRC
+Responses: ={"event": "key", "key": "left"}= / ={"event": "timeout"}= /
+={"event": "closed"}=.
 
 *** =POST /gui/prompt=
 
-Activates the command zone in input mode with a custom prompt and waits for
-the user to type text and press =Enter= (or =Escape= to cancel). Blocks like
-=POST /gui/input=; mutually exclusive with it (same input lock).
+Activates the command input with a custom prompt. Blocks until =Enter= or
+=Escape=. Mutually exclusive with =POST /gui/input= (same lock).
 
-Request body:
-#+BEGIN_SRC json
-{"prompt": "Enter a rating (1-5): ", "timeout_ms": null}
-#+END_SRC
+Request body: ={"prompt": "Enter a rating (1-5): ", "timeout_ms": null}=
 
-Response (confirmed):
-#+BEGIN_SRC json
-{"event": "confirm", "text": "4"}
-#+END_SRC
-
-Response (cancelled via =Escape=):
-#+BEGIN_SRC json
-{"event": "cancel"}
-#+END_SRC
+Responses: ={"event": "confirm", "text": "4"}= / ={"event": "cancel"}=.
 
 *** =GET /gui/status=
 
-Returns the current GUI state: tab list, active tab, panels, active repo,
-daemon connectivity, input lock status.
+Returns the current GUI state.
 
-Response body:
 #+BEGIN_SRC json
 {
   "tabs": [
     {
-      "index": 1,
-      "name": "Tab 1",
-      "active": true,
+      "index": 1, "name": "Tab 1", "active": true,
       "panels": [
-        {"id": 1, "view": {"type": "entry-list"}, "focused": true},
-        {"id": 2, "view": {"type": "file", "path": "/photos/a.jpg"}}
-      ]
-    },
-    {
-      "index": 2,
-      "name": "Query workspace",
-      "active": false,
-      "panels": [
-        {"id": 1, "view": {"type": "query"}, "focused": true}
+        {"id": 1, "type": "entry-list", "focused": true},
+        {"id": 2, "type": "file"}
       ]
     }
   ],
@@ -551,11 +592,7 @@ Response body:
 
 #+BEGIN_SRC bash
 #!/usr/bin/env bash
-# Randomly pick two images, ask the user to choose, record the preferred one.
-
 GUI="http://127.0.0.1:7524"
-DAEMON="http://127.0.0.1:7523"
-REPO="<repo_uuid>"
 
 while true; do
   A=$(find /photos -name "*.jpg" | shuf -n1)
@@ -585,47 +622,49 @@ done
 
 * Open questions
 
-** Framework choice
+** Frontend framework
 
-No GUI framework has been selected. The scripting use case (=file= and =html=
-views, custom styles) favours a web renderer (Tauri/WebView) because file
-preview and HTML rendering are native to the browser engine, and CSS theming
-requires no extra work. A native renderer (egui, Iced) would need explicit
-implementations for image decoding, HTML rendering, and a theme DSL.
+Tauri is decided. The JavaScript/TypeScript frontend framework (Svelte, React,
+Vue, vanilla JS, etc.) is not yet chosen. A lightweight option that compiles
+to vanilla JS with no runtime is preferred.
 
-** Layout (sidebar vs. tabs)
+** =metafolder= API injection mechanism
 
-The two-panel model is specified. Whether the panels are complemented by a
-persistent sidebar (repo/folder tree) or a tab bar for view switching is not
-decided. A sidebar would occupy space from one panel; tabs would overlay the
-panel header.
+Panel types need access to =window.metafolder=. Two options:
+- Each panel type is an =<iframe>=; the GUI communicates via =postMessage=.
+- Panel types are loaded as web components or modules in the same document,
+  sharing the JS runtime directly.
+The choice affects isolation (iframes are sandboxed) vs. simplicity.
 
-** File preview formats
+** Media codec support
 
-The =file= view should support at minimum JPEG/PNG images and plain text.
-Additional formats (PDF, SVG, video thumbnails, audio waveforms) are deferred
-to v2.
+The =file= panel type uses HTML5 =<audio>= / =<video>=; supported formats
+depend on the system WebView (WebKit2GTK on Linux). H.264 may require
+=gst-plugins-bad= or =gst-libav= on some Arch configurations.
+
+** Panel type update strategy
+
+Built-in panel types ship as editable examples. When the GUI updates, new
+default versions must not silently overwrite user edits. A diff/merge workflow
+is needed (exact mechanism TBD).
 
 ** Pagination
 
-=GET /metadata= and =POST /query= return all results in one response. For
-large repos the entry list must either use virtual scrolling or request the
-daemon's (not yet designed) cursor-based pagination.
+=GET /metadata= and =POST /query= return all results in one response.
+=entry-list= must use virtual scrolling or wait for daemon-side cursor
+pagination.
 
 ** Path display
 
 =TreeRef= values are =(parent_uuid, name)= pairs. Displaying a full path
-requires walking the parent chain. The GUI must decide whether to resolve
-paths eagerly (one extra request per entry) or lazily (on hover/expand).
+requires walking the parent chain. Resolution strategy (eager vs. lazy) is TBD.
 
 ** GUI API port persistence
 
-Whether the GUI API port (default 7524) is persisted to a well-known file
-(e.g. =~/.run/metafolder-gui.port=) so that scripts can discover it without
-hard-coding the port is not yet decided.
+Whether the GUI API port (default 7524) is written to a well-known file so
+scripts can discover it without hard-coding is not yet decided.
 
 ** Concurrent script sessions
 
-The input lock allows only one =POST /gui/input= at a time. Whether multiple
-scripts can coexist (one holds the lock, others queue or fail immediately) is
-not specified for v1.
+Only one =POST /gui/input= at a time. Whether additional sessions queue or
+fail immediately is not specified for v1.
