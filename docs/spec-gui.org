@@ -117,31 +117,39 @@ overrides; it does not need to list every binding. The GUI engine supplies all
 defaults separately and merges them at startup, with the user file taking
 precedence.
 
-Each keybinding has an optional =when= clause that restricts when it fires.
-Four scope levels exist, in decreasing priority:
+Each keybinding has two independent scope dimensions:
 
-| Scope     | =when= value          | Active when                                               |
-|-----------+-----------------------+-----------------------------------------------------------|
-| =always=  | =always=              | Everywhere, including inside text inputs. Use sparingly.  |
-| =editing= | =editing=             | A text input is focused (command input or field editor).  |
-| =local=   | =<panel-type-name>=   | The named panel type is focused; no text input focused.   |
-| =global=  | absent                | No text input focused; no panel-type restriction.         |
+- =when= (optional) — restricts the binding to a specific panel type. Absent
+  means the binding is *global* (fires regardless of which panel type is
+  focused). A panel type name (e.g. =entry-list=) makes it *local* (fires
+  only when that panel type is focused).
+- =text-input= (boolean, default =false=) — whether the binding also fires
+  when a text input is focused (command input or field editor). =false= means
+  the binding is suppressed while the user is typing; =true= means it fires
+  regardless.
 
-When multiple bindings match the same key, =always= wins over =editing=/=local=,
-which win over =global=.
+The two dimensions combine independently:
+
+| =when=             | =text-input= | Fires when                                          |
+|--------------------+--------------+-----------------------------------------------------|
+| absent             | =false=      | Any panel focused; no text input active (default)   |
+| absent             | =true=       | Any panel focused; even inside a text input         |
+| =<panel-type>=     | =false=      | Named panel focused; no text input active           |
+| =<panel-type>=     | =true=       | Named panel focused; even inside a text input       |
+
+When the same key matches several bindings, a more specific binding wins: local
+over global, =text-input = false= over =text-input = true= (the less permissive
+one takes precedence when both would fire).
 
 Config file examples:
 
 #+BEGIN_SRC toml
-"escape"  = { command = "editing:unfocus",          when = "always"     }
-"ctrl+a"  = { command = "editing:goto-line-start",  when = "editing"    }
-"j"       = { command = "entry-list:next",           when = "entry-list" }
-"ctrl+t"  = { command = "tab:new"                                        }
+"escape"  = { command = "editing:unfocus",         text-input = true              }
+"ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
+"j"       = { command = "entry-list:next",         when = "entry-list"            }
+"ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
+"ctrl+t"  = { command = "tab:new"                                                  }
 #+END_SRC
-
-The =editing= scope covers all text inputs uniformly: the command input and
-every field editor in =entry-detail=, so text-editing keybindings are defined
-once and work everywhere.
 
 Panel types may suggest default keybindings via =metafolder.addKeybinding=;
 these are applied only when the user has no conflicting binding configured.
@@ -151,8 +159,8 @@ these are applied only when the user has no conflicting binding configured.
 A read-only line at the very bottom of the window, always visible and never
 focused. Displays status messages, error notifications, the name of the last
 executed command (dim text), and a spinner during long operations. Content is
-global (shared across all workspaces). Messages auto-clear after a
-configurable timeout (default 5 s).
+*per-workspace*: switching tabs shows the status bar of the active workspace.
+Messages auto-clear after a configurable timeout (default 5 s).
 
 ** Command input
 
@@ -193,13 +201,18 @@ session can set panel types, display messages in the status bar, activate the
 command input with a prompt, and block waiting for user key input. Only one
 script session may hold the input-wait lock at a time.
 
-** Repo selector
+** Repo indicator
 
-A UI element that shows the active repository of the current workspace.
-Selecting a different repository opens a new workspace tab with that repo as
-=active_repo=. If the current workspace has no active repo (=null=, e.g. at
-startup), the selection sets it in place without opening a new tab. Populated
-from =GET /repos=.
+A read-only label in the panel header area showing the name of the active
+repository for the current workspace. It is purely informational; the user
+cannot change =active_repo= through it.
+
+To open a repository, the user uses =repos:open= (e.g. via a menu or
+keybinding), which switches the focused panel to the =repos= panel type where
+the desired repo can be selected or a new one initialised. Selecting a repo
+in the =repos= panel type opens a new workspace tab with that repo as
+=active_repo=. If the current workspace already has =active_repo = null=
+(e.g. at startup), the selection sets it in place instead.
 
 * GUI
 
@@ -265,7 +278,7 @@ Always-visible read-only line at the bottom. Shows:
 - The last executed command name (dim text).
 - A spinner during long-running operations (reconcile, shell commands).
 
-Content is global (not per-workspace).
+Content is per-workspace; each tab has its own status bar history.
 
 ** Command input
 
@@ -286,6 +299,7 @@ Behaviours:
 | Command              | Description                                    |
 |----------------------+------------------------------------------------|
 | =daemon:set-url=     | Change daemon URL                              |
+| =repos:open=         | Switch focused panel to =repos= for repo selection |
 | =repos:init=         | Open init-repo form                            |
 | =repos:load=         | Open load-repo form                            |
 | =tab:new=            | Open a new workspace tab                       |
@@ -307,10 +321,12 @@ Behaviours:
 | =log:prune=          | Prune the event log                            |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =quit=               | Exit the GUI                                   |
-| =editing:unfocus=    | Remove focus from the active text input (scope: =always=) |
-| =editing:confirm=    | Confirm the current text input (scope: =editing=) |
-| =editing:goto-line-start= | Move cursor to start of line (scope: =editing=) |
-| =editing:goto-line-end=   | Move cursor to end of line (scope: =editing=)   |
+| =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
+| =editing:confirm=         | Confirm the current text input (=text-input = true=)          |
+| =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
+| =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
+| =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
+| =message:clear=           | Clear the =message= panel log for this workspace              |
 
 ** Keyboard navigation
 
@@ -416,12 +432,11 @@ metafolder.commands.register('my-panel:global-action', {
 })
 
 // Suggest default keybindings (applied only if no conflict in user config).
-// The optional third argument overrides the when clause; defaults to the
-// command's scope.
+// Optional third argument: { when, textInput } overrides.
 metafolder.addKeybinding('my-panel:change-mode list', 'ctrl+l')
 metafolder.addKeybinding('my-panel:change-mode grid', 'ctrl+g')
-metafolder.addKeybinding('editing:my-text-action',    'ctrl+e', 'editing')
-metafolder.addKeybinding('my-panel:urgent',           'ctrl+u', 'always')
+metafolder.addKeybinding('my-panel:edit-text', 'ctrl+e', { textInput: true })
+metafolder.addKeybinding('editing:unfocus',    'escape', { textInput: true })
 #+END_SRC
 
 Registered commands appear in the command input autocomplete alongside
@@ -478,9 +493,11 @@ to =workspace.selected_entry=. Other panels update reactively (see
 
 *** =entry-detail= panel type
 
-Displays all fields of the entry in =selected_entry= (calls
-=GET .../metadata/:uuid=). Each field row shows name, value, an edit button,
-and a delete button.
+When =selected_entry= is =null=, displays a centred "No entry selected"
+message and the /New entry/ button.
+
+Otherwise calls =GET .../metadata/:uuid= and displays all fields. Each field
+row shows name, value, an edit button, and a delete button.
 
 Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).
@@ -519,12 +536,6 @@ checks whether any field is being edited. If so, an alert is shown:
 ="Unsaved changes — discard and switch entry? [Confirm / Cancel]"=. The switch
 proceeds only if the user confirms.
 
-*** Create entry
-
-=entry:create= opens a dialog with an empty field list. The user adds fields
-via the Field editor. Submitting calls =POST .../metadata=. On success the new
-entry is inserted into the active =entry-list= and selected.
-
 *** Batch set
 
 When =selected_entries= is non-empty, =entry:batch-set= opens a dialog for
@@ -533,12 +544,13 @@ UUIDs.
 
 ** Message view
 
-The =message= panel type is a scrollable, append-only log. It receives:
-- All messages posted to the status bar (with timestamp).
-- stdout/stderr of shell commands run via =!=.
-- Reconcile progress and results.
-- Any message posted by a script via =POST /gui/message= (also shown in the
-  status bar as a transient notification).
+The =message= panel type is a scrollable, append-only log, *per-workspace*.
+It receives:
+- All messages posted to the active workspace's status bar (with timestamp).
+- stdout/stderr of shell commands run via =!= in this workspace.
+- Reconcile progress and results triggered from this workspace.
+- Any message posted by a script via =POST /gui/message= targeting this
+  workspace (also shown in the status bar as a transient notification).
 
 The log is cleared by the =message:clear= command. It is not persisted across
 sessions.
@@ -606,8 +618,9 @@ field (="loading"= / ="ready"=).
 
 *** =POST /gui/message=
 
-Posts a message to the status bar (transient) and appends it to the =message=
-panel type log.
+Posts a message to the active workspace's status bar (transient) and appends
+it to that workspace's =message= panel type log. An optional =?tab=N=
+parameter targets a specific workspace.
 
 Request body:
 #+BEGIN_SRC json
@@ -619,9 +632,15 @@ integer → auto-clears after that many milliseconds.
 
 *** =POST /gui/input=
 
-Waits for the user to press one of the listed keys. *Blocks* until a match or
-timeout. The GUI enters a modal input-wait state; non-listed keys are
-suppressed and noted in the status bar.
+Registers an input wait and blocks until the =answer:send= command is
+executed (by any means: a temporary binding installed by this request, a
+permanent user binding, or a manual invocation via the command input).
+No keystrokes are suppressed; all normal shortcuts continue to work.
+
+The optional =keys= array installs temporary global keybindings for the
+duration of the wait: each listed key is bound to =answer:send <key>=
+(scope: global, =text-input = false=). These bindings are removed when the
+request resolves or times out.
 
 Only one =POST /gui/input= at a time; concurrent calls return =409=.
 
@@ -630,7 +649,7 @@ Request body:
 {"keys": ["left", "right", "escape"], "timeout_ms": null}
 #+END_SRC
 
-Responses: ={"event": "key", "key": "left"}= / ={"event": "timeout"}= /
+Responses: ={"event": "answer", "value": "left"}= / ={"event": "timeout"}= /
 ={"event": "closed"}=.
 
 *** =POST /gui/prompt=
@@ -659,7 +678,7 @@ Returns the current GUI state.
   ],
   "active_repo": "<repo_uuid>",
   "daemon_connected": true,
-  "input_lock": false
+  "input_wait_active": false
 }
 #+END_SRC
 
@@ -730,11 +749,15 @@ Built-in panel types ship as editable examples. When the GUI updates, new
 default versions must not silently overwrite user edits. A diff/merge workflow
 is needed (exact mechanism TBD).
 
-** Inline form navigation
+** Commands targeting an absent panel type
 
-=repos:init= and =repos:load= transform the focused panel into a form.
-Behaviour when the user switches panel type or closes the panel mid-form
-(unsaved data) is not yet specified.
+Several commands implicitly target a specific panel type (=entry:create=
+requires =entry-detail=; =entry:delete= requires a selected entry; inline
+forms require some panel to host them). When the required panel type is not
+open in the current workspace, the behaviour is unspecified: open it
+automatically in the focused panel, in the other panel, or show an error? The
+same question applies when the user switches panel type mid-form (unsaved
+data). A general policy needs to be defined before implementation.
 
 ** Pagination
 
