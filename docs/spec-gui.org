@@ -26,24 +26,34 @@ decided.
 
 ** Workspace
 
-The complete state of one tab: panel count (1 or 2), each panel's current
-panel type and its internal state (scroll position, query draft, display mode,
-etc.), the panel width ratio, the command input content, and the workspace
-variables. Switching tabs swaps workspaces atomically; no state is lost. Each
-workspace is independent. Workspace state is not persisted across sessions;
-the GUI starts fresh each time.
+A self-contained state container. Each workspace holds: the state of every
+panel type that has been loaded in it during the session (scroll position,
+query draft, display mode, etc.), the workspace variables, and the status bar
+history. Panel types retain their state for the lifetime of the session —
+switching to a different panel type and back restores the previous state.
+Workspace state is not persisted across sessions; the GUI starts fresh each
+time.
 
 The =active_repo= of a workspace is set when the workspace is created and
-cannot be changed. To work with a different repository, a new workspace (tab)
-is opened. This prevents =selected_entry= and other workspace variables from
-becoming invalid due to a repo switch.
+cannot be changed. To work with a different repository, a new workspace is
+created (see [[*Tab bar]]). This prevents =selected_entry= and other workspace
+variables from becoming invalid due to a repo switch.
 
-** Panel
+** Panel slot
 
-A resizable content area belonging to a workspace. Each workspace displays one
-or two panels side by side (single panel at creation; the user can open a
-second). Panels are separated by a draggable divider; their relative width
-ratio is part of the workspace state.
+One of two fixed content areas in the window (left and right). Each slot is
+assigned exactly one workspace and displays one panel type from that workspace
+at a time. A workspace can be assigned to zero, one, or both slots
+simultaneously.
+
+When both slots display the same workspace, each slot independently selects
+which panel type to show. This enables, for example, =entry-list= on the left
+and =file= on the right within one workspace, sharing its variables
+(=selected_entry=, etc.).
+
+The two slots are separated by a draggable divider; the width ratio is part of
+the window state (not per-workspace). The focused slot has a visible indicator
+(border highlight — theme-controlled) and receives keyboard input.
 
 ** Panel type
 
@@ -67,10 +77,14 @@ Users can add custom panel types by creating a new directory under
 =~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside
 built-in types in the panel type selector.
 
+Each panel type retains its full state for the lifetime of the session, even
+when not displayed. Switching to another panel type and back restores the
+previous state unchanged.
+
 ** Display mode
 
 The visual representation used within a panel type that supports several
-layouts. Stored as part of the panel's state in the workspace.
+layouts. Stored as part of the panel type's state in the workspace.
 
 The =entry-list= panel type supports at minimum:
 - =table= — tabular list with configurable columns.
@@ -78,8 +92,8 @@ The =entry-list= panel type supports at minimum:
 
 ** Workspace variables
 
-A reactive, per-workspace key-value store shared across all panels in the
-workspace. Panel types read and write these variables to communicate without
+A reactive, per-workspace key-value store shared across all panel types
+loaded in the workspace. Panel types read and write these variables to communicate without
 being directly coupled to each other.
 
 Standard variables:
@@ -159,16 +173,19 @@ these are applied only when the user has no conflicting binding configured.
 A read-only line at the very bottom of the window, always visible and never
 focused. Displays status messages, error notifications, the name of the last
 executed command (dim text), and a spinner during long operations. Content is
-*per-workspace*: switching tabs shows the status bar of the active workspace.
-Messages auto-clear after a configurable timeout (default 5 s).
+*per-workspace*. When both slots display the same workspace, one status bar is
+shown; when the two slots display different workspaces, two status bars are
+shown (one per slot). Messages auto-clear after a configurable timeout
+(default 5 s).
 
 ** Command input
 
 A single-line text input that appears just above the status bar when activated
 (configurable keybinding, default suggestion: =:=). Dismissed with =Escape=.
-Content (text and cursor position) is per-workspace: switching tabs restores
-the exact state that was active in that workspace, including a partial command
-being typed.
+There is one command input; it targets the focused slot's workspace. Content
+(text and cursor position) is per-workspace: switching the focused slot to a
+different workspace restores the command input state of that workspace,
+including any partial command being typed.
 
 Accepts:
 - A command name (with inline completion; =Tab= accepts the first suggestion)
@@ -203,16 +220,17 @@ script session may hold the input-wait lock at a time.
 
 ** Repo indicator
 
-A read-only label in the panel header area showing the name of the active
-repository for the current workspace. It is purely informational; the user
+A read-only label in the slot's header bar showing the name of the active
+repository for that slot's workspace. It is purely informational; the user
 cannot change =active_repo= through it.
 
 To open a repository, the user uses =repos:open= (e.g. via a menu or
-keybinding), which switches the focused panel to the =repos= panel type where
+keybinding), which switches the focused slot to the =repos= panel type where
 the desired repo can be selected or a new one initialised. Selecting a repo
-in the =repos= panel type opens a new workspace tab with that repo as
-=active_repo=. If the current workspace already has =active_repo = null=
-(e.g. at startup), the selection sets it in place instead.
+in the =repos= panel type opens a new workspace (tab) with that repo as
+=active_repo=, assigned to the focused slot. If the focused slot's workspace
+already has =active_repo = null= (e.g. at startup), the selection sets it
+in place instead.
 
 * GUI
 
@@ -231,60 +249,72 @@ No authentication: the daemon is local-only and requires none.
 
 ** Tab bar
 
-A row of tabs at the very top of the window. Each tab represents one
-workspace. Clicking a tab (or pressing its keybinding) switches workspaces
-atomically: panels, their panel types, the panel divider position, and the
-command input are all restored.
+A row of tabs at the top of the window. Each tab represents one workspace.
+Tabs have a short user-editable name (default: ="Workspace 1"=,
+="Workspace 2"=, etc.). Tab state is not persisted across sessions.
 
-Tabs have a short user-editable name (default: ="Tab 1"=, ="Tab 2"=, etc.).
-Tab state is not persisted across sessions.
+Color indicators show the current slot assignments:
+- *Green*: workspace displayed in the focused slot.
+- *Red*: workspace displayed in the non-focused slot.
+- *Green + red*: workspace displayed in both slots simultaneously.
+- No color: workspace not currently visible in either slot.
+
+*Left-click* on a tab: assigns that workspace to the focused slot (the slot
+keeps focus). *Right-click*: assigns that workspace to the non-focused slot.
 
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
-| =tab:new=         | Open a new workspace tab (default panel type: entry-list) |
-| =tab:close=       | Close the active tab (not available when only one remains)|
-| =tab:rename=      | Rename the active tab (prompts via command input)         |
-| =tab:next=        | Switch to the next tab (wraps around)                     |
-| =tab:prev=        | Switch to the previous tab (wraps around)                 |
-| =tab:goto-N=      | Switch directly to tab N                                  |
+| =tab:new=         | Create a new workspace and assign it to the focused slot  |
+| =tab:close=       | Close the focused slot's workspace (removes its tab)      |
+| =tab:rename=      | Rename the focused slot's workspace                       |
+| =tab:next=        | Assign the next workspace to the focused slot (wraps)     |
+| =tab:prev=        | Assign the previous workspace to the focused slot         |
+| =tab:goto-N=      | Assign workspace N to the focused slot                    |
 
 Default keybinding suggestions: =alt+t= for =tab:new=, =alt+w= for
 =tab:close=, =alt+1= … =alt+9= for =tab:goto-N=.
 
 ** Layout and panels
 
-Each workspace's area (below the tab bar) is divided into:
-- *Main area*: one or two panels side by side.
-- *Command input*: a single line just above the status bar, visible only when
-  active.
-- *Status bar*: a single read-only line at the very bottom, always visible.
+The window area (below the tab bar) is divided into:
+- *Two panel slots* (left and right), each assigned one workspace (see
+  [[*Panel slot]]). At startup only the left slot is visible.
+- *Command input*: a single line just above the status bar(s), visible only
+  when active.
+- *Status bar*: one or two read-only lines at the very bottom (see
+  [[*Status bar]]).
 
-At startup one panel is shown. =panel:split= opens a second panel mirroring
-the first. =panel:close= closes the focused panel (not available when only
-one remains). The focused panel receives keyboard navigation; focus switches
-via =panel:focus-next=. The focused panel has a visible indicator (border
-highlight — controlled by the theme).
+=panel:split= shows the right slot. If no workspace was previously assigned to
+it, a new workspace is created (inheriting =active_repo= from the focused
+workspace). =panel:close= hides the non-focused slot; the workspace remains in
+the tab bar. The focused slot has a visible indicator (border highlight —
+theme-controlled); focus switches via =panel:focus-next=.
 
-Each panel has a thin header bar showing the active panel type name. The
-header contains a dropdown that lists all available panel types (built-in and
-custom); selecting one switches the panel. The same switch is available via
-the =panel:set-type <name>= command and configurable keybindings.
+Each slot has a thin header bar showing the current panel type name and the
+repo indicator. The header contains a dropdown that lists all available panel
+types (built-in and custom); selecting one switches the displayed panel type
+for that slot. The same switch is available via =panel:set-type <name>= and
+configurable keybindings.
 
 ** Status bar
 
-Always-visible read-only line at the bottom. Shows:
+Always-visible read-only area at the bottom. Shows:
 - Status messages after commands (e.g. ="Entry deleted."=).
 - Error messages from failed operations.
 - The last executed command name (dim text).
 - A spinner during long-running operations (reconcile, shell commands).
 
-Content is per-workspace; each tab has its own status bar history.
+Content is per-workspace. When both slots display the same workspace, one
+status bar is shown. When the two slots display different workspaces, two
+status bars are shown (one per slot, each reflecting its own workspace).
 
 ** Command input
 
 Hidden by default; activated by a configurable keybinding (default: =:=).
-Shows a prompt character and a text field. Dismissed with =Escape=. Content
-is per-workspace.
+Shows a prompt character and a text field above the status bar(s). Dismissed
+with =Escape=. There is one command input; it targets the focused slot's
+workspace. Content is per-workspace: switching the focused slot to a different
+workspace restores that workspace's command input state.
 
 Behaviours:
 - Typing a command name + =Enter= → invokes the command (=Tab= completes).
@@ -302,16 +332,16 @@ Behaviours:
 | =repos:open=         | Switch focused panel to =repos= for repo selection |
 | =repos:init=         | Open init-repo form                            |
 | =repos:load=         | Open load-repo form                            |
-| =tab:new=            | Open a new workspace tab                       |
-| =tab:close=          | Close the active tab                           |
-| =tab:rename=         | Rename the active tab                          |
-| =tab:next=           | Switch to the next tab                         |
-| =tab:prev=           | Switch to the previous tab                     |
-| =tab:goto-N=         | Switch to tab N                                |
-| =panel:split=        | Open second panel                              |
-| =panel:close=        | Close focused panel                            |
-| =panel:focus-next=   | Move focus to the other panel                  |
-| =panel:set-type <name>= | Switch focused panel to the named panel type|
+| =tab:new=            | Create a new workspace, assign to focused slot |
+| =tab:close=          | Close the focused slot's workspace             |
+| =tab:rename=         | Rename the focused slot's workspace            |
+| =tab:next=           | Assign the next workspace to the focused slot  |
+| =tab:prev=           | Assign the previous workspace to the focused slot |
+| =tab:goto-N=         | Assign workspace N to the focused slot         |
+| =panel:split=        | Show the right slot (create workspace if unassigned) |
+| =panel:close=        | Hide the non-focused slot (workspace preserved) |
+| =panel:focus-next=   | Move focus to the other slot                   |
+| =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =entry:create=       | Clear =entry-detail= to create a new entry     |
 | =entry:delete=       | Delete the selected entry                      |
 | =entry-list:set-mode <mode>= | Switch entry-list display mode        |
@@ -335,9 +365,9 @@ Every command is reachable from the keyboard. No command requires the mouse.
 
 Within =entry-list=:
 - =Up= / =Down= move the selection (updates =selected_entry=).
-- =Enter= or =Right= opens the entry in the other panel (or opens the other
-  panel if it was closed), changing its panel type to =entry-detail= (or =file=
-  if the entry has a known file path). See [[*Cross-panel selection]].
+- =Enter= or =Right= switches the other slot to =entry-detail= (or =file= if
+  the entry has a valid =mfr_path=), opening the slot if hidden. See
+  [[*Cross-panel selection]].
 - =Space= toggles selection for multi-select (updates =selected_entries=).
 
 Within =entry-detail=:
@@ -464,17 +494,17 @@ Repo indicator and the =repos= panel type.
 =repos:init= is a local command of the =repos= panel type (scope:
 =when = "repos"=). It transforms the =repos= panel to show an inline form
 with =root= (required) and =metafolder= (optional, for external database).
-Submitting calls =POST /repos/init=. On success a new workspace tab is opened
-with the new repo as =active_repo=. On =409= an error message appears in the
-status bar and the form remains open.
+Submitting calls =POST /repos/init=. On success a new workspace is created
+with the new repo as =active_repo= and assigned to the focused slot. On =409=
+an error message appears in the status bar and the form remains open.
 
 *** Load repo
 
 =repos:load= is a local command of the =repos= panel type (scope:
 =when = "repos"=). It transforms the =repos= panel to show an inline form
 with mutually exclusive =root= or =metafolder= inputs. Submitting calls
-=POST /repos/load=. On success a new workspace tab is opened with the loaded
-repo as =active_repo=.
+=POST /repos/load=. On success a new workspace is created with the loaded
+repo as =active_repo= and assigned to the focused slot.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:init= / =repos:load= from there.
@@ -532,12 +562,15 @@ Shows a "no preview available" message for unsupported formats.
 *** Cross-panel selection
 
 Selecting an entry in =entry-list= (keyboard or mouse) sets =selected_entry=
-in the workspace. Any other panel displaying =entry-detail= or =file=
-subscribes to this variable and updates its content automatically.
+in the workspace. Any slot displaying =entry-detail= or =file= from the same
+workspace subscribes to this variable and updates its content automatically.
+Slots showing different workspaces are unaffected.
 
-*Double-click* (or =Enter= / =Right= keybinding) in =entry-list=: if the other
-panel is closed, it is opened; its panel type is set to =entry-detail= (or
-=file= if the entry has a valid =mfr_path=).
+*Double-click* (or =Enter= / =Right= keybinding) in =entry-list=: if the
+other slot shows the same workspace and is displaying a different panel type,
+it is switched to =entry-detail= (or =file= if the entry has a valid
+=mfr_path=). If the other slot is hidden, it is opened (showing the same
+workspace).
 
 *Edit guard*: before =entry-detail= replaces its content with a new entry, it
 checks whether any field is being edited. If so, an alert is shown:
@@ -600,11 +633,53 @@ messages, wait for user input.
 All endpoints are available as long as the GUI is running, regardless of
 daemon connectivity.
 
-*** =PUT /gui/panels/:id/view=
+*** =GET /gui/workspaces=
 
-Sets the panel type of panel =:id= (=1= or =2=) in the active workspace.
-Optional =?tab=N= query parameter targets a specific workspace by 1-based
-index. If panel =2= does not exist, it is opened automatically.
+Returns the list of all open workspaces.
+
+#+BEGIN_SRC json
+[
+  {"id": "ws-1", "name": "Workspace 1", "active_repo": "<repo_uuid>"},
+  {"id": "ws-2", "name": "Workspace 2", "active_repo": null}
+]
+#+END_SRC
+
+*** =POST /gui/workspaces=
+
+Creates a new workspace. Returns its id.
+
+Response: ={"id": "ws-3"}=
+
+*** =DELETE /gui/workspaces/:id=
+
+Closes a workspace. If it was assigned to one or both slots, those slots are
+unassigned. Returns =204 No Content=.
+
+*** =GET /gui/layout=
+
+Returns the current slot assignments.
+
+#+BEGIN_SRC json
+{"left": "ws-1", "right": "ws-2"}
+#+END_SRC
+
+A slot value of =null= means the slot is hidden (no workspace assigned).
+
+*** =PUT /gui/layout=
+
+Assigns workspaces to slots. Only the keys present in the request body are
+updated; omitted keys are unchanged.
+
+#+BEGIN_SRC json
+{"left": "ws-1", "right": "ws-2"}
+#+END_SRC
+
+Setting a slot to =null= hides it. Returns =200 OK=, body ={}=.
+
+*** =PUT /gui/panels/:slot/view=
+
+Sets the panel type displayed in slot =:slot= (=left= or =right=). If the slot
+is hidden, it is shown first.
 
 Request body examples:
 
@@ -617,18 +692,19 @@ Request body examples:
 {"type": "my-custom-panel", "state": { ... }}
 #+END_SRC
 
-Response: =200 OK=, body ={}\=.
+Response: =200 OK=, body ={}=.
 
-*** =GET /gui/panels/:id/view=
+*** =GET /gui/panels/:slot/view=
 
-Returns the current panel type descriptor of panel =:id=, including a =status=
-field (="loading"= / ="ready"=).
+Returns the current panel type descriptor for slot =:slot=, including a
+=status= field (="loading"= / ="ready"=).
 
 *** =POST /gui/message=
 
-Posts a message to the active workspace's status bar (transient) and appends
-it to that workspace's =message= panel type log. An optional =?tab=N=
-parameter targets a specific workspace.
+Posts a message to a workspace's status bar (transient) and appends it to
+that workspace's =message= panel type log. An optional =?workspace_id=<id>=
+query parameter targets a specific workspace; defaults to the focused slot's
+workspace.
 
 Request body:
 #+BEGIN_SRC json
@@ -677,16 +753,14 @@ Returns the current GUI state.
 
 #+BEGIN_SRC json
 {
-  "tabs": [
-    {
-      "index": 1, "name": "Tab 1", "active": true,
-      "panels": [
-        {"id": 1, "type": "entry-list", "focused": true},
-        {"id": 2, "type": "file"}
-      ]
-    }
+  "workspaces": [
+    {"id": "ws-1", "name": "Workspace 1", "active_repo": "<repo_uuid>"},
+    {"id": "ws-2", "name": "Workspace 2", "active_repo": null}
   ],
-  "active_repo": "<repo_uuid>",
+  "layout": {
+    "left":  {"workspace_id": "ws-1", "panel_type": "entry-list", "focused": true},
+    "right": {"workspace_id": "ws-2", "panel_type": "file",        "focused": false}
+  },
   "daemon_connected": true,
   "input_wait_active": false
 }
@@ -698,17 +772,28 @@ Returns the current GUI state.
 #!/usr/bin/env bash
 GUI="http://127.0.0.1:7524"
 
+# Create two dedicated workspaces for the comparison
+WS_LEFT=$(curl -s -X POST $GUI/gui/workspaces \
+               -H "Content-Type: application/json" -d '{}' | jq -r .id)
+WS_RIGHT=$(curl -s -X POST $GUI/gui/workspaces \
+                -H "Content-Type: application/json" -d '{}' | jq -r .id)
+
+# Assign them to the two panel slots
+curl -s -X PUT $GUI/gui/layout \
+     -H "Content-Type: application/json" \
+     -d "{\"left\": \"$WS_LEFT\", \"right\": \"$WS_RIGHT\"}"
+
 while true; do
   A=$(find /photos -name "*.jpg" | shuf -n1)
   B=$(find /photos -name "*.jpg" | shuf -n1)
 
-  curl -s -X PUT $GUI/gui/panels/1/view \
+  curl -s -X PUT $GUI/gui/panels/left/view \
        -H "Content-Type: application/json" \
        -d "{\"type\":\"file\",\"path\":\"$A\"}"
-  curl -s -X PUT $GUI/gui/panels/2/view \
+  curl -s -X PUT $GUI/gui/panels/right/view \
        -H "Content-Type: application/json" \
        -d "{\"type\":\"file\",\"path\":\"$B\"}"
-  curl -s -X POST $GUI/gui/message \
+  curl -s -X POST "$GUI/gui/message?workspace_id=$WS_LEFT" \
        -H "Content-Type: application/json" \
        -d '{"text":"← left  → right  Esc to stop"}'
 
@@ -722,6 +807,10 @@ while true; do
   WINNER=$( [ "$KEY" = "left" ] && echo "$A" || echo "$B" )
   # record winner as metadata via daemon …
 done
+
+# Clean up the temporary workspaces
+curl -s -X DELETE "$GUI/gui/workspaces/$WS_LEFT"
+curl -s -X DELETE "$GUI/gui/workspaces/$WS_RIGHT"
 #+END_SRC
 
 * Open questions
