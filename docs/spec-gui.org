@@ -68,7 +68,7 @@ Built-in panel types:
 |------------------+--------------------------------------------------------------|
 | =entry-list=     | Metadata entries filtered by an embedded query; primary selection source |
 | =entry-detail=   | All fields of the selected entry; follows =selected_entry=   |
-| =file=           | Preview of the file at =selected_path= (image, audio, video, text) |
+| =file=           | Preview of the file at the active path from =selected_paths=        |
 | =file-manager=   | Filesystem tree navigator; browse and add files/dirs to the DB |
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
@@ -103,8 +103,8 @@ Standard variables:
 | Key                | Type                          | Description                        |
 |--------------------+-------------------------------+------------------------------------|
 | =active_repo=      | =string \vert null=           | UUID of the active repository      |
-| =selected_path=    | =string \vert null=           | Absolute path of the highlighted filesystem entry |
-| =selected_entry=   | =\{uuid, repo\} \vert null=   | Metadata entry for =selected_path= (null if untracked) |
+| =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem entry (usually one; multiple if the entry has several =mfr_path= values) |
+| =selected_entry=   | =\{uuid, repo\} \vert null=   | Metadata entry for the highlighted path (null if untracked) |
 | =selected_entries= | =string[]=                    | UUIDs of all selected entries      |
 
 Panel types may define their own variables using namespaced keys (e.g.
@@ -361,7 +361,7 @@ Behaviours:
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =entry:batch-set=         | Set a field on all =selected_entries=                         |
-| =file-manager:add=        | Add selected path to the DB as a new metadata entry           |
+| =file-manager:add=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 
@@ -372,7 +372,7 @@ Every command is reachable from the keyboard. No command requires the mouse.
 Within =entry-list=:
 - =Up= / =Down= move the selection (updates =selected_entry=).
 - =Enter= or =Right= switches the other slot to =entry-detail= (or =file= if
-  the entry has a valid =mfr_path=), opening the slot if hidden. See
+  =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
 - =Space= toggles selection for multi-select (updates =selected_entries=).
 
@@ -547,10 +547,10 @@ Supports sorting by column, multi-selection (=selected_entries=), and full
 keyboard navigation.
 
 When the user moves the selection, =entry-list= writes the highlighted entry
-to =workspace.selected_entry= and, if the entry has a valid =mfr_path=, also
-sets =workspace.selected_path= to the resolved absolute path (otherwise
-=selected_path= is set to =null=). Other panels update reactively (see
-[[*Cross-panel selection]]).
+to =workspace.selected_entry= and sets =workspace.selected_paths= to the list
+of resolved absolute paths from all =mfr_path= field rows of that entry
+(empty list if the entry has no valid =mfr_path=). Other panels update
+reactively (see [[*Cross-panel selection]]).
 
 *** =entry-detail= panel type
 
@@ -571,17 +571,26 @@ At the bottom of the panel:
 - /Add field/ → =POST .../metadata/:uuid/fields=
 - /Set field/ → =PATCH .../metadata/:uuid=
 - /Delete entry/ → confirmation → =DELETE .../metadata/:uuid=
+- /Watch and reconcile/ → visible when the entry's =mf_watch= field is
+  =false= or absent. Sets =mf_watch = true= (=PATCH=), then calls
+  =POST .../metadata/:uuid/reconcile=. A spinner appears in the status bar
+  during the operation; the result is appended to the =message= panel type.
+  Useful after adding an entry via =file-manager:add= to activate tracking and
+  populate the subtree.
 
 Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
 a =force= checkbox.
 
 *** =file= panel type
 
-Displays a preview of the file at =selected_path=, using the HTML5 =<img>=,
-=<audio>=, or =<video>= element depending on the file type. Falls back to a
-plain-text view for text files. Shows a "no preview available" message for
-unsupported formats. Shows a "no file selected" message when =selected_path=
-is =null=. Works with both tracked and untracked files.
+Displays a preview of the file at the currently active path from
+=selected_paths=. When =selected_paths= is empty, shows a "no file selected"
+message. When =selected_paths= has more than one element (entry accessible at
+multiple locations), a dropdown in the panel header lets the user choose which
+path to preview. Uses the HTML5 =<img>=, =<audio>=, or =<video>= element
+depending on the file type; falls back to a plain-text view for text files;
+shows "no preview available" for unsupported formats. Works with both tracked
+and untracked files.
 
 *** =file-manager= panel type
 
@@ -596,25 +605,27 @@ untracked ones.
 =active_repo= root. When unchecked, the user can navigate anywhere on the
 disk. Adding files to the DB is only available for paths inside the
 =active_repo= root; attempting it outside returns an error in the status bar.
+When =active_repo= is =null=, the checkbox is disabled and =file-manager:add=
+/ =file-manager:goto-root= return an error.
 
-*Selection*: moving the cursor updates =workspace.selected_path= to the
-highlighted path. If the path has an existing metadata entry in the active
-repo, =workspace.selected_entry= is also updated; otherwise it is set to
-=null=.
+*Selection*: moving the cursor sets =workspace.selected_paths= to a
+single-element list containing the highlighted path. If the path has an
+existing metadata entry in the active repo, =workspace.selected_entry= is also
+updated; otherwise it is set to =null=.
 
-*Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or sets
-=selected_path= for a file; =Backspace= goes up one level.
+*Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
+selection for a file; =Backspace= goes up one level.
 
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
-| =file-manager:add=        | Create a metadata entry for the selected path (=POST .../metadata= with =mfr_path=). Error if outside =active_repo= root. |
+| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates entry with =mf_watch = false=; parent entries created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
 
 *** =workspace-info= panel type
 
 Displays all workspace variables for the current workspace: =active_repo=,
-=selected_path=, =selected_entry=, =selected_entries=, and any custom
+=selected_paths=, =selected_entry=, =selected_entries=, and any custom
 namespaced variables. Values are shown in JSON format and update reactively
 as they change. Read-only; useful for debugging panel type communication and
 for monitoring GUI state from scripts.
@@ -622,7 +633,7 @@ for monitoring GUI state from scripts.
 *** Cross-panel selection
 
 Selecting an entry in =entry-list= or =file-manager= updates the workspace
-variables =selected_path= and/or =selected_entry= (see the respective panel
+variables =selected_paths= and/or =selected_entry= (see the respective panel
 type sections for details). Any slot in the same workspace displaying
 =entry-detail=, =file=, or =workspace-info= subscribes reactively and updates
 automatically. Slots showing different workspaces are unaffected.
@@ -881,6 +892,17 @@ curl -s -X DELETE "$GUI/gui/workspaces/$WS_RIGHT"
 Tauri is decided. The JavaScript/TypeScript frontend framework (Svelte, React,
 Vue, vanilla JS, etc.) is not yet chosen. A lightweight option that compiles
 to vanilla JS with no runtime is preferred.
+
+** Custom panel type trust model
+
+The =metafolder.fs= API gives panel types unrestricted read access to the
+filesystem (any directory, not just the repo root). Combined with
+=metafolder.daemon= (full DB access) and =metafolder.workspace= (shared
+variables), a malicious panel type installed from an untrusted source would
+have broad access. No sandboxing is currently planned; users are expected to
+only install panel types they trust. This is consistent with the trust
+requirement for the daemon access itself. To be revisited if a panel type
+distribution mechanism is ever added.
 
 ** =metafolder= API injection mechanism
 

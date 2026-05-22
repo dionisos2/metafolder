@@ -348,6 +348,64 @@ Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
 (see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
 on =(field_name, value_uuid, value_name)=.
 
+** Single-entry track
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/track
+#+END_SRC
+
+Creates a metadata entry for a single filesystem path without activating
+tracking. Intended for use from =file-manager= (and scripts) when the user
+wants to add a file or directory to the DB before deciding on its watch scope.
+
+Request body:
+#+BEGIN_SRC json
+{"path": "/absolute/path/to/file-or-dir"}
+#+END_SRC
+
+The path must be inside the repository root; otherwise =400= is returned.
+
+If the path is already tracked (an entry with a matching =mfr_path= TreeRef
+exists), =409= is returned with the conflicting entry UUID.
+
+Otherwise the daemon:
+1. Creates any missing parent directory entries along the path (with
+   =mf_watch = false=), using the tree cache for lookup.
+2. Creates the target entry with =mfr_path=, =mfr_type=, =mfr_size=,
+   =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= taken from =stat=,
+   and =mf_watch = false=.
+
+The new entry is *not* subject to eligibility checks (=mf_watch= / =mf_ignore=
+evaluation); the caller is responsible for configuring the watch scope
+afterwards (see [[*Watch and Ignore]]).
+
+Response body: ={"uuid": "<new_entry_uuid>"}=
+
+** Single-entry reconcile
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/metadata/:metadata_uuid/reconcile
+#+END_SRC
+
+Runs reconcile semantics scoped to the subtree rooted at the given entry.
+Intended to be called after =mf_watch= is set to =true= on an entry that was
+added via [[*Single-entry track]] or created manually.
+
+Behaviour:
+- Walks the directory on disk (or refreshes a single file).
+- For each filesystem path found inside the subtree, evaluates eligibility
+  (=mf_watch= / =mf_ignore=) and creates missing entries with all =mfr_*=
+  fields; updates =mfr_*= fields for entries that already exist.
+- Does not perform fingerprint or similarity matching (no orphan detection).
+  For orphan detection, use the full [[*Reconcile]].
+- Creates missing parent directory entries along the path if needed.
+
+Returns =404= if the entry does not exist. Returns =400= if the entry has no
+valid =mfr_path= (path is =Nothing= or unknown).
+
+Response body: same format as full reconcile (=created=, =moved=, =candidates=),
+with =moved= always =0= and =candidates= always empty.
+
 ** Reconcile
 
 #+BEGIN_SRC
