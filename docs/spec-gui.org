@@ -42,9 +42,10 @@ variables from becoming invalid due to a repo switch.
 ** Panel slot
 
 One of two fixed content areas in the window (left and right). Each slot is
-assigned exactly one workspace and displays one panel type from that workspace
-at a time. A workspace can be assigned to zero, one, or both slots
-simultaneously.
+assigned at most one workspace. An unassigned slot remains visible but shows a
+centred "No workspace selected" message; the user can assign a workspace by
+clicking a tab or using =tab:new=. A workspace can be assigned to zero, one,
+or both slots simultaneously.
 
 When both slots display the same workspace, each slot independently selects
 which panel type to show. This enables, for example, =entry-list= on the left
@@ -268,7 +269,7 @@ keeps focus). *Right-click*: assigns that workspace to the non-focused slot.
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
 | =tab:new=         | Create a new workspace and assign it to the focused slot  |
-| =tab:close=       | Close the focused slot's workspace (removes its tab)      |
+| =tab:close=       | Close the focused slot's workspace (removes its tab; slot becomes unassigned) |
 | =tab:rename=      | Rename the focused slot's workspace                       |
 | =tab:next=        | Assign the next workspace to the focused slot (wraps)     |
 | =tab:prev=        | Assign the previous workspace to the focused slot         |
@@ -332,11 +333,11 @@ Behaviours:
 | Command              | Description                                    |
 |----------------------+------------------------------------------------|
 | =daemon:set-url=     | Change daemon URL                              |
-| =repos:open=         | Switch focused panel to =repos= for repo selection |
+| =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:init=         | Open init-repo form                            |
 | =repos:load=         | Open load-repo form                            |
 | =tab:new=            | Create a new workspace, assign to focused slot |
-| =tab:close=          | Close the focused slot's workspace             |
+| =tab:close=          | Close the focused slot's workspace (slot becomes unassigned) |
 | =tab:rename=         | Rename the focused slot's workspace            |
 | =tab:next=           | Assign the next workspace to the focused slot  |
 | =tab:prev=           | Assign the previous workspace to the focused slot |
@@ -449,8 +450,9 @@ const entry = metafolder.workspace.get('selected_entry')
 metafolder.workspace.onChange('selected_entry', ({ uuid, repo }) => { ... })
 #+END_SRC
 
-Standard keys: =active_repo=, =selected_entry=, =selected_entries=.
-Panel types may use namespaced custom keys (e.g. =my-panel:state=).
+Standard keys: =active_repo=, =selected_paths=, =selected_entry=,
+=selected_entries=. Panel types may use namespaced custom keys (e.g.
+=my-panel:state=).
 
 **** =metafolder.commands= and =metafolder.addKeybinding=
 
@@ -599,7 +601,8 @@ directly; the daemon is not involved in directory listing.
 
 *Display*: a tree/list of files and directories with a visual distinction
 between tracked entries (have =mfr_path= metadata in the active repo) and
-untracked ones.
+untracked ones. When =active_repo= is =null=, all entries are shown as
+untracked (no distinction is possible).
 
 *Root behaviour*: a checkbox (default: checked) constrains navigation to the
 =active_repo= root. When unchecked, the user can navigate anywhere on the
@@ -720,12 +723,20 @@ Returns the list of all open workspaces.
 
 Creates a new workspace. Returns its id.
 
+Request body (all fields optional):
+#+BEGIN_SRC json
+{"active_repo": "<repo_uuid>"}
+#+END_SRC
+
+If =active_repo= is absent, the workspace uses the daemon's first loaded
+repository (from =GET /repos=), or =null= if no repositories are loaded.
+
 Response: ={"id": "ws-3"}=
 
 *** =DELETE /gui/workspaces/:id=
 
-Closes a workspace. If it was assigned to one or both slots, those slots are
-unassigned. Returns =204 No Content=.
+Closes a workspace. Any slot that had this workspace assigned becomes
+unassigned (shows "No workspace selected"). Returns =204 No Content=.
 
 *** =GET /gui/layout=
 
@@ -763,6 +774,12 @@ Request body examples:
 {"type": "log"}
 {"type": "my-custom-panel", "state": { ... }}
 #+END_SRC
+
+When =type= is =file= and =path= is provided, the workspace variable
+=selected_paths= is set to =[path]= and =selected_entry= is set to the
+matching metadata entry (or =null= if the file is untracked). Omitting =path=
+leaves =selected_paths= unchanged and the =file= panel type displays whatever
+path was already active.
 
 Response: =200 OK=, body ={}=.
 
