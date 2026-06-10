@@ -286,4 +286,35 @@ Questions to resolve before implementing sync:
 
 * CLI
 
+Cross-repo sync is entirely v2. The orchestration described in
+[[*Two-phase sync process]] and [[*Sync intentions]] lives in the CLI; the
+daemon only provides the primitives listed in
+[[*Required daemon primitives]].
+
+** =mf sync=                                                              :v2:
+
+#+BEGIN_SRC
+mf sync plan <repo_a_uuid> <repo_b_uuid> --intents <file>
+mf sync run  <repo_a_uuid> <repo_b_uuid> --intents <file>
+#+END_SRC
+
+Both repositories must be loaded in the same daemon instance (for a remote
+repo: mount it, e.g. over SSHFS, and =mf load= it first).
+
+The intents file declares the sync-method → query mapping (see
+[[*Sync intentions]]); its exact format is TBD.
+
+- =plan=: evaluates the intent queries on both repos, computes links to
+  create/delete, file transfers, metadata propagations and conflicts, and
+  prints the plan together with the =PRAGMA data_version= guard values.
+  Read-only.
+- =run=: re-plans, validates the =data_version= guards, suspends the
+  executors, executes file transfers then metadata commits in batches,
+  resumes the executors, and prints a summary. Conflicts are resolved
+  according to the policy declared in the intents file, falling back to an
+  interactive prompt.
+
+Exact flags, conflict-resolution UX, and the intents file format are to be
+specified when sync is implemented (v2).
+
 * Open questions

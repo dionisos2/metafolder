@@ -93,6 +93,11 @@ The =entry-list= panel type supports at minimum:
 - =table= — tabular list with configurable columns.
 - =grid= — thumbnail grid, useful for image collections.
 
+For large result sets, =entry-list= uses the daemon's cursor pagination
+(=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
+[[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
+the user scrolls.
+
 ** Workspace variables
 
 A reactive, per-workspace key-value store shared across all panel types
@@ -939,8 +944,10 @@ floating palette. To be revisited once the panel type ecosystem grows.
 ** Media codec support
 
 The =file= panel type uses HTML5 =<audio>= / =<video>=; supported formats
-depend on the system WebView (WebKit2GTK on Linux). H.264 may require
-=gst-plugins-bad= or =gst-libav= on some Arch configurations.
+depend on the system WebView, which differs per platform (WebKit2GTK on
+Linux, WKWebView on macOS, WebView2 on Windows — see
+[[file:spec-platform.org][spec-platform.org]]). On Linux, H.264 may require
+GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
 
 ** Panel type update strategy
 
@@ -957,12 +964,6 @@ open in the current workspace, the behaviour is unspecified: open it
 automatically in the focused panel, in the other panel, or show an error? The
 same question applies when the user switches panel type mid-form (unsaved
 data). A general policy needs to be defined before implementation.
-
-** Pagination
-
-=GET /metadata= and =POST /query= return all results in one response.
-=entry-list= must use virtual scrolling or wait for daemon-side cursor
-pagination.
 
 ** Path display
 

@@ -270,15 +270,20 @@ pre-loading from the database is required.
 
 The daemon watches each loaded repository root for filesystem events (inotify
 on Linux, FSEvents on macOS, ReadDirectoryChangesW on Windows, via the =notify=
-crate). *The watcher and manual writes with =force= are the only components
-that set =mfr_path= to =Nothing=*; reconcile leaves =mfr_path= stale rather
-than setting it to =Nothing=.
+crate; per-backend differences are detailed in
+[[file:spec-platform.org][spec-platform.org]]). *The watcher and manual writes
+with =force= are the only components that set =mfr_path= to =Nothing=*;
+reconcile leaves =mfr_path= stale rather than setting it to =Nothing=.
 
-The =notify= crate correlates raw =MOVED_FROM= / =MOVED_TO= pairs (matched by
-cookie) into a single =Rename(Both)= event when both paths are inside the same
-watched tree. =Rename(From)= alone means the file definitively left the
-repository (destination is outside the watched tree or in a different repo
-root). =Rename(To)= alone means the file arrived from outside.
+The =notify= crate correlates raw rename-out / rename-in event pairs (e.g.
+matched by inotify cookie on Linux) into a single =Rename(Both)= event when
+both paths are inside the same watched tree. =Rename(From)= alone means the
+file definitively left the repository (destination is outside the watched
+tree or in a different repo root). =Rename(To)= alone means the file arrived
+from outside. On backends where rename correlation is unavailable, a rename
+surfaces as =Remove= + =Create= and identity is recovered via the fingerprint
+search of the =Rename(To)= path (see
+[[file:spec-platform.org][spec-platform.org]]).
 
 Before processing any event, the daemon evaluates eligibility for the affected
 path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
@@ -496,6 +501,53 @@ Response body:
 #+END_SRC
 
 * CLI
+
+** =mf reconcile=
+
+Calls =POST /reconcile= (full reconcile) and prints a summary followed by the
+candidate list:
+
+#+BEGIN_SRC
+created: 2  moved: 1
+
+Candidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>' --force):
+  abc...  /music/jazz/old.mp3
+      → /music2/jazz_copy.mp3   (partial_hash)
+      → /backup/unknown.mp3     (size)
+#+END_SRC
+
+Candidates are informational: the CLI never auto-confirms a match. To confirm
+one, the user updates the orphaned entry's =mfr_path= as shown (a =force=
+write, since =mfr_path= is an =mfr_*= field).
+
+| Flag                | Description                                                          |
+|---------------------+----------------------------------------------------------------------|
+| =--entry <uuid>=    | Single-entry reconcile: calls =POST /metadata/:uuid/reconcile= instead, scoped to that entry's subtree |
+| =--json=            | Print the raw JSON response body                                     |
+
+** =mf track <path>=
+
+Calls =POST /track= for the given path (OS-native absolute path, or relative
+to the current directory — the CLI absolutises it). Prints the new entry
+UUID. Fails with exit code 1 when the path is outside the repository root or
+already tracked.
+
+** Configuring the watch scope
+
+The watch/ignore system is driven by the =mf_watch= and =mf_ignore= fields
+(see [[*Watch and Ignore]]); no dedicated commands are needed:
+
+#+BEGIN_SRC
+# Activate tracking for a directory entry
+mf set <dir_uuid> mf_watch:bool=true
+
+# Then create entries for the files already inside it
+mf reconcile --entry <dir_uuid>
+
+# Replace the ignore patterns of a directory (multi-map: one add per pattern)
+mf set <dir_uuid> 'mf_ignore:string=\.git(/.*)?$'
+mf add <dir_uuid> 'mf_ignore:string=target(/.*)?$'
+#+END_SRC
 
 * Open questions
 

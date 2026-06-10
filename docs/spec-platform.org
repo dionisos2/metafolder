@@ -1,0 +1,161 @@
+#+TITLE: Metafolder — Cross-platform Compatibility Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+Metafolder targets Linux, macOS, and Windows. This file centralises every
+platform-dependent behaviour; the other spec files describe behaviour in
+platform-neutral terms and link here for the per-platform details. The data
+model itself is platform-independent: a repository created on one OS must be
+loadable on another (e.g. a repo on a removable drive).
+
+* Concepts
+
+** Path representation
+
+- Internally (database, HTTP API, query DSL, tree cache), paths are always
+  repo-root-relative and use =/= as separator, regardless of platform.
+  =TreeRef= =value_name= components are single path components and never
+  contain a separator.
+- Conversion to and from the OS-native form (e.g. =\= separators, drive
+  prefixes on Windows) happens only at the filesystem boundary (watcher,
+  reconcile, track, file transfers). Rust's =std::path= handles this
+  conversion.
+- Absolute paths appear only in =config.json= (=root=, =metafolder=) and in
+  API parameters that designate filesystem locations (=/repos/init=,
+  =/repos/load=, =/track=). These are OS-native and therefore not portable
+  across platforms; when a repository is moved to another machine or OS, the
+  =root= in =config.json= must be updated (loading by =metafolder= path
+  already re-reads =root= from =config.json=).
+- File names are stored in =value_name= verbatim, as returned by the OS
+  (UTF-8; on Windows, the UTF-16 names are converted to UTF-8). Names that
+  are not valid Unicode are not supported in v1 and are skipped with a
+  warning.
+
+** Case sensitivity
+
+Default filesystems are case-sensitive on Linux and case-insensitive (but
+case-preserving) on macOS and Windows. The stored =value_name= always keeps
+the on-disk casing. When the daemon loads a repository it probes the
+filesystem's case sensitivity (by creating a temporary file inside
+=.metafolder/= and testing access through a different casing) and records the
+result in the in-memory repo state. On case-insensitive filesystems, path
+comparisons performed by the watcher, reconcile, and the tree cache use
+case-insensitive matching, so that an event reported with different casing
+still resolves to the existing entry.
+
+** File metadata fields
+
+Availability of the =mfr_*= stat-derived fields per platform:
+
+| Field              | Linux           | macOS             | Windows                       |
+|--------------------+-----------------+-------------------+-------------------------------|
+| =mfr_type=         | yes             | yes               | yes                           |
+| =mfr_size=         | yes             | yes               | yes                           |
+| =mfr_mtime=        | yes             | yes               | yes                           |
+| =mfr_btime=        | if FS supports (=statx=) | yes (=st_birthtime=) | yes (=ftCreationTime=) |
+| =mfr_permissions=  | yes             | yes               | *never written* (absent)      |
+| =mfr_uid=          | yes             | yes               | *never written* (absent)      |
+| =mfr_gid=          | yes             | yes               | *never written* (absent)      |
+
+- =mfr_permissions=, =mfr_uid=, =mfr_gid= are Unix-specific. On Windows they
+  are never written; on an entry they remain in the "unknown" state
+  (=IsUnknown=). A repository written on Unix and later watched on Windows
+  keeps the Unix values untouched (Windows daemon operations simply do not
+  refresh them).
+- =mfr_btime= is read through =std::fs::Metadata::created()=, which abstracts
+  the per-OS source. It is absent when the filesystem does not provide it.
+- Hashing (=mfr_partial_hash=, =mfr_full_hash=) is pure content-based
+  (=xxhash-rust=) and fully portable.
+
+** MIME detection                                                        :v2:
+
+=mfr_mime= is computed by content analysis. The backend is
+platform-dependent: =libmagic= where available (Linux, macOS), with a
+pure-Rust content-detection fallback on Windows (exact crate TBD). The stored
+value is always a standard MIME string, so the producing backend does not
+matter to consumers.
+
+** File watcher backends
+
+The =notify= crate abstracts the per-OS event APIs: inotify (Linux), FSEvents
+(macOS), ReadDirectoryChangesW (Windows). Behavioural differences the daemon
+must absorb:
+
+- *Rename correlation*: on Linux, =MOVED_FROM= / =MOVED_TO= pairs are matched
+  by inotify cookie into =Rename(Both)=. On backends where correlation is
+  unavailable or unreliable, a rename may surface as =Remove= followed by
+  =Create=; identity is then recovered through the orphan fingerprint search
+  of the =Rename(To)= / reconcile path (see
+  [[file:spec-file-tracking.org][spec-file-tracking.org]]). The data model is
+  unaffected.
+- *Data/Metadata distinction*: where the backend cannot distinguish
+  =Modify(Data)= from =Modify(Metadata)=, the daemon falls back to
+  =Modify(Data)= semantics (full refresh + hash invalidation).
+- *Recursion*: inotify requires one watch per directory (the =notify= crate
+  manages this); FSEvents and ReadDirectoryChangesW are natively recursive.
+  This is an implementation detail with no spec-visible effect, except that
+  on Linux very large repositories may hit
+  =fs.inotify.max_user_watches=; the daemon logs a clear error when watch
+  registration fails.
+
+** Network and special filesystems
+
+SQLite WAL mode requires shared-memory files (=.wal-shm=), which network
+filesystems (SSHFS, NFS, SMB/UNC shares) generally do not support. When a
+repository's =.metafolder/= directory resides on such a filesystem, the
+daemon switches that connection to =PRAGMA journal_mode=DELETE=. The switch
+is per-connection and does not alter the database permanently; the next local
+connection resumes WAL. Detection: the daemon attempts to open in WAL mode
+and falls back to DELETE if SQLite reports an error.
+
+** GUI WebView
+
+The GUI (Tauri) renders in the system WebView: WebKit2GTK on Linux, WKWebView
+on macOS, WebView2 on Windows. Media codec support in the =file= panel type
+therefore varies by platform; on Linux, H.264 may require GStreamer plugin
+packages (e.g. =gst-plugins-bad=, =gst-libav=).
+
+* Daemon
+
+- Path conversion and case-sensitivity probing as described in
+  [[*Concepts]]. The probe runs once per =load= and its result is kept in
+  =RepoState=.
+- The daemon never creates files outside =.metafolder/=, so Windows reserved
+  device names (=CON=, =NUL=, ...) only matter when *reading* the tree: such
+  names are tracked like any other if the filesystem reports them.
+- The exclusive-lock invariant (=PRAGMA locking_mode = EXCLUSIVE=) works on
+  all three platforms via SQLite's portable locking.
+
+* CLI
+
+- Path arguments (=mf init=, =mf load=, =mf track=) accept OS-native paths
+  and are sent to the daemon as such (the daemon and CLI run on the same
+  machine).
+- Paths printed in output (query results, reconcile candidates) are the
+  internal repo-root-relative =/=-separated form, on every platform.
+- Rollback =move_file= operations execute the file move with OS-native paths
+  derived from the internal form.
+
+* Open questions
+
+** Unicode normalisation
+
+macOS filesystems normalise names (HFS+: NFD; APFS: normalisation-
+insensitive). A repo created on Linux with NFC names and opened on macOS may
+see the "same" name with a different byte sequence. Whether =value_name=
+should be normalised (e.g. to NFC) at the filesystem boundary, or compared
+normalisation-insensitively like case, is unresolved.
+
+** Windows long paths
+
+Paths longer than 260 characters require the =\\?\= prefix or a registry
+opt-in on Windows. Whether the daemon should apply the prefix automatically
+is unresolved.
+
+** Symbolic links
+
+Symlink semantics differ across platforms (and require privileges on
+Windows). The current spec does not define watcher/reconcile behaviour for
+symlinks at all; this is a prerequisite question, tracked here because the
+answer is likely platform-dependent.

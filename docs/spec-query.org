@@ -59,6 +59,43 @@ the query results.
 setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
 regex to =value_name= (the single name component).
 
+** MATCHES performance
+
+In v1, =MATCHES= performs a full scan of the candidate rows with the =REGEXP=
+UDF. Benchmarks measured ~650 ms for 50 k entries; this is accepted for v1.
+
+** MATCHES acceleration via FTS5                                          :v2:
+
+To accelerate =MATCHES= on large repositories, an FTS5 virtual table with the
+trigram tokenizer indexes the textual columns:
+
+#+BEGIN_SRC sql
+CREATE VIRTUAL TABLE field_text USING fts5(
+    text,                       -- value_text or value_name
+    content = '',               -- contentless: text is not stored twice
+    tokenize = 'trigram'
+);
+#+END_SRC
+
+One =field_text= row is maintained per =field= row of type =string=,
+=datetime= or =tree_ref= (for =tree_ref=, the indexed text is =value_name=),
+with =rowid= equal to =field.id=. The daemon keeps it in sync inside the same
+transaction as every write to the =field= table (no triggers, so that the
+event log remains the only side-channel).
+
+Query plan for =MATCHES=:
+
+1. Extract the literal substrings of length ≥ 3 that any match of the regex
+   must contain (using the =regex-syntax= crate on the parsed pattern).
+2. If at least one such literal exists, pre-filter via
+   =SELECT rowid FROM field_text WHERE text MATCH '"<literal>"'= (trigram
+   index lookup), then apply =REGEXP= only to the surviving rows.
+3. If no literal can be extracted (e.g. pattern =^.*$=), fall back to the v1
+   full scan.
+
+The pre-filter is purely an optimisation: results are identical to the full
+scan in all cases.
+
 ** HTTP API
 
 *** =POST /repos/:repo_uuid/query=
@@ -73,11 +110,19 @@ Request body:
 #+BEGIN_SRC json
 {
   "query": <Query>,
-  "select": ["path", "rating"]
+  "select": ["path", "rating"],
+  "sort": [{"field": "rating", "order": "desc"}],
+  "limit": 500,
+  "cursor": "..."
 }
 #+END_SRC
 
 =query= is a =Query= JSON object (see [[*Query Language]]).
+
+=sort=, =limit= and =cursor= are optional and enable sorted/paginated
+results; their semantics (including the response envelope used when =limit=
+is present) are defined in the Pagination section of
+[[file:spec-data-model.org][spec-data-model.org]].
 
 =select= is optional:
 - Absent → response is =["uuid1", "uuid2", ...]=
@@ -127,9 +172,63 @@ Response body: ={"updated": <count>}=
 
 * CLI
 
-* Open questions
+** Query DSL
 
-** Full-text / regex index
-=MATCHES= currently performs a full table scan with the REGEXP UDF (~650 ms for
-50 k entries). Options: FTS5 virtual table, or a precomputed hash index for
-exact-match patterns.
+The CLI accepts queries as a human-friendly DSL string, parsed by a
+hand-written lexer + recursive-descent parser and compiled to the =Query=
+JSON representation.
+
+*** Grammar
+
+#+BEGIN_SRC
+query     := or_expr
+or_expr   := and_expr ( "OR" and_expr )*
+and_expr  := unary ( "AND" unary )*
+unary     := "NOT" unary | atom
+atom      := "(" query ")" | predicate
+
+predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
+           | field cmp_op literal
+           | field "MATCHES" string
+           | field "->"  ( string | "(" query ")" )
+           | field "->*" string
+
+cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
+literal   := int | float | string | "true" | "false"
+field     := identifier
+string    := '"' ... '"'
+#+END_SRC
+
+- Keywords (=AND=, =OR=, =NOT=, =IS=, =PRESENT=, =ABSENT=, =UNKNOWN=,
+  =MATCHES=, =true=, =false=) are case-sensitive uppercase except the boolean
+  literals.
+- Precedence: =NOT= binds tighter than =AND=, which binds tighter than =OR=;
+  parentheses override.
+- =field -> "path"= compiles to =Follows= with a path right-hand side
+  (=TreeRef= semantics); =field -> (predicate)= compiles to =Follows= with a
+  sub-query right-hand side (=Ref= semantics).
+- =field ->* "path"= compiles to =FollowsTransitive= (TreeRef only).
+
+Examples:
+
+#+BEGIN_SRC
+rating > 3 AND genre = "jazz"
+mfr_path IS ABSENT
+NOT (seen = true OR rating IS UNKNOWN)
+mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
+author -> (name = "Coltrane")
+#+END_SRC
+
+** =mf query <predicate>=
+
+Compiles the predicate and calls =POST /query=. By default prints matching
+UUIDs, one per line. The CLI paginates internally (following =next_cursor=)
+and streams the output.
+
+| Flag                       | Description                                                          |
+|----------------------------+----------------------------------------------------------------------|
+| =--select a,b= / =--select '*'= | Print full metadata objects (JSON array) restricted to the listed fields, or all fields with ='*'= |
+| =--sort field[:asc\vert{}desc]=  | Sort results; repeatable for secondary keys                          |
+| =--limit N=                | Stop after N results                                                 |
+
+* Open questions

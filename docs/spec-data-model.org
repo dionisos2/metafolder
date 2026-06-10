@@ -22,6 +22,7 @@ read-only or when metadata should be kept on a separate, faster device.
 | =name=      | string | Name of the repository                 |
 | =version=   | string | Config schema version                  |
 | =root=      | path   | Absolute path to the watched directory |
+| =schema=    | path   | Optional path to the user schema file, relative to =.metafolder/= (or absolute); default =.metafolder/schema.json= (see [[file:spec-schema.org][spec-schema.org]]) |
 
 ** Metadata
 
@@ -100,15 +101,20 @@ The stored fields for a file/directory entry are:
 | =mfr_type=         | mfr    | String     | ="file"= or ="dir"=                                                                                        |
 | =mfr_size=         | mfr    | Int        | File size in bytes at last watcher/reconcile update                                                        |
 | =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =stat=)                                                               |
-| =mfr_btime=        | mfr    | DateTime   | Creation time (from =statx= =btime=); absent if filesystem does not support it [v2]                        |
-| =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=                                                        |
-| =mfr_uid=          | mfr    | Int        | Owner user ID                                                                                              |
-| =mfr_gid=          | mfr    | Int        | Owner group ID                                                                                             |
-| =mfr_mime=         | mfr    | String     | MIME type from =libmagic= content analysis; absent if not yet computed [v2]                                |
+| =mfr_btime=        | mfr    | DateTime   | File creation time, when the platform/filesystem provides one; absent otherwise (see [[file:spec-platform.org][spec-platform.org]]) [v2] |
+| =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
+| =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
+| =mfr_gid=          | mfr    | Int        | Owner group ID; Unix only, never written on Windows                                                        |
+| =mfr_mime=         | mfr    | String     | MIME type from content analysis (platform-dependent backend, see [[file:spec-platform.org][spec-platform.org]]); absent if not yet computed [v2] |
 | =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
 | =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this entry and its descendants are tracked (see [[*Watch and Ignore]])  |
 | =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
+
+The user schema feature defines one additional reserved =mf_*= field:
+=mf_schema= (String, multi-map — entry type declaration). The constraints
+themselves live in an external schema file, not in the database; see
+[[file:spec-schema.org][spec-schema.org]].
 
 The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each entry.
 
@@ -134,7 +140,7 @@ regardless of whether the value was previously set with =force=. =force= is an
 explicit acknowledgement that the value may be overwritten at any time.
 
 Typical legitimate use-cases: restoring permissions after an erroneous
-=chmod -R=; correcting a MIME type misdetected by =libmagic=; resolving an
+recursive permission change; correcting a misdetected MIME type; resolving an
 =mfr_path= conflict the watcher cannot handle automatically.
 
 *=mf_*= fields* are read by the daemon to control its behaviour and written
@@ -157,10 +163,11 @@ field across all ancestors at once, keeping the closest result.
 ** SQLite Schema
 
 Each repository uses its own =.metafolder/db.sqlite= file (WAL mode, foreign
-keys enabled). Exception: when a repository is loaded from a network filesystem
-(e.g. SSHFS), the daemon switches to =DELETE= journal mode (=PRAGMA
-journal_mode=DELETE=) at connection time. WAL requires POSIX shared memory
-(=.wal-shm=) which network filesystems do not support. This switch is applied
+keys enabled). Exception: when a repository is loaded from a network
+filesystem (e.g. SSHFS, NFS, SMB), the daemon switches to =DELETE= journal
+mode (=PRAGMA journal_mode=DELETE=) at connection time, because WAL requires
+shared-memory files (=.wal-shm=) which network filesystems do not support
+(see [[file:spec-platform.org][spec-platform.org]]). This switch is applied
 per-connection and does not modify the database permanently — the next local
 connection resumes WAL mode normally. A benchmark should be run once sync is
 implemented to verify that DELETE journal mode is acceptable for large syncs.
@@ -219,6 +226,81 @@ CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
     WHERE value_type = 'tree_ref';
 #+END_SRC
 
+** Pagination
+
+=GET /metadata= and =POST /query= (see
+[[file:spec-query.org][spec-query.org]]) support keyset (cursor-based)
+pagination. Pagination is opt-in: without a =limit= parameter, the full
+result set is returned in one response with the unwrapped response shape, and
+nothing changes for existing clients.
+
+*** Request parameters
+
+| Parameter | Type   | Description                                                          |
+|-----------+--------+----------------------------------------------------------------------|
+| =limit=   | int    | Maximum number of results in this page; enables pagination           |
+| =cursor=  | string | Opaque token from the previous page's =next_cursor=; absent for page 1 |
+| =sort=    | list   | Sort specification (=POST /query= only; see below)                   |
+
+For =GET /metadata= the parameters are query-string parameters
+(=?limit=500&cursor=...=); results are sorted by entry UUID (ascending byte
+order). For =POST /query= they are top-level JSON body keys.
+
+*** Sort specification (=POST /query=)
+
+#+BEGIN_SRC json
+"sort": [{"field": "rating", "order": "desc"}, {"field": "title", "order": "asc"}]
+#+END_SRC
+
+- =order= is ="asc"= (default) or ="desc"=.
+- The entry UUID (ascending) is always implicitly appended as the final sort
+  key, so the total order is unambiguous and the keyset cursor can resume
+  exactly after the last returned entry even when sort values are equal.
+- =sort= without =limit= is allowed (sorted full response).
+- Sorting by reserved or user fields is allowed alike.
+
+Sort semantics per entry for a sort field =F=:
+
+- Entries where =F= is unknown (no row) or where every row is =Nothing= sort
+  *after* all entries with a value, regardless of =order=.
+- Multi-map fields: the entry's sort key is its smallest value of =F= for
+  ="asc"=, its largest for ="desc"=.
+- When rows of =F= have mixed value types across entries, a fixed type
+  precedence orders the groups: bool < int/float (compared together
+  numerically) < string < datetime < ref/refbase/externalref (by UUID bytes)
+  < tree_ref (by =value_name=). Values are compared within their group using
+  their natural order.
+
+*** Response envelope
+
+When =limit= is present, the response is wrapped:
+
+#+BEGIN_SRC json
+{
+  "results": [...],
+  "next_cursor": "b64token-or-null"
+}
+#+END_SRC
+
+=results= has exactly the same item format as the unpaginated response
+(UUID strings, or metadata objects when =select= is used). =next_cursor= is
+=null= when there are no further results.
+
+*** Cursor semantics
+
+The cursor is an opaque token (base64-encoded JSON) encoding the sort-key
+values and UUID of the last returned entry, plus a hash of the =(query,
+sort)= pair. Clients must not parse it.
+
+- A cursor is only valid for the same query and sort specification that
+  produced it; the daemon verifies the embedded hash and returns =400=
+  (=invalid cursor=) on mismatch. Cursors do not expire otherwise.
+- Keyset resumption is a =WHERE (sort_key, uuid) > (cursor values)= filter:
+  pages are stable against entries inserted or deleted in portions of the
+  order already consumed. If an entry's sort-field value changes between two
+  page requests, that entry may be returned twice or skipped — this is
+  inherent to keyset pagination over live data and is accepted.
+
 ** HTTP API
 
 #+BEGIN_SRC
@@ -237,6 +319,9 @@ DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
 Returns all metadata UUIDs in the repository.
 
 Response body: =["uuid1", "uuid2", ...]=
+
+Optional =?limit=N&cursor=...= query parameters paginate the result (sorted
+by UUID); the response is then the pagination envelope (see [[*Pagination]]).
 
 *** =POST /repos/:repo_uuid/metadata=
 
@@ -343,9 +428,93 @@ If the targeted field row is protected, the request body must contain
 
 * CLI
 
-* Open questions
+Entry manipulation commands. Global conventions (binary name, =--repo=,
+=--daemon-url=, exit codes) are defined in
+[[file:spec-main.org][spec-main.org]].
 
-** Pagination
-=GET /metadata= and =POST /query= return all results in one response. For very
-large repositories this may be unacceptable. A cursor-based pagination API
-should be designed.
+** Field specification syntax
+
+Commands that write fields take a /field spec/ argument of the form
+=name:type[=value]=:
+
+| Type          | Syntax                                  | Example                                           |
+|---------------+-----------------------------------------+---------------------------------------------------|
+| =nothing=     | =name:nothing= (no value)               | =rating:nothing=                                  |
+| =string=      | =name:string=text= (quotes optional)    | =genre:string=jazz=, =genre:string="hard bop"=    |
+| =int=         | =name:int=N=                            | =rating:int=5=                                    |
+| =float=       | =name:float=X=                          | =score:float=3.14=                                |
+| =bool=        | =name:bool=true|false=                  | =seen:bool=true=                                  |
+| =datetime=    | =name:datetime=ISO-8601=                | =added:datetime=2024-01-01T12:00:00Z=             |
+| =ref=         | =name:ref=<entry_uuid>=                 | =author:ref=8f3a...=                              |
+| =tree_ref=    | =name:tree_ref=<parent_uuid>/<name>=; empty parent for a root: =name:tree_ref=/<name>= | =parent:tree_ref=8f3a.../félins= |
+| =refbase=     | =name:refbase=<repo_uuid>=              | =origin:refbase=47ab...=                          |
+| =externalref= | =name:externalref=<repo_uuid>:<entry_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
+
+** Query-or-UUID arguments
+
+Commands written =<query|uuid>= accept either a bare entry UUID (targets that
+single entry, no daemon query round-trip) or a DSL predicate (see
+[[file:spec-query.org][spec-query.org]]) evaluated by the daemon.
+
+** =mf list=
+
+Prints all entry UUIDs of the repository, one per line. Calls
+=GET /metadata=; for large repositories the CLI paginates internally
+(following =next_cursor=) and streams the output.
+
+| Flag        | Description                          |
+|-------------+--------------------------------------|
+| =--limit N= | Stop after N UUIDs                   |
+
+** =mf get <query|uuid>=
+
+Prints the full metadata objects of the matching entries as a JSON array
+(including field =id=s, needed by =mf unset=).
+
+| Flag             | Description                                       |
+|------------------+---------------------------------------------------|
+| =--fields a,b=   | Only include the listed field names               |
+
+** =mf create --field <spec> [--field <spec> ...]=
+
+Creates an entry with the given fields (=POST /metadata=) and prints its
+UUID.
+
+** =mf set <query|uuid> <spec>=
+
+Sets a field with =set_field= semantics (replaces all rows of that name).
+With a UUID target, issues a direct =PATCH=; with a predicate, uses the batch
+=POST /set= endpoint (single server-side transaction) and prints the number
+of updated entries.
+
+| Flag      | Description                                                |
+|-----------+------------------------------------------------------------|
+| =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
+
+** =mf add <uuid> <spec>=
+
+Appends one field row without touching existing rows of that name (multi-map
+append, =POST .../fields=). Only accepts a UUID target: the batch endpoint
+has =set= semantics only.
+
+| Flag      | Description                          |
+|-----------+--------------------------------------|
+| =--force= | Required to write =mfr_*= fields     |
+
+** =mf unset <uuid> <field_id>=
+
+Deletes the single field row identified by =field_id= (as shown by
+=mf get=). Calls =DELETE .../fields/:field_id=.
+
+| Flag      | Description                          |
+|-----------+--------------------------------------|
+| =--force= | Required to delete =mfr_*= fields    |
+
+** =mf delete <query|uuid>=
+
+Deletes the matching entries (metadata and all fields). Prints the number of
+deleted entries. Asks for confirmation when the target is a predicate, unless
+=--force= is passed (same convention as =mf prune=; unambiguous here because
+=mf delete= removes whole entries and never writes =mfr_*= fields).
+
+* Open questions

@@ -38,7 +38,8 @@ authentication; access control is left to the OS.
 Features tagged =:v2:= on headings or marked =[v2]= inline are deferred to
 version 2. Version 1 covers: CRUD, =TreeRef= / tree cache, file watcher (basic
 events), reconcile (fingerprint phase only), query language, reserved fields
-(=mfr_*= / =mf_*=), and the watch/ignore system.
+(=mfr_*= / =mf_*=), the watch/ignore system, the user schema
+([[file:spec-schema.org][spec-schema.org]]), and cursor pagination.
 
 ** Key invariants
 
@@ -149,6 +150,9 @@ Response body: ={"repo_uuid": "..."}=
 | TreeRef parent entry not found         | 400         |                                |
 | TreeRef write would create a cycle     | 400         |                                |
 | TreeRef depth exceeds 1000             | 400         |                                |
+| Schema constraint violation            | 400         | =violations= array in body (see [[file:spec-schema.org][spec-schema.org]]) |
+| Invalid schema file (load / reload)    | 400         | Message identifies the offending constraint |
+| Invalid pagination cursor              | 400         | Cursor/query-sort mismatch     |
 | Internal error (DB, I/O)               | 500         | Error message in body          |
 
 ** Open questions
@@ -158,6 +162,67 @@ No mechanism yet for cleanly unloading a repository (stopping its watcher,
 releasing its DB connection) without restarting the whole daemon.
 
 * CLI
+
+** General description
+
+The CLI is a thin client over the daemon's HTTP API: it performs no direct
+database or filesystem-watching work itself. The binary is named =mf=. Each
+spec file documents the CLI commands for its own feature area in its =* CLI=
+section; this section defines the conventions shared by all commands.
+
+| Spec file                                          | Commands                                          |
+|----------------------------------------------------+---------------------------------------------------|
+| this file                                          | =mf init=, =mf load=, =mf repos=                  |
+| [[file:spec-data-model.org][spec-data-model.org]]   | =mf list=, =mf get=, =mf create=, =mf set=, =mf add=, =mf unset=, =mf delete= |
+| [[file:spec-query.org][spec-query.org]]             | =mf query=, query DSL grammar                     |
+| [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
+| [[file:spec-schema.org][spec-schema.org]]           | =mf schema check=, =mf schema reload=, =mf schema show= |
+| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log=, =mf rollback=, =mf prune= (all v2)      |
+| [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
+
+** Global options
+
+| Option         | Env variable             | Description                                                |
+|----------------+--------------------------+------------------------------------------------------------|
+| =--daemon-url= | =METAFOLDER_DAEMON_URL=  | Daemon base URL; default =http://127.0.0.1:7523=           |
+| =--repo <UUID>= | =METAFOLDER_REPO=       | Target repository; required by all repo-scoped commands    |
+
+A repo-scoped command invoked without =--repo= / =METAFOLDER_REPO= fails
+immediately with a usage error (exit code 2), without contacting the daemon.
+
+** Output conventions
+
+- Normal results go to stdout; errors and warnings to stderr.
+- Machine-friendly by default: UUID lists are printed one per line; structured
+  results are JSON. Commands with a human-oriented default format provide a
+  =--json= flag that prints the raw response body instead.
+- Daemon error responses (={"error": "..."}=) are printed to stderr as
+  =error: <message>=.
+
+** Exit codes
+
+| Code | Meaning                                                          |
+|------+------------------------------------------------------------------|
+| 0    | Success                                                          |
+| 1    | Operation failed (daemon error, violations found, no match, ...) |
+| 2    | Usage error (bad arguments, unparsable DSL/field spec, missing =--repo=) |
+
+** Repository commands
+
+*** =mf init <root> [--metafolder <path>]=
+
+Calls =POST /repos/init= and prints the new repository UUID. =--metafolder=
+selects an external database location (see [[*=POST /repos/init=]]).
+
+*** =mf load <root | --metafolder <path>>=
+
+Calls =POST /repos/load= (standard form with a root path, or external
+database form with =--metafolder=) and prints the repository UUID.
+
+*** =mf repos=
+
+Calls =GET /repos= and prints the loaded repositories as pretty-printed JSON.
+
 * GUI
 
 See [[file:spec-gui.org][spec-gui.org]] for the full GUI specification.
