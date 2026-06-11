@@ -2,6 +2,8 @@
 // (spec-gui "workspace-info panel type"). Read-only; useful to debug
 // panel communication and to monitor the GUI from scripts.
 
+import { el } from '/__ui.js';
+
 const { workspace } = metafolder;
 
 const STANDARD = ['active_repo', 'selected_paths', 'selected_entry', 'selected_entries'];
@@ -17,17 +19,14 @@ function render() {
     (a, b) => rank(a) - rank(b) || a.localeCompare(b),
   );
   document.getElementById('vars').replaceChildren(
-    ...keys.map((key) => {
-      const tr = document.createElement('tr');
-      const name = document.createElement('td');
-      name.className = 'key';
-      name.textContent = key;
-      const value = document.createElement('td');
-      value.className = 'value';
-      value.textContent = JSON.stringify(values.get(key) ?? null, null, 1);
-      tr.append(name, value);
-      return tr;
-    }),
+    ...keys.map((key) =>
+      el(
+        'tr',
+        {},
+        el('td', { class: 'key' }, key),
+        el('td', { class: 'value' }, JSON.stringify(values.get(key) ?? null, null, 1)),
+      ),
+    ),
   );
 }
 

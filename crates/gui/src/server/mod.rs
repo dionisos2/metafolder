@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 const SHIM_JS: &str = include_str!("../../panel-shim/shim.js");
 const KEYMATCH_JS: &str = include_str!("../../panel-shim/keymatch.js");
 const RESOLVE_JS: &str = include_str!("../../panel-shim/resolve.js");
+const UI_JS: &str = include_str!("../../panel-shim/ui.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -36,6 +37,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__shim.js", get(|| async { javascript(SHIM_JS) }))
         .route("/__keymatch.js", get(|| async { javascript(KEYMATCH_JS) }))
         .route("/__resolve.js", get(|| async { javascript(RESOLVE_JS) }))
+        .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route(
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {

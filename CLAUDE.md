@@ -201,7 +201,8 @@ events; panel types are plain HTML/JS directories rendered in iframes.
 - `panel-shim/shim.js`: injected into every panel document; provides
   `window.metafolder` (daemon/workspace/commands/fs/statusBar/messages +
   `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized lazy
-  TreeRef path resolution.
+  TreeRef path resolution; `ui.js` (served as `/__ui.js`, importable by
+  panels): `el()` DOM builder, `formatValue()`, `field()`.
 - `panel-types/`: the built-in panels (repos, entry-list, entry-detail,
   file, file-manager, message, log, workspace-info, hello example) as
   user-copyable plain HTML/JS.

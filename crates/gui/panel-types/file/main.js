@@ -2,6 +2,8 @@
 // (spec-gui "file panel type"). Files are streamed by the GUI server's
 // /fsraw endpoint (HTTP Range supported, so audio/video can seek).
 
+import { el } from '/__ui.js';
+
 const { workspace } = metafolder;
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
@@ -24,33 +26,28 @@ function rawUrl(path) {
 }
 
 function placeholder(text) {
-  const p = document.createElement('p');
-  p.className = 'placeholder';
-  p.textContent = text;
-  viewer.replaceChildren(p);
+  viewer.replaceChildren(el('p', { class: 'placeholder' }, text));
 }
 
 function renderPathBar() {
   pathBar.hidden = paths.length === 0;
   if (paths.length > 1) {
     // Entry reachable at several locations: pick which one to preview.
-    const select = document.createElement('select');
-    paths.forEach((path, index) => {
-      const option = document.createElement('option');
-      option.value = String(index);
-      option.textContent = path;
-      option.selected = index === activeIndex;
-      select.appendChild(option);
-    });
-    select.addEventListener('change', () => {
-      activeIndex = Number(select.value);
-      void renderViewer();
-    });
+    const select = el(
+      'select',
+      {
+        onchange: () => {
+          activeIndex = Number(select.value);
+          void renderViewer();
+        },
+      },
+      paths.map((path, index) =>
+        el('option', { value: String(index), selected: index === activeIndex }, path),
+      ),
+    );
     pathBar.replaceChildren(select);
   } else if (paths.length === 1) {
-    const span = document.createElement('span');
-    span.textContent = paths[0];
-    pathBar.replaceChildren(span);
+    pathBar.replaceChildren(el('span', {}, paths[0]));
   }
 }
 
@@ -79,10 +76,9 @@ async function renderViewer() {
   const url = rawUrl(path);
 
   if (IMAGE.has(extension)) {
-    const img = document.createElement('img');
-    img.src = url;
-    img.onerror = () => placeholder('cannot load the file');
-    viewer.replaceChildren(img);
+    viewer.replaceChildren(
+      el('img', { src: url, onerror: () => placeholder('cannot load the file') }),
+    );
   } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
     // A media element with no usable GStreamer pipeline does not fail
     // gracefully: it crashes the WebKit web process and freezes the
@@ -96,10 +92,7 @@ async function renderViewer() {
       );
       return;
     }
-    const media = document.createElement(kind);
-    media.controls = true;
-    media.src = url;
-    viewer.replaceChildren(media);
+    viewer.replaceChildren(el(kind, { controls: true, src: url }));
   } else if (TEXT.has(extension)) {
     try {
       const response = await fetch(url, {
@@ -107,8 +100,7 @@ async function renderViewer() {
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const text = await response.text();
-      const pre = document.createElement('pre');
-      pre.textContent = text;
+      const pre = el('pre', {}, text);
       viewer.replaceChildren(pre);
       if (response.status === 206 && text.length >= TEXT_PREVIEW_LIMIT) {
         pre.textContent += '\n… (truncated preview)';

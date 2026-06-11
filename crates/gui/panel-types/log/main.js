@@ -1,6 +1,8 @@
 // log panel: revisions in reverse chronological order, expandable into
 // operations; rollback and prune (spec-gui "Event log").
 
+import { el } from '/__ui.js';
+
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 let repo = null;
@@ -15,21 +17,13 @@ const placeholderElement = document.getElementById('placeholder');
 const rollbackButton = document.getElementById('rollback');
 const pruneButton = document.getElementById('prune');
 
-async function call(method, path, body) {
-  const response = await daemon.request(method, path, body);
-  if (response.status >= 400) {
-    throw new Error(response.body?.error ?? `error ${response.status}`);
-  }
-  return response.body;
-}
-
 async function refresh() {
   if (!repo) {
     placeholderElement.textContent = 'No active repository.';
     return;
   }
   try {
-    const log = await call('GET', `/repos/${repo}/log`);
+    const log = await daemon.call('GET', `/repos/${repo}/log`);
     operations = log.operations ?? [];
     const head = log.head;
     const opCount = new Map();
@@ -53,6 +47,46 @@ async function refresh() {
   }
 }
 
+function revisionRow(rev) {
+  return el(
+    'tr',
+    {
+      class: ['rev', rev.id === selectedRev && 'selected'],
+      onclick: () => {
+        selectedRev = rev.id;
+        expandedRev = expandedRev === rev.id ? null : rev.id;
+        render();
+      },
+    },
+    el('td', {}, `#${rev.id}`, rev.label && [' ', el('span', { class: 'label' }, rev.label)]),
+    el('td', {}, new Date(rev.timestamp).toLocaleString()), // ms since epoch
+    el('td', {}, String(rev.opCount)),
+    el('td', { class: [rev.isHead && 'head-marker'] }, rev.isHead ? 'HEAD' : ''),
+  );
+}
+
+function operationsRow(rev) {
+  return el(
+    'tr',
+    { class: 'ops' },
+    el(
+      'td',
+      { colSpan: 4 },
+      operations
+        .filter((o) => o.rev_id === rev.id)
+        .map((op) =>
+          el(
+            'div',
+            { class: 'op' },
+            `op ${op.id}: ${op.op_type}${op.field_name ? ` ${op.field_name}` : ''}${
+              op.entry_uuid ? ` on ${String(op.entry_uuid).slice(0, 8)}…` : ''
+            }`,
+          ),
+        ),
+    ),
+  );
+}
+
 function render() {
   placeholderElement.hidden = revisions.length > 0;
   if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
@@ -60,54 +94,11 @@ function render() {
   rollbackButton.disabled = selectedRev === null;
   pruneButton.disabled = selectedRev === null;
 
-  const fragments = [];
-  for (const rev of revisions) {
-    const tr = document.createElement('tr');
-    tr.className = 'rev';
-    tr.classList.toggle('selected', rev.id === selectedRev);
-    const cells = [
-      `#${rev.id}` + (rev.label ? ` ` : ''),
-      new Date(rev.timestamp).toLocaleString(), // ms since epoch
-      String(rev.opCount),
-      rev.isHead ? 'HEAD' : '',
-    ];
-    cells.forEach((text, index) => {
-      const td = document.createElement('td');
-      td.textContent = text;
-      if (index === 0 && rev.label) {
-        const label = document.createElement('span');
-        label.className = 'label';
-        label.textContent = rev.label;
-        td.appendChild(label);
-      }
-      if (index === 3 && rev.isHead) td.className = 'head-marker';
-      tr.appendChild(td);
-    });
-    tr.addEventListener('click', () => {
-      selectedRev = rev.id;
-      expandedRev = expandedRev === rev.id ? null : rev.id;
-      render();
-    });
-    fragments.push(tr);
-
-    if (expandedRev === rev.id) {
-      const opsRow = document.createElement('tr');
-      opsRow.className = 'ops';
-      const td = document.createElement('td');
-      td.colSpan = 4;
-      for (const op of operations.filter((o) => o.rev_id === rev.id)) {
-        const div = document.createElement('div');
-        div.className = 'op';
-        div.textContent = `op ${op.id}: ${op.op_type}${op.field_name ? ` ${op.field_name}` : ''}${
-          op.entry_uuid ? ` on ${String(op.entry_uuid).slice(0, 8)}…` : ''
-        }`;
-        td.appendChild(div);
-      }
-      opsRow.appendChild(td);
-      fragments.push(opsRow);
-    }
-  }
-  rows.replaceChildren(...fragments);
+  rows.replaceChildren(
+    ...revisions.flatMap((rev) =>
+      expandedRev === rev.id ? [revisionRow(rev), operationsRow(rev)] : [revisionRow(rev)],
+    ),
+  );
 }
 
 // Rollback restores the state as of the END of the selected revision:
@@ -120,7 +111,7 @@ async function rollback() {
   if (selectedRev === null) return;
   if (!confirm(`Rollback to revision #${selectedRev}?`)) return;
   try {
-    const result = await call('POST', `/repos/${repo}/rollback`, {
+    const result = await daemon.call('POST', `/repos/${repo}/rollback`, {
       target: { id: lastOpOf(selectedRev) },
     });
     statusBar.message(
@@ -130,7 +121,7 @@ async function rollback() {
     await workspace.set('entries:dirty', Date.now()); // refresh entry-list
     await refresh();
   } catch (error) {
-    statusBar.message(String(error.message ?? error), 8000);
+    await statusBar.error(error);
   }
 }
 
@@ -138,7 +129,7 @@ async function prune() {
   if (selectedRev === null) return;
   if (!confirm(`Prune all history before revision #${selectedRev}? This cannot be undone.`)) return;
   try {
-    const result = await call('POST', `/repos/${repo}/log/prune`, {
+    const result = await daemon.call('POST', `/repos/${repo}/log/prune`, {
       mode: 'before',
       target: { id: lastOpOf(selectedRev) },
     });
@@ -150,7 +141,7 @@ async function prune() {
     expandedRev = null;
     await refresh();
   } catch (error) {
-    statusBar.message(String(error.message ?? error), 8000);
+    await statusBar.error(error);
   }
 }
 

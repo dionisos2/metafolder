@@ -1,6 +1,8 @@
 // repos panel: list loaded repositories, init/load new ones, open a
 // repository in a workspace (spec-gui "Repository management").
 
+import { el } from '/__ui.js';
+
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 const list = document.getElementById('repo-list');
@@ -14,28 +16,24 @@ function toggleForm(form, show) {
 }
 
 async function refresh() {
-  const response = await daemon.request('GET', '/repos');
-  if (response.status !== 200) {
-    statusBar.message(response.body?.error ?? 'cannot list repositories');
+  let repos;
+  try {
+    repos = (await daemon.call('GET', '/repos')) ?? [];
+  } catch (error) {
+    await statusBar.error(error);
     return;
   }
-  const repos = response.body ?? [];
   empty.hidden = repos.length > 0;
   list.replaceChildren(
-    ...repos.map((repo) => {
-      const item = document.createElement('li');
-      const name = document.createElement('strong');
-      name.textContent = repo.name;
-      const root = document.createElement('span');
-      root.className = 'root';
-      root.textContent = repo.root;
-      const uuid = document.createElement('span');
-      uuid.className = 'uuid';
-      uuid.textContent = repo.repo_uuid.slice(0, 8);
-      item.append(name, root, uuid);
-      item.addEventListener('click', () => openRepo(repo.repo_uuid));
-      return item;
-    }),
+    ...repos.map((repo) =>
+      el(
+        'li',
+        { onclick: () => openRepo(repo.repo_uuid) },
+        el('strong', {}, repo.name),
+        el('span', { class: 'root' }, repo.root),
+        el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+      ),
+    ),
   );
 }
 
@@ -58,27 +56,27 @@ async function openRepo(repoUuid) {
 
 async function submit(form, path, payload, errorElement) {
   errorElement.textContent = '';
-  const response = await daemon.request('POST', path, payload);
-  if (response.status === 200) {
+  try {
+    const created = await daemon.call('POST', path, payload);
     toggleForm(form, false);
-    statusBar.message(`Repository ready: ${response.body.repo_uuid.slice(0, 8)}…`, 5000);
+    statusBar.message(`Repository ready: ${created.repo_uuid.slice(0, 8)}…`, 5000);
     await refresh();
-    await commands.invoke(`tab:new ${response.body.repo_uuid}`);
-  } else {
-    errorElement.textContent = response.body?.error ?? `error ${response.status}`;
+    await commands.invoke(`tab:new ${created.repo_uuid}`);
+  } catch (error) {
+    errorElement.textContent = String(error.message ?? error);
   }
 }
 
 initForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const root = document.getElementById('init-root').value.trim();
-  submit(initForm, '/repos/init', { root }, document.getElementById('init-error'));
+  void submit(initForm, '/repos/init', { root }, document.getElementById('init-error'));
 });
 
 loadForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const root = document.getElementById('load-root').value.trim();
-  submit(loadForm, '/repos/load', { root }, document.getElementById('load-error'));
+  void submit(loadForm, '/repos/load', { root }, document.getElementById('load-error'));
 });
 
 document.getElementById('show-init').addEventListener('click', () => toggleForm(initForm, true));

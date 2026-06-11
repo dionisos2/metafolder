@@ -185,6 +185,14 @@ window.metafolder = {
   daemon: {
     /** Raw daemon call: request('GET', '/repos') etc. */
     request: (method, path, body = null) => request('daemon.request', { method, path, body }),
+    /** Like request, but throws on >= 400 and returns the body directly. */
+    call: async (method, path, body = null) => {
+      const response = await request('daemon.request', { method, path, body });
+      if (response.status >= 400) {
+        throw new Error(response.body?.error ?? `${method} ${path}: HTTP ${response.status}`);
+      }
+      return response.body;
+    },
     /** Compiles a query DSL string to the Query JSON IR. */
     parseQuery: (dsl) => request('daemon.parseQuery', { dsl }),
     /** Repo-root-relative path of an entry (lazy walk, memoized). */
@@ -206,6 +214,24 @@ window.metafolder = {
       const root = repoRoots.get(repo);
       if (root === undefined) throw new Error(`repository ${repo} is not loaded`);
       return root;
+    },
+    /**
+     * Absolute filesystem paths of an entry: one per `mfr_path` tree_ref
+     * (fields are a multi-map), unresolvable (stale) refs skipped.
+     */
+    entryPaths: async (repo, entry) => {
+      const root = await window.metafolder.daemon.repoRoot(repo);
+      const paths = [];
+      for (const f of entry.fields ?? []) {
+        if (f.name !== 'mfr_path' || f.value.type !== 'tree_ref') continue;
+        try {
+          const relative = await resolverFor(repo).resolveTreeRef(f.value.value);
+          paths.push(relative === '' ? root : `${root}/${relative}`);
+        } catch {
+          /* stale TreeRef: skip */
+        }
+      }
+      return paths;
     },
   },
 
@@ -253,6 +279,9 @@ window.metafolder = {
 
   statusBar: {
     message: (text, timeoutMs = null) => request('statusBar.message', { text, timeoutMs }),
+    /** Standard error report: statusBar.error(error) in a catch block. */
+    error: (error, timeoutMs = 8000) =>
+      request('statusBar.message', { text: String(error?.message ?? error), timeoutMs }),
   },
 
   messages: {

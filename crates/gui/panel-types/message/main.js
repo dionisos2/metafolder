@@ -1,17 +1,18 @@
 // message panel: per-workspace append-only log (spec-gui "Message view").
 
+import { el } from '/__ui.js';
+
 const { commands, messages } = metafolder;
 
 const log = document.getElementById('log');
 
 function line(entry) {
-  const div = document.createElement('div');
-  div.className = 'line';
-  const ts = document.createElement('span');
-  ts.className = 'ts';
-  ts.textContent = new Date(entry.ts_ms).toLocaleTimeString();
-  div.append(ts, entry.text);
-  return div;
+  return el(
+    'div',
+    { class: 'line' },
+    el('span', { class: 'ts' }, new Date(entry.ts_ms).toLocaleTimeString()),
+    entry.text,
+  );
 }
 
 function append(entry) {

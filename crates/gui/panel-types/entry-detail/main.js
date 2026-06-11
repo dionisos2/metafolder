@@ -1,6 +1,8 @@
 // entry-detail panel: shows and edits all fields of selected_entry
 // (spec-gui "entry-detail panel type").
 
+import { el, formatValue } from '/__ui.js';
+
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 let current = null; // {uuid, repo} | null
@@ -28,73 +30,42 @@ function api(path) {
   return `/repos/${current.repo}/metadata/${current.uuid}${path}`;
 }
 
-async function call(method, path, body) {
-  const response = await daemon.request(method, path, body);
-  if (response.status >= 400) {
-    throw new Error(response.body?.error ?? `error ${response.status}`);
-  }
-  return response.body;
-}
-
-// ── Value formatting and editing widgets ────────────────────────────────
-
-function formatValue({ type, value }) {
-  switch (type) {
-    case 'nothing':
-      return '∅ (absent)';
-    case 'tree_ref':
-      return `${value.parent ?? '(root)'} / ${value.name}`;
-    case 'externalref':
-      return `${value.repo} :: ${value.entry}`;
-    default:
-      return String(value);
-  }
-}
+// ── Value editing widgets ───────────────────────────────────────────────
 
 /** Builds an input widget for a value; returns {element, read()}. */
 function widgetFor(type, initial) {
-  const input = document.createElement('input');
   switch (type) {
-    case 'int':
-      input.type = 'number';
-      input.step = '1';
-      input.value = initial ?? '';
+    case 'int': {
+      const input = el('input', { type: 'number', step: '1', value: initial ?? '' });
       return { element: input, read: () => ({ type, value: Number(input.value) }) };
-    case 'float':
-      input.type = 'number';
-      input.step = 'any';
-      input.value = initial ?? '';
+    }
+    case 'float': {
+      const input = el('input', { type: 'number', step: 'any', value: initial ?? '' });
       return { element: input, read: () => ({ type, value: Number(input.value) }) };
+    }
     case 'bool': {
-      input.type = 'checkbox';
-      input.checked = initial === true;
+      const input = el('input', { type: 'checkbox', checked: initial === true });
       return { element: input, read: () => ({ type, value: input.checked }) };
     }
-    case 'datetime':
-      input.placeholder = '2024-03-15T10:30:00Z';
-      input.value = initial ?? '';
+    case 'datetime': {
+      const input = el('input', { placeholder: '2024-03-15T10:30:00Z', value: initial ?? '' });
       return { element: input, read: () => ({ type, value: input.value.trim() }) };
-    case 'nothing': {
-      const span = document.createElement('span');
-      span.textContent = '∅ (absent)';
-      return { element: span, read: () => ({ type: 'nothing' }) };
     }
+    case 'nothing':
+      return { element: el('span', {}, '∅'), read: () => ({ type: 'nothing' }) };
     case 'ref':
-    case 'refbase':
-      input.placeholder = '32-char hex uuid';
-      input.value = initial ?? '';
+    case 'refbase': {
+      const input = el('input', { placeholder: '32-char hex uuid', value: initial ?? '' });
       return { element: input, read: () => ({ type, value: input.value.trim() }) };
+    }
     case 'tree_ref': {
-      const wrap = document.createElement('span');
-      const parent = document.createElement('input');
-      parent.placeholder = 'parent uuid (empty = root)';
-      parent.value = initial?.parent ?? '';
-      const name = document.createElement('input');
-      name.placeholder = 'name';
-      name.value = initial?.name ?? '';
-      wrap.append(parent, ' / ', name);
+      const parent = el('input', {
+        placeholder: 'parent uuid (empty = root)',
+        value: initial?.parent ?? '',
+      });
+      const name = el('input', { placeholder: 'name', value: initial?.name ?? '' });
       return {
-        element: wrap,
+        element: el('span', {}, parent, ' / ', name),
         read: () => ({
           type,
           value: { parent: parent.value.trim() || null, name: name.value.trim() },
@@ -102,22 +73,17 @@ function widgetFor(type, initial) {
       };
     }
     case 'externalref': {
-      const wrap = document.createElement('span');
-      const repo = document.createElement('input');
-      repo.placeholder = 'repo uuid';
-      repo.value = initial?.repo ?? '';
-      const target = document.createElement('input');
-      target.placeholder = 'entry uuid';
-      target.value = initial?.entry ?? '';
-      wrap.append(repo, ' :: ', target);
+      const repo = el('input', { placeholder: 'repo uuid', value: initial?.repo ?? '' });
+      const target = el('input', { placeholder: 'entry uuid', value: initial?.entry ?? '' });
       return {
-        element: wrap,
+        element: el('span', {}, repo, ' :: ', target),
         read: () => ({ type, value: { repo: repo.value.trim(), entry: target.value.trim() } }),
       };
     }
-    default: // string
-      input.value = initial ?? '';
+    default: {
+      const input = el('input', { value: initial ?? '' });
       return { element: input, read: () => ({ type: 'string', value: input.value }) };
+    }
   }
 }
 
@@ -147,72 +113,81 @@ function needsWatch() {
   return !watch || watch.value.value !== true;
 }
 
+function nameCell(name, type) {
+  return el('td', { class: 'name' }, name, ' ', el('span', { class: 'type' }, type));
+}
+
 function fieldRow(field) {
-  const tr = document.createElement('tr');
   const readonly = isReserved(field.name) && !forceBox.checked;
-  tr.classList.toggle('readonly', readonly);
-
-  const name = document.createElement('td');
-  name.className = 'name';
-  name.innerHTML = `${field.name} <span class="type">${field.value.type}</span>`;
-
-  const value = document.createElement('td');
-  value.className = 'value';
-  const ops = document.createElement('td');
-  ops.className = 'ops';
+  const value = el('td', { class: 'value' });
+  const ops = el('td', { class: 'ops' });
 
   if (editingField === field.id) {
     const widget = widgetFor(field.value.type, field.value.value);
     value.appendChild(widget.element);
-    const ok = button('OK', async () => {
-      await saveField(field, widget.read());
-    });
-    const cancel = button('Cancel', () => {
-      editingField = null;
-      render();
-    });
-    ops.append(ok, cancel);
-    queueMicrotask(() => widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.());
+    ops.append(
+      el('button', { onclick: () => saveField(field, widget.read()) }, 'OK'),
+      el(
+        'button',
+        {
+          onclick: () => {
+            editingField = null;
+            render();
+          },
+        },
+        'Cancel',
+      ),
+    );
+    queueMicrotask(
+      () => widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.(),
+    );
   } else {
     value.textContent = formatValue(field.value);
-    const edit = button('Edit', () => {
-      editingField = field.id;
-      render();
-    });
-    edit.disabled = readonly || field.value.type === 'nothing';
-    const del = button('Delete', () => deleteField(field));
-    del.disabled = readonly;
-    ops.append(edit, del);
+    ops.append(
+      el(
+        'button',
+        {
+          disabled: readonly || field.value.type === 'nothing',
+          onclick: () => {
+            editingField = field.id;
+            render();
+          },
+        },
+        'Edit',
+      ),
+      el('button', { disabled: readonly, onclick: () => deleteField(field) }, 'Delete'),
+    );
   }
-  tr.append(name, value, ops);
-  return tr;
+  return el(
+    'tr',
+    { class: [readonly && 'readonly'] },
+    nameCell(field.name, field.value.type),
+    value,
+    ops,
+  );
 }
 
 function stagedRow(staged, index) {
-  const tr = document.createElement('tr');
-  const name = document.createElement('td');
-  name.className = 'name';
-  name.innerHTML = `${staged.name} <span class="type">${staged.value.type}</span>`;
-  const value = document.createElement('td');
-  value.className = 'value';
-  value.textContent = formatValue(staged.value);
-  const ops = document.createElement('td');
-  ops.className = 'ops';
-  ops.appendChild(
-    button('Remove', () => {
-      stagedFields.splice(index, 1);
-      render();
-    }),
+  return el(
+    'tr',
+    {},
+    nameCell(staged.name, staged.value.type),
+    el('td', { class: 'value' }, formatValue(staged.value)),
+    el(
+      'td',
+      { class: 'ops' },
+      el(
+        'button',
+        {
+          onclick: () => {
+            stagedFields.splice(index, 1);
+            render();
+          },
+        },
+        'Remove',
+      ),
+    ),
   );
-  tr.append(name, value, ops);
-  return tr;
-}
-
-function button(label, onClick) {
-  const element = document.createElement('button');
-  element.textContent = label;
-  element.addEventListener('click', onClick);
-  return element;
 }
 
 // ── Operations ──────────────────────────────────────────────────────────
@@ -225,7 +200,7 @@ async function load() {
     return;
   }
   try {
-    entry = await call('GET', api(''));
+    entry = await daemon.call('GET', api(''));
   } catch (error) {
     entry = null;
     showError(String(error.message ?? error));
@@ -235,7 +210,7 @@ async function load() {
 
 async function saveField(field, newValue) {
   try {
-    await call('PUT', api(`/fields/${field.id}`), {
+    await daemon.call('PUT', api(`/fields/${field.id}`), {
       value: newValue,
       ...(isReserved(field.name) && { force: true }),
     });
@@ -250,7 +225,11 @@ async function saveField(field, newValue) {
 async function deleteField(field) {
   if (!confirm(`Delete field "${field.name}"?`)) return;
   try {
-    await call('DELETE', api(`/fields/${field.id}`), isReserved(field.name) ? { force: true } : null);
+    await daemon.call(
+      'DELETE',
+      api(`/fields/${field.id}`),
+      isReserved(field.name) ? { force: true } : null,
+    );
     await load();
     await dirty();
   } catch (error) {
@@ -294,9 +273,9 @@ async function addField(replace) {
     if (!current) throw new Error('no entry selected');
     const force = isReserved(name) ? { force: true } : {};
     if (replace) {
-      await call('PATCH', api(''), { name, value, ...force });
+      await daemon.call('PATCH', api(''), { name, value, ...force });
     } else {
-      await call('POST', api('/fields'), { name, value, ...force });
+      await daemon.call('POST', api('/fields'), { name, value, ...force });
     }
     addForm.classList.remove('open');
     await load();
@@ -319,7 +298,7 @@ async function saveNewEntry() {
     const repo = current?.repo ?? (await workspace.get('active_repo'));
     if (!repo) throw new Error('no active repository');
     const force = stagedFields.some((f) => isReserved(f.name)) ? { force: true } : {};
-    const created = await call('POST', `/repos/${repo}/metadata`, {
+    const created = await daemon.call('POST', `/repos/${repo}/metadata`, {
       fields: stagedFields,
       ...force,
     });
@@ -335,7 +314,7 @@ async function saveNewEntry() {
 async function deleteEntry() {
   if (!current || !confirm('Delete this entry (metadata only)?')) return;
   try {
-    await call('DELETE', api(''));
+    await daemon.call('DELETE', api(''));
     statusBar.message('Entry deleted.', 5000);
     await workspace.set('selected_entry', null);
     await dirty();
@@ -348,13 +327,13 @@ async function watchAndReconcile() {
   if (!current) return;
   try {
     statusBar.message('Reconciling…', null);
-    await call('PATCH', api(''), { name: 'mf_watch', value: { type: 'bool', value: true } });
-    const result = await call('POST', api('/reconcile'), {});
+    await daemon.call('PATCH', api(''), { name: 'mf_watch', value: { type: 'bool', value: true } });
+    const result = await daemon.call('POST', api('/reconcile'), {});
     statusBar.message(`Reconcile done: ${JSON.stringify(result)}`, 8000);
     await load();
     await dirty();
   } catch (error) {
-    statusBar.message(String(error.message ?? error), 8000);
+    await statusBar.error(error);
   }
 }
 
@@ -418,7 +397,7 @@ commands.register('entry:batch-set', {
     const repo = current?.repo ?? (await workspace.get('active_repo'));
     // No uuid predicate in the query IR yet: one PATCH per entry.
     for (const uuid of selected) {
-      await call('PATCH', `/repos/${repo}/metadata/${uuid}`, { name, value });
+      await daemon.call('PATCH', `/repos/${repo}/metadata/${uuid}`, { name, value });
     }
     statusBar.message(`Field "${name}" set on ${selected.length} entries.`, 5000);
     await dirty();

@@ -2,6 +2,8 @@
 // daemon), distinguish tracked entries, add paths to the DB
 // (spec-gui "file-manager panel type").
 
+import { el } from '/__ui.js';
+
 const { fs, daemon, workspace, commands, statusBar } = metafolder;
 
 let repo = null;
@@ -27,28 +29,26 @@ function insideRoot(path) {
 async function loadTrackedPaths() {
   trackedPaths = new Map();
   if (!repo) return;
-  const root = repoRoot ?? (repoRoot = await daemon.repoRoot(repo));
   let cursor = null;
   do {
-    const response = await daemon.request('POST', `/repos/${repo}/query`, {
-      query: { type: 'is_present', field: 'mfr_path' },
-      select: '*',
-      limit: 500,
-      ...(cursor && { cursor }),
-    });
-    if (response.status !== 200) return;
-    for (const entry of response.body.results) {
-      for (const field of entry.fields ?? []) {
-        if (field.name !== 'mfr_path' || field.value.type !== 'tree_ref') continue;
-        try {
-          const relative = await daemon.resolveTreeRef(repo, field.value.value);
-          trackedPaths.set(relative === '' ? root : `${root}/${relative}`, entry.uuid);
-        } catch {
-          /* stale path */
-        }
+    let page;
+    try {
+      page = await daemon.call('POST', `/repos/${repo}/query`, {
+        query: { type: 'is_present', field: 'mfr_path' },
+        select: '*',
+        limit: 500,
+        ...(cursor && { cursor }),
+      });
+    } catch (error) {
+      await statusBar.error(error);
+      return;
+    }
+    for (const entry of page.results) {
+      for (const path of await daemon.entryPaths(repo, entry)) {
+        trackedPaths.set(path, entry.uuid);
       }
     }
-    cursor = response.body.next_cursor;
+    cursor = page.next_cursor;
   } while (cursor);
 }
 
@@ -63,7 +63,7 @@ async function open(dir) {
     cursorIndex = -1;
     render();
   } catch (error) {
-    statusBar.message(String(error.message ?? error), 5000);
+    await statusBar.error(error, 5000);
   }
 }
 
@@ -75,24 +75,19 @@ function render() {
     !repo || !selected || trackedPaths.has(selected.path) || !insideRoot(selected.path);
 
   entriesList.replaceChildren(
-    ...listing.map((item, index) => {
-      const li = document.createElement('li');
-      li.classList.toggle('cursor', index === cursorIndex);
-      li.classList.toggle('tracked', trackedPaths.has(item.path));
-      const icon = document.createElement('span');
-      icon.className = 'icon';
-      icon.textContent = item.is_dir ? '▸' : '·';
-      const name = document.createElement('span');
-      name.className = 'name';
-      name.textContent = item.name;
-      const badge = document.createElement('span');
-      badge.className = 'badge';
-      badge.textContent = trackedPaths.has(item.path) ? 'tracked' : '';
-      li.append(icon, name, badge);
-      li.addEventListener('click', () => select(index));
-      li.addEventListener('dblclick', () => activate(index));
-      return li;
-    }),
+    ...listing.map((item, index) =>
+      el(
+        'li',
+        {
+          class: [index === cursorIndex && 'cursor', trackedPaths.has(item.path) && 'tracked'],
+          onclick: () => select(index),
+          ondblclick: () => activate(index),
+        },
+        el('span', { class: 'icon' }, item.is_dir ? '▸' : '·'),
+        el('span', { class: 'name' }, item.name),
+        el('span', { class: 'badge' }, trackedPaths.has(item.path) ? 'tracked' : ''),
+      ),
+    ),
   );
 }
 
@@ -127,16 +122,17 @@ async function addSelected() {
     return;
   }
   if (!item) return;
-  const response = await daemon.request('POST', `/repos/${repo}/track`, { path: item.path });
-  if (response.status === 200) {
-    statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, 5000);
-    await loadTrackedPaths();
-    render();
-    await select(cursorIndex);
-    await workspace.set('entries:dirty', Date.now());
-  } else {
-    statusBar.message(response.body?.error ?? `track failed (${response.status})`, 6000);
+  try {
+    await daemon.call('POST', `/repos/${repo}/track`, { path: item.path });
+  } catch (error) {
+    await statusBar.error(error, 6000);
+    return;
   }
+  statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, 5000);
+  await loadTrackedPaths();
+  render();
+  await select(cursorIndex);
+  await workspace.set('entries:dirty', Date.now());
 }
 
 async function gotoRoot() {

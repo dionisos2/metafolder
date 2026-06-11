@@ -1,6 +1,8 @@
 // entry-list panel: entries of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "entry-list panel type").
 
+import { el, field, formatValue } from '/__ui.js';
+
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 const PAGE_SIZE = 100;
@@ -17,7 +19,6 @@ const MATCH_ALL = {
 };
 
 let repo = null;
-let repoRoot = null;
 let entries = [];
 let nextCursor = null;
 let loading = false;
@@ -37,17 +38,12 @@ const queryError = document.getElementById('query-error');
 
 // ── Data access ─────────────────────────────────────────────────────────
 
-function field(entry, name) {
-  return (entry.fields ?? []).find((f) => f.name === name);
-}
-
 function fieldDisplay(entry, name) {
   const f = field(entry, name);
   if (!f) return '';
-  const { type, value } = f.value;
-  if (type === 'tree_ref') return value.name || '(root)';
-  if (type === 'nothing') return '∅';
-  return String(value);
+  // mfr_path column: leaf name only, until the resolved path arrives.
+  if (f.value.type === 'tree_ref') return f.value.value.name || '(root)';
+  return formatValue(f.value);
 }
 
 async function fetchPage(reset) {
@@ -63,20 +59,21 @@ async function fetchPage(reset) {
       entries = [];
       nextCursor = null;
     }
-    const body = {
-      query: queryIR ?? MATCH_ALL,
-      select: '*',
-      limit: PAGE_SIZE,
-      ...(sort.length > 0 && { sort }),
-      ...(nextCursor && { cursor: nextCursor }),
-    };
-    const response = await daemon.request('POST', `/repos/${repo}/query`, body);
-    if (response.status !== 200) {
-      statusBar.message(response.body?.error ?? `query failed (${response.status})`);
+    let page;
+    try {
+      page = await daemon.call('POST', `/repos/${repo}/query`, {
+        query: queryIR ?? MATCH_ALL,
+        select: '*',
+        limit: PAGE_SIZE,
+        ...(sort.length > 0 && { sort }),
+        ...(nextCursor && { cursor: nextCursor }),
+      });
+    } catch (error) {
+      await statusBar.error(error);
       return;
     }
-    entries = entries.concat(response.body.results);
-    nextCursor = response.body.next_cursor;
+    entries = entries.concat(page.results);
+    nextCursor = page.next_cursor;
     if (reset) {
       // Drop checked entries that no longer match.
       const alive = new Set(entries.map((e) => e.uuid));
@@ -106,14 +103,14 @@ async function fetchPage(reset) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function renderHeader() {
-  const header = document.getElementById('header-row');
-  header.replaceChildren(
+  document.getElementById('header-row').replaceChildren(
     ...COLUMNS.map((name) => {
-      const th = document.createElement('th');
       const active = sort.find((s) => s.field === name);
-      th.textContent = name + (active ? (active.order === 'asc' ? ' ▲' : ' ▼') : '');
-      th.addEventListener('click', () => toggleSort(name));
-      return th;
+      return el(
+        'th',
+        { onclick: () => toggleSort(name) },
+        name + (active ? (active.order === 'asc' ? ' ▲' : ' ▼') : ''),
+      );
     }),
   );
 }
@@ -121,41 +118,43 @@ function renderHeader() {
 function render() {
   renderHeader();
   rows.replaceChildren(
-    ...entries.map((entry, index) => {
-      const tr = document.createElement('tr');
-      tr.className = 'row';
-      tr.classList.toggle('cursor', index === cursorIndex);
-      tr.classList.toggle('checked', checked.has(entry.uuid));
-      for (const column of COLUMNS) {
-        const td = document.createElement('td');
-        td.textContent =
-          column === 'version' ? String(entry.version) : fieldDisplay(entry, column);
-        if (column === 'mfr_path') {
-          td.dataset.uuid = entry.uuid;
-          void fillResolvedPath(td, entry);
-        }
-        tr.appendChild(td);
-      }
-      tr.addEventListener('click', () => setCursor(index));
-      tr.addEventListener('dblclick', () => openSelected());
-      return tr;
-    }),
+    ...entries.map((entry, index) =>
+      el(
+        'tr',
+        {
+          class: ['row', index === cursorIndex && 'cursor', checked.has(entry.uuid) && 'checked'],
+          onclick: () => setCursor(index),
+          ondblclick: () => openSelected(),
+        },
+        COLUMNS.map((column) => {
+          const td = el(
+            'td',
+            {},
+            column === 'version' ? String(entry.version) : fieldDisplay(entry, column),
+          );
+          if (column === 'mfr_path') {
+            td.dataset.uuid = entry.uuid;
+            void fillResolvedPath(td, entry);
+          }
+          return td;
+        }),
+      ),
+    ),
   );
   grid.replaceChildren(
     ...entries.map((entry, index) => {
-      const card = document.createElement('div');
-      card.className = 'card';
-      card.classList.toggle('cursor', index === cursorIndex);
-      const img = document.createElement('img');
-      img.loading = 'lazy';
+      const img = el('img', { loading: 'lazy' });
       void fillThumbnail(img, entry);
-      const name = document.createElement('div');
-      name.className = 'name';
-      name.textContent = fieldDisplay(entry, 'mfr_path') || entry.uuid.slice(0, 8);
-      card.append(img, name);
-      card.addEventListener('click', () => setCursor(index));
-      card.addEventListener('dblclick', () => openSelected());
-      return card;
+      return el(
+        'div',
+        {
+          class: ['card', index === cursorIndex && 'cursor'],
+          onclick: () => setCursor(index),
+          ondblclick: () => openSelected(),
+        },
+        img,
+        el('div', { class: 'name' }, fieldDisplay(entry, 'mfr_path') || entry.uuid.slice(0, 8)),
+      );
     }),
   );
   statusLine.textContent =
@@ -176,7 +175,7 @@ async function fillResolvedPath(td, entry) {
 
 async function fillThumbnail(img, entry) {
   try {
-    const paths = await resolvedAbsolutePaths(entry);
+    const paths = await daemon.entryPaths(repo, entry);
     if (paths.length > 0) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(paths[0])}`;
   } catch {
     /* no preview */
@@ -185,23 +184,6 @@ async function fillThumbnail(img, entry) {
 
 // ── Selection (workspace variables) ─────────────────────────────────────
 
-async function resolvedAbsolutePaths(entry) {
-  const root = repoRoot ?? (repoRoot = await daemon.repoRoot(repo));
-  const refs = (entry.fields ?? []).filter(
-    (f) => f.name === 'mfr_path' && f.value.type === 'tree_ref',
-  );
-  const paths = [];
-  for (const f of refs) {
-    try {
-      const relative = await daemon.resolveTreeRef(repo, f.value.value);
-      paths.push(relative === '' ? root : `${root}/${relative}`);
-    } catch {
-      /* unresolvable (stale) path: skip */
-    }
-  }
-  return paths;
-}
-
 async function setCursor(index) {
   cursorIndex = Math.max(0, Math.min(index, entries.length - 1));
   render();
@@ -209,7 +191,7 @@ async function setCursor(index) {
   if (!entry) return;
   document.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
   await workspace.set('selected_entry', { uuid: entry.uuid, repo });
-  await workspace.set('selected_paths', await resolvedAbsolutePaths(entry));
+  await workspace.set('selected_paths', await daemon.entryPaths(repo, entry));
 }
 
 async function toggleChecked() {
@@ -224,7 +206,7 @@ async function toggleChecked() {
 async function openSelected() {
   const entry = entries[cursorIndex];
   if (!entry) return;
-  const paths = await resolvedAbsolutePaths(entry);
+  const paths = await daemon.entryPaths(repo, entry);
   await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'entry-detail'}`);
 }
 
