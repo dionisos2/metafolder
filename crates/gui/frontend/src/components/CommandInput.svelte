@@ -1,6 +1,12 @@
 <script lang="ts">
   import { invoke } from '../lib/ipc';
-  import { commonPrefix, dispatch, filterCommands, setEditingTarget } from '../lib/commands';
+  import {
+    commonPrefix,
+    dispatch,
+    filterCommands,
+    setEditingTarget,
+    shortcutsFor,
+  } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
 
   let element = $state<HTMLInputElement | null>(null);
@@ -164,6 +170,9 @@
           <button onmousedown={(e) => e.preventDefault()} onclick={() => acceptSuggestion(suggestion.name)}>
             <span class="name">{suggestion.name}</span>
             <span class="label">{suggestion.label}</span>
+            {#if shortcutsFor(store.keytable, suggestion.name).length > 0}
+              <span class="shortcut">{shortcutsFor(store.keytable, suggestion.name).join(', ')}</span>
+            {/if}
           </button>
         </li>
       {/each}
@@ -250,5 +259,17 @@
   }
   .suggestions .label {
     color: var(--mf-fg-dim, #8a8a96);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .suggestions .shortcut {
+    margin-left: auto;
+    font-family: var(--mf-font-mono, monospace);
+    color: var(--mf-accent, #4c56c4);
+    white-space: nowrap;
+  }
+  .suggestions li.selected .shortcut {
+    color: rgba(255, 255, 255, 0.85);
   }
 </style>

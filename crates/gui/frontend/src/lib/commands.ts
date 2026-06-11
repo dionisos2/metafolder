@@ -29,6 +29,20 @@ export function gotoIndex(name: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** Key combos bound to a command (exact or with parameters), for the
+ *  autocomplete display. */
+export function shortcutsFor(
+  keytable: { keys: string[]; invocation: string }[],
+  commandName: string,
+): string[] {
+  return keytable
+    .filter(
+      (binding) =>
+        binding.invocation === commandName || binding.invocation.startsWith(commandName + ' '),
+    )
+    .map((binding) => binding.keys.join(' '));
+}
+
 /** Longest prefix shared by every name (shell-style Tab completion). */
 export function commonPrefix(names: string[]): string {
   if (names.length === 0) return '';

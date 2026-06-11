@@ -3,7 +3,13 @@
 // exercised in the running app.
 
 import { describe, expect, test } from 'vitest';
-import { commonPrefix, filterCommands, gotoIndex, parseInvocation } from '../src/lib/commands';
+import {
+  commonPrefix,
+  filterCommands,
+  gotoIndex,
+  parseInvocation,
+  shortcutsFor,
+} from '../src/lib/commands';
 
 describe('parseInvocation', () => {
   test('plain command name', () => {
@@ -69,6 +75,43 @@ describe('commonPrefix', () => {
   test('no shared prefix yields the empty string', () => {
     expect(commonPrefix(['panel:close', 'tab:close'])).toBe('');
     expect(commonPrefix([])).toBe('');
+  });
+});
+
+describe('shortcutsFor', () => {
+  const binding = (keys: string[], invocation: string) => ({
+    keys,
+    invocation,
+    when: null,
+    text_input: false,
+  });
+  const table = [
+    binding(['alt+t'], 'tab:new'),
+    binding(['ctrl+g'], 'entry-list:set-mode grid'),
+    binding(['down'], 'entry-list:next'),
+    binding(['j'], 'entry-list:next'),
+    binding(['g', 'g'], 'entry-list:goto-top'),
+  ];
+
+  test('exact invocation match', () => {
+    expect(shortcutsFor(table, 'tab:new')).toEqual(['alt+t']);
+  });
+
+  test('parameterized invocations count for the bare command', () => {
+    expect(shortcutsFor(table, 'entry-list:set-mode')).toEqual(['ctrl+g']);
+  });
+
+  test('several bindings are all listed', () => {
+    expect(shortcutsFor(table, 'entry-list:next')).toEqual(['down', 'j']);
+  });
+
+  test('sequences are space-joined', () => {
+    expect(shortcutsFor(table, 'entry-list:goto-top')).toEqual(['g g']);
+  });
+
+  test('no binding yields an empty list, not a partial-name match', () => {
+    expect(shortcutsFor(table, 'tab:close')).toEqual([]);
+    expect(shortcutsFor(table, 'entry-list:go')).toEqual([]);
   });
 });
 
