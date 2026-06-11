@@ -135,6 +135,36 @@ async fn test_health_transitions_emit_events() {
 }
 
 #[tokio::test]
+async fn test_reconcile_run_posts_status_and_logs() {
+    let (url, _) = spawn_stub().await;
+    let (notifier, gui) = gui_with_notifier();
+    let proxy = Arc::new(DaemonProxy::new(url));
+
+    // No active repo: refused.
+    assert!(
+        metafolder_gui::reconcile::run(gui.clone(), proxy.clone(), "ws-1".into())
+            .await
+            .is_err()
+    );
+
+    let ws = gui.tab_new(Some("abc123".into()));
+    notifier.clear();
+    metafolder_gui::reconcile::run(gui.clone(), proxy, ws.clone())
+        .await
+        .unwrap();
+
+    let statuses = notifier.payloads(events::STATUS_MESSAGE);
+    assert_eq!(statuses.len(), 2);
+    assert_eq!(statuses[0]["kind"], "busy");
+    assert!(statuses[1]["text"]
+        .as_str()
+        .unwrap()
+        .starts_with("Reconcile:"));
+    // Full result in the message log (busy + summary + detail).
+    assert_eq!(gui.messages(&ws).unwrap().len(), 3);
+}
+
+#[tokio::test]
 async fn test_set_url_is_visible() {
     let proxy = DaemonProxy::new("http://127.0.0.1:7523".into());
     assert_eq!(proxy.base_url(), "http://127.0.0.1:7523");

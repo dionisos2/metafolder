@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Built-in panel type: live view of all workspace variables (spec-gui
+     "workspace-info panel type"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>workspace-info</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 10px;
+        font-size: 13px;
+      }
+      h2 {
+        font-size: 1em;
+        color: var(--mf-fg-dim, #8a8a96);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td {
+        padding: 4px 6px;
+        vertical-align: top;
+      }
+      tr:nth-child(odd) {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      td.key {
+        font-family: var(--mf-font-mono, monospace);
+        white-space: nowrap;
+      }
+      td.value {
+        width: 100%;
+        font-family: var(--mf-font-mono, monospace);
+        white-space: pre-wrap;
+        word-break: break-all;
+        color: var(--mf-ok, #56c44c);
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Workspace variables</h2>
+    <table>
+      <tbody id="vars"></tbody>
+    </table>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

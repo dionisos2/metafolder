@@ -82,6 +82,70 @@ impl ConfigDir {
         KeybindingSet::from_sources(DEFAULT_KEYBINDINGS, &user)
     }
 
+    /// Writes (or replaces) one user keybinding override and returns the
+    /// recompiled merged set. Combos are matched after normalization, so
+    /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` entry.
+    pub fn set_user_keybinding(
+        &self,
+        combo: &str,
+        command: &str,
+        when: Option<&str>,
+        text_input: bool,
+    ) -> Result<KeybindingSet, String> {
+        let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
+        let mut table = self.read_user_keybindings_table()?;
+        table.retain(|key, _| {
+            crate::keybindings::parse_combo(key)
+                .map(|keys| keys.join(" ") != normalized)
+                .unwrap_or(true)
+        });
+        let mut entry = toml::Table::new();
+        entry.insert("command".into(), toml::Value::String(command.to_string()));
+        if let Some(when) = when {
+            entry.insert("when".into(), toml::Value::String(when.to_string()));
+        }
+        if text_input {
+            entry.insert("text-input".into(), toml::Value::Boolean(true));
+        }
+        table.insert(normalized, toml::Value::Table(entry));
+        self.write_user_keybindings_table(&table)?;
+        self.load_keybindings()
+    }
+
+    /// Removes a user override (reverting to the shipped default);
+    /// missing entries are a no-op. Returns the recompiled set.
+    pub fn remove_user_keybinding(&self, combo: &str) -> Result<KeybindingSet, String> {
+        let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
+        let mut table = self.read_user_keybindings_table()?;
+        table.retain(|key, _| {
+            crate::keybindings::parse_combo(key)
+                .map(|keys| keys.join(" ") != normalized)
+                .unwrap_or(true)
+        });
+        self.write_user_keybindings_table(&table)?;
+        self.load_keybindings()
+    }
+
+    fn read_user_keybindings_table(&self) -> Result<toml::Table, String> {
+        let path = self.root.join("keybindings.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(content) => {
+                toml::from_str(&content).map_err(|e| format!("invalid keybindings file: {e}"))
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(toml::Table::new()),
+            Err(e) => Err(format!("cannot read {}: {e}", path.display())),
+        }
+    }
+
+    fn write_user_keybindings_table(&self, table: &toml::Table) -> Result<(), String> {
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| format!("cannot create {}: {e}", self.root.display()))?;
+        let path = self.root.join("keybindings.toml");
+        let serialized =
+            toml::to_string_pretty(table).map_err(|e| format!("cannot serialize: {e}"))?;
+        std::fs::write(&path, serialized).map_err(|e| format!("cannot write {}: {e}", path.display()))
+    }
+
     // ── Style ────────────────────────────────────────────────────────────
 
     pub fn style_css_path(&self) -> PathBuf {

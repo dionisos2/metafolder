@@ -191,6 +191,41 @@ pub fn get_compiled_keybindings(app: AppHandle) -> Vec<CompiledBinding> {
     app.keybindings.lock().unwrap().compiled()
 }
 
+/// Settings view: writes a user keybinding override to keybindings.toml,
+/// swaps in the recompiled set and pushes it to every document.
+#[tauri::command]
+pub fn set_user_keybinding(
+    app: AppHandle,
+    combo: String,
+    command: String,
+    when: Option<String>,
+    text_input: Option<bool>,
+) -> Result<Vec<CompiledBinding>, String> {
+    let set = app.config.set_user_keybinding(
+        &combo,
+        &command,
+        when.as_deref(),
+        text_input.unwrap_or(false),
+    )?;
+    let compiled = set.compiled();
+    *app.keybindings.lock().unwrap() = set;
+    crate::push_keybindings(&app.gui, &compiled);
+    Ok(compiled)
+}
+
+/// Settings view: removes a user override (reverting to the default).
+#[tauri::command]
+pub fn remove_user_keybinding(
+    app: AppHandle,
+    combo: String,
+) -> Result<Vec<CompiledBinding>, String> {
+    let set = app.config.remove_user_keybinding(&combo)?;
+    let compiled = set.compiled();
+    *app.keybindings.lock().unwrap() = set;
+    crate::push_keybindings(&app.gui, &compiled);
+    Ok(compiled)
+}
+
 #[tauri::command]
 pub fn list_panel_types(app: AppHandle) -> Result<Vec<String>, String> {
     app.config.list_panel_types()

@@ -13,6 +13,7 @@ let nextRequestId = 1;
 const varListeners = new Map(); // key -> Set<fn>
 const commandHandlers = new Map(); // name -> fn
 const visibilityListeners = new Set();
+const messageListeners = new Set(); // message-log appends (null = cleared)
 
 let initData = null;
 let resolveReady;
@@ -101,6 +102,9 @@ window.addEventListener('message', (event) => {
         );
       break;
     }
+    case 'message-appended':
+      for (const listener of messageListeners) listener(message.entry);
+      break;
     case 'keytable':
       matcher.setBindings(message.bindings ?? []);
       break;
@@ -227,6 +231,11 @@ window.metafolder = {
 
   messages: {
     list: () => request('messages.list', {}),
+    /** entry is null when the log was cleared. */
+    onAppend(listener) {
+      if (messageListeners.size === 0) void request('workspace.subscribe', { key: 'messages' });
+      messageListeners.add(listener);
+    },
   },
 };
 

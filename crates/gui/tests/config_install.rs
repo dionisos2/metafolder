@@ -113,6 +113,63 @@ fn test_panel_dir_resolution() {
 }
 
 #[test]
+fn test_set_user_keybinding_overrides_and_persists() {
+    let (_guard, config) = temp_config();
+    config.install_defaults().unwrap();
+
+    let set = config
+        .set_user_keybinding("alt+t", "panel:split", None, false)
+        .unwrap();
+    let alt_t: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["alt+t"]).collect();
+    assert_eq!(alt_t.len(), 1);
+    assert_eq!(alt_t[0].invocation, "panel:split");
+
+    // Persisted: a fresh load sees the override.
+    let reloaded = config.load_keybindings().unwrap();
+    let alt_t = reloaded
+        .compiled()
+        .into_iter()
+        .find(|b| b.keys == ["alt+t"])
+        .unwrap();
+    assert_eq!(alt_t.invocation, "panel:split");
+}
+
+#[test]
+fn test_set_user_keybinding_replaces_differently_spelled_combo() {
+    let (_guard, config) = temp_config();
+    config
+        .set_user_keybinding("shift+ctrl+a", "first", None, false)
+        .unwrap();
+    let set = config
+        .set_user_keybinding("ctrl+shift+A", "second", Some("entry-list"), true)
+        .unwrap();
+    let bindings: Vec<_> = set
+        .compiled()
+        .into_iter()
+        .filter(|b| b.keys == ["ctrl+shift+a"])
+        .collect();
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].invocation, "second");
+    assert_eq!(bindings[0].when.as_deref(), Some("entry-list"));
+    assert!(bindings[0].text_input);
+}
+
+#[test]
+fn test_remove_user_keybinding_restores_default() {
+    let (_guard, config) = temp_config();
+    config.install_defaults().unwrap();
+    config
+        .set_user_keybinding("alt+t", "panel:split", None, false)
+        .unwrap();
+
+    let set = config.remove_user_keybinding("alt+t").unwrap();
+    let alt_t = set.compiled().into_iter().find(|b| b.keys == ["alt+t"]).unwrap();
+    assert_eq!(alt_t.invocation, "tab:new"); // shipped default again
+    // Removing a non-override is a no-op, not an error.
+    config.remove_user_keybinding("alt+t").unwrap();
+}
+
+#[test]
 fn test_port_file_roundtrip() {
     let (_guard, config) = temp_config();
     let path = config.write_port_file(7524).unwrap();

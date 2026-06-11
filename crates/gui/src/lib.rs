@@ -13,6 +13,7 @@ pub mod events;
 pub mod fs_commands;
 pub mod keybindings;
 pub mod notifier;
+pub mod reconcile;
 pub mod server;
 pub mod shell_exec;
 pub mod state;
@@ -73,6 +74,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("quit", "Exit the GUI"),
         ("daemon:set-url", "Change the daemon URL"),
         ("repos:open", "Open the repository panel in the focused slot"),
+        ("reconcile:run", "Reconcile the active repository with the filesystem"),
     ] {
         registry.register_builtin(name, label);
     }
@@ -179,6 +181,8 @@ pub fn run(options: Options) {
             commands::register_command,
             commands::suggest_keybinding,
             commands::get_compiled_keybindings,
+            commands::set_user_keybinding,
+            commands::remove_user_keybinding,
             commands::list_panel_types,
             commands::load_style,
             commands::config_info,
@@ -189,6 +193,7 @@ pub fn run(options: Options) {
             commands::daemon_set_url,
             commands::daemon_health,
             commands::parse_query,
+            reconcile::reconcile_run,
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,

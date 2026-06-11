@@ -1,0 +1,96 @@
+<!doctype html>
+<!-- Built-in panel type: event log — revisions and operations (spec-gui
+     "Event log"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>log</title>
+    <style>
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-size: 13px;
+      }
+      #toolbar {
+        display: flex;
+        gap: 6px;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #revisions {
+        flex: 1;
+        overflow-y: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        text-align: left;
+        background: var(--mf-bg-raised, #26262e);
+        padding: 4px 8px;
+      }
+      td {
+        padding: 3px 8px;
+        white-space: nowrap;
+      }
+      tr.rev {
+        cursor: pointer;
+      }
+      tr.rev:hover,
+      tr.rev.selected {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      tr.ops td {
+        padding: 0 8px 8px 24px;
+      }
+      .op {
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .head-marker {
+        color: var(--mf-ok, #56c44c);
+      }
+      .label {
+        color: var(--mf-accent, #4c56c4);
+      }
+      .placeholder {
+        padding: 20px;
+        text-align: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="refresh">Refresh</button>
+      <button id="rollback" disabled>Rollback to selected (log:rollback)</button>
+      <button id="prune" disabled>Prune before selected (log:prune)</button>
+    </div>
+    <div id="revisions">
+      <p class="placeholder" id="placeholder">Loading…</p>
+      <table hidden>
+        <thead>
+          <tr><th>revision</th><th>timestamp</th><th>operations</th><th>status</th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

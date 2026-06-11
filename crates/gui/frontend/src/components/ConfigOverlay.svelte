@@ -1,7 +1,13 @@
 <script lang="ts">
   import { invoke } from '../lib/ipc';
   import { applyStyle, store } from '../lib/store.svelte';
-  import type { ConfigInfo } from '../lib/types';
+  import type { Binding, ConfigInfo } from '../lib/types';
+
+  let combo = $state('');
+  let command = $state('');
+  let when = $state('');
+  let textInput = $state(false);
+  let bindingError = $state('');
 
   $effect(() => {
     if (store.ui.configOpen && store.ui.configInfo === null) {
@@ -17,6 +23,40 @@
 
   function close() {
     store.ui.configOpen = false;
+  }
+
+  function prefill(binding: Binding) {
+    combo = binding.keys.join(' ');
+    command = binding.invocation;
+    when = binding.when ?? '';
+    textInput = binding.text_input;
+  }
+
+  async function saveBinding() {
+    bindingError = '';
+    try {
+      store.keytable = await invoke<Binding[]>('set_user_keybinding', {
+        combo,
+        command,
+        when: when.trim() === '' ? null : when.trim(),
+        textInput,
+      });
+      combo = '';
+      command = '';
+    } catch (error) {
+      bindingError = String(error);
+    }
+  }
+
+  async function resetBinding(binding: Binding) {
+    bindingError = '';
+    try {
+      store.keytable = await invoke<Binding[]>('remove_user_keybinding', {
+        combo: binding.keys.join(' '),
+      });
+    } catch (error) {
+      bindingError = String(error);
+    }
   }
 </script>
 
@@ -46,6 +86,33 @@
       <p class="hint">
         The stylesheet also reloads automatically when the file changes.
       </p>
+
+      <h3>Keybindings</h3>
+      <div class="binding-form">
+        <input placeholder="combo (e.g. ctrl+k or g g)" bind:value={combo} />
+        <input placeholder="command (e.g. tab:new)" bind:value={command} />
+        <input placeholder="when (panel type, empty = global)" bind:value={when} />
+        <label><input type="checkbox" bind:checked={textInput} /> text-input</label>
+        <button onclick={saveBinding} disabled={!combo.trim() || !command.trim()}>Save</button>
+      </div>
+      {#if bindingError}<p class="error">{bindingError}</p>{/if}
+      <div class="binding-table">
+        <table>
+          <tbody>
+            {#each store.keytable as binding (binding.keys.join(' ') + (binding.when ?? ''))}
+              <tr>
+                <td class="combo">{binding.keys.join(' ')}</td>
+                <td>{binding.invocation}</td>
+                <td class="scope">{binding.when ?? 'global'}{binding.text_input ? ' ⌨' : ''}</td>
+                <td>
+                  <button onclick={() => prefill(binding)}>Edit</button>
+                  <button onclick={() => resetBinding(binding)}>Reset</button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
     {/if}
   </div>
 </div>
@@ -106,5 +173,47 @@
     border: 1px solid var(--mf-fg-dim, #8a8a96);
     border-radius: 3px;
     cursor: pointer;
+  }
+  h3 {
+    font-size: 1em;
+    margin: 14px 0 6px;
+  }
+  .binding-form {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .binding-form input[type='text'],
+  .binding-form input:not([type]) {
+    font-family: var(--mf-font-mono, monospace);
+    background: var(--mf-bg, #1e1e24);
+    color: var(--mf-fg, #d8d8e0);
+    border: 1px solid var(--mf-fg-dim, #8a8a96);
+    border-radius: 3px;
+    padding: 2px 6px;
+  }
+  .binding-table {
+    max-height: 14em;
+    overflow-y: auto;
+    margin-top: 8px;
+    border: 1px solid var(--mf-bg, #1e1e24);
+  }
+  .binding-table table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .binding-table td {
+    padding: 2px 8px;
+    font-size: 0.9em;
+  }
+  .combo {
+    font-family: var(--mf-font-mono, monospace);
+  }
+  .scope {
+    color: var(--mf-fg-dim, #8a8a96);
+  }
+  .error {
+    color: var(--mf-error, #c44c56);
   }
 </style>

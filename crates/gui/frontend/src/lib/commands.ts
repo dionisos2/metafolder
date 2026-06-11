@@ -159,6 +159,9 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'config:open':
         store.ui.configOpen = true;
         return;
+      case 'reconcile:run':
+        if (ws) await invoke('reconcile_run', { wsId: ws });
+        return;
       case 'repos:open':
         await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
         return;

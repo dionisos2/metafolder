@@ -498,6 +498,11 @@ impl GuiState {
     pub fn clear_messages(&self, ws_id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.workspace_mut(ws_id)?.messages.clear();
+        // A null entry tells message panels the log was cleared.
+        self.notifier.emit(
+            events::MESSAGE_APPENDED,
+            json!({ "workspace_id": ws_id, "entry": Value::Null }),
+        );
         Ok(())
     }
 }
@@ -827,5 +832,9 @@ mod tests {
 
         state.clear_messages("ws-1").unwrap();
         assert!(state.messages("ws-1").unwrap().is_empty());
+        // Clearing notifies panels with a null entry.
+        let appended = notifier.payloads(events::MESSAGE_APPENDED);
+        assert_eq!(appended.len(), 2);
+        assert_eq!(appended[1]["entry"], Value::Null);
     }
 }
