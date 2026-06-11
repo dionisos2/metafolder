@@ -29,6 +29,21 @@ export function gotoIndex(name: string): number | null {
   return match ? Number(match[1]) : null;
 }
 
+/** Longest prefix shared by every name (shell-style Tab completion). */
+export function commonPrefix(names: string[]): string {
+  if (names.length === 0) return '';
+  let prefix = names[0];
+  for (const name of names.slice(1)) {
+    let length = 0;
+    while (length < prefix.length && length < name.length && prefix[length] === name[length]) {
+      length += 1;
+    }
+    prefix = prefix.slice(0, length);
+    if (prefix === '') break;
+  }
+  return prefix;
+}
+
 export function filterCommands<C extends { name: string }>(commands: C[], prefix: string): C[] {
   const byName = (a: C, b: C) => a.name.localeCompare(b.name);
   if (prefix === '') return [...commands].sort(byName);

@@ -1,12 +1,14 @@
 <script lang="ts">
   import { invoke } from '../lib/ipc';
-  import { dispatch, filterCommands, setEditingTarget } from '../lib/commands';
+  import { commonPrefix, dispatch, filterCommands, setEditingTarget } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
 
   let element = $state<HTMLInputElement | null>(null);
   let draft = $state('');
   let currentWs = $state<string | null>(null);
   let focused = $state(false);
+  /** Highlighted suggestion while navigating with Up/Down; -1 = none. */
+  let selectedIndex = $state(-1);
 
   // The draft is per-workspace (spec-gui "Command input"): switching the
   // focused slot to another workspace restores that workspace's draft.
@@ -36,13 +38,58 @@
     }
   });
 
-  const suggestions = $derived(
+  const matches = $derived(
     !focused || store.ui.promptText !== null || draft.startsWith('!') || draft.includes(' ')
       ? []
-      : filterCommands(store.commands, draft).slice(0, 8),
+      : filterCommands(store.commands, draft),
   );
+  const suggestions = $derived(matches.slice(0, 8));
+
+  // Typing leaves list navigation (the list itself just refilters).
+  $effect(() => {
+    void draft;
+    selectedIndex = -1;
+  });
+
+  function moveSelection(delta: number) {
+    if (suggestions.length === 0) return;
+    selectedIndex =
+      selectedIndex < 0 && delta < 0
+        ? suggestions.length - 1
+        : (selectedIndex + delta + suggestions.length) % suggestions.length;
+    requestAnimationFrame(() =>
+      document.querySelector('.suggestions .selected')?.scrollIntoView({ block: 'nearest' }),
+    );
+  }
+
+  /** Writes the suggestion into the input (does not execute it). */
+  function acceptSuggestion(name: string) {
+    draft = name + ' ';
+    selectedIndex = -1;
+    element?.focus();
+  }
+
+  /** Shell-style Tab: one match completes it, several complete the
+   *  longest common prefix. */
+  function completeTab() {
+    if (selectedIndex >= 0) {
+      acceptSuggestion(suggestions[selectedIndex].name);
+      return;
+    }
+    if (matches.length === 1) {
+      acceptSuggestion(matches[0].name);
+      return;
+    }
+    const prefix = commonPrefix(matches.map((m) => m.name));
+    if (prefix.startsWith(draft) && prefix.length > draft.length) draft = prefix;
+  }
 
   function unfocus() {
+    // First Escape leaves list navigation, the next one the input.
+    if (selectedIndex >= 0) {
+      selectedIndex = -1;
+      return;
+    }
     if (store.ui.promptText !== null) {
       // A script prompt dismissed with Escape resolves as "cancel".
       void invoke('prompt_resolve', { confirm: false, text: null });
@@ -52,6 +99,11 @@
   }
 
   async function submit() {
+    // Enter while navigating writes the suggestion, it does not execute.
+    if (selectedIndex >= 0) {
+      acceptSuggestion(suggestions[selectedIndex].name);
+      return;
+    }
     const input = draft;
     draft = '';
     const ws = currentWs;
@@ -76,7 +128,13 @@
       unfocus();
     } else if (event.key === 'Tab') {
       event.preventDefault();
-      if (suggestions.length > 0) draft = suggestions[0].name + ' ';
+      completeTab();
+    } else if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      moveSelection(1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveSelection(-1);
     }
   }
 
@@ -99,14 +157,9 @@
 <div class="command-input" class:focused>
   {#if suggestions.length > 0}
     <ul class="suggestions">
-      {#each suggestions as suggestion (suggestion.name)}
-        <li>
-          <button
-            onclick={() => {
-              draft = suggestion.name + ' ';
-              element?.focus();
-            }}
-          >
+      {#each suggestions as suggestion, index (suggestion.name)}
+        <li class:selected={index === selectedIndex}>
+          <button onmousedown={(e) => e.preventDefault()} onclick={() => acceptSuggestion(suggestion.name)}>
             <span class="name">{suggestion.name}</span>
             <span class="label">{suggestion.label}</span>
           </button>
@@ -182,6 +235,13 @@
   }
   .suggestions button:hover {
     background: var(--mf-bg, #1e1e24);
+  }
+  .suggestions li.selected button {
+    background: var(--mf-accent, #4c56c4);
+    color: #fff;
+  }
+  .suggestions li.selected .label {
+    color: rgba(255, 255, 255, 0.7);
   }
   .suggestions .name {
     font-family: var(--mf-font-mono, monospace);

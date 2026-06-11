@@ -201,8 +201,13 @@ restores the command input state of that workspace, including any partial
 command being typed.
 
 Accepts:
-- A command name (with inline completion; =Tab= accepts the first suggestion)
-  optionally followed by space-separated parameters.
+- A command name (with inline completion) optionally followed by
+  space-separated parameters. =Tab= completes shell-style: a single match
+  is completed entirely, several matches complete to their longest common
+  prefix. =Up=/=Down= navigate the suggestion list; =Enter= on a
+  highlighted suggestion writes it into the input (without executing);
+  =Escape= leaves the list navigation (typing also does), then a second
+  =Escape= unfocuses the input.
 - A shell command prefixed with =!= — executed as a subprocess; stdout/stderr
   goes to the =message= panel type and to the terminal from which the GUI was
   launched.
@@ -332,7 +337,8 @@ the focused slot to a different workspace restores that workspace's command
 input state.
 
 Behaviours:
-- Typing a command name + =Enter= → invokes the command (=Tab= completes).
+- Typing a command name + =Enter= → invokes the command (=Tab= completes
+  shell-style; =Up=/=Down= browse the suggestions, see [[*Command input]]).
 - Parameters follow the command name, separated by spaces.
 - =!shell-command= + =Enter= → runs in background; output goes to the
   =message= panel type and the launching terminal.

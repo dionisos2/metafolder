@@ -3,7 +3,7 @@
 // exercised in the running app.
 
 import { describe, expect, test } from 'vitest';
-import { filterCommands, gotoIndex, parseInvocation } from '../src/lib/commands';
+import { commonPrefix, filterCommands, gotoIndex, parseInvocation } from '../src/lib/commands';
 
 describe('parseInvocation', () => {
   test('plain command name', () => {
@@ -53,6 +53,22 @@ describe('gotoIndex', () => {
   test('returns null for other commands', () => {
     expect(gotoIndex('tab:goto-')).toBeNull();
     expect(gotoIndex('tab:new')).toBeNull();
+  });
+});
+
+describe('commonPrefix', () => {
+  test('returns the longest shared prefix', () => {
+    expect(commonPrefix(['panel:close', 'panel:split', 'panel:focus-next'])).toBe('panel:');
+    expect(commonPrefix(['tab:new', 'tab:next'])).toBe('tab:ne');
+  });
+
+  test('single name is its own prefix', () => {
+    expect(commonPrefix(['quit'])).toBe('quit');
+  });
+
+  test('no shared prefix yields the empty string', () => {
+    expect(commonPrefix(['panel:close', 'tab:close'])).toBe('');
+    expect(commonPrefix([])).toBe('');
   });
 });
 
