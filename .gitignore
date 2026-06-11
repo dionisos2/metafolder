@@ -1,6 +1,7 @@
 target/
 benchmarks/bench_data/
-benchmarks/result.txt
+benchmarks/result*.txt
+benchmarks/.metafolder/
 .claude/
 crates/gui/frontend/node_modules/
 crates/gui/frontend/dist/
