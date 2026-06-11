@@ -100,6 +100,12 @@ describe('bridge core', () => {
     expect(pushes).toEqual([{ mf: true, type: 'var-changed', key: 'anything', value: 5 }]);
   });
 
+  test('workspace.adoptRepo routes to adopt_repo', async () => {
+    const { bridge, invoke, source } = setup();
+    await bridge.onMessage(source, request(1, 'workspace.adoptRepo', { repo: 'r-9' }));
+    expect(invoke).toHaveBeenCalledWith('adopt_repo', { wsId: 'ws-1', repo: 'r-9' });
+  });
+
   test('commands.register forwards to the registry and refreshes', async () => {
     const { bridge, invoke, onCommandsChanged, source } = setup();
     await bridge.onMessage(

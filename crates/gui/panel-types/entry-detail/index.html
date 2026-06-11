@@ -1,0 +1,167 @@
+<!doctype html>
+<!-- Built-in panel type: all fields of the selected entry (spec-gui
+     "entry-detail panel type"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>entry-detail</title>
+    <style>
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-size: 13px;
+      }
+      #placeholder {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 8px;
+      }
+      #content.hidden,
+      #placeholder.hidden {
+        display: none;
+      }
+      .entry-head {
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.85em;
+        margin-bottom: 8px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td {
+        padding: 4px 6px;
+        vertical-align: top;
+      }
+      tr:nth-child(odd) {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      td.name {
+        font-family: var(--mf-font-mono, monospace);
+        white-space: nowrap;
+      }
+      td.name .type {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.85em;
+      }
+      td.value {
+        width: 100%;
+        word-break: break-all;
+      }
+      td.ops {
+        white-space: nowrap;
+      }
+      tr.readonly td.name {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 7px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      input,
+      select {
+        font: inherit;
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-accent, #4c56c4);
+        border-radius: 3px;
+        padding: 2px 5px;
+      }
+      #toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px;
+        background: var(--mf-bg-raised, #26262e);
+        align-items: center;
+      }
+      #add-form {
+        display: none;
+        gap: 6px;
+        padding: 8px;
+        background: var(--mf-bg-raised, #26262e);
+        border-top: 1px solid var(--mf-bg, #1e1e24);
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #add-form.open {
+        display: flex;
+      }
+      label.force {
+        margin-left: auto;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.9em;
+      }
+      .error {
+        color: var(--mf-error, #c44c56);
+        padding: 2px 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="placeholder">
+      <p>No entry selected</p>
+      <button id="new-entry-placeholder">New entry</button>
+    </div>
+
+    <div id="content" class="hidden">
+      <div class="entry-head" id="entry-head"></div>
+      <table>
+        <tbody id="field-rows"></tbody>
+      </table>
+    </div>
+
+    <p class="error" id="error"></p>
+
+    <div id="add-form">
+      <input id="add-name" placeholder="field name" size="14" />
+      <select id="add-type">
+        <option>string</option>
+        <option>int</option>
+        <option>float</option>
+        <option>bool</option>
+        <option>datetime</option>
+        <option>nothing</option>
+        <option>ref</option>
+        <option>tree_ref</option>
+      </select>
+      <input id="add-value" placeholder="value" size="20" />
+      <button id="add-append">Add field</button>
+      <button id="add-set">Set field (replace)</button>
+      <button id="add-cancel">Cancel</button>
+    </div>
+
+    <div id="toolbar">
+      <button id="new-entry">New entry</button>
+      <button id="show-add">Add / set field…</button>
+      <button id="save-new" hidden>Save new entry</button>
+      <button id="watch-reconcile" hidden>Watch and reconcile</button>
+      <button id="delete-entry">Delete entry</button>
+      <label class="force"><input type="checkbox" id="force" /> force (mfr_*)</label>
+    </div>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

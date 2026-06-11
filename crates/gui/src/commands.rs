@@ -4,6 +4,7 @@
 
 use crate::command_registry::{CommandDef, CommandRegistry, Scope};
 use crate::config::ConfigDir;
+use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
 use crate::keybindings::{CompiledBinding, KeybindingSet};
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, WorkspaceInfo};
@@ -19,7 +20,7 @@ pub struct App {
     pub config: Arc<ConfigDir>,
     pub keybindings: Mutex<KeybindingSet>,
     pub gui_port: u16,
-    pub daemon_url: Mutex<String>,
+    pub daemon: Arc<DaemonProxy>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
 }
@@ -53,7 +54,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         panel_types: app.config.list_panel_types()?,
         style_css: app.config.load_style(),
         gui_port: app.gui_port,
-        daemon_url: app.daemon_url.lock().unwrap().clone(),
+        daemon_url: app.daemon.base_url(),
     })
 }
 
@@ -131,6 +132,11 @@ pub fn ws_set_var(app: AppHandle, ws_id: String, key: String, value: Value) -> R
 #[tauri::command]
 pub fn ws_vars(app: AppHandle, ws_id: String) -> Result<Vec<(String, Value)>, String> {
     app.gui.vars(&ws_id)
+}
+
+#[tauri::command]
+pub fn adopt_repo(app: AppHandle, ws_id: String, repo: String) -> Result<(), String> {
+    app.gui.adopt_repo(&ws_id, &repo)
 }
 
 // ── Commands and keybindings ─────────────────────────────────────────────
@@ -237,6 +243,46 @@ pub fn get_messages(app: AppHandle, ws_id: String) -> Result<Vec<MessageEntry>, 
 #[tauri::command]
 pub fn clear_messages(app: AppHandle, ws_id: String) -> Result<(), String> {
     app.gui.clear_messages(&ws_id)
+}
+
+// ── Daemon ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn daemon_request(
+    app: AppHandle<'_>,
+    method: String,
+    path: String,
+    body: Option<Value>,
+) -> Result<ProxyResponse, String> {
+    let result = app.daemon.request(&method, &path, body).await;
+    if result.is_err() {
+        // Likely a daemon outage: refresh the health state right away.
+        let daemon = app.daemon.clone();
+        let gui = app.gui.clone();
+        tauri::async_runtime::spawn(async move {
+            daemon.check_health(&gui).await;
+        });
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn daemon_set_url(app: AppHandle<'_>, url: String) -> Result<bool, String> {
+    app.daemon.set_url(url);
+    Ok(app.daemon.check_health(&app.gui).await)
+}
+
+#[tauri::command]
+pub async fn daemon_health(app: AppHandle<'_>) -> Result<bool, String> {
+    Ok(app.daemon.check_health(&app.gui).await)
+}
+
+/// Compiles a query DSL string to the `Query` JSON IR (shared parser in
+/// metafolder-core, same syntax as the CLI).
+#[tauri::command]
+pub fn parse_query(dsl: String) -> Result<Value, String> {
+    let query = metafolder_core::dsl::parse_query(&dsl)?;
+    serde_json::to_value(query).map_err(|e| format!("cannot serialize the query: {e}"))
 }
 
 #[tauri::command]

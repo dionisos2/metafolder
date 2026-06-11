@@ -1,0 +1,136 @@
+<!doctype html>
+<!-- Built-in panel type: repository list, init and load (spec-gui
+     "Repository management"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>repos</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 10px;
+        font-size: 14px;
+      }
+      h2 {
+        font-size: 1em;
+        color: var(--mf-fg-dim, #8a8a96);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      li {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      li:hover,
+      li.selected {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      .uuid {
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .root {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .actions {
+        display: flex;
+        gap: 8px;
+        margin: 12px 0;
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 4px;
+        padding: 4px 10px;
+        cursor: pointer;
+      }
+      form {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 8px 12px;
+        align-items: center;
+        margin: 12px 0;
+        padding: 10px;
+        background: var(--mf-bg-raised, #26262e);
+        border-radius: 6px;
+      }
+      form.hidden {
+        display: none;
+      }
+      input {
+        font: inherit;
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 3px 6px;
+      }
+      .form-actions {
+        grid-column: 2;
+        display: flex;
+        gap: 8px;
+      }
+      .error {
+        grid-column: 1 / -1;
+        color: var(--mf-error, #c44c56);
+      }
+      .empty {
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Repositories</h2>
+    <ul id="repo-list"></ul>
+    <p id="empty" class="empty" hidden>No repository loaded in the daemon.</p>
+
+    <div class="actions">
+      <button id="show-init">Init new repo…</button>
+      <button id="show-load">Load repo…</button>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <form id="init-form" class="hidden">
+      <label for="init-root">Root directory</label>
+      <input id="init-root" placeholder="/path/to/files" required />
+      <label for="init-meta">External .metafolder (optional)</label>
+      <input id="init-meta" placeholder="/path/to/store" />
+      <div class="form-actions">
+        <button type="submit">Initialize</button>
+        <button type="button" class="cancel">Cancel</button>
+      </div>
+      <p class="error" id="init-error"></p>
+    </form>
+
+    <form id="load-form" class="hidden">
+      <label for="load-root">Root directory</label>
+      <input id="load-root" placeholder="/path/to/files" />
+      <label for="load-meta">…or .metafolder directory</label>
+      <input id="load-meta" placeholder="/path/to/store" />
+      <div class="form-actions">
+        <button type="submit">Load</button>
+        <button type="button" class="cancel">Cancel</button>
+      </div>
+      <p class="error" id="load-error"></p>
+    </form>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

@@ -110,7 +110,9 @@ export async function dispatch(invocation: string): Promise<void> {
         editingTarget?.lineEnd();
         return;
       case 'tab:new':
-        await invoke('tab_new', { activeRepo: null });
+        // Optional parameter: the repo UUID of the new workspace
+        // (used by the repos panel).
+        await invoke('tab_new', { activeRepo: args[0] ?? null });
         return;
       case 'tab:close':
         await invoke('tab_close');
@@ -142,11 +144,30 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'panel:set-type':
         if (args[0]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[0] });
         return;
+      case 'panel:reveal-other': {
+        // Shows the given panel type for the SAME workspace in the other
+        // slot, opening it if hidden (spec-gui "Cross-panel selection").
+        if (!args[0] || !ws) return;
+        const other = store.layout.focused === 'left' ? 'right' : 'left';
+        await invoke('tab_assign', { wsId: ws, slot: other });
+        await invoke('panel_set_type', { slot: other, panelType: args[0] });
+        return;
+      }
       case 'message:clear':
         if (ws) await invoke('clear_messages', { wsId: ws });
         return;
       case 'config:open':
         store.ui.configOpen = true;
+        return;
+      case 'repos:open':
+        await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
+        return;
+      case 'daemon:set-url':
+        if (args[0]) {
+          const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });
+          store.daemonUrl = args[0];
+          await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
+        }
         return;
       case 'quit':
         await invoke('quit');

@@ -420,6 +420,24 @@ impl GuiState {
         Ok(())
     }
 
+    /// Sets `active_repo` on a workspace that does not have one yet
+    /// (spec-gui "Repo indicator": in-place selection at startup). Once
+    /// set, the repo never changes — open another workspace instead.
+    pub fn adopt_repo(&self, ws_id: &str, repo: &str) -> Result<(), String> {
+        let mut inner = self.lock();
+        let ws = inner.workspace_mut(ws_id)?;
+        if ws.active_repo.is_some() {
+            return Err("this workspace already has a repository; open a new tab".into());
+        }
+        ws.active_repo = Some(repo.to_string());
+        self.emit_workspaces(&inner);
+        self.notifier.emit(
+            events::WORKSPACE_VAR_CHANGED,
+            json!({ "workspace_id": ws_id, "key": "active_repo", "value": repo }),
+        );
+        Ok(())
+    }
+
     // ── Workspace variables ──────────────────────────────────────────────
 
     pub fn set_var(&self, ws_id: &str, key: &str, value: Value) -> Result<(), String> {
@@ -746,6 +764,25 @@ mod tests {
             .any(|(k, v)| k == "active_repo" && *v == json!("repo-7")));
         // ...but immutable: set at creation, never changed.
         assert!(state.set_var(&id, "active_repo", json!("other")).is_err());
+    }
+
+    #[test]
+    fn test_adopt_repo_sets_active_repo_once() {
+        let (notifier, state) = state();
+        notifier.clear();
+        // ws-1 starts with no repo: adoption allowed (spec-gui "Repo
+        // indicator": selection sets it in place when null).
+        state.adopt_repo("ws-1", "repo-1").unwrap();
+        assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), json!("repo-1"));
+        assert_eq!(state.workspaces()[0].active_repo.as_deref(), Some("repo-1"));
+        // Indicator + panels must hear about it.
+        assert!(!notifier.payloads(events::WORKSPACES_CHANGED).is_empty());
+        let vars = notifier.payloads(events::WORKSPACE_VAR_CHANGED);
+        assert!(vars
+            .iter()
+            .any(|p| p["key"] == "active_repo" && p["value"] == json!("repo-1")));
+        // Second adoption: refused (immutable once set).
+        assert!(state.adopt_repo("ws-1", "repo-2").is_err());
     }
 
     #[test]

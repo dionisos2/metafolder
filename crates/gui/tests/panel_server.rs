@@ -44,7 +44,21 @@ async fn test_panel_html_served_with_shim_injected() {
     let html = String::from_utf8(body).unwrap();
     // A module script so the shim can import /__keymatch.js.
     assert!(html.contains(r#"<script type="module" src="/__shim.js"></script>"#));
+    // The user stylesheet applies to panels too (iframes do not inherit
+    // the shell's CSS).
+    assert!(html.contains(r#"<link rel="stylesheet" href="/__style.css">"#));
     assert!(html.contains("Hello from a panel type"));
+}
+
+#[tokio::test]
+async fn test_user_stylesheet_is_served_to_panels() {
+    let (_guard, config, router) = setup();
+    std::fs::write(config.style_css_path(), "body { color: teal }").unwrap();
+
+    let (status, content_type, body) = get(&router, "/__style.css").await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(content_type.starts_with("text/css"));
+    assert_eq!(String::from_utf8(body).unwrap(), "body { color: teal }");
 }
 
 #[tokio::test]
@@ -84,6 +98,8 @@ async fn test_shim_and_keymatch_are_served() {
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/javascript"));
     let (status, _, _) = get(&router, "/__keymatch.js").await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = get(&router, "/__resolve.js").await;
     assert_eq!(status, StatusCode::OK);
 }
 

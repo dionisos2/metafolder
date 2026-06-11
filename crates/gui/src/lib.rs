@@ -8,6 +8,7 @@
 pub mod command_registry;
 pub mod commands;
 pub mod config;
+pub mod daemon_proxy;
 pub mod events;
 pub mod fs_commands;
 pub mod keybindings;
@@ -70,6 +71,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("message:clear", "Clear the workspace message log"),
         ("config:open", "Open the settings view"),
         ("quit", "Exit the GUI"),
+        ("daemon:set-url", "Change the daemon URL"),
+        ("repos:open", "Open the repository panel in the focused slot"),
     ] {
         registry.register_builtin(name, label);
     }
@@ -91,7 +94,7 @@ pub fn run(options: Options) {
         .expect("invalid keybindings configuration");
 
     let gui_port = options.gui_port;
-    let daemon_url = options.daemon_url.clone();
+    let daemon = Arc::new(daemon_proxy::DaemonProxy::new(options.daemon_url.clone()));
 
     tauri::Builder::default()
         .setup(move |tauri_app| {
@@ -105,15 +108,23 @@ pub fn run(options: Options) {
                 }
             };
             let app = Arc::new(commands::App {
-                gui,
+                gui: gui.clone(),
                 registry,
                 config: config.clone(),
                 keybindings: Mutex::new(keybindings),
                 gui_port,
-                daemon_url: Mutex::new(daemon_url),
+                daemon: daemon.clone(),
                 style_watcher: Mutex::new(style_watcher),
             });
             tauri::Manager::manage(tauri_app, app);
+
+            // Daemon health polling (spec-gui "Connection to the daemon").
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    daemon.check_health(&gui).await;
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                }
+            });
 
             // The GUI HTTP server: panel assets, /fsraw, scripting API.
             let server_config = config.clone();
@@ -163,6 +174,7 @@ pub fn run(options: Options) {
             commands::ws_get_var,
             commands::ws_set_var,
             commands::ws_vars,
+            commands::adopt_repo,
             commands::list_commands,
             commands::register_command,
             commands::suggest_keybinding,
@@ -173,6 +185,10 @@ pub fn run(options: Options) {
             fs_commands::fs_read_dir,
             fs_commands::fs_stat,
             shell_exec::run_shell,
+            commands::daemon_request,
+            commands::daemon_set_url,
+            commands::daemon_health,
+            commands::parse_query,
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,

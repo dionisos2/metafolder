@@ -8,7 +8,10 @@ use axum::response::{IntoResponse, Response};
 use std::path::Component;
 use std::sync::Arc;
 
-const SHIM_TAG: &str = r#"<script type="module" src="/__shim.js"></script>"#;
+const SHIM_TAG: &str = concat!(
+    r#"<link rel="stylesheet" href="/__style.css">"#,
+    r#"<script type="module" src="/__shim.js"></script>"#
+);
 
 pub async fn serve(
     State(config): State<Arc<ConfigDir>>,

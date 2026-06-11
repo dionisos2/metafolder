@@ -1,0 +1,144 @@
+<!doctype html>
+<!-- Built-in panel type: metadata entries filtered by an embedded query
+     (spec-gui "entry-list panel type"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>entry-list</title>
+    <style>
+      body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+        font-size: 13px;
+      }
+      #query-editor {
+        display: none;
+        padding: 6px;
+        gap: 6px;
+        background: var(--mf-bg-raised, #26262e);
+      }
+      #query-editor.open {
+        display: flex;
+      }
+      #query-input {
+        flex: 1;
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 3px 6px;
+      }
+      #query-error {
+        color: var(--mf-error, #c44c56);
+        padding: 2px 8px;
+      }
+      #scroll {
+        flex: 1;
+        overflow-y: auto;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th {
+        position: sticky;
+        top: 0;
+        text-align: left;
+        background: var(--mf-bg-raised, #26262e);
+        padding: 4px 8px;
+        cursor: pointer;
+        user-select: none;
+      }
+      td {
+        padding: 3px 8px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 28em;
+      }
+      tr.row {
+        cursor: pointer;
+      }
+      tr.row:hover {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      tr.cursor {
+        outline: 1px solid var(--mf-accent, #4c56c4);
+      }
+      tr.checked td:first-child::before {
+        content: '✓ ';
+        color: var(--mf-ok, #56c44c);
+      }
+      #grid {
+        display: none;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px;
+        padding: 8px;
+      }
+      body.grid #grid {
+        display: grid;
+      }
+      body.grid table {
+        display: none;
+      }
+      .card {
+        border: 1px solid var(--mf-bg-raised, #26262e);
+        border-radius: 6px;
+        overflow: hidden;
+        cursor: pointer;
+      }
+      .card.cursor {
+        outline: 2px solid var(--mf-accent, #4c56c4);
+      }
+      .card img {
+        width: 100%;
+        height: 110px;
+        object-fit: cover;
+        display: block;
+        background: var(--mf-bg-raised, #26262e);
+      }
+      .card .name {
+        padding: 4px 6px;
+        font-size: 0.85em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #status-line {
+        padding: 3px 8px;
+        color: var(--mf-fg-dim, #8a8a96);
+        background: var(--mf-bg-raised, #26262e);
+        font-size: 0.9em;
+      }
+      .placeholder {
+        display: flex;
+        height: 100%;
+        align-items: center;
+        justify-content: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="query-editor">
+      <input id="query-input" placeholder='query DSL, e.g. rating > 3 AND genre = "jazz" (empty = all)' />
+      <button id="query-apply">Apply</button>
+    </div>
+    <div id="query-error"></div>
+    <div id="scroll">
+      <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
+      <table>
+        <thead>
+          <tr id="header-row"></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="grid"></div>
+    </div>
+    <div id="status-line"></div>
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

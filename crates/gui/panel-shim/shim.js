@@ -5,6 +5,7 @@
 // own module scripts: window.metafolder is always defined for them.
 
 import { comboFromEvent, createMatcher } from '/__keymatch.js';
+import { createPathResolver } from '/__resolve.js';
 
 const pendingRequests = new Map();
 let nextRequestId = 1;
@@ -18,6 +19,30 @@ let resolveReady;
 const ready = new Promise((resolve) => (resolveReady = resolve));
 
 const matcher = createMatcher([]);
+
+// Per-repo TreeRef path resolvers and repo-root cache.
+const resolvers = new Map();
+const repoRoots = new Map();
+
+function resolverFor(repo) {
+  if (!resolvers.has(repo)) {
+    resolvers.set(
+      repo,
+      createPathResolver(async (uuid) => {
+        const response = await request('daemon.request', {
+          method: 'GET',
+          path: `/repos/${repo}/metadata/${uuid}`,
+          body: null,
+        });
+        if (response.status !== 200) {
+          throw new Error(response.body?.error ?? `entry ${uuid} not found`);
+        }
+        return response.body;
+      }),
+    );
+  }
+  return resolvers.get(repo);
+}
 
 function send(message) {
   window.parent.postMessage({ mf: true, ...message }, '*');
@@ -134,6 +159,26 @@ window.metafolder = {
     request: (method, path, body = null) => request('daemon.request', { method, path, body }),
     /** Compiles a query DSL string to the Query JSON IR. */
     parseQuery: (dsl) => request('daemon.parseQuery', { dsl }),
+    /** Repo-root-relative path of an entry (lazy walk, memoized). */
+    resolvePath: (repo, uuid) => resolverFor(repo).resolveUuid(uuid),
+    /** Same, for a raw tree_ref value {parent, name}. */
+    resolveTreeRef: (repo, value) => resolverFor(repo).resolveTreeRef(value),
+    /** Drops the cached path of an entry (after a move/rename). */
+    invalidatePath: (repo, uuid) => resolverFor(repo).invalidate(uuid),
+    /** Absolute root directory of a repository (cached GET /repos). */
+    repoRoot: async (repo) => {
+      if (!repoRoots.has(repo)) {
+        const response = await request('daemon.request', {
+          method: 'GET',
+          path: '/repos',
+          body: null,
+        });
+        for (const item of response.body ?? []) repoRoots.set(item.repo_uuid, item.root);
+      }
+      const root = repoRoots.get(repo);
+      if (root === undefined) throw new Error(`repository ${repo} is not loaded`);
+      return root;
+    },
   },
 
   workspace: {

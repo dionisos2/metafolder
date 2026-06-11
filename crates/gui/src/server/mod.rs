@@ -14,11 +14,20 @@ use std::sync::Arc;
 
 const SHIM_JS: &str = include_str!("../../panel-shim/shim.js");
 const KEYMATCH_JS: &str = include_str!("../../panel-shim/keymatch.js");
+const RESOLVE_JS: &str = include_str!("../../panel-shim/resolve.js");
 
 pub fn build_router(config: Arc<ConfigDir>) -> Router {
     Router::new()
         .route("/__shim.js", get(|| async { javascript(SHIM_JS) }))
         .route("/__keymatch.js", get(|| async { javascript(KEYMATCH_JS) }))
+        .route("/__resolve.js", get(|| async { javascript(RESOLVE_JS) }))
+        .route(
+            "/__style.css",
+            get(|axum::extract::State(config): axum::extract::State<Arc<ConfigDir>>| async move {
+                use axum::response::IntoResponse;
+                ([("content-type", "text/css")], config.load_style()).into_response()
+            }),
+        )
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
         .with_state(config)

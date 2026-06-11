@@ -43,6 +43,8 @@ export function createBridgeCore(deps: BridgeDeps) {
         return deps.invoke('ws_get_var', { wsId, key: params.key });
       case 'workspace.set':
         return deps.invoke('ws_set_var', { wsId, key: params.key, value: params.value });
+      case 'workspace.adoptRepo':
+        return deps.invoke('adopt_repo', { wsId, repo: params.repo });
       case 'workspace.subscribe':
         instance.subscriptions.add(String(params.key));
         return null;
