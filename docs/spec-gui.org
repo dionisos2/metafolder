@@ -620,6 +620,11 @@ depending on the file type; falls back to a plain-text view for text files;
 shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
+Before creating an =<audio>= / =<video>= element, the panel queries
+=GET /__media-support= on the GUI server and, when the required GStreamer
+elements are missing, shows an explanatory message instead of attempting
+playback (see [[*Media codec support]]).
+
 *** =file-manager= panel type
 
 A filesystem tree navigator. The GUI backend (Tauri/Rust) reads the disk
@@ -1016,4 +1021,23 @@ depend on the system WebView, which differs per platform (WebKit2GTK on
 Linux, WKWebView on macOS, WebView2 on Windows — see
 [[file:spec-platform.org][spec-platform.org]]). On Linux, H.264 may require
 GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
+
+On Linux, a missing audio sink does not fail gracefully: WebKitGTK
+crashes its web process while building the playback pipeline, which
+freezes the entire GUI (the shell and all panel iframes share that one
+process). Two defenses are implemented:
+
+- =GET /__media-support= on the GUI server reports
+  ={"audio": bool, "video": bool, "missing": [elements]}=, probed once
+  per process with =gst-inspect-1.0 --exists= on =autoaudiosink= /
+  =autovideosink= (falling back to a plugin-file scan for
+  =libgstautodetect.so= when the tool is unavailable; undeterminable
+  counts as missing). The =file= panel checks it before creating a media
+  element and otherwise shows a message naming the missing elements
+  (provided by =gst-plugins-good=).
+- The GUI connects WebKitGTK's =web-process-terminated= signal and
+  reloads the shell when the web process dies for any reason — Rust owns
+  all canonical state, so the session survives. A second termination
+  within 10 seconds of the previous one is assumed to be a reload-crash
+  loop and is not followed by another reload.
 

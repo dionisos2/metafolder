@@ -43,6 +43,13 @@ pub fn build_router(state: ServerState) -> Router {
                 ([("content-type", "text/css")], state.config.load_style()).into_response()
             }),
         )
+        .route(
+            "/__media-support",
+            get(|| async {
+                use axum::response::IntoResponse;
+                axum::Json(crate::media_support::system().clone()).into_response()
+            }),
+        )
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
         .route(

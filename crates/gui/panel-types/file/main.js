@@ -54,6 +54,21 @@ function renderPathBar() {
   }
 }
 
+let mediaSupportCache = null;
+
+async function mediaSupport() {
+  if (mediaSupportCache === null) {
+    try {
+      const response = await fetch(`${metafolder.guiServer}/__media-support`);
+      mediaSupportCache = await response.json();
+    } catch {
+      // Undeterminable (GUI server unreachable): do not degrade silently.
+      mediaSupportCache = { audio: true, video: true, missing: [] };
+    }
+  }
+  return mediaSupportCache;
+}
+
 async function renderViewer() {
   const path = paths[activeIndex];
   if (!path) {
@@ -68,16 +83,23 @@ async function renderViewer() {
     img.src = url;
     img.onerror = () => placeholder('cannot load the file');
     viewer.replaceChildren(img);
-  } else if (AUDIO.has(extension)) {
-    const audio = document.createElement('audio');
-    audio.controls = true;
-    audio.src = url;
-    viewer.replaceChildren(audio);
-  } else if (VIDEO.has(extension)) {
-    const video = document.createElement('video');
-    video.controls = true;
-    video.src = url;
-    viewer.replaceChildren(video);
+  } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
+    // A media element with no usable GStreamer pipeline does not fail
+    // gracefully: it crashes the WebKit web process and freezes the
+    // whole GUI. Ask the GUI server first (/__media-support).
+    const kind = VIDEO.has(extension) ? 'video' : 'audio';
+    const support = await mediaSupport();
+    if (!support[kind]) {
+      placeholder(
+        `media preview disabled: missing GStreamer elements: ` +
+          `${support.missing.join(', ')} (install gst-plugins-good)`,
+      );
+      return;
+    }
+    const media = document.createElement(kind);
+    media.controls = true;
+    media.src = url;
+    viewer.replaceChildren(media);
   } else if (TEXT.has(extension)) {
     try {
       const response = await fetch(url, {

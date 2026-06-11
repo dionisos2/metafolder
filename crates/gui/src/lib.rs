@@ -12,6 +12,7 @@ pub mod daemon_proxy;
 pub mod events;
 pub mod fs_commands;
 pub mod keybindings;
+pub mod media_support;
 pub mod notifier;
 pub mod reconcile;
 pub mod server;
@@ -123,6 +124,42 @@ pub fn run(options: Options) {
                 style_watcher: Mutex::new(style_watcher),
             });
             tauri::Manager::manage(tauri_app, app);
+
+            // A WebKit web-process crash (e.g. a GStreamer failure in a
+            // media pipeline) would otherwise leave the window frozen on
+            // its last frame: the shell and every panel iframe share that
+            // single process. Reload the shell instead — Rust owns all
+            // canonical state, so nothing is lost. A second crash shortly
+            // after a reload means reloading re-triggers it: stop there
+            // rather than loop.
+            #[cfg(target_os = "linux")]
+            if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
+                let _ = window.with_webview(|webview| {
+                    use webkit2gtk::WebViewExt;
+                    let last_crash = std::cell::Cell::new(None::<std::time::Instant>);
+                    webview.inner().connect_web_process_terminated(
+                        move |webview, reason| {
+                            let now = std::time::Instant::now();
+                            let rapid = last_crash.get().is_some_and(|previous| {
+                                now - previous < std::time::Duration::from_secs(10)
+                            });
+                            last_crash.set(Some(now));
+                            if rapid {
+                                eprintln!(
+                                    "metafolder-gui: web process terminated again \
+                                     ({reason:?}); not reloading (crash loop)"
+                                );
+                                return;
+                            }
+                            eprintln!(
+                                "metafolder-gui: web process terminated ({reason:?}); \
+                                 reloading the shell"
+                            );
+                            webview.reload();
+                        },
+                    );
+                });
+            }
 
             // Daemon health polling (spec-gui "Connection to the daemon").
             let poll_daemon = daemon.clone();
