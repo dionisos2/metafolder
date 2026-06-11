@@ -14,6 +14,7 @@ cargo test
 # Run tests for a single crate
 cargo test -p metafolder-core
 cargo test -p metafolder-daemon
+cargo test -p metafolder-cli
 
 # Run a single integration test binary / a single test by name
 cargo test -p metafolder-daemon --test storage
@@ -22,10 +23,11 @@ cargo test -p metafolder-daemon test_reconcile_creates_entries_for_new_files
 # Run the daemon (default port 7523)
 cargo run -p metafolder-daemon
 cargo run -p metafolder-daemon -- --port 8080
-```
 
-The CLI (`mf`) is not implemented yet (next roadmap item); interact with the
-daemon over HTTP (`curl` examples in README.md).
+# Run the CLI (binary name: mf)
+cargo run -p metafolder-cli -- --help
+cargo run -p metafolder-cli -- --repo <UUID> list
+```
 
 ## Specs and roadmap
 
@@ -37,7 +39,7 @@ the relevant spec section first; when deviating, update the spec.
 
 ## Architecture
 
-Cargo workspace: `core`, `daemon`, `cli` (stub), `gui` (stub), `bench`
+Cargo workspace: `core`, `daemon`, `cli`, `gui` (stub), `bench`
 (old POC harness, to be revived with the CLI).
 
 ### `crates/core`
@@ -125,10 +127,32 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   tree cache, schema, watcher/executor handles), Axum handlers (blocking
   SQLite work via `spawn_blocking`).
 
-### `crates/cli`, `crates/gui`
+### `crates/cli`
 
-Stubs. The v1 CLI (`mf`) is specified in the `* CLI` sections of the spec
-files and is the next roadmap item.
+The `mf` binary (package `metafolder-cli`): a thin client over the daemon's
+HTTP API, specified in the `* CLI` sections of the spec files (the
+log/rollback/prune and sync commands are v2 and not implemented). Library +
+thin `main.rs`:
+
+- `fieldspec.rs`: parses `name:type[=value]` field specs into
+  `(String, Value)`.
+- `dsl.rs`: hand-written lexer + recursive-descent parser compiling the
+  query DSL (`rating > 3 AND genre = "jazz"`, `->`, `->*`, `IS PRESENT`...)
+  to the `Query` JSON IR.
+- `client.rs`: `ureq`-based HTTP client; `CliError::Usage` (exit 2) vs
+  `CliError::Op` (exit 1), daemon `{"error": ...}` bodies become
+  `error: <message>` on stderr.
+- `commands.rs`: one function per command; `<query|uuid>` targets, internal
+  pagination (`PAGE_SIZE` 500, follows `next_cursor`), reconcile/violation
+  formatting, confirmation prompt for predicate `mf delete`.
+
+Repo-scoped commands require `--repo`/`METAFOLDER_REPO` (checked before any
+HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
+`http://127.0.0.1:7523`.
+
+### `crates/gui`
+
+Stub, not yet implemented.
 
 ## Repository structure on disk
 
@@ -169,3 +193,8 @@ per feature area: `storage`, `repo`, `tree_cache`, `http_api`, `query`,
 `reconcile`, `track_http`, `schema`, `log_http`). HTTP tests build the router
 with a fresh `AppState` and `oneshot` requests; filesystem tests use
 disposable directories under `std::env::temp_dir()`.
+
+CLI tests: parser and formatter unit tests live in the `cli` modules; e2e
+tests (`crates/cli/tests/cli_e2e.rs`) run the real `mf` binary
+(`env!("CARGO_BIN_EXE_mf")`) against one shared in-process daemon bound to an
+ephemeral port.

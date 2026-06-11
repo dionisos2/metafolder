@@ -10,7 +10,7 @@ The project is a Cargo workspace:
 
 - **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`) and its JSON serialization.
 - **`daemon`** — single background process managing one or more repositories: SQLite storage with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, query engine, user schema validation, and an HTTP API.
-- **`cli`** — stub; the v1 CLI (`mf`) is the next roadmap item.
+- **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, entry CRUD, query DSL, reconcile/track, schema commands).
 - **`gui`** — stub, not yet implemented.
 - **`bench`** — benchmarking harness (targets the old POC API; to be updated with the CLI).
 
@@ -31,6 +31,36 @@ cargo run -p metafolder-daemon -- --port 8080
 ```
 
 The daemon is local-only and unauthenticated; access control is left to the OS.
+
+## Quick tour (mf)
+
+With the daemon running:
+
+```bash
+# Initialise a repository (creates .metafolder/ inside the directory)
+REPO=$(cargo run -p metafolder-cli -- init /path/to/folder)
+export METAFOLDER_REPO=$REPO          # or pass --repo $REPO to each command
+
+# Nothing is tracked by default (opt-in). Enable tracking on the root entry:
+ROOT=$(mf query 'mf_watch IS PRESENT')
+mf set $ROOT mf_watch:bool=true
+
+# Index the files already present (the watcher tracks new changes live):
+mf reconcile
+
+# Query: every file under /music, with sizes
+mf query 'mfr_path ->* "/music"' --select mfr_size
+
+# Tag a file, then find it back
+mf set $(mf query 'mfr_path ->* "/music"' --limit 1) genre:string=jazz
+mf query 'genre = "jazz"'
+```
+
+`mf --help` lists all commands (`init`, `load`, `repos`, `list`, `get`,
+`create`, `set`, `add`, `unset`, `delete`, `query`, `reconcile`, `track`,
+`schema check|reload|show`). Global options: `--daemon-url`
+(`METAFOLDER_DAEMON_URL`) and `--repo` (`METAFOLDER_REPO`). Exit codes:
+0 success, 1 operation failed, 2 usage error.
 
 ## Quick tour (curl)
 

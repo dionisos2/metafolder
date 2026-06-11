@@ -480,6 +480,10 @@ Prints the full metadata objects of the matching entries as a JSON array
 Creates an entry with the given fields (=POST /metadata=) and prints its
 UUID.
 
+| Flag      | Description                                                |
+|-----------+------------------------------------------------------------|
+| =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
+
 ** =mf set <query|uuid> <spec>=
 
 Sets a field with =set_field= semantics (replaces all rows of that name).
