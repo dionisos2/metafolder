@@ -1,0 +1,22 @@
+{
+  "name": "metafolder-gui-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^6",
+    "jsdom": "^26",
+    "svelte": "^5",
+    "typescript": "^5",
+    "vite": "^7",
+    "vitest": "^3"
+  }
+}

@@ -2,3 +2,6 @@ target/
 benchmarks/bench_data/
 benchmarks/result.txt
 .claude/
+crates/gui/frontend/node_modules/
+crates/gui/frontend/dist/
+crates/gui/gen/

@@ -1,3 +1,22 @@
+//! Thin binary over the GUI library: parses CLI flags and runs the app.
+
+use clap::Parser;
+
+#[derive(Parser)]
+#[command(name = "mf-gui", about = "Metafolder graphical interface")]
+struct Args {
+    /// Port of the GUI HTTP server (panel assets + scripting API).
+    #[arg(long, default_value_t = 7524)]
+    gui_port: u16,
+    /// Base URL of the metafolder daemon.
+    #[arg(long, default_value = "http://127.0.0.1:7523")]
+    daemon_url: String,
+}
+
 fn main() {
-    println!("metafolder-gui — pas encore implémenté");
+    let args = Args::parse();
+    metafolder_gui::run(metafolder_gui::Options {
+        gui_port: args.gui_port,
+        daemon_url: args.daemon_url,
+    });
 }
