@@ -39,7 +39,11 @@ Features tagged =:v2:= on headings or marked =[v2]= inline are deferred to
 version 2. Version 1 covers: CRUD, =TreeRef= / tree cache, file watcher (basic
 events), reconcile (fingerprint phase only), query language, reserved fields
 (=mfr_*= / =mf_*=), the watch/ignore system, the user schema
-([[file:spec-schema.org][spec-schema.org]]), and cursor pagination.
+([[file:spec-schema.org][spec-schema.org]]), cursor pagination, and the
+daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]):
+logged write flow, =pending_operation= buffer, atomic metadata-only rollback,
+log reading and pruning. Only the coordinated navigation protocol (and the
+log/rollback CLI) is deferred to v2.
 
 ** Key invariants
 

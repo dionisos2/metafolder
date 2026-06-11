@@ -6,232 +6,94 @@ File identity is hash-based, so metadata follows files when they are moved or re
 
 ## Architecture
 
-The project is a Cargo workspace with four crates:
+The project is a Cargo workspace:
 
-- **`core`** — shared data structures (`Metadata`, `Field`, `Value`) and serialization logic used by all other crates.
-- **`daemon`** — single background process that manages metadata for one or more repositories. Each repository can be loaded into the running daemon; it watches the filesystem for file changes (via inotify) and exposes an HTTP API for reading and writing metadata.
-- **`cli`** — command-line tool that communicates with the daemon over HTTP.
-- **`gui`** — keyboard-driven graphical interface (not yet implemented).
+- **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`) and its JSON serialization.
+- **`daemon`** — single background process managing one or more repositories: SQLite storage with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, query engine, user schema validation, and an HTTP API.
+- **`cli`** — stub; the v1 CLI (`mf`) is the next roadmap item.
+- **`gui`** — stub, not yet implemented.
+- **`bench`** — benchmarking harness (targets the old POC API; to be updated with the CLI).
 
-## Build
+The full specification lives under `docs/` (`spec-*.org`).
+
+## Build and test
 
 ```bash
 cargo build
-```
-
-## Test
-
-```bash
 cargo test
 ```
 
-## Usage
-
-### 1. Start the daemon
+## Running the daemon
 
 ```bash
-cargo run -p metafolder-daemon
-```
-
-By default it listens on port `7523`. Use `--port` to change it:
-
-```bash
+cargo run -p metafolder-daemon            # listens on 127.0.0.1:7523
 cargo run -p metafolder-daemon -- --port 8080
 ```
 
-### 2. Use the CLI
+The daemon is local-only and unauthenticated; access control is left to the OS.
 
-The CLI binary is `metafolder`. Two global options control where it connects:
-
-| Option | Env var | Default |
-|--------|---------|---------|
-| `--daemon-url <URL>` | `METAFOLDER_DAEMON_URL` | `http://localhost:7523` |
-| `--repo <UUID>` | `METAFOLDER_REPO` | *(required for entry/query commands)* |
-
----
-
-#### Repository management
+## Quick tour (curl)
 
 ```bash
-# Initialize a new repository (creates .metafolder/ in the given directory)
-metafolder repo init /path/to/folder
-# → prints the new repo UUID
+B=localhost:7523
 
-# Load an existing repository into the running daemon
-metafolder repo load /path/to/folder
-# → prints the repo UUID
+# Initialise a repository (creates .metafolder/ inside the directory)
+REPO=$(curl -s -X POST $B/repos/init -d '{"root": "/path/to/folder"}' \
+       -H 'content-type: application/json' | jq -r .repo_uuid)
 
-# List all repositories currently loaded in the daemon
-metafolder repo list
+# Nothing is tracked by default (opt-in). Enable tracking on the root entry:
+ROOT=$(curl -s -X POST $B/repos/$REPO/query \
+       -d '{"query": {"type": "is_present", "field": "mf_watch"}}' \
+       -H 'content-type: application/json' | jq -r '.[0]')
+curl -s -X PATCH $B/repos/$REPO/metadata/$ROOT \
+     -d '{"name": "mf_watch", "value": {"type": "bool", "value": true}}' \
+     -H 'content-type: application/json'
+
+# Index the files already present (the watcher tracks new changes live):
+curl -s -X POST $B/repos/$REPO/reconcile
+
+# Query: every file under /music, with sizes
+curl -s -X POST $B/repos/$REPO/query -H 'content-type: application/json' -d '{
+  "query": {"type": "follows_transitive", "field": "mfr_path", "path": "/music"},
+  "select": ["mfr_size"]
+}'
+
+# Undo the last revision (metadata only)
+curl -s -X POST $B/repos/$REPO/rollback \
+     -d '{"target": {"prev_revision": true}}' -H 'content-type: application/json'
 ```
 
-Once a repository is initialized or loaded, the daemon watches it for filesystem changes and automatically creates or updates entries.
+## HTTP API overview
 
----
+All bodies are JSON; errors are `{"error": "<message>"}` with a meaningful
+status code. UUIDs are 32-char lowercase hex strings. See the `docs/` specs
+for the full request/response formats.
 
-#### Entry management
+| Route | Description |
+|---|---|
+| `GET /health` | Liveness check |
+| `GET /repos`, `POST /repos/init`, `POST /repos/load` | Repository management (`init`/`load` accept an external `metafolder` location) |
+| `GET\|POST /repos/:repo/metadata` | List (paginated with `?limit&cursor`) / create entries |
+| `GET\|PATCH\|DELETE /repos/:repo/metadata/:uuid` | Read / set-field / delete one entry |
+| `POST .../metadata/:uuid/fields`, `PUT\|DELETE .../fields/:field_id` | Multi-map field operations |
+| `POST /repos/:repo/query` | Query engine (`select`, `sort`, keyset pagination) |
+| `POST /repos/:repo/set` | Batch set on every query match (one transaction) |
+| `POST /repos/:repo/reconcile` | Full reconcile (fingerprint phase, candidates) |
+| `POST /repos/:repo/track` | Track a single path without activating the watch scope |
+| `POST .../metadata/:uuid/reconcile` | Reconcile one subtree |
+| `GET /repos/:repo/schema`, `POST .../schema/reload`, `POST .../schema/check` | User schema (spec-schema) |
+| `GET /repos/:repo/log`, `GET\|PATCH .../log/revisions/:rev_id` | Event log reading, labels |
+| `POST /repos/:repo/rollback`, `POST /repos/:repo/log/prune` | Atomic navigation, pruning |
 
-All entry commands require `--repo <UUID>` (or the `METAFOLDER_REPO` env var).
+Key concepts (see `docs/spec-data-model.org`):
 
-```bash
-# List all entry UUIDs in the repository
-metafolder --repo <UUID> entries list
-
-# Get a specific entry
-metafolder --repo <UUID> entries get <entry-uuid>
-
-# Create an entry with fields (format: name:type:value, repeatable)
-metafolder --repo <UUID> entries create \
-  --field rating:int:5 \
-  --field tag:string:jazz \
-  --field note:nothing:
-
-# Set (replace) a field on a specific entry
-metafolder --repo <UUID> entries set <entry-uuid> <field> <type> <value>
-
-# Set a field on all entries matching a query
-metafolder --repo <UUID> entries set --query "tag = \"jazz\"" rating int 5
-
-# Delete an entry
-metafolder --repo <UUID> entries delete <entry-uuid>
-```
-
-Field types for `entries create` and `entries set`: `string`, `int`, `float`, `bool`, `nothing`, `ref`.
-
----
-
-#### Querying
-
-```bash
-metafolder --repo <UUID> query "<predicate>"
-```
-
-Returns one UUID per line for every entry matching the predicate.
-
-**Query DSL syntax:**
-
-```
-# Presence checks (three-valued: unknown = field absent, absent = field is Nothing)
-path IS PRESENT
-path IS ABSENT
-path IS UNKNOWN
-
-# Comparisons  (=  !=  <  <=  >  >=)
-rating > 3
-label = "jazz"
-active = true
-
-# Boolean combinators (AND binds tighter than OR)
-rating > 3 AND path IS PRESENT
-tag = "jazz" OR tag = "blues"
-NOT path IS PRESENT
-
-# Parentheses
-(tag = "jazz" OR tag = "blues") AND rating >= 4
-
-# Reference traversal: field points to an entry matching a condition
-tag -> (label = "jazz")
-
-# Transitive traversal: follow field zero or more hops
-tag ->* (label = "music")
-```
-
----
-
-#### Reconcile
-
-Reconcile syncs the database with the current state of the filesystem: creates entries for files that have no entry yet, and clears the `path` field (sets it to `Nothing`) for entries whose file no longer exists.
-
-```bash
-metafolder --repo <UUID> reconcile
-# → prints: created: N  cleared: M
-```
-
----
-
-### Environment variables
-
-```bash
-export METAFOLDER_REPO=<uuid>
-export METAFOLDER_DAEMON_URL=http://localhost:7523
-
-# Then you can omit --repo and --daemon-url from every command:
-metafolder entries list
-metafolder query "rating > 3 AND path IS PRESENT"
-```
-
----
-
-## HTTP API
-
-The daemon also exposes a direct HTTP API (used internally by the CLI).
-
-**Check the daemon is up:**
-```
-GET /health
-```
-
-**List loaded repositories:**
-```
-GET /repos
-```
-
-**Initialize a new repository:**
-```
-POST /repos/init
-Content-Type: application/json
-
-{ "root": "/path/to/folder" }
-```
-
-**Load an existing repository:**
-```
-POST /repos/load
-Content-Type: application/json
-
-{ "root": "/path/to/folder" }
-```
-
-**Create a metadata entry manually:**
-```
-POST /repos/<repo_uuid>/entries
-Content-Type: application/json
-
-{
-  "fields": [
-    { "name": "rating", "value": { "type": "int",    "value": 5 } },
-    { "name": "tag",    "value": { "type": "string", "value": "jazz" } }
-  ]
-}
-```
-
-**Retrieve an entry:**
-```
-GET /repos/<repo_uuid>/entries/<entry_uuid>
-```
-
-**Update a field on an entry:**
-```
-PATCH /repos/<repo_uuid>/entries/<entry_uuid>
-Content-Type: application/json
-
-{ "name": "rating", "value": { "type": "int", "value": 9 } }
-```
-
-**Delete an entry:**
-```
-DELETE /repos/<repo_uuid>/entries/<entry_uuid>
-```
-
-**Run a query (returns matching UUIDs):**
-```
-POST /repos/<repo_uuid>/query
-Content-Type: application/json
-
-{ "op": "IsPresent", "field": "path" }
-```
-
-**Reconcile filesystem with database:**
-```
-POST /repos/<repo_uuid>/reconcile
-```
+- Everything is a metadata entry: a multi-map of `(name, value)` fields with
+  ten value types, including `tree_ref` (a position in a named tree — the
+  filesystem tree uses the reserved `mfr_path` field).
+- Three-valued logic: a field can be *present*, explicitly *absent*
+  (`nothing`), or *unknown* (no row).
+- `mfr_*` fields are daemon-owned (require `"force": true` to override);
+  `mf_*` fields (`mf_watch`, `mf_ignore`, `mf_schema`) control the daemon.
+- Tracking is opt-in per subtree via `mf_watch`/`mf_ignore` inheritance.
+- Every write is recorded in an event log; any past state can be restored
+  with `POST /rollback`, and new writes after a rollback create branches.

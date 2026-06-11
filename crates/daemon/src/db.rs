@@ -1,329 +1,22 @@
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use rusqlite::Connection;
+//! Low-level SQLite operations: connection setup, schema, row encoding and
+//! unlogged read helpers. All writes must go through [`crate::log::Writer`]
+//! so that the event log stays consistent with the data tables.
 
-    pub fn test_db() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_db(&conn).unwrap();
-        conn
-    }
+use std::path::Path;
 
-    fn sample_fields() -> Vec<Field> {
-        vec![
-            Field { name: "path".to_string(),   value: Value::String("/music/a.mp3".to_string()) },
-            Field { name: "rating".to_string(),  value: Value::Int(4) },
-            Field { name: "active".to_string(),  value: Value::Bool(true) },
-            Field { name: "score".to_string(),   value: Value::Float(8.5) },
-            Field { name: "created".to_string(), value: Value::Date("2024-01-15".to_string()) },
-            Field { name: "duration".to_string(),value: Value::Duration(210_000) },
-            Field { name: "note".to_string(),    value: Value::Nothing },
-        ]
-    }
-
-    // ── TDD : update_path ─────────────────────────────────────────────────────
-
-    #[test]
-    fn test_update_path_renames_path_field() {
-        let conn = test_db();
-        create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::String("/tmp/old.mp3".to_string()) },
-            Field { name: "rating".to_string(), value: Value::Int(5) },
-        ]).unwrap();
-
-        let found = update_path(&conn, "/tmp/old.mp3", "/tmp/new.mp3").unwrap();
-        assert!(found, "should return true when entry was found");
-
-        assert!(find_entry_by_path(&conn, "/tmp/old.mp3").unwrap().is_none());
-        assert!(find_entry_by_path(&conn, "/tmp/new.mp3").unwrap().is_some());
-    }
-
-    #[test]
-    fn test_update_path_returns_false_when_not_found() {
-        let conn = test_db();
-        let found = update_path(&conn, "/nonexistent.mp3", "/tmp/new.mp3").unwrap();
-        assert!(!found);
-    }
-
-    #[test]
-    fn test_update_path_preserves_other_fields() {
-        let conn = test_db();
-        let created = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(),   value: Value::String("/tmp/old.mp3".to_string()) },
-            Field { name: "rating".to_string(), value: Value::Int(5) },
-        ]).unwrap();
-
-        update_path(&conn, "/tmp/old.mp3", "/tmp/new.mp3").unwrap();
-
-        let retrieved = get_entry(&conn, created.uuid).unwrap();
-        let rating = retrieved.fields.iter().find(|f| f.name == "rating").unwrap();
-        assert_eq!(rating.value, Value::Int(5));
-    }
-
-    // ── Existing functions ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_create_and_get_roundtrip() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-        let fields = sample_fields();
-
-        let created = create_entry(&conn, db_id, fields).unwrap();
-        let retrieved = get_entry(&conn, created.uuid).unwrap();
-
-        assert_eq!(created.uuid, retrieved.uuid);
-        assert_eq!(created.db_id, retrieved.db_id);
-        assert_eq!(created.fields.len(), retrieved.fields.len());
-    }
-
-    #[test]
-    fn test_all_value_types_roundtrip() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-
-        let target = create_entry(&conn, db_id, vec![
-            Field { name: "label".to_string(), value: Value::String("target".to_string()) }
-        ]).unwrap();
-
-        let fields = vec![
-            Field { name: "a".to_string(), value: Value::Nothing },
-            Field { name: "b".to_string(), value: Value::String("hello".to_string()) },
-            Field { name: "c".to_string(), value: Value::Int(-99) },
-            Field { name: "d".to_string(), value: Value::Float(1.23) },
-            Field { name: "e".to_string(), value: Value::Bool(false) },
-            Field { name: "f".to_string(), value: Value::Date("2023-06-01".to_string()) },
-            Field { name: "g".to_string(), value: Value::DateTime("2023-06-01T12:00:00Z".to_string()) },
-            Field { name: "h".to_string(), value: Value::Duration(5000) },
-            Field { name: "i".to_string(), value: Value::Ref(target.uuid) },
-        ];
-
-        let created = create_entry(&conn, db_id, fields.clone()).unwrap();
-        let retrieved = get_entry(&conn, created.uuid).unwrap();
-
-        for (orig, ret) in fields.iter().zip(retrieved.fields.iter()) {
-            assert_eq!(orig.name, ret.name, "field name mismatch");
-            assert_eq!(orig.value, ret.value, "value mismatch for field '{}'", orig.name);
-        }
-    }
-
-    #[test]
-    fn test_multimap_fields() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-        let fields = vec![
-            Field { name: "tag".to_string(), value: Value::String("jazz".to_string()) },
-            Field { name: "tag".to_string(), value: Value::String("live".to_string()) },
-            Field { name: "tag".to_string(), value: Value::String("piano".to_string()) },
-        ];
-
-        let created = create_entry(&conn, db_id, fields).unwrap();
-        let retrieved = get_entry(&conn, created.uuid).unwrap();
-
-        assert_eq!(retrieved.fields.len(), 3);
-        let tags: Vec<_> = retrieved.fields.iter()
-            .filter(|f| f.name == "tag")
-            .map(|f| &f.value)
-            .collect();
-        assert_eq!(tags.len(), 3);
-    }
-
-    #[test]
-    fn test_get_nonexistent_entry_returns_error() {
-        let conn = test_db();
-        let result = get_entry(&conn, Uuid::nil());
-        assert!(result.is_err(), "should return an error for a nonexistent UUID");
-    }
-
-    // ── TDD : find_entry_by_path ──────────────────────────────────────────────
-
-    #[test]
-    fn test_find_entry_by_path_found() {
-        let conn = test_db();
-        let created = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::String("/tmp/foo.txt".to_string()) },
-        ]).unwrap();
-        let result = find_entry_by_path(&conn, "/tmp/foo.txt").unwrap();
-        assert_eq!(result, Some(created.uuid));
-    }
-
-    #[test]
-    fn test_find_entry_by_path_not_found() {
-        let conn = test_db();
-        let result = find_entry_by_path(&conn, "/nonexistent.txt").unwrap();
-        assert_eq!(result, None);
-    }
-
-    // ── TDD : clear_path ─────────────────────────────────────────────────────
-
-    #[test]
-    fn test_clear_path_sets_value_to_nothing() {
-        let conn = test_db();
-        let created = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(),   value: Value::String("/tmp/foo.txt".to_string()) },
-            Field { name: "rating".to_string(), value: Value::Int(5) },
-        ]).unwrap();
-
-        clear_path(&conn, created.uuid).unwrap();
-
-        let retrieved = get_entry(&conn, created.uuid).unwrap();
-        let path_field = retrieved.fields.iter().find(|f| f.name == "path").unwrap();
-        assert_eq!(path_field.value, Value::Nothing, "path should be Nothing after clear");
-
-        let rating_field = retrieved.fields.iter().find(|f| f.name == "rating").unwrap();
-        assert_eq!(rating_field.value, Value::Int(5), "other fields should be unchanged");
-    }
-
-    // ── TDD : list_entries ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_list_entries_empty() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-        let result = list_entries(&conn, db_id).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_list_entries_returns_all() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-        let e1 = create_entry(&conn, db_id, vec![]).unwrap();
-        let e2 = create_entry(&conn, db_id, vec![]).unwrap();
-        let result = list_entries(&conn, db_id).unwrap();
-        assert_eq!(result.len(), 2);
-        assert!(result.contains(&e1.uuid));
-        assert!(result.contains(&e2.uuid));
-    }
-
-    #[test]
-    fn test_list_entries_filters_by_db_id() {
-        let conn = test_db();
-        let db1 = Uuid::new_v4();
-        let db2 = Uuid::new_v4();
-        let e1 = create_entry(&conn, db1, vec![]).unwrap();
-        let _e2 = create_entry(&conn, db2, vec![]).unwrap();
-        let result = list_entries(&conn, db1).unwrap();
-        assert_eq!(result, vec![e1.uuid]);
-    }
-
-    // ── TDD : set_field ───────────────────────────────────────────────────────
-
-    #[test]
-    fn test_set_field_inserts_when_absent() {
-        let conn = test_db();
-        let entry = create_entry(&conn, Uuid::new_v4(), vec![]).unwrap();
-        set_field(&conn, entry.uuid, "rating", Value::Int(5)).unwrap();
-        let retrieved = get_entry(&conn, entry.uuid).unwrap();
-        assert_eq!(retrieved.get("rating"), Some(&Value::Int(5)));
-    }
-
-    #[test]
-    fn test_set_field_replaces_existing() {
-        let conn = test_db();
-        let entry = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "rating".to_string(), value: Value::Int(3) },
-        ]).unwrap();
-        set_field(&conn, entry.uuid, "rating", Value::Int(9)).unwrap();
-        let retrieved = get_entry(&conn, entry.uuid).unwrap();
-        let ratings: Vec<_> = retrieved.fields.iter().filter(|f| f.name == "rating").collect();
-        assert_eq!(ratings.len(), 1);
-        assert_eq!(ratings[0].value, Value::Int(9));
-    }
-
-    #[test]
-    fn test_set_field_replaces_multimap() {
-        let conn = test_db();
-        let entry = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "tag".to_string(), value: Value::String("jazz".to_string()) },
-            Field { name: "tag".to_string(), value: Value::String("live".to_string()) },
-        ]).unwrap();
-        set_field(&conn, entry.uuid, "tag", Value::String("blues".to_string())).unwrap();
-        let retrieved = get_entry(&conn, entry.uuid).unwrap();
-        let tags: Vec<_> = retrieved.fields.iter().filter(|f| f.name == "tag").collect();
-        assert_eq!(tags.len(), 1);
-        assert_eq!(tags[0].value, Value::String("blues".to_string()));
-    }
-
-    #[test]
-    fn test_set_field_preserves_other_fields() {
-        let conn = test_db();
-        let entry = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::String("/a.mp3".to_string()) },
-            Field { name: "rating".to_string(), value: Value::Int(3) },
-        ]).unwrap();
-        set_field(&conn, entry.uuid, "rating", Value::Int(7)).unwrap();
-        let retrieved = get_entry(&conn, entry.uuid).unwrap();
-        assert_eq!(retrieved.get("path"), Some(&Value::String("/a.mp3".to_string())));
-        assert_eq!(retrieved.get("rating"), Some(&Value::Int(7)));
-    }
-
-    // ── TDD : list_path_entries ───────────────────────────────────────────────
-
-    #[test]
-    fn test_list_path_entries_empty() {
-        let conn = test_db();
-        let result = list_path_entries(&conn).unwrap();
-        assert!(result.is_empty());
-    }
-
-    #[test]
-    fn test_list_path_entries_string_only() {
-        let conn = test_db();
-        let e1 = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::String("/a.mp3".to_string()) },
-        ]).unwrap();
-        let e2 = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::String("/b.mp3".to_string()) },
-        ]).unwrap();
-        let result = list_path_entries(&conn).unwrap();
-        assert_eq!(result.len(), 2);
-        assert!(result.contains(&(e1.uuid, "/a.mp3".to_string())));
-        assert!(result.contains(&(e2.uuid, "/b.mp3".to_string())));
-    }
-
-    #[test]
-    fn test_list_path_entries_ignores_no_path() {
-        let conn = test_db();
-        // Entry with Nothing path should not appear
-        let _e1 = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "path".to_string(), value: Value::Nothing },
-        ]).unwrap();
-        // Entry with no path field should not appear
-        let _e2 = create_entry(&conn, Uuid::new_v4(), vec![
-            Field { name: "rating".to_string(), value: Value::Int(5) },
-        ]).unwrap();
-        let result = list_path_entries(&conn).unwrap();
-        assert!(result.is_empty());
-    }
-
-    // ── TDD : delete_entry ────────────────────────────────────────────────────
-
-    #[test]
-    fn test_delete_entry_removes_entry_and_fields() {
-        let conn = test_db();
-        let db_id = Uuid::new_v4();
-        let created = create_entry(&conn, db_id, sample_fields()).unwrap();
-
-        assert!(get_entry(&conn, created.uuid).is_ok());
-
-        delete_entry(&conn, created.uuid).unwrap();
-
-        assert!(get_entry(&conn, created.uuid).is_err(), "the entry should have been deleted");
-
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM field WHERE metadata_uuid = ?1",
-            rusqlite::params![created.uuid.as_bytes().to_vec()],
-            |row| row.get(0),
-        ).unwrap();
-        assert_eq!(count, 0, "fields should have been deleted");
-    }
-}
-
-use anyhow::{bail, Context};
-use rusqlite::{params, Connection};
+use anyhow::{bail, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
-use metafolder_core::entry::{DatabaseId, EntryId, Field, Metadata, Value};
+use metafolder_core::entry::{Field, Metadata, Value, ZERO_UUID};
+
+/// One row of the `field` table, decoded.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldRow {
+    pub id: i64,
+    pub name: String,
+    pub value: Value,
+}
 
 // ── UUID ↔ BLOB helpers ───────────────────────────────────────────────────────
 
@@ -331,339 +24,587 @@ pub fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
     uuid.as_bytes().to_vec()
 }
 
-pub fn bytes_to_uuid(bytes: Vec<u8>) -> anyhow::Result<Uuid> {
+pub fn bytes_to_uuid(bytes: Vec<u8>) -> Result<Uuid> {
     let arr: [u8; 16] = bytes
         .try_into()
         .map_err(|_| anyhow::anyhow!("Invalid UUID blob: expected 16 bytes"))?;
     Ok(Uuid::from_bytes(arr))
 }
 
-// ── Database initialization ───────────────────────────────────────────────────
+// ── Connection setup ──────────────────────────────────────────────────────────
 
-/// Initializes the SQLite schema for a new repository.
-/// Fails if tables already exist — call only on a fresh database.
-pub fn init_db(conn: &Connection) -> anyhow::Result<()> {
+fn configure_connection(conn: &Connection) -> Result<()> {
+    // An exclusive lock for the whole connection lifetime prevents a second
+    // daemon instance from loading the same repository (spec-main invariant).
+    conn.pragma_update(None, "locking_mode", "EXCLUSIVE")
+        .context("Failed to set locking_mode")?;
+    // WAL requires shared-memory files, which network filesystems do not
+    // support; fall back to DELETE journal mode there (spec-platform).
+    let wal = conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| {
+        row.get::<_, String>(0)
+    });
+    if wal.is_err() {
+        conn.pragma_update(None, "journal_mode", "DELETE")
+            .context("Failed to set journal_mode")?;
+    }
+    conn.pragma_update(None, "foreign_keys", true)
+        .context("Failed to enable foreign keys")?;
+
+    // REGEXP user-defined function backing the `Matches` query operator.
+    conn.create_scalar_function(
+        "REGEXP",
+        2,
+        rusqlite::functions::FunctionFlags::SQLITE_UTF8
+            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            // SQLite: X REGEXP Y → regexp(Y, X), so arg 0 is the pattern.
+            let pattern: String = ctx.get(0)?;
+            let text: String = ctx.get(1)?;
+            regex::Regex::new(&pattern)
+                .map(|re| re.is_match(&text))
+                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
+        },
+    )?;
+    Ok(())
+}
+
+/// Opens a file-backed database with all connection-level settings applied.
+pub fn open_database(path: &Path) -> Result<Connection> {
+    let conn = Connection::open(path)
+        .with_context(|| format!("Failed to open SQLite database at {path:?}"))?;
+    configure_connection(&conn)?;
+    Ok(conn)
+}
+
+/// Opens an in-memory database with connection-level settings (for tests).
+pub fn open_in_memory() -> Result<Connection> {
+    let conn = Connection::open_in_memory()?;
+    configure_connection(&conn)?;
+    Ok(conn)
+}
+
+/// Creates all tables and indexes. Call on a fresh database only.
+pub fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
-        PRAGMA journal_mode = WAL;
-        PRAGMA foreign_keys = ON;
-
+        -- ── Data tables (spec-data-model) ───────────────────────────────────
         CREATE TABLE metadata (
-            uuid   BLOB PRIMARY KEY NOT NULL,  -- 16-byte UUID
-            db_id  BLOB NOT NULL               -- 16-byte UUID (repo identifier)
+            uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
+            version  INTEGER NOT NULL DEFAULT 0     -- bumped on every field write
         );
+
+        -- One row per owning repository (usually one; two for link entries).
+        CREATE TABLE metadata_db (
+            metadata_uuid  BLOB NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+            db_id          BLOB NOT NULL,
+            PRIMARY KEY (metadata_uuid, db_id)
+        );
+        CREATE INDEX idx_metadata_db ON metadata_db(db_id);
 
         CREATE TABLE field (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            metadata_uuid  BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
-            field_name     TEXT    NOT NULL,
-            value_type     TEXT    NOT NULL,  -- see Value discriminant
-            value_str      TEXT,              -- String, Date, DateTime
-            value_int      INTEGER,           -- Int, Bool (0/1), Duration (ms)
-            value_real     REAL,              -- Float
-            value_ref      BLOB    REFERENCES metadata(uuid)  -- Ref (16-byte UUID)
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            metadata_uuid   BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+            field_name      TEXT    NOT NULL,
+            value_type      TEXT    NOT NULL,
+            value_text      TEXT,    -- string, datetime
+            value_int       INTEGER, -- int, bool (0/1)
+            value_real      REAL,    -- float
+            value_uuid      BLOB,    -- ref/refbase/externalref: entry or repo UUID;
+                                     -- tree_ref: parent UUID (zero UUID for roots)
+            value_ref_repo  BLOB,    -- externalref only: repo UUID
+            value_name      TEXT     -- tree_ref: name component
+        );
+        CREATE INDEX idx_field_entry ON field(metadata_uuid, field_name);
+        CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
+            WHERE value_type IN ('ref', 'externalref');
+        CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
+            WHERE value_type = 'tree_ref';
+
+        -- ── Event log (spec-event-log) ──────────────────────────────────────
+        CREATE TABLE revision (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp  INTEGER NOT NULL,  -- Unix ms
+            label      TEXT
         );
 
-        CREATE INDEX idx_field_entry
-            ON field(metadata_uuid, field_name);
+        CREATE TABLE operation (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            parent_id             INTEGER REFERENCES operation(id),
+            rev_id                INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE,
+            seq                   INTEGER NOT NULL,
+            op_type               TEXT    NOT NULL,
+            entity_uuid           BLOB    NOT NULL,
+            entity_version_before INTEGER,
+            field_name            TEXT
+        );
+        CREATE INDEX idx_operation_parent ON operation(parent_id);
+        CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
+        CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
 
-        CREATE INDEX idx_field_reverse
-            ON field(field_name, value_ref);
+        CREATE TABLE op_snapshot (
+            op_id          INTEGER NOT NULL REFERENCES operation(id) ON DELETE CASCADE,
+            is_new         INTEGER NOT NULL CHECK (is_new IN (0, 1)),
+            field_id       INTEGER NOT NULL,
+            field_name     TEXT    NOT NULL,
+            value_type     TEXT    NOT NULL,
+            value_text     TEXT,
+            value_int      INTEGER,
+            value_real     REAL,
+            value_uuid     BLOB,
+            value_ref_repo BLOB,
+            value_name     TEXT,
+            PRIMARY KEY (op_id, is_new, field_id)
+        );
+
+        CREATE TABLE log_head (
+            singleton  INTEGER PRIMARY KEY CHECK (singleton = 1),
+            op_id      INTEGER REFERENCES operation(id)
+        );
+        INSERT INTO log_head (singleton, op_id) VALUES (1, NULL);
+
+        CREATE TABLE pending_operation (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            op_type        TEXT NOT NULL,
+            entity_uuid    BLOB,
+            path           TEXT,
+            from_path      TEXT,
+            to_path        TEXT,
+            field_name     TEXT,
+            value_type     TEXT,
+            value_text     TEXT,
+            value_int      INTEGER,
+            value_real     REAL,
+            value_uuid     BLOB,
+            value_ref_repo BLOB,
+            value_name     TEXT
+        );
         ",
     )
     .context("Failed to initialize the database schema")
 }
 
-// ── Value ↔ SQLite conversions ────────────────────────────────────────────────
+// ── Read helpers ──────────────────────────────────────────────────────────────
 
-/// Inserts a field into the `field` table.
-pub fn insert_field(conn: &Connection, metadata_uuid: Uuid, field: &Field) -> anyhow::Result<()> {
-    let entry_blob = uuid_to_bytes(metadata_uuid);
-    match &field.value {
-        Value::Nothing => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type)
-                 VALUES (?1, ?2, 'nothing')",
-                params![entry_blob, field.name],
-            )?;
-        }
-        Value::String(s) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_str)
-                 VALUES (?1, ?2, 'string', ?3)",
-                params![entry_blob, field.name, s],
-            )?;
-        }
-        Value::Int(n) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_int)
-                 VALUES (?1, ?2, 'int', ?3)",
-                params![entry_blob, field.name, n],
-            )?;
-        }
-        Value::Float(f) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_real)
-                 VALUES (?1, ?2, 'float', ?3)",
-                params![entry_blob, field.name, f],
-            )?;
-        }
-        Value::Bool(b) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_int)
-                 VALUES (?1, ?2, 'bool', ?3)",
-                params![entry_blob, field.name, *b as i64],
-            )?;
-        }
-        Value::Date(s) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_str)
-                 VALUES (?1, ?2, 'date', ?3)",
-                params![entry_blob, field.name, s],
-            )?;
-        }
-        Value::DateTime(s) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_str)
-                 VALUES (?1, ?2, 'datetime', ?3)",
-                params![entry_blob, field.name, s],
-            )?;
-        }
-        Value::Duration(ms) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_int)
-                 VALUES (?1, ?2, 'duration', ?3)",
-                params![entry_blob, field.name, ms],
-            )?;
-        }
-        Value::Ref(id) => {
-            conn.execute(
-                "INSERT INTO field (metadata_uuid, field_name, value_type, value_ref)
-                 VALUES (?1, ?2, 'ref', ?3)",
-                params![entry_blob, field.name, uuid_to_bytes(*id)],
-            )?;
-        }
-    }
-    Ok(())
+/// Retrieves an entry with all its fields, or None if it does not exist.
+pub fn get_entry(conn: &Connection, uuid: Uuid) -> Result<Option<Metadata>> {
+    let Some(version) = get_version(conn, uuid)? else {
+        return Ok(None);
+    };
+    let mut stmt =
+        conn.prepare("SELECT db_id FROM metadata_db WHERE metadata_uuid = ?1 ORDER BY db_id")?;
+    let db_ids = stmt
+        .query_map(params![uuid_to_bytes(uuid)], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+
+    let fields = get_field_rows(conn, uuid)?
+        .into_iter()
+        .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
+        .collect();
+
+    Ok(Some(Metadata { uuid, db_ids, version, fields }))
 }
 
-/// Reconstructs a `Value` from a row in the `field` table.
-fn row_to_value(
+/// Returns the version counter of an entry, or None if it does not exist.
+pub fn get_version(conn: &Connection, uuid: Uuid) -> Result<Option<u64>> {
+    let v: Option<i64> = conn
+        .query_row(
+            "SELECT version FROM metadata WHERE uuid = ?1",
+            params![uuid_to_bytes(uuid)],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(v.map(|v| v as u64))
+}
+
+const FIELD_COLUMNS: &str =
+    "id, field_name, value_type, value_text, value_int, value_real, value_uuid, value_ref_repo, value_name";
+
+fn row_to_field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, Result<Value>)> {
+    let id: i64 = row.get(0)?;
+    let name: String = row.get(1)?;
+    let value = decode_value(
+        &row.get::<_, String>(2)?,
+        row.get(3)?,
+        row.get(4)?,
+        row.get(5)?,
+        row.get(6)?,
+        row.get(7)?,
+        row.get(8)?,
+    );
+    Ok((id, name, value))
+}
+
+/// All field rows of an entry, with their row ids.
+pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {FIELD_COLUMNS} FROM field WHERE metadata_uuid = ?1 ORDER BY id"
+    ))?;
+    let rows = stmt.query_map(params![uuid_to_bytes(uuid)], row_to_field_row)?;
+    collect_field_rows(rows)
+}
+
+/// Field rows of an entry restricted to one field name.
+pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {FIELD_COLUMNS} FROM field
+         WHERE metadata_uuid = ?1 AND field_name = ?2 ORDER BY id"
+    ))?;
+    let rows = stmt.query_map(params![uuid_to_bytes(uuid), name], row_to_field_row)?;
+    collect_field_rows(rows)
+}
+
+fn collect_field_rows<'a>(
+    rows: impl Iterator<Item = rusqlite::Result<(i64, String, Result<Value>)>> + 'a,
+) -> Result<Vec<FieldRow>> {
+    rows.map(|r| {
+        let (id, name, value) = r?;
+        Ok(FieldRow { id, name, value: value? })
+    })
+    .collect()
+}
+
+/// All entry UUIDs owned exclusively by `db_id`, sorted by UUID byte order.
+/// Link entries (several owners) are excluded, as mandated by spec-data-model.
+pub fn list_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT m1.metadata_uuid FROM metadata_db m1
+         WHERE m1.db_id = ?1
+           AND (SELECT COUNT(*) FROM metadata_db m2
+                WHERE m2.metadata_uuid = m1.metadata_uuid) = 1
+         ORDER BY m1.metadata_uuid",
+    )?;
+    let uuids = stmt
+        .query_map(params![uuid_to_bytes(db_id)], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
+/// All entries of this repository holding an `mfr_path` TreeRef (i.e. with
+/// a known tree position, stale or not).
+pub fn all_tracked_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT f.metadata_uuid FROM field f
+         JOIN metadata_db md ON md.metadata_uuid = f.metadata_uuid AND md.db_id = ?1
+         WHERE f.field_name = 'mfr_path' AND f.value_type = 'tree_ref'",
+    )?;
+    let uuids = stmt
+        .query_map(params![uuid_to_bytes(db_id)], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
+/// Orphaned entries of this repository (`mfr_path` = Nothing) whose stored
+/// `mfr_size` matches. First step of the fingerprint cascade.
+pub fn find_orphans_by_size(conn: &Connection, db_id: Uuid, size: i64) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT p.metadata_uuid FROM field p
+         JOIN metadata_db md ON md.metadata_uuid = p.metadata_uuid AND md.db_id = ?1
+         JOIN field s ON s.metadata_uuid = p.metadata_uuid
+              AND s.field_name = 'mfr_size' AND s.value_type = 'int' AND s.value_int = ?2
+         WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'",
+    )?;
+    let uuids = stmt
+        .query_map(params![uuid_to_bytes(db_id), size], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
+/// One page of [`list_entries`]: entries after `after` (exclusive), at most
+/// `limit` rows, sorted by UUID byte order (keyset pagination).
+pub fn list_entries_page(
+    conn: &Connection,
+    db_id: Uuid,
+    after: Option<Uuid>,
+    limit: usize,
+) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT m1.metadata_uuid FROM metadata_db m1
+         WHERE m1.db_id = ?1
+           AND (?2 IS NULL OR m1.metadata_uuid > ?2)
+           AND (SELECT COUNT(*) FROM metadata_db m2
+                WHERE m2.metadata_uuid = m1.metadata_uuid) = 1
+         ORDER BY m1.metadata_uuid LIMIT ?3",
+    )?;
+    let uuids = stmt
+        .query_map(
+            params![uuid_to_bytes(db_id), after.map(uuid_to_bytes), limit as i64],
+            |r| r.get::<_, Vec<u8>>(0),
+        )?
+        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
+        .collect::<Result<Vec<Uuid>>>()?;
+    Ok(uuids)
+}
+
+/// Resolves one tree step: the child of `parent` named `name` in the tree of
+/// `field_name`. `parent = None` looks up root nodes.
+pub fn find_tree_child(
+    conn: &Connection,
+    field_name: &str,
+    parent: Option<Uuid>,
+    name: &str,
+) -> Result<Option<Uuid>> {
+    find_tree_child_opts(conn, field_name, parent, name, false)
+}
+
+/// Like [`find_tree_child`], optionally matching `name` case-insensitively
+/// (SQLite NOCASE — ASCII only; spec-platform leaves Unicode folding open).
+pub fn find_tree_child_opts(
+    conn: &Connection,
+    field_name: &str,
+    parent: Option<Uuid>,
+    name: &str,
+    case_insensitive: bool,
+) -> Result<Option<Uuid>> {
+    let collate = if case_insensitive { " COLLATE NOCASE" } else { "" };
+    let parent_blob = uuid_to_bytes(parent.unwrap_or(ZERO_UUID));
+    let uuid: Option<Vec<u8>> = conn
+        .query_row(
+            &format!(
+                "SELECT metadata_uuid FROM field
+                 WHERE field_name = ?1 AND value_type = 'tree_ref'
+                   AND value_uuid = ?2 AND value_name = ?3{collate}"
+            ),
+            params![field_name, parent_blob, name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    uuid.map(bytes_to_uuid).transpose()
+}
+
+/// All direct children of `parent` in the tree of `field_name`, with the
+/// name component each child contributes.
+pub fn tree_children(
+    conn: &Connection,
+    field_name: &str,
+    parent: Uuid,
+) -> Result<Vec<(Uuid, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT metadata_uuid, value_name FROM field
+         WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_uuid = ?2",
+    )?;
+    let children = stmt
+        .query_map(params![field_name, uuid_to_bytes(parent)], |r| {
+            Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+        })?
+        .map(|r| {
+            let (uuid, name) = r?;
+            Ok((bytes_to_uuid(uuid)?, name))
+        })
+        .collect::<Result<Vec<(Uuid, String)>>>()?;
+    Ok(children)
+}
+
+/// The first tree position `(parent, name)` of an entry for `field_name`,
+/// or None when the entry has no such TreeRef field.
+pub fn tree_position(
+    conn: &Connection,
+    field_name: &str,
+    uuid: Uuid,
+) -> Result<Option<(Option<Uuid>, String)>> {
+    let row: Option<(Vec<u8>, String)> = conn
+        .query_row(
+            "SELECT value_uuid, value_name FROM field
+             WHERE metadata_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'
+             ORDER BY id LIMIT 1",
+            params![uuid_to_bytes(uuid), field_name],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    row.map(|(parent, name)| {
+        let parent = bytes_to_uuid(parent)?;
+        Ok((if parent == ZERO_UUID { None } else { Some(parent) }, name))
+    })
+    .transpose()
+}
+
+/// The TreeRef parents of an entry for `field_name` (multi-map: one entry can
+/// have several positions). `None` in the result means "root".
+pub fn get_tree_parents(
+    conn: &Connection,
+    field_name: &str,
+    uuid: Uuid,
+) -> Result<Vec<Option<Uuid>>> {
+    let mut stmt = conn.prepare(
+        "SELECT value_uuid FROM field
+         WHERE metadata_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'",
+    )?;
+    let parents = stmt
+        .query_map(params![uuid_to_bytes(uuid), field_name], |r| r.get::<_, Vec<u8>>(0))?
+        .map(|r| {
+            let parent = bytes_to_uuid(r?)?;
+            Ok(if parent == ZERO_UUID { None } else { Some(parent) })
+        })
+        .collect::<Result<Vec<Option<Uuid>>>>()?;
+    Ok(parents)
+}
+
+// ── Internal row encoding (shared with the log module) ───────────────────────
+
+/// Column values for one `field` (or `op_snapshot`) row.
+pub(crate) struct EncodedValue {
+    pub value_type: &'static str,
+    pub text: Option<String>,
+    pub int: Option<i64>,
+    pub real: Option<f64>,
+    pub uuid: Option<Vec<u8>>,
+    pub ref_repo: Option<Vec<u8>>,
+    pub name: Option<String>,
+}
+
+impl EncodedValue {
+    fn new(value_type: &'static str) -> Self {
+        Self {
+            value_type,
+            text: None,
+            int: None,
+            real: None,
+            uuid: None,
+            ref_repo: None,
+            name: None,
+        }
+    }
+}
+
+pub(crate) fn encode_value(value: &Value) -> EncodedValue {
+    let mut e;
+    match value {
+        Value::Nothing => e = EncodedValue::new("nothing"),
+        Value::String(s) => {
+            e = EncodedValue::new("string");
+            e.text = Some(s.clone());
+        }
+        Value::Int(n) => {
+            e = EncodedValue::new("int");
+            e.int = Some(*n);
+        }
+        Value::Float(f) => {
+            e = EncodedValue::new("float");
+            e.real = Some(*f);
+        }
+        Value::Bool(b) => {
+            e = EncodedValue::new("bool");
+            e.int = Some(*b as i64);
+        }
+        Value::DateTime(s) => {
+            e = EncodedValue::new("datetime");
+            e.text = Some(s.clone());
+        }
+        Value::Ref(id) => {
+            e = EncodedValue::new("ref");
+            e.uuid = Some(uuid_to_bytes(*id));
+        }
+        Value::TreeRef { parent, name } => {
+            e = EncodedValue::new("tree_ref");
+            e.uuid = Some(uuid_to_bytes(parent.unwrap_or(ZERO_UUID)));
+            e.name = Some(name.clone());
+        }
+        Value::RefBase(id) => {
+            e = EncodedValue::new("refbase");
+            e.uuid = Some(uuid_to_bytes(*id));
+        }
+        Value::ExternalRef { repo, entry } => {
+            e = EncodedValue::new("externalref");
+            e.uuid = Some(uuid_to_bytes(*entry));
+            e.ref_repo = Some(uuid_to_bytes(*repo));
+        }
+    }
+    e
+}
+
+pub(crate) fn decode_value(
     value_type: &str,
-    value_str: Option<String>,
-    value_int: Option<i64>,
-    value_real: Option<f64>,
-    value_ref: Option<Vec<u8>>,
-) -> anyhow::Result<Value> {
+    text: Option<String>,
+    int: Option<i64>,
+    real: Option<f64>,
+    uuid: Option<Vec<u8>>,
+    ref_repo: Option<Vec<u8>>,
+    name: Option<String>,
+) -> Result<Value> {
     match value_type {
         "nothing" => Ok(Value::Nothing),
-        "string" => Ok(Value::String(value_str.context("value_str missing")?)),
-        "int" => Ok(Value::Int(value_int.context("value_int missing")?)),
-        "float" => Ok(Value::Float(value_real.context("value_real missing")?)),
-        "bool" => Ok(Value::Bool(value_int.context("value_int missing")? != 0)),
-        "date" => Ok(Value::Date(value_str.context("value_str missing")?)),
-        "datetime" => Ok(Value::DateTime(value_str.context("value_str missing")?)),
-        "duration" => Ok(Value::Duration(value_int.context("value_int missing")?)),
-        "ref" => {
-            let bytes = value_ref.context("value_ref missing")?;
-            Ok(Value::Ref(bytes_to_uuid(bytes)?))
+        "string" => Ok(Value::String(text.context("value_text missing")?)),
+        "int" => Ok(Value::Int(int.context("value_int missing")?)),
+        "float" => Ok(Value::Float(real.context("value_real missing")?)),
+        "bool" => Ok(Value::Bool(int.context("value_int missing")? != 0)),
+        "datetime" => Ok(Value::DateTime(text.context("value_text missing")?)),
+        "ref" => Ok(Value::Ref(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
+        "tree_ref" => {
+            let parent = bytes_to_uuid(uuid.context("value_uuid missing")?)?;
+            Ok(Value::TreeRef {
+                parent: if parent == ZERO_UUID { None } else { Some(parent) },
+                name: name.context("value_name missing")?,
+            })
         }
+        "refbase" => Ok(Value::RefBase(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
+        "externalref" => Ok(Value::ExternalRef {
+            repo: bytes_to_uuid(ref_repo.context("value_ref_repo missing")?)?,
+            entry: bytes_to_uuid(uuid.context("value_uuid missing")?)?,
+        }),
         other => bail!("Unknown value type: '{other}'"),
     }
 }
 
-// ── CRUD ──────────────────────────────────────────────────────────────────────
-
-/// Creates a new entry with its fields. Returns the created entry.
-pub fn create_entry(
+/// Inserts one row in `field`. `explicit_id` restores a row with its original
+/// primary key (used by log navigation); None lets AUTOINCREMENT assign one.
+pub(crate) fn insert_field_row(
     conn: &Connection,
-    db_id: DatabaseId,
-    fields: Vec<Field>,
-) -> anyhow::Result<Metadata> {
-    let entry = Metadata::new(db_id);
-
-    conn.execute(
-        "INSERT INTO metadata (uuid, db_id) VALUES (?1, ?2)",
-        params![uuid_to_bytes(entry.uuid), uuid_to_bytes(entry.db_id)],
-    )
-    .context("Failed to insert entry")?;
-
-    for field in &fields {
-        insert_field(conn, entry.uuid, field)
-            .with_context(|| format!("Failed to insert field '{}'", field.name))?;
+    metadata_uuid: Uuid,
+    name: &str,
+    value: &Value,
+    explicit_id: Option<i64>,
+) -> Result<i64> {
+    let map_unique = |err: rusqlite::Error| -> anyhow::Error {
+        if err.to_string().contains("idx_field_tree") {
+            anyhow::anyhow!("tree position already occupied for field '{name}'")
+        } else {
+            err.into()
+        }
+    };
+    let e = encode_value(value);
+    match explicit_id {
+        None => {
+            conn.execute(
+                "INSERT INTO field (metadata_uuid, field_name, value_type, value_text,
+                                    value_int, value_real, value_uuid, value_ref_repo, value_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    uuid_to_bytes(metadata_uuid),
+                    name,
+                    e.value_type,
+                    e.text,
+                    e.int,
+                    e.real,
+                    e.uuid,
+                    e.ref_repo,
+                    e.name
+                ],
+            )
+            .map_err(map_unique)?;
+        }
+        Some(id) => {
+            conn.execute(
+                "INSERT INTO field (id, metadata_uuid, field_name, value_type, value_text,
+                                    value_int, value_real, value_uuid, value_ref_repo, value_name)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    id,
+                    uuid_to_bytes(metadata_uuid),
+                    name,
+                    e.value_type,
+                    e.text,
+                    e.int,
+                    e.real,
+                    e.uuid,
+                    e.ref_repo,
+                    e.name
+                ],
+            )
+            .map_err(map_unique)?;
+        }
     }
-
-    Ok(Metadata {
-        uuid: entry.uuid,
-        db_id: entry.db_id,
-        fields,
-    })
-}
-
-/// Deletes an entry and all its fields (CASCADE via FK).
-pub fn delete_entry(conn: &Connection, uuid: Uuid) -> anyhow::Result<()> {
-    let rows = conn
-        .execute("DELETE FROM metadata WHERE uuid = ?1", params![uuid_to_bytes(uuid)])
-        .context("Error during deletion")?;
-
-    if rows == 0 {
-        anyhow::bail!("Entry not found: {uuid}");
-    }
-    Ok(())
-}
-
-/// Updates the `path` field from `old_path` to `new_path`. Returns true if an entry was found.
-pub fn update_path(conn: &Connection, old_path: &str, new_path: &str) -> anyhow::Result<bool> {
-    let rows = conn.execute(
-        "UPDATE field SET value_str = ?1
-         WHERE field_name = 'path' AND value_type = 'string' AND value_str = ?2",
-        params![new_path, old_path],
-    )?;
-    Ok(rows > 0)
-}
-
-/// Update all entries whose path starts with `old_prefix/`, replacing the
-/// prefix with `new_prefix`. Used when a directory is renamed.
-/// Returns the number of updated rows.
-pub fn update_path_prefix(
-    conn: &Connection,
-    old_prefix: &str,
-    new_prefix: &str,
-) -> anyhow::Result<usize> {
-    // Match paths that are exactly `old_prefix/...` (never just `old_prefix` alone,
-    // which would be a file rename handled by `update_path`).
-    let old_with_sep = format!("{old_prefix}/");
-    let rows = conn.execute(
-        "UPDATE field
-         SET value_str = ?1 || SUBSTR(value_str, ?2)
-         WHERE field_name = 'path' AND value_type = 'string'
-           AND value_str LIKE ?3 ESCAPE '\\'",
-        params![
-            new_prefix,
-            old_with_sep.len() as i64,    // 1-based SUBSTR offset (length without +1 = skip prefix, keep '/')
-            format!("{}/%", old_prefix.replace('%', "\\%").replace('_', "\\_")),
-        ],
-    )?;
-    Ok(rows)
-}
-
-/// Sets the `path` field of an entry to `Nothing`, preserving all other fields.
-pub fn clear_path(conn: &Connection, metadata_uuid: Uuid) -> anyhow::Result<()> {
-    conn.execute(
-        "UPDATE field SET value_type = 'nothing', value_str = NULL
-         WHERE metadata_uuid = ?1 AND field_name = 'path'",
-        params![uuid_to_bytes(metadata_uuid)],
-    )?;
-    Ok(())
-}
-
-/// Finds the UUID of the entry whose `path` field matches the given string.
-pub fn find_entry_by_path(conn: &Connection, path: &str) -> anyhow::Result<Option<Uuid>> {
-    let mut stmt = conn.prepare(
-        "SELECT metadata_uuid FROM field
-         WHERE field_name = 'path' AND value_type = 'string' AND value_str = ?1
-         LIMIT 1",
-    )?;
-    let mut rows = stmt.query(params![path])?;
-    rows.next()?
-        .map(|r| r.get::<_, Vec<u8>>(0).map_err(Into::into).and_then(bytes_to_uuid))
-        .transpose()
-}
-
-/// Lists all entry UUIDs belonging to the given database.
-pub fn list_entries(conn: &Connection, db_id: Uuid) -> anyhow::Result<Vec<Uuid>> {
-    let mut stmt = conn.prepare("SELECT uuid FROM metadata WHERE db_id = ?1")?;
-    let uuids = stmt
-        .query_map(params![uuid_to_bytes(db_id)], |row| row.get::<_, Vec<u8>>(0))?
-        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
-        .collect::<anyhow::Result<Vec<Uuid>>>()?;
-    Ok(uuids)
-}
-
-/// Replaces all field rows for `(uuid, name)` with a single new value.
-pub fn set_field(conn: &Connection, uuid: Uuid, name: &str, value: Value) -> anyhow::Result<()> {
-    conn.execute(
-        "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
-        params![uuid_to_bytes(uuid), name],
-    )?;
-    let field = Field { name: name.to_string(), value };
-    insert_field(conn, uuid, &field)
-}
-
-/// Returns all (uuid, path_string) pairs where path is a non-Nothing string field.
-pub fn list_path_entries(conn: &Connection) -> anyhow::Result<Vec<(Uuid, String)>> {
-    let mut stmt = conn.prepare(
-        "SELECT metadata_uuid, value_str FROM field
-         WHERE field_name = 'path' AND value_type = 'string'",
-    )?;
-    let entries = stmt
-        .query_map([], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, String>(1)?)))?
-        .map(|r| {
-            let (bytes, path) = r?;
-            Ok((bytes_to_uuid(bytes)?, path))
-        })
-        .collect::<anyhow::Result<Vec<(Uuid, String)>>>()?;
-    Ok(entries)
-}
-
-/// Executes a pre-compiled SQL query (with CTEs) and returns matching UUIDs.
-pub fn query_entries(
-    conn: &Connection,
-    sql: &str,
-    params: &[rusqlite::types::Value],
-) -> anyhow::Result<Vec<Uuid>> {
-    let mut stmt = conn.prepare(sql)?;
-    let uuids = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            row.get::<_, Vec<u8>>(0)
-        })?
-        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
-        .collect::<anyhow::Result<Vec<Uuid>>>()?;
-    Ok(uuids)
-}
-
-/// Retrieves an entry and all its fields by UUID.
-pub fn get_entry(conn: &Connection, uuid: Uuid) -> anyhow::Result<Metadata> {
-    let (uuid_blob, db_id_blob): (Vec<u8>, Vec<u8>) = conn
-        .query_row(
-            "SELECT uuid, db_id FROM metadata WHERE uuid = ?1",
-            params![uuid_to_bytes(uuid)],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .context("Entry not found")?;
-
-    let db_id: DatabaseId = bytes_to_uuid(db_id_blob)?;
-    let entry_id: EntryId = bytes_to_uuid(uuid_blob)?;
-
-    let mut stmt = conn
-        .prepare(
-            "SELECT field_name, value_type, value_str, value_int, value_real, value_ref
-             FROM field WHERE metadata_uuid = ?1",
-        )
-        .context("Failed to prepare query")?;
-
-    let fields: Vec<Field> = stmt
-        .query_map(params![uuid_to_bytes(uuid)], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, Option<i64>>(3)?,
-                row.get::<_, Option<f64>>(4)?,
-                row.get::<_, Option<Vec<u8>>>(5)?,
-            ))
-        })
-        .context("Error reading fields")?
-        .map(|r| {
-            let (name, vtype, vstr, vint, vreal, vref) = r?;
-            let value = row_to_value(&vtype, vstr, vint, vreal, vref)?;
-            Ok(Field { name, value })
-        })
-        .collect::<anyhow::Result<Vec<Field>>>()?;
-
-    Ok(Metadata {
-        uuid: entry_id,
-        db_id,
-        fields,
-    })
+    Ok(conn.last_insert_rowid())
 }

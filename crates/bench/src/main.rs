@@ -396,7 +396,7 @@ async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
     let per_file = elapsed / n as u32;
     let rows = vec![
         (format!("{n} files moved individually"), 1, elapsed),
-        (format!("  → per file"), 1, per_file),
+        ("  → per file".to_string(), 1, per_file),
     ];
     print_section(
         &format!("Watcher — individual moves ({n} files)"),

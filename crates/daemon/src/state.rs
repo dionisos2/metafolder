@@ -1,219 +1,149 @@
+//! In-memory daemon state: the set of loaded repositories.
+
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use anyhow::Context;
 use rusqlite::Connection;
+use serde::Serialize;
 use uuid::Uuid;
 
-fn setup_conn(conn: &Connection) -> anyhow::Result<()> {
-    conn.create_scalar_function(
-        "REGEXP",
-        2,
-        rusqlite::functions::FunctionFlags::SQLITE_UTF8
-            | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
-        |ctx| {
-            // SQLite: X REGEXP Y  →  regexp(Y, X)
-            // so arg 0 = pattern (Y), arg 1 = string to search (X)
-            let pattern: String = ctx.get(0)?;
-            let text: String = ctx.get(1)?;
-            regex::Regex::new(&pattern)
-                .map(|re| re.is_match(&text))
-                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
-        },
-    )?;
-    Ok(())
-}
-
 use crate::config::RepoConfig;
-use crate::watcher::WatcherHandle;
+use crate::error::ApiError;
+use crate::repo::{self, OpenedRepo, RepoLocator};
+use crate::tree_cache::TreeCache;
 
+/// One loaded repository. The SQLite connection and the tree cache each sit
+/// behind their own mutex; blocking work runs in `spawn_blocking`.
 pub struct RepoState {
-    pub conn: Arc<Mutex<Connection>>,
+    pub conn: Mutex<Connection>,
+    pub cache: Mutex<TreeCache>,
     pub config: RepoConfig,
-    _watcher: WatcherHandle,
+    pub metafolder_dir: PathBuf,
+    pub case_insensitive: bool,
+    /// Watcher + executor; None until started (or in unit tests).
+    pub handles: Mutex<Option<RepoHandles>>,
+    /// Loaded user schema; replaced atomically on reload (spec-schema).
+    pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
 }
 
+impl RepoState {
+    pub fn from_opened(opened: OpenedRepo) -> Self {
+        Self {
+            conn: Mutex::new(opened.conn),
+            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
+            config: opened.config,
+            metafolder_dir: opened.metafolder_dir,
+            case_insensitive: opened.case_insensitive,
+            handles: Mutex::new(None),
+            schema: Mutex::new(None),
+        }
+    }
+}
+
+/// Background machinery of a loaded repository. Held by the RepoState so it
+/// is dropped (watcher stopped, executor joined) when the repo is unloaded.
+pub struct RepoHandles {
+    pub watcher: crate::watcher::WatcherHandle,
+    pub executor: crate::executor::ExecutorHandle,
+}
+
+#[derive(Default)]
 pub struct AppState {
-    pub repos: Mutex<HashMap<Uuid, RepoState>>,
+    repos: Mutex<HashMap<Uuid, Arc<RepoState>>>,
+}
+
+/// Public description of a loaded repository (`GET /repos`).
+#[derive(Debug, Serialize)]
+pub struct RepoInfo {
+    #[serde(with = "metafolder_core::entry::hex_uuid")]
+    pub repo_uuid: Uuid,
+    pub name: String,
+    pub root: PathBuf,
+    pub created_at: u64,
 }
 
 impl AppState {
     pub fn new() -> Self {
-        Self { repos: Mutex::new(HashMap::new()) }
+        Self::default()
     }
 
-    /// Creates a new repository at `root`: writes config.json, initializes db.sqlite.
-    /// Fails if a repository already exists there.
-    pub fn create_repo(&self, root: &Path) -> anyhow::Result<Uuid> {
-        let root = root.canonicalize()
-            .with_context(|| format!("Cannot resolve path {:?}: the directory must exist before initializing a repository", root))?;
-        let metafolder_dir = root.join(".metafolder");
+    /// Initialises a new repository and registers it as loaded.
+    pub fn init_repo(&self, root: &Path, metafolder: Option<&Path>) -> Result<Uuid, ApiError> {
+        let opened = repo::init_repository(root, metafolder)?;
+        let uuid = opened.config.repo_uuid;
+        let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
+        self.repos.lock().unwrap().insert(uuid, repo_state);
+        Ok(uuid)
+    }
 
-        if metafolder_dir.exists() {
-            anyhow::bail!("Repository already exists at {:?}", root);
+    /// Loads the user schema (an invalid schema file fails the load with
+    /// 400), replays any pending buffer left by a previous run, then starts
+    /// the watcher and its executor (spec: the buffer is replayed before the
+    /// repository serves requests).
+    fn activate(repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
+        let schema =
+            crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
+                .map_err(ApiError::bad_request)?;
+        *repo_state.schema.lock().unwrap() = schema;
+        crate::executor::flush_pending(&repo_state)?;
+        let quiet = std::time::Duration::from_millis(500);
+        let executor = crate::executor::spawn(&repo_state, quiet);
+        let watcher = crate::watcher::start(&repo_state, executor.pinger())?;
+        *repo_state.handles.lock().unwrap() = Some(RepoHandles { watcher, executor });
+        Ok(repo_state)
+    }
+
+    /// Loads an existing repository. Loading an already-loaded repository is
+    /// idempotent and returns its UUID (the exclusive SQLite lock would make
+    /// a second real open fail anyway).
+    pub fn load_repo(&self, locator: RepoLocator) -> Result<Uuid, ApiError> {
+        let metafolder_dir = match &locator {
+            RepoLocator::Root(root) => root
+                .canonicalize()
+                .map_err(|_| {
+                    ApiError::bad_request(format!(
+                        "Cannot resolve path {root:?}: the root directory must exist"
+                    ))
+                })?
+                .join(".metafolder"),
+            RepoLocator::Metafolder(dir) => dir.clone(),
+        };
+        if RepoConfig::exists(&metafolder_dir) {
+            let config = RepoConfig::read(&metafolder_dir)?;
+            if self.repos.lock().unwrap().contains_key(&config.repo_uuid) {
+                return Ok(config.repo_uuid);
+            }
         }
-
-        std::fs::create_dir_all(&metafolder_dir)
-            .context("Failed to create .metafolder directory")?;
-
-        let config = RepoConfig::new(root.clone());
-        config.write(&metafolder_dir)?;
-
-        let db_path = metafolder_dir.join("db.sqlite");
-        let conn = Connection::open(&db_path)
-            .context("Failed to open SQLite database")?;
-        crate::db::init_db(&conn)?;
-        setup_conn(&conn)?;
-
-        let conn = Arc::new(Mutex::new(conn));
-        let watcher = crate::watcher::start(root, conn.clone(), config.repo_uuid);
-        let repo_uuid = config.repo_uuid;
-
-        self.repos.lock().unwrap().insert(repo_uuid, RepoState {
-            conn,
-            config,
-            _watcher: watcher,
-        });
-
-        println!("[daemon] Repository created (uuid: {repo_uuid})");
-        Ok(repo_uuid)
+        let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
+        let uuid = opened.config.repo_uuid;
+        let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
+        self.repos.lock().unwrap().insert(uuid, repo_state);
+        Ok(uuid)
     }
 
-    /// Loads an existing repository from `root`.
-    /// Fails if no repository is found there.
-    pub fn load_repo(&self, root: &Path) -> anyhow::Result<Uuid> {
-        let root = root.canonicalize()
-            .with_context(|| format!("Cannot resolve path {:?}: the directory must exist before loading a repository", root))?;
-        let metafolder_dir = root.join(".metafolder");
-
-        if !metafolder_dir.exists() {
-            anyhow::bail!("No repository found at {:?} (missing .metafolder/)", root);
-        }
-
-        let config = RepoConfig::read(&metafolder_dir)?;
-        let db_path = metafolder_dir.join("db.sqlite");
-        let conn = Connection::open(&db_path)
-            .context("Failed to open SQLite database")?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;")
-            .context("Failed to configure SQLite")?;
-        setup_conn(&conn)?;
-
-        let conn = Arc::new(Mutex::new(conn));
-        let watcher = crate::watcher::start(root, conn.clone(), config.repo_uuid);
-        let repo_uuid = config.repo_uuid;
-
-        self.repos.lock().unwrap().insert(repo_uuid, RepoState {
-            conn,
-            config,
-            _watcher: watcher,
-        });
-
-        println!("[daemon] Repository loaded (uuid: {repo_uuid})");
-        Ok(repo_uuid)
-    }
-
-    /// Returns the connection and uuid for a loaded repo, or an error if not loaded.
-    pub fn get_repo_conn(&self, repo_uuid: Uuid) -> anyhow::Result<(Arc<Mutex<Connection>>, Uuid)> {
-        let repos = self.repos.lock().unwrap();
-        let repo = repos.get(&repo_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Repository {repo_uuid} is not loaded"))?;
-        Ok((repo.conn.clone(), repo.config.repo_uuid))
-    }
-
-    /// Returns (conn, db_id, root) for a loaded repo.
-    pub fn get_repo_info(
-        &self,
-        repo_uuid: Uuid,
-    ) -> anyhow::Result<(Arc<Mutex<Connection>>, Uuid, std::path::PathBuf)> {
-        let repos = self.repos.lock().unwrap();
-        let repo = repos
+    /// Fetches a loaded repository or fails with 404.
+    pub fn repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
+        self.repos
+            .lock()
+            .unwrap()
             .get(&repo_uuid)
-            .ok_or_else(|| anyhow::anyhow!("Repository {repo_uuid} is not loaded"))?;
-        Ok((repo.conn.clone(), repo.config.repo_uuid, repo.config.root.clone()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn make_temp_dir() -> std::path::PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("metafolder_test_{}", uuid::Uuid::new_v4()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+            .cloned()
+            .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))
     }
 
-    #[test]
-    fn test_create_repo_creates_metafolder_structure() {
-        let dir = make_temp_dir();
-        let state = AppState::new();
-
-        let uuid = state.create_repo(&dir).unwrap();
-
-        assert!(dir.join(".metafolder/config.json").exists());
-        assert!(dir.join(".metafolder/db.sqlite").exists());
-        let repos = state.repos.lock().unwrap();
-        assert!(repos.contains_key(&uuid));
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_create_repo_fails_if_already_exists() {
-        let dir = make_temp_dir();
-        let state = AppState::new();
-        state.create_repo(&dir).unwrap();
-
-        let err = state.create_repo(&dir).unwrap_err();
-        assert!(err.to_string().contains("already exists"));
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_create_repo_fails_if_dir_missing() {
-        let dir = std::env::temp_dir()
-            .join(format!("metafolder_nonexistent_{}", uuid::Uuid::new_v4()));
-        let state = AppState::new();
-
-        let err = state.create_repo(&dir).unwrap_err();
-        assert!(err.to_string().contains("must exist"));
-    }
-
-    #[test]
-    fn test_load_repo_restores_uuid() {
-        let dir = make_temp_dir();
-        let state1 = AppState::new();
-        let created_uuid = state1.create_repo(&dir).unwrap();
-
-        let state2 = AppState::new();
-        let loaded_uuid = state2.load_repo(&dir).unwrap();
-
-        assert_eq!(created_uuid, loaded_uuid);
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_load_repo_fails_if_no_metafolder() {
-        let dir = make_temp_dir();
-        let state = AppState::new();
-
-        let err = state.load_repo(&dir).unwrap_err();
-        assert!(err.to_string().contains("No repository found"));
-
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    #[test]
-    fn test_load_repo_fails_if_dir_missing() {
-        let dir = std::env::temp_dir()
-            .join(format!("metafolder_nonexistent_{}", uuid::Uuid::new_v4()));
-        let state = AppState::new();
-
-        let err = state.load_repo(&dir).unwrap_err();
-        assert!(err.to_string().contains("must exist"));
+    pub fn list_repos(&self) -> Vec<RepoInfo> {
+        let repos = self.repos.lock().unwrap();
+        let mut infos: Vec<RepoInfo> = repos
+            .values()
+            .map(|r| RepoInfo {
+                repo_uuid: r.config.repo_uuid,
+                name: r.config.name.clone(),
+                root: r.config.root.clone(),
+                created_at: r.config.created_at,
+            })
+            .collect();
+        infos.sort_by_key(|i| i.repo_uuid);
+        infos
     }
 }

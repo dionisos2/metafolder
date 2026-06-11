@@ -1,15 +1,10 @@
 use std::sync::Arc;
 
-use axum::Router;
 use clap::Parser;
 use tokio::net::TcpListener;
 
-mod config;
-mod db;
-mod query_exec;
-mod routes;
-mod state;
-mod watcher;
+use metafolder_daemon::routes;
+use metafolder_daemon::state::AppState;
 
 #[derive(Parser)]
 #[command(name = "metafolder-daemon", about = "Metadata management daemon")]
@@ -23,14 +18,12 @@ struct Args {
 async fn main() {
     let args = Args::parse();
 
-    let state = Arc::new(state::AppState::new());
-    let app: Router = routes::build(state);
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state);
 
     let addr = format!("127.0.0.1:{}", args.port);
-    let listener = TcpListener::bind(&addr)
-        .await
-        .expect("Failed to start the server");
+    let listener = TcpListener::bind(&addr).await.expect("Failed to bind the listening port");
 
     println!("[daemon] Listening on http://{addr}");
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(listener, app).await.expect("HTTP server failed");
 }

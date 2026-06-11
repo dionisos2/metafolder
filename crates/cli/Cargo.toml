@@ -6,12 +6,5 @@ edition = "2021"
 [[bin]]
 name = "metafolder"
 
+# Stub crate: the v1 CLI (`mf`) is the next roadmap item after the daemon.
 [dependencies]
-metafolder-core = { path = "../core" }
-anyhow = "1"
-tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", features = ["json"] }
-clap = { version = "4", features = ["derive", "env"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-uuid = { version = "1", features = ["v4", "serde"] }

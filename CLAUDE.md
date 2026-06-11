@@ -14,96 +14,158 @@ cargo test
 # Run tests for a single crate
 cargo test -p metafolder-core
 cargo test -p metafolder-daemon
-cargo test -p metafolder-cli
 
-# Run a single test by name (substring match)
-cargo test -p metafolder-daemon test_reconcile_creates_for_new_files
+# Run a single integration test binary / a single test by name
+cargo test -p metafolder-daemon --test storage
+cargo test -p metafolder-daemon test_reconcile_creates_entries_for_new_files
 
 # Run the daemon (default port 7523)
 cargo run -p metafolder-daemon
 cargo run -p metafolder-daemon -- --port 8080
-
-# Run the CLI (requires daemon running)
-cargo run -p metafolder-cli -- repo init /path/to/folder
-cargo run -p metafolder-cli -- --repo <UUID> entries list
 ```
+
+The CLI (`mf`) is not implemented yet (next roadmap item); interact with the
+daemon over HTTP (`curl` examples in README.md).
+
+## Specs and roadmap
+
+The implementation follows the specs under `docs/` (`spec-main.org`,
+`spec-data-model.org`, `spec-query.org`, `spec-file-tracking.org`,
+`spec-event-log.org`, `spec-schema.org`, `spec-platform.org`; `spec-sync.org`
+and parts tagged `:v2:` are deferred). When changing daemon behaviour, check
+the relevant spec section first; when deviating, update the spec.
 
 ## Architecture
 
-Cargo workspace with four crates: `core`, `daemon`, `cli`, `gui`.
+Cargo workspace: `core`, `daemon`, `cli` (stub), `gui` (stub), `bench`
+(old POC harness, to be revived with the CLI).
 
 ### `crates/core`
 
-Defines the shared data model used by all other crates:
+Shared data model used by all other crates:
 
-- `entry.rs`: `Metadata` (uuid + db_ids: Vec<Uuid> + version + Vec<Field>), `Field` (name + value), `Value` enum. Fields form a **multi-map**: multiple fields with the same name are allowed. `Value::Nothing` is an explicit absence ("this field does not apply"), distinct from the field simply not existing ("unknown"). The ten `Value` variants (Nothing, String, Int, Float, Bool, DateTime, Ref(Uuid), TreeRef(Option<Uuid>, String), RefBase(Uuid), ExternalRef(Uuid, Uuid)) serialize to `{"type": "...", "value": ...}` JSON. `db_ids` normally contains one repo UUID; two UUIDs means a link entry shared between repos.
-- `query.rs`: `Query` enum — the intermediate representation for queries. Includes boolean combinators (And/Or/Not), three-valued logic predicates (IsPresent/IsAbsent/IsUnknown), comparisons (Eq/Neq/Lt/Lte/Gt/Gte), `Matches` (regex on string/TreeRef), and graph traversal (`Follows` / `FollowsTransitive` for `Ref` and `TreeRef` fields).
+- `entry.rs`: `Metadata` (uuid + `db_ids: Vec<Uuid>` + `version: u64` + fields),
+  `Field` (`id: Option<i64>` — the DB row id, present in API responses — +
+  name + value), `Value` enum. Fields form a **multi-map**: several fields
+  with the same name are allowed. `Value::Nothing` is an explicit absence
+  ("this field does not apply"), distinct from the field not existing
+  ("unknown"). Ten `Value` variants: `Nothing`, `String`, `Int`, `Float`,
+  `Bool`, `DateTime`, `Ref(Uuid)`, `TreeRef { parent: Option<Uuid>, name }`,
+  `RefBase(Uuid)`, `ExternalRef { repo, entry }`. JSON form is
+  `{"type": "...", "value": ...}` with UUIDs as 32-char lowercase hex (serde
+  helpers `hex_uuid`, `hex_uuid_opt`, `hex_uuid_vec`).
+- `query.rs`: `Query` enum — the JSON IR for queries (internally tagged with
+  `"type"`, snake_case). Boolean combinators (And/Or/Not), three-valued
+  predicates (IsPresent/IsAbsent/IsUnknown), comparisons (Eq/Neq/Lt/Lte/Gt/Gte),
+  `Matches` (regex), and traversal: `Follows { field, target }` where target
+  is a path string (TreeRef) or a sub-query (Ref), and
+  `FollowsTransitive { field, path }` (TreeRef only).
 
 ### `crates/daemon`
 
 Background HTTP server (Axum + Tokio) managing one or more repositories.
+The crate is a library (`lib.rs`) plus a thin binary (`main.rs`); integration
+tests live in `crates/daemon/tests/` and drive the Axum router directly with
+`tower::ServiceExt::oneshot`.
 
-- `main.rs`: CLI args (clap), starts Axum on `127.0.0.1:<port>`.
-- `config.rs`: `RepoConfig` — persisted as `.metafolder/config.json`. Contains `repo_uuid`, `version`, `root` path, `created_at`.
-- `state.rs`: `AppState` holds a `Mutex<HashMap<Uuid, RepoState>>`. Each `RepoState` owns an `Arc<Mutex<rusqlite::Connection>>` and a `WatcherHandle`. `create_repo` / `load_repo` initialize or reopen a repository.
-- `db.rs`: All SQLite operations. Schema uses an EAV (entity-attribute-value) pattern: `metadata` table (uuid, version), `metadata_db` table (metadata_uuid, db_id — one row per owning repo), and `field` table (id, metadata_uuid, field_name, value_type, value_text, value_int, value_real, value_uuid, value_ref_repo, value_name). UUIDs are stored as 16-byte BLOBs. Also contains the event log tables: `revision`, `operation`, `op_snapshot`, `log_head`, `pending_operation`.
-- `query_exec.rs`: Compiles a `Query` into a CTE-based SQL string using a `Compiler` that emits one CTE per query node. `FollowsTransitive` on a `TreeRef` field is handled as a hybrid: descendant UUIDs are collected via the tree cache, then injected as an `IN` clause. Results are filtered by `metadata_db` to isolate the repository.
-- `watcher.rs`: Uses the `notify` crate (inotify on Linux) to watch a repository root. Creates entries on `Create`, sets `mfr_path` to `Nothing` on `Remove`, updates `mfr_path` TreeRef on `Rename(Both)`. Writes events to the `pending_operation` table; the executor flushes them after a 500 ms quiet period. Ignores events under `.metafolder/`.
-- `routes.rs`: Axum route handlers. Blocking SQLite calls are dispatched via `tokio::task::spawn_blocking`. Key routes:
-  - `GET /health`, `GET /repos`, `POST /repos/init`, `POST /repos/load`
-  - `GET|POST /repos/:repo_uuid/metadata`
-  - `GET|DELETE|PATCH /repos/:repo_uuid/metadata/:metadata_uuid`
-  - `POST /repos/:repo_uuid/metadata/:metadata_uuid/fields`
-  - `PUT|DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id`
-  - `POST /repos/:repo_uuid/query`, `POST /repos/:repo_uuid/set`
-  - `POST /repos/:repo_uuid/reconcile`
-  - `GET /repos/:repo_uuid/log`, `GET|PATCH /repos/:repo_uuid/log/revisions/:rev_id`
-  - `POST /repos/:repo_uuid/log/prune`, `POST /repos/:repo_uuid/rollback`
+- `config.rs`: `RepoConfig` persisted as `.metafolder/config.json`
+  (repo_uuid, name, version, root, optional schema path, created_at).
+- `repo.rs`: repository init/load (`OpenedRepo`), external `.metafolder/`
+  location, the filesystem root entry with its defaults (`mf_watch = false`,
+  default `mf_ignore` patterns), case-sensitivity probe.
+- `db.rs`: SQLite layer. EAV schema: `metadata` (uuid, version),
+  `metadata_db` (one row per owning repo), `field` (value columns incl.
+  `value_uuid`/`value_ref_repo`/`value_name`; UNIQUE tree index on
+  `(field_name, value_uuid, value_name)` for `tree_ref` rows) and the event
+  log tables (`revision`, `operation`, `op_snapshot`, `log_head`,
+  `pending_operation`). UUIDs are 16-byte BLOBs; the zero UUID is the
+  TreeRef root sentinel. Connections: WAL (DELETE fallback for network FS),
+  `locking_mode = EXCLUSIVE` (one daemon per repo), `REGEXP` UDF.
+- `log.rs`: **all writes go through `Writer`** — one revision per Writer, one
+  `operation` row + before/after `op_snapshot` rows per change, running HEAD
+  chain, `metadata.version` bump per field write. Also: history reading,
+  target resolution (id/timestamp/label/prev_revision), atomic navigation
+  (LCA, inverse/forward application restoring original `field.id`s and
+  versions), pruning (before/linearize). Watcher-originated writes use the
+  file op types (`file_deleted`, `file_moved`, `file_modified`) but are
+  set-field-shaped: one operation per field name (slight divergence from the
+  spec's one-op-per-event snapshot table, chosen so every op has a uniform
+  inverse).
+- `tree_cache.rs`: per-repo in-memory path→UUID cache shared across TreeRef
+  field names; lazy population from the DB, O(1) rename/move, LRU eviction
+  via a lazy min-heap of leaves; descendant collection walks the DB.
+- `eligibility.rs`: watch/ignore algorithm (`mf_watch` inherited, direct
+  override, nearest-ancestor `mf_ignore` pattern set, no merging).
+- `watcher.rs` + `executor.rs`: the watcher (notify/inotify) enqueues raw
+  events into `pending_operation` and pings the executor, which flushes after
+  a 500 ms quiet period: compaction (incl. absorbing notify's From/To/Both
+  rename triplet), grouping by resulting op type (one revision per group),
+  then application of the event semantics (cascading Nothing on removes,
+  fingerprint search of orphans on arrivals). The buffer is replayed at repo
+  load. Both hold `Weak<RepoState>` (an Arc would leak the repo and its
+  exclusive lock).
+- `fingerprint.rs`: xxHash3 partial (first+last 4 KiB) and full hashes.
+- `fs_meta.rs`: stat-derived `mfr_*` fields, dependency-free ISO-8601.
+- `reconcile.rs`: full reconcile (fs walk with eligibility pruning, the
+  fingerprint phase with definitive moves and strong/weak candidates, entry
+  creation; never writes `mfr_path = Nothing`) and single-entry reconcile.
+- `query_exec.rs`: compiles a `Query` into a CTE chain (one CTE per node,
+  `_repo` CTE = universe/isolation). `FollowsTransitive` is hybrid:
+  descendants come from the tree cache and are inlined as literals. Sorting
+  implements the spec semantics (unknown/Nothing last, multi-map min/max,
+  fixed type-group precedence) via window functions; keyset pagination uses
+  opaque cursors bound to a hash of (query, sort).
+- `schema.rs`: user schema parsing/validation (errors identify the offending
+  constraint), per-field index, delta validation of user writes (violations
+  roll the transaction back and return 400 with a `violations` array).
+- `pagination.rs`, `error.rs`, `reserved.rs`: cursor encoding, the
+  `{"error": ...}` JSON error type (status classification), reserved field
+  rules (`mfr_*` need `force`; unknown `mf_*` rejected).
+- `state.rs` + `routes.rs`: `AppState` (loaded repos), `RepoState` (conn,
+  tree cache, schema, watcher/executor handles), Axum handlers (blocking
+  SQLite work via `spawn_blocking`).
 
-### `crates/cli`
+### `crates/cli`, `crates/gui`
 
-Clap-based subcommand tool that communicates with the daemon over HTTP.
-
-- `main.rs`: Subcommands: `repo {init,load,list}`, `entries {create,get,list,set,delete}`, `query <predicate>`, `reconcile`. Repo UUID supplied via `--repo <UUID>` or `METAFOLDER_REPO` env var. Daemon URL via `--daemon-url` or `METAFOLDER_DAEMON_URL`.
-- `dsl.rs`: Hand-written lexer + recursive-descent parser for the query DSL. Grammar: `field IS PRESENT|ABSENT|UNKNOWN`, comparisons (`=`, `!=`, `<`, `<=`, `>`, `>=`), `AND`/`OR`/`NOT`, parentheses, and graph traversal (`field -> atom`, `field ->* atom`).
-- `http.rs`: `reqwest`-based async HTTP helpers for each daemon endpoint.
-- `output.rs`: Pretty-printing for entries, repo lists, UUIDs, reconcile results.
-
-### `crates/gui`
-
-Stub only — not yet implemented.
+Stubs. The v1 CLI (`mf`) is specified in the `* CLI` sections of the spec
+files and is the next roadmap item.
 
 ## Repository structure on disk
 
-Each watched directory gets a `.metafolder/` subdirectory containing:
-- `config.json` — `RepoConfig` (uuid, version, root, created_at)
-- `db.sqlite` — SQLite database with WAL mode and foreign keys enabled
-
-## Spec file organisation
-
-All spec files under `docs/` follow the same top-level structure:
-
-```
-* Overview        — one-paragraph description of the topic
-* Concepts        — shared data model / vocabulary, not component-specific
-* Daemon          — daemon implementation: SQLite schema, internal logic, HTTP API
-* CLI             — CLI-specific behaviour (stub if not yet specified)
-* Open questions  — unresolved design questions
-```
-
-Within `* Daemon`, the typical sub-sections are:
-- `** SQLite Schema` — tables and indexes; snapshot formats and invariants as `***` sub-sections
-- `** <Feature>` — one sub-section per major behaviour (e.g. Navigation, Log pruning, Coordinated navigation)
-- `** HTTP API` — all endpoints as `***` sub-sections, with request/response examples
-
-Features deferred to v2 are tagged `:v2:` on their heading.
-
-This structure allows reconstructing the full spec for a given component (e.g. daemon) by collecting all `* Daemon` sections across spec files.
+Each repository's `.metafolder/` directory (inside the watched root, or at an
+external location recorded in the config) contains:
+- `config.json` — `RepoConfig`
+- `db.sqlite` — SQLite database (WAL, exclusive lock while loaded)
+- `schema.json` — optional user schema (spec-schema)
 
 ## Key invariants
 
-- A file entry has an `mfr_path` field (`Value::TreeRef`). When the file is deleted, `mfr_path` becomes `Value::Nothing` (the entry is preserved for its metadata). Only the watcher and manual `force` writes set `mfr_path` to `Nothing`; reconcile leaves stale TreeRefs in place.
-- Repository ownership is recorded in the `metadata_db` table (`metadata_uuid`, `db_id`). Queries filter by `db_id` to isolate the current repository. Entries with two `db_id` rows are link entries shared between repos.
-- `set_field` replaces **all** rows for `(uuid, field_name)` — it collapses multi-map fields to a single value.
-- The `version` counter on a metadata entry is managed exclusively by the daemon; it is incremented on every write to `fields`.
-- Every write to the data tables is recorded in the event log (`operation` + `op_snapshot`). HEAD (`log_head.op_id`) always reflects the current database state.
+- A file entry has an `mfr_path` field (`Value::TreeRef`). When the file is
+  deleted, `mfr_path` becomes `Value::Nothing` (the entry is preserved).
+  Only the watcher and manual `force` writes set `mfr_path` to `Nothing`;
+  reconcile leaves stale TreeRefs in place.
+- Repository ownership lives in `metadata_db`; queries return only entries
+  owned exclusively by the current repository.
+- Tracking is opt-in: nothing is watched until `mf_watch = true` is set
+  (inherited through the `mfr_path` tree, filtered by `mf_ignore` regexes).
+- `set_field` replaces **all** rows for `(uuid, field_name)`.
+- `metadata.version` is managed exclusively by the daemon; incremented on
+  every field write, restored exactly by rollback.
+- Every write goes through `log::Writer`; HEAD (`log_head.op_id`) and the
+  data tables are always mutually consistent (single transaction).
+- TreeRef references form a forest per field name (no cycles, depth ≤ 1000);
+  writes violating this are rejected with 400.
+- The repository database is held under an exclusive SQLite lock for the
+  whole lifetime of the connection: a second daemon cannot load the same
+  repo, and `RepoState` must never be kept alive by its own background tasks
+  (they hold `Weak` references).
+
+## Testing conventions
+
+TDD: write the failing test first. Unit tests live next to the code
+(`#[cfg(test)]`); most coverage is in `crates/daemon/tests/*.rs` (one file
+per feature area: `storage`, `repo`, `tree_cache`, `http_api`, `query`,
+`query_http`, `eligibility`, `fs_meta`, `executor`, `watcher_e2e`,
+`reconcile`, `track_http`, `schema`, `log_http`). HTTP tests build the router
+with a fresh `AppState` and `oneshot` requests; filesystem tests use
+disposable directories under `std::env::temp_dir()`.
