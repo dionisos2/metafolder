@@ -1,12 +1,11 @@
 //! `GET /panel/:name/*path` — files of a panel type directory, with the
 //! metafolder shim `<script>` injected into HTML documents.
 
-use crate::config::ConfigDir;
+use super::ServerState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::path::Component;
-use std::sync::Arc;
 
 const SHIM_TAG: &str = concat!(
     r#"<link rel="stylesheet" href="/__style.css">"#,
@@ -14,10 +13,10 @@ const SHIM_TAG: &str = concat!(
 );
 
 pub async fn serve(
-    State(config): State<Arc<ConfigDir>>,
+    State(state): State<ServerState>,
     Path((name, path)): Path<(String, String)>,
 ) -> Response {
-    let Some(panel_dir) = config.panel_dir(&name) else {
+    let Some(panel_dir) = state.config.panel_dir(&name) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

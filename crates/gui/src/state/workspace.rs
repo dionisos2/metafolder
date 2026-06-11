@@ -3,7 +3,7 @@
 use super::layout::SlotId;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct Workspace {
     pub id: String,
@@ -16,6 +16,9 @@ pub struct Workspace {
     pub messages: Vec<MessageEntry>,
     /// Last panel type displayed per slot, restored on re-assignment.
     pub last_panel: HashMap<SlotId, String>,
+    /// Panel types whose iframe finished initializing in this workspace
+    /// (GET /gui/panels/:slot/view "loading"/"ready").
+    pub ready_panels: HashSet<String>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

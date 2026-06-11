@@ -172,6 +172,10 @@ export async function dispatch(invocation: string): Promise<void> {
           await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
         }
         return;
+      case 'answer:send':
+        // Resolves a script's POST /gui/input wait.
+        await invoke('answer_send', { value: args.join(' ') });
+        return;
       case 'quit':
         await invoke('quit');
         return;

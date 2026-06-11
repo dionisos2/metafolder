@@ -8,3 +8,5 @@ pub const MESSAGE_APPENDED: &str = "message-appended";
 pub const KEYBINDINGS_CHANGED: &str = "keybindings-changed";
 pub const STYLE_CHANGED: &str = "style-changed";
 pub const DAEMON_HEALTH_CHANGED: &str = "daemon-health-changed";
+pub const PROMPT_REQUESTED: &str = "prompt-requested";
+pub const INPUT_WAIT_CHANGED: &str = "input-wait-changed";

@@ -75,6 +75,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("daemon:set-url", "Change the daemon URL"),
         ("repos:open", "Open the repository panel in the focused slot"),
         ("reconcile:run", "Reconcile the active repository with the filesystem"),
+        ("answer:send", "Resolve the pending script input wait"),
     ] {
         registry.register_builtin(name, label);
     }
@@ -109,29 +110,41 @@ pub fn run(options: Options) {
                     None
                 }
             };
+            let keybindings = Arc::new(Mutex::new(keybindings));
+            let input = Arc::new(server::input_wait::InputWait::new());
             let app = Arc::new(commands::App {
                 gui: gui.clone(),
                 registry,
                 config: config.clone(),
-                keybindings: Mutex::new(keybindings),
+                keybindings: keybindings.clone(),
                 gui_port,
                 daemon: daemon.clone(),
+                input: input.clone(),
                 style_watcher: Mutex::new(style_watcher),
             });
             tauri::Manager::manage(tauri_app, app);
 
             // Daemon health polling (spec-gui "Connection to the daemon").
+            let poll_daemon = daemon.clone();
+            let poll_gui = gui.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    daemon.check_health(&gui).await;
+                    poll_daemon.check_health(&poll_gui).await;
                     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 }
             });
 
             // The GUI HTTP server: panel assets, /fsraw, scripting API.
             let server_config = config.clone();
+            let server_state = server::ServerState {
+                config: config.clone(),
+                gui: gui.clone(),
+                daemon: daemon.clone(),
+                keybindings,
+                input,
+            };
             tauri::async_runtime::spawn(async move {
-                let router = server::build_router(server_config.clone());
+                let router = server::build_router(server_state);
                 let address = std::net::SocketAddr::from(([127, 0, 0, 1], gui_port));
                 match tokio::net::TcpListener::bind(address).await {
                     Ok(listener) => {
@@ -157,6 +170,8 @@ pub fn run(options: Options) {
                     let app: tauri::State<'_, Arc<commands::App>> =
                         tauri::Manager::state(handle);
                     app.config.remove_port_file();
+                    // Pending script waits resolve with "closed".
+                    app.input.close_all();
                 }
             }
         })
@@ -194,6 +209,9 @@ pub fn run(options: Options) {
             commands::daemon_health,
             commands::parse_query,
             reconcile::reconcile_run,
+            commands::answer_send,
+            commands::prompt_resolve,
+            commands::panel_ready,
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,

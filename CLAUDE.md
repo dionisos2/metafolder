@@ -27,7 +27,20 @@ cargo run -p metafolder-daemon -- --port 8080
 # Run the CLI (binary name: mf)
 cargo run -p metafolder-cli -- --help
 cargo run -p metafolder-cli -- --repo <UUID> list
+
+# GUI: frontend tests + build (run from crates/gui/frontend; npm install once)
+npm --prefix crates/gui/frontend test
+npm --prefix crates/gui/frontend run build
+
+# Run the GUI (binary name: mf-gui; build the frontend first)
+cargo run -p metafolder-gui
+cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
 ```
+
+Building the gui crate needs the Tauri system libraries (Arch:
+`webkit2gtk-4.1 gtk3 librsvg`) and `npm`. Plain `cargo build` works without
+a built frontend (`build.rs` writes a placeholder `frontend/dist`), but the
+window will be empty until `npm run build` has produced the real bundle.
 
 ## Specs and roadmap
 
@@ -39,7 +52,7 @@ the relevant spec section first; when deviating, update the spec.
 
 ## Architecture
 
-Cargo workspace: `core`, `daemon`, `cli`, `gui` (stub), `bench`
+Cargo workspace: `core`, `daemon`, `cli`, `gui` (Tauri v2 + Svelte 5), `bench`
 (old POC harness, to be revived with the CLI).
 
 ### `crates/core`
@@ -152,7 +165,52 @@ HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
 
 ### `crates/gui`
 
-Stub, not yet implemented.
+The `mf-gui` binary (package `metafolder-gui`): a Tauri v2 desktop app over
+the daemon HTTP API, specified in `docs/spec-gui.org`. **Rust owns all
+canonical state**; the Svelte 5 shell (`frontend/`) mirrors it via Tauri
+events; panel types are plain HTML/JS directories rendered in iframes.
+
+- `state/`: `GuiState` — workspaces (tabs), the two panel slots, focus,
+  per-workspace variables and message logs. Every mutation emits an event
+  through the `FrontendNotifier` trait (`notifier.rs`; tests use
+  `RecordingNotifier`).
+- `keybindings.rs`: combo/sequence parsing, TOML model, defaults + user +
+  panel-suggestion merge, compiled table consumed by the shared JS matcher
+  (`panel-shim/keymatch.js`, used identically by the shell and inside each
+  iframe — key events do not cross iframe boundaries).
+- `command_registry.rs`: builtin + panel-registered commands, autocomplete
+  listing (global + focused panel's local commands).
+- `config.rs`: `~/.config/metafolder-gui/` — first-run install of editable
+  defaults (`keybindings.toml`, `style.css`, `panel-types/*`; user edits are
+  never overwritten), always-refreshed `panel-types-defaults/` diff mirror,
+  user keybinding override persistence, `gui.port` discovery file.
+- `server/`: Axum router on 127.0.0.1:7524 — panel assets with shim+style
+  injection (`panel_assets.rs`), raw files with Range support (`fsraw.rs`),
+  and the `/gui/*` scripting API (`gui_api.rs`, `input_wait.rs`: workspaces,
+  layout, panel views, message, input/prompt waits with a single lock, 409
+  on concurrency, status snapshot).
+- `daemon_proxy.rs`: reqwest client to the daemon (the WebView cannot call
+  it directly — CORS); health polling emits `daemon-health-changed`.
+- `commands.rs`: thin `#[tauri::command]` wrappers; `shell_exec.rs` (`!`
+  commands), `style_watcher.rs` (style.css auto-reload), `fs_commands.rs`
+  (`metafolder.fs`), `reconcile.rs` (`reconcile:run` flow).
+- `panel-shim/shim.js`: injected into every panel document; provides
+  `window.metafolder` (daemon/workspace/commands/fs/statusBar/messages +
+  `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized lazy
+  TreeRef path resolution.
+- `panel-types/`: the built-in panels (repos, entry-list, entry-detail,
+  file, file-manager, message, log, workspace-info, hello example) as
+  user-copyable plain HTML/JS.
+- `frontend/`: Svelte shell — TabBar, two Slots + divider, CommandInput
+  (per-workspace drafts, autocomplete, script prompts), StatusBar(s),
+  ConfigOverlay (paths + keybinding editor), PanelHost (iframe pool, one
+  live iframe per workspace×panel-type, never reparented) and the bridge
+  (`lib/panels/bridge.ts`, unit-tested core of the postMessage protocol).
+
+GUI tests: `cargo test -p metafolder-gui` (state/keybindings/registry unit
+tests + `tests/*.rs` driving the Axum router with oneshot and a stub daemon
+on an ephemeral port); `npm --prefix crates/gui/frontend test` (vitest:
+keymatch, commands parsing, bridge, resolve).
 
 ## Repository structure on disk
 

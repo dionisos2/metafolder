@@ -80,6 +80,11 @@ impl DaemonProxy {
         Ok(ProxyResponse { status, body })
     }
 
+    /// Last health-check outcome; `None` before the first check.
+    pub fn last_connected(&self) -> Option<bool> {
+        *self.connected.lock().unwrap()
+    }
+
     /// One health probe; emits `daemon-health-changed` when the state
     /// differs from the last known one. Returns the current state.
     pub async fn check_health(&self, gui: &GuiState) -> bool {

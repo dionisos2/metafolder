@@ -11,7 +11,7 @@ four crates:
 - =core=: shared data model (entries, fields, values, queries)
 - =daemon=: background HTTP server managing repositories and exposing a REST API
 - =cli=: command-line tool that communicates with the daemon
-- =gui=: graphical interface (stub, not yet implemented)
+- =gui=: graphical interface (Tauri v2 + Svelte 5, see spec-gui.org)
 
 * Daemon
 

@@ -6,7 +6,10 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use metafolder_gui::config::ConfigDir;
-use metafolder_gui::server;
+use metafolder_gui::daemon_proxy::DaemonProxy;
+use metafolder_gui::notifier::RecordingNotifier;
+use metafolder_gui::server::{self, ServerState};
+use metafolder_gui::state::GuiState;
 use std::sync::Arc;
 use tower::util::ServiceExt;
 
@@ -14,7 +17,14 @@ fn setup() -> (tempfile::TempDir, Arc<ConfigDir>, axum::Router) {
     let dir = tempfile::tempdir().unwrap();
     let config = Arc::new(ConfigDir::at(dir.path().join("metafolder-gui")));
     config.install_defaults().unwrap();
-    let router = server::build_router(config.clone());
+    let state = ServerState {
+        config: config.clone(),
+        gui: Arc::new(GuiState::new(Arc::new(RecordingNotifier::new()))),
+        daemon: Arc::new(DaemonProxy::new("http://127.0.0.1:1".into())),
+        keybindings: Arc::new(std::sync::Mutex::new(config.load_keybindings().unwrap())),
+        input: Arc::new(server::input_wait::InputWait::new()),
+    };
+    let router = server::build_router(state);
     (dir, config, router)
 }
 

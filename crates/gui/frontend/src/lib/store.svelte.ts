@@ -34,6 +34,8 @@ export const store = $state({
     commandInputActive: false,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
+    /// Non-null while a script's POST /gui/prompt waits for the input.
+    promptText: null as string | null,
   },
 });
 
@@ -111,6 +113,10 @@ export async function initStore() {
   });
   await listen<{ connected: boolean }>('daemon-health-changed', (event) => {
     store.daemonConnected = event.payload.connected;
+  });
+  await listen<{ prompt: string }>('prompt-requested', (event) => {
+    store.ui.promptText = event.payload.prompt;
+    store.ui.commandInputActive = true;
   });
 
   store.ready = true;

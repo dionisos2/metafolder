@@ -72,6 +72,8 @@
       '*',
     );
     readiness.get(instanceKey(meta.wsId, meta.panelType))?.resolve();
+    // Visible in GET /gui/panels/:slot/view as "ready".
+    void invoke('panel_ready', { wsId: meta.wsId, panelType: meta.panelType });
   }
 
   /** Aligns the iframe pool with the current layout and slot geometry. */

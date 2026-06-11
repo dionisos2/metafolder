@@ -78,6 +78,7 @@ impl Inner {
             vars: Default::default(),
             messages: Vec::new(),
             last_panel: Default::default(),
+            ready_panels: Default::default(),
         });
         id
     }
@@ -378,6 +379,35 @@ impl GuiState {
         inner.slot_mut(other).visible = false;
         self.emit_layout(&inner);
         Ok(())
+    }
+
+    /// Hides a slot (GUI API `PUT /gui/layout` with null); the workspace
+    /// assignment is remembered. Focus falls back to the other slot.
+    pub fn hide_slot(&self, slot_id: SlotId) {
+        let mut inner = self.lock();
+        inner.slot_mut(slot_id).visible = false;
+        if inner.focused == slot_id && inner.slot(slot_id.other()).visible {
+            inner.focused = slot_id.other();
+        }
+        self.emit_layout(&inner);
+    }
+
+    /// Marks a (workspace, panel type) instance as ready (iframe loaded
+    /// and initialized); reported by the frontend.
+    pub fn set_panel_ready(&self, ws_id: &str, panel_type: &str) -> Result<(), String> {
+        let mut inner = self.lock();
+        inner
+            .workspace_mut(ws_id)?
+            .ready_panels
+            .insert(panel_type.to_string());
+        Ok(())
+    }
+
+    pub fn panel_ready(&self, ws_id: &str, panel_type: &str) -> bool {
+        self.lock()
+            .workspace(ws_id)
+            .map(|ws| ws.ready_panels.contains(panel_type))
+            .unwrap_or(false)
     }
 
     /// `panel:focus-next` — moves focus to the other slot if visible.
@@ -729,6 +759,32 @@ mod tests {
     fn test_set_panel_type_errors_on_unassigned_slot() {
         let (_, state) = state();
         assert!(state.set_panel_type(SlotId::Right, "log").is_err());
+    }
+
+    #[test]
+    fn test_hide_slot_moves_focus_to_the_visible_slot() {
+        let (_, state) = state();
+        state.panel_split().unwrap();
+        state.focus_next();
+        assert_eq!(state.layout().focused, SlotId::Right);
+
+        // Hiding the focused slot gives focus back to the other one.
+        state.hide_slot(SlotId::Right);
+        let layout = state.layout();
+        assert!(!layout.right.visible);
+        assert_eq!(layout.focused, SlotId::Left);
+        // Workspace assignment is remembered while hidden.
+        assert!(layout.right.workspace_id.is_some());
+    }
+
+    #[test]
+    fn test_panel_readiness_is_tracked_per_workspace_and_type() {
+        let (_, state) = state();
+        assert!(!state.panel_ready("ws-1", "repos"));
+        state.set_panel_ready("ws-1", "repos").unwrap();
+        assert!(state.panel_ready("ws-1", "repos"));
+        assert!(!state.panel_ready("ws-1", "entry-list"));
+        assert!(state.set_panel_ready("ws-99", "repos").is_err());
     }
 
     // ── Workspace variables ──────────────────────────────────────────────

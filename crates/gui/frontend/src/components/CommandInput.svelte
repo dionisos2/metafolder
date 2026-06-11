@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '../lib/ipc';
   import { dispatch, filterCommands, setEditingTarget } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
 
@@ -32,12 +33,17 @@
   });
 
   const suggestions = $derived(
-    draft.startsWith('!') || draft.includes(' ')
+    store.ui.promptText !== null || draft.startsWith('!') || draft.includes(' ')
       ? []
       : filterCommands(store.commands, draft).slice(0, 8),
   );
 
   function close() {
+    if (store.ui.promptText !== null) {
+      // A script prompt dismissed with Escape resolves as "cancel".
+      void invoke('prompt_resolve', { confirm: false, text: null });
+      store.ui.promptText = null;
+    }
     store.ui.commandInputActive = false;
     element?.blur();
   }
@@ -47,6 +53,14 @@
     draft = '';
     const ws = currentWs;
     if (ws !== null) store.inputDrafts[ws] = '';
+    if (store.ui.promptText !== null) {
+      // Script prompt (POST /gui/prompt): confirm with the typed text.
+      store.ui.promptText = null;
+      store.ui.commandInputActive = false;
+      element?.blur();
+      await invoke('prompt_resolve', { confirm: true, text: input });
+      return;
+    }
     close();
     await dispatch(input);
   }
@@ -98,7 +112,7 @@
       </ul>
     {/if}
     <div class="line">
-      <span class="prompt">:</span>
+      <span class="prompt">{store.ui.promptText ?? ':'}</span>
       <input
         bind:this={element}
         bind:value={draft}

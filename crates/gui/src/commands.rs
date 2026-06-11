@@ -18,9 +18,12 @@ pub struct App {
     pub gui: Arc<GuiState>,
     pub registry: Arc<CommandRegistry>,
     pub config: Arc<ConfigDir>,
-    pub keybindings: Mutex<KeybindingSet>,
+    /// Shared with the GUI HTTP server (temporary /gui/input bindings).
+    pub keybindings: Arc<Mutex<KeybindingSet>>,
     pub gui_port: u16,
     pub daemon: Arc<DaemonProxy>,
+    /// Shared /gui/input + /gui/prompt wait lock.
+    pub input: Arc<crate::server::input_wait::InputWait>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
 }
@@ -318,6 +321,30 @@ pub async fn daemon_health(app: AppHandle<'_>) -> Result<bool, String> {
 pub fn parse_query(dsl: String) -> Result<Value, String> {
     let query = metafolder_core::dsl::parse_query(&dsl)?;
     serde_json::to_value(query).map_err(|e| format!("cannot serialize the query: {e}"))
+}
+
+// ── Scripting waits ──────────────────────────────────────────────────────
+
+/// `answer:send <value>` — resolves the active `POST /gui/input` wait.
+#[tauri::command]
+pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
+    if app.input.resolve_answer(&value) {
+        Ok(())
+    } else {
+        Err("no script is waiting for input".into())
+    }
+}
+
+/// Command-input resolution of a `POST /gui/prompt` wait.
+#[tauri::command]
+pub fn prompt_resolve(app: AppHandle, confirm: bool, text: Option<String>) -> bool {
+    app.input.resolve_prompt(confirm, text)
+}
+
+/// Reported by PanelHost once a panel iframe finished initializing.
+#[tauri::command]
+pub fn panel_ready(app: AppHandle, ws_id: String, panel_type: String) -> Result<(), String> {
+    app.gui.set_panel_ready(&ws_id, &panel_type)
 }
 
 #[tauri::command]

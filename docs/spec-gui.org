@@ -18,9 +18,12 @@ Four cross-cutting design principles govern the GUI:
   can drive panels and wait for user input.
 - *Themeable*: appearance is controlled by a CSS file loaded at startup.
 
-The GUI is built with *Tauri*: a Rust backend communicating with a system
-WebView frontend. The JavaScript/TypeScript frontend framework is not yet
-decided.
+The GUI is built with *Tauri* (v2): a Rust backend communicating with a
+system WebView frontend. The shell frontend is *Svelte 5* (Vite build);
+panel types are plain HTML/JS with no build step. The Rust backend owns all
+canonical state (workspaces, layout, variables, keybindings, command
+registry); the shell is a thin reflection updated through Tauri events, so
+the scripting HTTP API and the window always agree.
 
 * Concepts
 
@@ -425,8 +428,16 @@ Panel types live under =~/.config/metafolder-gui/panel-types/=:
 #+END_SRC
 
 Built-in types ship as pre-populated examples. The user can edit them freely;
-the GUI does not overwrite them on update (the update ships new defaults to a
-separate location the user can diff against).
+the GUI does not overwrite them on update: installation only writes missing
+files under =panel-types/=, while =panel-types-defaults/= (a sibling
+directory) is rewritten on every startup with the current shipped versions,
+so the user can diff their edits against the defaults after an upgrade.
+
+Panel types are served to the WebView by the GUI's own HTTP server (the
+GUI API port, default 7524): =GET /panel/<name>/<file>=. HTML documents get
+the =metafolder= shim and a =<link>= to the user stylesheet injected at
+serve time. Raw local files for the =file= panel type are served by
+=GET /fsraw?path=...= with HTTP Range support (media seeking).
 
 *** The =metafolder= API
 
@@ -660,8 +671,10 @@ proceeds only if the user confirms.
 *** Batch set
 
 When =selected_entries= is non-empty, =entry:batch-set= opens a dialog for
-field name and value and calls =POST .../set= with an =Or= of the selected
-UUIDs.
+field name and value and sets it on every selected entry. (v1
+implementation note: the query IR has no UUID predicate, so this is one
+=PATCH .../metadata/:uuid= per selected entry rather than a single
+=POST .../set=; to be revisited if a UUID predicate is added.)
 
 ** Message view
 
@@ -907,13 +920,66 @@ curl -s -X DELETE "$GUI/gui/workspaces/$WS_LEFT"
 curl -s -X DELETE "$GUI/gui/workspaces/$WS_RIGHT"
 #+END_SRC
 
-* Open questions
+* Resolved design decisions (v1)
 
 ** Frontend framework
 
-Tauri is decided. The JavaScript/TypeScript frontend framework (Svelte, React,
-Vue, vanilla JS, etc.) is not yet chosen. A lightweight option that compiles
-to vanilla JS with no runtime is preferred.
+Svelte 5 + Vite for the shell. Built-in panel types are plain HTML/JS (no
+build step) so users can read and copy them as examples.
+
+** =metafolder= API injection mechanism
+
+Each panel type instance is an =<iframe>= (one per (workspace, panel type),
+kept alive while hidden for state retention, never reparented). A shim
+script injected at serve time provides =window.metafolder= and talks to the
+shell over =postMessage=; the shell forwards to the Rust backend. Key events
+never cross the iframe boundary, so the shim runs the same key matcher as
+the shell against the compiled binding table and forwards resolved
+invocations.
+
+A corollary: the same panel type cannot be displayed in both slots for the
+same workspace (one iframe cannot render twice); =panel:set-type= rejects
+this with a status bar error.
+
+** Daemon access
+
+Panels and the shell reach the daemon through the Rust backend (a reqwest
+proxy exposed as =metafolder.daemon.request=). The WebView cannot call the
+daemon directly (CORS), and the daemon stays GUI-agnostic.
+
+** Commands targeting an absent panel type
+
+Commands registered by a panel type whose iframe is not instantiated yet in
+the focused workspace are dispatched after lazily creating the hidden
+iframe. Commands registered with =reveal: true= (e.g. =entry:create=,
+=log:rollback=) additionally switch a slot to the owning panel type first:
+the other slot when it shows the same workspace, otherwise the focused
+slot. Limitation: a panel type's commands only exist in the registry once
+the panel has been instantiated at least once in the session.
+
+** Path display
+
+Lazy resolution: =metafolder.daemon.resolvePath(repo, uuid)= /
+=resolveTreeRef(repo, value)= walk the =mfr_path= parent chain through the
+daemon API with a per-repo memo cache (=invalidatePath= drops one entry
+after a move). Paths are repo-root-relative; =metafolder.daemon.repoRoot=
+gives the absolute root.
+
+** GUI API port persistence
+
+The actually-bound port is written to =$XDG_RUNTIME_DIR/metafolder/gui.port=
+(fallback: =~/.config/metafolder-gui/gui.port=) and removed on clean exit.
+
+** Concurrent script sessions
+
+Only one =POST /gui/input= / =POST /gui/prompt= wait at a time; concurrent
+calls fail immediately with =409= (no queueing).
+
+** Panel type update strategy
+
+Resolved by the =panel-types-defaults/= mirror (see [[*Directory layout]]).
+
+* Open questions
 
 ** Custom panel type trust model
 
@@ -925,14 +991,6 @@ have broad access. No sandboxing is currently planned; users are expected to
 only install panel types they trust. This is consistent with the trust
 requirement for the daemon access itself. To be revisited if a panel type
 distribution mechanism is ever added.
-
-** =metafolder= API injection mechanism
-
-Panel types need access to =window.metafolder=. Two options:
-- Each panel type is an =<iframe>=; the GUI communicates via =postMessage=.
-- Panel types are loaded as web components or modules in the same document,
-  sharing the JS runtime directly.
-The choice affects isolation (iframes are sandboxed) vs. simplicity.
 
 ** Panel type selector UX
 
@@ -949,33 +1007,3 @@ Linux, WKWebView on macOS, WebView2 on Windows — see
 [[file:spec-platform.org][spec-platform.org]]). On Linux, H.264 may require
 GStreamer plugin packages (e.g. =gst-plugins-bad=, =gst-libav=).
 
-** Panel type update strategy
-
-Built-in panel types ship as editable examples. When the GUI updates, new
-default versions must not silently overwrite user edits. A diff/merge workflow
-is needed (exact mechanism TBD).
-
-** Commands targeting an absent panel type
-
-Several commands implicitly target a specific panel type (=entry:create=
-requires =entry-detail=; =entry:delete= requires a selected entry; inline
-forms require some panel to host them). When the required panel type is not
-open in the current workspace, the behaviour is unspecified: open it
-automatically in the focused panel, in the other panel, or show an error? The
-same question applies when the user switches panel type mid-form (unsaved
-data). A general policy needs to be defined before implementation.
-
-** Path display
-
-=TreeRef= values are =(parent_uuid, name)= pairs. Displaying a full path
-requires walking the parent chain. Resolution strategy (eager vs. lazy) is TBD.
-
-** GUI API port persistence
-
-Whether the GUI API port (default 7524) is written to a well-known file so
-scripts can discover it without hard-coding is not yet decided.
-
-** Concurrent script sessions
-
-Only one =POST /gui/input= at a time. Whether additional sessions queue or
-fail immediately is not specified for v1.
