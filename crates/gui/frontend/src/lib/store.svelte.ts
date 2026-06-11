@@ -32,6 +32,9 @@ export const store = $state({
   inputDrafts: {} as Record<string, string>,
   ui: {
     commandInputActive: false,
+    /// Bumped on every command-input:activate so the input re-focuses
+    /// even when it is already open.
+    commandInputFocusTick: 0,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
     /// Non-null while a script's POST /gui/prompt waits for the input.

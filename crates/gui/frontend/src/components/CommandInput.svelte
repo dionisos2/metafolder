@@ -27,8 +27,12 @@
   });
 
   $effect(() => {
+    // The tick re-triggers focusing when ':' is pressed while the input
+    // is already open but unfocused.
+    void store.ui.commandInputFocusTick;
     if (store.ui.commandInputActive && element) {
       element.focus();
+      element.setSelectionRange(draft.length, draft.length);
     }
   });
 

@@ -86,6 +86,13 @@
     void invoke('panel_ready', { wsId: meta.wsId, panelType: meta.panelType });
   }
 
+  // The slot bodies shrink/grow when the command input, suggestions or a
+  // second status bar appear: follow their geometry, not just layout
+  // events.
+  const resizeObserver =
+    typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => sync());
+  const observedBodies = new Set<Element>();
+
   /** Aligns the iframe pool with the current layout and slot geometry. */
   function sync() {
     if (!layer) return;
@@ -96,6 +103,10 @@
       const iframe = ensureIframe(payload.workspace_id, payload.panel_type);
       const body = document.querySelector(`[data-slot-body="${slot}"]`);
       if (!iframe || !body) continue;
+      if (resizeObserver && !observedBodies.has(body)) {
+        resizeObserver.observe(body);
+        observedBodies.add(body);
+      }
       const rect = body.getBoundingClientRect();
       Object.assign(iframe.style, {
         display: 'block',
@@ -202,6 +213,7 @@
     return () => {
       window.removeEventListener('message', onMessage);
       window.removeEventListener('resize', sync);
+      resizeObserver?.disconnect();
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
       setPanelDispatch(null);
     };
