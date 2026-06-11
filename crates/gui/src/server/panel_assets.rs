@@ -8,7 +8,7 @@ use axum::response::{IntoResponse, Response};
 use std::path::Component;
 use std::sync::Arc;
 
-const SHIM_TAG: &str = r#"<script src="/__shim.js"></script>"#;
+const SHIM_TAG: &str = r#"<script type="module" src="/__shim.js"></script>"#;
 
 pub async fn serve(
     State(config): State<Arc<ConfigDir>>,
@@ -77,7 +77,8 @@ mod tests {
     fn test_inject_shim_after_head() {
         let html = "<html><head><title>t</title></head><body></body></html>";
         let injected = inject_shim(html);
-        assert!(injected.starts_with("<html><head><script src=\"/__shim.js\"></script><title>"));
+        let expected = format!("<html><head>{SHIM_TAG}<title>");
+        assert!(injected.starts_with(&expected));
     }
 
     #[test]

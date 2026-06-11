@@ -153,6 +153,12 @@ impl GuiState {
         self.inner.lock().expect("GuiState lock poisoned")
     }
 
+    /// Emits an arbitrary event through the frontend notifier (used by
+    /// engine helpers outside this module, e.g. keybinding pushes).
+    pub fn notify(&self, event: &str, payload: Value) {
+        self.notifier.emit(event, payload);
+    }
+
     fn emit_workspaces(&self, inner: &Inner) {
         self.notifier.emit(
             events::WORKSPACES_CHANGED,
@@ -189,13 +195,18 @@ impl GuiState {
     }
 
     pub fn get_var(&self, ws_id: &str, key: &str) -> Result<Value, String> {
-        Ok(self
-            .lock()
-            .workspace(ws_id)?
-            .vars
-            .get(key)
-            .cloned()
-            .unwrap_or(Value::Null))
+        let inner = self.lock();
+        let ws = inner.workspace(ws_id)?;
+        // `active_repo` is a standard variable (spec-gui) but lives as a
+        // workspace field: set at creation, never changed.
+        if key == "active_repo" {
+            return Ok(ws
+                .active_repo
+                .as_deref()
+                .map(Value::from)
+                .unwrap_or(Value::Null));
+        }
+        Ok(ws.vars.get(key).cloned().unwrap_or(Value::Null))
     }
 
     pub fn vars(&self, ws_id: &str) -> Result<Vec<(String, Value)>, String> {
@@ -203,6 +214,10 @@ impl GuiState {
         let ws = inner.workspace(ws_id)?;
         let mut vars: Vec<(String, Value)> =
             ws.vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        vars.push((
+            "active_repo".to_string(),
+            ws.active_repo.as_deref().map(Value::from).unwrap_or(Value::Null),
+        ));
         vars.sort_by(|a, b| a.0.cmp(&b.0));
         Ok(vars)
     }
@@ -408,6 +423,9 @@ impl GuiState {
     // ── Workspace variables ──────────────────────────────────────────────
 
     pub fn set_var(&self, ws_id: &str, key: &str, value: Value) -> Result<(), String> {
+        if key == "active_repo" {
+            return Err("active_repo is set at workspace creation and cannot change".into());
+        }
         let mut inner = self.lock();
         inner
             .workspace_mut(ws_id)?
@@ -712,6 +730,22 @@ mod tests {
                 "value": ["/tmp/a"],
             })]
         );
+    }
+
+    #[test]
+    fn test_active_repo_is_a_readonly_standard_variable() {
+        let (_, state) = state();
+        let id = state.tab_new(Some("repo-7".into()));
+        // Readable through the variable store (spec-gui standard vars)...
+        assert_eq!(state.get_var(&id, "active_repo").unwrap(), json!("repo-7"));
+        assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), Value::Null);
+        assert!(state
+            .vars(&id)
+            .unwrap()
+            .iter()
+            .any(|(k, v)| k == "active_repo" && *v == json!("repo-7")));
+        // ...but immutable: set at creation, never changed.
+        assert!(state.set_var(&id, "active_repo", json!("other")).is_err());
     }
 
     #[test]

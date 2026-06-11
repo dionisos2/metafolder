@@ -42,7 +42,8 @@ async fn test_panel_html_served_with_shim_injected() {
     assert!(content_type.starts_with("text/html"));
 
     let html = String::from_utf8(body).unwrap();
-    assert!(html.contains(r#"<script src="/__shim.js"></script>"#));
+    // A module script so the shim can import /__keymatch.js.
+    assert!(html.contains(r#"<script type="module" src="/__shim.js"></script>"#));
     assert!(html.contains("Hello from a panel type"));
 }
 
