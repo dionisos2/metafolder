@@ -428,6 +428,124 @@ fn test_multiple_ops_in_one_revision_chain() {
 }
 
 #[test]
+fn test_large_revision_chain_across_bulk_chunks() {
+    // More operations than the incremental flush threshold (4096) and the
+    // multi-row INSERT chunks: the parent chain, seq numbering, snapshots
+    // and HEAD must stay correct across both kinds of boundary.
+    const N: i64 = 5000;
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    for i in 0..N {
+        w.set_field(m.uuid, &format!("f{i}"), Value::Int(i)).unwrap();
+    }
+    w.commit().unwrap();
+
+    let rows: Vec<(i64, Option<i64>, i64)> = conn
+        .prepare(
+            "SELECT id, parent_id, seq FROM operation
+             WHERE op_type = 'set_field' ORDER BY seq",
+        )
+        .unwrap()
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(rows.len(), N as usize);
+    let create_op: i64 = conn
+        .query_row("SELECT id FROM operation WHERE op_type = 'create_entry'", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(rows[0].1, Some(create_op), "first op chains to the previous HEAD");
+    for (i, row) in rows.iter().enumerate() {
+        assert_eq!(row.2, i as i64 + 1, "seq numbering");
+        if i > 0 {
+            assert_eq!(row.1, Some(rows[i - 1].0), "parent chain at op {i}");
+        }
+    }
+
+    let head: Option<i64> = conn
+        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(head, Some(rows.last().unwrap().0));
+
+    // One after-snapshot per set_field operation.
+    let snapshots: i64 = conn
+        .query_row("SELECT COUNT(*) FROM op_snapshot WHERE is_new = 1", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(snapshots, N);
+    assert_eq!(db::get_entry(&conn, m.uuid).unwrap().unwrap().version, N as u64);
+}
+
+#[test]
+fn test_ancestry_detects_cycle() {
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![]);
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    w.set_field(m.uuid, "a", Value::Int(1)).unwrap();
+    w.set_field(m.uuid, "b", Value::Int(2)).unwrap();
+    w.commit().unwrap();
+
+    // Corrupt the log: point the oldest operation at the newest one.
+    conn.execute(
+        "UPDATE operation SET parent_id = (SELECT MAX(id) FROM operation)
+         WHERE id = (SELECT MIN(id) FROM operation)",
+        [],
+    )
+    .unwrap();
+
+    let head = metafolder_daemon::log::get_head(&conn).unwrap().unwrap();
+    let err = metafolder_daemon::log::ancestry(&conn, head).unwrap_err();
+    assert!(err.to_string().contains("cycle"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_prune_reclaims_disk_space() {
+    use metafolder_daemon::log::{self, PruneMode};
+
+    let dir = std::env::temp_dir().join(format!("mf-prune-vacuum-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("db.sqlite");
+    let mut conn = db::open_database(&path).unwrap();
+    db::init_schema(&conn).unwrap();
+    let db_id = repo_id();
+
+    // One large revision (sizeable snapshots), then a tiny HEAD revision.
+    let payload = "x".repeat(4096);
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    for _ in 0..256 {
+        w.create_entry(vec![Field::new("payload", Value::String(payload.clone()))]).unwrap();
+    }
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    w.create_entry(vec![]).unwrap();
+    w.commit().unwrap();
+
+    // Fold the WAL into the main file so before/after sizes are comparable.
+    conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);").unwrap();
+    let total_size = |p: &std::path::Path| {
+        let main = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+        let wal = std::fs::metadata(p.with_extension("sqlite-wal")).map(|m| m.len()).unwrap_or(0);
+        main + wal
+    };
+    let before = total_size(&path);
+
+    let head = log::get_head(&conn).unwrap().unwrap();
+    log::prune(&mut conn, PruneMode::Before, head).unwrap();
+
+    let after = total_size(&path);
+    assert!(
+        after < before * 7 / 10,
+        "prune should compact the database file: before={before}, after={after}"
+    );
+
+    drop(conn);
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
 fn test_empty_writer_leaves_no_revision() {
     let mut conn = test_conn();
     let w = Writer::begin(&mut conn, repo_id(), None).unwrap();

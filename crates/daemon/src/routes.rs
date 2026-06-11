@@ -332,15 +332,9 @@ async fn get_log(
             "linear" => match head {
                 None => vec![],
                 Some(head) => {
-                    let mut chain = crate::log::ancestry(&conn, head)?;
+                    let mut chain = crate::log::ancestry_ops(&conn, head)?;
                     chain.reverse(); // root → HEAD, oldest first
                     chain
-                        .into_iter()
-                        .map(|id| {
-                            crate::log::get_op(&conn, id)?
-                                .ok_or_else(|| anyhow::anyhow!("op {id} vanished"))
-                        })
-                        .collect::<Result<Vec<_>, _>>()?
                 }
             },
             other => {

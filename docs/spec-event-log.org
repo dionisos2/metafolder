@@ -336,6 +336,11 @@ ancestor of HEAD (or HEAD itself). Targets are specified as ={"id": N}=,
 ={"label": L}=, or ={"timestamp": T}=, with the same resolution rules as
 rollback targets.
 
+After deleting the operations, both prune commands compact the database file
+(=VACUUM= followed by a WAL checkpoint), returning the reclaimed space to the
+filesystem — snapshot rows are the dominant share of the database size, so
+pruning is the retention mechanism for disk usage.
+
 *** Prune-before(X)
 
 Makes operation X the new root (=X.parent_id= set to =NULL=). Deletes all

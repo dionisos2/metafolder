@@ -112,7 +112,8 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
 pub fn get_op(conn: &rusqlite::Connection, id: i64) -> Result<Option<OpRow>> {
     use rusqlite::OptionalExtension as _;
     let row = conn
-        .query_row(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id = ?1"), params![id], row_to_op)
+        .prepare_cached(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id = ?1"))?
+        .query_row(params![id], row_to_op)
         .optional()?;
     row.map(|(mut op, entity)| {
         op.entity_uuid = db::bytes_to_uuid(entity)?;
@@ -135,26 +136,63 @@ pub fn all_ops(conn: &rusqlite::Connection) -> Result<Vec<OpRow>> {
     Ok(ops)
 }
 
+/// The recursive CTE walking the parent chain from `?1` up to the root.
+/// `?2` caps the walk at (operation count + 1) rows so a corrupted log with a
+/// cycle terminates instead of looping; the duplicate id is detected in Rust.
+const ANCESTRY_CTE: &str = "
+    WITH RECURSIVE chain(id, depth) AS (
+        SELECT ?1, 0
+        UNION ALL
+        SELECT o.parent_id, c.depth + 1
+        FROM chain c JOIN operation o ON o.id = c.id
+        WHERE o.parent_id IS NOT NULL
+        LIMIT ?2
+    )";
+
+fn cycle_cap(conn: &rusqlite::Connection) -> Result<i64> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))?;
+    Ok(count + 1)
+}
+
 /// Ancestor chain from `from` (inclusive) up to the root, in that order.
+/// One recursive CTE instead of one query per operation.
 pub fn ancestry(conn: &rusqlite::Connection, from: i64) -> Result<Vec<i64>> {
-    let mut chain = Vec::new();
-    let mut seen = HashSet::new();
-    let mut cur = Some(from);
-    while let Some(id) = cur {
-        if !seen.insert(id) {
-            anyhow::bail!("operation history contains a cycle at op {id}");
-        }
-        chain.push(id);
-        cur = get_op(conn, id)?
-            .with_context(|| format!("operation {id} not found"))?
-            .parent_id;
+    Ok(ancestry_ops(conn, from)?.into_iter().map(|op| op.id).collect())
+}
+
+/// Full operation rows of the ancestor chain from `from` (inclusive) up to
+/// the root, in that order.
+pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "{ANCESTRY_CTE}
+         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
+                o.entity_version_before, o.field_name
+         FROM chain c JOIN operation o ON o.id = c.id
+         ORDER BY c.depth"
+    ))?;
+    let ops = stmt
+        .query_map(params![from, cycle_cap(conn)?], row_to_op)?
+        .map(|r| {
+            let (mut op, entity) = r?;
+            op.entity_uuid = db::bytes_to_uuid(entity)?;
+            Ok(op)
+        })
+        .collect::<Result<Vec<OpRow>>>()?;
+    if ops.is_empty() {
+        anyhow::bail!("operation {from} not found");
     }
-    Ok(chain)
+    let mut seen = HashSet::new();
+    for op in &ops {
+        if !seen.insert(op.id) {
+            anyhow::bail!("operation history contains a cycle at op {}", op.id);
+        }
+    }
+    Ok(ops)
 }
 
 /// Snapshot rows of one operation (`is_new` 0 = before, 1 = after).
 pub fn snapshots(conn: &rusqlite::Connection, op_id: i64, is_new: i64) -> Result<Vec<FieldRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT field_id, field_name, value_type, value_text, value_int, value_real,
                 value_uuid, value_ref_repo, value_name
          FROM op_snapshot WHERE op_id = ?1 AND is_new = ?2 ORDER BY field_id",
@@ -202,56 +240,62 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
             Ok(Some(*id))
         }
         Target::Timestamp(t) => {
+            use rusqlite::OptionalExtension as _;
             let Some(head) = head else {
                 anyhow::bail!("no operation found at or before timestamp {t} (empty history)");
             };
-            for op_id in ancestry(conn, head)? {
-                let op = get_op(conn, op_id)?.context("ancestry op vanished")?;
-                let ts: i64 = conn.query_row(
-                    "SELECT timestamp FROM revision WHERE id = ?1",
-                    params![op.rev_id],
-                    |r| r.get(0),
-                )?;
-                if ts <= *t {
-                    return Ok(Some(op_id));
-                }
-            }
-            anyhow::bail!("no operation found at or before timestamp {t}")
+            // Walking from HEAD down, the first operation whose revision is
+            // at or before the timestamp.
+            let found: Option<i64> = conn
+                .prepare_cached(&format!(
+                    "{ANCESTRY_CTE}
+                     SELECT c.id FROM chain c
+                     JOIN operation o ON o.id = c.id
+                     JOIN revision r ON r.id = o.rev_id
+                     WHERE r.timestamp <= ?3
+                     ORDER BY c.depth LIMIT 1"
+                ))?
+                .query_row(params![head, cycle_cap(conn)?, t], |r| r.get(0))
+                .optional()?;
+            found.map(Some).with_context(|| format!("no operation found at or before timestamp {t}"))
         }
         Target::Label(label) => {
+            use rusqlite::OptionalExtension as _;
             let Some(head) = head else {
                 anyhow::bail!("label '{label}' not found (empty history)");
             };
             // Walking from HEAD down, the first op of a matching revision is
             // the last operation of the most recent matching revision.
-            for op_id in ancestry(conn, head)? {
-                let op = get_op(conn, op_id)?.context("ancestry op vanished")?;
-                let rev_label: Option<String> = conn.query_row(
-                    "SELECT label FROM revision WHERE id = ?1",
-                    params![op.rev_id],
-                    |r| r.get(0),
-                )?;
-                if rev_label.as_deref() == Some(label.as_str()) {
-                    return Ok(Some(op_id));
-                }
-            }
-            anyhow::bail!("label '{label}' not found on the HEAD ancestry path")
+            let found: Option<i64> = conn
+                .prepare_cached(&format!(
+                    "{ANCESTRY_CTE}
+                     SELECT c.id FROM chain c
+                     JOIN operation o ON o.id = c.id
+                     JOIN revision r ON r.id = o.rev_id
+                     WHERE r.label = ?3
+                     ORDER BY c.depth LIMIT 1"
+                ))?
+                .query_row(params![head, cycle_cap(conn)?, label], |r| r.get(0))
+                .optional()?;
+            found
+                .map(Some)
+                .with_context(|| format!("label '{label}' not found on the HEAD ancestry path"))
         }
         Target::PrevRevision => {
             let Some(head) = head else {
                 anyhow::bail!("nothing to undo: the history is empty");
             };
-            // Find the first operation of HEAD's revision; its parent is the
-            // state before the whole revision (None = empty state).
-            let mut op = get_op(conn, head)?.context("HEAD operation not found")?;
-            while let Some(parent_id) = op.parent_id {
-                let parent = get_op(conn, parent_id)?.context("parent op vanished")?;
-                if parent.rev_id != op.rev_id {
-                    break;
-                }
-                op = parent;
-            }
-            Ok(op.parent_id)
+            // The first operation of HEAD's revision (operations of one
+            // revision form a chain); its parent is the state before the
+            // whole revision (None = empty state).
+            let parent: Option<i64> = conn.query_row(
+                "SELECT parent_id FROM operation
+                 WHERE rev_id = (SELECT rev_id FROM operation WHERE id = ?1)
+                 ORDER BY seq LIMIT 1",
+                params![head],
+                |r| r.get(0),
+            )?;
+            Ok(parent)
         }
     }
 }
@@ -341,10 +385,8 @@ pub fn navigate(
 
 fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Result<()> {
     if let Some(version) = version {
-        tx.execute(
-            "UPDATE metadata SET version = ?1 WHERE uuid = ?2",
-            params![version as i64, db::uuid_to_bytes(uuid)],
-        )?;
+        tx.prepare_cached("UPDATE metadata SET version = ?1 WHERE uuid = ?2")?
+            .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
     }
     Ok(())
 }
@@ -379,10 +421,8 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
         // All set-field-shaped operations (one field name, full replacement).
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.execute(
-                "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
-                params![db::uuid_to_bytes(entity), field],
-            )?;
+            tx.prepare_cached("DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2")?
+                .execute(params![db::uuid_to_bytes(entity), field])?;
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
@@ -431,10 +471,8 @@ fn apply_forward(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.execute(
-                "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
-                params![db::uuid_to_bytes(entity), field],
-            )?;
+            tx.prepare_cached("DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2")?
+                .execute(params![db::uuid_to_bytes(entity), field])?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
@@ -530,8 +568,11 @@ pub fn prune(
     // child-before-parent since ids are monotonically increasing.
     let mut ordered: Vec<i64> = to_delete.iter().copied().collect();
     ordered.sort_unstable_by(|a, b| b.cmp(a));
-    for id in ordered {
-        tx.execute("DELETE FROM operation WHERE id = ?1", params![id])?;
+    {
+        let mut stmt = tx.prepare_cached("DELETE FROM operation WHERE id = ?1")?;
+        for id in ordered {
+            stmt.execute(params![id])?;
+        }
     }
     tx.execute(
         "DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)",
@@ -541,19 +582,70 @@ pub fn prune(
     let revisions_after: i64 =
         conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
 
+    // Return the freed pages to the filesystem: the deleted snapshots would
+    // otherwise keep the file at its high-water size (spec-event-log
+    // "Log pruning").
+    conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
+        .context("Failed to compact the database after prune")?;
+
     Ok((to_delete.len(), (revisions_before - revisions_after) as usize))
 }
+
+/// Multi-row INSERT in chunks. `insert_sql` is the statement up to (and
+/// excluding) the VALUES clause; every row must have `row_width` parameters.
+fn bulk_insert(
+    tx: &Transaction<'_>,
+    insert_sql: &str,
+    row_width: usize,
+    rows: &[Vec<rusqlite::types::Value>],
+) -> Result<()> {
+    // Stay well under SQLITE_MAX_VARIABLE_NUMBER (32766 for bundled SQLite).
+    const MAX_PARAMS: usize = 16_000;
+    let rows_per_chunk = (MAX_PARAMS / row_width).max(1);
+    let row_placeholder =
+        format!("({})", vec!["?"; row_width].join(", "));
+    for chunk in rows.chunks(rows_per_chunk) {
+        let placeholders = vec![row_placeholder.as_str(); chunk.len()].join(", ");
+        let sql = format!("{insert_sql} VALUES {placeholders}");
+        tx.execute(&sql, rusqlite::params_from_iter(chunk.iter().flatten()))?;
+    }
+    Ok(())
+}
+
+/// One buffered operation, written to `operation`/`op_snapshot` in bulk
+/// (spec-event-log "Normal write flow": for batch operations all operation
+/// rows are inserted together after computing the parent chain).
+struct PendingOp {
+    op_type: OpType,
+    entity: Uuid,
+    field_name: Option<String>,
+    version_before: Option<u64>,
+    before: Vec<FieldRow>,
+    after: Vec<FieldRow>,
+}
+
+/// Buffered operations are flushed to the database once this many accumulate,
+/// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
+const FLUSH_THRESHOLD: usize = 4096;
 
 /// A single logged write transaction. All changes made through one Writer
 /// form one revision; commit is atomic. Dropping a Writer without committing
 /// rolls everything back. After any method returns an error, the Writer must
 /// be dropped (the whole revision is abandoned).
+///
+/// Data-table changes are applied immediately (later changes and lookups in
+/// the same revision observe them); the log rows are buffered and inserted
+/// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
     tx: Transaction<'c>,
     db_id: Uuid,
     rev_id: i64,
-    head: Option<i64>,
-    seq: i64,
+    /// Parent of the next operation to flush: HEAD as of `begin`, then the
+    /// last flushed operation.
+    chain_head: Option<i64>,
+    /// Number of operations already flushed to the database.
+    flushed: i64,
+    pending: Vec<PendingOp>,
 }
 
 impl<'c> Writer<'c> {
@@ -571,7 +663,7 @@ impl<'c> Writer<'c> {
             params![now_ms(), label],
         )?;
         let rev_id = tx.last_insert_rowid();
-        Ok(Self { tx, db_id, rev_id, head, seq: 0 })
+        Ok(Self { tx, db_id, rev_id, chain_head: head, flushed: 0, pending: Vec::new() })
     }
 
     pub fn rev_id(&self) -> i64 {
@@ -586,7 +678,7 @@ impl<'c> Writer<'c> {
 
     /// Number of operations recorded so far in this revision.
     pub fn op_count(&self) -> i64 {
-        self.seq
+        self.flushed + self.pending.len() as i64
     }
 
     /// Removes every row of `(uuid, name)`, leaving the field unknown.
@@ -598,11 +690,10 @@ impl<'c> Writer<'c> {
             return Ok(());
         }
         let version_before = self.bump_version(uuid)?;
-        self.tx.execute(
-            "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
-            params![db::uuid_to_bytes(uuid), name],
-        )?;
-        self.log_op(op_type, uuid, Some(name), Some(version_before), &before, &[])?;
+        self.tx
+            .prepare_cached("DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2")?
+            .execute(params![db::uuid_to_bytes(uuid), name])?;
+        self.log_op(op_type, uuid, Some(name), Some(version_before), before, vec![])?;
         Ok(())
     }
 
@@ -612,14 +703,12 @@ impl<'c> Writer<'c> {
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }
-        self.tx.execute(
-            "INSERT INTO metadata (uuid, version) VALUES (?1, 0)",
-            params![db::uuid_to_bytes(uuid)],
-        )?;
-        self.tx.execute(
-            "INSERT INTO metadata_db (metadata_uuid, db_id) VALUES (?1, ?2)",
-            params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(self.db_id)],
-        )?;
+        self.tx
+            .prepare_cached("INSERT INTO metadata (uuid, version) VALUES (?1, 0)")?
+            .execute(params![db::uuid_to_bytes(uuid)])?;
+        self.tx
+            .prepare_cached("INSERT INTO metadata_db (metadata_uuid, db_id) VALUES (?1, ?2)")?
+            .execute(params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(self.db_id)])?;
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -629,7 +718,7 @@ impl<'c> Writer<'c> {
             out_fields.push(Field { id: Some(id), ..f });
         }
 
-        self.log_op(OpType::CreateEntry, uuid, None, None, &[], &after)?;
+        self.log_op(OpType::CreateEntry, uuid, None, None, vec![], after)?;
         Ok(Metadata { uuid, db_ids: vec![self.db_id], version: 0, fields: out_fields })
     }
 
@@ -641,7 +730,7 @@ impl<'c> Writer<'c> {
         // CASCADE removes field and metadata_db rows.
         self.tx
             .execute("DELETE FROM metadata WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
-        self.log_op(OpType::DeleteEntry, uuid, None, Some(version), &before, &[])?;
+        self.log_op(OpType::DeleteEntry, uuid, None, Some(version), before, vec![])?;
         Ok(())
     }
 
@@ -662,13 +751,12 @@ impl<'c> Writer<'c> {
         self.validate_tree_ref(uuid, name, &value)?;
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
-        self.tx.execute(
-            "DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2",
-            params![db::uuid_to_bytes(uuid), name],
-        )?;
+        self.tx
+            .prepare_cached("DELETE FROM field WHERE metadata_uuid = ?1 AND field_name = ?2")?
+            .execute(params![db::uuid_to_bytes(uuid), name])?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
-        self.log_op(op_type, uuid, Some(name), Some(version_before), &before, &after)?;
+        self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
         Ok(())
     }
 
@@ -679,7 +767,7 @@ impl<'c> Writer<'c> {
         let version_before = self.bump_version(uuid)?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
-        self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), &[], &after)?;
+        self.log_op(OpType::AppendField, uuid, Some(name), Some(version_before), vec![], after)?;
         Ok(id)
     }
 
@@ -698,14 +786,14 @@ impl<'c> Writer<'c> {
             uuid,
             Some(&old.name.clone()),
             Some(v1),
-            std::slice::from_ref(&old),
-            &[],
+            vec![old.clone()],
+            vec![],
         )?;
 
         let v2 = self.bump_version(uuid)?;
         db::insert_field_row(&self.tx, uuid, &old.name, &value, Some(field_id))?;
         let after = vec![FieldRow { id: field_id, name: old.name.clone(), value }];
-        self.log_op(OpType::AppendField, uuid, Some(&old.name), Some(v2), &[], &after)?;
+        self.log_op(OpType::AppendField, uuid, Some(&old.name), Some(v2), vec![], after)?;
         Ok(())
     }
 
@@ -719,21 +807,23 @@ impl<'c> Writer<'c> {
             uuid,
             Some(&old.name.clone()),
             Some(version_before),
-            &[old],
-            &[],
+            vec![old],
+            vec![],
         )?;
         Ok(())
     }
 
-    /// Writes the final HEAD and commits the transaction.
-    pub fn commit(self) -> Result<()> {
-        if self.seq == 0 {
+    /// Flushes the remaining buffered operations, writes the final HEAD and
+    /// commits the transaction.
+    pub fn commit(mut self) -> Result<()> {
+        if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the empty revision, leave HEAD alone.
             self.tx.execute("DELETE FROM revision WHERE id = ?1", params![self.rev_id])?;
         } else {
+            self.flush_pending()?;
             self.tx.execute(
                 "UPDATE log_head SET op_id = ?1 WHERE singleton = 1",
-                params![self.head],
+                params![self.chain_head],
             )?;
         }
         self.tx.commit().context("Failed to commit write transaction")
@@ -745,10 +835,9 @@ impl<'c> Writer<'c> {
     fn bump_version(&self, uuid: Uuid) -> Result<u64> {
         let before = db::get_version(&self.tx, uuid)?
             .with_context(|| format!("Metadata entry not found: {uuid}"))?;
-        self.tx.execute(
-            "UPDATE metadata SET version = version + 1 WHERE uuid = ?1",
-            params![db::uuid_to_bytes(uuid)],
-        )?;
+        self.tx
+            .prepare_cached("UPDATE metadata SET version = version + 1 WHERE uuid = ?1")?
+            .execute(params![db::uuid_to_bytes(uuid)])?;
         Ok(before)
     }
 
@@ -760,63 +849,109 @@ impl<'c> Writer<'c> {
             .with_context(|| format!("Field {field_id} not found on entry {uuid}"))
     }
 
-    /// Inserts the operation row and its snapshots, advancing the running HEAD.
+    /// Buffers one operation; the log rows are inserted in bulk, in batches
+    /// of [`FLUSH_THRESHOLD`].
     fn log_op(
         &mut self,
         op_type: OpType,
         entity: Uuid,
         field_name: Option<&str>,
         version_before: Option<u64>,
-        before: &[FieldRow],
-        after: &[FieldRow],
-    ) -> Result<i64> {
-        self.seq += 1;
-        self.tx.execute(
-            "INSERT INTO operation
-                 (parent_id, rev_id, seq, op_type, entity_uuid, entity_version_before, field_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                self.head,
-                self.rev_id,
-                self.seq,
-                op_type.as_str(),
-                db::uuid_to_bytes(entity),
-                version_before.map(|v| v as i64),
-                field_name
-            ],
-        )?;
-        let op_id = self.tx.last_insert_rowid();
-        for row in before {
-            self.insert_snapshot(op_id, 0, row)?;
+        before: Vec<FieldRow>,
+        after: Vec<FieldRow>,
+    ) -> Result<()> {
+        self.pending.push(PendingOp {
+            op_type,
+            entity,
+            field_name: field_name.map(str::to_string),
+            version_before,
+            before,
+            after,
+        });
+        if self.pending.len() >= FLUSH_THRESHOLD {
+            self.flush_pending()?;
         }
-        for row in after {
-            self.insert_snapshot(op_id, 1, row)?;
-        }
-        self.head = Some(op_id);
-        Ok(op_id)
+        Ok(())
     }
 
-    fn insert_snapshot(&self, op_id: i64, is_new: i64, row: &FieldRow) -> Result<()> {
-        let e = db::encode_value(&row.value);
-        self.tx.execute(
+    /// Bulk-inserts the buffered `operation` and `op_snapshot` rows,
+    /// advancing the running chain head.
+    ///
+    /// Operation ids are assigned up front from `sqlite_sequence` so the
+    /// parent chain can be computed before inserting; explicit-id inserts
+    /// into an AUTOINCREMENT table keep the sequence in step, preserving the
+    /// never-reused-id guarantee.
+    fn flush_pending(&mut self) -> Result<()> {
+        use rusqlite::types::Value as Sql;
+        use rusqlite::OptionalExtension as _;
+
+        if self.pending.is_empty() {
+            return Ok(());
+        }
+        let last_id: Option<i64> = self
+            .tx
+            .query_row(
+                "SELECT seq FROM sqlite_sequence WHERE name = 'operation'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let base = last_id.unwrap_or(0) + 1;
+
+        let pending = std::mem::take(&mut self.pending);
+        let mut op_rows: Vec<Vec<Sql>> = Vec::with_capacity(pending.len());
+        let mut snapshot_rows: Vec<Vec<Sql>> = Vec::new();
+        for (i, op) in pending.iter().enumerate() {
+            let op_id = base + i as i64;
+            let parent = if i == 0 { self.chain_head } else { Some(op_id - 1) };
+            op_rows.push(vec![
+                Sql::Integer(op_id),
+                parent.map_or(Sql::Null, Sql::Integer),
+                Sql::Integer(self.rev_id),
+                Sql::Integer(self.flushed + i as i64 + 1), // seq
+                Sql::Text(op.op_type.as_str().to_string()),
+                Sql::Blob(db::uuid_to_bytes(op.entity)),
+                op.version_before.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
+                op.field_name.clone().map_or(Sql::Null, Sql::Text),
+            ]);
+            for (is_new, rows) in [(0, &op.before), (1, &op.after)] {
+                for row in rows {
+                    let e = db::encode_value(&row.value);
+                    snapshot_rows.push(vec![
+                        Sql::Integer(op_id),
+                        Sql::Integer(is_new),
+                        Sql::Integer(row.id),
+                        Sql::Text(row.name.clone()),
+                        Sql::Text(e.value_type.to_string()),
+                        e.text.map_or(Sql::Null, Sql::Text),
+                        e.int.map_or(Sql::Null, Sql::Integer),
+                        e.real.map_or(Sql::Null, Sql::Real),
+                        e.uuid.map_or(Sql::Null, Sql::Blob),
+                        e.ref_repo.map_or(Sql::Null, Sql::Blob),
+                        e.name.map_or(Sql::Null, Sql::Text),
+                    ]);
+                }
+            }
+        }
+
+        bulk_insert(
+            &self.tx,
+            "INSERT INTO operation
+                 (id, parent_id, rev_id, seq, op_type, entity_uuid,
+                  entity_version_before, field_name)",
+            8,
+            &op_rows,
+        )?;
+        bulk_insert(
+            &self.tx,
             "INSERT INTO op_snapshot
                  (op_id, is_new, field_id, field_name, value_type, value_text,
-                  value_int, value_real, value_uuid, value_ref_repo, value_name)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![
-                op_id,
-                is_new,
-                row.id,
-                row.name,
-                e.value_type,
-                e.text,
-                e.int,
-                e.real,
-                e.uuid,
-                e.ref_repo,
-                e.name
-            ],
+                  value_int, value_real, value_uuid, value_ref_repo, value_name)",
+            11,
+            &snapshot_rows,
         )?;
+        self.flushed += pending.len() as i64;
+        self.chain_head = Some(base + pending.len() as i64 - 1);
         Ok(())
     }
 

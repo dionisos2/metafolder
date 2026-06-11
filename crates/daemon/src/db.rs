@@ -49,20 +49,34 @@ fn configure_connection(conn: &Connection) -> Result<()> {
     }
     conn.pragma_update(None, "foreign_keys", true)
         .context("Failed to enable foreign keys")?;
+    // The write and navigation hot paths go through `prepare_cached`; keep
+    // enough room so the recurring statements never evict each other.
+    conn.set_prepared_statement_cache_capacity(64);
 
     // REGEXP user-defined function backing the `Matches` query operator.
+    // Compiled patterns are cached: a scan calls the UDF once per row, and
+    // recompiling the regex each time dominates the query cost.
+    let regex_cache: std::sync::Mutex<std::collections::HashMap<String, regex::Regex>> =
+        std::sync::Mutex::new(std::collections::HashMap::new());
     conn.create_scalar_function(
         "REGEXP",
         2,
         rusqlite::functions::FunctionFlags::SQLITE_UTF8
             | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
-        |ctx| {
+        move |ctx| {
             // SQLite: X REGEXP Y → regexp(Y, X), so arg 0 is the pattern.
             let pattern: String = ctx.get(0)?;
             let text: String = ctx.get(1)?;
-            regex::Regex::new(&pattern)
-                .map(|re| re.is_match(&text))
-                .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))
+            let mut cache = regex_cache.lock().unwrap();
+            if !cache.contains_key(&pattern) {
+                if cache.len() >= 64 {
+                    cache.clear();
+                }
+                let compiled = regex::Regex::new(&pattern)
+                    .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
+                cache.insert(pattern.clone(), compiled);
+            }
+            Ok(cache[&pattern].is_match(&text))
         },
     )?;
     Ok(())
@@ -208,11 +222,8 @@ pub fn get_entry(conn: &Connection, uuid: Uuid) -> Result<Option<Metadata>> {
 /// Returns the version counter of an entry, or None if it does not exist.
 pub fn get_version(conn: &Connection, uuid: Uuid) -> Result<Option<u64>> {
     let v: Option<i64> = conn
-        .query_row(
-            "SELECT version FROM metadata WHERE uuid = ?1",
-            params![uuid_to_bytes(uuid)],
-            |r| r.get(0),
-        )
+        .prepare_cached("SELECT version FROM metadata WHERE uuid = ?1")?
+        .query_row(params![uuid_to_bytes(uuid)], |r| r.get(0))
         .optional()?;
     Ok(v.map(|v| v as u64))
 }
@@ -237,7 +248,7 @@ fn row_to_field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, R
 
 /// All field rows of an entry, with their row ids.
 pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
-    let mut stmt = conn.prepare(&format!(
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT {FIELD_COLUMNS} FROM field WHERE metadata_uuid = ?1 ORDER BY id"
     ))?;
     let rows = stmt.query_map(params![uuid_to_bytes(uuid)], row_to_field_row)?;
@@ -246,7 +257,7 @@ pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
 
 /// Field rows of an entry restricted to one field name.
 pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
-    let mut stmt = conn.prepare(&format!(
+    let mut stmt = conn.prepare_cached(&format!(
         "SELECT {FIELD_COLUMNS} FROM field
          WHERE metadata_uuid = ?1 AND field_name = ?2 ORDER BY id"
     ))?;
@@ -567,42 +578,42 @@ pub(crate) fn insert_field_row(
     let e = encode_value(value);
     match explicit_id {
         None => {
-            conn.execute(
+            conn.prepare_cached(
                 "INSERT INTO field (metadata_uuid, field_name, value_type, value_text,
                                     value_int, value_real, value_uuid, value_ref_repo, value_name)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
-                params![
-                    uuid_to_bytes(metadata_uuid),
-                    name,
-                    e.value_type,
-                    e.text,
-                    e.int,
-                    e.real,
-                    e.uuid,
-                    e.ref_repo,
-                    e.name
-                ],
-            )
+            )?
+            .execute(params![
+                uuid_to_bytes(metadata_uuid),
+                name,
+                e.value_type,
+                e.text,
+                e.int,
+                e.real,
+                e.uuid,
+                e.ref_repo,
+                e.name
+            ])
             .map_err(map_unique)?;
         }
         Some(id) => {
-            conn.execute(
+            conn.prepare_cached(
                 "INSERT INTO field (id, metadata_uuid, field_name, value_type, value_text,
                                     value_int, value_real, value_uuid, value_ref_repo, value_name)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                params![
-                    id,
-                    uuid_to_bytes(metadata_uuid),
-                    name,
-                    e.value_type,
-                    e.text,
-                    e.int,
-                    e.real,
-                    e.uuid,
-                    e.ref_repo,
-                    e.name
-                ],
-            )
+            )?
+            .execute(params![
+                id,
+                uuid_to_bytes(metadata_uuid),
+                name,
+                e.value_type,
+                e.text,
+                e.int,
+                e.real,
+                e.uuid,
+                e.ref_repo,
+                e.name
+            ])
             .map_err(map_unique)?;
         }
     }
