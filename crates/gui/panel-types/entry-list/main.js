@@ -54,11 +54,14 @@ async function fetchPage(reset) {
   if (!repo || loading) return;
   loading = true;
   try {
+    let keepUuid = null;
     if (reset) {
+      // A refresh (new query, entries:dirty, …) must not steal the
+      // selection: remember the highlighted entry and restore it.
+      keepUuid =
+        entries[cursorIndex]?.uuid ?? (await workspace.get('selected_entry'))?.uuid ?? null;
       entries = [];
       nextCursor = null;
-      cursorIndex = -1;
-      checked = new Set();
     }
     const body = {
       query: queryIR ?? MATCH_ALL,
@@ -74,8 +77,27 @@ async function fetchPage(reset) {
     }
     entries = entries.concat(response.body.results);
     nextCursor = response.body.next_cursor;
+    if (reset) {
+      // Drop checked entries that no longer match.
+      const alive = new Set(entries.map((e) => e.uuid));
+      if ([...checked].some((uuid) => !alive.has(uuid))) {
+        checked = new Set([...checked].filter((uuid) => alive.has(uuid)));
+        await workspace.set('selected_entries', [...checked]);
+      }
+      const keepIndex = keepUuid === null ? -1 : entries.findIndex((e) => e.uuid === keepUuid);
+      if (keepIndex >= 0) {
+        // Same entry still listed: move the cursor back silently, the
+        // selection variables are already correct.
+        cursorIndex = keepIndex;
+      } else if (entries.length > 0) {
+        render();
+        await setCursor(0);
+        return;
+      } else {
+        cursorIndex = -1;
+      }
+    }
     render();
-    if (reset && entries.length > 0) setCursor(0);
   } finally {
     loading = false;
   }
