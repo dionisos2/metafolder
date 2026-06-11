@@ -43,7 +43,9 @@
       ? []
       : filterCommands(store.commands, draft),
   );
-  const suggestions = $derived(matches.slice(0, 8));
+  // Every match is listed; the CSS max-height makes the list scroll, so
+  // arrow navigation travels through all possible completions.
+  const suggestions = $derived(matches);
 
   // Typing leaves list navigation (the list itself just refilters).
   $effect(() => {
