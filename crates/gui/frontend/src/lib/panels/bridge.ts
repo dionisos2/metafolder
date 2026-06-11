@@ -1,6 +1,11 @@
 // Shell side of the shell⇄panel postMessage protocol. The pure core
 // (createBridgeCore) is unit tested; PanelHost owns the DOM (iframes,
 // positioning) and wires window.onmessage to it.
+//
+// Instances are keyed by a string id, NOT by Window identity: WebKitGTK
+// swaps the iframe's WindowProxy on cross-origin navigation, so a
+// contentWindow captured at creation never matches event.source later.
+// PanelHost resolves event.source against the live iframes instead.
 
 export interface PanelMeta {
   wsId: string;
@@ -20,7 +25,7 @@ export interface BridgeDeps {
 }
 
 export function createBridgeCore(deps: BridgeDeps) {
-  const instances = new Map<Window, Instance>();
+  const instances = new Map<string, Instance>();
   let nextInvocationId = 1;
   const pendingCommands = new Map<number, { resolve: () => void; reject: (e: unknown) => void }>();
 
@@ -87,19 +92,19 @@ export function createBridgeCore(deps: BridgeDeps) {
   }
 
   return {
-    register(source: Window, meta: PanelMeta, post: Instance['post']) {
+    register(source: string, meta: PanelMeta, post: Instance['post']) {
       instances.set(source, { meta, post, subscriptions: new Set() });
     },
 
-    unregister(source: Window) {
+    unregister(source: string) {
       instances.delete(source);
     },
 
-    instanceMeta(source: Window): PanelMeta | undefined {
+    instanceMeta(source: string): PanelMeta | undefined {
       return instances.get(source)?.meta;
     },
 
-    async onMessage(source: Window, data: unknown) {
+    async onMessage(source: string, data: unknown) {
       const instance = instances.get(source);
       const message = data as Record<string, unknown> | null;
       if (!instance || !message || message.mf !== true) return;
@@ -161,12 +166,12 @@ export function createBridgeCore(deps: BridgeDeps) {
       }
     },
 
-    pushVisibility(source: Window, visible: boolean, slot: string | null) {
+    pushVisibility(source: string, visible: boolean, slot: string | null) {
       instances.get(source)?.post({ mf: true, type: 'visibility', visible, slot });
     },
 
     /** Sends a registered command to its panel; resolves on command-result. */
-    dispatchCommand(source: Window, name: string, args: string[]): Promise<void> {
+    dispatchCommand(source: string, name: string, args: string[]): Promise<void> {
       const instance = instances.get(source);
       if (!instance) return Promise.reject('panel not available');
       const invocationId = nextInvocationId++;

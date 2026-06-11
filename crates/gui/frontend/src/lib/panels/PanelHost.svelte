@@ -11,6 +11,11 @@
   // One iframe per (workspace, panel type), kept alive for the whole
   // session (state retention) and NEVER reparented — moving an iframe in
   // the DOM reloads it. Hidden instances are display:none.
+  //
+  // Instances are identified by the string key "ws|type". Incoming
+  // messages are matched against the CURRENT contentWindow of each
+  // iframe: WebKitGTK swaps the WindowProxy on cross-origin navigation,
+  // so a proxy captured at creation would never equal event.source.
   const iframes = new Map<string, HTMLIFrameElement>();
   const readiness = new Map<string, { promise: Promise<void>; resolve: () => void }>();
   let visibleSlots = new Map<string, SlotId>(); // instance key -> slot
@@ -22,6 +27,13 @@
   });
 
   const instanceKey = (wsId: string, panelType: string) => `${wsId}|${panelType}`;
+
+  function keyForSource(source: MessageEventSource): string | null {
+    for (const [key, iframe] of iframes) {
+      if (iframe.contentWindow === source) return key;
+    }
+    return null;
+  }
 
   function ensureIframe(wsId: string, panelType: string): HTMLIFrameElement {
     const key = instanceKey(wsId, panelType);
@@ -39,39 +51,37 @@
     const promise = new Promise<void>((resolve) => (resolveReady = resolve));
     readiness.set(key, { promise, resolve: resolveReady });
 
-    // contentWindow is the stable WindowProxy used as the identity of
-    // this panel in the bridge.
-    if (iframe.contentWindow) {
-      bridge.register(iframe.contentWindow, { wsId, panelType }, (message) =>
-        iframe!.contentWindow?.postMessage(message, '*'),
-      );
-    }
+    bridge.register(key, { wsId, panelType }, (message) =>
+      iframe!.contentWindow?.postMessage(message, '*'),
+    );
     return iframe;
   }
 
-  async function sendInit(source: Window) {
-    const meta = bridge.instanceMeta(source);
-    if (!meta) return;
+  async function sendInit(key: string) {
+    const meta = bridge.instanceMeta(key);
+    const target = iframes.get(key)?.contentWindow;
+    if (!meta || !target) return;
     let vars: [string, unknown][] = [];
     try {
       vars = (await invoke('ws_vars', { wsId: meta.wsId })) as [string, unknown][];
     } catch {
       /* workspace may be gone already */
     }
-    source.postMessage(
+    target.postMessage(
       {
         mf: true,
         type: 'init',
         workspaceId: meta.wsId,
         panelType: meta.panelType,
-        slot: visibleSlots.get(instanceKey(meta.wsId, meta.panelType)) ?? null,
+        slot: visibleSlots.get(key) ?? null,
         vars: Object.fromEntries(vars),
-        keytable: store.keytable,
+        // $state proxies cannot be structured-cloned: snapshot first.
+        keytable: $state.snapshot(store.keytable),
         guiServer: `http://127.0.0.1:${store.guiPort}`,
       },
       '*',
     );
-    readiness.get(instanceKey(meta.wsId, meta.panelType))?.resolve();
+    readiness.get(key)?.resolve();
     // Visible in GET /gui/panels/:slot/view as "ready".
     void invoke('panel_ready', { wsId: meta.wsId, panelType: meta.panelType });
   }
@@ -102,7 +112,7 @@
       const wsId = key.split('|')[0];
       if (!liveWorkspaces.has(wsId)) {
         // Workspace closed: drop the instance entirely.
-        if (iframe.contentWindow) bridge.unregister(iframe.contentWindow);
+        bridge.unregister(key);
         iframe.remove();
         iframes.delete(key);
         readiness.delete(key);
@@ -113,16 +123,10 @@
 
     // Visibility pushes on change.
     for (const [key, slot] of wanted) {
-      if (visibleSlots.get(key) !== slot) {
-        const win = iframes.get(key)?.contentWindow;
-        if (win) bridge.pushVisibility(win, true, slot);
-      }
+      if (visibleSlots.get(key) !== slot) bridge.pushVisibility(key, true, slot);
     }
     for (const [key] of visibleSlots) {
-      if (!wanted.has(key)) {
-        const win = iframes.get(key)?.contentWindow;
-        if (win) bridge.pushVisibility(win, false, null);
-      }
+      if (!wanted.has(key)) bridge.pushVisibility(key, false, null);
     }
     visibleSlots = wanted;
   }
@@ -139,18 +143,18 @@
     const onMessage = (event: MessageEvent) => {
       const data = event.data as { mf?: boolean; type?: string } | null;
       if (!data?.mf || !event.source) return;
-      const source = event.source as Window;
+      const key = keyForSource(event.source);
+      if (!key) return;
       if (data.type === 'ready') {
-        void sendInit(source);
+        void sendInit(key);
         return;
       }
       if (data.type === 'focused') {
-        const meta = bridge.instanceMeta(source);
-        const slot = meta && visibleSlots.get(instanceKey(meta.wsId, meta.panelType));
+        const slot = visibleSlots.get(key);
         if (slot && slot !== store.layout.focused) void invoke('panel_focus_next');
         return;
       }
-      void bridge.onMessage(source, data);
+      void bridge.onMessage(key, data);
     };
     window.addEventListener('message', onMessage);
     window.addEventListener('resize', sync);
@@ -190,10 +194,9 @@
         await invoke('panel_set_type', { slot: target, panelType: command.owner });
       }
 
-      const iframe = ensureIframe(wsId, command.owner);
+      ensureIframe(wsId, command.owner);
       await readiness.get(key)?.promise;
-      if (!iframe.contentWindow) throw 'panel not available';
-      await bridge.dispatchCommand(iframe.contentWindow, command.name, args);
+      await bridge.dispatchCommand(key, command.name, args);
     });
 
     return () => {

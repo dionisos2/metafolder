@@ -12,7 +12,7 @@ function setup() {
   const onCommandsChanged = vi.fn();
   const bridge = createBridgeCore({ invoke, dispatch, onCommandsChanged });
 
-  const source = {} as Window; // identity token; never dereferenced
+  const source = 'ws-1|hello'; // string instance id
   const post = vi.fn();
   bridge.register(source, { wsId: 'ws-1', panelType: 'hello' }, post);
   return { bridge, invoke, dispatch, onCommandsChanged, source, post };
@@ -29,7 +29,7 @@ const request = (id: number, method: string, params: unknown) => ({
 describe('bridge core', () => {
   test('messages from unregistered sources are ignored', async () => {
     const { bridge, invoke } = setup();
-    const stranger = {} as Window;
+    const stranger = 'ws-9|nope';
     await bridge.onMessage(stranger, request(1, 'workspace.get', { key: 'k' }));
     expect(invoke).not.toHaveBeenCalled();
   });

@@ -212,6 +212,18 @@ tests + `tests/*.rs` driving the Axum router with oneshot and a stub daemon
 on an ephemeral port); `npm --prefix crates/gui/frontend test` (vitest:
 keymatch, commands parsing, bridge, resolve).
 
+GUI dev gotchas (learned the hard way):
+- Panels are served from `~/.config/metafolder-gui/panel-types/` (the user
+  copy, installed once and never overwritten). After editing a built-in
+  panel in the repo, delete its directory there so the next launch
+  re-installs it.
+- Never post `$state` proxies through `postMessage` (DataCloneError, and
+  the rejection is silent in an async handler): `$state.snapshot()` first.
+- WebKitGTK swaps the iframe WindowProxy on cross-origin navigation:
+  never key anything on a captured `contentWindow`; match `event.source`
+  against the live `iframe.contentWindow` at message time (and the shim
+  re-sends `ready` until the shell answers).
+
 ## Repository structure on disk
 
 Each repository's `.metafolder/` directory (inside the watched root, or at an

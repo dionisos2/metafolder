@@ -4,9 +4,7 @@
   "version": "0.1.0",
   "identifier": "org.metafolder.gui",
   "build": {
-    "frontendDist": "frontend/dist",
-    "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm --prefix frontend run dev"
+    "frontendDist": "frontend/dist"
   },
   "app": {
     "windows": [

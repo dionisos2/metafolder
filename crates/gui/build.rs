@@ -1,4 +1,11 @@
 fn main() {
+    // include_str!/include_dir! do not register their inputs with cargo:
+    // re-embed the shim, panels and default config when they change.
+    println!("cargo:rerun-if-changed=panel-shim");
+    println!("cargo:rerun-if-changed=panel-types");
+    println!("cargo:rerun-if-changed=default-config");
+    println!("cargo:rerun-if-changed=frontend/dist");
+
     // The tauri context macro requires `frontendDist` to exist at compile
     // time; a placeholder keeps plain `cargo build` working before the
     // frontend has been built (`npm --prefix frontend run build`).

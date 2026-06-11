@@ -66,6 +66,7 @@ window.addEventListener('message', (event) => {
     case 'init': {
       initData = message;
       matcher.setBindings(message.keytable ?? []);
+      clearInterval(readyRetry);
       resolveReady();
       break;
     }
@@ -239,4 +240,11 @@ window.metafolder = {
   },
 };
 
+// Announce until the shell answers with init: the very first message can
+// race the WebView's cross-origin WindowProxy swap (the shell cannot
+// match event.source against the iframe yet).
 send({ type: 'ready' });
+const readyRetry = setInterval(() => {
+  if (initData === null) send({ type: 'ready' });
+  else clearInterval(readyRetry);
+}, 200);
