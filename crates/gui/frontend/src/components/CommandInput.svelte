@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { invoke } from '../lib/ipc';
   import {
     commonPrefix,
@@ -35,13 +36,16 @@
     }
   });
 
-  // command-input:activate focuses the always-visible input.
+  // command-input:activate focuses the always-visible input. Only the
+  // tick is tracked: reading element/draft without untrack would re-run
+  // this (and steal the focus) on every draft swap, e.g. when
+  // panel:focus-next changes the focused workspace.
   $effect(() => {
-    void store.ui.commandInputFocusTick;
-    if (store.ui.commandInputFocusTick > 0 && element) {
-      element.focus();
-      element.setSelectionRange(draft.length, draft.length);
-    }
+    if (store.ui.commandInputFocusTick === 0) return;
+    untrack(() => {
+      element?.focus();
+      element?.setSelectionRange(draft.length, draft.length);
+    });
   });
 
   const matches = $derived(
