@@ -31,9 +31,8 @@ export const store = $state({
   lastCommand: {} as Record<string, string>,
   inputDrafts: {} as Record<string, string>,
   ui: {
-    commandInputActive: false,
-    /// Bumped on every command-input:activate so the input re-focuses
-    /// even when it is already open.
+    /// Bumped on every command-input:activate; the always-visible input
+    /// grabs the keyboard focus when it changes.
     commandInputFocusTick: 0,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
@@ -119,7 +118,7 @@ export async function initStore() {
   });
   await listen<{ prompt: string }>('prompt-requested', (event) => {
     store.ui.promptText = event.payload.prompt;
-    store.ui.commandInputActive = true;
+    store.ui.commandInputFocusTick += 1;
   });
 
   store.ready = true;

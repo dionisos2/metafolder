@@ -192,12 +192,13 @@ shown (one per slot). Messages auto-clear after a configurable timeout
 
 ** Command input
 
-A single-line text input that appears just above the status bar when activated
-(configurable keybinding, default suggestion: =:=). Dismissed with =Escape=.
-There is one command input; it targets the focused slot's workspace. Content
-(text and cursor position) is per-workspace: switching the focused slot to a
-different workspace restores the command input state of that workspace,
-including any partial command being typed.
+A single-line text input permanently visible just above the status bar. A
+configurable keybinding (default suggestion: =:=) gives it keyboard focus;
+=Escape= removes the focus (the draft is kept). There is one command input;
+it targets the focused slot's workspace. Content (text and cursor position)
+is per-workspace: switching the focused slot to a different workspace
+restores the command input state of that workspace, including any partial
+command being typed.
 
 Accepts:
 - A command name (with inline completion; =Tab= accepts the first suggestion)
@@ -291,8 +292,8 @@ Default keybinding suggestions: =alt+t= for =tab:new=, =alt+w= for
 The window area (below the tab bar) is divided into:
 - *Two panel slots* (left and right), each assigned one workspace (see
   [[*Panel slot]]). At startup only the left slot is visible.
-- *Command input*: a single line just above the status bar(s), visible only
-  when active.
+- *Command input*: a single line just above the status bar(s), always
+  visible.
 - *Status bar*: one or two read-only lines at the very bottom (see
   [[*Status bar]]).
 
@@ -322,19 +323,21 @@ status bars are shown (one per slot, each reflecting its own workspace).
 
 ** Command input
 
-Hidden by default; activated by a configurable keybinding (default: =:=).
-Shows a prompt character and a text field above the status bar(s). Dismissed
-with =Escape=. There is one command input; it targets the focused slot's
-workspace. Content is per-workspace: switching the focused slot to a different
-workspace restores that workspace's command input state.
+Always visible: a prompt character and a text field above the status
+bar(s). A configurable keybinding (default: =:=) gives it keyboard focus;
+=Escape= unfocuses it, keeping the draft. The autocomplete suggestions are
+shown only while the input is focused. There is one command input; it
+targets the focused slot's workspace. Content is per-workspace: switching
+the focused slot to a different workspace restores that workspace's command
+input state.
 
 Behaviours:
 - Typing a command name + =Enter= → invokes the command (=Tab= completes).
 - Parameters follow the command name, separated by spaces.
 - =!shell-command= + =Enter= → runs in background; output goes to the
   =message= panel type and the launching terminal.
-- When a script calls =POST /gui/prompt=, the command input activates with the
-  script-supplied prompt text.
+- When a script calls =POST /gui/prompt=, the command input grabs the focus
+  and shows the script-supplied prompt text.
 
 *** Command names (non-exhaustive default set)
 

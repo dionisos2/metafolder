@@ -54,7 +54,7 @@ pub(crate) fn push_keybindings(gui: &GuiState, compiled: &[CompiledBinding]) {
 /// "Command names"). Handlers live in the frontend dispatcher.
 fn register_builtins(registry: &CommandRegistry) {
     for (name, label) in [
-        ("command-input:activate", "Open the command input"),
+        ("command-input:activate", "Focus the command input"),
         ("editing:unfocus", "Leave the focused text input"),
         ("editing:confirm", "Confirm the focused text input"),
         ("editing:goto-line-start", "Move the cursor to the line start"),

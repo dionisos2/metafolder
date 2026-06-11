@@ -95,7 +95,7 @@ export async function dispatch(invocation: string): Promise<void> {
   try {
     switch (name) {
       case 'command-input:activate':
-        store.ui.commandInputActive = true;
+        // The input is always visible: activation means focusing it.
         store.ui.commandInputFocusTick += 1;
         return;
       case 'editing:unfocus':
@@ -121,9 +121,8 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'tab:rename':
         if (args.length === 0) {
           // No name given: prefill the command input instead.
-          store.ui.commandInputActive = true;
-          store.ui.commandInputFocusTick += 1;
           if (ws) store.inputDrafts[ws] = 'tab:rename ';
+          store.ui.commandInputFocusTick += 1;
           return;
         }
         if (ws) await invoke('tab_rename', { wsId: ws, name: args.join(' ') });
