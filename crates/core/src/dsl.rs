@@ -2,8 +2,8 @@
 //! human-friendly predicate syntax to the `Query` JSON IR (spec-query
 //! "* CLI", "Query DSL").
 
-use metafolder_core::entry::Value;
-use metafolder_core::query::{FollowTarget, Query};
+use crate::entry::Value;
+use crate::query::{FollowTarget, Query};
 
 /// Parses a DSL predicate string into a `Query`.
 pub fn parse_query(input: &str) -> Result<Query, String> {
@@ -368,8 +368,8 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metafolder_core::entry::Value;
-    use metafolder_core::query::FollowTarget;
+    use crate::entry::Value;
+    use crate::query::FollowTarget;
 
     fn ok(input: &str) -> Query {
         parse_query(input).unwrap_or_else(|e| panic!("'{input}' should parse: {e}"))

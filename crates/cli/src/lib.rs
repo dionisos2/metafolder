@@ -4,5 +4,8 @@
 
 pub mod client;
 pub mod commands;
-pub mod dsl;
 pub mod fieldspec;
+
+// The query DSL parser lives in core (shared with the GUI); re-exported so
+// `metafolder_cli::dsl::parse_query` keeps working.
+pub use metafolder_core::dsl;

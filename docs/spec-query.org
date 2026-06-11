@@ -178,6 +178,10 @@ The CLI accepts queries as a human-friendly DSL string, parsed by a
 hand-written lexer + recursive-descent parser and compiled to the =Query=
 JSON representation.
 
+The parser is shared code: it lives in the =core= crate
+(=metafolder_core::dsl::parse_query=) and is used by both the CLI and the
+GUI (the =entry-list= query editor, see [[file:spec-gui.org][spec-gui.org]]).
+
 *** Grammar
 
 #+BEGIN_SRC
