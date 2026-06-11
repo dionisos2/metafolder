@@ -110,8 +110,6 @@
     <form id="init-form" class="hidden">
       <label for="init-root">Root directory</label>
       <input id="init-root" placeholder="/path/to/files" required />
-      <label for="init-meta">External .metafolder (optional)</label>
-      <input id="init-meta" placeholder="/path/to/store" />
       <div class="form-actions">
         <button type="submit">Initialize</button>
         <button type="button" class="cancel">Cancel</button>
@@ -121,9 +119,7 @@
 
     <form id="load-form" class="hidden">
       <label for="load-root">Root directory</label>
-      <input id="load-root" placeholder="/path/to/files" />
-      <label for="load-meta">…or .metafolder directory</label>
-      <input id="load-meta" placeholder="/path/to/store" />
+      <input id="load-root" placeholder="/path/to/files" required />
       <div class="form-actions">
         <button type="submit">Load</button>
         <button type="button" class="cancel">Cancel</button>

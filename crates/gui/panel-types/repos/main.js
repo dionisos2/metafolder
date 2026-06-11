@@ -68,21 +68,13 @@ async function submit(form, path, payload, errorElement) {
 initForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const root = document.getElementById('init-root').value.trim();
-  const meta = document.getElementById('init-meta').value.trim();
-  const payload = meta ? { root, metafolder: meta } : { root };
-  submit(initForm, '/repos/init', payload, document.getElementById('init-error'));
+  submit(initForm, '/repos/init', { root }, document.getElementById('init-error'));
 });
 
 loadForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const root = document.getElementById('load-root').value.trim();
-  const meta = document.getElementById('load-meta').value.trim();
-  const errorElement = document.getElementById('load-error');
-  if (!!root === !!meta) {
-    errorElement.textContent = 'fill exactly one of root / .metafolder';
-    return;
-  }
-  submit(loadForm, '/repos/load', root ? { root } : { metafolder: meta }, errorElement);
+  submit(loadForm, '/repos/load', { root }, document.getElementById('load-error'));
 });
 
 document.getElementById('show-init').addEventListener('click', () => toggleForm(initForm, true));

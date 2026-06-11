@@ -115,6 +115,21 @@ window.addEventListener('message', (event) => {
   }
 });
 
+// The editing:* commands act on THIS document's focused text input; they
+// are handled here, not forwarded to the shell. `null` means "keep the
+// native behaviour": Enter must still submit panel forms and reach the
+// panel's own keydown handlers.
+const EDITING_ACTIONS = {
+  'editing:confirm': null,
+  'editing:unfocus': () => document.activeElement?.blur(),
+  'editing:goto-line-start': () => document.activeElement?.setSelectionRange?.(0, 0),
+  'editing:goto-line-end': () => {
+    const active = document.activeElement;
+    const end = active?.value?.length ?? 0;
+    active?.setSelectionRange?.(end, end);
+  },
+};
+
 // Key events never cross the iframe boundary: run the shared matcher here
 // and forward resolved invocations to the shell.
 window.addEventListener(
@@ -130,11 +145,19 @@ window.addEventListener(
         active.tagName === 'SELECT' ||
         active.isContentEditable);
     const result = matcher.feed(combo, { panelType: initData.panelType, textInput });
-    if (result) {
-      event.preventDefault();
-      event.stopPropagation();
-      if (result.invocation) send({ type: 'key-resolved', invocation: result.invocation });
+    if (!result) return;
+    if (result.invocation && result.invocation in EDITING_ACTIONS) {
+      const action = EDITING_ACTIONS[result.invocation];
+      if (action) {
+        event.preventDefault();
+        event.stopPropagation();
+        action();
+      }
+      return;
     }
+    event.preventDefault();
+    event.stopPropagation();
+    if (result.invocation) send({ type: 'key-resolved', invocation: result.invocation });
   },
   { capture: true },
 );

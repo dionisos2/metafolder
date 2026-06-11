@@ -56,6 +56,11 @@ export function setEditingTarget(target: EditingTarget | null) {
   editingTarget = target;
 }
 
+/** Whether an editing:* command currently has a registered handler. */
+export function hasEditingTarget(): boolean {
+  return editingTarget !== null;
+}
+
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
 export type PanelDispatch = (command: CommandDef, args: string[]) => Promise<void>;

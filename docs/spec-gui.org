@@ -535,18 +535,19 @@ Repo indicator and the =repos= panel type.
 
 =repos:init= is a local command of the =repos= panel type (scope:
 =when = "repos"=). It transforms the =repos= panel to show an inline form
-with =root= (required) and =metafolder= (optional, for external database).
-Submitting calls =POST /repos/init=. On success a new workspace is created
-with the new repo as =active_repo= and assigned to the focused slot. On =409=
-an error message appears in the status bar and the form remains open.
+with a single =root= input (the daemon API also accepts an external
+=metafolder= location, but the GUI does not expose it). Submitting calls
+=POST /repos/init=. On success a new workspace is created with the new repo
+as =active_repo= and assigned to the focused slot. On =409= an error
+message appears in the status bar and the form remains open.
 
 *** Load repo
 
 =repos:load= is a local command of the =repos= panel type (scope:
 =when = "repos"=). It transforms the =repos= panel to show an inline form
-with mutually exclusive =root= or =metafolder= inputs. Submitting calls
-=POST /repos/load=. On success a new workspace is created with the loaded
-repo as =active_repo= and assigned to the focused slot.
+with a single =root= input. Submitting calls =POST /repos/load=. On success
+a new workspace is created with the loaded repo as =active_repo= and
+assigned to the focused slot.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:init= / =repos:load= from there.

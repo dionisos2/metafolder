@@ -4,7 +4,7 @@
 
 // @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../../panel-shim/keymatch.js';
-import { dispatch } from './commands';
+import { dispatch, hasEditingTarget } from './commands';
 import { focusedPanelType, store } from './store.svelte';
 
 export function isTextInput(element: Element | null): boolean {
@@ -35,11 +35,14 @@ export function installKeys() {
         panelType: focusedPanelType(),
         textInput: isTextInput(document.activeElement),
       });
-      if (result) {
-        event.preventDefault();
-        event.stopPropagation();
-        if (result.invocation) void dispatch(result.invocation);
-      }
+      if (!result) return;
+      // editing:* only fires where a handler is registered (the command
+      // input); otherwise the key keeps its native behaviour (e.g. Enter
+      // committing the tab-rename input).
+      if (result.invocation?.startsWith('editing:') && !hasEditingTarget()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (result.invocation) void dispatch(result.invocation);
     },
     { capture: true },
   );
