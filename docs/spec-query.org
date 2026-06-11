@@ -234,5 +234,6 @@ and streams the output.
 | =--select a,b= / =--select '*'= | Print full metadata objects (JSON array) restricted to the listed fields, or all fields with ='*'= |
 | =--sort field[:asc\vert{}desc]=  | Sort results; repeatable for secondary keys                          |
 | =--limit N=                | Stop after N results                                                 |
+| =--values=                 | With =--select <one field>=: print the field's raw values, one per line (multi-map: one line per row; =nothing= rows skipped; scalars bare, refs as 32-hex uuids, structured values as compact JSON) |
 
 * Open questions

@@ -16,5 +16,5 @@
 * DONE specifications for the GUI
 * DONE specifications for the Rust commands
 * DONE first version of the daemon
-* TODO first version of the Rust commands
-* TODO first version of the GUI
+* DONE first version of the Rust commands
+* DONE first version of the GUI

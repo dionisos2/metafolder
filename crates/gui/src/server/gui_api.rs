@@ -347,6 +347,9 @@ pub async fn post_input(
 #[derive(Deserialize)]
 pub struct PromptBody {
     prompt: String,
+    /// Values offered by the command input autocomplete during the prompt.
+    #[serde(default)]
+    completions: Vec<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
 }
@@ -358,9 +361,10 @@ pub async fn post_prompt(
     let Ok(receiver) = state.input.begin_prompt() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
-    state
-        .gui
-        .notify(events::PROMPT_REQUESTED, json!({ "prompt": body.prompt }));
+    state.gui.notify(
+        events::PROMPT_REQUESTED,
+        json!({ "prompt": body.prompt, "completions": body.completions }),
+    );
 
     let outcome = match body.timeout_ms {
         Some(ms) => tokio::time::timeout(Duration::from_millis(ms), receiver)

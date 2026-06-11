@@ -68,6 +68,15 @@ export function filterCommands<C extends { name: string }>(commands: C[], prefix
   return [...starts, ...contains];
 }
 
+/** Autocomplete filter for script prompt completions (POST /gui/prompt):
+ *  same prefix-then-substring ranking as the command list. */
+export function filterCompletions(completions: string[], draft: string): string[] {
+  return filterCommands(
+    completions.map((name) => ({ name })),
+    draft,
+  ).map((c) => c.name);
+}
+
 // ── Editing target ─────────────────────────────────────────────────────
 // The focused text input registers handlers for the editing:* commands
 // (which fire with text-input = true keybindings).

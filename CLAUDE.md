@@ -153,11 +153,15 @@ thin `main.rs`:
   query DSL (`rating > 3 AND genre = "jazz"`, `->`, `->*`, `IS PRESENT`...)
   to the `Query` JSON IR.
 - `client.rs`: `ureq`-based HTTP client; `CliError::Usage` (exit 2) vs
-  `CliError::Op` (exit 1), daemon `{"error": ...}` bodies become
+  `CliError::Op` (exit 1), daemon/GUI `{"error": ...}` bodies become
   `error: <message>` on stderr.
 - `commands.rs`: one function per command; `<query|uuid>` targets, internal
   pagination (`PAGE_SIZE` 500, follows `next_cursor`), reconcile/violation
-  formatting, confirmation prompt for predicate `mf delete`.
+  formatting, confirmation prompt for predicate `mf delete`, `mf path`
+  (mfr_path chain walk), `mf query --values` (raw values, one per line).
+- `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
+  mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
+  port discovery via the `gui.port` file, `--gui-url`/`METAFOLDER_GUI_URL`.
 
 Repo-scoped commands require `--repo`/`METAFOLDER_REPO` (checked before any
 HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to

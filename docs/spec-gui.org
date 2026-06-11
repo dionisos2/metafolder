@@ -865,7 +865,14 @@ Responses: ={"event": "answer", "value": "left"}= / ={"event": "timeout"}= /
 Activates the command input with a custom prompt. Blocks until =Enter= or
 =Escape=. Mutually exclusive with =POST /gui/input= (same lock).
 
-Request body: ={"prompt": "Enter a rating (1-5): ", "timeout_ms": null}=
+Request body:
+={"prompt": "Enter a rating (1-5): ", "completions": [], "timeout_ms": null}=
+
+The optional =completions= array is offered by the command input's
+autocomplete while the prompt is active (same prefix-then-substring
+ranking and Tab/arrow navigation as command completion; accepting a value
+writes it into the input without submitting). The user may still type any
+free-form answer.
 
 Responses: ={"event": "confirm", "text": "4"}= / ={"event": "cancel"}=.
 
@@ -887,6 +894,25 @@ Returns the current GUI state.
   "input_wait_active": false
 }
 #+END_SRC
+
+*** CLI: =mf gui=
+
+The =mf= CLI exposes the scripting API as plain-text subcommands, so shell
+scripts need neither =curl= nor =jq=. The GUI base URL comes from
+=--gui-url= / =METAFOLDER_GUI_URL=, else the =gui.port= file (see
+[[*GUI API port persistence]]), else the default =http://127.0.0.1:7524=.
+
+| Command                                              | Effect                                                             |
+|------------------------------------------------------+--------------------------------------------------------------------|
+| =mf gui status=                                      | =GET /gui/status=, pretty-printed JSON                             |
+| =mf gui repo=                                        | Prints the active repo of the focused workspace (exit 1 if none)   |
+| =mf gui workspace new [--repo <uuid>]=               | Creates a workspace, prints its id                                 |
+| =mf gui workspace rm <id>=                           | Closes a workspace                                                 |
+| =mf gui layout [<slot> [<ws or ->]]=                 | Prints both slots / one slot / assigns (=-= hides the slot)        |
+| =mf gui view <slot> [<type>] [--path] [--state]=     | Prints or sets the panel type of a slot                            |
+| =mf gui message <text> [--workspace] [--timeout-ms]= | Posts a status bar message                                         |
+| =mf gui input <key>... [--timeout-ms]=               | Waits for one of the keys, prints it (exit 1 on timeout/close)     |
+| =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
 *** Example: image comparison script
 

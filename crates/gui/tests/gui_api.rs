@@ -390,6 +390,44 @@ async fn test_prompt_confirm_and_cancel() {
     assert_eq!(body, json!({"event": "cancel"}));
 }
 
+#[tokio::test]
+async fn test_prompt_forwards_completions() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/prompt",
+            Some(json!({"prompt": "Tag: ", "completions": ["jazz", "rock"]})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
+    assert_eq!(prompts[0]["prompt"], "Tag: ");
+    assert_eq!(prompts[0]["completions"], json!(["jazz", "rock"]));
+
+    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    let (status, _) = waiting.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+
+    // Without the field, completions default to an empty list.
+    ctx.notifier.clear();
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "? "}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let prompts = ctx.notifier.payloads(events::PROMPT_REQUESTED);
+    assert_eq!(prompts[0]["completions"], json!([]));
+    assert!(ctx.input.resolve_prompt(false, None));
+    waiting.await.unwrap();
+}
+
 // ── Status ────────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -404,4 +442,25 @@ async fn test_status_snapshot() {
     assert_eq!(body["layout"]["right"], Value::Null);
     assert_eq!(body["input_wait_active"], false);
     assert!(body["daemon_connected"].is_boolean());
+}
+
+// ── Media support ─────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_media_support_endpoint() {
+    let ctx = setup().await;
+    let (status, body) = request(&ctx.router, "GET", "/__media-support", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The values depend on the host's GStreamer installation: only check
+    // the shape and the internal consistency of the answer.
+    let missing: Vec<String> = body["missing"]
+        .as_array()
+        .expect("'missing' must be an array")
+        .iter()
+        .map(|v| v.as_str().unwrap().to_string())
+        .collect();
+    let has = |element: &str| !missing.iter().any(|m| m == element);
+    assert_eq!(body["audio"], json!(has("autoaudiosink")));
+    assert_eq!(body["video"], json!(has("autoaudiosink") && has("autovideosink")));
 }

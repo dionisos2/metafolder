@@ -290,12 +290,41 @@ pub struct QueryArgs {
     pub select: Option<String>,
     pub sort: Vec<String>,
     pub limit: Option<usize>,
+    /// Print the selected field's raw values, one per line, instead of
+    /// entry JSON (requires `--select` with exactly one field).
+    pub values: bool,
+}
+
+/// `--values` line format: scalars are printed bare, references as the
+/// 32-hex uuid, structured values (tree_ref, externalref) as compact JSON;
+/// `nothing` rows are skipped.
+fn raw_value_line(value: &Json) -> Option<String> {
+    match value["type"].as_str() {
+        Some("nothing") => None,
+        Some("string") | Some("datetime") | Some("ref") | Some("refbase") => {
+            value["value"].as_str().map(str::to_string)
+        }
+        Some("int") | Some("float") | Some("bool") => Some(value["value"].to_string()),
+        _ => Some(value["value"].to_string()),
+    }
 }
 
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let query = parse_dsl(&args.predicate)?;
     let sort = parse_sort(&args.sort)?;
+    if args.values {
+        let single = args
+            .select
+            .as_deref()
+            .filter(|s| *s != "*" && !s.contains(','))
+            .is_some();
+        if !single {
+            return Err(CliError::Usage(
+                "--values requires --select with exactly one field".into(),
+            ));
+        }
+    }
     // `--select a,b` restricts the printed fields; `--select '*'` keeps all.
     let select = args.select.as_deref().map(|s| {
         if s == "*" {
@@ -327,6 +356,16 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
             for uuid in &results {
                 println!("{}", uuid.as_str().unwrap_or_default());
             }
+        } else if args.values {
+            // Raw values, one per line, streamed (multi-map: one line per
+            // row of the selected field).
+            for entry in &results {
+                for field in entry["fields"].as_array().into_iter().flatten() {
+                    if let Some(line) = raw_value_line(&field["value"]) {
+                        println!("{line}");
+                    }
+                }
+            }
         } else {
             objects.extend(results.iter().cloned());
         }
@@ -338,7 +377,7 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
             None => break,
         }
     }
-    if select.is_some() {
+    if select.is_some() && !args.values {
         print_pretty(&Json::Array(objects));
     }
     Ok(0)
@@ -373,6 +412,66 @@ pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
     let body = json!({"path": absolutize(path)?});
     let resp = ctx.client.post(&format!("{base}/track"), &body)?;
     println!("{}", resp["uuid"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
+/// Maximum `mfr_path` chain length, mirroring the daemon's tree depth limit.
+const MAX_PATH_DEPTH: usize = 1000;
+
+/// Resolves an entry to its filesystem path by walking the `mfr_path`
+/// parent chain up to the root entry. Relative paths are repo-root-relative
+/// and start with `/` (the root entry itself is `/`).
+pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut current = Uuid::parse_str(uuid)
+        .map_err(|_| CliError::Usage(format!("invalid entry UUID: '{uuid}'")))?;
+    let mut components: Vec<String> = Vec::new();
+    loop {
+        if components.len() >= MAX_PATH_DEPTH {
+            return Err(CliError::Op(format!("mfr_path chain deeper than {MAX_PATH_DEPTH}")));
+        }
+        let entry = ctx.client.get(&format!("{base}/metadata/{}", current.as_simple()), &[])?;
+        let tree_ref = entry["fields"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|f| f["name"] == "mfr_path" && f["value"]["type"] == "tree_ref")
+            .map(|f| &f["value"]["value"])
+            .ok_or_else(|| {
+                CliError::Op(format!("entry {} has no mfr_path tree_ref", current.as_simple()))
+            })?;
+        match tree_ref["parent"].as_str() {
+            None => break, // the repository root entry
+            Some(parent) => {
+                components.push(tree_ref["name"].as_str().unwrap_or_default().to_string());
+                current = Uuid::parse_str(parent)
+                    .map_err(|_| CliError::Op(format!("malformed parent uuid: '{parent}'")))?;
+            }
+        }
+    }
+    components.reverse();
+    let rel = format!("/{}", components.join("/"));
+    if relative {
+        println!("{rel}");
+    } else {
+        let repos = ctx.client.get("/repos", &[])?;
+        let repo_simple = ctx.repo_base()?; // "/repos/<simple uuid>"
+        let repo_simple = repo_simple.trim_start_matches("/repos/");
+        let root = repos
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|r| r["repo_uuid"] == repo_simple)
+            .and_then(|r| r["root"].as_str())
+            .ok_or_else(|| CliError::Op(format!("repository {repo_simple} is not loaded")))?
+            .trim_end_matches('/')
+            .to_string();
+        if components.is_empty() {
+            println!("{root}");
+        } else {
+            println!("{root}{rel}");
+        }
+    }
     Ok(0)
 }
 

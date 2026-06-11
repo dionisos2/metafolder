@@ -5,6 +5,7 @@
     commonPrefix,
     dispatch,
     filterCommands,
+    filterCompletions,
     setEditingTarget,
     shortcutsFor,
   } from '../lib/commands';
@@ -48,10 +49,19 @@
     });
   });
 
+  // While a script prompt is active, the list offers the prompt's
+  // completions (values, not commands) instead of the command registry.
   const matches = $derived(
-    !focused || store.ui.promptText !== null || draft.startsWith('!') || draft.includes(' ')
+    !focused
       ? []
-      : filterCommands(store.commands, draft),
+      : store.ui.promptText !== null
+        ? filterCompletions(store.ui.promptCompletions, draft).map((name) => ({
+            name,
+            label: '',
+          }))
+        : draft.startsWith('!') || draft.includes(' ')
+          ? []
+          : filterCommands(store.commands, draft),
   );
   // Every match is listed; the CSS max-height makes the list scroll, so
   // arrow navigation travels through all possible completions.
@@ -74,9 +84,10 @@
     );
   }
 
-  /** Writes the suggestion into the input (does not execute it). */
+  /** Writes the suggestion into the input (does not execute it). A prompt
+   *  completion is a final value: no trailing space. */
   function acceptSuggestion(name: string) {
-    draft = name + ' ';
+    draft = store.ui.promptText !== null ? name : name + ' ';
     selectedIndex = -1;
     element?.focus();
   }
@@ -106,6 +117,7 @@
       // A script prompt dismissed with Escape resolves as "cancel".
       void invoke('prompt_resolve', { confirm: false, text: null });
       store.ui.promptText = null;
+      store.ui.promptCompletions = [];
     }
     element?.blur();
   }
@@ -123,6 +135,7 @@
     if (store.ui.promptText !== null) {
       // Script prompt (POST /gui/prompt): confirm with the typed text.
       store.ui.promptText = null;
+      store.ui.promptCompletions = [];
       element?.blur();
       await invoke('prompt_resolve', { confirm: true, text: input });
       return;

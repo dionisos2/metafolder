@@ -542,6 +542,80 @@ fn test_reconcile_single_entry() {
     assert!(out.stdout.starts_with("created: 1"), "unexpected summary: {}", out.stdout);
 }
 
+// ── Query --values ────────────────────────────────────────────────────────────
+
+#[test]
+fn test_query_values_prints_raw_scalars() {
+    let (repo, _root) = init_repo("values");
+    create_entry(&repo, &["type:string=tag", "name:string=jazz"]);
+    create_entry(&repo, &["type:string=tag", "name:string=rock", "weight:int=3"]);
+
+    let out = mf(&["--repo", &repo, "query", "type = \"tag\"", "--select", "name", "--values"]);
+    assert_ok(&out);
+    let mut names: Vec<&str> = out.stdout.lines().collect();
+    names.sort_unstable();
+    assert_eq!(names, vec!["jazz", "rock"]);
+
+    let out = mf(&["--repo", &repo, "query", "name = \"rock\"", "--select", "weight", "--values"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "3");
+}
+
+#[test]
+fn test_query_values_requires_a_single_selected_field() {
+    let (repo, _root) = init_repo("values_usage");
+    let out = mf(&["--repo", &repo, "query", "name = \"x\"", "--values"]);
+    assert_eq!(out.code, 2, "stdout: {}", out.stdout);
+    let out = mf(&["--repo", &repo, "query", "name = \"x\"", "--select", "a,b", "--values"]);
+    assert_eq!(out.code, 2, "stdout: {}", out.stdout);
+}
+
+// ── Path resolution ───────────────────────────────────────────────────────────
+
+#[test]
+fn test_path_resolves_tracked_file() {
+    let (repo, root) = init_repo("path");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
+
+    let out = mf(&["--repo", &repo, "track", root.join("sub/file.txt").to_str().unwrap()]);
+    assert_ok(&out);
+    let uuid = out.stdout.trim().to_string();
+
+    let out = mf(&["--repo", &repo, "path", &uuid]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), root.join("sub/file.txt").to_str().unwrap());
+
+    let out = mf(&["--repo", &repo, "path", "--relative", &uuid]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "/sub/file.txt");
+}
+
+#[test]
+fn test_path_of_the_root_entry() {
+    let (repo, root) = init_repo("path_root");
+    let out = mf(&["--repo", &repo, "list"]);
+    assert_ok(&out);
+    let root_uuid = out.stdout.trim().to_string();
+
+    let out = mf(&["--repo", &repo, "path", &root_uuid]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), root.to_str().unwrap());
+
+    let out = mf(&["--repo", &repo, "path", "--relative", &root_uuid]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "/");
+}
+
+#[test]
+fn test_path_fails_on_entry_without_mfr_path() {
+    let (repo, _root) = init_repo("path_none");
+    let uuid = create_entry(&repo, &["title:string=no path"]);
+    let out = mf(&["--repo", &repo, "path", &uuid]);
+    assert_eq!(out.code, 1, "stdout: {}", out.stdout);
+    assert!(out.stderr.contains("mfr_path"), "stderr: {}", out.stderr);
+}
+
 // ── Schema ────────────────────────────────────────────────────────────────────
 
 const FILM_SCHEMA: &str = r#"{

@@ -532,6 +532,14 @@ to the current directory — the CLI absolutises it). Prints the new entry
 UUID. Fails with exit code 1 when the path is outside the repository root or
 already tracked.
 
+** =mf path <uuid>=
+
+Prints the absolute filesystem path of an entry by walking the =mfr_path=
+parent chain up to the root entry (repository root from =GET /repos=).
+With =--relative=, prints the repo-root-relative path instead, starting
+with =/= (the root entry itself is =/=). Fails with exit code 1 when the
+entry has no =mfr_path= TreeRef (untracked or deleted file).
+
 ** Configuring the watch scope
 
 The watch/ignore system is driven by the =mf_watch= and =mf_ignore= fields

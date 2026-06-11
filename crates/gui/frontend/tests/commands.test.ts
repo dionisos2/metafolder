@@ -6,6 +6,7 @@ import { describe, expect, test } from 'vitest';
 import {
   commonPrefix,
   filterCommands,
+  filterCompletions,
   gotoIndex,
   parseInvocation,
   shortcutsFor,
@@ -138,5 +139,22 @@ describe('filterCommands', () => {
 
   test('no match yields an empty list', () => {
     expect(filterCommands(all, 'zzz')).toEqual([]);
+  });
+});
+
+describe('filterCompletions', () => {
+  const tags = ['rock', 'jazz', 'jazz/bebop', 'classical'];
+
+  test('prefix matches come first, then substring matches', () => {
+    expect(filterCompletions(tags, 'jazz')).toEqual(['jazz', 'jazz/bebop']);
+    expect(filterCompletions(tags, 'bop')).toEqual(['jazz/bebop']);
+  });
+
+  test('empty draft lists every completion, sorted', () => {
+    expect(filterCompletions(tags, '')).toEqual(['classical', 'jazz', 'jazz/bebop', 'rock']);
+  });
+
+  test('no match yields an empty list', () => {
+    expect(filterCompletions(tags, 'zzz')).toEqual([]);
   });
 });

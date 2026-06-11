@@ -38,6 +38,8 @@ export const store = $state({
     configInfo: null as ConfigInfo | null,
     /// Non-null while a script's POST /gui/prompt waits for the input.
     promptText: null as string | null,
+    /// Completions offered by the active prompt's autocomplete.
+    promptCompletions: [] as string[],
   },
 });
 
@@ -116,8 +118,9 @@ export async function initStore() {
   await listen<{ connected: boolean }>('daemon-health-changed', (event) => {
     store.daemonConnected = event.payload.connected;
   });
-  await listen<{ prompt: string }>('prompt-requested', (event) => {
+  await listen<{ prompt: string; completions?: string[] }>('prompt-requested', (event) => {
     store.ui.promptText = event.payload.prompt;
+    store.ui.promptCompletions = event.payload.completions ?? [];
     store.ui.commandInputFocusTick += 1;
   });
 

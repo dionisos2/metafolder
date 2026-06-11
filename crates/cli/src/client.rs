@@ -28,13 +28,20 @@ impl CliError {
 
 pub struct Client {
     base: String,
+    /// Peer name used in transport error messages ("daemon" or "GUI").
+    peer: &'static str,
     agent: ureq::Agent,
 }
 
 impl Client {
     pub fn new(base_url: &str) -> Self {
+        Self::with_peer(base_url, "daemon")
+    }
+
+    pub fn with_peer(base_url: &str, peer: &'static str) -> Self {
         Self {
             base: base_url.trim_end_matches('/').to_string(),
+            peer,
             agent: ureq::Agent::new(),
         }
     }
@@ -65,11 +72,11 @@ impl Client {
                 let message = body["error"]
                     .as_str()
                     .map(str::to_string)
-                    .unwrap_or_else(|| format!("daemon returned HTTP {code}"));
+                    .unwrap_or_else(|| format!("{} returned HTTP {code}", self.peer));
                 Err(CliError::Op(message))
             }
             Err(ureq::Error::Transport(t)) => {
-                Err(CliError::Op(format!("cannot reach the daemon at {}: {t}", self.base)))
+                Err(CliError::Op(format!("cannot reach the {} at {}: {t}", self.peer, self.base)))
             }
         }
     }

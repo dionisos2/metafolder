@@ -8,10 +8,10 @@ File identity is hash-based, so metadata follows files when they are moved or re
 
 The project is a Cargo workspace:
 
-- **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`) and its JSON serialization.
+- **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`), its JSON serialization, and the query DSL parser.
 - **`daemon`** — single background process managing one or more repositories: SQLite storage with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, query engine, user schema validation, and an HTTP API.
 - **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, entry CRUD, query DSL, reconcile/track, schema commands).
-- **`gui`** — stub, not yet implemented.
+- **`gui`** — the `mf-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories rendered in iframes and can be customized or added by the user.
 - **`bench`** — benchmarking harness (targets the old POC API; to be updated with the CLI).
 
 The full specification lives under `docs/` (`spec-*.org`).
@@ -21,6 +21,9 @@ The full specification lives under `docs/` (`spec-*.org`).
 ```bash
 cargo build
 cargo test
+
+# GUI frontend (vitest): npm install once in crates/gui/frontend
+npm --prefix crates/gui/frontend test
 ```
 
 ## Running the daemon
@@ -31,6 +34,27 @@ cargo run -p metafolder-daemon -- --port 8080
 ```
 
 The daemon is local-only and unauthenticated; access control is left to the OS.
+
+## Running the GUI
+
+Building the gui crate needs the Tauri system libraries (Arch:
+`webkit2gtk-4.1 gtk3 librsvg`) and `npm`. Build the frontend first, then run
+`mf-gui` with the daemon running:
+
+```bash
+npm --prefix crates/gui/frontend install   # once
+npm --prefix crates/gui/frontend run build
+
+cargo run -p metafolder-gui                # GUI API on 127.0.0.1:7524
+cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
+```
+
+On first run the GUI installs its editable configuration under
+`~/.config/metafolder-gui/` (`keybindings.toml`, `style.css`, and the
+built-in panel types as user-copyable HTML/JS); user edits are never
+overwritten. The local HTTP API on port 7524 lets external scripts drive the
+GUI (workspaces, layout, panel views, messages, input prompts). See
+`docs/spec-gui.org`.
 
 ## Quick tour (mf)
 
@@ -58,9 +82,15 @@ mf query 'genre = "jazz"'
 
 `mf --help` lists all commands (`init`, `load`, `repos`, `list`, `get`,
 `create`, `set`, `add`, `unset`, `delete`, `query`, `reconcile`, `track`,
-`schema check|reload|show`). Global options: `--daemon-url`
-(`METAFOLDER_DAEMON_URL`) and `--repo` (`METAFOLDER_REPO`). Exit codes:
-0 success, 1 operation failed, 2 usage error.
+`path`, `schema check|reload|show`, and the `gui` subcommands below).
+Global options: `--daemon-url` (`METAFOLDER_DAEMON_URL`) and `--repo`
+(`METAFOLDER_REPO`). Exit codes: 0 success, 1 operation failed, 2 usage
+error.
+
+`mf gui …` drives a running GUI through its scripting API (`status`,
+`repo`, `workspace new|rm`, `layout`, `view`, `message`, `input`,
+`prompt`); see `scripts/gui-tag-pair.sh` for a complete interactive
+example (per-file yes/no tagging with prompt autocompletion).
 
 ## Quick tour (curl)
 
