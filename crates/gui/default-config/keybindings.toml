@@ -1,0 +1,33 @@
+# Default keybindings shipped with the metafolder GUI.
+# Copy entries you want to change into your own
+# ~/.config/metafolder-gui/keybindings.toml — the user file only needs the
+# overrides, it is merged over these defaults at startup.
+
+# Command input (spec default suggestion).
+":" = { command = "command-input:activate" }
+
+# Text editing (fire even while a text input is focused).
+"escape" = { command = "editing:unfocus", text-input = true }
+"enter" = { command = "editing:confirm", text-input = true }
+"ctrl+a" = { command = "editing:goto-line-start", text-input = true }
+"ctrl+e" = { command = "editing:goto-line-end", text-input = true }
+
+# Tabs (spec default suggestions: alt+t, alt+w, alt+1..9).
+"alt+t" = { command = "tab:new" }
+"alt+w" = { command = "tab:close" }
+"alt+n" = { command = "tab:next" }
+"alt+p" = { command = "tab:prev" }
+"alt+1" = { command = "tab:goto-1" }
+"alt+2" = { command = "tab:goto-2" }
+"alt+3" = { command = "tab:goto-3" }
+"alt+4" = { command = "tab:goto-4" }
+"alt+5" = { command = "tab:goto-5" }
+"alt+6" = { command = "tab:goto-6" }
+"alt+7" = { command = "tab:goto-7" }
+"alt+8" = { command = "tab:goto-8" }
+"alt+9" = { command = "tab:goto-9" }
+
+# Panel slots.
+"alt+v" = { command = "panel:split" }
+"alt+c" = { command = "panel:close" }
+"alt+o" = { command = "panel:focus-next" }

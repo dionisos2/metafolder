@@ -1,0 +1,24 @@
+/* Default metafolder GUI stylesheet.
+ * Copy to ~/.config/metafolder-gui/style.css and edit freely; the GUI
+ * reloads it automatically when the file changes. */
+
+:root {
+  --mf-bg: #1e1e24;
+  --mf-bg-raised: #26262e;
+  --mf-fg: #d8d8e0;
+  --mf-fg-dim: #8a8a96;
+  --mf-accent: #4c56c4;
+  --mf-focus-border: #4c56c4;
+  --mf-error: #c44c56;
+  --mf-ok: #56c44c;
+  --mf-tab-focused: #56c44c;
+  --mf-tab-unfocused: #c44c56;
+  --mf-font: sans-serif;
+  --mf-font-mono: monospace;
+}
+
+body {
+  background: var(--mf-bg);
+  color: var(--mf-fg);
+  font-family: var(--mf-font);
+}

@@ -5,8 +5,12 @@
 //! updated through Tauri events. An Axum server (default port 7524) serves
 //! panel-type directories and the scripting API.
 
+pub mod command_registry;
+pub mod config;
 pub mod events;
+pub mod keybindings;
 pub mod notifier;
+pub mod server;
 pub mod state;
 
 /// Startup options, from CLI flags.
