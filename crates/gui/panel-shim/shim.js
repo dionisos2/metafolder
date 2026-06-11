@@ -212,6 +212,8 @@ window.metafolder = {
   workspace: {
     get: (key) => request('workspace.get', { key }),
     set: (key, value) => request('workspace.set', { key, value }),
+    /** Sets active_repo on a workspace that has none yet (repos panel). */
+    adoptRepo: (repo) => request('workspace.adoptRepo', { repo }),
     onChange(key, listener) {
       if (!varListeners.has(key)) {
         varListeners.set(key, new Set());

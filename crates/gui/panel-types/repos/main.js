@@ -43,12 +43,16 @@ async function refresh() {
 // (startup case), otherwise open a new workspace (spec-gui "Repo
 // indicator").
 async function openRepo(repoUuid) {
-  const current = await workspace.get('active_repo');
-  if (current === null) {
-    await workspace.adoptRepo(repoUuid);
-    await commands.invoke('panel:set-type entry-list');
-  } else {
-    await commands.invoke(`tab:new ${repoUuid}`);
+  try {
+    const current = await workspace.get('active_repo');
+    if (current === null) {
+      await workspace.adoptRepo(repoUuid);
+      await commands.invoke('panel:set-type entry-list');
+    } else {
+      await commands.invoke(`tab:new ${repoUuid}`);
+    }
+  } catch (error) {
+    statusBar.message(`cannot open the repository: ${error.message ?? error}`, 8000);
   }
 }
 
