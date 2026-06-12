@@ -6,3 +6,6 @@ benchmarks/.metafolder/
 crates/gui/frontend/node_modules/
 crates/gui/frontend/dist/
 crates/gui/gen/
+prompts.txt
+.#prompts.txt
+node_modules/
