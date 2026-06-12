@@ -2,7 +2,6 @@
   import { untrack } from 'svelte';
   import { invoke } from '../lib/ipc';
   import {
-    commonPrefix,
     dispatch,
     filterCommands,
     filterCompletions,
@@ -15,8 +14,9 @@
   let draft = $state('');
   let currentWs = $state<string | null>(null);
   let focused = $state(false);
-  /** Highlighted suggestion while navigating with Up/Down; -1 = none. */
-  let selectedIndex = $state(-1);
+  /** Highlighted suggestion; the first match is selected by default, so
+   *  Tab always has a target. Up/Down move it. */
+  let selectedIndex = $state(0);
 
   // The draft is per-workspace (spec-gui "Command input"): switching the
   // focused slot to another workspace restores that workspace's draft.
@@ -51,6 +51,8 @@
 
   // While a script prompt is active, the list offers the prompt's
   // completions (values, not commands) instead of the command registry.
+  // The filter is fuzzy, so spaces in the draft are term separators
+  // ("con def" matches like .*con.*def.*), not an argument boundary.
   const matches = $derived(
     !focused
       ? []
@@ -59,7 +61,7 @@
             name,
             label: '',
           }))
-        : draft.startsWith('!') || draft.includes(' ')
+        : draft.startsWith('!')
           ? []
           : filterCommands(store.commands, draft),
   );
@@ -67,18 +69,15 @@
   // arrow navigation travels through all possible completions.
   const suggestions = $derived(matches);
 
-  // Typing leaves list navigation (the list itself just refilters).
+  // Typing returns the selection to the best (first) match.
   $effect(() => {
     void draft;
-    selectedIndex = -1;
+    selectedIndex = 0;
   });
 
   function moveSelection(delta: number) {
     if (suggestions.length === 0) return;
-    selectedIndex =
-      selectedIndex < 0 && delta < 0
-        ? suggestions.length - 1
-        : (selectedIndex + delta + suggestions.length) % suggestions.length;
+    selectedIndex = (selectedIndex + delta + suggestions.length) % suggestions.length;
     requestAnimationFrame(() =>
       document.querySelector('.suggestions .selected')?.scrollIntoView({ block: 'nearest' }),
     );
@@ -88,23 +87,14 @@
    *  completion is a final value: no trailing space. */
   function acceptSuggestion(name: string) {
     draft = store.ui.promptText !== null ? name : name + ' ';
-    selectedIndex = -1;
+    selectedIndex = 0;
     element?.focus();
   }
 
-  /** Shell-style Tab: one match completes it, several complete the
-   *  longest common prefix. */
+  /** Tab writes the selected suggestion into the input. */
   function completeTab() {
-    if (selectedIndex >= 0) {
-      acceptSuggestion(suggestions[selectedIndex].name);
-      return;
-    }
-    if (matches.length === 1) {
-      acceptSuggestion(matches[0].name);
-      return;
-    }
-    const prefix = commonPrefix(matches.map((m) => m.name));
-    if (prefix.startsWith(draft) && prefix.length > draft.length) draft = prefix;
+    if (suggestions.length === 0) return;
+    acceptSuggestion(suggestions[Math.min(selectedIndex, suggestions.length - 1)].name);
   }
 
   function cancelPrompt() {
@@ -116,30 +106,22 @@
   }
 
   function unfocus() {
-    // First Escape leaves list navigation, the next one the input.
-    if (selectedIndex >= 0) {
-      selectedIndex = -1;
-      return;
-    }
     cancelPrompt();
     element?.blur();
   }
 
   /** editing:discard — clear the draft entirely, then leave the input. */
   function discard() {
-    selectedIndex = -1;
+    selectedIndex = 0;
     draft = '';
     if (currentWs !== null) store.inputDrafts[currentWs] = '';
     cancelPrompt();
     element?.blur();
   }
 
+  // Enter always runs what is typed (a suggestion is always selected, so
+  // it cannot double as "accept the suggestion" — that is Tab's job).
   async function submit() {
-    // Enter while navigating writes the suggestion, it does not execute.
-    if (selectedIndex >= 0) {
-      acceptSuggestion(suggestions[selectedIndex].name);
-      return;
-    }
     const input = draft;
     draft = '';
     const ws = currentWs;

@@ -4,7 +4,6 @@
 
 import { describe, expect, test } from 'vitest';
 import {
-  commonPrefix,
   filterCommands,
   filterCompletions,
   gotoIndex,
@@ -60,22 +59,6 @@ describe('gotoIndex', () => {
   test('returns null for other commands', () => {
     expect(gotoIndex('tab:goto-')).toBeNull();
     expect(gotoIndex('tab:new')).toBeNull();
-  });
-});
-
-describe('commonPrefix', () => {
-  test('returns the longest shared prefix', () => {
-    expect(commonPrefix(['panel:unsplit', 'panel:split', 'panel:focus-next'])).toBe('panel:');
-    expect(commonPrefix(['tab:new', 'tab:next'])).toBe('tab:ne');
-  });
-
-  test('single name is its own prefix', () => {
-    expect(commonPrefix(['quit'])).toBe('quit');
-  });
-
-  test('no shared prefix yields the empty string', () => {
-    expect(commonPrefix(['panel:unsplit', 'tab:close'])).toBe('');
-    expect(commonPrefix([])).toBe('');
   });
 });
 
@@ -141,6 +124,19 @@ describe('filterCommands', () => {
   test('no match yields an empty list', () => {
     expect(filterCommands(all, 'zzz')).toEqual([]);
   });
+
+  test('space-separated terms match fuzzily, in order ("con def" ≈ .*con.*def.*)', () => {
+    const names = filterCommands(all, 'pan spl').map((c) => c.name);
+    expect(names).toEqual(['panel:split', 'panel:unsplit']);
+    // Terms must appear in order, without overlapping.
+    expect(filterCommands(all, 'spl pan')).toEqual([]);
+    expect(filterCommands(all, 'tab close').map((c) => c.name)).toEqual(['tab:close']);
+  });
+
+  test('matching is case-insensitive', () => {
+    const names = filterCommands(all, 'PAN').map((c) => c.name);
+    expect(names).toEqual(['panel:split', 'panel:unsplit']);
+  });
 });
 
 describe('filterCompletions', () => {
@@ -157,5 +153,10 @@ describe('filterCompletions', () => {
 
   test('no match yields an empty list', () => {
     expect(filterCompletions(tags, 'zzz')).toEqual([]);
+  });
+
+  test('space-separated terms match fuzzily, in order', () => {
+    expect(filterCompletions(tags, 'ja be')).toEqual(['jazz/bebop']);
+    expect(filterCompletions(tags, 'be ja')).toEqual([]);
   });
 });

@@ -211,12 +211,15 @@ command being typed.
 
 Accepts:
 - A command name (with inline completion) optionally followed by
-  space-separated parameters. =Tab= completes shell-style: a single match
-  is completed entirely, several matches complete to their longest common
-  prefix. =Up=/=Down= navigate the suggestion list; =Enter= on a
-  highlighted suggestion writes it into the input (without executing);
-  =Escape= leaves the list navigation (typing also does), then a second
-  =Escape= unfocuses the input.
+  space-separated parameters. The suggestion list is filtered fuzzily and
+  case-insensitively: the draft is split on whitespace and the terms must
+  appear in the command name in order ("con def" matches like the regex
+  =.*con.*def.*=). The first (best) suggestion is always selected;
+  =Up=/=Down= move the selection. =Tab= writes the selected suggestion
+  into the input (without executing); =Enter= always runs exactly what is
+  typed — never the selection, since one is always highlighted. Because
+  spaces are fuzzy term separators, the list simply empties when typed
+  arguments stop matching any command name.
 - A shell command prefixed with =!= — executed as a subprocess; stdout/stderr
   goes to the =message= panel type and to the terminal from which the GUI was
   launched.
