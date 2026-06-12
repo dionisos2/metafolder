@@ -2,6 +2,7 @@
 // operations; rollback and prune (spec-gui "Event log").
 
 import { el } from '/__ui.js';
+import { moveSelection } from './selection.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
@@ -49,16 +50,26 @@ async function refresh() {
   }
 }
 
+/** Selects a revision; with toggleOps, also expands/collapses its operations. */
+function selectRevision(id, { toggleOps = false } = {}) {
+  selectedRev = id;
+  if (toggleOps) expandedRev = expandedRev === id ? null : id;
+  render();
+  document.querySelector('tr.rev.selected')?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveBy(delta) {
+  const id = moveSelection(revisions, selectedRev, delta);
+  if (id !== null) selectRevision(id);
+}
+
 function revisionRow(rev) {
   return el(
     'tr',
     {
       class: ['rev', rev.id === selectedRev && 'selected'],
-      onclick: () => {
-        selectedRev = rev.id;
-        expandedRev = expandedRev === rev.id ? null : rev.id;
-        render();
-      },
+      onclick: () => selectRevision(rev.id),
+      ondblclick: () => selectRevision(rev.id, { toggleOps: true }),
     },
     el('td', {}, `#${rev.id}`, rev.label && [' ', el('span', { class: 'label' }, rev.label)]),
     el('td', {}, new Date(rev.timestamp).toLocaleString()), // ms since epoch
@@ -168,6 +179,26 @@ commands.register('log:refresh', {
   label: 'Log: refresh from the daemon',
   handler: refresh,
 });
+commands.register('log:next', {
+  label: 'Log: move the selection down',
+  handler: () => moveBy(1),
+});
+commands.register('log:prev', {
+  label: 'Log: move the selection up',
+  handler: () => moveBy(-1),
+});
+commands.register('log:toggle-ops', {
+  label: 'Log: expand/collapse the selected revision',
+  handler: () => {
+    if (selectedRev !== null) selectRevision(selectedRev, { toggleOps: true });
+  },
+});
+
+metafolder.addKeybinding('log:next', 'down');
+metafolder.addKeybinding('log:next', 'j');
+metafolder.addKeybinding('log:prev', 'up');
+metafolder.addKeybinding('log:prev', 'k');
+metafolder.addKeybinding('log:toggle-ops', 'enter');
 
 workspace.onChange('metarecords:dirty', () => void refresh());
 workspace.onChange('active_repo', (value) => {

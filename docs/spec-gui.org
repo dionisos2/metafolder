@@ -916,7 +916,9 @@ revisions ahead of (or beside) HEAD are not part of the linear history
 anymore, but they must stay listed so the user can navigate forward
 again.
 
-Selecting a revision (=Enter=) expands it to show individual operations.
+A click — or =up= / =down= (also =k= / =j=), via =log:prev= / =log:next= —
+moves the selection. A double click or =Enter= (=log:toggle-ops=) expands
+the revision to show its individual operations (and collapses it again).
 
 *** Revision commands
 
