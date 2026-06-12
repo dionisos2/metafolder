@@ -39,6 +39,14 @@
     }
     renaming = null;
   }
+
+  async function closeWs(wsId: string) {
+    try {
+      await invoke('tab_close_ws', { wsId });
+    } catch {
+      /* errors surface via the status bar */
+    }
+  }
 </script>
 
 <nav class="tab-bar">
@@ -71,6 +79,15 @@
         <span class="dot dot-focused" class:on={ind.focused}></span>
         <span class="dot dot-other" class:on={ind.other}></span>
         {ws.name}
+        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <span
+          class="close"
+          title="close this workspace"
+          onclick={(e) => {
+            e.stopPropagation();
+            void closeWs(ws.id);
+          }}>×</span
+        >
       {/if}
     </button>
   {/each}
@@ -113,6 +130,15 @@
   }
   .new-tab {
     color: var(--mf-fg-dim, #8a8a96);
+  }
+  .close {
+    color: var(--mf-fg-dim, #8a8a96);
+    border-radius: 3px;
+    padding: 0 3px;
+  }
+  .close:hover {
+    color: var(--mf-error, #c44c56);
+    background: var(--mf-bg-raised, #26262e);
   }
   .rename {
     font: inherit;

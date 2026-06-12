@@ -279,6 +279,9 @@ Color indicators show the current slot assignments:
 
 *Left-click* on a tab: assigns that workspace to the focused slot (the slot
 keeps focus). *Right-click*: assigns that workspace to the non-focused slot.
+Each tab carries a *close button* (=×=) that closes its workspace — the
+mouse equivalent of =tab:close=, except it targets the clicked tab's
+workspace rather than the focused slot's.
 
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
@@ -313,6 +316,13 @@ repo indicator. The header contains a dropdown that lists all available panel
 types (built-in and custom); selecting one switches the displayed panel type
 for that slot. The same switch is available via =panel:set-type <name>= and
 configurable keybindings.
+
+The header also carries the mouse equivalents of the layout commands: when
+the slot is the only visible one, a *split button* (=◫=, =panel:split=
+semantics) shows the second slot; when both slots are visible, a *close
+button* (=×=) hides that slot — its own slot, unlike =panel:close= which
+hides the non-focused one. The hidden slot's workspace assignment is
+remembered either way.
 
 ** Status bar
 

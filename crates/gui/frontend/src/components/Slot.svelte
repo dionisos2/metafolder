@@ -8,6 +8,7 @@
   const payload = $derived(slotPayload(id));
   const workspace = $derived(workspaceById(payload.workspace_id));
   const isFocused = $derived(store.layout.focused === id);
+  const otherVisible = $derived(store.layout[id === 'left' ? 'right' : 'left'].visible);
 
   async function focusMe() {
     if (!isFocused) await invoke('panel_focus_next');
@@ -45,11 +46,32 @@
         <option value={name}>{name}</option>
       {/each}
     </select>
-    <span class="repo-indicator" title="active repository">
-      {#if workspace?.active_repo}
-        {workspace.active_repo.slice(0, 8)}
+    <span class="header-right">
+      <span class="repo-indicator" title="active repository">
+        {#if workspace?.active_repo}
+          {workspace.active_repo.slice(0, 8)}
+        {:else}
+          no repo
+        {/if}
+      </span>
+      {#if otherVisible}
+        <button
+          class="slot-button"
+          title="hide this panel slot"
+          onclick={(e) => {
+            e.stopPropagation();
+            void invoke('slot_hide', { slot: id });
+          }}>×</button
+        >
       {:else}
-        no repo
+        <button
+          class="slot-button"
+          title="show the second panel slot (panel:split)"
+          onclick={(e) => {
+            e.stopPropagation();
+            void invoke('panel_split');
+          }}>◫</button
+        >
       {/if}
     </span>
   </header>
@@ -90,10 +112,28 @@
     border: 1px solid var(--mf-fg-dim, #8a8a96);
     border-radius: 3px;
   }
+  .header-right {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
   .repo-indicator {
     color: var(--mf-fg-dim, #8a8a96);
     font-family: var(--mf-font-mono, monospace);
     font-size: 0.85em;
+  }
+  .slot-button {
+    border: none;
+    border-radius: 3px;
+    padding: 0 4px;
+    background: transparent;
+    color: var(--mf-fg-dim, #8a8a96);
+    font: inherit;
+    cursor: pointer;
+  }
+  .slot-button:hover {
+    color: var(--mf-fg, #d8d8e0);
+    background: var(--mf-bg, #1e1e24);
   }
   .slot-body {
     position: relative;

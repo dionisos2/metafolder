@@ -73,6 +73,13 @@ pub fn tab_close(app: AppHandle) -> Result<(), String> {
     app.gui.tab_close()
 }
 
+/// Mouse path: the tab's close button targets its own workspace, which
+/// is not necessarily the focused one (unlike `tab:close`).
+#[tauri::command]
+pub fn tab_close_ws(app: AppHandle, ws_id: String) -> Result<(), String> {
+    app.gui.close_workspace(&ws_id)
+}
+
 #[tauri::command]
 pub fn tab_rename(app: AppHandle, ws_id: String, name: String) -> Result<(), String> {
     app.gui.rename_workspace(&ws_id, &name)
@@ -108,6 +115,13 @@ pub fn panel_split(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn panel_close(app: AppHandle) -> Result<(), String> {
     app.gui.panel_close()
+}
+
+/// Mouse path: the slot header's close button hides its own slot,
+/// which is not necessarily the non-focused one (unlike `panel:close`).
+#[tauri::command]
+pub fn slot_hide(app: AppHandle, slot: SlotId) {
+    app.gui.hide_slot(slot)
 }
 
 #[tauri::command]
