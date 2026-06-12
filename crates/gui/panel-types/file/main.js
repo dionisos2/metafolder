@@ -116,9 +116,15 @@ async function renderViewer() {
 function update(newPaths) {
   paths = Array.isArray(newPaths) ? newPaths : [];
   activeIndex = 0;
+  metafolder.whenVisible(deferredRender);
+}
+
+// Loading the file (image/media/text fetch) waits for an actual display:
+// a hidden instance following selected_paths must not stream anything.
+const deferredRender = () => {
   renderPathBar();
   void renderViewer();
-}
+};
 
 await metafolder.ready;
 workspace.onChange('selected_paths', update);

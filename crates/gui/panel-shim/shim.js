@@ -6,6 +6,7 @@
 
 import { comboFromEvent, createMatcher } from '/__keymatch.js';
 import { createPathResolver } from '/__resolve.js';
+import { createVisibilityGate } from '/__visibility.js';
 import {
   hasOpenMenu,
   installContextMenuSuppression,
@@ -26,6 +27,7 @@ let resolveReady;
 const ready = new Promise((resolve) => (resolveReady = resolve));
 
 const matcher = createMatcher([]);
+const visibilityGate = createVisibilityGate();
 
 // Per-repo TreeRef path resolvers and repo-info cache.
 const resolvers = new Map();
@@ -87,6 +89,7 @@ window.addEventListener('message', (event) => {
     case 'init': {
       initData = message;
       matcher.setBindings(message.keytable ?? []);
+      visibilityGate.set(message.slot !== null && message.slot !== undefined);
       clearInterval(readyRetry);
       resolveReady();
       break;
@@ -131,6 +134,7 @@ window.addEventListener('message', (event) => {
       matcher.setBindings(message.bindings ?? []);
       break;
     case 'visibility':
+      visibilityGate.set(message.visible === true);
       for (const listener of visibilityListeners) listener(message.visible, message.slot);
       break;
   }
@@ -226,6 +230,21 @@ window.metafolder = {
 
   onVisibility(listener) {
     visibilityListeners.add(listener);
+  },
+
+  /** Whether this panel is currently displayed in a slot. */
+  get visible() {
+    return visibilityGate.visible;
+  },
+
+  /**
+   * Runs `fn` now when the panel is displayed, otherwise once on the
+   * next display. Panels defer their first data load through this, so a
+   * hidden pre-instantiated panel costs nothing beyond registration.
+   * Re-arming with the same function while hidden runs it once.
+   */
+  whenVisible(fn) {
+    visibilityGate.whenVisible(fn);
   },
 
   daemon: {

@@ -431,10 +431,16 @@ async function start() {
   if (repo !== null) await fetchPage(true);
 }
 
+// The first query waits for the first actual display: construction stays
+// cheap so the panel type can be pre-instantiated hidden (commands
+// registered, no daemon traffic). start() re-reads the repo and fetches
+// with the selection preserved, so one stable callback covers every
+// trigger; re-arming while hidden coalesces into a single run on show.
+const deferredStart = () => void start();
 // Refresh when metarecord-detail (or another panel) writes metarecords.
-workspace.onChange('metarecords:dirty', () => void fetchPage(true));
+workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredStart));
 // The workspace may adopt a repo after startup (repos panel).
-workspace.onChange('active_repo', () => void start());
+workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
 // Columns may also be set by a script (mf gui) or another session.
 workspace.onChange('metarecord-list:columns', (value) => {
   setColumns(value);
@@ -450,4 +456,4 @@ workspace.onChange('metarecord-list:page-size', (value) => {
 setColumns(await workspace.get('metarecord-list:columns'));
 widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
 pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
-await start();
+metafolder.whenVisible(deferredStart);

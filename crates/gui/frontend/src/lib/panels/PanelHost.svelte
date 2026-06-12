@@ -173,6 +173,18 @@
     window.addEventListener('message', onMessage);
     window.addEventListener('resize', sync);
 
+    // Pre-instantiate every panel type once (hidden, for the startup
+    // workspace) so all panel commands are registered from the start:
+    // dispatch by name then works session-wide (the registry survives
+    // iframe removal). The shim's visibility gate keeps these instances
+    // free of daemon traffic until actually displayed. Delayed so the
+    // startup layout settles first.
+    const prewarmTimer = setTimeout(() => {
+      const wsId = focusedWs() ?? store.workspaces[0]?.id;
+      if (!wsId) return;
+      for (const panelType of store.panelTypes) ensureIframe(wsId, panelType);
+    }, 1000);
+
     const unlisteners: Promise<() => void>[] = [
       listen<{ workspace_id: string; key: string; value: unknown }>(
         'workspace-var-changed',
@@ -214,6 +226,7 @@
     });
 
     return () => {
+      clearTimeout(prewarmTimer);
       window.removeEventListener('message', onMessage);
       window.removeEventListener('resize', sync);
       resizeObserver?.disconnect();

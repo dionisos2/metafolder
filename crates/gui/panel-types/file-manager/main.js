@@ -239,11 +239,15 @@ async function start() {
   }
 }
 
-workspace.onChange('active_repo', () => void start());
+// The first directory listing waits for the first actual display:
+// construction stays cheap so the panel type can be pre-instantiated
+// hidden (commands registered, no filesystem/daemon traffic).
+const deferredStart = () => void start();
+workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
 workspace.onChange('metarecords:dirty', async () => {
-  if (currentDir === null) return;
+  if (currentDir === null) return; // not started yet (still hidden)
   await refreshTracked(currentDir);
   render();
 });
 
-await start();
+metafolder.whenVisible(deferredStart);

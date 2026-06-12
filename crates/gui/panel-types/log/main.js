@@ -204,11 +204,15 @@ metafolder.addKeybinding('log:prev', 'up');
 metafolder.addKeybinding('log:prev', 'k');
 metafolder.addKeybinding('log:toggle-ops', 'enter');
 
-workspace.onChange('metarecords:dirty', () => void refresh());
+// The log fetch (the whole tree) waits for the first actual display:
+// construction stays cheap so the panel type can be pre-instantiated
+// hidden, and edits while hidden coalesce into one refresh on show.
+const deferredRefresh = () => void refresh();
+workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
 workspace.onChange('active_repo', (value) => {
   repo = value;
-  void refresh();
+  metafolder.whenVisible(deferredRefresh);
 });
 
 repo = await workspace.get('active_repo');
-await refresh();
+metafolder.whenVisible(deferredRefresh);

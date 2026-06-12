@@ -87,6 +87,17 @@ Each panel type retains its full state for the lifetime of the session, even
 when not displayed. Switching to another panel type and back restores the
 previous state unchanged.
 
+Panel *construction* is separate from the *first display*: loading the
+iframe registers commands, keybinding suggestions and listeners, but a
+panel's expensive work — the initial query of =metarecord-list=, the directory
+listing of =file-manager=, the log fetch, streaming the previewed file —
+is deferred to the first actual display via =metafolder.whenVisible(fn)=
+(=metafolder.visible= exposes the current state; while hidden, repeated
+triggers re-arming the same callback coalesce into one run on show). The
+shell pre-instantiates every installed panel type once at startup, hidden,
+for the startup workspace: all panel commands are registered from the
+start at the cost of construction only, without daemon traffic.
+
 ** Display mode
 
 The visual representation used within a panel type that supports several
@@ -145,9 +156,11 @@ type that registered the command (in the focused workspace), so acting on
 an unfocused — or hidden — panel is legitimate (e.g. the file panel's
 arrow keys drive =metarecord-list:next= / =metarecord-list:prev= in the other slot).
 Focus-dependent behaviour belongs to keybindings (=when=, see
-[[*Keybinding]]), not to commands. A panel command is only registered once
-its panel type has been instantiated in the session (lazily, hidden if
-need be, on first dispatch); until then the name is unknown.
+[[*Keybinding]]), not to commands. Panel commands are registered when the
+panel type is instantiated; the shell pre-instantiates every installed
+panel type once at startup (hidden, see [[*Panel type]]), so all command
+names are known from the start. The registry survives iframe removal
+(workspace closed): a later dispatch re-instantiates the owner lazily.
 
 ** Keybinding
 
