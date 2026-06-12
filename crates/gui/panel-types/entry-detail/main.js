@@ -2,6 +2,8 @@
 // (spec-gui "entry-detail panel type").
 
 import { el, formatValue, valueEl } from '/__ui.js';
+import { createTypePicker, parseRawValue } from './add-type.js';
+import { createAnnotator } from './annotations.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
@@ -17,6 +19,18 @@ const fieldRows = document.getElementById('field-rows');
 const entryHead = document.getElementById('entry-head');
 const errorBox = document.getElementById('error');
 const addForm = document.getElementById('add-form');
+const addValueSlot = document.getElementById('add-value');
+let addWidget = null; // {element, read()} for the picked type
+let annotator = null; // rebuilt per load (entries change under us)
+
+/** The form's value widget follows the picked type (a tree_ref needs two
+ *  inputs, a bool a checkbox, ...): same widgets as inline editing. */
+function setAddWidget(type) {
+  addWidget = widgetFor(type, undefined);
+  addValueSlot.replaceChildren(addWidget.element);
+}
+const typePicker = createTypePicker(document.getElementById('add-type'), 'string', setAddWidget);
+setAddWidget(typePicker.get());
 const forceBox = document.getElementById('force');
 
 const isReserved = (name) => name.startsWith('mfr_');
@@ -148,6 +162,7 @@ function fieldRow(field) {
     );
   } else {
     value.replaceChildren(valueEl(field.value, openRef));
+    appendAnnotation(value, field);
     ops.append(
       el(
         'button',
@@ -170,6 +185,18 @@ function fieldRow(field) {
     value,
     ops,
   );
+}
+
+/** Fills in, asynchronously, the dim line under a reference value: the
+ *  resolved path of a tree_ref, the "name" field of a ref's target. */
+function appendAnnotation(cell, field) {
+  if (!annotator) return;
+  const note = el('div', { class: 'annotation' });
+  cell.append(note);
+  void annotator.annotate(field.name, field.value).then((text) => {
+    if (text !== null) note.textContent = text;
+    else note.remove();
+  });
 }
 
 function stagedRow(staged, index) {
@@ -206,6 +233,10 @@ async function load() {
   }
   try {
     entry = await daemon.call('GET', api(''));
+    // Fresh cache per load: referenced entries may have changed too.
+    annotator = createAnnotator((uuid) =>
+      daemon.call('GET', `/repos/${current.repo}/metadata/${uuid}`),
+    );
   } catch (error) {
     entry = null;
     showError(String(error.message ?? error));
@@ -244,26 +275,8 @@ async function deleteField(field) {
 
 function readAddForm() {
   const name = document.getElementById('add-name').value.trim();
-  const type = document.getElementById('add-type').value;
-  const raw = document.getElementById('add-value').value;
   if (!name) throw new Error('field name is required');
-  const widgetless = {
-    string: () => ({ type, value: raw }),
-    int: () => ({ type, value: Number(raw) }),
-    float: () => ({ type, value: Number(raw) }),
-    bool: () => ({ type, value: raw.trim() === 'true' }),
-    datetime: () => ({ type, value: raw.trim() }),
-    nothing: () => ({ type: 'nothing' }),
-    ref: () => ({ type, value: raw.trim() }),
-    tree_ref: () => {
-      // "parent-uuid/name" or just "name" for a root.
-      const slash = raw.indexOf('/');
-      return slash === -1
-        ? { type, value: { parent: null, name: raw.trim() } }
-        : { type, value: { parent: raw.slice(0, slash).trim() || null, name: raw.slice(slash + 1).trim() } };
-    },
-  };
-  return { name, value: widgetless[type]() };
+  return { name, value: addWidget.read() };
 }
 
 async function addField(replace) {
@@ -395,10 +408,7 @@ commands.register('entry:batch-set', {
       [name, type, ...raw] = answer.split(/\s+/);
       raw = raw.join(' ');
     }
-    document.getElementById('add-name').value = name;
-    document.getElementById('add-type').value = type;
-    document.getElementById('add-value').value = raw;
-    const { value } = readAddForm();
+    const value = parseRawValue(type, raw);
     const repo = current?.repo ?? (await workspace.get('active_repo'));
     // No uuid predicate in the query IR yet: one PATCH per entry.
     for (const uuid of selected) {

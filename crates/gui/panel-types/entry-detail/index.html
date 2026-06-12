@@ -60,6 +60,10 @@
         width: 100%;
         word-break: break-all;
       }
+      td.value .annotation {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.85em;
+      }
       td.ops {
         white-space: nowrap;
       }
@@ -80,7 +84,7 @@
         cursor: default;
       }
       input,
-      select {
+      #add-type {
         font: inherit;
         font-family: var(--mf-font-mono, monospace);
         background: var(--mf-bg, #1e1e24);
@@ -137,17 +141,8 @@
 
     <div id="add-form">
       <input id="add-name" placeholder="field name" size="14" />
-      <select id="add-type">
-        <option>string</option>
-        <option>int</option>
-        <option>float</option>
-        <option>bool</option>
-        <option>datetime</option>
-        <option>nothing</option>
-        <option>ref</option>
-        <option>tree_ref</option>
-      </select>
-      <input id="add-value" placeholder="value" size="20" />
+      <button id="add-type"></button>
+      <span id="add-value"></span>
       <button id="add-append">Add field</button>
       <button id="add-set">Set field (replace)</button>
       <button id="add-cancel">Cancel</button>
