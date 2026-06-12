@@ -11,6 +11,8 @@
   --mf-focus-border: #4c56c4;
   --mf-error: #c44c56;
   --mf-ok: #56c44c;
+  /* orphaned metarecords: the tracked file no longer exists on disk */
+  --mf-orphan: #b07ad6;
   --mf-tab-focused: #56c44c;
   --mf-tab-unfocused: #c44c56;
   --mf-font: sans-serif;

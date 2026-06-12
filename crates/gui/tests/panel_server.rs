@@ -115,6 +115,8 @@ async fn test_shim_and_keymatch_are_served() {
     assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__menu.js").await;
     assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = get(&router, "/__orphan.js").await;
+    assert_eq!(status, StatusCode::OK);
 }
 
 #[tokio::test]

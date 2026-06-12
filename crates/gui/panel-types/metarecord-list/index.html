@@ -91,6 +91,11 @@
         content: '✓ ';
         color: var(--mf-ok, #56c44c);
       }
+      /* orphaned metarecords: the tracked file no longer exists on disk */
+      tr.orphan td,
+      .card.orphan .name {
+        color: var(--mf-orphan, #b07ad6);
+      }
       #grid {
         display: none;
         grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

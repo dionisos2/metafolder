@@ -10,6 +10,7 @@ export default defineConfig({
       // the source module so vitest can load panel code unchanged.
       '/__ui.js': fileURLToPath(new URL('../panel-shim/ui.js', import.meta.url)),
       '/__menu.js': fileURLToPath(new URL('../panel-shim/menu.js', import.meta.url)),
+      '/__orphan.js': fileURLToPath(new URL('../panel-shim/orphan.js', import.meta.url)),
     },
   },
   clearScreen: false,

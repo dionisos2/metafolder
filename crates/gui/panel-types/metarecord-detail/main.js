@@ -2,6 +2,7 @@
 // (spec-gui "metarecord-detail panel type").
 
 import { el, formatValue, valueEl } from '/__ui.js';
+import { orphanState, orphanLabel } from '/__orphan.js';
 import { createTypePicker, parseRawValue } from './add-type.js';
 import { createAnnotator } from './annotations.js';
 
@@ -17,6 +18,7 @@ const placeholder = document.getElementById('placeholder');
 const content = document.getElementById('content');
 const fieldRows = document.getElementById('field-rows');
 const metarecordHead = document.getElementById('metarecord-head');
+const orphanNote = document.getElementById('orphan-note');
 const errorBox = document.getElementById('error');
 const addForm = document.getElementById('add-form');
 const addValueSlot = document.getElementById('add-value');
@@ -110,6 +112,7 @@ function widgetFor(type, initial) {
 
 function render() {
   const hasContent = metarecord !== null || newMetarecordMode;
+  if (metarecord === null || newMetarecordMode) orphanNote.hidden = true;
   placeholder.classList.toggle('hidden', hasContent);
   content.classList.toggle('hidden', !hasContent);
   document.getElementById('save-new').hidden = !newMetarecordMode;
@@ -241,7 +244,26 @@ async function load() {
     metarecord = null;
     showError(String(error.message ?? error));
   }
+  orphanNote.hidden = true;
   render();
+  void fillOrphanNote();
+}
+
+/** Shows the purple orphan line when the tracked file is gone (async). */
+async function fillOrphanNote() {
+  if (!metarecord) return;
+  const shown = metarecord;
+  const state = await orphanState(metarecord, {
+    metarecordPaths: (m) => daemon.metarecordPaths(current.repo, m),
+    exists: (path) =>
+      metafolder.fs.stat(path).then(
+        () => true,
+        () => false,
+      ),
+  }).catch(() => null);
+  if (state === null || metarecord !== shown) return;
+  orphanNote.textContent = orphanLabel(state);
+  orphanNote.hidden = false;
 }
 
 async function saveField(field, newValue) {

@@ -37,6 +37,11 @@
         font-size: 0.85em;
         margin-bottom: 8px;
       }
+      /* orphaned metarecord: the tracked file no longer exists on disk */
+      #orphan-note {
+        color: var(--mf-orphan, #b07ad6);
+        margin-bottom: 8px;
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -132,6 +137,7 @@
 
     <div id="content" class="hidden">
       <div class="metarecord-head" id="metarecord-head"></div>
+      <div id="orphan-note" hidden></div>
       <table>
         <tbody id="field-rows"></tbody>
       </table>

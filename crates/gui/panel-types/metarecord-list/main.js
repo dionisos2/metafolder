@@ -2,6 +2,7 @@
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
 import { el } from '/__ui.js';
+import { orphanState, orphanLabel } from '/__orphan.js';
 import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
@@ -32,6 +33,7 @@ let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
 let mode = 'table';
 let refCache = new Map(); // uuid -> Promise<metarecord>, for ~target columns
+let orphanCache = new Map(); // uuid -> Promise<null|'deleted'|'missing'>
 
 const rows = document.getElementById('rows');
 const grid = document.getElementById('grid');
@@ -69,6 +71,7 @@ async function fetchPage(reset) {
       metarecords = [];
       nextCursor = null;
       refCache = new Map();
+      orphanCache = new Map();
     }
     let page;
     try {
@@ -170,11 +173,33 @@ function fillCell(node, column, metarecord) {
   );
 }
 
+// Orphan check environment (one disk stat per metarecord per result set).
+const orphanCtx = {
+  metarecordPaths: (metarecord) => daemon.metarecordPaths(repo, metarecord),
+  exists: (path) =>
+    metafolder.fs.stat(path).then(
+      () => true,
+      () => false,
+    ),
+};
+
+/** Marks the row/card when the metarecord's tracked file is gone (async). */
+function fillOrphan(node, metarecord) {
+  if (!orphanCache.has(metarecord.uuid)) {
+    orphanCache.set(metarecord.uuid, orphanState(metarecord, orphanCtx).catch(() => null));
+  }
+  void orphanCache.get(metarecord.uuid).then((state) => {
+    if (state === null) return;
+    node.classList.add('orphan');
+    node.title = orphanLabel(state);
+  });
+}
+
 function render() {
   renderHeader();
   rows.replaceChildren(
-    ...metarecords.map((metarecord, index) =>
-      el(
+    ...metarecords.map((metarecord, index) => {
+      const tr = el(
         'tr',
         {
           class: ['row', index === cursorIndex && 'cursor', checked.has(metarecord.uuid) && 'checked'],
@@ -186,14 +211,16 @@ function render() {
           if (column.deref !== null) fillCell(td, column, metarecord);
           return td;
         }),
-      ),
-    ),
+      );
+      fillOrphan(tr, metarecord);
+      return tr;
+    }),
   );
   grid.replaceChildren(
     ...metarecords.map((metarecord, index) => {
       const img = el('img', { loading: 'lazy' });
       void fillThumbnail(img, metarecord);
-      return el(
+      const card = el(
         'div',
         {
           class: ['card', index === cursorIndex && 'cursor'],
@@ -207,6 +234,8 @@ function render() {
           cellQuickText(GRID_NAME_COLUMN, metarecord) || metarecord.uuid.slice(0, 8),
         ),
       );
+      fillOrphan(card, metarecord);
+      return card;
     }),
   );
   statusLine.textContent =

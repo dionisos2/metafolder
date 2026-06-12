@@ -101,6 +101,15 @@ For large result sets, =metarecord-list= uses the daemon's cursor pagination
 [[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
 the user scrolls.
 
+Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
+exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
+or a stale TreeRef (left in place by reconcile, see
+[[file:spec-file-tracking.org][spec-file-tracking.org]]) — are made visible:
+=metarecord-list= colours the row/card (theme variable =--mf-orphan=, purple
+by default) with a tooltip giving the reason; =metarecord-detail= shows a
+one-line note under the metarecord head. A metarecord with no =mfr_path=
+field at all is not a file metarecord and is never marked.
+
 ** Workspace variables
 
 A reactive, per-workspace key-value store shared across all panel types
