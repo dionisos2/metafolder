@@ -298,6 +298,7 @@ impl CmpOp {
 struct Compiler<'a> {
     conn: &'a Connection,
     cache: &'a mut TreeCache,
+    db_id: Uuid,
     ctes: Vec<(String, String)>,
     params: Vec<SqlValue>,
     counter: usize,
@@ -317,7 +318,31 @@ impl<'a> Compiler<'a> {
                 .to_string(),
         )];
         let params = vec![SqlValue::Blob(db::uuid_to_bytes(db_id))];
-        Self { conn, cache, ctes, params, counter: 0 }
+        Self { conn, cache, db_id, ctes, params, counter: 0 }
+    }
+
+    /// Runs a sub-query on its own (a fresh compiler and statement) and
+    /// returns the matching UUIDs, repo-filtered like a top-level query.
+    /// Used by the hybrid `FollowsTransitive` execution, whose tree-cache
+    /// walk needs the root set before SQL generation.
+    fn execute_condition(&mut self, cond: &Query) -> Result<Vec<Uuid>, ApiError> {
+        let mut sub = Compiler::new(self.conn, self.cache, self.db_id);
+        let last = sub.compile_node(cond)?;
+        let Compiler { ctes, params, .. } = sub;
+        let cte_sql: Vec<String> =
+            ctes.into_iter().map(|(name, body)| format!("{name} AS ({body})")).collect();
+        let sql = format!(
+            "WITH {} SELECT uuid FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)",
+            cte_sql.join(", ")
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(anyhow::Error::from)?;
+        let mut rows =
+            stmt.query(rusqlite::params_from_iter(params.iter())).map_err(anyhow::Error::from)?;
+        let mut uuids = Vec::new();
+        while let Some(row) = rows.next().map_err(anyhow::Error::from)? {
+            uuids.push(db::bytes_to_uuid(row.get::<_, Vec<u8>>(0).map_err(anyhow::Error::from)?)?);
+        }
+        Ok(uuids)
     }
 
     fn fresh(&mut self) -> String {
@@ -437,16 +462,32 @@ impl<'a> Compiler<'a> {
                 }
             },
 
-            Query::FollowsTransitive { field, path } => {
-                // Hybrid execution: descendants are collected through the
-                // tree cache, then injected as inline literals (no bound
-                // parameter limit). Only TreeRef trees have descendants; on
-                // a Ref field this matches nothing by construction.
+            Query::FollowsTransitive { field, target } => {
+                // Hybrid execution: the root set (one path-resolved metarecord,
+                // or every match of the condition sub-query) and its
+                // descendants are collected through the tree cache, then
+                // injected as inline literals (no bound parameter limit).
+                // Only TreeRef trees have descendants; on a Ref field this
+                // matches nothing by construction.
                 let conn = self.conn;
-                let Some(target) = self.cache.resolve_path(conn, field, path)? else {
-                    return Ok(self.empty());
+                let roots = match target {
+                    FollowTarget::Path(path) => {
+                        match self.cache.resolve_path(conn, field, path)? {
+                            None => Vec::new(),
+                            Some(uuid) => vec![uuid],
+                        }
+                    }
+                    FollowTarget::Condition(cond) => self.execute_condition(cond)?,
                 };
-                let descendants = self.cache.descendants(conn, field, target)?;
+                let mut descendants = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                for root in roots {
+                    for d in self.cache.descendants(conn, field, root)? {
+                        if seen.insert(d) {
+                            descendants.push(d);
+                        }
+                    }
+                }
                 if descendants.is_empty() {
                     return Ok(self.empty());
                 }

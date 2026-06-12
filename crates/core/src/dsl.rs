@@ -338,11 +338,22 @@ impl Parser {
                 None => Err("expected a path string or a parenthesized query after '->'".into()),
             },
             Some(Tok::ArrowStar) => match self.next() {
-                Some(Tok::Str(path)) => Ok(Query::FollowsTransitive { field, path }),
-                Some(tok) => {
-                    Err(format!("expected a path string after '->*', got {}", describe(&tok)))
+                Some(Tok::Str(path)) => {
+                    Ok(Query::FollowsTransitive { field, target: FollowTarget::Path(path) })
                 }
-                None => Err("expected a path string after '->*'".into()),
+                Some(Tok::LParen) => {
+                    let sub = self.or_expr()?;
+                    self.expect(Tok::RParen)?;
+                    Ok(Query::FollowsTransitive {
+                        field,
+                        target: FollowTarget::Condition(Box::new(sub)),
+                    })
+                }
+                Some(tok) => Err(format!(
+                    "expected a path string or a parenthesized query after '->*', got {}",
+                    describe(&tok)
+                )),
+                None => Err("expected a path string or a parenthesized query after '->*'".into()),
             },
             Some(tok) => Err(format!(
                 "expected an operator after field '{field}', got {}",
@@ -482,13 +493,30 @@ mod tests {
     fn test_follows_transitive() {
         assert_eq!(
             ok(r#"mfr_path ->* "/music/jazz""#),
-            Query::FollowsTransitive { field: "mfr_path".into(), path: "/music/jazz".into() }
+            Query::FollowsTransitive {
+                field: "mfr_path".into(),
+                target: FollowTarget::Path("/music/jazz".into()),
+            }
         );
     }
 
     #[test]
-    fn test_follows_transitive_requires_string() {
-        err("mfr_path ->* (a = 1)");
+    fn test_follows_transitive_with_condition() {
+        assert_eq!(
+            ok(r#"mfr_path ->* (mfr_path = "2021")"#),
+            Query::FollowsTransitive {
+                field: "mfr_path".into(),
+                target: FollowTarget::Condition(Box::new(Query::Eq {
+                    field: "mfr_path".into(),
+                    value: Value::String("2021".into()),
+                })),
+            }
+        );
+    }
+
+    #[test]
+    fn test_follows_transitive_requires_string_or_query() {
+        err("mfr_path ->* 5");
     }
 
     // ── combinators and precedence ───────────────────────────────────────────
@@ -563,7 +591,7 @@ mod tests {
                 operands: vec![
                     Query::FollowsTransitive {
                         field: "mfr_path".into(),
-                        path: "/music/jazz".into(),
+                        target: FollowTarget::Path("/music/jazz".into()),
                     },
                     Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() },
                 ],

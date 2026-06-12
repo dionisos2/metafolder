@@ -535,10 +535,73 @@ fn test_follows_transitive_collects_all_descendants() {
         Value::TreeRef { parent: Some(root), name: "docs".into() },
     )]);
 
-    let q = Query::FollowsTransitive { field: "mfr_path".into(), path: "/music".into() };
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/music".into()),
+    };
     assert_same_set(f.run(&q), vec![jazz, song]);
 
-    let q = Query::FollowsTransitive { field: "mfr_path".into(), path: "/nope".into() };
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/nope".into()),
+    };
+    assert!(f.run(&q).is_empty());
+}
+
+#[test]
+fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
+    // "everything inside any folder named 2021", with one matching folder
+    // nested inside another: descendants overlap and must be deduplicated;
+    // the matching roots themselves are not descendants.
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let y2021_outer = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let sub = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021_outer), name: "sub".into() },
+    )]);
+    let deep = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(sub), name: "deep.jpg".into() },
+    )]);
+    let y2021_inner = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021_outer), name: "2021".into() },
+    )]);
+    let inner_file = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021_inner), name: "b.jpg".into() },
+    )]);
+    let other = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "other".into() },
+    )]);
+    let _outside = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(other), name: "c.jpg".into() },
+    )]);
+
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Condition(Box::new(Query::Eq {
+            field: "mfr_path".into(),
+            value: s("2021"),
+        })),
+    };
+    // y2021_inner is both a matching root and a descendant of y2021_outer.
+    assert_same_set(f.run(&q), vec![sub, deep, y2021_inner, inner_file]);
+
+    // A condition matching nothing → empty result, not an error.
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Condition(Box::new(Query::Eq {
+            field: "mfr_path".into(),
+            value: s("nope"),
+        })),
+    };
     assert!(f.run(&q).is_empty());
 }
 

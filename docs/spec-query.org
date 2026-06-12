@@ -26,7 +26,7 @@ CLI provides a DSL that compiles to this representation.
 | Or                  | =or=                  | At least one operand must match                |
 | Not                 | =not=                 | Operand must not match                         |
 | Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
-| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the metarecord at the given path |
+| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition) |
 | Matches             | =matches=             | String field matches a regex pattern                           |
 
 * Daemon
@@ -53,11 +53,15 @@ query matches metarecords whose direct parent (=value_uuid=) is that metarecord.
 DSL syntax: =field -> "path"= / =field -> (predicate)=.
 
 =FollowsTransitive= is restricted to =TreeRef= fields; applying it to a =Ref=
-field is rejected with =400=. The right-hand side is a path string (e.g.
-="/projects"=) that is resolved to a UUID via the tree cache. All descendants of
-that metarecord are then collected iteratively via the tree cache (fetching missing
-nodes from the DB step by step), and the resulting UUID set is used to filter
-the query results.
+field is rejected with =400=. The right-hand side is either a path string
+(e.g. ="/projects"=) that is resolved to a UUID via the tree cache, or a
+condition (sub-query, executed on its own and repo-filtered) whose matches
+form the root set — e.g. =mfr_path ->* (mfr_path = "2021")= matches
+everything inside any directory named =2021=. All descendants of the root(s)
+are then collected iteratively via the tree cache (fetching missing nodes
+from the DB step by step, deduplicating across overlapping roots), and the
+resulting UUID set is used to filter the query results. The roots themselves
+are not part of the result.
 
 String operations on a =TreeRef= row apply to =value_name= (the single name
 component) — the same convention everywhere: comparisons (=Eq=/=Neq= and the
@@ -208,7 +212,7 @@ predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field cmp_op literal
            | field "MATCHES" string
            | field "->"  ( string | "(" query ")" )
-           | field "->*" string
+           | field "->*" ( string | "(" query ")" )
 
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
 literal   := int | float | string | "true" | "false"
@@ -225,7 +229,9 @@ string    := '"' ... '"'
   (=TreeRef= semantics); =field -> (predicate)= compiles to =Follows= with a
   sub-query right-hand side (the referent of a =Ref= row, or the direct
   parent of a =TreeRef= row, must satisfy the predicate).
-- =field ->* "path"= compiles to =FollowsTransitive= (TreeRef only).
+- =field ->* "path"= / =field ->* (predicate)= compiles to
+  =FollowsTransitive= (TreeRef only), with the same two right-hand-side
+  forms as =->=.
 
 Examples:
 

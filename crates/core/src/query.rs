@@ -37,9 +37,10 @@ pub enum Query {
     /// On a `TreeRef` field, `target` is a path string and matches metarecords
     /// whose direct parent is the metarecord at that path.
     Follows { field: String, target: FollowTarget },
-    /// `TreeRef` fields only: the metarecord is a descendant of the metarecord at the
-    /// given path.
-    FollowsTransitive { field: String, path: String },
+    /// `TreeRef` fields only: the metarecord is a descendant of the metarecord at
+    /// the given path (`target` is a path string), or of any metarecord satisfying
+    /// the sub-query (`target` is a condition).
+    FollowsTransitive { field: String, target: FollowTarget },
 
     // --- Pattern matching ---
     /// The field has a string value matching the regex. On a `TreeRef`
@@ -47,8 +48,9 @@ pub enum Query {
     Matches { field: String, pattern: String },
 }
 
-/// Right-hand side of `Follows`: either a path string (TreeRef semantics) or
-/// a sub-query (Ref semantics). JSON: a bare string or a Query object.
+/// Right-hand side of `Follows` and `FollowsTransitive`: either a path string
+/// (TreeRef semantics) or a sub-query (the referent — direct parent for
+/// TreeRef — must satisfy it). JSON: a bare string or a Query object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum FollowTarget {
@@ -84,11 +86,30 @@ mod tests {
 
     #[test]
     fn test_follows_transitive_json_format() {
-        let q = Query::FollowsTransitive { field: "mfr_path".into(), path: "/music/jazz".into() };
+        let q = Query::FollowsTransitive {
+            field: "mfr_path".into(),
+            target: FollowTarget::Path("/music/jazz".into()),
+        };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
-            r#"{"type":"follows_transitive","field":"mfr_path","path":"/music/jazz"}"#
+            r#"{"type":"follows_transitive","field":"mfr_path","target":"/music/jazz"}"#
         );
+    }
+
+    #[test]
+    fn test_follows_transitive_with_condition_target_json_format() {
+        let q = Query::FollowsTransitive {
+            field: "mfr_path".into(),
+            target: FollowTarget::Condition(Box::new(Query::Eq {
+                field: "mfr_path".into(),
+                value: Value::String("2021".into()),
+            })),
+        };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"follows_transitive","field":"mfr_path","target":{"type":"eq","field":"mfr_path","value":{"type":"string","value":"2021"}}}"#
+        );
+        assert_eq!(roundtrip(&q), q);
     }
 
     #[test]
@@ -163,7 +184,10 @@ mod tests {
                     field: "mfr_path".into(),
                     target: FollowTarget::Path("/music".into()),
                 },
-                Query::FollowsTransitive { field: "mfr_path".into(), path: "/music".into() },
+                Query::FollowsTransitive {
+                    field: "mfr_path".into(),
+                    target: FollowTarget::Path("/music".into()),
+                },
                 Query::Matches { field: "title".into(), pattern: "^Live".into() },
             ],
         };
