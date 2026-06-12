@@ -26,6 +26,7 @@ let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec st
 let widths = {}; // column spec -> px; persisted per workspace
 let metarecords = [];
 let nextCursor = null;
+let total = null; // full result count (daemon-side COUNT, first page only)
 let loading = false;
 let queryIR = null; // null = match all
 let sort = []; // [{field, order}]
@@ -79,6 +80,7 @@ async function fetchPage(reset) {
         query: queryIR ?? MATCH_ALL,
         select: '*',
         limit: PAGE_SIZE,
+        ...(reset && { count: true }), // daemon-side COUNT, no extra pages
         ...(sort.length > 0 && { sort }),
         ...(nextCursor && { cursor: nextCursor }),
       });
@@ -88,6 +90,7 @@ async function fetchPage(reset) {
     }
     metarecords = metarecords.concat(page.results);
     nextCursor = page.next_cursor;
+    if (reset) total = page.total ?? null;
     if (reset) {
       // Drop checked metarecords that no longer match.
       const alive = new Set(metarecords.map((e) => e.uuid));
@@ -239,7 +242,9 @@ function render() {
     }),
   );
   statusLine.textContent =
-    `${metarecords.length} metarecord${metarecords.length === 1 ? '' : 's'}` +
+    `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
+      (total ?? metarecords.length) === 1 ? '' : 's'
+    }` +
     (nextCursor ? ' (more available — scroll down)' : '') +
     (checked.size > 0 ? ` — ${checked.size} selected` : '');
 }

@@ -172,6 +172,49 @@ async fn test_query_sort_and_pagination_envelope() {
 }
 
 #[tokio::test]
+async fn test_query_count_reports_the_full_total() {
+    let (app, repo, root) = setup("count").await;
+    for i in 0..5 {
+        create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": i}}])).await;
+    }
+    let query = json!({"type": "is_present", "field": "n"});
+
+    // The total covers the whole result set, not just the page.
+    let (status, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": query, "limit": 2, "count": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "query failed: {page}");
+    assert_eq!(page["results"].as_array().unwrap().len(), 2);
+    assert_eq!(page["total"], json!(5));
+
+    // Without count the field is absent entirely.
+    let (_, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": query, "limit": 2})),
+    )
+    .await;
+    assert!(page.get("total").is_none(), "total must be opt-in: {page}");
+
+    // count without limit: the unwrapped array has nowhere to carry it.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": query, "count": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_batch_set() {
     let (app, repo, root) = setup("set").await;
     for genre in ["jazz", "jazz", "rock"] {

@@ -212,7 +212,7 @@ async fn list_metarecords(
                     None
                 };
                 let results: Vec<String> = uuids.into_iter().map(hex).collect();
-                Ok(Json(Page { results, next_cursor }).into_response())
+                Ok(Json(Page { results, next_cursor, total: None }).into_response())
             }
         }
     })
@@ -743,6 +743,9 @@ struct QueryBody {
     limit: Option<usize>,
     #[serde(default)]
     cursor: Option<String>,
+    /// Adds the full result count to the pagination envelope.
+    #[serde(default)]
+    count: bool,
 }
 
 async fn run_query(
@@ -753,6 +756,10 @@ async fn run_query(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        if body.count && body.limit.is_none() {
+            // The unwrapped (bare array) response has nowhere to carry it.
+            return Err(ApiError::bad_request("'count' requires 'limit'"));
+        }
         let conn = repo_state.conn.lock().unwrap();
         let mut cache = repo_state.cache.lock().unwrap();
         let (uuids, next_cursor) = query_exec::execute(
@@ -764,6 +771,11 @@ async fn run_query(
             body.limit,
             body.cursor.as_deref(),
         )?;
+        let total = if body.count {
+            Some(query_exec::count(&conn, &mut cache, repo_uuid, &body.query)?)
+        } else {
+            None
+        };
         drop(cache);
 
         let results: Vec<serde_json::Value> = match &body.select {
@@ -791,7 +803,7 @@ async fn run_query(
         };
 
         if body.limit.is_some() {
-            Ok(Json(Page { results, next_cursor }).into_response())
+            Ok(Json(Page { results, next_cursor, total }).into_response())
         } else {
             Ok(Json(results).into_response())
         }

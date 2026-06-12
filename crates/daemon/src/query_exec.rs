@@ -43,6 +43,29 @@ fn default_order() -> SortOrder {
 /// ordering between two real values.
 const NUM_SENTINEL: &str = "-9e99";
 
+/// Counts the matching metarecords without fetching them: the same CTE chain
+/// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
+pub fn count(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    db_id: Uuid,
+    query: &Query,
+) -> Result<usize, ApiError> {
+    let mut compiler = Compiler::new(conn, cache, db_id);
+    let last = compiler.compile_node(query)?;
+    let Compiler { ctes, params, .. } = compiler;
+    let cte_sql: Vec<String> =
+        ctes.into_iter().map(|(name, body)| format!("{name} AS ({body})")).collect();
+    let sql = format!(
+        "WITH {} SELECT COUNT(*) FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)",
+        cte_sql.join(", ")
+    );
+    let total: i64 = conn
+        .query_row(&sql, rusqlite::params_from_iter(params.iter()), |row| row.get(0))
+        .map_err(anyhow::Error::from)?;
+    Ok(total as usize)
+}
+
 /// Executes a query: returns one page of matching UUIDs in query order plus
 /// the next cursor (always None when `limit` is absent).
 pub fn execute(

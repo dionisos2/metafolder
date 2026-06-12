@@ -56,4 +56,7 @@ impl Cursor {
 pub struct Page<T> {
     pub results: Vec<T>,
     pub next_cursor: Option<String>,
+    /// Full result count, on request (`count: true`, POST /query only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<usize>,
 }

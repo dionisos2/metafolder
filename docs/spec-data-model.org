@@ -251,6 +251,7 @@ nothing changes for existing clients.
 | =limit=   | int    | Maximum number of results in this page; enables pagination           |
 | =cursor=  | string | Opaque token from the previous page's =next_cursor=; absent for page 1 |
 | =sort=    | list   | Sort specification (=POST /query= only; see below)                   |
+| =count=   | bool   | Adds =total= (the full result count) to the envelope (=POST /query= only; requires =limit= — the unwrapped response has nowhere to carry it). Computed daemon-side with a =COUNT(*)= over the compiled query, without fetching rows. |
 
 For =GET /metarecords= the parameters are query-string parameters
 (=?limit=500&cursor=...=); results are sorted by metarecord UUID (ascending byte
@@ -294,7 +295,11 @@ When =limit= is present, the response is wrapped:
 
 =results= has exactly the same item format as the unpaginated response
 (UUID strings, or metadata objects when =select= is used). =next_cursor= is
-=null= when there are no further results.
+=null= when there are no further results. With =count: true= the envelope
+also carries ="total": N= — the full result count of the query at the time
+of this page (live data may shift it between pages; clients typically
+request it on the first page only, e.g. the metarecord-list status line
+"200/5000").
 
 *** Cursor semantics
 
