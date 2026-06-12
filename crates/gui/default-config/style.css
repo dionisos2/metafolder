@@ -5,8 +5,8 @@
 :root {
   --mf-bg: #1e1e24;
   --mf-bg-raised: #26262e;
-  --mf-fg: #d8d8e0;
-  --mf-fg-dim: #8a8a96;
+  --mf-fg: #ffffff;
+  --mf-fg-dim: #ffffff;
   --mf-accent: #4c56c4;
   --mf-focus-border: #4c56c4;
   --mf-error: #c44c56;
@@ -21,6 +21,32 @@ body {
   background: var(--mf-bg);
   color: var(--mf-fg);
   font-family: var(--mf-font);
+}
+
+/* WebKitGTK renders closed selects with the native (light) widget and
+ * ignores CSS backgrounds on them, which puts themed white text on a
+ * white box: disable the native appearance so the CSS theme really
+ * applies, with an explicit chevron replacing the native arrow. */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  background: var(--mf-bg)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%23ffffff'/%3E%3C/svg%3E")
+    no-repeat right 6px center;
+  color: var(--mf-fg);
+  border: 1px solid var(--mf-fg-dim);
+  border-radius: 3px;
+  padding: 1px 20px 1px 6px;
+}
+
+/* Native buttons and the native options popup keep a light background
+ * when a panel does not restyle them: force really black text there.
+ * Panels that theme their controls override this (their own <style>
+ * comes later). */
+button,
+option {
+  color: #000000;
 }
 
 /* Entry references rendered as clickable links (/__ui.js valueEl). */
