@@ -417,5 +417,13 @@ workspace.onChange('selected_entry', (value) => {
   void load();
 });
 
+// Another panel changed entries (log rollback, file-manager track, …):
+// reload the displayed entry — unless an edit is in progress (a reload
+// would silently discard it; the user gets fresh data on save/cancel).
+workspace.onChange('entries:dirty', () => {
+  if (editingField !== null || newEntryMode) return;
+  void load();
+});
+
 current = await workspace.get('selected_entry');
 await load();

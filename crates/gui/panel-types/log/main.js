@@ -23,7 +23,9 @@ async function refresh() {
     return;
   }
   try {
-    const log = await daemon.call('GET', `/repos/${repo}/log`);
+    // Tree mode: keep listing revisions left ahead of (or beside) HEAD
+    // after a rollback, so navigating forward again stays possible.
+    const log = await daemon.call('GET', `/repos/${repo}/log?mode=tree`);
     operations = log.operations ?? [];
     const head = log.head;
     const opCount = new Map();
@@ -101,21 +103,23 @@ function render() {
   );
 }
 
-// Rollback restores the state as of the END of the selected revision:
-// target the highest operation id of that revision.
+// Navigation restores the state as of the END of the selected revision:
+// target the highest operation id of that revision. The daemon accepts
+// any node of the operation tree — an ancestor (rollback), a descendant
+// (redo) or a node on another branch.
 function lastOpOf(revId) {
   return Math.max(...operations.filter((o) => o.rev_id === revId).map((o) => o.id));
 }
 
 async function rollback() {
   if (selectedRev === null) return;
-  if (!confirm(`Rollback to revision #${selectedRev}?`)) return;
+  if (!confirm(`Go to revision #${selectedRev} (rollback or redo)?`)) return;
   try {
     const result = await daemon.call('POST', `/repos/${repo}/rollback`, {
       target: { id: lastOpOf(selectedRev) },
     });
     statusBar.message(
-      `Rollback done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
+      `Navigation done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
       8000,
     );
     await workspace.set('entries:dirty', Date.now()); // refresh entry-list

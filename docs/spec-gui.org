@@ -623,6 +623,12 @@ message and the /New entry/ button.
 Otherwise calls =GET .../metadata/:uuid= and displays all fields. Each field
 row shows name, value, an edit button, and a delete button.
 
+The panel reloads the displayed entry when another panel signals a data
+change through the =entries:dirty= workspace variable (log navigation,
+file-manager tracking, …) — unless an edit is in progress: reloading
+would silently discard it, so the stale view persists until the edit is
+saved or cancelled.
+
 Reference values are clickable (=valueEl=, see [[*UI helpers: =/__ui.js=]]):
 clicking the uuid of a =ref=/=refbase=, the parent of a =tree_ref= or the
 entry of an =externalref= sets =selected_entry= to the referenced entry —
@@ -759,15 +765,22 @@ bar. On completion:
 
 *** Log view (=log= panel type)
 
-Calls =GET .../log= and displays revisions in reverse chronological order.
-Columns: =rev_id=, timestamp, operation count, =status=.
+Calls =GET .../log?mode=tree= and displays revisions in reverse
+chronological order. Columns: =rev_id=, timestamp, operation count,
+=status= (HEAD marker). Tree mode matters: after a rollback the
+revisions ahead of (or beside) HEAD are not part of the linear history
+anymore, but they must stay listed so the user can navigate forward
+again.
 
 Selecting a revision (=Enter=) expands it to show individual operations.
 
 *** Revision commands
 
-- =log:rollback= → confirmation → =POST .../rollback=. Refreshes =entry-list=
-  afterwards.
+- =log:rollback= → confirmation → =POST .../rollback= targeting the last
+  operation of the selected revision. The target may be an ancestor
+  (rollback) or a descendant / another branch (redo): the same command
+  navigates in both directions, which is also how a rollback is undone.
+  Refreshes =entry-list= and =entry-detail= afterwards (=entries:dirty=).
 - =log:mark-checkpoint= [v2] → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log
