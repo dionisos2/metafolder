@@ -1,23 +1,18 @@
 //! Command registry (spec-gui "Command"): named operations registered by
 //! the shell (builtin) or by panel types, listed by the command input
-//! autocomplete. Builtins default to global scope; panel commands to local.
+//! autocomplete. Every registered command is listed and invocable
+//! regardless of which panel is focused — invocations are dispatched to
+//! the owning panel type, so acting on an unfocused (or hidden) panel is
+//! legitimate; keybindings scope with `when` where focus matters.
 
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Scope {
-    Global,
-    Local,
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CommandDef {
     pub name: String,
     pub label: String,
-    pub scope: Scope,
     /// Panel type that registered the command; `None` for builtins.
     pub owner: Option<String>,
     /// Whether invoking the command should reveal the owning panel type
@@ -42,32 +37,23 @@ impl CommandRegistry {
             .insert(def.name.clone(), def);
     }
 
-    /// Registers a shell builtin (global scope).
+    /// Registers a shell builtin.
     pub fn register_builtin(&self, name: &str, label: &str) {
         self.insert(CommandDef {
             name: name.to_string(),
             label: label.to_string(),
-            scope: Scope::Global,
             owner: None,
             reveal: false,
         });
     }
 
-    /// Registers a command from a panel type. `scope` defaults to local.
-    /// Re-registering the same name replaces the previous definition
-    /// (panels re-register on iframe reload).
-    pub fn register_panel(
-        &self,
-        panel_type: &str,
-        name: &str,
-        label: &str,
-        scope: Option<Scope>,
-        reveal: bool,
-    ) {
+    /// Registers a command from a panel type. Re-registering the same
+    /// name replaces the previous definition (panels re-register on
+    /// iframe reload).
+    pub fn register_panel(&self, panel_type: &str, name: &str, label: &str, reveal: bool) {
         self.insert(CommandDef {
             name: name.to_string(),
             label: label.to_string(),
-            scope: scope.unwrap_or(Scope::Local),
             owner: Some(panel_type.to_string()),
             reveal,
         });
@@ -81,18 +67,11 @@ impl CommandRegistry {
             .cloned()
     }
 
-    /// Autocomplete listing: all global commands, plus local commands of
-    /// the focused panel type; sorted by name.
-    pub fn list(&self, focused_panel: Option<&str>) -> Vec<CommandDef> {
+    /// Autocomplete listing: every registered command, sorted by name
+    /// (the fuzzy filter narrows it down; execution routes to the owner).
+    pub fn list(&self) -> Vec<CommandDef> {
         let commands = self.commands.lock().expect("CommandRegistry lock poisoned");
-        let mut listed: Vec<CommandDef> = commands
-            .values()
-            .filter(|def| match def.scope {
-                Scope::Global => true,
-                Scope::Local => def.owner.as_deref() == focused_panel && focused_panel.is_some(),
-            })
-            .cloned()
-            .collect();
+        let mut listed: Vec<CommandDef> = commands.values().cloned().collect();
         listed.sort_by(|a, b| a.name.cmp(&b.name));
         listed
     }
@@ -103,83 +82,49 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_builtin_is_global_and_always_listed() {
+    fn test_builtin_is_always_listed() {
         let registry = CommandRegistry::new();
         registry.register_builtin("tab:new", "New workspace tab");
 
         let def = registry.get("tab:new").unwrap();
-        assert_eq!(def.scope, Scope::Global);
         assert_eq!(def.owner, None);
         assert!(!def.reveal);
-
-        assert!(registry.list(None).iter().any(|c| c.name == "tab:new"));
-        assert!(registry
-            .list(Some("metarecord-list"))
-            .iter()
-            .any(|c| c.name == "tab:new"));
+        assert!(registry.list().iter().any(|c| c.name == "tab:new"));
     }
 
     #[test]
-    fn test_panel_command_defaults_to_local_scope() {
+    fn test_panel_commands_are_listed_regardless_of_focus() {
+        // Commands are dispatched to their owning panel type, so a panel's
+        // command is invocable (and listed) even when another panel is
+        // focused or the owner is not displayed at all.
         let registry = CommandRegistry::new();
-        registry.register_panel("metarecord-list", "metarecord-list:next", "Next entry", None, false);
+        registry.register_panel("metarecord-list", "metarecord-list:next", "Next entry", false);
 
         let def = registry.get("metarecord-list:next").unwrap();
-        assert_eq!(def.scope, Scope::Local);
         assert_eq!(def.owner.as_deref(), Some("metarecord-list"));
-
-        // Listed only when its panel type is focused.
-        assert!(registry
-            .list(Some("metarecord-list"))
-            .iter()
-            .any(|c| c.name == "metarecord-list:next"));
-        assert!(!registry
-            .list(Some("file"))
-            .iter()
-            .any(|c| c.name == "metarecord-list:next"));
-        assert!(!registry.list(None).iter().any(|c| c.name == "metarecord-list:next"));
-    }
-
-    #[test]
-    fn test_panel_command_can_opt_into_global_scope() {
-        let registry = CommandRegistry::new();
-        registry.register_panel(
-            "my-panel",
-            "my-panel:global-action",
-            "Global action",
-            Some(Scope::Global),
-            true,
-        );
-
-        let def = registry.get("my-panel:global-action").unwrap();
-        assert_eq!(def.scope, Scope::Global);
-        assert!(def.reveal);
-        assert!(registry
-            .list(Some("file"))
-            .iter()
-            .any(|c| c.name == "my-panel:global-action"));
+        assert!(registry.list().iter().any(|c| c.name == "metarecord-list:next"));
     }
 
     #[test]
     fn test_reregistration_replaces() {
         let registry = CommandRegistry::new();
-        registry.register_panel("p", "p:cmd", "First", None, false);
-        registry.register_panel("p", "p:cmd", "Second", None, true);
+        registry.register_panel("p", "p:cmd", "First", false);
+        registry.register_panel("p", "p:cmd", "Second", true);
 
         let def = registry.get("p:cmd").unwrap();
         assert_eq!(def.label, "Second");
         assert!(def.reveal);
-        assert_eq!(registry.list(Some("p")).len(), 1);
+        assert_eq!(registry.list().len(), 1);
     }
 
     #[test]
     fn test_list_is_sorted_by_name() {
         let registry = CommandRegistry::new();
         registry.register_builtin("tab:new", "b");
-        registry.register_builtin("panel:split", "a");
+        registry.register_panel("p", "panel:split", "a", false);
         registry.register_builtin("quit", "c");
 
-        let names: Vec<String> = registry.list(None).into_iter().map(|c| c.name).collect();
+        let names: Vec<String> = registry.list().into_iter().map(|c| c.name).collect();
         assert_eq!(names, vec!["panel:split", "quit", "tab:new"]);
     }
 

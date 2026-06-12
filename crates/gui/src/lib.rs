@@ -280,6 +280,6 @@ mod tests {
         let registry = CommandRegistry::new();
         register_builtins(&registry);
         let def = registry.get("devtools:open").expect("devtools:open registered");
-        assert_eq!(def.scope, crate::command_registry::Scope::Global);
+        assert_eq!(def.owner, None);
     }
 }

@@ -139,9 +139,15 @@ command input with autocomplete. Every user-visible behaviour is a command.
 Keybindings map key combos to command invocation strings (command name plus
 optional parameters).
 
-Each command has a *scope* that determines when it is active (see [[*Keybinding]]).
-Built-in commands default to =global=; commands registered by a panel type
-default to =local=.
+Every registered command is listed in the autocomplete and invocable by
+name, whatever panel is focused: invocations are dispatched to the panel
+type that registered the command (in the focused workspace), so acting on
+an unfocused — or hidden — panel is legitimate (e.g. the file panel's
+arrow keys drive =metarecord-list:next= / =metarecord-list:prev= in the other slot).
+Focus-dependent behaviour belongs to keybindings (=when=, see
+[[*Keybinding]]), not to commands. A panel command is only registered once
+its panel type has been instantiated in the session (lazily, hidden if
+need be, on first dispatch); until then the name is unknown.
 
 ** Keybinding
 
@@ -591,19 +597,13 @@ Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
 **** =metafolder.commands= and =metafolder.addKeybinding=
 
 #+BEGIN_SRC js
-// scope: 'local' (default) | 'global'
 // text-input controls whether the command's default bindings fire in text inputs;
 // it is also used as the default for addKeybinding calls for this command.
+// (a legacy `scope` option is accepted and ignored: every command is
+// listed and invocable whatever panel is focused)
 metafolder.commands.register('my-panel:change-mode', {
   label: 'My Panel: Change display mode',
-  scope: 'local',
   handler: ({ mode }) => { ... }
-})
-
-metafolder.commands.register('my-panel:global-action', {
-  label: 'My Panel: Global action',
-  scope: 'global',
-  handler: () => { ... }
 })
 
 // Suggest default keybindings (applied only if no conflict in user config).
@@ -692,8 +692,8 @@ Repo indicator and the =repos= panel type.
 
 *** Init repo
 
-=repos:init= is a local command of the =repos= panel type (scope:
-=when = "repos"=). It transforms the =repos= panel to show an inline form
+=repos:init= is a command of the =repos= panel type. It transforms the
+=repos= panel to show an inline form
 with a single =root= input (the daemon API also accepts an external
 =metafolder= location, but the GUI does not expose it). Submitting calls
 =POST /repos/init=. On success a new workspace is created with the new repo
@@ -702,8 +702,8 @@ message appears in the status bar and the form remains open.
 
 *** Load repo
 
-=repos:load= is a local command of the =repos= panel type (scope:
-=when = "repos"=). It transforms the =repos= panel to show an inline form
+=repos:load= is a command of the =repos= panel type. It transforms the
+=repos= panel to show an inline form
 with a single =root= input. Submitting calls =POST /repos/load=. On success
 a new workspace is created with the loaded repo as =active_repo= and
 assigned to the focused slot.
@@ -821,6 +821,13 @@ Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer
 elements are missing, shows an explanatory message instead of attempting
 playback (see [[*Media codec support]]).
+
+Default keybindings map the arrow keys, when the =file= panel is focused,
+to =metarecord-list:next= / =metarecord-list:prev=: they move the metarecord-list
+selection of the same workspace (commands dispatch to their owning panel
+type), and the preview follows through =selected_paths= — flipping through
+files without leaving the preview. Pure keybindings, no coupling in
+either panel; rebindable like everything else.
 
 *** =file-manager= panel type
 

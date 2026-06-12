@@ -66,7 +66,6 @@ export function createBridgeCore(deps: BridgeDeps) {
           panelType,
           name: params.name,
           label: params.label ?? String(params.name),
-          scope: params.scope ?? null,
           reveal: params.reveal ?? false,
         });
         deps.onCommandsChanged();

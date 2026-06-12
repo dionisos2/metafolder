@@ -289,12 +289,14 @@ window.metafolder = {
   },
 
   commands: {
-    register(name, { label, scope, textInput, reveal, handler } = {}) {
+    // `scope` is accepted for backward compatibility and ignored: every
+    // command is invocable regardless of focus (dispatch routes to the
+    // owning panel type).
+    register(name, { label, textInput, reveal, handler } = {}) {
       if (handler) commandHandlers.set(name, handler);
       return request('commands.register', {
         name,
         label: label ?? name,
-        scope: scope ?? null,
         textInput: textInput ?? false,
         reveal: reveal ?? false,
       });

@@ -28,6 +28,12 @@
 "8" = { command = "tab:goto-8" }
 "9" = { command = "tab:goto-9" }
 
+# In the file panel the arrows drive the metarecord-list selection of the
+# same workspace (commands are dispatched to their owning panel type,
+# focused or not); the file panel follows through selected_paths.
+"down" = { command = "metarecord-list:next", when = "file" }
+"up" = { command = "metarecord-list:prev", when = "file" }
+
 # Event log navigation (one revision per step, on the active repo).
 "ctrl+z" = { command = "log:undo" }
 "ctrl+shift+z" = { command = "log:redo" }

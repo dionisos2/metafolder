@@ -32,7 +32,6 @@ export interface Binding {
 export interface CommandDef {
   name: string;
   label: string;
-  scope: 'global' | 'local';
   owner: string | null;
   reveal: boolean;
 }

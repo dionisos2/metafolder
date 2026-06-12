@@ -2,7 +2,7 @@
 //! engine modules. No logic here — everything testable lives in
 //! `state`, `keybindings`, `command_registry` and `config`.
 
-use crate::command_registry::{CommandDef, CommandRegistry, Scope};
+use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
 use crate::keybindings::{CompiledBinding, KeybindingSet};
@@ -44,16 +44,11 @@ pub struct InitialState {
 
 #[tauri::command]
 pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
-    let layout = app.gui.layout();
-    let focused_panel = match layout.focused {
-        SlotId::Left => layout.left.panel_type.clone(),
-        SlotId::Right => layout.right.panel_type.clone(),
-    };
     Ok(InitialState {
         workspaces: app.gui.workspaces(),
         layout: app.gui.layout(),
         keybindings: app.keybindings.lock().unwrap().compiled(),
-        commands: app.registry.list(focused_panel.as_deref()),
+        commands: app.registry.list(),
         panel_types: app.config.list_panel_types()?,
         style_css: app.config.load_style(),
         gui_port: app.gui_port,
@@ -169,8 +164,8 @@ pub fn adopt_repo(app: AppHandle, ws_id: String, repo: String) -> Result<(), Str
 // ── Commands and keybindings ─────────────────────────────────────────────
 
 #[tauri::command]
-pub fn list_commands(app: AppHandle, focused_panel: Option<String>) -> Vec<CommandDef> {
-    app.registry.list(focused_panel.as_deref())
+pub fn list_commands(app: AppHandle) -> Vec<CommandDef> {
+    app.registry.list()
 }
 
 #[tauri::command]
@@ -179,17 +174,10 @@ pub fn register_command(
     panel_type: String,
     name: String,
     label: String,
-    scope: Option<String>,
     reveal: Option<bool>,
 ) -> Result<(), String> {
-    let scope = match scope.as_deref() {
-        None => None,
-        Some("local") => Some(Scope::Local),
-        Some("global") => Some(Scope::Global),
-        Some(other) => return Err(format!("unknown command scope: {other}")),
-    };
     app.registry
-        .register_panel(&panel_type, &name, &label, scope, reveal.unwrap_or(false));
+        .register_panel(&panel_type, &name, &label, reveal.unwrap_or(false));
     Ok(())
 }
 

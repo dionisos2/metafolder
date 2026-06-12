@@ -114,6 +114,7 @@ describe('bridge core', () => {
       request(1, 'commands.register', {
         name: 'hello:greet',
         label: 'Greet',
+        // A legacy `scope` option is accepted and ignored.
         scope: 'local',
         reveal: true,
       }),
@@ -122,7 +123,6 @@ describe('bridge core', () => {
       panelType: 'hello',
       name: 'hello:greet',
       label: 'Greet',
-      scope: 'local',
       reveal: true,
     });
     expect(onCommandsChanged).toHaveBeenCalled();

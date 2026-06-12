@@ -3,7 +3,7 @@
 // tested; dispatch routes to Tauri commands and panel iframes.
 
 import { invoke } from './ipc';
-import { focusedPanelType, focusedWs, store } from './store.svelte';
+import { focusedWs, store } from './store.svelte';
 import type { CommandDef } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
@@ -261,8 +261,4 @@ export async function dispatch(invocation: string): Promise<void> {
   } catch (error) {
     await status(String(error));
   }
-}
-
-export function autocompleteContext(): string | null {
-  return focusedPanelType();
 }

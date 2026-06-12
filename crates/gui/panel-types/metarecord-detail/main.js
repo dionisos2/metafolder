@@ -404,18 +404,15 @@ await metafolder.ready;
 
 commands.register('metarecord:create', {
   label: 'Create a new metarecord (metarecord-detail form)',
-  scope: 'global',
   reveal: true,
   handler: startNewMetarecord,
 });
 commands.register('metarecord:delete', {
   label: 'Delete the selected metarecord',
-  scope: 'global',
   handler: deleteEntry,
 });
 commands.register('metarecord:batch-set', {
   label: 'Set a field on all selected metarecords',
-  scope: 'global',
   reveal: true,
   handler: async (...args) => {
     // Args: <name> <type> <value...>; or interactive prompt fallback.

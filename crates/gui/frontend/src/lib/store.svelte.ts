@@ -76,9 +76,7 @@ export function applyStyle(css: string) {
 }
 
 export async function refreshCommands() {
-  store.commands = await invoke<CommandDef[]>('list_commands', {
-    focusedPanel: focusedPanelType(),
-  });
+  store.commands = await invoke<CommandDef[]>('list_commands');
 }
 
 const statusTimers: Metarecord<string, ReturnType<typeof setTimeout>> = {};
@@ -107,9 +105,11 @@ export async function initStore() {
   await listen<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {
     store.workspaces = event.payload.workspaces;
   });
+  // The command list no longer depends on the focused panel (every
+  // registered command is listed); panels registering new commands
+  // refresh it through the bridge's onCommandsChanged.
   await listen<LayoutView>('layout-changed', (event) => {
     store.layout = event.payload;
-    void refreshCommands();
   });
   await listen<{ bindings: Binding[] }>('keybindings-changed', (event) => {
     store.keytable = event.payload.bindings;
