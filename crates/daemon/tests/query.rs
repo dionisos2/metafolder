@@ -146,6 +146,78 @@ fn test_neq_requires_a_differing_occurrence() {
 }
 
 #[test]
+fn test_eq_string_on_tree_ref_compares_the_name() {
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let y2021 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let _y2022 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2022".into() },
+    )]);
+
+    // A string operand compares against the TreeRef name component.
+    assert_same_set(
+        f.run(&Query::Eq { field: "mfr_path".into(), value: s("2021") }),
+        vec![y2021],
+    );
+    // Exact name equality, not a substring match.
+    assert!(f.run(&Query::Eq { field: "mfr_path".into(), value: s("202") }).is_empty());
+    // Strict (parent, name) equality via a TreeRef operand still works.
+    assert_same_set(
+        f.run(&Query::Eq {
+            field: "mfr_path".into(),
+            value: Value::TreeRef { parent: Some(root), name: "2021".into() },
+        }),
+        vec![y2021],
+    );
+}
+
+#[test]
+fn test_neq_string_on_tree_ref_compares_the_name() {
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let _y2021 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let y2022 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2022".into() },
+    )]);
+
+    // A TreeRef named "2021" is *equal* to the string "2021": it must not
+    // count as a differing occurrence. root (named "") and 2022 do differ.
+    assert_same_set(
+        f.run(&Query::Neq { field: "mfr_path".into(), value: s("2021") }),
+        vec![root, y2022],
+    );
+}
+
+#[test]
+fn test_ordered_string_comparison_on_tree_ref_name() {
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let y2021 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let _y2022 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2022".into() },
+    )]);
+
+    // Same convention as sorting: tree_ref rows order by their name.
+    // root's name is "" and also sorts before "2022".
+    assert_same_set(
+        f.run(&Query::Lt { field: "mfr_path".into(), value: s("2022") }),
+        vec![root, y2021],
+    );
+}
+
+#[test]
 fn test_ordered_comparisons_numeric() {
     let mut f = Fixture::new();
     let three = f.create(vec![Field::new("rating", Value::Int(3))]);
@@ -365,6 +437,48 @@ fn test_follows_tree_empty_path_matches_root_children() {
 
     let q = Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("".into()) };
     assert_same_set(f.run(&q), vec![music, docs]);
+}
+
+#[test]
+fn test_follows_condition_on_tree_ref_matches_children_of_matching_parents() {
+    // "all files directly inside any folder named 2021": a condition
+    // right-hand side works on TreeRef fields too, matching metarecords whose
+    // direct parent satisfies the sub-query.
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let y2021_a = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let other = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "other".into() },
+    )]);
+    let y2021_b = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(other), name: "2021".into() },
+    )]);
+    let file_a = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021_a), name: "a.jpg".into() },
+    )]);
+    let file_b = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021_b), name: "b.jpg".into() },
+    )]);
+    let _file_other = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(other), name: "c.jpg".into() },
+    )]);
+
+    let q = Query::Follows {
+        field: "mfr_path".into(),
+        target: FollowTarget::Condition(Box::new(Query::Eq {
+            field: "mfr_path".into(),
+            value: s("2021"),
+        })),
+    };
+    assert_same_set(f.run(&q), vec![file_a, file_b]);
 }
 
 #[test]

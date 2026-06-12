@@ -42,11 +42,15 @@ operation — the daemon first collects the descendant UUID set iteratively via
 the tree cache, then injects it as an =IN= clause into the surrounding SQL query
 rather than emitting a CTE.
 
-=Follows= on a =Ref= field takes a condition (sub-query) as right-hand side and
-matches metarecords whose =value_uuid= points to a metarecord satisfying that condition.
-On a =TreeRef= field, the right-hand side is a path string (e.g. ="/music/jazz"=)
-resolved to a UUID via the tree cache; it matches metarecords whose direct parent
-(=value_uuid=) is that metarecord. DSL syntax: =field -> "path"=.
+=Follows= takes either a condition (sub-query) or a path string as right-hand
+side. With a condition, it matches metarecords whose =value_uuid= (the =Ref=
+referent, or the =TreeRef= direct parent) points to a metarecord satisfying
+that condition; this works on both =Ref= and =TreeRef= fields, e.g.
+=mfr_path -> (mfr_path = "2021")= matches the direct children of every
+directory named =2021=. With a path string (e.g. ="/music/jazz"=, =TreeRef=
+semantics only), the path is resolved to a UUID via the tree cache and the
+query matches metarecords whose direct parent (=value_uuid=) is that metarecord.
+DSL syntax: =field -> "path"= / =field -> (predicate)=.
 
 =FollowsTransitive= is restricted to =TreeRef= fields; applying it to a =Ref=
 field is rejected with =400=. The right-hand side is a path string (e.g.
@@ -54,6 +58,15 @@ field is rejected with =400=. The right-hand side is a path string (e.g.
 that metarecord are then collected iteratively via the tree cache (fetching missing
 nodes from the DB step by step), and the resulting UUID set is used to filter
 the query results.
+
+String operations on a =TreeRef= row apply to =value_name= (the single name
+component) — the same convention everywhere: comparisons (=Eq=/=Neq= and the
+ordered operators) with a string operand, =Matches=, and sorting. So
+=mfr_path = "2021"= matches every metarecord whose =mfr_path= name is exactly
+=2021=, wherever it sits in the tree. Strict =(parent, name)= equality remains
+available through =Eq= with a =tree_ref= JSON value (no DSL literal exists for
+it; the same pair can be expressed in the DSL as
+=field -> "/parent/path" AND field = "name"=).
 
 =Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
 setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
@@ -210,7 +223,8 @@ string    := '"' ... '"'
   parentheses override.
 - =field -> "path"= compiles to =Follows= with a path right-hand side
   (=TreeRef= semantics); =field -> (predicate)= compiles to =Follows= with a
-  sub-query right-hand side (=Ref= semantics).
+  sub-query right-hand side (the referent of a =Ref= row, or the direct
+  parent of a =TreeRef= row, must satisfy the predicate).
 - =field ->* "path"= compiles to =FollowsTransitive= (TreeRef only).
 
 Examples:
@@ -221,6 +235,7 @@ mfr_path IS ABSENT
 NOT (seen = true OR rating IS UNKNOWN)
 mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
 author -> (name = "Coltrane")
+mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
 #+END_SRC
 
 ** =mf query <predicate>=

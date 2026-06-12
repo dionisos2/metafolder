@@ -414,7 +414,7 @@ impl<'a> Compiler<'a> {
                     self.push_text(field);
                     Ok(self.add(format!(
                         "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                         WHERE field_name = ? AND value_type = 'ref' \
+                         WHERE field_name = ? AND value_type IN ('ref', 'tree_ref') \
                            AND value_uuid IN (SELECT uuid FROM {sub})"
                     )))
                 }
@@ -511,8 +511,14 @@ impl<'a> Compiler<'a> {
                 ))
             }
             Value::String(s) => {
+                // Same convention as Matches and sorting: on a tree_ref row,
+                // a string operand compares against the name component.
                 self.push_text(s);
-                Ok(format!("value_type = 'string' AND value_text {sym} ?"))
+                self.push_text(s);
+                Ok(format!(
+                    "(value_type = 'string' AND value_text {sym} ?) OR \
+                     (value_type = 'tree_ref' AND value_name {sym} ?)"
+                ))
             }
             Value::DateTime(s) => {
                 self.push_text(s);
