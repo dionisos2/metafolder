@@ -48,7 +48,9 @@ impl ConfigDir {
     /// Installs the shipped defaults: `keybindings.toml`, `style.css` and
     /// `panel-types/*` are written only when missing (user edits are never
     /// overwritten); `panel-types-defaults/*` is always rewritten so users
-    /// can diff their edits against the current defaults.
+    /// can diff their edits against the current defaults. A user panel
+    /// file identical to the previous defaults mirror was never edited,
+    /// so it is upgraded to the new shipped version in place.
     pub fn install_defaults(&self) -> Result<(), String> {
         let io = |e: std::io::Error| format!("config install failed: {e}");
         std::fs::create_dir_all(&self.root).map_err(io)?;
@@ -63,6 +65,13 @@ impl ConfigDir {
             }
         }
 
+        // Before the mirror refresh: it still holds the defaults shipped
+        // by the previous run, the reference for "never edited".
+        upgrade_pristine(
+            &PANEL_TYPES,
+            &self.root.join("panel-types"),
+            &self.root.join("panel-types-defaults"),
+        )?;
         install_dir(&PANEL_TYPES, &self.root.join("panel-types"), false)?;
         install_dir(&PANEL_TYPES, &self.root.join("panel-types-defaults"), true)?;
         Ok(())
@@ -214,6 +223,27 @@ impl ConfigDir {
     pub fn remove_port_file(&self) {
         let _ = std::fs::remove_file(self.port_file_path());
     }
+}
+
+/// Upgrades the never-edited user copies of shipped files: a user file
+/// whose content equals the previous defaults mirror (`old_defaults`,
+/// written by the last run) carries no user edit and is rewritten with
+/// the new shipped content. Anything else — edited, missing, or without
+/// a mirror counterpart (first run) — is left to `install_dir`.
+fn upgrade_pristine(source: &Dir<'_>, user: &Path, old_defaults: &Path) -> Result<(), String> {
+    let io = |e: std::io::Error| format!("config install failed: {e}");
+    for dir in source.dirs() {
+        upgrade_pristine(dir, user, old_defaults)?;
+    }
+    for file in source.files() {
+        let user_path = user.join(file.path());
+        let Ok(current) = std::fs::read(&user_path) else { continue };
+        let Ok(previous) = std::fs::read(old_defaults.join(file.path())) else { continue };
+        if current == previous && current != file.contents() {
+            std::fs::write(&user_path, file.contents()).map_err(io)?;
+        }
+    }
+    Ok(())
 }
 
 /// Copies an embedded directory tree to disk. With `overwrite`, existing

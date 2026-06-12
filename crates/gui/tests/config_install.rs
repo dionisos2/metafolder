@@ -41,6 +41,43 @@ fn test_user_edits_are_never_overwritten() {
 }
 
 #[test]
+fn test_pristine_panel_copies_are_upgraded() {
+    let (_guard, config) = temp_config();
+    config.install_defaults().unwrap();
+
+    // Simulate the leftovers of an older binary's startup: the same old
+    // shipped content in the user copy and in the defaults mirror.
+    let user = config.root().join("panel-types/hello/index.html");
+    let mirror = config.root().join("panel-types-defaults/hello/index.html");
+    std::fs::write(&user, "<html>old shipped</html>").unwrap();
+    std::fs::write(&mirror, "<html>old shipped</html>").unwrap();
+
+    config.install_defaults().unwrap();
+    // The user copy was never edited (identical to the previous
+    // defaults): it is upgraded to the currently shipped version.
+    assert_eq!(
+        std::fs::read_to_string(&user).unwrap(),
+        std::fs::read_to_string(&mirror).unwrap(),
+    );
+    assert!(std::fs::read_to_string(&user).unwrap().contains("Example panel type"));
+}
+
+#[test]
+fn test_edited_panel_copies_survive_upgrades() {
+    let (_guard, config) = temp_config();
+    config.install_defaults().unwrap();
+
+    let user = config.root().join("panel-types/hello/index.html");
+    let mirror = config.root().join("panel-types-defaults/hello/index.html");
+    std::fs::write(&user, "<html>my edits</html>").unwrap();
+    std::fs::write(&mirror, "<html>old shipped</html>").unwrap();
+
+    config.install_defaults().unwrap();
+    // Edited (differs from the previous defaults): left untouched.
+    assert_eq!(std::fs::read_to_string(&user).unwrap(), "<html>my edits</html>");
+}
+
+#[test]
 fn test_defaults_mirror_is_always_refreshed() {
     let (_guard, config) = temp_config();
     config.install_defaults().unwrap();

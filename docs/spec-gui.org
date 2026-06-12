@@ -448,10 +448,13 @@ Panel types live under =~/.config/metafolder-gui/panel-types/=:
 #+END_SRC
 
 Built-in types ship as pre-populated examples. The user can edit them freely;
-the GUI does not overwrite them on update: installation only writes missing
-files under =panel-types/=, while =panel-types-defaults/= (a sibling
-directory) is rewritten on every startup with the current shipped versions,
-so the user can diff their edits against the defaults after an upgrade.
+the GUI never overwrites an edited file. On startup, installation writes
+missing files under =panel-types/= and *upgrades the never-edited ones*: a
+user file whose content is identical to =panel-types-defaults/= (a sibling
+mirror directory holding the versions shipped by the previous run) carries
+no user edit and is replaced with the new shipped version. The mirror is
+then rewritten with the current shipped versions, so the user can also diff
+their edits against the defaults after an upgrade.
 
 Panel types are served to the WebView by the GUI's own HTTP server (the
 GUI API port, default 7524): =GET /panel/<name>/<file>=. HTML documents get
