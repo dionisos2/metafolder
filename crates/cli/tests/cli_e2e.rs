@@ -511,8 +511,9 @@ fn test_reconcile_reports_created_entries() {
 
     let out = mf(&["--repo", &repo, "reconcile"]);
     assert_ok(&out);
+    // a.txt + b.txt + .metafolder + config.json (internal/ is excluded).
     assert!(
-        out.stdout.starts_with("created: 2  moved: 0"),
+        out.stdout.starts_with("created: 4  moved: 0"),
         "unexpected summary: {}",
         out.stdout
     );

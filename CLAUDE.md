@@ -240,8 +240,14 @@ GUI dev gotchas (learned the hard way):
 Each repository's `.metafolder/` directory (inside the watched root, or at an
 external location recorded in the config) contains:
 - `config.json` — `RepoConfig`
-- `db.sqlite` — SQLite database (WAL, exclusive lock while loaded)
 - `schema.json` — optional user schema (spec-schema)
+- `internal/db.sqlite` — SQLite database (WAL, exclusive lock while loaded)
+
+`internal/` (database + sidecars, case probe) is the only part of
+`.metafolder/` excluded from tracking — by absolute path, in both the watcher
+and the reconcile walk; the rest of `.metafolder/` is ordinary trackable
+content. A pre-`internal/` layout is migrated automatically at load
+(`db.sqlite*` moved into `internal/`).
 
 ## Key invariants
 

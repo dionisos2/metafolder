@@ -28,6 +28,12 @@ pub struct RepoState {
 }
 
 impl RepoState {
+    /// Absolute path of `.metafolder/internal/` — the only part of the
+    /// repository excluded from tracking (watcher and reconcile).
+    pub fn internal_dir(&self) -> PathBuf {
+        self.metafolder_dir.join(repo::INTERNAL_DIR)
+    }
+
     pub fn from_opened(opened: OpenedRepo) -> Self {
         Self {
             conn: Mutex::new(opened.conn),

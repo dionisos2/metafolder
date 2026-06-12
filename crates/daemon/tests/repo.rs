@@ -20,7 +20,8 @@ fn test_init_creates_structure_and_root_entry() {
     let opened = repo::init_repository(&root, None).unwrap();
 
     assert!(root.join(".metafolder/config.json").exists());
-    assert!(root.join(".metafolder/db.sqlite").exists());
+    assert!(root.join(".metafolder/internal/db.sqlite").exists());
+    assert!(!root.join(".metafolder/db.sqlite").exists());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
     assert_eq!(
         opened.config.name,
@@ -76,7 +77,7 @@ fn test_init_with_external_metafolder() {
 
     let opened = repo::init_repository(&root, Some(&meta)).unwrap();
     assert!(meta.join("config.json").exists());
-    assert!(meta.join("db.sqlite").exists());
+    assert!(meta.join("internal/db.sqlite").exists());
     assert!(!root.join(".metafolder").exists());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
     drop(opened);
@@ -103,6 +104,35 @@ fn test_load_standard_form_restores_uuid() {
 }
 
 #[test]
+fn test_load_migrates_legacy_db_layout() {
+    let root = temp_dir("migrate");
+    let created = repo::init_repository(&root, None).unwrap();
+    let uuid = created.config.repo_uuid;
+    drop(created);
+
+    // Recreate the legacy layout: the whole db.sqlite* family directly in
+    // .metafolder/, no internal/ directory.
+    let metafolder = root.join(".metafolder");
+    let internal = metafolder.join("internal");
+    for entry in std::fs::read_dir(&internal).unwrap() {
+        let entry = entry.unwrap();
+        std::fs::rename(entry.path(), metafolder.join(entry.file_name())).unwrap();
+    }
+    std::fs::remove_dir(&internal).unwrap();
+    assert!(metafolder.join("db.sqlite").exists());
+
+    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    assert_eq!(loaded.config.repo_uuid, uuid);
+    assert!(internal.join("db.sqlite").exists());
+    assert!(!metafolder.join("db.sqlite").exists());
+    assert!(!metafolder.join("db.sqlite-wal").exists());
+    // The loaded repository is functional: the root entry is readable.
+    assert!(db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().is_some());
+    drop(loaded);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_load_fails_when_no_repository() {
     let root = temp_dir("noload");
     let err = repo::load_repository(RepoLocator::Root(root.clone())).unwrap_err();
@@ -117,7 +147,8 @@ fn test_exclusive_lock_blocks_second_connection() {
 
     // The first connection holds an EXCLUSIVE lock (it has already written);
     // a second connection must not be able to read or write.
-    let second = rusqlite::Connection::open(root.join(".metafolder/db.sqlite")).unwrap();
+    let second =
+        rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
     let res: Result<i64, _> =
         second.query_row("SELECT COUNT(*) FROM metadata", [], |r| r.get(0));
     assert!(res.is_err(), "second connection must be locked out");
@@ -134,13 +165,15 @@ fn test_case_sensitivity_probe() {
     // platforms the probe may legitimately return true.
     #[cfg(target_os = "linux")]
     assert!(!opened.case_insensitive);
-    // The probe must not leave its temporary file behind.
-    let leftovers: Vec<_> = std::fs::read_dir(root.join(".metafolder"))
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().contains("case_probe"))
-        .collect();
-    assert!(leftovers.is_empty(), "probe file must be cleaned up");
+    // The probe runs inside internal/ and must not leave its file behind.
+    for dir in [root.join(".metafolder"), root.join(".metafolder/internal")] {
+        let leftovers: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains("case_probe"))
+            .collect();
+        assert!(leftovers.is_empty(), "probe file must be cleaned up");
+    }
     drop(opened);
     std::fs::remove_dir_all(root).unwrap();
 }

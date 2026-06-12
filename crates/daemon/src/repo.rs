@@ -15,6 +15,13 @@ use crate::log::Writer;
 
 pub const DB_FILE: &str = "db.sqlite";
 
+/// Subdirectory of `.metafolder/` holding the live database (and its WAL /
+/// journal sidecars) plus other daemon-managed volatile files. It is the
+/// only part of `.metafolder/` excluded from tracking — by absolute path,
+/// in both the watcher and reconcile — so that the daemon's own writes can
+/// never feed back into the event stream.
+pub const INTERNAL_DIR: &str = "internal";
+
 /// Default `mf_ignore` patterns written on the root entry at init.
 pub const DEFAULT_IGNORE_PATTERNS: &[&str] =
     &[r"\.git(/.*)?$", r"node_modules(/.*)?$", r"__pycache__(/.*)?$"];
@@ -32,10 +39,10 @@ pub struct OpenedRepo {
 }
 
 /// Probes the filesystem's case sensitivity by creating a lowercase file in
-/// `.metafolder/` and accessing it through an uppercase name.
-fn probe_case_insensitive(metafolder_dir: &Path) -> bool {
-    let lower = metafolder_dir.join(".case_probe_a");
-    let upper = metafolder_dir.join(".CASE_PROBE_A");
+/// `.metafolder/internal/` and accessing it through an uppercase name.
+fn probe_case_insensitive(internal_dir: &Path) -> bool {
+    let lower = internal_dir.join(".case_probe_a");
+    let upper = internal_dir.join(".CASE_PROBE_A");
     if std::fs::write(&lower, b"").is_err() {
         return false;
     }
@@ -70,6 +77,14 @@ pub fn init_repository(root: &Path, metafolder: Option<&Path>) -> Result<OpenedR
     }
     std::fs::create_dir_all(&metafolder_dir)
         .with_context(|| format!("Failed to create {metafolder_dir:?}"))?;
+    // Canonical from here on: the watcher and reconcile exclude internal/
+    // by absolute path comparison.
+    let metafolder_dir = metafolder_dir
+        .canonicalize()
+        .with_context(|| format!("Cannot resolve path {metafolder_dir:?}"))?;
+    let internal_dir = metafolder_dir.join(INTERNAL_DIR);
+    std::fs::create_dir_all(&internal_dir)
+        .with_context(|| format!("Failed to create {internal_dir:?}"))?;
 
     let name = root
         .file_name()
@@ -78,11 +93,11 @@ pub fn init_repository(root: &Path, metafolder: Option<&Path>) -> Result<OpenedR
     let config = RepoConfig::new(root, name);
     config.write(&metafolder_dir)?;
 
-    let mut conn = db::open_database(&metafolder_dir.join(DB_FILE))?;
+    let mut conn = db::open_database(&internal_dir.join(DB_FILE))?;
     db::init_schema(&conn)?;
     create_root_entry(&mut conn, &config)?;
 
-    let case_insensitive = probe_case_insensitive(&metafolder_dir);
+    let case_insensitive = probe_case_insensitive(&internal_dir);
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
@@ -116,8 +131,34 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     if !RepoConfig::exists(&metafolder_dir) {
         bail!("No repository found at {metafolder_dir:?} (missing config.json)");
     }
+    let metafolder_dir = metafolder_dir
+        .canonicalize()
+        .with_context(|| format!("Cannot resolve path {metafolder_dir:?}"))?;
     let config = RepoConfig::read(&metafolder_dir)?;
-    let conn = db::open_database(&metafolder_dir.join(DB_FILE))?;
-    let case_insensitive = probe_case_insensitive(&metafolder_dir);
+    let internal_dir = metafolder_dir.join(INTERNAL_DIR);
+    std::fs::create_dir_all(&internal_dir)
+        .with_context(|| format!("Failed to create {internal_dir:?}"))?;
+    migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
+    let conn = db::open_database(&internal_dir.join(DB_FILE))?;
+    let case_insensitive = probe_case_insensitive(&internal_dir);
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
+}
+
+/// Moves a pre-`internal/` database into `internal/`. The whole `db.sqlite*`
+/// family moves together (-wal, -shm, and a possible hot -journal must stay
+/// next to the main file for SQLite recovery to find them).
+fn migrate_legacy_db_layout(metafolder_dir: &Path, internal_dir: &Path) -> Result<()> {
+    if !metafolder_dir.join(DB_FILE).exists() {
+        return Ok(());
+    }
+    for entry in std::fs::read_dir(metafolder_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with(DB_FILE) && entry.path().is_file() {
+            std::fs::rename(entry.path(), internal_dir.join(&name)).with_context(|| {
+                format!("Failed to move legacy {name:?} into {internal_dir:?}")
+            })?;
+        }
+    }
+    Ok(())
 }

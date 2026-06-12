@@ -16,6 +16,14 @@ By default, =.metafolder/= is a subdirectory of the watched root. It can also
 live at an arbitrary path (external database), useful when the data disk is
 read-only or when metadata should be kept on a separate, faster device.
 
+The database and other daemon-managed volatile files live in the
+=.metafolder/internal/= subdirectory, which is always excluded from tracking
+(see [[file:spec-file-tracking.org][spec-file-tracking.org]]). The rest of
+=.metafolder/= (=config.json=, =schema.json=) is ordinary content that the
+user may track like any other file. Repositories created before the
+=internal/= layout are migrated automatically at load time (the =db.sqlite*=
+family is moved into =internal/=).
+
 | Field       | Type   | Description                            |
 |-------------+--------+----------------------------------------|
 | =repo_uuid= | UUID   | Stable identifier for this repository  |
@@ -162,7 +170,7 @@ field across all ancestors at once, keeping the closest result.
 
 ** SQLite Schema
 
-Each repository uses its own =.metafolder/db.sqlite= file (WAL mode, foreign
+Each repository uses its own =.metafolder/internal/db.sqlite= file (WAL mode, foreign
 keys enabled). Exception: when a repository is loaded from a network
 filesystem (e.g. SSHFS, NFS, SMB), the daemon switches to =DELETE= journal
 mode (=PRAGMA journal_mode=DELETE=) at connection time, because WAL requires

@@ -38,7 +38,7 @@ Default filesystems are case-sensitive on Linux and case-insensitive (but
 case-preserving) on macOS and Windows. The stored =value_name= always keeps
 the on-disk casing. When the daemon loads a repository it probes the
 filesystem's case sensitivity (by creating a temporary file inside
-=.metafolder/= and testing access through a different casing) and records the
+=.metafolder/internal/= and testing access through a different casing) and records the
 result in the in-memory repo state. On case-insensitive filesystems, path
 comparisons performed by the watcher, reconcile, and the tree cache use
 case-insensitive matching, so that an event reported with different casing

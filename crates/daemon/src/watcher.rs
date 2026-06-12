@@ -1,7 +1,7 @@
 //! Filesystem watcher (spec-file-tracking "File Watcher"): translates notify
 //! events into [`crate::executor::FsEvent`]s, enqueues them in the persistent
-//! buffer and pings the executor. Events under `.metafolder/` and non-UTF-8
-//! names are skipped.
+//! buffer and pings the executor. Events under `.metafolder/internal/` (the
+//! daemon's own database writes) and non-UTF-8 names are skipped.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -20,7 +20,7 @@ pub struct WatcherHandle {
 pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHandle> {
     let watch_root = repo.config.root.clone();
     let root = repo.config.root.clone();
-    let metafolder_dir = repo.metafolder_dir.clone();
+    let internal_dir = repo.internal_dir();
     // Weak: the watcher is owned by the RepoState; an Arc here would be a
     // reference cycle keeping the repository loaded forever.
     let repo = Arc::downgrade(repo);
@@ -31,7 +31,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
                 let Some(repo) = repo.upgrade() else {
                     return; // Repository unloaded.
                 };
-                handle_event(&repo, &root, &metafolder_dir, &pinger, event)
+                handle_event(&repo, &root, &internal_dir, &pinger, event)
             }
             Err(err) => eprintln!("[watcher] backend error: {err}"),
         }
@@ -47,9 +47,9 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
 
 /// Converts an absolute path to the internal repo-root-relative form
 /// (leading `/`, `/` separators). None for paths outside the root, under
-/// `.metafolder/`, or with non-UTF-8 names (skipped with a warning).
-fn relative(root: &Path, metafolder_dir: &Path, abs: &Path) -> Option<String> {
-    if abs.starts_with(metafolder_dir) {
+/// `.metafolder/internal/`, or with non-UTF-8 names (skipped with a warning).
+fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<String> {
+    if abs.starts_with(internal_dir) {
         return None;
     }
     let rel = abs.strip_prefix(root).ok()?;
@@ -75,13 +75,13 @@ fn relative(root: &Path, metafolder_dir: &Path, abs: &Path) -> Option<String> {
 fn handle_event(
     repo: &RepoState,
     root: &Path,
-    metafolder_dir: &Path,
+    internal_dir: &Path,
     pinger: &ExecutorPinger,
     event: notify::Event,
 ) {
     use notify::event::{ModifyKind, RenameMode};
 
-    let rel = |p: &Path| relative(root, metafolder_dir, p);
+    let rel = |p: &Path| relative(root, internal_dir, p);
     let mut events: Vec<FsEvent> = Vec::new();
     match event.kind {
         notify::EventKind::Create(_) => {
@@ -95,7 +95,7 @@ fn handle_event(
                 match (rel(from), rel(to)) {
                     (Some(a), Some(b)) => events.push(FsEvent::Rename(a, b)),
                     // One side is outside the watched scope (e.g. into
-                    // .metafolder/): degrade to the one-sided forms.
+                    // .metafolder/internal/): degrade to the one-sided forms.
                     (Some(a), None) => events.push(FsEvent::RenameFrom(a)),
                     (None, Some(b)) => events.push(FsEvent::RenameTo(b)),
                     (None, None) => {}
@@ -131,4 +131,43 @@ fn handle_event(
     }
     drop(conn);
     pinger.ping();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::relative;
+    use std::path::Path;
+
+    #[test]
+    fn test_relative_skips_internal_dir_only() {
+        let root = Path::new("/repo");
+        let internal = Path::new("/repo/.metafolder/internal");
+        let rel = |p: &str| relative(root, internal, Path::new(p));
+
+        assert_eq!(rel("/repo/a.txt").as_deref(), Some("/a.txt"));
+        assert_eq!(
+            rel("/repo/.metafolder/config.json").as_deref(),
+            Some("/.metafolder/config.json")
+        );
+        assert_eq!(rel("/repo/.metafolder/internal/db.sqlite"), None);
+        assert_eq!(rel("/repo/.metafolder/internal/db.sqlite-wal"), None);
+        assert_eq!(rel("/elsewhere/x"), None);
+        assert_eq!(rel("/repo"), None);
+    }
+
+    #[test]
+    fn test_relative_handles_external_metafolder_inside_root() {
+        // root = "/" with the metafolder elsewhere inside it: only the
+        // internal/ directory is excluded, by absolute path.
+        let root = Path::new("/");
+        let internal = Path::new("/home/.metafolder/internal");
+        let rel = |p: &str| relative(root, internal, Path::new(p));
+
+        assert_eq!(rel("/etc/hosts").as_deref(), Some("/etc/hosts"));
+        assert_eq!(
+            rel("/home/.metafolder/config.json").as_deref(),
+            Some("/home/.metafolder/config.json")
+        );
+        assert_eq!(rel("/home/.metafolder/internal/db.sqlite"), None);
+    }
 }

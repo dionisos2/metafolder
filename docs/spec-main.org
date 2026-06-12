@@ -136,8 +136,9 @@ Response body:
 
 *** =POST /repos/init=
 
-Initialises a new repository. Creates =config.json= and =db.sqlite= inside the
-=.metafolder/= directory. Fails if a repository already exists there.
+Initialises a new repository. Creates =config.json= and =internal/db.sqlite=
+inside the =.metafolder/= directory. Fails if a repository already exists
+there.
 
 Request body:
 #+BEGIN_SRC json

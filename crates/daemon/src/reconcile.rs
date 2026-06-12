@@ -56,8 +56,9 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
     let mut result = ReconcileResult::default();
 
     // Step 2 — walk the filesystem (eligibility-pruned).
+    let internal_dir = repo.internal_dir();
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
-    walk(&mut writer, &mut cache, &root, "", &mut fs_paths)?;
+    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths)?;
 
     // New files: paths with no entry at that tree position.
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
@@ -200,7 +201,7 @@ pub fn reconcile_entry(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, 
     if abs_base.exists() {
         let meta = std::fs::metadata(&abs_base).map_err(anyhow::Error::from)?;
         fs_paths.push((base.clone(), meta));
-        walk(&mut writer, &mut cache, &root, &base, &mut fs_paths)?;
+        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths)?;
     }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
@@ -223,12 +224,14 @@ pub fn reconcile_entry(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, 
 // ── Shared helpers (also used by the track endpoint) ──────────────────────────
 
 /// Recursively walks `prefix` (repo-root-relative), collecting eligible
-/// paths. Ineligible directories are pruned (cascading skip); `.metafolder`
-/// is always skipped.
+/// paths. Ineligible directories are pruned (cascading skip); the
+/// repository's `.metafolder/internal/` directory is always skipped,
+/// matched by absolute path (the metafolder may live anywhere).
 fn walk(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
+    internal_dir: &Path,
     prefix: &str,
     out: &mut Vec<(String, Metadata)>,
 ) -> Result<()> {
@@ -243,7 +246,7 @@ fn walk(
             eprintln!("[reconcile] skipping non-UTF-8 name under {abs:?}");
             continue;
         };
-        if prefix.is_empty() && name == ".metafolder" {
+        if entry.path() == internal_dir {
             continue;
         }
         let rel = format!("{prefix}/{name}");
@@ -254,7 +257,7 @@ fn walk(
         let is_dir = meta.is_dir();
         out.push((rel.clone(), meta));
         if is_dir {
-            walk(writer, cache, root, &rel, out)?;
+            walk(writer, cache, root, internal_dir, &rel, out)?;
         }
     }
     Ok(())

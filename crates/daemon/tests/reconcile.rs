@@ -74,7 +74,7 @@ fn test_reconcile_creates_entries_for_new_files() {
     write_file(&root, "sub/b.txt", b"bb");
 
     let result = run(&repo);
-    assert_eq!(result.created, 3, "a.txt + sub + sub/b.txt");
+    assert_eq!(result.created, 5, "a.txt + sub + sub/b.txt + .metafolder + config.json");
     assert_eq!(result.moved, 0);
     assert!(result.candidates.is_empty());
 
@@ -97,8 +97,23 @@ fn test_reconcile_respects_eligibility() {
     write_file(&root, "ok.txt", b"y");
 
     let result = run(&repo);
-    assert_eq!(result.created, 1, "only ok.txt; .git is ignored");
+    assert_eq!(result.created, 3, "ok.txt + .metafolder + config.json; .git is ignored");
     assert!(resolve(&repo, "/.git").is_none());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_reconcile_tracks_metafolder_but_skips_internal() {
+    let (repo, root) = setup("metafolder");
+
+    run(&repo);
+    // .metafolder/ is ordinary trackable content (the root has mf_watch)...
+    assert!(resolve(&repo, "/.metafolder/config.json").is_some());
+    // ...but internal/ (live database and other daemon-managed files) is
+    // always excluded, by absolute path.
+    assert!(resolve(&repo, "/.metafolder/internal").is_none());
+    assert!(resolve(&repo, "/.metafolder/internal/db.sqlite").is_none());
 
     std::fs::remove_dir_all(root).unwrap();
 }
