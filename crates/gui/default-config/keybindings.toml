@@ -37,6 +37,17 @@
 "c" = { command = "panel:unsplit" }
 "o" = { command = "panel:focus-next" }
 
+# Panel type switching: "s" then one letter (the status bar lists the
+# continuations while the sequence is pending; escape cancels it).
+"s l" = { command = "panel:set-type metarecord-list" }
+"s d" = { command = "panel:set-type metarecord-detail" }
+"s f" = { command = "panel:set-type file" }
+"s m" = { command = "panel:set-type file-manager" }
+"s o" = { command = "panel:set-type log" }
+"s r" = { command = "panel:set-type repos" }
+"s g" = { command = "panel:set-type message" }
+"s w" = { command = "panel:set-type workspace-info" }
+
 # Panel types suggest their own keybindings (metafolder.addKeybinding);
 # they are the weakest layer, so an entry here overrides them. Scope it
 # to the panel type with `when`, e.g. to rebind metarecord-list's "open in

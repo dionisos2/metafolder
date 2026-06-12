@@ -40,6 +40,12 @@ export const store = $state({
     promptText: null as string | null,
     /// Completions offered by the active prompt's autocomplete.
     promptCompletions: [] as string[],
+    /// Non-null while a key sequence is pending (shell or panel matcher):
+    /// the typed prefix and the bindings that can still complete it.
+    pendingKeys: null as {
+      prefix: string[];
+      candidates: { keys: string[]; invocation: string }[];
+    } | null,
   },
 });
 

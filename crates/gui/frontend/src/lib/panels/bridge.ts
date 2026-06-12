@@ -18,10 +18,18 @@ interface Instance {
   subscriptions: Set<string>;
 }
 
+export interface PendingKeys {
+  prefix: string[];
+  candidates: { keys: string[]; invocation: string }[];
+}
+
 export interface BridgeDeps {
   invoke: (command: string, args?: Metarecord<string, unknown>) => Promise<unknown>;
   dispatch: (invocation: string) => Promise<void>;
   onCommandsChanged: () => void;
+  /** A panel's key matcher entered (object) or left (null) a pending
+   *  sequence: the shell shows/clears the continuation hint. */
+  onPendingKeys: (pending: PendingKeys | null) => void;
 }
 
 export function createBridgeCore(deps: BridgeDeps) {
@@ -126,6 +134,9 @@ export function createBridgeCore(deps: BridgeDeps) {
         }
         case 'key-resolved':
           await deps.dispatch(String(message.invocation));
+          break;
+        case 'key-pending':
+          deps.onPendingKeys((message.pending as PendingKeys | null) ?? null);
           break;
         case 'command-result': {
           const pending = pendingCommands.get(Number(message.invocationId));

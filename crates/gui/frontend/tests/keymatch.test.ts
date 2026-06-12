@@ -94,8 +94,19 @@ describe('createMatcher', () => {
   test('two-key sequences report pending then fire', () => {
     const matcher = createMatcher([b(['g', 'g'], 'metarecord-list:goto-top', 'metarecord-list')]);
     const ctx = { panelType: 'metarecord-list', textInput: false };
-    expect(matcher.feed('g', ctx)).toEqual({ pending: true });
+    expect(matcher.feed('g', ctx)).toMatchObject({ pending: true, prefix: ['g'] });
     expect(matcher.feed('g', ctx)).toEqual({ invocation: 'metarecord-list:goto-top' });
+  });
+
+  test('a pending result carries the continuation candidates (hint display)', () => {
+    const list = b(['s', 'l'], 'panel:set-type metarecord-list');
+    const detail = b(['s', 'd'], 'panel:set-type metarecord-detail');
+    const matcher = createMatcher([list, detail, b(['x'], 'cut')]);
+    expect(matcher.feed('s', noInput)).toEqual({
+      pending: true,
+      prefix: ['s'],
+      candidates: [list, detail],
+    });
   });
 
   test('an interrupted sequence falls back to single-key matching', () => {
@@ -103,21 +114,30 @@ describe('createMatcher', () => {
       b(['g', 'g'], 'goto-top'),
       b(['x'], 'cut'),
     ]);
-    expect(matcher.feed('g', noInput)).toEqual({ pending: true });
+    expect(matcher.feed('g', noInput)).toMatchObject({ pending: true });
     // 'x' aborts the sequence but still matches its own binding.
     expect(matcher.feed('x', noInput)).toEqual({ invocation: 'cut' });
   });
 
-  test('sequences expire after the timeout', () => {
-    let clock = 0;
-    const matcher = createMatcher([b(['g', 'g'], 'goto-top')], {
-      timeoutMs: 1000,
-      now: () => clock,
-    });
-    expect(matcher.feed('g', noInput)).toEqual({ pending: true });
-    clock = 2000;
-    // Too late: the buffer reset, this 'g' starts a new sequence.
-    expect(matcher.feed('g', noInput)).toEqual({ pending: true });
+  test('escape cancels a pending sequence instead of matching', () => {
+    const matcher = createMatcher([
+      b(['g', 'g'], 'goto-top'),
+      b(['escape'], 'editing:unfocus', null, true),
+    ]);
+    expect(matcher.feed('g', noInput)).toMatchObject({ pending: true });
+    expect(matcher.feed('escape', noInput)).toEqual({ cancelled: true });
+    // Without a pending sequence escape matches its own binding.
+    expect(matcher.feed('escape', noInput)).toEqual({ invocation: 'editing:unfocus' });
+    // The sequence really was dropped: 'g' starts over.
+    expect(matcher.feed('g', noInput)).toMatchObject({ pending: true, prefix: ['g'] });
+  });
+
+  test('a pending sequence never expires', () => {
+    // No clock is consulted at all: a prefix stays pending until a key
+    // completes, aborts or cancels it (spec-gui "Keybinding").
+    const matcher = createMatcher([b(['g', 'g'], 'goto-top')]);
+    expect(matcher.feed('g', noInput)).toMatchObject({ pending: true });
+    expect(matcher.feed('g', noInput)).toEqual({ invocation: 'goto-top' });
   });
 
   test('setBindings replaces the table', () => {

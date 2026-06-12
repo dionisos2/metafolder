@@ -37,13 +37,10 @@ export function comboFromEvent(event) {
   return parts.join('+');
 }
 
-export function createMatcher(bindings, options = {}) {
+export function createMatcher(bindings) {
   let table = bindings ?? [];
-  const timeoutMs = options.timeoutMs ?? 1000;
-  const now = options.now ?? (() => Date.now());
 
   let buffer = [];
-  let bufferAt = 0;
 
   function eligible(binding, context) {
     if (context.textInput && !binding.text_input) return false;
@@ -69,14 +66,13 @@ export function createMatcher(bindings, options = {}) {
   }
 
   function tryMatch(keys, context) {
-    const candidates = table.filter((binding) => eligible(binding, context));
-    const exact = candidates
+    const eligibles = table.filter((binding) => eligible(binding, context));
+    const exact = eligibles
       .filter((binding) => sameKeys(binding.keys, keys))
       .sort((a, b) => rank(a) - rank(b));
     if (exact.length > 0) return { invocation: exact[0].invocation };
-    if (candidates.some((binding) => startsWith(binding.keys, keys))) {
-      return { pending: true };
-    }
+    const candidates = eligibles.filter((binding) => startsWith(binding.keys, keys));
+    if (candidates.length > 0) return { pending: true, prefix: keys, candidates };
     return null;
   }
 
@@ -86,11 +82,16 @@ export function createMatcher(bindings, options = {}) {
       buffer = [];
     },
 
-    // Feeds one normalized combo; returns {invocation}, {pending: true}
-    // (sequence in progress — caller should preventDefault), or null.
+    // Feeds one normalized combo; returns {invocation}, {pending: true,
+    // prefix, candidates} (sequence in progress — the caller should
+    // preventDefault; candidates are the bindings that can still complete
+    // it, for the hint display), {cancelled: true} (escape dropped the
+    // pending sequence), or null. A pending sequence never expires.
     feed(combo, context) {
-      const at = now();
-      if (buffer.length > 0 && at - bufferAt > timeoutMs) buffer = [];
+      if (buffer.length > 0 && combo === 'escape') {
+        buffer = [];
+        return { cancelled: true };
+      }
 
       let result = tryMatch([...buffer, combo], context);
       if (result === null && buffer.length > 0) {
@@ -99,12 +100,7 @@ export function createMatcher(bindings, options = {}) {
         result = tryMatch([combo], context);
       }
 
-      if (result?.pending) {
-        buffer = [...buffer, combo];
-        bufferAt = at;
-      } else {
-        buffer = [];
-      }
+      buffer = result?.pending ? result.prefix : [];
       return result;
     },
   };

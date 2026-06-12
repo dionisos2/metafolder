@@ -164,6 +164,7 @@ const defaultMenu = installDefaultContextMenu(window, (invocation) =>
 
 // Key events never cross the iframe boundary: run the shared matcher here
 // and forward resolved invocations to the shell.
+let hadPendingKeys = false;
 window.addEventListener(
   'keydown',
   (event) => {
@@ -178,6 +179,18 @@ window.addEventListener(
         active.tagName === 'SELECT' ||
         active.isContentEditable);
     const result = matcher.feed(combo, { panelType: initData.panelType, textInput });
+    // The continuation hint lives in the shell: forward pending state
+    // changes (the cleared state only once, plain typing stays silent).
+    if (result?.pending) {
+      hadPendingKeys = true;
+      send({
+        type: 'key-pending',
+        pending: { prefix: result.prefix, candidates: result.candidates },
+      });
+    } else if (hadPendingKeys) {
+      hadPendingKeys = false;
+      send({ type: 'key-pending', pending: null });
+    }
     if (!result) return;
     if (result.invocation && result.invocation in EDITING_ACTIONS) {
       const action = EDITING_ACTIONS[result.invocation];

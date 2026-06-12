@@ -47,6 +47,11 @@ export function installKeys() {
         panelType: focusedPanelType(),
         textInput: isTextInput(document.activeElement),
       });
+      // Continuation hint: shown while a sequence is pending, cleared by
+      // any other outcome (fired, cancelled with escape, aborted).
+      store.ui.pendingKeys = result?.pending
+        ? { prefix: result.prefix, candidates: result.candidates }
+        : null;
       if (!result) return;
       // editing:* only fires where a handler is registered (the command
       // input); otherwise the key keeps its native behaviour (e.g. Enter

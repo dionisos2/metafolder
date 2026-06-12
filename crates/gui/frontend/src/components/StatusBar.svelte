@@ -12,7 +12,29 @@
     }
     return ids;
   });
+
+  // Pending key sequence: one entry per continuation, sorted by keys.
+  const keyHints = $derived.by(() => {
+    const pending = store.ui.pendingKeys;
+    if (!pending) return null;
+    const hints = pending.candidates.map((c) => ({
+      keys: c.keys.slice(pending.prefix.length).join(' '),
+      invocation: c.invocation,
+    }));
+    hints.sort((a, b) => a.keys.localeCompare(b.keys));
+    return { prefix: pending.prefix.join(' '), hints };
+  });
 </script>
+
+{#if keyHints}
+  <div class="key-hints">
+    <span class="prefix">{keyHints.prefix}</span>
+    {#each keyHints.hints as hint (hint.keys + hint.invocation)}
+      <span class="hint"><span class="keys">{hint.keys}</span> {hint.invocation}</span>
+    {/each}
+    <span class="hint dim">escape cancels</span>
+  </div>
+{/if}
 
 <footer class="status-bars">
   {#each barWorkspaces as wsId (wsId)}
@@ -31,6 +53,25 @@
 </footer>
 
 <style>
+  .key-hints {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 14px;
+    padding: 3px 8px;
+    background: var(--mf-bg-raised, #26262e);
+    border-top: 1px solid var(--mf-bg, #1e1e24);
+    font-size: 0.9em;
+  }
+  .key-hints .prefix,
+  .key-hints .keys {
+    font-family: var(--mf-font-mono, monospace);
+    color: var(--mf-accent, #4c56c4);
+  }
+  .key-hints .hint.dim {
+    margin-left: auto;
+    color: var(--mf-fg-dim, #8a8a96);
+  }
   .status-bars {
     display: flex;
     flex: none;

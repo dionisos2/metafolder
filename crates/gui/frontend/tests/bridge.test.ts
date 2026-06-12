@@ -10,12 +10,13 @@ function setup() {
   const invoke = vi.fn(async (_cmd: string, _args?: unknown) => 'ok' as unknown);
   const dispatch = vi.fn(async (_invocation: string) => {});
   const onCommandsChanged = vi.fn();
-  const bridge = createBridgeCore({ invoke, dispatch, onCommandsChanged });
+  const onPendingKeys = vi.fn();
+  const bridge = createBridgeCore({ invoke, dispatch, onCommandsChanged, onPendingKeys });
 
   const source = 'ws-1|hello'; // string instance id
   const post = vi.fn();
   bridge.register(source, { wsId: 'ws-1', panelType: 'hello' }, post);
-  return { bridge, invoke, dispatch, onCommandsChanged, source, post };
+  return { bridge, invoke, dispatch, onCommandsChanged, onPendingKeys, source, post };
 }
 
 const request = (id: number, method: string, params: unknown) => ({
@@ -131,6 +132,15 @@ describe('bridge core', () => {
     const { bridge, dispatch, source } = setup();
     await bridge.onMessage(source, request(1, 'commands.invoke', { invocation: 'tab:new' }));
     expect(dispatch).toHaveBeenCalledWith('tab:new');
+  });
+
+  test('key-pending forwards the panel matcher state to the shell hint', async () => {
+    const { bridge, onPendingKeys, source } = setup();
+    const pending = { prefix: ['s'], candidates: [{ keys: ['s', 'l'], invocation: 'panel:set-type metarecord-list' }] };
+    await bridge.onMessage(source, { mf: true, type: 'key-pending', pending });
+    expect(onPendingKeys).toHaveBeenCalledWith(pending);
+    await bridge.onMessage(source, { mf: true, type: 'key-pending', pending: null });
+    expect(onPendingKeys).toHaveBeenLastCalledWith(null);
   });
 
   test('key-resolved goes through the shell dispatcher', async () => {

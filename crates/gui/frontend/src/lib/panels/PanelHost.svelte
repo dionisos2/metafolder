@@ -24,6 +24,9 @@
     invoke,
     dispatch,
     onCommandsChanged: () => void refreshCommands(),
+    onPendingKeys: (pending) => {
+      store.ui.pendingKeys = pending;
+    },
   });
 
   const instanceKey = (wsId: string, panelType: string) => `${wsId}|${panelType}`;
