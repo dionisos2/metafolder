@@ -1,7 +1,7 @@
 //! Integration tests for the query engine: predicate compilation, graph
 //! traversal, sorting and keyset pagination (spec-query, spec-data-model).
 
-use metafolder_core::entry::{Field, Value};
+use metafolder_core::record::{Field, Value};
 use metafolder_core::query::{FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
@@ -29,7 +29,7 @@ impl Fixture {
 
     fn create_in(&mut self, db_id: Uuid, fields: Vec<Field>) -> Uuid {
         let mut w = Writer::begin(&mut self.conn, db_id, None).unwrap();
-        let m = w.create_entry(fields).unwrap();
+        let m = w.create_record(fields).unwrap();
         w.commit().unwrap();
         m.uuid
     }

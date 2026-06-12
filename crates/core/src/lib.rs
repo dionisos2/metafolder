@@ -1,3 +1,3 @@
 pub mod dsl;
-pub mod entry;
+pub mod record;
 pub mod query;

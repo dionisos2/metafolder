@@ -1,6 +1,6 @@
 //! Reconcile (spec-file-tracking): synchronises the database with the
 //! filesystem on demand. The fingerprint phase recovers moved files; new
-//! files get entries; orphaned entries keep their stale path (reconcile
+//! files get records; orphaned records keep their stale path (reconcile
 //! never writes Nothing).
 
 use std::collections::{HashMap, HashSet};
@@ -11,12 +11,12 @@ use anyhow::Result;
 use serde::Serialize;
 use uuid::Uuid;
 
-use metafolder_core::entry::{Field, Value};
+use metafolder_core::record::{Field, Value};
 
 use crate::db;
 use crate::eligibility;
 use crate::error::ApiError;
-use crate::executor::ensure_parent_entries;
+use crate::executor::ensure_parent_records;
 use crate::fingerprint;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
@@ -32,8 +32,8 @@ pub struct CandidateMatch {
 
 #[derive(Debug, Serialize)]
 pub struct Candidate {
-    #[serde(with = "metafolder_core::entry::hex_uuid")]
-    pub entry_uuid: Uuid,
+    #[serde(with = "metafolder_core::record::hex_uuid")]
+    pub record_uuid: Uuid,
     pub stale_path: String,
     pub matches: Vec<CandidateMatch>,
 }
@@ -60,7 +60,7 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
     walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths)?;
 
-    // New files: paths with no entry at that tree position.
+    // New files: paths with no record at that tree position.
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
     for (rel, meta) in fs_paths {
         if cache.resolve_path(writer.connection(), "mfr_path", &rel)?.is_none() {
@@ -68,11 +68,11 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
         }
     }
 
-    // Step 1 — orphaned entries: tree position no longer present on disk.
+    // Step 1 — orphaned records: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
     // ineligible are not mistaken for orphans.)
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
-    for uuid in db::all_tracked_entries(writer.connection(), db_id)? {
+    for uuid in db::all_tracked_records(writer.connection(), db_id)? {
         let Some(path) = cache.path_of(writer.connection(), "mfr_path", uuid)? else {
             continue;
         };
@@ -154,11 +154,11 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
             for m in &matches {
                 claimed.insert(m.path.clone());
             }
-            result.candidates.push(Candidate { entry_uuid: orphan, stale_path, matches });
+            result.candidates.push(Candidate { record_uuid: orphan, stale_path, matches });
         }
     }
 
-    // Step 5 — create entries for the remaining new files, parents first.
+    // Step 5 — create records for the remaining new files, parents first.
     new_files.sort_by_key(|(rel, _)| rel.matches('/').count());
     for (rel, _) in &new_files {
         if claimed.contains(rel) {
@@ -167,7 +167,7 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
         if cache.resolve_path(writer.connection(), "mfr_path", rel)?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
-        create_entry_for(&mut writer, &mut cache, &root, rel, &[])?;
+        create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
         result.created += 1;
     }
 
@@ -175,17 +175,17 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
     Ok(result)
 }
 
-/// Single-entry reconcile: same semantics scoped to the subtree rooted at
-/// the given entry, without the fingerprint phase. Existing entries get
+/// Single-record reconcile: same semantics scoped to the subtree rooted at
+/// the given record, without the fingerprint phase. Existing records get
 /// their `mfr_*` stat fields refreshed.
-pub fn reconcile_entry(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, ApiError> {
+pub fn reconcile_record(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
     let root = repo.config.root.clone();
     let db_id = repo.config.repo_uuid;
 
     if db::get_version(&conn, uuid)?.is_none() {
-        return Err(ApiError::not_found(format!("Metadata entry not found: {uuid}")));
+        return Err(ApiError::not_found(format!("Record not found: {uuid}")));
     }
     let Some(base) = cache.path_of(&conn, "mfr_path", uuid)? else {
         return Err(ApiError::bad_request(format!(
@@ -211,7 +211,7 @@ pub fn reconcile_entry(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, 
         match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
             Some(existing) => refresh_stat_fields(&mut writer, &root, existing, rel)?,
             None => {
-                create_entry_for(&mut writer, &mut cache, &root, rel, &[])?;
+                create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
                 result.created += 1;
             }
         }
@@ -263,15 +263,15 @@ fn walk(
     Ok(())
 }
 
-/// Creates the entry for a new filesystem path (parents included).
-pub(crate) fn create_entry_for(
+/// Creates the record for a new filesystem path (parents included).
+pub(crate) fn create_record_for(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
     rel: &str,
     extra_fields: &[Field],
 ) -> Result<Uuid> {
-    let parent = ensure_parent_entries(writer, cache, root, rel, extra_fields)?;
+    let parent = ensure_parent_records(writer, cache, root, rel, extra_fields)?;
     let name = rel.rsplit('/').next().unwrap_or(rel);
     let mut fields = vec![Field::new(
         "mfr_path",
@@ -279,12 +279,12 @@ pub(crate) fn create_entry_for(
     )];
     fields.extend(fs_meta::stat_fields(&root.join(rel.trim_start_matches('/')))?);
     fields.extend(extra_fields.iter().cloned());
-    let created = writer.create_entry(fields)?;
+    let created = writer.create_record(fields)?;
     cache.apply_insert("mfr_path", Some(parent), name, created.uuid);
     Ok(created.uuid)
 }
 
-/// Re-points an orphaned entry at its recovered location and refreshes its
+/// Re-points an orphaned record at its recovered location and refreshes its
 /// stat fields.
 fn apply_move(
     writer: &mut Writer,
@@ -293,7 +293,7 @@ fn apply_move(
     uuid: Uuid,
     rel: &str,
 ) -> Result<()> {
-    let parent = ensure_parent_entries(writer, cache, root, rel, &[])?;
+    let parent = ensure_parent_records(writer, cache, root, rel, &[])?;
     let name = rel.rsplit('/').next().unwrap_or(rel);
     writer.set_field_as(
         OpType::FileMoved,
@@ -306,7 +306,7 @@ fn apply_move(
     refresh_stat_fields(writer, root, uuid, rel)
 }
 
-/// Refreshes the stat-derived fields of an existing entry, writing only the
+/// Refreshes the stat-derived fields of an existing record, writing only the
 /// fields whose value actually changed (idempotent reconciles do not grow
 /// the log).
 fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -> Result<()> {

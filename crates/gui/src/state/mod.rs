@@ -15,11 +15,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{MessageEntry, Workspace, WorkspaceInfo};
 
 /// Default panel type shown when a workspace is first displayed: `repos`
-/// when no repository is active (entry point), `entry-list` otherwise.
+/// when no repository is active (entry point), `record-list` otherwise.
 /// (Decision; the spec leaves the initial panel type unspecified.)
 fn default_panel_type(active_repo: Option<&str>) -> &'static str {
     match active_repo {
-        Some(_) => "entry-list",
+        Some(_) => "record-list",
         None => "repos",
     }
 }
@@ -87,7 +87,7 @@ impl Inner {
     /// workspace's last panel type for it. When that panel type is already
     /// shown for the same workspace in the other visible slot (one iframe
     /// exists per (workspace, panel type)), the slot falls back to
-    /// `entry-detail` — pairing the list with the detail view is the
+    /// `record-detail` — pairing the list with the detail view is the
     /// expected split — and, when that one is taken too or no repo is
     /// active, gets no panel type (the frontend shows the type picker).
     fn assign(&mut self, ws_id: &str, slot_id: SlotId) -> Result<(), String> {
@@ -107,8 +107,8 @@ impl Inner {
         };
         let panel_type = if !other_shows(&wanted) {
             Some(wanted)
-        } else if has_repo && !other_shows("entry-detail") {
-            Some("entry-detail".to_string())
+        } else if has_repo && !other_shows("record-detail") {
+            Some("record-detail".to_string())
         } else {
             None
         };
@@ -589,7 +589,7 @@ impl GuiState {
     pub fn clear_messages(&self, ws_id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         inner.workspace_mut(ws_id)?.messages.clear();
-        // A null entry tells message panels the log was cleared.
+        // A null record tells message panels the log was cleared.
         self.notifier.emit(
             events::MESSAGE_APPENDED,
             json!({ "workspace_id": ws_id, "entry": Value::Null }),
@@ -652,8 +652,8 @@ mod tests {
 
         let layout = state.layout();
         assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-2"));
-        // A repo is active: default panel type is entry-list.
-        assert_eq!(layout.left.panel_type.as_deref(), Some("entry-list"));
+        // A repo is active: default panel type is record-list.
+        assert_eq!(layout.left.panel_type.as_deref(), Some("record-list"));
 
         assert!(!notifier.payloads(events::WORKSPACES_CHANGED).is_empty());
         assert!(!notifier.payloads(events::LAYOUT_CHANGED).is_empty());
@@ -761,31 +761,31 @@ mod tests {
         assert_eq!(state.workspaces().len(), count);
         // The focused slot's panel type cannot be duplicated for the same
         // workspace: the new slot pairs the list with the detail view.
-        assert_eq!(layout.right.panel_type.as_deref(), Some("entry-detail"));
+        assert_eq!(layout.right.panel_type.as_deref(), Some("record-detail"));
     }
 
     #[test]
     fn test_panel_split_without_repo_leaves_the_new_slot_typeless() {
         let (_, state) = state();
-        // ws-1 has no repo: left shows "repos", and entry-detail is
+        // ws-1 has no repo: left shows "repos", and record-detail is
         // meaningless without a repository — the type picker is shown.
         state.panel_split().unwrap();
         assert_eq!(state.layout().right.panel_type, None);
     }
 
     #[test]
-    fn test_assign_collision_falls_back_to_typeless_when_entry_detail_taken() {
+    fn test_assign_collision_falls_back_to_typeless_when_record_detail_taken() {
         let (_, state) = state();
         let ws1 = state.tab_new(Some("repo-1".into()));
-        state.panel_split().unwrap(); // right: ws1 entry-detail
-        // Remember entry-detail as ws1's right-slot panel type.
-        state.set_panel_type(SlotId::Right, "entry-detail").unwrap();
+        state.panel_split().unwrap(); // right: ws1 record-detail
+        // Remember record-detail as ws1's right-slot panel type.
+        state.set_panel_type(SlotId::Right, "record-detail").unwrap();
         // Park another workspace in the right slot, then move the left
-        // slot to entry-detail (no collision: different workspaces).
+        // slot to record-detail (no collision: different workspaces).
         let ws2 = state.create_workspace(Some("repo-1".into()));
         state.tab_assign(&ws2, SlotId::Right).unwrap();
-        state.set_panel_type(SlotId::Left, "entry-detail").unwrap();
-        // ws1 comes back to the right slot wanting entry-detail, which
+        state.set_panel_type(SlotId::Left, "record-detail").unwrap();
+        // ws1 comes back to the right slot wanting record-detail, which
         // the left slot already shows: no fallback left, typeless.
         state.tab_assign(&ws1, SlotId::Right).unwrap();
         assert_eq!(state.layout().right.panel_type, None);
@@ -794,14 +794,14 @@ mod tests {
     #[test]
     fn test_panel_swap_exchanges_the_two_panel_types() {
         let (notifier, state) = state();
-        state.tab_new(Some("repo-1".into())); // left: entry-list
-        state.panel_split().unwrap(); // right: entry-detail
+        state.tab_new(Some("repo-1".into())); // left: record-list
+        state.panel_split().unwrap(); // right: record-detail
         notifier.clear();
         state.panel_swap().unwrap();
 
         let layout = state.layout();
-        assert_eq!(layout.left.panel_type.as_deref(), Some("entry-detail"));
-        assert_eq!(layout.right.panel_type.as_deref(), Some("entry-list"));
+        assert_eq!(layout.left.panel_type.as_deref(), Some("record-detail"));
+        assert_eq!(layout.right.panel_type.as_deref(), Some("record-list"));
         assert!(!notifier.payloads(events::LAYOUT_CHANGED).is_empty());
     }
 
@@ -815,13 +815,13 @@ mod tests {
     fn test_panel_swap_updates_the_last_panel_memory() {
         let (_, state) = state();
         let ws = state.tab_new(Some("repo-1".into()));
-        state.panel_split().unwrap(); // left: entry-list, right: entry-detail
-        state.panel_swap().unwrap(); // left: entry-detail, right: entry-list
+        state.panel_split().unwrap(); // left: record-list, right: record-detail
+        state.panel_swap().unwrap(); // left: record-detail, right: record-list
 
         // Switching away and back restores the swapped types.
         state.tab_new(None);
         state.tab_assign(&ws, SlotId::Left).unwrap();
-        assert_eq!(state.layout().left.panel_type.as_deref(), Some("entry-detail"));
+        assert_eq!(state.layout().left.panel_type.as_deref(), Some("record-detail"));
     }
 
     #[test]
@@ -928,7 +928,7 @@ mod tests {
         assert!(!state.panel_ready("ws-1", "repos"));
         state.set_panel_ready("ws-1", "repos").unwrap();
         assert!(state.panel_ready("ws-1", "repos"));
-        assert!(!state.panel_ready("ws-1", "entry-list"));
+        assert!(!state.panel_ready("ws-1", "record-list"));
         assert!(state.set_panel_ready("ws-99", "repos").is_err());
     }
 
@@ -943,7 +943,7 @@ mod tests {
             .unwrap();
         assert_eq!(state.get_var("ws-1", "selected_paths").unwrap(), json!(["/tmp/a"]));
         // Unset variable reads as Null ("unknown").
-        assert_eq!(state.get_var("ws-1", "selected_entry").unwrap(), Value::Null);
+        assert_eq!(state.get_var("ws-1", "selected_record").unwrap(), Value::Null);
 
         let payloads = notifier.payloads(events::WORKSPACE_VAR_CHANGED);
         assert_eq!(
@@ -1033,7 +1033,7 @@ mod tests {
 
         state.clear_messages("ws-1").unwrap();
         assert!(state.messages("ws-1").unwrap().is_empty());
-        // Clearing notifies panels with a null entry.
+        // Clearing notifies panels with a null record.
         let appended = notifier.payloads(events::MESSAGE_APPENDED);
         assert_eq!(appended.len(), 2);
         assert_eq!(appended[1]["entry"], Value::Null);

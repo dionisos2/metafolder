@@ -32,7 +32,7 @@ function placeholder(text) {
 function renderPathBar() {
   pathBar.hidden = paths.length === 0;
   if (paths.length > 1) {
-    // Entry reachable at several locations: pick which one to preview.
+    // Record reachable at several locations: pick which one to preview.
     const select = el(
       'select',
       {

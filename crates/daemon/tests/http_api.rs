@@ -60,9 +60,9 @@ async fn app_with_repo(prefix: &str) -> (Router, String, PathBuf) {
 }
 
 /// Creates an entry and returns its full metadata object.
-async fn create_entry(app: &Router, repo: &str, fields: Value) -> Value {
+async fn create_record(app: &Router, repo: &str, fields: Value) -> Value {
     let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metadata"), Some(json!({"fields": fields})))
+        request(app, "POST", &format!("/repos/{repo}/records"), Some(json!({"fields": fields})))
             .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body
@@ -137,18 +137,18 @@ async fn test_malformed_json_body_is_bad_request() {
 async fn test_unknown_repo_is_not_found() {
     let app = app();
     let bogus = Uuid::new_v4().as_simple().to_string();
-    let (status, body) = request(&app, "GET", &format!("/repos/{bogus}/metadata"), None).await;
+    let (status, body) = request(&app, "GET", &format!("/repos/{bogus}/records"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert!(body["error"].is_string());
 }
 
-// ── Metadata CRUD ─────────────────────────────────────────────────────────────
+// ── Record CRUD ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn test_create_get_delete_entry() {
+async fn test_create_get_delete_record() {
     let (app, repo, root) = app_with_repo("crud").await;
 
-    let created = create_entry(
+    let created = create_record(
         &app,
         &repo,
         json!([
@@ -164,24 +164,24 @@ async fn test_create_get_delete_entry() {
     assert_eq!(created["fields"].as_array().unwrap().len(), 3);
     assert!(created["fields"][0]["id"].is_i64(), "fields must carry their row id");
 
-    let (status, got) = request(&app, "GET", &format!("/repos/{repo}/metadata/{uuid}"), None).await;
+    let (status, got) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(got, created);
 
     let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/metadata/{uuid}"), None).await;
+        request(&app, "DELETE", &format!("/repos/{repo}/records/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metadata/{uuid}"), None).await;
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[tokio::test]
-async fn test_get_unknown_entry_is_not_found() {
+async fn test_get_unknown_record_is_not_found() {
     let (app, repo, root) = app_with_repo("get404").await;
     let bogus = Uuid::new_v4().as_simple().to_string();
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metadata/{bogus}"), None).await;
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/records/{bogus}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -189,7 +189,7 @@ async fn test_get_unknown_entry_is_not_found() {
 #[tokio::test]
 async fn test_patch_sets_field_and_bumps_version() {
     let (app, repo, root) = app_with_repo("patch").await;
-    let created = create_entry(
+    let created = create_record(
         &app,
         &repo,
         json!([
@@ -203,7 +203,7 @@ async fn test_patch_sets_field_and_bumps_version() {
     let (status, updated) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/metadata/{uuid}"),
+        &format!("/repos/{repo}/records/{uuid}"),
         Some(json!({"name": "tag", "value": {"type": "string", "value": "blues"}})),
     )
     .await;
@@ -223,7 +223,7 @@ async fn test_patch_sets_field_and_bumps_version() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/metadata/{bogus}"),
+        &format!("/repos/{repo}/records/{bogus}"),
         Some(json!({"name": "tag", "value": {"type": "string", "value": "x"}})),
     )
     .await;
@@ -235,7 +235,7 @@ async fn test_patch_sets_field_and_bumps_version() {
 #[tokio::test]
 async fn test_field_append_replace_delete() {
     let (app, repo, root) = app_with_repo("fields").await;
-    let created = create_entry(
+    let created = create_record(
         &app,
         &repo,
         json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
@@ -247,7 +247,7 @@ async fn test_field_append_replace_delete() {
     let (status, updated) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/metadata/{uuid}/fields"),
+        &format!("/repos/{repo}/records/{uuid}/fields"),
         Some(json!({"name": "tag", "value": {"type": "string", "value": "live"}})),
     )
     .await;
@@ -262,7 +262,7 @@ async fn test_field_append_replace_delete() {
     let (status, updated) = request(
         &app,
         "PUT",
-        &format!("/repos/{repo}/metadata/{uuid}/fields/{live_id}"),
+        &format!("/repos/{repo}/records/{uuid}/fields/{live_id}"),
         Some(json!({"value": {"type": "string", "value": "studio"}})),
     )
     .await;
@@ -272,7 +272,7 @@ async fn test_field_append_replace_delete() {
     assert_eq!(replaced["value"]["value"], "studio");
 
     // PUT with a field id belonging to another entry → 404.
-    let other = create_entry(
+    let other = create_record(
         &app,
         &repo,
         json!([{"name": "x", "value": {"type": "int", "value": 1}}]),
@@ -282,7 +282,7 @@ async fn test_field_append_replace_delete() {
     let (status, _) = request(
         &app,
         "PUT",
-        &format!("/repos/{repo}/metadata/{uuid}/fields/{foreign_id}"),
+        &format!("/repos/{repo}/records/{uuid}/fields/{foreign_id}"),
         Some(json!({"value": {"type": "int", "value": 2}})),
     )
     .await;
@@ -292,12 +292,12 @@ async fn test_field_append_replace_delete() {
     let (status, _) = request(
         &app,
         "DELETE",
-        &format!("/repos/{repo}/metadata/{uuid}/fields/{live_id}"),
+        &format!("/repos/{repo}/records/{uuid}/fields/{live_id}"),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metadata/{uuid}"), None).await;
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
     assert_eq!(got["fields"].as_array().unwrap().len(), 1);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -313,7 +313,7 @@ async fn test_reserved_fields_require_force() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/metadata"),
+        &format!("/repos/{repo}/records"),
         Some(json!({"fields": [{"name": "mfr_size", "value": {"type": "int", "value": 10}}]})),
     )
     .await;
@@ -323,7 +323,7 @@ async fn test_reserved_fields_require_force() {
     let (status, created) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/metadata"),
+        &format!("/repos/{repo}/records"),
         Some(json!({
             "force": true,
             "fields": [{"name": "mfr_size", "value": {"type": "int", "value": 10}}]
@@ -337,7 +337,7 @@ async fn test_reserved_fields_require_force() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/metadata/{uuid}"),
+        &format!("/repos/{repo}/records/{uuid}"),
         Some(json!({"name": "mfr_size", "value": {"type": "int", "value": 20}})),
     )
     .await;
@@ -345,7 +345,7 @@ async fn test_reserved_fields_require_force() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/metadata/{uuid}"),
+        &format!("/repos/{repo}/records/{uuid}"),
         Some(json!({"name": "mfr_size", "value": {"type": "int", "value": 20}, "force": true})),
     )
     .await;
@@ -355,19 +355,19 @@ async fn test_reserved_fields_require_force() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/metadata/{uuid}"),
+        &format!("/repos/{repo}/records/{uuid}"),
         Some(json!({"name": "mf_typo", "value": {"type": "bool", "value": true}, "force": true})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Deleting a reserved field row requires force in the body.
-    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metadata/{uuid}"), None).await;
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
     let field_id = got["fields"][0]["id"].as_i64().unwrap();
     let (status, _) = request(
         &app,
         "DELETE",
-        &format!("/repos/{repo}/metadata/{uuid}/fields/{field_id}"),
+        &format!("/repos/{repo}/records/{uuid}/fields/{field_id}"),
         None,
     )
     .await;
@@ -375,7 +375,7 @@ async fn test_reserved_fields_require_force() {
     let (status, _) = request(
         &app,
         "DELETE",
-        &format!("/repos/{repo}/metadata/{uuid}/fields/{field_id}"),
+        &format!("/repos/{repo}/records/{uuid}/fields/{field_id}"),
         Some(json!({"force": true})),
     )
     .await;
@@ -393,7 +393,7 @@ async fn test_tree_ref_validation_is_bad_request() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/metadata"),
+        &format!("/repos/{repo}/records"),
         Some(json!({"fields": [{"name": "parent",
             "value": {"type": "tree_ref", "value": {"parent": parent, "name": "x"}}}]})),
     )
@@ -408,12 +408,12 @@ async fn test_tree_ref_validation_is_bad_request() {
 async fn test_list_metadata_plain_and_paginated() {
     let (app, repo, root) = app_with_repo("page").await;
     for i in 0..5 {
-        create_entry(&app, &repo, json!([{"name": "i", "value": {"type": "int", "value": i}}]))
+        create_record(&app, &repo, json!([{"name": "i", "value": {"type": "int", "value": i}}]))
             .await;
     }
 
     // Without limit: plain array (5 entries + the filesystem root entry).
-    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/metadata"), None).await;
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/records"), None).await;
     assert_eq!(status, StatusCode::OK);
     let all: Vec<String> =
         body.as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
@@ -424,13 +424,13 @@ async fn test_list_metadata_plain_and_paginated() {
 
     // Paginated: pages of 4, then 2, then done.
     let (status, page1) =
-        request(&app, "GET", &format!("/repos/{repo}/metadata?limit=4"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/records?limit=4"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page1["results"].as_array().unwrap().len(), 4);
     let cursor = page1["next_cursor"].as_str().expect("next_cursor expected").to_string();
 
     let (status, page2) =
-        request(&app, "GET", &format!("/repos/{repo}/metadata?limit=4&cursor={cursor}"), None)
+        request(&app, "GET", &format!("/repos/{repo}/records?limit=4&cursor={cursor}"), None)
             .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page2["results"].as_array().unwrap().len(), 2);
@@ -447,7 +447,7 @@ async fn test_list_metadata_plain_and_paginated() {
 
     // Invalid cursor → 400.
     let (status, _) =
-        request(&app, "GET", &format!("/repos/{repo}/metadata?limit=4&cursor=zzz"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/records?limit=4&cursor=zzz"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     std::fs::remove_dir_all(root).unwrap();

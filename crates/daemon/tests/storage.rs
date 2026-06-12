@@ -1,7 +1,7 @@
 //! Integration tests for the storage layer: SQLite schema, value encoding,
 //! the logged write flow (Writer), TreeRef validation, reserved fields.
 
-use metafolder_core::entry::{Field, Value};
+use metafolder_core::record::{Field, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::{OpType, Writer};
 use metafolder_daemon::reserved;
@@ -19,9 +19,9 @@ fn repo_id() -> Uuid {
 }
 
 /// Creates an entry through a single-use Writer and returns it.
-fn create(conn: &mut Connection, db_id: Uuid, fields: Vec<Field>) -> metafolder_core::entry::Metadata {
+fn create(conn: &mut Connection, db_id: Uuid, fields: Vec<Field>) -> metafolder_core::record::Record {
     let mut w = Writer::begin(conn, db_id, None).unwrap();
-    let m = w.create_entry(fields).unwrap();
+    let m = w.create_record(fields).unwrap();
     w.commit().unwrap();
     m
 }
@@ -40,8 +40,8 @@ fn test_init_schema_creates_all_tables() {
         .collect::<Result<_, _>>()
         .unwrap();
     for expected in [
-        "metadata",
-        "metadata_db",
+        "record",
+        "record_db",
         "field",
         "revision",
         "operation",
@@ -79,7 +79,7 @@ fn test_tree_unique_index_rejects_duplicate_position() {
     // Same (field_name, parent, name) again must fail.
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
     let err = w
-        .create_entry(vec![Field::new(
+        .create_record(vec![Field::new(
             "mfr_path",
             Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() },
         )])
@@ -115,11 +115,11 @@ fn test_all_value_types_roundtrip() {
         Field::new("h", Value::Ref(target.uuid)),
         Field::new("parent", Value::TreeRef { parent: Some(root.uuid), name: "félins".into() }),
         Field::new("j", Value::RefBase(repo2)),
-        Field::new("k", Value::ExternalRef { repo: repo2, entry: target.uuid }),
+        Field::new("k", Value::ExternalRef { repo: repo2, record: target.uuid }),
     ];
     let created = create(&mut conn, db_id, fields.clone());
 
-    let got = db::get_entry(&conn, created.uuid).unwrap().expect("entry must exist");
+    let got = db::get_record(&conn, created.uuid).unwrap().expect("entry must exist");
     assert_eq!(got.uuid, created.uuid);
     assert_eq!(got.db_ids, vec![db_id]);
     assert_eq!(got.fields.len(), fields.len());
@@ -131,13 +131,13 @@ fn test_all_value_types_roundtrip() {
 }
 
 #[test]
-fn test_get_entry_returns_none_for_unknown_uuid() {
+fn test_get_record_returns_none_for_unknown_uuid() {
     let conn = test_conn();
-    assert!(db::get_entry(&conn, Uuid::new_v4()).unwrap().is_none());
+    assert!(db::get_record(&conn, Uuid::new_v4()).unwrap().is_none());
 }
 
 #[test]
-fn test_list_entries_filters_by_db_id_and_sorts_by_uuid() {
+fn test_list_records_filters_by_db_id_and_sorts_by_uuid() {
     let mut conn = test_conn();
     let db1 = repo_id();
     let db2 = repo_id();
@@ -154,7 +154,7 @@ fn test_list_entries_filters_by_db_id_and_sorts_by_uuid() {
 // ── Writer: create ────────────────────────────────────────────────────────────
 
 #[test]
-fn test_create_entry_initial_state() {
+fn test_create_record_initial_state() {
     let mut conn = test_conn();
     let db_id = repo_id();
     let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
@@ -165,7 +165,7 @@ fn test_create_entry_initial_state() {
 }
 
 #[test]
-fn test_create_entry_writes_log() {
+fn test_create_record_writes_log() {
     let mut conn = test_conn();
     let m = create(&mut conn, repo_id(), vec![Field::new("rating", Value::Int(5))]);
 
@@ -176,7 +176,7 @@ fn test_create_entry_writes_log() {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .unwrap();
-    assert_eq!(op_type, "create_entry");
+    assert_eq!(op_type, "create_record");
     assert_eq!(entity, m.uuid.as_bytes().to_vec());
     assert_eq!(parent_id, None, "first operation has no parent");
     assert_eq!(seq, 1);
@@ -218,7 +218,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
     w.set_field(m.uuid, "tag", Value::String("blues".into())).unwrap();
     w.commit().unwrap();
 
-    let got = db::get_entry(&conn, m.uuid).unwrap().unwrap();
+    let got = db::get_record(&conn, m.uuid).unwrap().unwrap();
     let tags = got.get_all("tag");
     assert_eq!(tags, vec![&Value::String("blues".into())]);
     assert_eq!(got.version, 1, "version must be incremented by the write");
@@ -252,7 +252,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
 }
 
 #[test]
-fn test_set_field_on_unknown_entry_fails() {
+fn test_set_field_on_unknown_record_fails() {
     let mut conn = test_conn();
     let mut w = Writer::begin(&mut conn, repo_id(), None).unwrap();
     assert!(w.set_field(Uuid::new_v4(), "rating", Value::Int(1)).is_err());
@@ -270,7 +270,7 @@ fn test_append_field_keeps_existing_rows() {
     w.append_field(m.uuid, "tag", Value::String("live".into())).unwrap();
     w.commit().unwrap();
 
-    let got = db::get_entry(&conn, m.uuid).unwrap().unwrap();
+    let got = db::get_record(&conn, m.uuid).unwrap().unwrap();
     assert_eq!(got.get_all("tag").len(), 2);
     assert_eq!(got.version, 1);
 }
@@ -293,7 +293,7 @@ fn test_replace_field_keeps_field_id() {
     w.replace_field(m.uuid, target_id, Value::String("blues".into())).unwrap();
     w.commit().unwrap();
 
-    let got = db::get_entry(&conn, m.uuid).unwrap().unwrap();
+    let got = db::get_record(&conn, m.uuid).unwrap().unwrap();
     let replaced = got.fields.iter().find(|f| f.id == Some(target_id)).unwrap();
     assert_eq!(replaced.value, Value::String("blues".into()));
     assert_eq!(got.get_all("tag").len(), 2, "the sibling row must be untouched");
@@ -329,7 +329,7 @@ fn test_delete_field_removes_single_row() {
     w.delete_field(m.uuid, target_id).unwrap();
     w.commit().unwrap();
 
-    let got = db::get_entry(&conn, m.uuid).unwrap().unwrap();
+    let got = db::get_record(&conn, m.uuid).unwrap().unwrap();
     assert_eq!(got.get_all("tag"), vec![&Value::String("live".into())]);
     assert_eq!(got.version, 1);
 }
@@ -337,7 +337,7 @@ fn test_delete_field_removes_single_row() {
 // ── Writer: delete entry ──────────────────────────────────────────────────────
 
 #[test]
-fn test_delete_entry_removes_everything_and_snapshots_before() {
+fn test_delete_record_removes_everything_and_snapshots_before() {
     let mut conn = test_conn();
     let db_id = repo_id();
     let m = create(
@@ -347,13 +347,13 @@ fn test_delete_entry_removes_everything_and_snapshots_before() {
     );
 
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    w.delete_entry(m.uuid).unwrap();
+    w.delete_record(m.uuid).unwrap();
     w.commit().unwrap();
 
-    assert!(db::get_entry(&conn, m.uuid).unwrap().is_none());
+    assert!(db::get_record(&conn, m.uuid).unwrap().is_none());
     let n_fields: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM field WHERE metadata_uuid = ?1",
+            "SELECT COUNT(*) FROM field WHERE record_uuid = ?1",
             [m.uuid.as_bytes().to_vec()],
             |r| r.get(0),
         )
@@ -361,7 +361,7 @@ fn test_delete_entry_removes_everything_and_snapshots_before() {
     assert_eq!(n_fields, 0);
     let n_db: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM metadata_db WHERE metadata_uuid = ?1",
+            "SELECT COUNT(*) FROM record_db WHERE record_uuid = ?1",
             [m.uuid.as_bytes().to_vec()],
             |r| r.get(0),
         )
@@ -369,7 +369,7 @@ fn test_delete_entry_removes_everything_and_snapshots_before() {
     assert_eq!(n_db, 0);
 
     let op_id: i64 = conn
-        .query_row("SELECT id FROM operation WHERE op_type = 'delete_entry'", [], |r| r.get(0))
+        .query_row("SELECT id FROM operation WHERE op_type = 'delete_record'", [], |r| r.get(0))
         .unwrap();
     let n_before: i64 = conn
         .query_row(
@@ -424,7 +424,7 @@ fn test_multiple_ops_in_one_revision_chain() {
     assert_eq!(head, Some(rows[2].0));
 
     // Version was bumped once per op.
-    assert_eq!(db::get_entry(&conn, m.uuid).unwrap().unwrap().version, 3);
+    assert_eq!(db::get_record(&conn, m.uuid).unwrap().unwrap().version, 3);
 }
 
 #[test]
@@ -455,7 +455,7 @@ fn test_large_revision_chain_across_bulk_chunks() {
         .unwrap();
     assert_eq!(rows.len(), N as usize);
     let create_op: i64 = conn
-        .query_row("SELECT id FROM operation WHERE op_type = 'create_entry'", [], |r| r.get(0))
+        .query_row("SELECT id FROM operation WHERE op_type = 'create_record'", [], |r| r.get(0))
         .unwrap();
     assert_eq!(rows[0].1, Some(create_op), "first op chains to the previous HEAD");
     for (i, row) in rows.iter().enumerate() {
@@ -475,7 +475,7 @@ fn test_large_revision_chain_across_bulk_chunks() {
         .query_row("SELECT COUNT(*) FROM op_snapshot WHERE is_new = 1", [], |r| r.get(0))
         .unwrap();
     assert_eq!(snapshots, N);
-    assert_eq!(db::get_entry(&conn, m.uuid).unwrap().unwrap().version, N as u64);
+    assert_eq!(db::get_record(&conn, m.uuid).unwrap().unwrap().version, N as u64);
 }
 
 #[test]
@@ -516,11 +516,11 @@ fn test_prune_reclaims_disk_space() {
     let payload = "x".repeat(4096);
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
     for _ in 0..256 {
-        w.create_entry(vec![Field::new("payload", Value::String(payload.clone()))]).unwrap();
+        w.create_record(vec![Field::new("payload", Value::String(payload.clone()))]).unwrap();
     }
     w.commit().unwrap();
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    w.create_entry(vec![]).unwrap();
+    w.create_record(vec![]).unwrap();
     w.commit().unwrap();
 
     // Fold the WAL into the main file so before/after sizes are comparable.
@@ -560,10 +560,10 @@ fn test_dropped_writer_rolls_back() {
     let db_id = repo_id();
     {
         let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-        w.create_entry(vec![Field::new("a", Value::Int(1))]).unwrap();
+        w.create_record(vec![Field::new("a", Value::Int(1))]).unwrap();
         // No commit: dropped here.
     }
-    let n: i64 = conn.query_row("SELECT COUNT(*) FROM metadata", [], |r| r.get(0)).unwrap();
+    let n: i64 = conn.query_row("SELECT COUNT(*) FROM record", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0, "uncommitted writes must roll back");
 }
 
@@ -574,7 +574,7 @@ fn test_tree_ref_parent_must_exist() {
     let mut conn = test_conn();
     let mut w = Writer::begin(&mut conn, repo_id(), None).unwrap();
     let err = w
-        .create_entry(vec![Field::new(
+        .create_record(vec![Field::new(
             "mfr_path",
             Value::TreeRef { parent: Some(Uuid::new_v4()), name: "x".into() },
         )])
@@ -590,7 +590,7 @@ fn test_tree_ref_parent_must_have_same_tree_field() {
     let parent = create(&mut conn, db_id, vec![Field::new("label", Value::String("p".into()))]);
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
     let err = w
-        .create_entry(vec![Field::new(
+        .create_record(vec![Field::new(
             "mfr_path",
             Value::TreeRef { parent: Some(parent.uuid), name: "x".into() },
         )])
@@ -643,12 +643,12 @@ fn test_tree_ref_depth_limit() {
     // Build a chain of exactly 1000 nodes (depth 1000): root is depth 1.
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
     let root = w
-        .create_entry(vec![Field::new("parent", Value::TreeRef { parent: None, name: "n1".into() })])
+        .create_record(vec![Field::new("parent", Value::TreeRef { parent: None, name: "n1".into() })])
         .unwrap();
     let mut prev = root.uuid;
     for i in 2..=1000 {
         let e = w
-            .create_entry(vec![Field::new(
+            .create_record(vec![Field::new(
                 "parent",
                 Value::TreeRef { parent: Some(prev), name: format!("n{i}") },
             )])
@@ -657,7 +657,7 @@ fn test_tree_ref_depth_limit() {
     }
     // Node 1001 exceeds the limit.
     let err = w
-        .create_entry(vec![Field::new(
+        .create_record(vec![Field::new(
             "parent",
             Value::TreeRef { parent: Some(prev), name: "n1001".into() },
         )])
@@ -698,8 +698,8 @@ fn test_user_fields_are_writable() {
 #[test]
 fn test_op_type_string_roundtrip() {
     for op in [
-        OpType::CreateEntry,
-        OpType::DeleteEntry,
+        OpType::CreateRecord,
+        OpType::DeleteRecord,
         OpType::SetField,
         OpType::AppendField,
         OpType::DeleteField,
@@ -710,6 +710,6 @@ fn test_op_type_string_roundtrip() {
     ] {
         assert_eq!(OpType::parse(op.as_str()).unwrap(), op);
     }
-    assert_eq!(OpType::CreateEntry.as_str(), "create_entry");
+    assert_eq!(OpType::CreateRecord.as_str(), "create_record");
     assert!(OpType::parse("bogus").is_none());
 }

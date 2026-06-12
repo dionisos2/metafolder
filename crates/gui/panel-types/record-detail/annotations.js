@@ -1,20 +1,20 @@
 // Secondary display line under reference values: the resolved path of a
 // tree_ref and the "name" field of a ref's target (a soft convention —
-// entries without one simply get no annotation). Unlike the shim's
+// records without one simply get no annotation). Unlike the shim's
 // resolvePath (mfr_path only), the tree_ref chain is walked through the
 // field's own name: each TreeRef field name is its own forest.
 
-export function createAnnotator(getEntry) {
-  const entries = new Map(); // uuid -> Promise<entry>
+export function createAnnotator(getRecord) {
+  const records = new Map(); // uuid -> Promise<record>
   const get = (uuid) => {
-    if (!entries.has(uuid)) entries.set(uuid, getEntry(uuid));
-    return entries.get(uuid);
+    if (!records.has(uuid)) records.set(uuid, getRecord(uuid));
+    return records.get(uuid);
   };
 
   async function treeRefPath(fieldName, { parent, name }) {
     if (!parent) return name;
-    const entry = await get(parent);
-    const field = (entry.fields ?? []).find(
+    const record = await get(parent);
+    const field = (record.fields ?? []).find(
       (f) => f.name === fieldName && f.value?.type === 'tree_ref',
     );
     if (!field) return null; // broken chain: better nothing than a wrong path
@@ -24,8 +24,8 @@ export function createAnnotator(getEntry) {
   }
 
   async function refName(uuid) {
-    const entry = await get(uuid);
-    const field = (entry.fields ?? []).find(
+    const record = await get(uuid);
+    const field = (record.fields ?? []).find(
       (f) => f.name === 'name' && typeof f.value?.value === 'string',
     );
     return field ? field.value.value : null;
@@ -41,7 +41,7 @@ export function createAnnotator(getEntry) {
       }
       if (value.type === 'ref') return await refName(value.value);
     } catch {
-      return null; // missing target entry, network error, ...
+      return null; // missing target record, network error, ...
     }
     return null;
   }

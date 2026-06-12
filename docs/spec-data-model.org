@@ -4,7 +4,7 @@
 * Overview
 
 The data model defines the core structures shared across all components:
-repositories, metadata entries, fields, and values.
+repositories, metadata records, fields, and values.
 
 * Concepts
 
@@ -32,26 +32,28 @@ family is moved into =internal/=).
 | =root=      | path   | Absolute path to the watched directory |
 | =schema=    | path   | Optional path to the user schema file, relative to =.metafolder/= (or absolute); default =.metafolder/schema.json= (see [[file:spec-schema.org][spec-schema.org]]) |
 
-** Metadata
+** Record
 
-An entry represents one tracked object (typically a file, but can be any
-user-created record such as a tag, collection, or cross-repo link).
+A record is a coherent set of metadata about one subject — typically a file —
+or a value shared by such metadata (a tag, a collection, a cross-repo link).
+The fields of a record are its metadata; "record" names the unit, "metadata"
+names what the fields are.
 
 | Field     | Type       | Description                                              |
 |-----------+------------+----------------------------------------------------------|
-| =uuid=    | UUID       | Stable identifier for this entry                         |
-| =db_ids=  | list<UUID> | Repositories that own this entry (usually one)           |
+| =uuid=    | UUID       | Stable identifier for this record                         |
+| =db_ids=  | list<UUID> | Repositories that own this record (usually one)           |
 | =version= | u64        | Monotonic write counter, managed by the daemon           |
 | =fields=  | list       | Ordered list of =Field= values                           |
 
 Fields form a *multi-map*: multiple fields with the same name are allowed.
 
 =db_ids= normally contains a single repository UUID (the owning repo). When it
-contains two UUIDs the entry is a /link entry/ shared between two repositories
+contains two UUIDs the record is a /link record/ shared between two repositories
 (see [[*Cross-repo Synchronisation]]).
 
-By default, queries return only entries whose =db_ids= equals exactly
-={current_repo}=. Entries with multiple =db_ids= are excluded unless explicitly
+By default, queries return only records whose =db_ids= equals exactly
+={current_repo}=. Records with multiple =db_ids= are excluded unless explicitly
 requested.
 
 ** Field and Value
@@ -66,17 +68,17 @@ A field is a =(name, value)= pair. Value is one of:
 | =Float=    | =f64=           | 64-bit float                                 |
 | =Bool=     | =bool=          |                                              |
 | =DateTime= | =String=        | ISO-8601 datetime (=YYYY-MM-DDTHH:MM:SSZ=)   |
-| =Ref=          | =UUID=         | Reference to another entry's UUID (same repo)              |
+| =Ref=          | =UUID=         | Reference to another record's UUID (same repo)              |
 | =TreeRef=      | =(UUID?, String)= | Position in a named tree: =(parent_uuid, name)=             |
 | =RefBase=      | =UUID=         | Reference to a repository UUID                             |
-| =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, entry UUID)              |
+| =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, record UUID)              |
 
-A =TreeRef= stores the position of an entry in a named tree as =(parent_uuid, name)=,
+A =TreeRef= stores the position of a record in a named tree as =(parent_uuid, name)=,
 kept in the =value_uuid= and =value_name= columns of the =field= table
 (see [[*SQLite Schema]]):
 
-- =value_uuid=: UUID of the parent entry (zero UUID =x'00...00'= for root nodes).
-- =value_name=: the name component contributed by this entry (e.g. filename, tag name).
+- =value_uuid=: UUID of the parent record (zero UUID =x'00...00'= for root nodes).
+- =value_name=: the name component contributed by this record (e.g. filename, tag name).
 
 Multiple independent trees can coexist within the same repository by using different
 field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
@@ -101,7 +103,7 @@ Two categories of reserved field names exist, distinguished by prefix:
 - =mf_*= (*metafolder*) — read by the daemon to control its behaviour; written
   freely by the user without =force=.
 
-The stored fields for a file/directory entry are:
+The stored fields for a file/directory record are:
 
 | Field              | Prefix | Value type | Description                                                                                                |
 |--------------------+--------+------------+------------------------------------------------------------------------------------------------------------|
@@ -116,18 +118,18 @@ The stored fields for a file/directory entry are:
 | =mfr_mime=         | mfr    | String     | MIME type from content analysis (platform-dependent backend, see [[file:spec-platform.org][spec-platform.org]]); absent if not yet computed [v2] |
 | =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
-| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this entry and its descendants are tracked (see [[*Watch and Ignore]])  |
+| =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this record and its descendants are tracked (see [[*Watch and Ignore]])  |
 | =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
 
 The user schema feature defines one additional reserved =mf_*= field:
-=mf_schema= (String, multi-map — entry type declaration). The constraints
+=mf_schema= (String, multi-map — record type declaration). The constraints
 themselves live in an external schema file, not in the database; see
 [[file:spec-schema.org][spec-schema.org]].
 
-The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each entry.
+The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each record.
 
 The three states of the =mfr_path= field have distinct semantics:
-- =mfr_path= present (valid TreeRef) → the entry is at that location.
+- =mfr_path= present (valid TreeRef) → the record is at that location.
 - =mfr_path= stale (TreeRef whose path no longer exists on disk) → location
   uncertain; reconcile will attempt to find a match via fingerprint or
   similarity and return it as a candidate.
@@ -163,7 +165,7 @@ miss, the daemon resolves each component iteratively via the
 Inherited property lookup (e.g. nearest ancestor with =sync_method=) is performed
 in two steps: first, walk the parent chain via the tree cache (fetching missing
 nodes from the DB step by step) to collect the ordered list of ancestor UUIDs;
-then issue a single query =WHERE metadata_uuid IN (...)= to retrieve the desired
+then issue a single query =WHERE record_uuid IN (...)= to retrieve the desired
 field across all ancestors at once, keeping the closest result.
 
 * Daemon
@@ -182,7 +184,7 @@ implemented to verify that DELETE journal mode is acceptable for large syncs.
 
 *** UUID encoding
 
-All UUIDs (entry UUIDs and repository UUIDs) are stored as =BLOB= (16 bytes,
+All UUIDs (record UUIDs and repository UUIDs) are stored as =BLOB= (16 bytes,
 raw binary). This applies uniformly to every UUID column in the schema.
 
 The HTTP API encodes UUIDs as 32-char lowercase hex strings (no hyphens) for
@@ -193,28 +195,28 @@ are the most compact representation. Hex encoding in the API is standard and
 unambiguous.
 
 The zero UUID (=x'00000000000000000000000000000000'=) is reserved as a sentinel
-for =TreeRef= root nodes and must never be assigned to a real entry. UUID v4
+for =TreeRef= root nodes and must never be assigned to a real record. UUID v4
 has 122 random bits (2¹²² ≈ 5×10³⁶ possible values); the probability of
-collision among 1 billion entries is ≈ 10⁻¹⁹ — negligible in practice.
+collision among 1 billion records is ≈ 10⁻¹⁹ — negligible in practice.
 
 #+BEGIN_SRC sql
-CREATE TABLE metadata (
+CREATE TABLE record (
     uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
     version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
 );
 
--- One row per owning repository (usually one; two for link entries).
-CREATE TABLE metadata_db (
-    metadata_uuid  BLOB NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+-- One row per owning repository (usually one; two for link records).
+CREATE TABLE record_db (
+    record_uuid  BLOB NOT NULL REFERENCES record(uuid) ON DELETE CASCADE,
     db_id          BLOB NOT NULL,           -- 16-byte repo UUID
-    PRIMARY KEY (metadata_uuid, db_id)
+    PRIMARY KEY (record_uuid, db_id)
 );
 
-CREATE INDEX idx_metadata_db ON metadata_db(db_id);
+CREATE INDEX idx_record_db ON record_db(db_id);
 
 CREATE TABLE field (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    metadata_uuid   BLOB    NOT NULL REFERENCES metadata(uuid) ON DELETE CASCADE,
+    record_uuid   BLOB    NOT NULL REFERENCES record(uuid) ON DELETE CASCADE,
     field_name      TEXT    NOT NULL,
     value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
                                        -- datetime | ref |
@@ -222,12 +224,12 @@ CREATE TABLE field (
     value_text      TEXT,              -- string, datetime
     value_int       INTEGER,           -- int, bool (0/1), duration (ms)
     value_real      REAL,              -- float
-    value_uuid      BLOB,              -- ref/externalref: entry UUID; tree_ref: parent UUID (zero UUID for root)
+    value_uuid      BLOB,              -- ref/externalref: record UUID; tree_ref: parent UUID (zero UUID for root)
     value_ref_repo  BLOB,              -- externalref only: repo UUID
-    value_name      TEXT               -- tree_ref: name component contributed by this entry
+    value_name      TEXT               -- tree_ref: name component contributed by this record
 );
 
-CREATE INDEX idx_field_entry        ON field(metadata_uuid, field_name);
+CREATE INDEX idx_field_record        ON field(record_uuid, field_name);
 CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_repo)
     WHERE value_type IN ('ref', 'externalref');
 CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
@@ -236,7 +238,7 @@ CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
 
 ** Pagination
 
-=GET /metadata= and =POST /query= (see
+=GET /records= and =POST /query= (see
 [[file:spec-query.org][spec-query.org]]) support keyset (cursor-based)
 pagination. Pagination is opt-in: without a =limit= parameter, the full
 result set is returned in one response with the unwrapped response shape, and
@@ -250,8 +252,8 @@ nothing changes for existing clients.
 | =cursor=  | string | Opaque token from the previous page's =next_cursor=; absent for page 1 |
 | =sort=    | list   | Sort specification (=POST /query= only; see below)                   |
 
-For =GET /metadata= the parameters are query-string parameters
-(=?limit=500&cursor=...=); results are sorted by entry UUID (ascending byte
+For =GET /records= the parameters are query-string parameters
+(=?limit=500&cursor=...=); results are sorted by record UUID (ascending byte
 order). For =POST /query= they are top-level JSON body keys.
 
 *** Sort specification (=POST /query=)
@@ -261,19 +263,19 @@ order). For =POST /query= they are top-level JSON body keys.
 #+END_SRC
 
 - =order= is ="asc"= (default) or ="desc"=.
-- The entry UUID (ascending) is always implicitly appended as the final sort
+- The record UUID (ascending) is always implicitly appended as the final sort
   key, so the total order is unambiguous and the keyset cursor can resume
-  exactly after the last returned entry even when sort values are equal.
+  exactly after the last returned record even when sort values are equal.
 - =sort= without =limit= is allowed (sorted full response).
 - Sorting by reserved or user fields is allowed alike.
 
-Sort semantics per entry for a sort field =F=:
+Sort semantics per record for a sort field =F=:
 
-- Entries where =F= is unknown (no row) or where every row is =Nothing= sort
-  *after* all entries with a value, regardless of =order=.
-- Multi-map fields: the entry's sort key is its smallest value of =F= for
+- Records where =F= is unknown (no row) or where every row is =Nothing= sort
+  *after* all records with a value, regardless of =order=.
+- Multi-map fields: the record's sort key is its smallest value of =F= for
   ="asc"=, its largest for ="desc"=.
-- When rows of =F= have mixed value types across entries, a fixed type
+- When rows of =F= have mixed value types across records, a fixed type
   precedence orders the groups: bool < int/float (compared together
   numerically) < string < datetime < ref/refbase/externalref (by UUID bytes)
   < tree_ref (by =value_name=). Values are compared within their group using
@@ -297,32 +299,32 @@ When =limit= is present, the response is wrapped:
 *** Cursor semantics
 
 The cursor is an opaque token (base64-encoded JSON) encoding the sort-key
-values and UUID of the last returned entry, plus a hash of the =(query,
+values and UUID of the last returned record, plus a hash of the =(query,
 sort)= pair. Clients must not parse it.
 
 - A cursor is only valid for the same query and sort specification that
   produced it; the daemon verifies the embedded hash and returns =400=
   (=invalid cursor=) on mismatch. Cursors do not expire otherwise.
 - Keyset resumption is a =WHERE (sort_key, uuid) > (cursor values)= filter:
-  pages are stable against entries inserted or deleted in portions of the
-  order already consumed. If an entry's sort-field value changes between two
-  page requests, that entry may be returned twice or skipped — this is
+  pages are stable against records inserted or deleted in portions of the
+  order already consumed. If a record's sort-field value changes between two
+  page requests, that record may be returned twice or skipped — this is
   inherent to keyset pagination over live data and is accepted.
 
 ** HTTP API
 
 #+BEGIN_SRC
-GET    /repos/:repo_uuid/metadata
-POST   /repos/:repo_uuid/metadata
-GET    /repos/:repo_uuid/metadata/:metadata_uuid
-DELETE /repos/:repo_uuid/metadata/:metadata_uuid
-PATCH  /repos/:repo_uuid/metadata/:metadata_uuid
-POST   /repos/:repo_uuid/metadata/:metadata_uuid/fields
-PUT    /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
-DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id
+GET    /repos/:repo_uuid/records
+POST   /repos/:repo_uuid/records
+GET    /repos/:repo_uuid/records/:record_uuid
+DELETE /repos/:repo_uuid/records/:record_uuid
+PATCH  /repos/:repo_uuid/records/:record_uuid
+POST   /repos/:repo_uuid/records/:record_uuid/fields
+PUT    /repos/:repo_uuid/records/:record_uuid/fields/:field_id
+DELETE /repos/:repo_uuid/records/:record_uuid/fields/:field_id
 #+END_SRC
 
-*** =GET /repos/:repo_uuid/metadata=
+*** =GET /repos/:repo_uuid/records=
 
 Returns all metadata UUIDs in the repository.
 
@@ -331,7 +333,7 @@ Response body: =["uuid1", "uuid2", ...]=
 Optional =?limit=N&cursor=...= query parameters paginate the result (sorted
 by UUID); the response is then the pagination envelope (see [[*Pagination]]).
 
-*** =POST /repos/:repo_uuid/metadata=
+*** =POST /repos/:repo_uuid/records=
 
 Creates a new metadata record with the given fields.
 
@@ -347,7 +349,7 @@ Request body:
 
 For =TreeRef= fields, the client supplies =(parent_uuid, name)= directly.
 The daemon validates that the given =parent_uuid= either is =null= (creating a
-root node) or refers to an existing entry that has a =TreeRef= field of the same
+root node) or refers to an existing record that has a =TreeRef= field of the same
 name. The filesystem root (=value_uuid = x'00...00'=, =value_name = ""=) is
 created at =repo init= time and is unique per field name (enforced by the
 =idx_field_tree= UNIQUE index). Other roots can be created freely.
@@ -357,9 +359,9 @@ record is accessible at several locations (e.g. a file with copies in different
 directories). =set_field= on =mfr_path= replaces all existing =mfr_path= rows with a
 single new one.
 
-Response body: full metadata object with =id= on each field (see =GET .../metadata/:uuid= below).
+Response body: full metadata object with =id= on each field (see =GET .../records/:uuid= below).
 
-*** =GET /repos/:repo_uuid/metadata/:metadata_uuid=
+*** =GET /repos/:repo_uuid/records/:record_uuid=
 
 Returns a single metadata record with all its fields.
 
@@ -380,14 +382,14 @@ Each field carries an =id= (the internal DB row id) that uniquely identifies
 it within the repository. This id is used to target individual fields in
 multi-map operations (see below).
 
-*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid=
+*** =DELETE /repos/:repo_uuid/records/:record_uuid=
 
 Deletes the metadata record and all its fields. Returns =204 No Content=.
 
-*** =PATCH /repos/:repo_uuid/metadata/:metadata_uuid=
+*** =PATCH /repos/:repo_uuid/records/:record_uuid=
 
 Replaces *all* existing rows for a given field name with a single new value
-(=set_field= semantics — collapses multi-map to one entry).
+(=set_field= semantics — collapses multi-map to one record).
 
 Request body:
 #+BEGIN_SRC json
@@ -398,7 +400,7 @@ Writing a protected field name without =force= returns =400=. See [[*Protected f
 
 Response body: updated full metadata object.
 
-*** =POST /repos/:repo_uuid/metadata/:metadata_uuid/fields=
+*** =POST /repos/:repo_uuid/records/:record_uuid/fields=
 
 Appends one field value without touching existing rows for that name (multi-map
 append). Use this to add a second =tag= without removing the first.
@@ -412,7 +414,7 @@ Writing a protected field name without =force= returns =400=. See [[*Protected f
 
 Response body: updated full metadata object.
 
-*** =PUT /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+*** =PUT /repos/:repo_uuid/records/:record_uuid/fields/:field_id=
 
 Replaces the single field row identified by =field_id=. Returns =404= if the id
 does not belong to this metadata record.
@@ -426,7 +428,7 @@ If the targeted field row is protected, omitting =force= returns =400=. See [[*P
 
 Response body: updated full metadata object.
 
-*** =DELETE /repos/:repo_uuid/metadata/:metadata_uuid/fields/:field_id=
+*** =DELETE /repos/:repo_uuid/records/:record_uuid/fields/:field_id=
 
 Removes the single field row identified by =field_id=. Returns =404= if the id
 does not belong to this metadata record.
@@ -436,7 +438,7 @@ If the targeted field row is protected, the request body must contain
 
 * CLI
 
-Entry manipulation commands. Global conventions (binary name, =--repo=,
+Record manipulation commands. Global conventions (binary name, =--repo=,
 =--daemon-url=, exit codes) are defined in
 [[file:spec-main.org][spec-main.org]].
 
@@ -453,21 +455,21 @@ Commands that write fields take a /field spec/ argument of the form
 | =float=       | =name:float=X=                          | =score:float=3.14=                                |
 | =bool=        | =name:bool=true|false=                  | =seen:bool=true=                                  |
 | =datetime=    | =name:datetime=ISO-8601=                | =added:datetime=2024-01-01T12:00:00Z=             |
-| =ref=         | =name:ref=<entry_uuid>=                 | =author:ref=8f3a...=                              |
+| =ref=         | =name:ref=<record_uuid>=                 | =author:ref=8f3a...=                              |
 | =tree_ref=    | =name:tree_ref=<parent_uuid>/<name>=; empty parent for a root: =name:tree_ref=/<name>= | =parent:tree_ref=8f3a.../félins= |
 | =refbase=     | =name:refbase=<repo_uuid>=              | =origin:refbase=47ab...=                          |
-| =externalref= | =name:externalref=<repo_uuid>:<entry_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
+| =externalref= | =name:externalref=<repo_uuid>:<record_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
 
 ** Query-or-UUID arguments
 
-Commands written =<query|uuid>= accept either a bare entry UUID (targets that
-single entry, no daemon query round-trip) or a DSL predicate (see
+Commands written =<query|uuid>= accept either a bare record UUID (targets that
+single record, no daemon query round-trip) or a DSL predicate (see
 [[file:spec-query.org][spec-query.org]]) evaluated by the daemon.
 
 ** =mf list=
 
-Prints all entry UUIDs of the repository, one per line. Calls
-=GET /metadata=; for large repositories the CLI paginates internally
+Prints all record UUIDs of the repository, one per line. Calls
+=GET /records=; for large repositories the CLI paginates internally
 (following =next_cursor=) and streams the output.
 
 | Flag        | Description                          |
@@ -476,7 +478,7 @@ Prints all entry UUIDs of the repository, one per line. Calls
 
 ** =mf get <query|uuid>=
 
-Prints the full metadata objects of the matching entries as a JSON array
+Prints the full metadata objects of the matching records as a JSON array
 (including field =id=s, needed by =mf unset=).
 
 | Flag             | Description                                       |
@@ -485,7 +487,7 @@ Prints the full metadata objects of the matching entries as a JSON array
 
 ** =mf create --field <spec> [--field <spec> ...]=
 
-Creates an entry with the given fields (=POST /metadata=) and prints its
+Creates a record with the given fields (=POST /records=) and prints its
 UUID.
 
 | Flag      | Description                                                |
@@ -497,7 +499,7 @@ UUID.
 Sets a field with =set_field= semantics (replaces all rows of that name).
 With a UUID target, issues a direct =PATCH=; with a predicate, uses the batch
 =POST /set= endpoint (single server-side transaction) and prints the number
-of updated entries.
+of updated records.
 
 | Flag      | Description                                                |
 |-----------+------------------------------------------------------------|
@@ -524,9 +526,9 @@ Deletes the single field row identified by =field_id= (as shown by
 
 ** =mf delete <query|uuid>=
 
-Deletes the matching entries (metadata and all fields). Prints the number of
-deleted entries. Asks for confirmation when the target is a predicate, unless
+Deletes the matching records (metadata and all fields). Prints the number of
+deleted records. Asks for confirmation when the target is a predicate, unless
 =--force= is passed (same convention as =mf prune=; unambiguous here because
-=mf delete= removes whole entries and never writes =mfr_*= fields).
+=mf delete= removes whole records and never writes =mfr_*= fields).
 
 * Open questions

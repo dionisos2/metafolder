@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- Built-in panel type: all fields of the selected entry (spec-gui
-     "entry-detail panel type"). -->
+<!-- Built-in panel type: all fields of the selected record (spec-gui
+     "record-detail panel type"). -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>entry-detail</title>
+    <title>record-detail</title>
     <style>
       body {
         margin: 0;
@@ -31,7 +31,7 @@
       #placeholder.hidden {
         display: none;
       }
-      .entry-head {
+      .record-head {
         font-family: var(--mf-font-mono, monospace);
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.85em;
@@ -126,12 +126,12 @@
   </head>
   <body>
     <div id="placeholder">
-      <p>No entry selected</p>
-      <button id="new-entry-placeholder">New entry</button>
+      <p>No record selected</p>
+      <button id="new-record-placeholder">New record</button>
     </div>
 
     <div id="content" class="hidden">
-      <div class="entry-head" id="entry-head"></div>
+      <div class="record-head" id="record-head"></div>
       <table>
         <tbody id="field-rows"></tbody>
       </table>
@@ -149,11 +149,11 @@
     </div>
 
     <div id="toolbar">
-      <button id="new-entry">New entry</button>
+      <button id="new-record">New record</button>
       <button id="show-add">Add / set field…</button>
-      <button id="save-new" hidden>Save new entry</button>
+      <button id="save-new" hidden>Save new record</button>
       <button id="watch-reconcile" hidden>Watch and reconcile</button>
-      <button id="delete-entry">Delete entry</button>
+      <button id="delete-record">Delete record</button>
       <label class="force"><input type="checkbox" id="force" /> force (mfr_*)</label>
     </div>
 

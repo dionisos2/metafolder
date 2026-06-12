@@ -2,7 +2,7 @@
 //! "Tree Cache"): path resolution with DB fallback, mutations, descendant
 //! collection, LRU eviction, case sensitivity.
 
-use metafolder_core::entry::{Field, Value};
+use metafolder_core::record::{Field, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::TreeCache;
@@ -19,7 +19,7 @@ fn test_conn() -> (Connection, Uuid) {
 fn tree_entry(conn: &mut Connection, db_id: Uuid, field: &str, parent: Option<Uuid>, name: &str) -> Uuid {
     let mut w = Writer::begin(conn, db_id, None).unwrap();
     let m = w
-        .create_entry(vec![Field::new(field, Value::TreeRef { parent, name: name.into() })])
+        .create_record(vec![Field::new(field, Value::TreeRef { parent, name: name.into() })])
         .unwrap();
     w.commit().unwrap();
     m.uuid
@@ -179,8 +179,8 @@ fn test_apply_remove_drops_subtree() {
 
     // Delete from DB, then notify the cache.
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    w.delete_entry(file).unwrap();
-    w.delete_entry(jazz).unwrap();
+    w.delete_record(file).unwrap();
+    w.delete_record(jazz).unwrap();
     w.commit().unwrap();
     cache.apply_remove("mfr_path", jazz);
 

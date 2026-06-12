@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use metafolder_core::entry::Value;
+use metafolder_core::record::Value;
 use metafolder_daemon::config::RepoConfig;
 use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
@@ -15,7 +15,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
 }
 
 #[test]
-fn test_init_creates_structure_and_root_entry() {
+fn test_init_creates_structure_and_root_record() {
     let root = temp_dir("init");
     let opened = repo::init_repository(&root, None).unwrap();
 
@@ -32,7 +32,7 @@ fn test_init_creates_structure_and_root_entry() {
     let root_uuid = db::find_tree_child(&opened.conn, "mfr_path", None, "")
         .unwrap()
         .expect("filesystem root entry must exist");
-    let entry = db::get_entry(&opened.conn, root_uuid).unwrap().unwrap();
+    let entry = db::get_record(&opened.conn, root_uuid).unwrap().unwrap();
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     let patterns: Vec<&Value> = entry.get_all("mf_ignore");
@@ -44,7 +44,7 @@ fn test_init_creates_structure_and_root_entry() {
     // The root entry creation went through the event log.
     let n_ops: i64 = opened
         .conn
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_entry'", [], |r| {
+        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_record'", [], |r| {
             r.get(0)
         })
         .unwrap();
@@ -133,6 +133,54 @@ fn test_load_migrates_legacy_db_layout() {
 }
 
 #[test]
+fn test_load_migrates_legacy_table_names() {
+    let root = temp_dir("sql_migrate");
+    let created = repo::init_repository(&root, None).unwrap();
+    let uuid = created.config.repo_uuid;
+    drop(created);
+
+    // Downgrade the schema to the pre-rename names (metadata / metadata_db /
+    // metadata_uuid columns / *_entry op types).
+    let db_path = root.join(".metafolder/internal/db.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE record RENAME TO metadata;
+         ALTER TABLE record_db RENAME TO metadata_db;
+         ALTER TABLE metadata_db RENAME COLUMN record_uuid TO metadata_uuid;
+         ALTER TABLE field RENAME COLUMN record_uuid TO metadata_uuid;
+         UPDATE operation SET op_type = 'create_entry' WHERE op_type = 'create_record';
+         UPDATE operation SET op_type = 'delete_entry' WHERE op_type = 'delete_record';",
+    )
+    .unwrap();
+    drop(conn);
+
+    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    assert_eq!(loaded.config.repo_uuid, uuid);
+    // The schema is migrated and functional: the root record is readable
+    // and its creation op uses the new op type.
+    let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
+    assert!(db::get_record(&loaded.conn, root_uuid).unwrap().is_some());
+    let n: i64 = loaded
+        .conn
+        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_record'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(n, 1);
+    let legacy: i64 = loaded
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(legacy, 0, "the legacy table name must be gone");
+    drop(loaded);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_load_fails_when_no_repository() {
     let root = temp_dir("noload");
     let err = repo::load_repository(RepoLocator::Root(root.clone())).unwrap_err();
@@ -150,7 +198,7 @@ fn test_exclusive_lock_blocks_second_connection() {
     let second =
         rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
     let res: Result<i64, _> =
-        second.query_row("SELECT COUNT(*) FROM metadata", [], |r| r.get(0));
+        second.query_row("SELECT COUNT(*) FROM record", [], |r| r.get(0));
     assert!(res.is_err(), "second connection must be locked out");
 
     drop(opened);

@@ -3,7 +3,7 @@
 
 * Overview
 
-The query system allows filtering metadata entries by field values, presence,
+The query system allows filtering metadata records by field values, presence,
 and graph relationships. Queries are represented as a recursive JSON structure
 and compiled to SQL on the daemon side. The CLI provides a human-friendly DSL
 that compiles to this representation.
@@ -26,7 +26,7 @@ CLI provides a DSL that compiles to this representation.
 | Or                  | =or=                  | At least one operand must match                |
 | Not                 | =not=                 | Operand must not match                         |
 | Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
-| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: entry is a descendant of the entry at the given path |
+| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: record is a descendant of the record at the given path |
 | Matches             | =matches=             | String field matches a regex pattern                           |
 
 * Daemon
@@ -34,8 +34,8 @@ CLI provides a DSL that compiles to this representation.
 ** Compilation
 
 Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
-the final SELECT is filtered via =metadata_db= to isolate the repository and
-exclude link entries by default.
+the final SELECT is filtered via =record_db= to isolate the repository and
+exclude link records by default.
 
 Exception: =FollowsTransitive= on a =TreeRef= field is executed as a hybrid
 operation — the daemon first collects the descendant UUID set iteratively via
@@ -43,15 +43,15 @@ the tree cache, then injects it as an =IN= clause into the surrounding SQL query
 rather than emitting a CTE.
 
 =Follows= on a =Ref= field takes a condition (sub-query) as right-hand side and
-matches entries whose =value_uuid= points to an entry satisfying that condition.
+matches records whose =value_uuid= points to a record satisfying that condition.
 On a =TreeRef= field, the right-hand side is a path string (e.g. ="/music/jazz"=)
-resolved to a UUID via the tree cache; it matches entries whose direct parent
-(=value_uuid=) is that entry. DSL syntax: =field -> "path"=.
+resolved to a UUID via the tree cache; it matches records whose direct parent
+(=value_uuid=) is that record. DSL syntax: =field -> "path"=.
 
 =FollowsTransitive= is restricted to =TreeRef= fields; applying it to a =Ref=
 field is rejected with =400=. The right-hand side is a path string (e.g.
 ="/projects"=) that is resolved to a UUID via the tree cache. All descendants of
-that entry are then collected iteratively via the tree cache (fetching missing
+that record are then collected iteratively via the tree cache (fetching missing
 nodes from the DB step by step), and the resulting UUID set is used to filter
 the query results.
 
@@ -62,7 +62,7 @@ regex to =value_name= (the single name component).
 ** MATCHES performance
 
 In v1, =MATCHES= performs a full scan of the candidate rows with the =REGEXP=
-UDF. Benchmarks measured ~650 ms for 50 k entries; this is accepted for v1.
+UDF. Benchmarks measured ~650 ms for 50 k records; this is accepted for v1.
 
 ** MATCHES acceleration via FTS5                                          :v2:
 
@@ -104,7 +104,7 @@ scan in all cases.
 POST /repos/:repo_uuid/query
 #+END_SRC
 
-Executes a query and returns matching entries.
+Executes a query and returns matching records.
 
 Request body:
 #+BEGIN_SRC json
@@ -144,7 +144,7 @@ Example response with =select=:
 ]
 #+END_SRC
 
-Fields absent from the entry (not present in the DB for that entry) are simply
+Fields absent from the record (not present in the DB for that record) are simply
 omitted from the response — they are not included as =Nothing=.
 
 *** =POST /repos/:repo_uuid/set= (Batch set)
@@ -153,7 +153,7 @@ omitted from the response — they are not included as =Nothing=.
 POST /repos/:repo_uuid/set
 #+END_SRC
 
-Runs a query server-side and sets a field on every matching entry in a single
+Runs a query server-side and sets a field on every matching record in a single
 transaction. More efficient than issuing individual PATCH requests from the
 client.
 
@@ -180,7 +180,7 @@ JSON representation.
 
 The parser is shared code: it lives in the =core= crate
 (=metafolder_core::dsl::parse_query=) and is used by both the CLI and the
-GUI (the =entry-list= query editor, see [[file:spec-gui.org][spec-gui.org]]).
+GUI (the =record-list= query editor, see [[file:spec-gui.org][spec-gui.org]]).
 
 *** Grammar
 

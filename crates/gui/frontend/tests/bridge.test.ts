@@ -78,17 +78,17 @@ describe('bridge core', () => {
 
   test('subscriptions deliver var changes for the right workspace only', async () => {
     const { bridge, source, post } = setup();
-    await bridge.onMessage(source, request(1, 'workspace.subscribe', { key: 'selected_entry' }));
+    await bridge.onMessage(source, request(1, 'workspace.subscribe', { key: 'selected_record' }));
 
-    bridge.forwardVarChange('ws-1', 'selected_entry', { uuid: 'u1' });
-    bridge.forwardVarChange('ws-2', 'selected_entry', { uuid: 'u2' });
+    bridge.forwardVarChange('ws-1', 'selected_record', { uuid: 'u1' });
+    bridge.forwardVarChange('ws-2', 'selected_record', { uuid: 'u2' });
     bridge.forwardVarChange('ws-1', 'other_key', 1);
 
     const pushes = post.mock.calls
       .map(([msg]) => msg)
       .filter((msg) => msg.type === 'var-changed');
     expect(pushes).toEqual([
-      { mf: true, type: 'var-changed', key: 'selected_entry', value: { uuid: 'u1' } },
+      { mf: true, type: 'var-changed', key: 'selected_record', value: { uuid: 'u1' } },
     ]);
   });
 

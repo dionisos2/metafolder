@@ -42,7 +42,7 @@ filesystem's case sensitivity (by creating a temporary file inside
 result in the in-memory repo state. On case-insensitive filesystems, path
 comparisons performed by the watcher, reconcile, and the tree cache use
 case-insensitive matching, so that an event reported with different casing
-still resolves to the existing entry.
+still resolves to the existing record.
 
 ** File metadata fields
 
@@ -59,7 +59,7 @@ Availability of the =mfr_*= stat-derived fields per platform:
 | =mfr_gid=          | yes             | yes               | *never written* (absent)      |
 
 - =mfr_permissions=, =mfr_uid=, =mfr_gid= are Unix-specific. On Windows they
-  are never written; on an entry they remain in the "unknown" state
+  are never written; on a record they remain in the "unknown" state
   (=IsUnknown=). A repository written on Unix and later watched on Windows
   keeps the Unix values untouched (Windows daemon operations simply do not
   refresh them).

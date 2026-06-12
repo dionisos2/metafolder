@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use metafolder_core::entry::Value;
+use metafolder_core::record::Value;
 use metafolder_daemon::db;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::Writer;
@@ -59,7 +59,7 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_entry(&conn, uuid).unwrap().unwrap().get(name).cloned()
+    db::get_record(&conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn count(repo: &RepoState, sql: &str) -> i64 {
@@ -70,7 +70,7 @@ fn count(repo: &RepoState, sql: &str) -> i64 {
 // ── Create ────────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_create_event_creates_entry_with_stat_fields() {
+fn test_create_event_creates_record_with_stat_fields() {
     let (repo, root, _) = setup("create");
     write_file(&root, "a.txt", b"hello");
     enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
@@ -87,7 +87,7 @@ fn test_create_event_creates_entry_with_stat_fields() {
 }
 
 #[test]
-fn test_create_creates_missing_parent_entries() {
+fn test_create_creates_missing_parent_records() {
     let (repo, root, _) = setup("parents");
     write_file(&root, "x/y/deep.txt", b"d");
     enqueue(&repo, &[FsEvent::Create("/x/y/deep.txt".into())]);
@@ -241,7 +241,7 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
 }
 
 #[test]
-fn test_rename_to_without_match_creates_new_entry() {
+fn test_rename_to_without_match_creates_new_record() {
     let (repo, root, _) = setup("arrival2");
     write_file(&root, "fresh.txt", b"brand new");
     enqueue(&repo, &[FsEvent::RenameTo("/fresh.txt".into())]);
@@ -409,7 +409,7 @@ fn test_groups_become_separate_revisions() {
     let create_revs: i64 = count(
         &repo,
         "SELECT COUNT(DISTINCT rev_id) FROM operation
-         WHERE op_type = 'create_entry' AND field_name IS NULL",
+         WHERE op_type = 'create_record' AND field_name IS NULL",
     );
     assert!(create_revs >= 1);
 

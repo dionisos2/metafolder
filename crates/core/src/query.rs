@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::entry::Value;
+use crate::record::Value;
 
 /// A query predicate. Internal (JSON) representation of queries.
 /// The text DSL ("rating > 3 AND tag IS PRESENT") is compiled into this
@@ -21,7 +21,7 @@ pub enum Query {
     IsPresent { field: String },
     /// The field exists with the value Nothing.
     IsAbsent { field: String },
-    /// The field does not exist on this entry.
+    /// The field does not exist on this record.
     IsUnknown { field: String },
 
     // --- Comparisons (at least one occurrence of the field matches) ---
@@ -34,10 +34,10 @@ pub enum Query {
 
     // --- Graph traversal ---
     /// On a `Ref` field, `target` is a sub-query the referent must satisfy.
-    /// On a `TreeRef` field, `target` is a path string and matches entries
-    /// whose direct parent is the entry at that path.
+    /// On a `TreeRef` field, `target` is a path string and matches records
+    /// whose direct parent is the record at that path.
     Follows { field: String, target: FollowTarget },
-    /// `TreeRef` fields only: the entry is a descendant of the entry at the
+    /// `TreeRef` fields only: the record is a descendant of the record at the
     /// given path.
     FollowsTransitive { field: String, path: String },
 

@@ -40,27 +40,27 @@ export function formatValue({ type, value }) {
     case 'tree_ref':
       return `${value.parent ?? '(root)'} / ${value.name}`;
     case 'externalref':
-      return `${value.repo} :: ${value.entry}`;
+      return `${value.repo} :: ${value.record}`;
     default:
       return String(value);
   }
 }
 
-/** First field of an entry with the given name (fields are a multi-map). */
-export function field(entry, name) {
-  return (entry.fields ?? []).find((f) => f.name === name);
+/** First field of an record with the given name (fields are a multi-map). */
+export function field(record, name) {
+  return (record.fields ?? []).find((f) => f.name === name);
 }
 
-/** Every field of an entry with the given name (multi-map rows, in order). */
-export function fields(entry, name) {
-  return (entry.fields ?? []).filter((f) => f.name === name);
+/** Every field of an record with the given name (multi-map rows, in order). */
+export function fields(record, name) {
+  return (record.fields ?? []).filter((f) => f.name === name);
 }
 
 /**
- * Like formatValue, but as a DOM node where entry references are
+ * Like formatValue, but as a DOM node where record references are
  * clickable: the uuid of ref/refbase, the parent of a tree_ref, the
- * entry of an externalref. Clicking calls onOpen(uuid, repo) — repo is
- * null except for externalref (the referenced entry's repository).
+ * record of an externalref. Clicking calls onOpen(uuid, repo) — repo is
+ * null except for externalref (the referenced record's repository).
  */
 export function valueEl(value, onOpen) {
   const link = (uuid, repo = null) =>
@@ -92,7 +92,7 @@ export function valueEl(value, onOpen) {
         'span',
         {},
         `${value.value.repo} :: `,
-        link(value.value.entry, value.value.repo),
+        link(value.value.record, value.value.repo),
       );
     default:
       return el('span', {}, formatValue(value));

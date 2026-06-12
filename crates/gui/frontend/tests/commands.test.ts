@@ -18,8 +18,8 @@ describe('parseInvocation', () => {
   });
 
   test('command with parameters', () => {
-    expect(parseInvocation('entry-list:set-mode grid')).toEqual({
-      name: 'entry-list:set-mode',
+    expect(parseInvocation('record-list:set-mode grid')).toEqual({
+      name: 'record-list:set-mode',
       args: ['grid'],
     });
     expect(parseInvocation('answer:send left')).toEqual({
@@ -88,10 +88,10 @@ describe('shortcutsFor', () => {
   });
   const table = [
     binding(['alt+t'], 'tab:new'),
-    binding(['ctrl+g'], 'entry-list:set-mode grid'),
-    binding(['down'], 'entry-list:next'),
-    binding(['j'], 'entry-list:next'),
-    binding(['g', 'g'], 'entry-list:goto-top'),
+    binding(['ctrl+g'], 'record-list:set-mode grid'),
+    binding(['down'], 'record-list:next'),
+    binding(['j'], 'record-list:next'),
+    binding(['g', 'g'], 'record-list:goto-top'),
   ];
 
   test('exact invocation match', () => {
@@ -99,20 +99,20 @@ describe('shortcutsFor', () => {
   });
 
   test('parameterized invocations count for the bare command', () => {
-    expect(shortcutsFor(table, 'entry-list:set-mode')).toEqual(['ctrl+g']);
+    expect(shortcutsFor(table, 'record-list:set-mode')).toEqual(['ctrl+g']);
   });
 
   test('several bindings are all listed', () => {
-    expect(shortcutsFor(table, 'entry-list:next')).toEqual(['down', 'j']);
+    expect(shortcutsFor(table, 'record-list:next')).toEqual(['down', 'j']);
   });
 
   test('sequences are space-joined', () => {
-    expect(shortcutsFor(table, 'entry-list:goto-top')).toEqual(['g g']);
+    expect(shortcutsFor(table, 'record-list:goto-top')).toEqual(['g g']);
   });
 
   test('no binding yields an empty list, not a partial-name match', () => {
     expect(shortcutsFor(table, 'tab:close')).toEqual([]);
-    expect(shortcutsFor(table, 'entry-list:go')).toEqual([]);
+    expect(shortcutsFor(table, 'record-list:go')).toEqual([]);
   });
 });
 

@@ -45,7 +45,7 @@ async function openRepo(repoUuid) {
     const current = await workspace.get('active_repo');
     if (current === null) {
       await workspace.adoptRepo(repoUuid);
-      await commands.invoke('panel:set-type entry-list');
+      await commands.invoke('panel:set-type record-list');
     } else {
       await commands.invoke(`tab:new ${repoUuid}`);
     }

@@ -1,5 +1,5 @@
 // Tracked-children lookup for the file-manager panel: query only the
-// entries whose mfr_path parent is the displayed directory (Follows with
+// records whose mfr_path parent is the displayed directory (Follows with
 // a path target), instead of paginating the whole repository.
 
 // Parent directory of an absolute path; the filesystem root is its own
@@ -27,10 +27,10 @@ function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Uuid of the entry of `dir` itself (the "." row), or null when untracked
-// or outside the repo. The root entry is the only one with an empty
+// Uuid of the record of `dir` itself (the "." row), or null when untracked
+// or outside the repo. The root record is the only one with an empty
 // TreeRef name; a subdirectory is pinned down by parent + exact name.
-export async function loadDirEntry(daemon, repo, repoRoot, dir) {
+export async function loadDirRecord(daemon, repo, repoRoot, dir) {
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null) return null;
   const matchSelf = {
@@ -60,7 +60,7 @@ export async function loadDirEntry(daemon, repo, repoRoot, dir) {
   return page.results[0]?.uuid ?? null;
 }
 
-// Map of absolute child path -> entry uuid for the tracked direct
+// Map of absolute child path -> record uuid for the tracked direct
 // children of `dir`. Outside the repo root nothing is tracked.
 export async function loadTrackedChildren(daemon, repo, repoRoot, dir) {
   const tracked = new Map();
@@ -75,10 +75,10 @@ export async function loadTrackedChildren(daemon, repo, repoRoot, dir) {
       limit: 500,
       ...(cursor && { cursor }),
     });
-    for (const entry of page.results) {
-      for (const field of entry.fields) {
+    for (const record of page.results) {
+      for (const field of record.fields) {
         if (field.name !== 'mfr_path' || field.value.type !== 'tree_ref') continue;
-        tracked.set(prefix + field.value.value.name, entry.uuid);
+        tracked.set(prefix + field.value.value.name, record.uuid);
       }
     }
     cursor = page.next_cursor;

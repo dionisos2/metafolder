@@ -3,7 +3,7 @@
 //! next to the module; this test pins the public location.
 
 use metafolder_core::dsl::parse_query;
-use metafolder_core::entry::Value;
+use metafolder_core::record::Value;
 use metafolder_core::query::Query;
 
 #[test]

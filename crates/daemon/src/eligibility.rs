@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use metafolder_core::entry::Value;
+use metafolder_core::record::Value;
 
 use crate::db;
 use crate::tree_cache::TreeCache;
@@ -18,8 +18,8 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
     // Prefixes from the root down: "" for the root, then "/a", "/a/b", …
     let prefixes: Vec<String> = (0..comps.len()).map(|i| comps[..=i].join("/")).collect();
 
-    // Entries existing along the path. A TreeRef child requires its parent
-    // entry, so the chain stops at the first unresolved prefix.
+    // Records existing along the path. A TreeRef child requires its parent
+    // record, so the chain stops at the first unresolved prefix.
     let mut chain: Vec<(usize, Uuid)> = Vec::new();
     for (i, prefix) in prefixes.iter().enumerate() {
         match cache.resolve_path(conn, "mfr_path", prefix)? {
@@ -29,11 +29,11 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
     }
 
     let full_idx = prefixes.len() - 1;
-    // The path's own entry, when it already exists.
+    // The path's own record, when it already exists.
     let own_entry: Option<Uuid> =
         chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
 
-    // Steps 1–2: nearest entry (including the path itself) defining mf_watch.
+    // Steps 1–2: nearest record (including the path itself) defining mf_watch.
     let mut watch: Option<(Uuid, bool)> = None;
     for (_, uuid) in chain.iter().rev() {
         if let Some(value) = bool_field(conn, *uuid, "mf_watch")? {
@@ -47,7 +47,7 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
     if !watch_value {
         return Ok(false);
     }
-    // Step 3: mf_watch set directly on the entry → tracked unconditionally.
+    // Step 3: mf_watch set directly on the record → tracked unconditionally.
     if own_entry == Some(watch_entry) {
         return Ok(true);
     }
@@ -74,7 +74,7 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
     Ok(true)
 }
 
-/// First Bool value of a field on an entry (Nothing rows do not count).
+/// First Bool value of a field on a record (Nothing rows do not count).
 fn bool_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<bool>> {
     Ok(db::get_field_rows_named(conn, uuid, name)?
         .into_iter()
@@ -84,7 +84,7 @@ fn bool_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<bool>>
         }))
 }
 
-/// All String values of a field on an entry.
+/// All String values of a field on a record.
 fn string_fields(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<String>> {
     Ok(db::get_field_rows_named(conn, uuid, name)?
         .into_iter()

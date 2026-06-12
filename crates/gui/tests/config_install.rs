@@ -178,7 +178,7 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
         .set_user_keybinding("shift+ctrl+a", "first", None, false)
         .unwrap();
     let set = config
-        .set_user_keybinding("ctrl+shift+A", "second", Some("entry-list"), true)
+        .set_user_keybinding("ctrl+shift+A", "second", Some("record-list"), true)
         .unwrap();
     let bindings: Vec<_> = set
         .compiled()
@@ -187,7 +187,7 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
         .collect();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].invocation, "second");
-    assert_eq!(bindings[0].when.as_deref(), Some("entry-list"));
+    assert_eq!(bindings[0].when.as_deref(), Some("record-list"));
     assert!(bindings[0].text_input);
 }
 

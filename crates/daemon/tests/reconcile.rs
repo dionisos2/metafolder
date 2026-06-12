@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use metafolder_core::entry::Value;
+use metafolder_core::record::Value;
 use metafolder_daemon::db;
 use metafolder_daemon::fingerprint;
 use metafolder_daemon::log::Writer;
@@ -51,7 +51,7 @@ fn resolve(repo: &RepoState, path: &str) -> Option<Uuid> {
 
 fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
     let conn = repo.conn.lock().unwrap();
-    db::get_entry(&conn, uuid).unwrap().unwrap().get(name).cloned()
+    db::get_record(&conn, uuid).unwrap().unwrap().get(name).cloned()
 }
 
 fn set_field(repo: &RepoState, uuid: Uuid, name: &str, value: Value) {
@@ -68,7 +68,7 @@ fn run(repo: &RepoState) -> ReconcileResult {
 // ── Creation ──────────────────────────────────────────────────────────────────
 
 #[test]
-fn test_reconcile_creates_entries_for_new_files() {
+fn test_reconcile_creates_records_for_new_files() {
     let (repo, root) = setup("create");
     write_file(&root, "a.txt", b"a");
     write_file(&root, "sub/b.txt", b"bb");
@@ -143,7 +143,7 @@ fn test_reconcile_never_clears_paths() {
 // ── Fingerprint phase ─────────────────────────────────────────────────────────
 
 #[test]
-fn test_reconcile_moves_entry_on_full_hash_match() {
+fn test_reconcile_moves_record_on_full_hash_match() {
     let (repo, root) = setup("move");
     write_file(&root, "old_place.bin", b"unique content 42");
     run(&repo);
@@ -181,7 +181,7 @@ fn test_reconcile_partial_match_without_full_hash_is_a_candidate() {
     assert_eq!(result.moved, 0);
     assert_eq!(result.candidates.len(), 1);
     let candidate = &result.candidates[0];
-    assert_eq!(candidate.entry_uuid, uuid);
+    assert_eq!(candidate.record_uuid, uuid);
     assert_eq!(candidate.stale_path, "/song.mp3");
     assert_eq!(candidate.matches.len(), 1);
     assert_eq!(candidate.matches[0].path, "/renamed.mp3");
@@ -206,7 +206,7 @@ fn test_reconcile_size_only_match_is_a_weak_candidate() {
 
     assert_eq!(result.moved, 0);
     assert_eq!(result.candidates.len(), 1);
-    assert_eq!(result.candidates[0].entry_uuid, uuid);
+    assert_eq!(result.candidates[0].record_uuid, uuid);
     assert_eq!(result.candidates[0].matches[0].fingerprint, "size");
     assert!(resolve(&repo, "/moved.txt").is_none(), "candidate file is not auto-created");
 
@@ -214,7 +214,7 @@ fn test_reconcile_size_only_match_is_a_weak_candidate() {
 }
 
 #[test]
-fn test_reconcile_mismatched_partial_creates_new_entry() {
+fn test_reconcile_mismatched_partial_creates_new_record() {
     let (repo, root) = setup("mismatch");
     write_file(&root, "a.bin", b"AAAAA");
     run(&repo);

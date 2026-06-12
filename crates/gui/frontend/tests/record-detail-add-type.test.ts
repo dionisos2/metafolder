@@ -1,10 +1,10 @@
-// entry-detail add-form type picker: a button + HTML menu (/__menu.js)
+// record-detail add-form type picker: a button + HTML menu (/__menu.js)
 // replacing the native <select>, whose WebKitGTK popup overflows the
 // screen when the add form sits near the bottom of the panel.
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { TYPES, createTypePicker, parseRawValue } from '../../panel-types/entry-detail/add-type.js';
+import { TYPES, createTypePicker, parseRawValue } from '../../panel-types/record-detail/add-type.js';
 
 function press(key: string) {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));

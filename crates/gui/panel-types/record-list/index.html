@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- Built-in panel type: metadata entries filtered by an embedded query
-     (spec-gui "entry-list panel type"). -->
+<!-- Built-in panel type: metadata records filtered by an embedded query
+     (spec-gui "record-list panel type"). -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>entry-list</title>
+    <title>record-list</title>
     <style>
       body {
         margin: 0;
@@ -156,7 +156,7 @@
         <input
           id="columns-input"
           placeholder="columns, e.g. mfr_path~ rating &amp;version"
-          title="space- or comma-separated columns: field (raw value), field~ (resolved: TreeRef shows the path from the root), field~name (Ref shows the target's field), &amp;uuid / &amp;version (entry metadata); empty restores the defaults"
+          title="space- or comma-separated columns: field (raw value), field~ (resolved: TreeRef shows the path from the root), field~name (Ref shows the target's field), &amp;uuid / &amp;version (record metadata); empty restores the defaults"
         />
         <button id="columns-apply">Apply</button>
       </div>

@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirEntry } from '../../panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirRecord } from '../../panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -72,10 +72,10 @@ describe('isWithin', () => {
   });
 });
 
-describe('loadDirEntry', () => {
+describe('loadDirRecord', () => {
   test('the repo root resolves via the empty TreeRef name', async () => {
     const daemon = fakeDaemon([{ results: [entry('aaaa', '')], next_cursor: null }]);
-    const uuid = await loadDirEntry(daemon, 'r1', '/data/repo', '/data/repo');
+    const uuid = await loadDirRecord(daemon, 'r1', '/data/repo', '/data/repo');
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/query', {
       query: { type: 'matches', field: 'mfr_path', pattern: '^$' },
       select: '*',
@@ -86,7 +86,7 @@ describe('loadDirEntry', () => {
 
   test('a subdirectory resolves via follows(parent) AND matches(^name$)', async () => {
     const daemon = fakeDaemon([{ results: [entry('bbbb', 'jazz')], next_cursor: null }]);
-    const uuid = await loadDirEntry(daemon, 'r1', '/data/repo', '/data/repo/music/jazz');
+    const uuid = await loadDirRecord(daemon, 'r1', '/data/repo', '/data/repo/music/jazz');
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/query', {
       query: {
         type: 'and',
@@ -103,19 +103,19 @@ describe('loadDirEntry', () => {
 
   test('regex metacharacters in the name are escaped', async () => {
     const daemon = fakeDaemon([{ results: [], next_cursor: null }]);
-    await loadDirEntry(daemon, 'r1', '/data/repo', '/data/repo/a+b (1)');
+    await loadDirRecord(daemon, 'r1', '/data/repo', '/data/repo/a+b (1)');
     expect(daemon.call.mock.calls[0][2].query.operands[1].pattern).toBe('^a\\+b \\(1\\)$');
   });
 
   test('untracked directory resolves to null', async () => {
     const daemon = fakeDaemon([{ results: [], next_cursor: null }]);
-    expect(await loadDirEntry(daemon, 'r1', '/data/repo', '/data/repo/new')).toBeNull();
+    expect(await loadDirRecord(daemon, 'r1', '/data/repo', '/data/repo/new')).toBeNull();
   });
 
   test('no repo or outside the root: null without a daemon round-trip', async () => {
     const daemon = fakeDaemon([]);
-    expect(await loadDirEntry(daemon, null, '/data/repo', '/data/repo')).toBeNull();
-    expect(await loadDirEntry(daemon, 'r1', '/data/repo', '/tmp')).toBeNull();
+    expect(await loadDirRecord(daemon, null, '/data/repo', '/data/repo')).toBeNull();
+    expect(await loadDirRecord(daemon, 'r1', '/data/repo', '/tmp')).toBeNull();
     expect(daemon.call).not.toHaveBeenCalled();
   });
 });

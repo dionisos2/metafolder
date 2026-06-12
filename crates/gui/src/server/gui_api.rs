@@ -162,8 +162,8 @@ pub async fn put_panel_view(
             if let Err(error) = state.gui.set_var(&ws_id, "selected_paths", json!([path])) {
                 return map_state_error(error);
             }
-            let entry = lookup_entry_by_path(&state, &ws_id, path).await;
-            if let Err(error) = state.gui.set_var(&ws_id, "selected_entry", entry) {
+            let entry = lookup_record_by_path(&state, &ws_id, path).await;
+            if let Err(error) = state.gui.set_var(&ws_id, "selected_record", entry) {
                 return map_state_error(error);
             }
         }
@@ -171,9 +171,9 @@ pub async fn put_panel_view(
     Json(json!({})).into_response()
 }
 
-/// Best-effort: the metadata entry whose `mfr_path` resolves to `path`
+/// Best-effort: the record whose `mfr_path` resolves to `path`
 /// in the workspace's active repo; `Null` for untracked files.
-async fn lookup_entry_by_path(state: &ServerState, ws_id: &str, path: &str) -> Value {
+async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> Value {
     let Ok(Value::String(repo)) = state.gui.get_var(ws_id, "active_repo") else {
         return Value::Null;
     };

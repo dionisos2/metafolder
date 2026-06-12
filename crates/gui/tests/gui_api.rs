@@ -244,7 +244,7 @@ async fn test_panel_view_file_with_path_sets_selection() {
         json!(["/tmp/picture.jpg"])
     );
     // No active repo in ws-1: no entry lookup is possible.
-    assert_eq!(ctx.gui.get_var("ws-1", "selected_entry").unwrap(), Value::Null);
+    assert_eq!(ctx.gui.get_var("ws-1", "selected_record").unwrap(), Value::Null);
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────

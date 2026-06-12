@@ -1,9 +1,9 @@
 // Lazy TreeRef path resolution with a memo cache (spec-gui "Path
 // display"). Paths are repo-root-relative ('/'-joined names; the root
-// entry contributes an empty name). The shim exposes this per repo as
+// record contributes an empty name). The shim exposes this per repo as
 // metafolder.daemon.resolvePath / resolveTreeRef / invalidatePath.
 
-export function createPathResolver(getEntry) {
+export function createPathResolver(getRecord) {
   const cache = new Map(); // uuid -> Promise<relative path>
 
   function resolveUuid(uuid) {
@@ -17,11 +17,11 @@ export function createPathResolver(getEntry) {
   }
 
   async function compute(uuid) {
-    const entry = await getEntry(uuid);
-    const field = (entry.fields ?? []).find(
+    const record = await getRecord(uuid);
+    const field = (record.fields ?? []).find(
       (f) => f.name === 'mfr_path' && f.value?.type === 'tree_ref',
     );
-    if (!field) throw new Error(`entry ${uuid} has no mfr_path TreeRef`);
+    if (!field) throw new Error(`record ${uuid} has no mfr_path TreeRef`);
     return resolveTreeRef(field.value.value);
   }
 

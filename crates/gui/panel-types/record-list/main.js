@@ -1,5 +1,5 @@
-// entry-list panel: entries of the active repo filtered by an embedded
-// DSL query; primary selection source (spec-gui "entry-list panel type").
+// record-list panel: records of the active repo filtered by an embedded
+// DSL query; primary selection source (spec-gui "record-list panel type").
 
 import { el } from '/__ui.js';
 import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
@@ -23,7 +23,7 @@ const MATCH_ALL = {
 let repo = null;
 let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
 let widths = {}; // column spec -> px; persisted per workspace
-let entries = [];
+let records = [];
 let nextCursor = null;
 let loading = false;
 let queryIR = null; // null = match all
@@ -31,7 +31,7 @@ let sort = []; // [{field, order}]
 let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
 let mode = 'table';
-let refCache = new Map(); // uuid -> Promise<entry>, for ~target columns
+let refCache = new Map(); // uuid -> Promise<record>, for ~target columns
 
 const rows = document.getElementById('rows');
 const grid = document.getElementById('grid');
@@ -48,9 +48,9 @@ const columnsError = document.getElementById('columns-error');
 // for one result set and is dropped on every reset fetch.
 const displayCtx = {
   resolveTreeRef: (value) => daemon.resolveTreeRef(repo, value),
-  getEntry: (uuid) => {
+  getRecord: (uuid) => {
     if (!refCache.has(uuid)) {
-      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metadata/${uuid}`));
+      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/records/${uuid}`));
     }
     return refCache.get(uuid);
   },
@@ -62,11 +62,11 @@ async function fetchPage(reset) {
   try {
     let keepUuid = null;
     if (reset) {
-      // A refresh (new query, entries:dirty, …) must not steal the
-      // selection: remember the highlighted entry and restore it.
+      // A refresh (new query, records:dirty, …) must not steal the
+      // selection: remember the highlighted record and restore it.
       keepUuid =
-        entries[cursorIndex]?.uuid ?? (await workspace.get('selected_entry'))?.uuid ?? null;
-      entries = [];
+        records[cursorIndex]?.uuid ?? (await workspace.get('selected_record'))?.uuid ?? null;
+      records = [];
       nextCursor = null;
       refCache = new Map();
     }
@@ -83,21 +83,21 @@ async function fetchPage(reset) {
       await statusBar.error(error);
       return;
     }
-    entries = entries.concat(page.results);
+    records = records.concat(page.results);
     nextCursor = page.next_cursor;
     if (reset) {
-      // Drop checked entries that no longer match.
-      const alive = new Set(entries.map((e) => e.uuid));
+      // Drop checked records that no longer match.
+      const alive = new Set(records.map((e) => e.uuid));
       if ([...checked].some((uuid) => !alive.has(uuid))) {
         checked = new Set([...checked].filter((uuid) => alive.has(uuid)));
-        await workspace.set('selected_entries', [...checked]);
+        await workspace.set('selected_records', [...checked]);
       }
-      const keepIndex = keepUuid === null ? -1 : entries.findIndex((e) => e.uuid === keepUuid);
+      const keepIndex = keepUuid === null ? -1 : records.findIndex((e) => e.uuid === keepUuid);
       if (keepIndex >= 0) {
-        // Same entry still listed: move the cursor back silently, the
+        // Same record still listed: move the cursor back silently, the
         // selection variables are already correct.
         cursorIndex = keepIndex;
-      } else if (entries.length > 0) {
+      } else if (records.length > 0) {
         render();
         await setCursor(0);
         return;
@@ -139,7 +139,7 @@ document.addEventListener('mouseup', () => {
   if (!resizing) return;
   const { moved } = resizing;
   resizing = null;
-  if (moved) void workspace.set('entry-list:column-widths', { ...widths });
+  if (moved) void workspace.set('record-list:column-widths', { ...widths });
 });
 
 function renderHeader() {
@@ -163,8 +163,8 @@ function renderHeader() {
   );
 }
 
-function fillCell(node, column, entry) {
-  cellText(column, entry, displayCtx).then(
+function fillCell(node, column, record) {
+  cellText(column, record, displayCtx).then(
     (text) => (node.textContent = text),
     () => {}, // keep the quick text
   );
@@ -173,26 +173,26 @@ function fillCell(node, column, entry) {
 function render() {
   renderHeader();
   rows.replaceChildren(
-    ...entries.map((entry, index) =>
+    ...records.map((record, index) =>
       el(
         'tr',
         {
-          class: ['row', index === cursorIndex && 'cursor', checked.has(entry.uuid) && 'checked'],
+          class: ['row', index === cursorIndex && 'cursor', checked.has(record.uuid) && 'checked'],
           onclick: () => setCursor(index),
           ondblclick: () => openSelected(),
         },
         columns.map((column) => {
-          const td = el('td', {}, cellQuickText(column, entry));
-          if (column.deref !== null) fillCell(td, column, entry);
+          const td = el('td', {}, cellQuickText(column, record));
+          if (column.deref !== null) fillCell(td, column, record);
           return td;
         }),
       ),
     ),
   );
   grid.replaceChildren(
-    ...entries.map((entry, index) => {
+    ...records.map((record, index) => {
       const img = el('img', { loading: 'lazy' });
-      void fillThumbnail(img, entry);
+      void fillThumbnail(img, record);
       return el(
         'div',
         {
@@ -204,20 +204,20 @@ function render() {
         el(
           'div',
           { class: 'name' },
-          cellQuickText(GRID_NAME_COLUMN, entry) || entry.uuid.slice(0, 8),
+          cellQuickText(GRID_NAME_COLUMN, record) || record.uuid.slice(0, 8),
         ),
       );
     }),
   );
   statusLine.textContent =
-    `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}` +
+    `${records.length} record${records.length === 1 ? '' : 's'}` +
     (nextCursor ? ' (more available — scroll down)' : '') +
     (checked.size > 0 ? ` — ${checked.size} selected` : '');
 }
 
-async function fillThumbnail(img, entry) {
+async function fillThumbnail(img, record) {
   try {
-    const paths = await daemon.entryPaths(repo, entry);
+    const paths = await daemon.recordPaths(repo, record);
     if (paths.length > 0) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(paths[0])}`;
   } catch {
     /* no preview */
@@ -227,29 +227,29 @@ async function fillThumbnail(img, entry) {
 // ── Selection (workspace variables) ─────────────────────────────────────
 
 async function setCursor(index) {
-  cursorIndex = Math.max(0, Math.min(index, entries.length - 1));
+  cursorIndex = Math.max(0, Math.min(index, records.length - 1));
   render();
-  const entry = entries[cursorIndex];
-  if (!entry) return;
+  const record = records[cursorIndex];
+  if (!record) return;
   document.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
-  await workspace.set('selected_entry', { uuid: entry.uuid, repo });
-  await workspace.set('selected_paths', await daemon.entryPaths(repo, entry));
+  await workspace.set('selected_record', { uuid: record.uuid, repo });
+  await workspace.set('selected_paths', await daemon.recordPaths(repo, record));
 }
 
 async function toggleChecked() {
-  const entry = entries[cursorIndex];
-  if (!entry) return;
-  if (checked.has(entry.uuid)) checked.delete(entry.uuid);
-  else checked.add(entry.uuid);
+  const record = records[cursorIndex];
+  if (!record) return;
+  if (checked.has(record.uuid)) checked.delete(record.uuid);
+  else checked.add(record.uuid);
   render();
-  await workspace.set('selected_entries', [...checked]);
+  await workspace.set('selected_records', [...checked]);
 }
 
 async function openSelected() {
-  const entry = entries[cursorIndex];
-  if (!entry) return;
-  const paths = await daemon.entryPaths(repo, entry);
-  await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'entry-detail'}`);
+  const record = records[cursorIndex];
+  if (!record) return;
+  const paths = await daemon.recordPaths(repo, record);
+  await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'record-detail'}`);
 }
 
 // ── Query and sort ──────────────────────────────────────────────────────
@@ -297,11 +297,11 @@ async function applyColumns() {
   columnsInput.value = columns.map((c) => c.spec).join(' ');
   render();
   // Persisted per workspace; also lets scripts set the columns.
-  await workspace.set('entry-list:columns', columns.map((c) => c.spec));
+  await workspace.set('record-list:columns', columns.map((c) => c.spec));
 }
 
 function toggleSort(column) {
-  if (!isSortable(column)) return; // entry meta, not a sortable field
+  if (!isSortable(column)) return; // record meta, not a sortable field
   const current = sort.find((s) => s.field === column.name);
   sort = current
     ? current.order === 'asc'
@@ -330,50 +330,50 @@ columnsInput.addEventListener('keydown', (event) => {
 
 await metafolder.ready;
 
-commands.register('entry-list:next', {
-  label: 'Entry list: move the selection down',
+commands.register('record-list:next', {
+  label: 'Record list: move the selection down',
   handler: () => setCursor(cursorIndex + 1),
 });
-commands.register('entry-list:prev', {
-  label: 'Entry list: move the selection up',
+commands.register('record-list:prev', {
+  label: 'Record list: move the selection up',
   handler: () => setCursor(cursorIndex - 1),
 });
-commands.register('entry-list:select-toggle', {
-  label: 'Entry list: toggle multi-selection',
+commands.register('record-list:select-toggle', {
+  label: 'Record list: toggle multi-selection',
   handler: toggleChecked,
 });
-commands.register('entry-list:open', {
-  label: 'Entry list: open the selection in the other panel',
+commands.register('record-list:open', {
+  label: 'Record list: open the selection in the other panel',
   handler: openSelected,
 });
-commands.register('entry-list:set-mode', {
-  label: 'Entry list: switch display mode (table | grid)',
+commands.register('record-list:set-mode', {
+  label: 'Record list: switch display mode (table | grid)',
   handler: (newMode) => {
     mode = newMode === 'grid' ? 'grid' : 'table';
     document.body.classList.toggle('grid', mode === 'grid');
   },
 });
-commands.register('entry-list:edit-query', {
-  label: 'Entry list: focus the query input',
+commands.register('record-list:edit-query', {
+  label: 'Record list: focus the query input',
   handler: () => queryInput.focus(),
 });
-commands.register('entry-list:edit-columns', {
-  label: 'Entry list: focus the columns input',
+commands.register('record-list:edit-columns', {
+  label: 'Record list: focus the columns input',
   handler: () => columnsInput.focus(),
 });
-commands.register('entry-list:refresh', {
-  label: 'Entry list: reload from the daemon',
+commands.register('record-list:refresh', {
+  label: 'Record list: reload from the daemon',
   handler: () => fetchPage(true),
 });
 
-metafolder.addKeybinding('entry-list:next', 'down');
-metafolder.addKeybinding('entry-list:next', 'j');
-metafolder.addKeybinding('entry-list:prev', 'up');
-metafolder.addKeybinding('entry-list:prev', 'k');
-metafolder.addKeybinding('entry-list:select-toggle', 'space');
-metafolder.addKeybinding('entry-list:open', 'enter');
-metafolder.addKeybinding('entry-list:open', 'right');
-metafolder.addKeybinding('entry-list:edit-query', '/');
+metafolder.addKeybinding('record-list:next', 'down');
+metafolder.addKeybinding('record-list:next', 'j');
+metafolder.addKeybinding('record-list:prev', 'up');
+metafolder.addKeybinding('record-list:prev', 'k');
+metafolder.addKeybinding('record-list:select-toggle', 'space');
+metafolder.addKeybinding('record-list:open', 'enter');
+metafolder.addKeybinding('record-list:open', 'right');
+metafolder.addKeybinding('record-list:edit-query', '/');
 
 async function start() {
   repo = await workspace.get('active_repo');
@@ -381,16 +381,16 @@ async function start() {
   if (repo !== null) await fetchPage(true);
 }
 
-// Refresh when entry-detail (or another panel) writes entries.
-workspace.onChange('entries:dirty', () => void fetchPage(true));
+// Refresh when record-detail (or another panel) writes records.
+workspace.onChange('records:dirty', () => void fetchPage(true));
 // The workspace may adopt a repo after startup (repos panel).
 workspace.onChange('active_repo', () => void start());
 // Columns may also be set by a script (mf gui) or another session.
-workspace.onChange('entry-list:columns', (value) => {
+workspace.onChange('record-list:columns', (value) => {
   setColumns(value);
   render();
 });
 
-setColumns(await workspace.get('entry-list:columns'));
-widths = (await workspace.get('entry-list:column-widths')) ?? {};
+setColumns(await workspace.get('record-list:columns'));
+widths = (await workspace.get('record-list:column-widths')) ?? {};
 await start();

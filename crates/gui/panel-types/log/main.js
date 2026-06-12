@@ -81,7 +81,7 @@ function operationsRow(rev) {
             'div',
             { class: 'op' },
             `op ${op.id}: ${op.op_type}${op.field_name ? ` ${op.field_name}` : ''}${
-              op.entry_uuid ? ` on ${String(op.entry_uuid).slice(0, 8)}…` : ''
+              op.entity_uuid ? ` on ${String(op.entity_uuid).slice(0, 8)}…` : ''
             }`,
           ),
         ),
@@ -122,7 +122,7 @@ async function rollback() {
       `Navigation done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
       8000,
     );
-    await workspace.set('entries:dirty', Date.now()); // refresh entry-list
+    await workspace.set('records:dirty', Date.now()); // refresh record-list
     await refresh();
   } catch (error) {
     await statusBar.error(error);
@@ -169,7 +169,7 @@ commands.register('log:refresh', {
   handler: refresh,
 });
 
-workspace.onChange('entries:dirty', () => void refresh());
+workspace.onChange('records:dirty', () => void refresh());
 workspace.onChange('active_repo', (value) => {
   repo = value;
   void refresh();

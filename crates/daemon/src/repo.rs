@@ -1,5 +1,5 @@
 //! Repository initialisation and loading: `.metafolder/` layout, config file,
-//! database creation, and the filesystem root entry with its default
+//! database creation, and the filesystem root record with its default
 //! watch/ignore configuration (spec-file-tracking "Watch and Ignore").
 
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-use metafolder_core::entry::{Field, Value};
+use metafolder_core::record::{Field, Value};
 
 use crate::config::RepoConfig;
 use crate::db;
@@ -22,7 +22,7 @@ pub const DB_FILE: &str = "db.sqlite";
 /// never feed back into the event stream.
 pub const INTERNAL_DIR: &str = "internal";
 
-/// Default `mf_ignore` patterns written on the root entry at init.
+/// Default `mf_ignore` patterns written on the root record at init.
 pub const DEFAULT_IGNORE_PATTERNS: &[&str] =
     &[r"\.git(/.*)?$", r"node_modules(/.*)?$", r"__pycache__(/.*)?$"];
 
@@ -63,7 +63,7 @@ pub enum RepoLocator {
 
 /// Initialises a new repository: creates `.metafolder/` (at `metafolder`
 /// when given — external database — otherwise inside `root`), writes
-/// `config.json`, creates the database schema and the filesystem root entry.
+/// `config.json`, creates the database schema and the filesystem root record.
 pub fn init_repository(root: &Path, metafolder: Option<&Path>) -> Result<OpenedRepo> {
     let root = root.canonicalize().with_context(|| {
         format!("Cannot resolve path {root:?}: the root directory must exist")
@@ -101,7 +101,7 @@ pub fn init_repository(root: &Path, metafolder: Option<&Path>) -> Result<OpenedR
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
-/// Creates the filesystem root entry: `mfr_path` root TreeRef, directory
+/// Creates the filesystem root record: `mfr_path` root TreeRef, directory
 /// type, tracking disabled (opt-in), default ignore patterns.
 fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {
     let mut fields = vec![
@@ -113,7 +113,7 @@ fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {
         fields.push(Field::new("mf_ignore", Value::String(pattern.to_string())));
     }
     let mut writer = Writer::begin(conn, config.repo_uuid, None)?;
-    writer.create_entry(fields)?;
+    writer.create_record(fields)?;
     writer.commit()
 }
 

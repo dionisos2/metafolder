@@ -51,7 +51,7 @@ async fn setup(prefix: &str) -> (Router, String, PathBuf) {
 
 async fn create(app: &Router, repo: &str, fields: Value) -> String {
     let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metadata"), Some(json!({"fields": fields})))
+        request(app, "POST", &format!("/repos/{repo}/records"), Some(json!({"fields": fields})))
             .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body["uuid"].as_str().unwrap().to_string()

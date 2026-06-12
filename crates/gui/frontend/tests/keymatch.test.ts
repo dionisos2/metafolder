@@ -58,10 +58,10 @@ describe('createMatcher', () => {
   test('local binding wins over global for the focused panel type', () => {
     const matcher = createMatcher([
       b(['j'], 'global:j'),
-      b(['j'], 'entry-list:next', 'entry-list'),
+      b(['j'], 'record-list:next', 'record-list'),
     ]);
-    expect(matcher.feed('j', { panelType: 'entry-list', textInput: false })).toEqual({
-      invocation: 'entry-list:next',
+    expect(matcher.feed('j', { panelType: 'record-list', textInput: false })).toEqual({
+      invocation: 'record-list:next',
     });
     expect(matcher.feed('j', { panelType: 'file', textInput: false })).toEqual({
       invocation: 'global:j',
@@ -71,10 +71,10 @@ describe('createMatcher', () => {
 
   test('text-input=false bindings are suppressed while typing', () => {
     const matcher = createMatcher([
-      b(['j'], 'entry-list:next', 'entry-list'),
+      b(['j'], 'record-list:next', 'record-list'),
       b(['escape'], 'editing:unfocus', null, true),
     ]);
-    const typing = { panelType: 'entry-list', textInput: true };
+    const typing = { panelType: 'record-list', textInput: true };
     expect(matcher.feed('j', typing)).toBeNull();
     expect(matcher.feed('escape', typing)).toEqual({ invocation: 'editing:unfocus' });
   });
@@ -92,10 +92,10 @@ describe('createMatcher', () => {
   });
 
   test('two-key sequences report pending then fire', () => {
-    const matcher = createMatcher([b(['g', 'g'], 'entry-list:goto-top', 'entry-list')]);
-    const ctx = { panelType: 'entry-list', textInput: false };
+    const matcher = createMatcher([b(['g', 'g'], 'record-list:goto-top', 'record-list')]);
+    const ctx = { panelType: 'record-list', textInput: false };
     expect(matcher.feed('g', ctx)).toEqual({ pending: true });
-    expect(matcher.feed('g', ctx)).toEqual({ invocation: 'entry-list:goto-top' });
+    expect(matcher.feed('g', ctx)).toEqual({ invocation: 'record-list:goto-top' });
   });
 
   test('an interrupted sequence falls back to single-key matching', () => {

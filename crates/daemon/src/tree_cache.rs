@@ -1,5 +1,5 @@
 //! In-memory tree cache (spec-file-tracking "Tree Cache"): resolves path
-//! strings to entry UUIDs without recursive SQL. One cache per repository,
+//! strings to record UUIDs without recursive SQL. One cache per repository,
 //! shared across all TreeRef field names (the field name is the first level).
 //! Starts empty and populates lazily; a min-heap of leaves drives LRU
 //! eviction when the node limit is exceeded.
@@ -32,7 +32,7 @@ struct Node {
 struct FieldTree {
     /// Root nodes by normalized name.
     roots: HashMap<String, usize>,
-    /// Cached nodes by entry UUID. An entry with several positions
+    /// Cached nodes by record UUID. A record with several positions
     /// (multi-map TreeRef) can have several nodes.
     by_uuid: HashMap<Uuid, Vec<usize>>,
 }
@@ -41,7 +41,7 @@ pub struct TreeCache {
     arena: Vec<Option<Node>>,
     free: Vec<usize>,
     fields: HashMap<String, FieldTree>,
-    /// Lazy LRU heap of (last_used, node) candidates; stale entries are
+    /// Lazy LRU heap of (last_used, node) candidates; stale records are
     /// discarded or re-pushed at pop time.
     heap: BinaryHeap<Reverse<(u64, usize)>>,
     clock: u64,
@@ -84,7 +84,7 @@ impl TreeCache {
         self.misses
     }
 
-    /// Resolves a path string to an entry UUID. Path format: components
+    /// Resolves a path string to a record UUID. Path format: components
     /// joined by `/`; the first component is the root's own name (so
     /// filesystem paths start with `/` because the root is named `""`).
     pub fn resolve_path(
@@ -143,7 +143,7 @@ impl TreeCache {
         Ok(Some(uuid))
     }
 
-    /// Reconstructs the path string of an entry by walking up its parents
+    /// Reconstructs the path string of a record by walking up its parents
     /// in the database (first position for multi-map fields).
     pub fn path_of(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Option<String>> {
         let mut components = Vec::new();
@@ -164,7 +164,7 @@ impl TreeCache {
         anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}")
     }
 
-    /// Collects all descendants of an entry (excluding itself), walking the
+    /// Collects all descendants of a record (excluding itself), walking the
     /// tree breadth-first from the database.
     pub fn descendants(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {
         let mut result = Vec::new();
@@ -182,7 +182,7 @@ impl TreeCache {
         Ok(result)
     }
 
-    /// Notifies the cache that an entry was inserted under `parent`.
+    /// Notifies the cache that a record was inserted under `parent`.
     pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &str, uuid: Uuid) {
         self.clock += 1;
         match parent {
@@ -205,7 +205,7 @@ impl TreeCache {
         self.evict_to_limit();
     }
 
-    /// Notifies the cache that an entry was renamed and/or moved. The cached
+    /// Notifies the cache that a record was renamed and/or moved. The cached
     /// subtree follows its directory when the new parent is cached too.
     pub fn apply_rename(&mut self, field: &str, uuid: Uuid, new_parent: Option<Uuid>, new_name: &str) {
         self.clock += 1;
@@ -214,7 +214,7 @@ impl TreeCache {
             return;
         };
         if nodes.len() != 1 {
-            // Multi-position entry: drop all cached positions; the new one
+            // Multi-position record: drop all cached positions; the new one
             // will be lazily reloaded on the next resolution.
             for idx in nodes {
                 self.remove_subtree(field, idx);
@@ -252,7 +252,7 @@ impl TreeCache {
         }
     }
 
-    /// Notifies the cache that an entry left the tree; drops its subtree.
+    /// Notifies the cache that a record left the tree; drops its subtree.
     pub fn apply_remove(&mut self, field: &str, uuid: Uuid) {
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
         for idx in nodes.unwrap_or_default() {
@@ -389,7 +389,7 @@ impl TreeCache {
         while self.live > self.max_nodes && self.evict_one() {}
     }
 
-    /// Pops the least-recently-used leaf and frees it. Stale heap entries
+    /// Pops the least-recently-used leaf and frees it. Stale heap records
     /// (touched since push, no longer a leaf, already freed) are skipped;
     /// touched leaves are re-pushed with their current timestamp.
     fn evict_one(&mut self) -> bool {
