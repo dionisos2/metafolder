@@ -85,6 +85,10 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 
 - `config.rs`: `RepoConfig` persisted as `.metafolder/config.json`
   (repo_uuid, name, version, root, optional schema path, created_at).
+- `daemon_config.rs`: optional daemon config
+  `~/.config/metafolder/config.json` (`--config` overrides), read at
+  startup: `load` list of repos to auto-load (`POST /repos/load` shape);
+  malformed file aborts startup, a repo that fails to load is a warning.
 - `repo.rs`: repository init/load (`OpenedRepo`), external `.metafolder/`
   location, the filesystem root entry with its defaults (`mf_watch = false`,
   default `mf_ignore` patterns), case-sensitivity probe.

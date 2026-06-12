@@ -74,6 +74,34 @@ The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
 All request and response bodies are JSON. Errors return a JSON object
 ={"error": "<message>"}= with an appropriate HTTP status code.
 
+** Daemon configuration
+
+The daemon reads an optional configuration file at startup:
+=$XDG_CONFIG_HOME/metafolder/config.json= (i.e.
+=~/.config/metafolder/config.json= on Linux). The =--config= flag overrides
+this path. This file is distinct from the per-repository
+=.metafolder/config.json=.
+
+#+BEGIN_SRC json
+{
+  "load": [
+    {"root": "/data/music"},
+    {"metafolder": "/ssd/meta/music"}
+  ]
+}
+#+END_SRC
+
+- =load= (optional): repositories to load at startup. Each entry has the
+  same shape as a =POST /repos/load= body: exactly one of =root= or
+  =metafolder=.
+- A missing configuration file is equivalent to an empty one.
+- A malformed configuration file (invalid JSON, unknown keys, an entry with
+  both or neither of =root=/=metafolder=) aborts daemon startup with an
+  error message.
+- A repository that fails to load (missing path, locked database, ...) is
+  reported as a warning on stderr; the daemon starts anyway and the other
+  entries are still loaded.
+
 ** Health
 
 #+BEGIN_SRC

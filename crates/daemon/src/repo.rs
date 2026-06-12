@@ -45,6 +45,7 @@ fn probe_case_insensitive(metafolder_dir: &Path) -> bool {
 }
 
 /// How to locate an existing repository for loading.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RepoLocator {
     /// Standard form: `.metafolder/` is inside this root directory.
     Root(PathBuf),
