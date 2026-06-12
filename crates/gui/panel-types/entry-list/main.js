@@ -32,7 +32,6 @@ const rows = document.getElementById('rows');
 const grid = document.getElementById('grid');
 const scroll = document.getElementById('scroll');
 const statusLine = document.getElementById('status-line');
-const queryEditor = document.getElementById('query-editor');
 const queryInput = document.getElementById('query-input');
 const queryError = document.getElementById('query-error');
 
@@ -278,11 +277,8 @@ commands.register('entry-list:set-mode', {
   },
 });
 commands.register('entry-list:edit-query', {
-  label: 'Entry list: toggle the query editor',
-  handler: () => {
-    queryEditor.classList.toggle('open');
-    if (queryEditor.classList.contains('open')) queryInput.focus();
-  },
+  label: 'Entry list: focus the query input',
+  handler: () => queryInput.focus(),
 });
 commands.register('entry-list:refresh', {
   label: 'Entry list: reload from the daemon',

@@ -366,7 +366,7 @@ Behaviours:
 | =entry:create=       | Clear =entry-detail= to create a new entry     |
 | =entry:delete=       | Delete the selected entry                      |
 | =entry-list:set-mode <mode>= | Switch entry-list display mode        |
-| =entry-list:edit-query=  | Toggle the query editor in entry-list      |
+| =entry-list:edit-query=  | Focus the query input in entry-list        |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:prune=          | Prune the event log                            |
@@ -598,9 +598,9 @@ The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 *** =entry-list= panel type
 
 Displays entries for the active repo (=active_repo= workspace variable)
-filtered by an embedded query. The query editor is shown/hidden by the
-=entry-list:edit-query= command; it uses the same DSL as the CLI. An empty
-query matches all entries.
+filtered by an embedded query. The query editor is always visible at the
+top of the panel; the =entry-list:edit-query= command focuses its input.
+It uses the same DSL as the CLI. An empty query matches all entries.
 
 Default display mode: =table= with columns =mfr_path= (resolved path),
 =mfr_type=, =version=. Columns are configurable. The =entry-list:set-mode=
