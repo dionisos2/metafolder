@@ -8,6 +8,7 @@
 
 # Text editing (fire even while a text input is focused).
 "escape" = { command = "editing:unfocus", text-input = true }
+"ctrl+q" = { command = "editing:discard", text-input = true }
 "enter" = { command = "editing:confirm", text-input = true }
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }

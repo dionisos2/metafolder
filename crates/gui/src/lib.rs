@@ -58,6 +58,7 @@ fn register_builtins(registry: &CommandRegistry) {
     for (name, label) in [
         ("command-input:activate", "Focus the command input"),
         ("editing:unfocus", "Leave the focused text input"),
+        ("editing:discard", "Clear and leave the focused text input"),
         ("editing:confirm", "Confirm the focused text input"),
         ("editing:goto-line-start", "Move the cursor to the line start"),
         ("editing:goto-line-end", "Move the cursor to the line end"),

@@ -107,18 +107,30 @@
     if (prefix.startsWith(draft) && prefix.length > draft.length) draft = prefix;
   }
 
+  function cancelPrompt() {
+    if (store.ui.promptText === null) return;
+    // A dismissed script prompt resolves as "cancel".
+    void invoke('prompt_resolve', { confirm: false, text: null });
+    store.ui.promptText = null;
+    store.ui.promptCompletions = [];
+  }
+
   function unfocus() {
     // First Escape leaves list navigation, the next one the input.
     if (selectedIndex >= 0) {
       selectedIndex = -1;
       return;
     }
-    if (store.ui.promptText !== null) {
-      // A script prompt dismissed with Escape resolves as "cancel".
-      void invoke('prompt_resolve', { confirm: false, text: null });
-      store.ui.promptText = null;
-      store.ui.promptCompletions = [];
-    }
+    cancelPrompt();
+    element?.blur();
+  }
+
+  /** editing:discard — clear the draft entirely, then leave the input. */
+  function discard() {
+    selectedIndex = -1;
+    draft = '';
+    if (currentWs !== null) store.inputDrafts[currentWs] = '';
+    cancelPrompt();
     element?.blur();
   }
 
@@ -168,6 +180,7 @@
     setEditingTarget({
       confirm: () => void submit(),
       unfocus,
+      discard,
       lineStart: () => element?.setSelectionRange(0, 0),
       lineEnd: () => element?.setSelectionRange(draft.length, draft.length),
     });

@@ -84,6 +84,8 @@ export function filterCompletions(completions: string[], draft: string): string[
 export interface EditingTarget {
   confirm(): void;
   unfocus(): void;
+  /** Clear the input's content, then unfocus it. */
+  discard(): void;
   lineStart(): void;
   lineEnd(): void;
 }
@@ -143,6 +145,9 @@ export async function dispatch(invocation: string): Promise<void> {
         return;
       case 'editing:unfocus':
         editingTarget?.unfocus();
+        return;
+      case 'editing:discard':
+        editingTarget?.discard();
         return;
       case 'editing:confirm':
         editingTarget?.confirm();

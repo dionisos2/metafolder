@@ -412,6 +412,7 @@ Behaviours:
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
 | =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
+| =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) |
 | =editing:confirm=         | Confirm the current text input (=text-input = true=)          |
 | =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
