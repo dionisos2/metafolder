@@ -4,7 +4,7 @@
 * Overview
 
 File tracking covers how the daemon discovers, monitors, and reconciles
-filesystem records with their database representations. It encompasses the
+filesystem metarecords with their database representations. It encompasses the
 file watcher (real-time events), reconcile (on-demand synchronisation), the
 tree cache (efficient path resolution), and the watch/ignore system (scope
 control).
@@ -23,7 +23,7 @@ when the previous one is insufficient:
 1. *File size* (from =stat=, free during directory walk) — eliminates most
    non-matches without opening any file.
 2. *Partial hash* — xxHash3 of the first 4 KB + last 4 KB of the file.
-   Computed on first open; stored in the database alongside the record.
+   Computed on first open; stored in the database alongside the metarecord.
 3. *Full hash* — xxHash3 of the entire file content.
    Computed only when size and partial hash both match and a definitive
    identity check is required (e.g. deduplication confirmation).
@@ -34,29 +34,29 @@ modified files), the =fast-tlsh= crate provides a TLSH locality-sensitive hash
 that can be used as an additional signal in the similarity phase (see
 [[*File Similarity]]).
 
-Files and directories are both tracked as first-class records. Directories can
+Files and directories are both tracked as first-class metarecords. Directories can
 carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
 the =value_uuid= chain of their =mfr_path= TreeRef field.
 
-The root directory record has =mfr_path= with =value_uuid = x'00...00'= and
-=value_name = ""=. All other records reference their direct parent directory via
+The root directory metarecord has =mfr_path= with =value_uuid = x'00...00'= and
+=value_name = ""=. All other metarecords reference their direct parent directory via
 =value_uuid=. The root is looked up by
 =WHERE field_name = 'mfr_path' AND value_uuid = x'00...00' AND value_name = ''=.
 
 ** File Similarity                                                        :v2:
 
 Used by reconcile as a fallback when fingerprint matching fails — either because
-no =mfr_partial_hash= is stored for the orphaned record, or because the file was both
+no =mfr_partial_hash= is stored for the orphaned metarecord, or because the file was both
 moved and modified (so hashes no longer match).
 
-*Orphaned record*: a record whose =mfr_path= TreeRef points to a filesystem location
+*Orphaned metarecord*: a metarecord whose =mfr_path= TreeRef points to a filesystem location
 that no longer exists on disk (stale path), and that was not matched by
 fingerprint during the current reconcile run.
 
 *Unmatched new file*: a file present on disk that has no corresponding database
-record and was not claimed by fingerprint matching.
+metarecord and was not claimed by fingerprint matching.
 
-Similarity between an orphaned record and an unmatched new file is computed from
+Similarity between an orphaned metarecord and an unmatched new file is computed from
 four signals:
 
 | Signal           | Formula                                                                  | Weight |
@@ -94,14 +94,14 @@ Only pairs with =score ≥ threshold= are included in the reconcile response.
 
 ** Watch and Ignore
 
-The daemon uses two =mf_*= fields on directory records to determine which
+The daemon uses two =mf_*= fields on directory metarecords to determine which
 files and directories to track. Both are inherited from the nearest ancestor
-that defines them; the root record always defines both.
+that defines them; the root metarecord always defines both.
 
 *** Fields
 
-- =mf_watch= (Bool): whether this record is eligible for tracking. Set on
-  directory records to control whole subtrees; can also be set on individual
+- =mf_watch= (Bool): whether this metarecord is eligible for tracking. Set on
+  directory metarecords to control whole subtrees; can also be set on individual
   files for per-file override. Default on root: =false= (opt-in by default —
   nothing is tracked until explicitly whitelisted).
 - =mf_ignore= (String, multi-map): each row is a regex pattern tested against
@@ -111,7 +111,7 @@ that defines them; the root record always defines both.
   ancestor that has at least one =mf_ignore= row provides the effective pattern
   set; patterns from different ancestors are *not* merged.
 
-At =repo init=, the root record is created with =mf_watch = false= and the
+At =repo init=, the root metarecord is created with =mf_watch = false= and the
 following default =mf_ignore= rows:
 
 #+BEGIN_SRC
@@ -122,10 +122,10 @@ __pycache__(/.*)?$
 
 *** Eligibility algorithm
 
-For a given repo-root-relative path =p= with direct record =e=:
+For a given repo-root-relative path =p= with direct metarecord =e=:
 
 1. Walk the ancestor chain (including =e= itself) to find =watch_ancestor= —
-   the nearest record that has an =mf_watch= field.
+   the nearest metarecord that has an =mf_watch= field.
 2. If =mf_watch= on =watch_ancestor= is =false= → *skip*.
 3. If =watch_ancestor= is =e= itself (=mf_watch= is set directly on =e=, not
    inherited) → *track unconditionally*; skip steps 4–5.
@@ -134,9 +134,9 @@ For a given repo-root-relative path =p= with direct record =e=:
 5. If any pattern in =ignore_ancestor='s =mf_ignore= rows matches =p= → *skip*.
 6. Otherwise → *track*.
 
-Step 3 is the per-record override: setting =mf_watch = true= directly on an
-record forces it to be tracked regardless of any ancestor's ignore patterns.
-This applies only to the record itself — its descendants are still subject to
+Step 3 is the per-metarecord override: setting =mf_watch = true= directly on an
+metarecord forces it to be tracked regardless of any ancestor's ignore patterns.
+This applies only to the metarecord itself — its descendants are still subject to
 normal eligibility evaluation (they inherit =mf_watch = true= but it is not
 "direct" on them, so they go through the ignore check). To also track the
 contents of a directly-watched directory, set =mf_ignore= on that directory
@@ -146,7 +146,7 @@ to replace the ancestor's patterns (including removing unwanted ones).
 needs a different pattern set must re-declare all desired patterns in its own
 =mf_ignore= rows. The recommended workflow is: query the effective =mf_ignore=
 rows for the target directory (via inherited property lookup), copy them, write
-them to the directory record, then remove the unwanted pattern.
+them to the directory metarecord, then remove the unwanted pattern.
 
 *** Cascading skip
 
@@ -157,19 +157,19 @@ The tree cache is used to collect descendants efficiently.
 *** Interaction with reconcile and watcher
 
 Both reconcile and the watcher evaluate eligibility before creating, updating,
-or clearing any record. Ineligible paths are silently ignored.
+or clearing any metarecord. Ineligible paths are silently ignored.
 
 *** Behaviour when =mf_watch= or =mf_ignore= changes
 
-Changing =mf_watch= or =mf_ignore= on a record does *not* automatically
-modify any existing database records. The changes take effect only on the next
+Changing =mf_watch= or =mf_ignore= on a metarecord does *not* automatically
+modify any existing database metarecords. The changes take effect only on the next
 event (watcher or reconcile) for each affected path:
 
 - *=mf_watch= set to =true=* on a previously-unwatched directory: existing
-  files under that directory have no records yet. A subsequent reconcile is
+  files under that directory have no metarecords yet. A subsequent reconcile is
   required to create them.
 - *=mf_watch= set to =false=* (or a new =mf_ignore= pattern now matches
-  existing records): those records are preserved as-is. They will no longer be
+  existing metarecords): those metarecords are preserved as-is. They will no longer be
   updated by the watcher or reconcile, but their metadata (including
   =mfr_path=) remains unchanged until the user explicitly removes them.
 
@@ -179,9 +179,9 @@ operations:
 
 | Goal                                                    | Mechanism                                              |
 |---------------------------------------------------------+--------------------------------------------------------|
-| Remove all records under a directory recursively        | Query =mfr_path follows_transitive "/dir"=, batch delete |
-| Remove records whose =mfr_path= is =Nothing= (deleted)  | Query =mfr_path is_absent=, batch delete               |
-| Remove records no longer in the watch scope             | Query the untracked subtree, batch delete              |
+| Remove all metarecords under a directory recursively        | Query =mfr_path follows_transitive "/dir"=, batch delete |
+| Remove metarecords whose =mfr_path= is =Nothing= (deleted)  | Query =mfr_path is_absent=, batch delete               |
+| Remove metarecords no longer in the watch scope             | Query the untracked subtree, batch delete              |
 
 These operations are available through the existing query + delete API
 primitives. No data is ever lost implicitly; the user remains in control.
@@ -191,19 +191,19 @@ primitives. No data is ever lost implicitly; the user remains in control.
 ** Tree Cache
 
 The daemon maintains one in-memory tree per loaded repository for resolving path
-strings to record UUIDs without issuing recursive SQL queries. The cache is shared
+strings to metarecord UUIDs without issuing recursive SQL queries. The cache is shared
 across all =TreeRef= field names within a repository; the field name forms the
 first level of the tree.
 
 *** Path string format
 
 A path string is the ordered list of =value_name= components from the root down
-to a record, joined by =/=. There is no trailing =/=.
+to a metarecord, joined by =/=. There is no trailing =/=.
 
 The root's own =value_name= determines whether paths in the tree have a leading
 =/=:
 
-| Tree type                    | Record                     | Path string        |
+| Tree type                    | Metarecord                     | Path string        |
 |------------------------------+---------------------------+--------------------|
 | filesystem (root: name=""=, parent=NULL)   | root           | =""=               |
 | filesystem                   | child ="projects"= of root | ="/projects"=      |
@@ -222,7 +222,7 @@ value_name='')= is enforced by the =idx_field_tree= UNIQUE index.
 #+BEGIN_SRC
 root (virtual)
 ├── "mfr_path"
-│   └── [root record, parent=NULL]
+│   └── [root metarecord, parent=NULL]
 │       └── "music"  → uuid_music
 │           └── "jazz"  → uuid_jazz
 │               └── "file.mp3"  → uuid_file
@@ -233,7 +233,7 @@ root (virtual)
 
 Each node stores:
 - =children=: map of name → child node
-- =uuid=: the record UUID at this position (=None= for the virtual root and field-name nodes)
+- =uuid=: the metarecord UUID at this position (=None= for the virtual root and field-name nodes)
 - =last_used=: logical clock updated on every traversal of this node
 - =heap_handle=: reference into the LRU heap (leaf nodes only)
 
@@ -263,7 +263,7 @@ promoted leaf always carries the correct recency timestamp.
 
 *** Startup
 
-The cache starts empty; records are populated lazily on first access. No
+The cache starts empty; metarecords are populated lazily on first access. No
 pre-loading from the database is required.
 
 ** File Watcher
@@ -317,7 +317,7 @@ write:
 
 | Sequence within the window         | Compacted result              |
 |------------------------------------+-------------------------------|
-| =Create A=, =Remove A=             | nothing (record never written) |
+| =Create A=, =Remove A=             | nothing (metarecord never written) |
 | =Create A=, =Rename A→B=           | =Create B=                    |
 | =Create A=, =Modify(Data) A=       | =Create A= (final state)      |
 | =Rename A→B=, =Rename B→C=         | =Rename A→C=                  |
@@ -332,7 +332,7 @@ the same revision, and that semantically distinct event kinds remain separate
 and independently rollbackable.
 
 Example: if the buffer contains 5 =Create= events and 2 =Modify(Data)= events,
-two revisions are produced — one with 5 =create_record= operations, one with 2
+two revisions are produced — one with 5 =create_metarecord= operations, one with 2
 =file_modified= operations.
 
 Note: for very large copies (slow media, network filesystems), events may
@@ -344,11 +344,11 @@ individually.
 
 | Filesystem event   | Action                                                                                                     |
 |--------------------+------------------------------------------------------------------------------------------------------------|
-| =Create=           | Look up parent UUID via tree cache; create record with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
-| =Remove=           | Set =mfr_path= to =Nothing= (record preserved); if a directory, cascade =Nothing= to all descendants in the same transaction |
+| =Create=           | Look up parent UUID via tree cache; create metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
+| =Remove=           | Set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade =Nothing= to all descendants in the same transaction |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID) |
 | =Rename(From)=     | File definitively left the repository: set =mfr_path= to =Nothing=; if a directory, cascade =Nothing= to all descendants in the same transaction |
-| =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned records (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new record |
+| =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned metarecords (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new metarecord |
 | =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash= and =mfr_full_hash= |
 | =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
 
@@ -360,13 +360,13 @@ Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
 (see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
 on =(field_name, value_uuid, value_name)=.
 
-** Single-record track
+** Single-metarecord track
 
 #+BEGIN_SRC
 POST /repos/:repo_uuid/track
 #+END_SRC
 
-Creates a metadata record for a single filesystem path without activating
+Creates a metadata metarecord for a single filesystem path without activating
 tracking. Intended for use from =file-manager= (and scripts) when the user
 wants to add a file or directory to the DB before deciding on its watch scope.
 
@@ -377,42 +377,42 @@ Request body:
 
 The path must be inside the repository root; otherwise =400= is returned.
 
-If the path is already tracked (a record with a matching =mfr_path= TreeRef
-exists), =409= is returned with the conflicting record UUID.
+If the path is already tracked (a metarecord with a matching =mfr_path= TreeRef
+exists), =409= is returned with the conflicting metarecord UUID.
 
 Otherwise the daemon:
-1. Creates any missing parent directory records along the path (with
+1. Creates any missing parent directory metarecords along the path (with
    =mf_watch = false=), using the tree cache for lookup.
-2. Creates the target record with =mfr_path=, =mfr_type=, =mfr_size=,
+2. Creates the target metarecord with =mfr_path=, =mfr_type=, =mfr_size=,
    =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= taken from =stat=,
    and =mf_watch = false=.
 
-The new record is *not* subject to eligibility checks (=mf_watch= / =mf_ignore=
+The new metarecord is *not* subject to eligibility checks (=mf_watch= / =mf_ignore=
 evaluation); the caller is responsible for configuring the watch scope
 afterwards (see [[*Watch and Ignore]]).
 
 Response body: ={"uuid": "<new_entry_uuid>"}=
 
-** Single-record reconcile
+** Single-metarecord reconcile
 
 #+BEGIN_SRC
-POST /repos/:repo_uuid/records/:record_uuid/reconcile
+POST /repos/:repo_uuid/metarecords/:metarecord_uuid/reconcile
 #+END_SRC
 
-Runs reconcile semantics scoped to the subtree rooted at the given record.
-Intended to be called after =mf_watch= is set to =true= on a record that was
-added via [[*Single-record track]] or created manually.
+Runs reconcile semantics scoped to the subtree rooted at the given metarecord.
+Intended to be called after =mf_watch= is set to =true= on a metarecord that was
+added via [[*Single-metarecord track]] or created manually.
 
 Behaviour:
 - Walks the directory on disk (or refreshes a single file).
 - For each filesystem path found inside the subtree, evaluates eligibility
-  (=mf_watch= / =mf_ignore=) and creates missing records with all =mfr_*=
-  fields; updates =mfr_*= fields for records that already exist.
+  (=mf_watch= / =mf_ignore=) and creates missing metarecords with all =mfr_*=
+  fields; updates =mfr_*= fields for metarecords that already exist.
 - Does not perform fingerprint or similarity matching (no orphan detection).
   For orphan detection, use the full [[*Reconcile]].
-- Creates missing parent directory records along the path if needed.
+- Creates missing parent directory metarecords along the path if needed.
 
-Returns =404= if the record does not exist. Returns =400= if the record has no
+Returns =404= if the metarecord does not exist. Returns =400= if the metarecord has no
 valid =mfr_path= (path is =Nothing= or unknown).
 
 Response body: same format as full reconcile (=created=, =moved=, =candidates=),
@@ -431,11 +431,11 @@ No request body required for v1. [v2] will add a =threshold= parameter
 
 *Steps:*
 
-1. Load all records with a non-Nothing =mfr_path= TreeRef from the DB; separate
+1. Load all metarecords with a non-Nothing =mfr_path= TreeRef from the DB; separate
    them into /active/ (path exists on disk) and /orphaned/ (path no longer
    exists on disk, i.e. stale path).
 2. Walk the filesystem; collect all file and directory paths.
-3. *Fingerprint phase* — for each orphaned record, search unmatched filesystem
+3. *Fingerprint phase* — for each orphaned metarecord, search unmatched filesystem
    paths using stored fingerprint data:
    - Pre-filter by =mfr_size= (if stored): discard paths with different size.
    - Among size matches, if =mfr_partial_hash= is stored: compute partial hash
@@ -448,39 +448,39 @@ No request body required for v1. [v2] will add a =threshold= parameter
      - Partial hash does not match: discard.
    - Size matches but no =mfr_partial_hash= stored: *weak candidate* → added
      to =candidates=.
-   - No =mfr_size= stored: record skipped (no fingerprint available).
+   - No =mfr_size= stored: metarecord skipped (no fingerprint available).
    New files that appear as a fingerprint candidate are *not* auto-created;
    they wait for explicit confirmation.
-4. *Similarity phase* [v2] — for each still-unmatched orphaned record and each
+4. *Similarity phase* [v2] — for each still-unmatched orphaned metarecord and each
    still-unmatched new path, compute the similarity score (see [[*File Similarity]]).
    Pairs with =score ≥ threshold= are appended to =candidates=. New files that
-   appear as a candidate for at least one orphaned record are *not* auto-created
-   as new records; they wait for explicit confirmation.
+   appear as a candidate for at least one orphaned metarecord are *not* auto-created
+   as new metarecords; they wait for explicit confirmation.
 5. *Create* — new files not claimed by fingerprint (or similarity [v2]) → create
-   record with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
+   metarecord with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
    =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_type=); create missing parent
-   directory records if needed.
-6. Orphaned records not matched by fingerprint and not present in any candidate
+   directory metarecords if needed.
+6. Orphaned metarecords not matched by fingerprint and not present in any candidate
    pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
    to =Nothing=.*
 
 *Directory identification*: directories have no fingerprint and are matched only
-by their path string. A directory record whose path no longer exists on disk
+by their path string. A directory metarecord whose path no longer exists on disk
 is left with its stale path (like any other orphan); it may appear in candidates
 if a new directory with a similar name exists.
 
-*Cascading Nothing*: whenever any record's =mfr_path= is set to =Nothing= (by the
-watcher or manually), all records whose =value_uuid=
-(directly or transitively, for =field_name = 'mfr_path'=) points to this record are
+*Cascading Nothing*: whenever any metarecord's =mfr_path= is set to =Nothing= (by the
+watcher or manually), all metarecords whose =value_uuid=
+(directly or transitively, for =field_name = 'mfr_path'=) points to this metarecord are
 also set to =Nothing= in the same transaction. Descendants are collected
 iteratively using the tree cache (fetching missing nodes from the DB step by
-step), then cleared in a single batched UPDATE. No record can have a valid path
+step), then cleared in a single batched UPDATE. No metarecord can have a valid path
 if one of its ancestors is gone.
 
 All creates and updates execute inside a single transaction.
 
 *Confirming a candidate*: the client sends a =PATCH= request to update the
-orphaned record's =mfr_path= field to the chosen new location. The new file is then
+orphaned metarecord's =mfr_path= field to the chosen new location. The new file is then
 considered matched; if the client calls =reconcile= again without the candidate
 having been confirmed, the same candidate will be returned again.
 
@@ -491,7 +491,7 @@ Response body:
   "moved": 1,
   "candidates": [
     {
-      "record_uuid": "abc...",
+      "metarecord_uuid": "abc...",
       "stale_path": "/music/jazz/old.mp3",
       "matches": [
         {"path": "/music2/jazz_copy.mp3", "fingerprint": "partial_hash"},
@@ -524,28 +524,28 @@ Candidates (confirm with: mf set <uuid> 'mfr_path:tree_ref=<parent_uuid>/<name>'
 #+END_SRC
 
 Candidates are informational: the CLI never auto-confirms a match. To confirm
-one, the user updates the orphaned record's =mfr_path= as shown (a =force=
+one, the user updates the orphaned metarecord's =mfr_path= as shown (a =force=
 write, since =mfr_path= is an =mfr_*= field).
 
 | Flag                | Description                                                          |
 |---------------------+----------------------------------------------------------------------|
-| =--record <uuid>=    | Single-record reconcile: calls =POST /records/:uuid/reconcile= instead, scoped to that record's subtree |
+| =--metarecord <uuid>=    | Single-metarecord reconcile: calls =POST /metarecords/:uuid/reconcile= instead, scoped to that metarecord's subtree |
 | =--json=            | Print the raw JSON response body                                     |
 
 ** =mf track <path>=
 
 Calls =POST /track= for the given path (OS-native absolute path, or relative
-to the current directory — the CLI absolutises it). Prints the new record
+to the current directory — the CLI absolutises it). Prints the new metarecord
 UUID. Fails with exit code 1 when the path is outside the repository root or
 already tracked.
 
 ** =mf path <uuid>=
 
-Prints the absolute filesystem path of a record by walking the =mfr_path=
-parent chain up to the root record (repository root from =GET /repos=).
+Prints the absolute filesystem path of a metarecord by walking the =mfr_path=
+parent chain up to the root metarecord (repository root from =GET /repos=).
 With =--relative=, prints the repo-root-relative path instead, starting
-with =/= (the root record itself is =/=). Fails with exit code 1 when the
-record has no =mfr_path= TreeRef (untracked or deleted file).
+with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
+metarecord has no =mfr_path= TreeRef (untracked or deleted file).
 
 ** Configuring the watch scope
 
@@ -553,11 +553,11 @@ The watch/ignore system is driven by the =mf_watch= and =mf_ignore= fields
 (see [[*Watch and Ignore]]); no dedicated commands are needed:
 
 #+BEGIN_SRC
-# Activate tracking for a directory record
+# Activate tracking for a directory metarecord
 mf set <dir_uuid> mf_watch:bool=true
 
-# Then create records for the files already inside it
-mf reconcile --record <dir_uuid>
+# Then create metarecords for the files already inside it
+mf reconcile --metarecord <dir_uuid>
 
 # Replace the ignore patterns of a directory (multi-map: one add per pattern)
 mf set <dir_uuid> 'mf_ignore:string=\.git(/.*)?$'

@@ -34,6 +34,6 @@
 
 # Panel types suggest their own keybindings (metafolder.addKeybinding);
 # they are the weakest layer, so an entry here overrides them. Scope it
-# to the panel type with `when`, e.g. to rebind record-list's "open in
+# to the panel type with `when`, e.g. to rebind metarecord-list's "open in
 # the other panel" from enter to l:
-# "l" = { command = "record-list:open", when = "record-list" }
+# "l" = { command = "metarecord-list:open", when = "metarecord-list" }

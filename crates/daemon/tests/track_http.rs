@@ -44,9 +44,9 @@ async fn setup(prefix: &str) -> (Router, String, PathBuf) {
     (app, repo, root)
 }
 
-async fn get_record(app: &Router, repo: &str, uuid: &str) -> Value {
+async fn get_metarecord(app: &Router, repo: &str, uuid: &str) -> Value {
     let (status, body) =
-        request(app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
+        request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK, "get failed: {body}");
     body
 }
@@ -73,7 +73,7 @@ async fn test_track_creates_record_and_parents_untracked() {
     let uuid = body["uuid"].as_str().unwrap().to_string();
 
     // The entry carries stat fields and mf_watch = false.
-    let entry = get_record(&app, &repo, &uuid).await;
+    let entry = get_metarecord(&app, &repo, &uuid).await;
     assert_eq!(field(&entry, "mfr_size").unwrap()["value"], 4);
     assert_eq!(field(&entry, "mf_watch").unwrap()["value"], false);
 
@@ -115,7 +115,7 @@ async fn test_full_reconcile_endpoint() {
     request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{root_uuid}"),
+        &format!("/repos/{repo}/metarecords/{root_uuid}"),
         Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
     )
     .await;
@@ -133,7 +133,7 @@ async fn test_full_reconcile_endpoint() {
 }
 
 #[tokio::test]
-async fn test_single_record_reconcile_endpoint() {
+async fn test_single_metarecord_reconcile_endpoint() {
     let (app, repo, root) = setup("recone").await;
     std::fs::create_dir_all(root.join("music")).unwrap();
     std::fs::write(root.join("music/a.mp3"), b"aaa").unwrap();
@@ -151,7 +151,7 @@ async fn test_single_record_reconcile_endpoint() {
     request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{dir_uuid}"),
+        &format!("/repos/{repo}/metarecords/{dir_uuid}"),
         Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
     )
     .await;
@@ -159,7 +159,7 @@ async fn test_single_record_reconcile_endpoint() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records/{dir_uuid}/reconcile"),
+        &format!("/repos/{repo}/metarecords/{dir_uuid}/reconcile"),
         None,
     )
     .await;
@@ -172,7 +172,7 @@ async fn test_single_record_reconcile_endpoint() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records/{bogus}/reconcile"),
+        &format!("/repos/{repo}/metarecords/{bogus}/reconcile"),
         None,
     )
     .await;
@@ -181,7 +181,7 @@ async fn test_single_record_reconcile_endpoint() {
     let (_, no_path) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records"),
+        &format!("/repos/{repo}/metarecords"),
         Some(json!({"fields": [{"name": "label", "value": {"type": "string", "value": "x"}}]})),
     )
     .await;
@@ -189,7 +189,7 @@ async fn test_single_record_reconcile_endpoint() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records/{no_path_uuid}/reconcile"),
+        &format!("/repos/{repo}/metarecords/{no_path_uuid}/reconcile"),
         None,
     )
     .await;

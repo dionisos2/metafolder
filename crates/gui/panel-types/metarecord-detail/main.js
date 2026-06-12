@@ -1,5 +1,5 @@
-// record-detail panel: shows and edits all fields of selected_record
-// (spec-gui "record-detail panel type").
+// metarecord-detail panel: shows and edits all fields of selected_metarecord
+// (spec-gui "metarecord-detail panel type").
 
 import { el, formatValue, valueEl } from '/__ui.js';
 import { createTypePicker, parseRawValue } from './add-type.js';
@@ -8,20 +8,20 @@ import { createAnnotator } from './annotations.js';
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 let current = null; // {uuid, repo} | null
-let record = null; // full record JSON
+let metarecord = null; // full metarecord JSON
 let editingField = null; // field id being edited, or null
-let newRecordMode = false;
-let stagedFields = []; // new-record mode: [{name, value}]
+let newMetarecordMode = false;
+let stagedFields = []; // new-metarecord mode: [{name, value}]
 
 const placeholder = document.getElementById('placeholder');
 const content = document.getElementById('content');
 const fieldRows = document.getElementById('field-rows');
-const recordHead = document.getElementById('record-head');
+const metarecordHead = document.getElementById('metarecord-head');
 const errorBox = document.getElementById('error');
 const addForm = document.getElementById('add-form');
 const addValueSlot = document.getElementById('add-value');
 let addWidget = null; // {element, read()} for the picked type
-let annotator = null; // rebuilt per load (records change under us)
+let annotator = null; // rebuilt per load (metarecords change under us)
 
 /** The form's value widget follows the picked type (a tree_ref needs two
  *  inputs, a bool a checkbox, ...): same widgets as inline editing. */
@@ -34,19 +34,19 @@ setAddWidget(typePicker.get());
 const forceBox = document.getElementById('force');
 
 const isReserved = (name) => name.startsWith('mfr_');
-const dirty = () => workspace.set('records:dirty', Date.now());
+const dirty = () => workspace.set('metarecords:dirty', Date.now());
 
 function showError(message) {
   errorBox.textContent = message ?? '';
 }
 
 function api(path) {
-  return `/repos/${current.repo}/records/${current.uuid}${path}`;
+  return `/repos/${current.repo}/metarecords/${current.uuid}${path}`;
 }
 
-/** Follows a reference: the panel itself reacts to selected_record. */
+/** Follows a reference: the panel itself reacts to selected_metarecord. */
 function openRef(uuid, repo = null) {
-  void workspace.set('selected_record', { uuid, repo: repo ?? current.repo });
+  void workspace.set('selected_metarecord', { uuid, repo: repo ?? current.repo });
 }
 
 // ── Value editing widgets ───────────────────────────────────────────────
@@ -93,10 +93,10 @@ function widgetFor(type, initial) {
     }
     case 'externalref': {
       const repo = el('input', { placeholder: 'repo uuid', value: initial?.repo ?? '' });
-      const target = el('input', { placeholder: 'record uuid', value: initial?.record ?? '' });
+      const target = el('input', { placeholder: 'metarecord uuid', value: initial?.metarecord ?? '' });
       return {
         element: el('span', {}, repo, ' :: ', target),
-        read: () => ({ type, value: { repo: repo.value.trim(), record: target.value.trim() } }),
+        read: () => ({ type, value: { repo: repo.value.trim(), metarecord: target.value.trim() } }),
       };
     }
     default: {
@@ -109,26 +109,26 @@ function widgetFor(type, initial) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function render() {
-  const hasContent = record !== null || newRecordMode;
+  const hasContent = metarecord !== null || newMetarecordMode;
   placeholder.classList.toggle('hidden', hasContent);
   content.classList.toggle('hidden', !hasContent);
-  document.getElementById('save-new').hidden = !newRecordMode;
-  document.getElementById('watch-reconcile').hidden = newRecordMode || !needsWatch();
-  document.getElementById('delete-record').disabled = newRecordMode || record === null;
+  document.getElementById('save-new').hidden = !newMetarecordMode;
+  document.getElementById('watch-reconcile').hidden = newMetarecordMode || !needsWatch();
+  document.getElementById('delete-metarecord').disabled = newMetarecordMode || metarecord === null;
   if (!hasContent) return;
 
-  if (newRecordMode) {
-    recordHead.textContent = 'new record (not saved yet)';
+  if (newMetarecordMode) {
+    metarecordHead.textContent = 'new metarecord (not saved yet)';
     fieldRows.replaceChildren(...stagedFields.map(stagedRow));
     return;
   }
-  recordHead.textContent = `uuid ${record.uuid} — version ${record.version}`;
-  fieldRows.replaceChildren(...record.fields.map(fieldRow));
+  metarecordHead.textContent = `uuid ${metarecord.uuid} — version ${metarecord.version}`;
+  fieldRows.replaceChildren(...metarecord.fields.map(fieldRow));
 }
 
 function needsWatch() {
-  if (!record) return false;
-  const watch = record.fields.find((f) => f.name === 'mf_watch');
+  if (!metarecord) return false;
+  const watch = metarecord.fields.find((f) => f.name === 'mf_watch');
   return !watch || watch.value.value !== true;
 }
 
@@ -227,18 +227,18 @@ function stagedRow(staged, index) {
 async function load() {
   showError('');
   if (!current) {
-    record = null;
+    metarecord = null;
     render();
     return;
   }
   try {
-    record = await daemon.call('GET', api(''));
-    // Fresh cache per load: referenced records may have changed too.
+    metarecord = await daemon.call('GET', api(''));
+    // Fresh cache per load: referenced metarecords may have changed too.
     annotator = createAnnotator((uuid) =>
-      daemon.call('GET', `/repos/${current.repo}/records/${uuid}`),
+      daemon.call('GET', `/repos/${current.repo}/metarecords/${uuid}`),
     );
   } catch (error) {
-    record = null;
+    metarecord = null;
     showError(String(error.message ?? error));
   }
   render();
@@ -283,12 +283,12 @@ async function addField(replace) {
   showError('');
   try {
     const { name, value } = readAddForm();
-    if (newRecordMode) {
+    if (newMetarecordMode) {
       stagedFields.push({ name, value });
       render();
       return;
     }
-    if (!current) throw new Error('no record selected');
+    if (!current) throw new Error('no metarecord selected');
     const force = isReserved(name) ? { force: true } : {};
     if (replace) {
       await daemon.call('PATCH', api(''), { name, value, ...force });
@@ -303,10 +303,10 @@ async function addField(replace) {
   }
 }
 
-function startNewRecord() {
-  newRecordMode = true;
+function startNewMetarecord() {
+  newMetarecordMode = true;
   stagedFields = [];
-  record = null;
+  metarecord = null;
   editingField = null;
   render();
 }
@@ -316,13 +316,13 @@ async function saveNewEntry() {
     const repo = current?.repo ?? (await workspace.get('active_repo'));
     if (!repo) throw new Error('no active repository');
     const force = stagedFields.some((f) => isReserved(f.name)) ? { force: true } : {};
-    const created = await daemon.call('POST', `/repos/${repo}/records`, {
+    const created = await daemon.call('POST', `/repos/${repo}/metarecords`, {
       fields: stagedFields,
       ...force,
     });
-    newRecordMode = false;
-    statusBar.message(`Record created: ${created.uuid.slice(0, 8)}…`, 5000);
-    await workspace.set('selected_record', { uuid: created.uuid, repo });
+    newMetarecordMode = false;
+    statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, 5000);
+    await workspace.set('selected_metarecord', { uuid: created.uuid, repo });
     await dirty();
   } catch (error) {
     showError(String(error.message ?? error));
@@ -330,11 +330,11 @@ async function saveNewEntry() {
 }
 
 async function deleteEntry() {
-  if (!current || !confirm('Delete this record (the file itself is kept)?')) return;
+  if (!current || !confirm('Delete this metarecord (the file itself is kept)?')) return;
   try {
     await daemon.call('DELETE', api(''));
-    statusBar.message('Record deleted.', 5000);
-    await workspace.set('selected_record', null);
+    statusBar.message('Metarecord deleted.', 5000);
+    await workspace.set('selected_metarecord', null);
     await dirty();
   } catch (error) {
     showError(String(error.message ?? error));
@@ -357,17 +357,17 @@ async function watchAndReconcile() {
 
 // Edit guard (spec-gui "Cross-panel selection").
 function confirmDiscardIfEditing() {
-  const editing = editingField !== null || (newRecordMode && stagedFields.length > 0);
+  const editing = editingField !== null || (newMetarecordMode && stagedFields.length > 0);
   if (!editing) return true;
-  return confirm('Unsaved changes — discard and switch record?');
+  return confirm('Unsaved changes — discard and switch metarecord?');
 }
 
 // ── Wiring ──────────────────────────────────────────────────────────────
 
-document.getElementById('new-record').addEventListener('click', startNewRecord);
-document.getElementById('new-record-placeholder').addEventListener('click', startNewRecord);
+document.getElementById('new-metarecord').addEventListener('click', startNewMetarecord);
+document.getElementById('new-metarecord-placeholder').addEventListener('click', startNewMetarecord);
 document.getElementById('save-new').addEventListener('click', saveNewEntry);
-document.getElementById('delete-record').addEventListener('click', deleteEntry);
+document.getElementById('delete-metarecord').addEventListener('click', deleteEntry);
 document.getElementById('watch-reconcile').addEventListener('click', watchAndReconcile);
 document.getElementById('show-add').addEventListener('click', () => {
   addForm.classList.toggle('open');
@@ -380,25 +380,25 @@ forceBox.addEventListener('change', render);
 
 await metafolder.ready;
 
-commands.register('record:create', {
-  label: 'Create a new record (record-detail form)',
+commands.register('metarecord:create', {
+  label: 'Create a new metarecord (metarecord-detail form)',
   scope: 'global',
   reveal: true,
-  handler: startNewRecord,
+  handler: startNewMetarecord,
 });
-commands.register('record:delete', {
-  label: 'Delete the selected record',
+commands.register('metarecord:delete', {
+  label: 'Delete the selected metarecord',
   scope: 'global',
   handler: deleteEntry,
 });
-commands.register('record:batch-set', {
-  label: 'Set a field on all selected records',
+commands.register('metarecord:batch-set', {
+  label: 'Set a field on all selected metarecords',
   scope: 'global',
   reveal: true,
   handler: async (...args) => {
     // Args: <name> <type> <value...>; or interactive prompt fallback.
-    const selected = (await workspace.get('selected_records')) ?? [];
-    if (selected.length === 0) throw new Error('no records selected (use Space in record-list)');
+    const selected = (await workspace.get('selected_metarecords')) ?? [];
+    if (selected.length === 0) throw new Error('no metarecords selected (use Space in metarecord-list)');
     let name = args[0];
     let type = args[1] ?? 'string';
     let raw = args.slice(2).join(' ');
@@ -410,30 +410,30 @@ commands.register('record:batch-set', {
     }
     const value = parseRawValue(type, raw);
     const repo = current?.repo ?? (await workspace.get('active_repo'));
-    // No uuid predicate in the query IR yet: one PATCH per record.
+    // No uuid predicate in the query IR yet: one PATCH per metarecord.
     for (const uuid of selected) {
-      await daemon.call('PATCH', `/repos/${repo}/records/${uuid}`, { name, value });
+      await daemon.call('PATCH', `/repos/${repo}/metarecords/${uuid}`, { name, value });
     }
-    statusBar.message(`Field "${name}" set on ${selected.length} records.`, 5000);
+    statusBar.message(`Field "${name}" set on ${selected.length} metarecords.`, 5000);
     await dirty();
   },
 });
 
-workspace.onChange('selected_record', (value) => {
+workspace.onChange('selected_metarecord', (value) => {
   if (!confirmDiscardIfEditing()) return;
-  newRecordMode = false;
+  newMetarecordMode = false;
   editingField = null;
   current = value;
   void load();
 });
 
-// Another panel changed records (log rollback, file-manager track, …):
-// reload the displayed record — unless an edit is in progress (a reload
+// Another panel changed metarecords (log rollback, file-manager track, …):
+// reload the displayed metarecord — unless an edit is in progress (a reload
 // would silently discard it; the user gets fresh data on save/cancel).
-workspace.onChange('records:dirty', () => {
-  if (editingField !== null || newRecordMode) return;
+workspace.onChange('metarecords:dirty', () => {
+  if (editingField !== null || newMetarecordMode) return;
   void load();
 });
 
-current = await workspace.get('selected_record');
+current = await workspace.get('selected_metarecord');
 await load();

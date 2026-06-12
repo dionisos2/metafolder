@@ -118,7 +118,7 @@ pub fn repos(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-// ── Record manipulation (spec-data-model) ──────────────────────────────────────
+// ── MetaRecord manipulation (spec-data-model) ──────────────────────────────────────
 
 pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -133,7 +133,7 @@ pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
         if let Some(c) = &cursor {
             params.push(("cursor", c.clone()));
         }
-        let resp = ctx.client.get(&format!("{base}/records"), &params)?;
+        let resp = ctx.client.get(&format!("{base}/metarecords"), &params)?;
         let results = resp["results"].as_array().cloned().unwrap_or_default();
         for uuid in &results {
             println!("{}", uuid.as_str().unwrap_or_default());
@@ -151,16 +151,16 @@ pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
 
 pub fn get(ctx: &Ctx, target: &str, fields: Option<&[String]>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let records = match parse_target(target)? {
+    let metarecords = match parse_target(target)? {
         Target::Entry(uuid) => {
-            let mut record =
-                ctx.client.get(&format!("{base}/records/{}", uuid.as_simple()), &[])?;
-            if let (Some(filter), Some(rows)) = (fields, record["fields"].as_array_mut()) {
+            let mut metarecord =
+                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+            if let (Some(filter), Some(rows)) = (fields, metarecord["fields"].as_array_mut()) {
                 rows.retain(|f| {
                     f["name"].as_str().is_some_and(|n| filter.iter().any(|w| w == n))
                 });
             }
-            json!([record])
+            json!([metarecord])
         }
         Target::Predicate(query) => {
             let select = match fields {
@@ -171,7 +171,7 @@ pub fn get(ctx: &Ctx, target: &str, fields: Option<&[String]>) -> Result<i32, Cl
             ctx.client.post(&format!("{base}/query"), &body)?
         }
     };
-    print_pretty(&records);
+    print_pretty(&metarecords);
     Ok(0)
 }
 
@@ -183,7 +183,7 @@ pub fn create(ctx: &Ctx, specs: &[String], force: bool) -> Result<i32, CliError>
         fields.push(json!({"name": name, "value": value}));
     }
     let body = json!({"fields": fields, "force": force});
-    let resp = ctx.client.post(&format!("{base}/records"), &body)?;
+    let resp = ctx.client.post(&format!("{base}/metarecords"), &body)?;
     println!("{}", resp["uuid"].as_str().unwrap_or_default());
     Ok(0)
 }
@@ -196,7 +196,7 @@ pub fn set(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
             let body = json!({"name": name, "value": value, "force": force});
             ctx.client.request(
                 "PATCH",
-                &format!("{base}/records/{}", uuid.as_simple()),
+                &format!("{base}/metarecords/{}", uuid.as_simple()),
                 &[],
                 Some(&body),
             )?;
@@ -213,20 +213,20 @@ pub fn set(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
 pub fn add(ctx: &Ctx, uuid: &str, spec: &str, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid record UUID: '{uuid}'")))?;
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
     let (name, value) = parse_spec(spec)?;
     let body = json!({"name": name, "value": value, "force": force});
-    ctx.client.post(&format!("{base}/records/{}/fields", uuid.as_simple()), &body)?;
+    ctx.client.post(&format!("{base}/metarecords/{}/fields", uuid.as_simple()), &body)?;
     Ok(0)
 }
 
 pub fn unset(ctx: &Ctx, uuid: &str, field_id: i64, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid record UUID: '{uuid}'")))?;
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
     ctx.client.request(
         "DELETE",
-        &format!("{base}/records/{}/fields/{field_id}", uuid.as_simple()),
+        &format!("{base}/metarecords/{}/fields/{field_id}", uuid.as_simple()),
         &[],
         Some(&json!({"force": force})),
     )?;
@@ -239,7 +239,7 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
         Target::Entry(uuid) => {
             ctx.client.request(
                 "DELETE",
-                &format!("{base}/records/{}", uuid.as_simple()),
+                &format!("{base}/metarecords/{}", uuid.as_simple()),
                 &[],
                 None,
             )?;
@@ -257,12 +257,12 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
                 println!("0");
                 return Ok(0);
             }
-            if !force && !confirm(&format!("Delete {} records? [y/N] ", uuids.len()))? {
+            if !force && !confirm(&format!("Delete {} metarecords? [y/N] ", uuids.len()))? {
                 eprintln!("aborted");
                 return Ok(1);
             }
             for uuid in &uuids {
-                ctx.client.request("DELETE", &format!("{base}/records/{uuid}"), &[], None)?;
+                ctx.client.request("DELETE", &format!("{base}/metarecords/{uuid}"), &[], None)?;
             }
             println!("{}", uuids.len());
         }
@@ -291,7 +291,7 @@ pub struct QueryArgs {
     pub sort: Vec<String>,
     pub limit: Option<usize>,
     /// Print the selected field's raw values, one per line, instead of
-    /// record JSON (requires `--select` with exactly one field).
+    /// metarecord JSON (requires `--select` with exactly one field).
     pub values: bool,
 }
 
@@ -418,19 +418,19 @@ pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
 /// Maximum `mfr_path` chain length, mirroring the daemon's tree depth limit.
 const MAX_PATH_DEPTH: usize = 1000;
 
-/// Resolves a record to its filesystem path by walking the `mfr_path`
-/// parent chain up to the root record. Relative paths are repo-root-relative
-/// and start with `/` (the root record itself is `/`).
+/// Resolves a metarecord to its filesystem path by walking the `mfr_path`
+/// parent chain up to the root metarecord. Relative paths are repo-root-relative
+/// and start with `/` (the root metarecord itself is `/`).
 pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut current = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid record UUID: '{uuid}'")))?;
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
     let mut components: Vec<String> = Vec::new();
     loop {
         if components.len() >= MAX_PATH_DEPTH {
             return Err(CliError::Op(format!("mfr_path chain deeper than {MAX_PATH_DEPTH}")));
         }
-        let entry = ctx.client.get(&format!("{base}/records/{}", current.as_simple()), &[])?;
+        let entry = ctx.client.get(&format!("{base}/metarecords/{}", current.as_simple()), &[])?;
         let tree_ref = entry["fields"]
             .as_array()
             .into_iter()
@@ -480,8 +480,8 @@ pub fn reconcile(ctx: &Ctx, entry: Option<&str>, raw_json: bool) -> Result<i32, 
     let path = match entry {
         Some(uuid) => {
             let uuid = Uuid::parse_str(uuid)
-                .map_err(|_| CliError::Usage(format!("invalid record UUID: '{uuid}'")))?;
-            format!("{base}/records/{}/reconcile", uuid.as_simple())
+                .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
+            format!("{base}/metarecords/{}/reconcile", uuid.as_simple())
         }
         None => format!("{base}/reconcile"),
     };
@@ -509,7 +509,7 @@ fn format_reconcile(resp: &Json) -> String {
         for candidate in candidates {
             out.push_str(&format!(
                 "\n  {}  {}",
-                candidate["record_uuid"].as_str().unwrap_or("?"),
+                candidate["metarecord_uuid"].as_str().unwrap_or("?"),
                 candidate["stale_path"].as_str().unwrap_or("?"),
             ));
             for matched in candidate["matches"].as_array().unwrap_or(&empty) {
@@ -544,7 +544,7 @@ pub fn schema_check(ctx: &Ctx, predicate: Option<&str>, raw_json: bool) -> Resul
         println!(
             "Checked {} {}, {} {}.",
             checked,
-            plural(checked, "record", "records"),
+            plural(checked, "metarecord", "metarecords"),
             violations.len(),
             plural(violations.len() as u64, "violation", "violations"),
         );
@@ -560,12 +560,12 @@ fn plural<'a>(n: u64, one: &'a str, many: &'a str) -> &'a str {
     }
 }
 
-/// One line per violation: record, activating type (`-` for global
+/// One line per violation: metarecord, activating type (`-` for global
 /// constraints), field, constraint kind, message.
 fn format_violation(violation: &Json) -> String {
     format!(
         "{}  {}  {}  {}  {}",
-        violation["record_uuid"].as_str().unwrap_or("?"),
+        violation["metarecord_uuid"].as_str().unwrap_or("?"),
         violation["type"].as_str().unwrap_or("-"),
         violation["field"].as_str().unwrap_or("?"),
         violation["kind"].as_str().unwrap_or("?"),
@@ -605,7 +605,7 @@ mod tests {
             "created": 2,
             "moved": 1,
             "candidates": [{
-                "record_uuid": "abc00000000000000000000000000001",
+                "metarecord_uuid": "abc00000000000000000000000000001",
                 "stale_path": "/music/jazz/old.mp3",
                 "matches": [
                     {"path": "/music2/jazz_copy.mp3", "fingerprint": "partial_hash"},
@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn test_format_violation_with_type() {
         let v = json!({
-            "record_uuid": "abc00000000000000000000000000001",
+            "metarecord_uuid": "abc00000000000000000000000000001",
             "type": "film",
             "field": "rating",
             "kind": "type",
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn test_format_violation_global_constraint_dash() {
         let v = json!({
-            "record_uuid": "abc00000000000000000000000000001",
+            "metarecord_uuid": "abc00000000000000000000000000001",
             "type": null,
             "field": "rating",
             "kind": "max_cardinality",

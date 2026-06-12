@@ -2,7 +2,7 @@
 //! human-friendly predicate syntax to the `Query` JSON IR (spec-query
 //! "* CLI", "Query DSL").
 
-use crate::record::Value;
+use crate::metarecord::Value;
 use crate::query::{FollowTarget, Query};
 
 /// Parses a DSL predicate string into a `Query`.
@@ -368,7 +368,7 @@ impl Parser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::record::Value;
+    use crate::metarecord::Value;
     use crate::query::FollowTarget;
 
     fn ok(input: &str) -> Query {

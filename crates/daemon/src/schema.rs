@@ -1,4 +1,4 @@
-//! User schema system (spec-schema): record types declared via `mf_schema`,
+//! User schema system (spec-schema): metarecord types declared via `mf_schema`,
 //! constraints loaded from an external JSON file, delta validation of user
 //! writes, and the check endpoint.
 
@@ -10,7 +10,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use metafolder_core::record::Value;
+use metafolder_core::metarecord::Value;
 
 use crate::config::RepoConfig;
 use crate::db;
@@ -61,7 +61,7 @@ struct RawConstraint {
 }
 
 /// A parsed and validated schema, indexed by field name so that validation
-/// adds no database query beyond reading the record itself.
+/// adds no database query beyond reading the metarecord itself.
 #[derive(Debug)]
 pub struct CompiledSchema {
     /// The schema as found in the file (returned by `GET /schema`).
@@ -169,8 +169,8 @@ pub fn load_for_repo(
 
 #[derive(Debug, Serialize)]
 pub struct Violation {
-    #[serde(with = "metafolder_core::record::hex_uuid")]
-    pub record_uuid: Uuid,
+    #[serde(with = "metafolder_core::metarecord::hex_uuid")]
+    pub metarecord_uuid: Uuid,
     /// The type name that activated the constraint; null for global ones.
     #[serde(rename = "type")]
     pub origin: Option<String>,
@@ -195,7 +195,7 @@ fn value_type_name(v: &Value) -> &'static str {
     }
 }
 
-/// Evaluates the applicable constraints for the given fields of one record,
+/// Evaluates the applicable constraints for the given fields of one metarecord,
 /// against its current state (delta validation: callers pass the touched
 /// field names after applying the write).
 pub fn validate_entry_fields(
@@ -204,7 +204,7 @@ pub fn validate_entry_fields(
     uuid: Uuid,
     touched: &[String],
 ) -> Result<Vec<Violation>> {
-    // The record's declared types (its mf_schema values).
+    // The metarecord's declared types (its mf_schema values).
     let types: Vec<String> = db::get_field_rows_named(conn, uuid, "mf_schema")?
         .into_iter()
         .filter_map(|r| match r.value {
@@ -236,7 +236,7 @@ pub fn validate_entry_fields(
                     r.value != Value::Nothing && value_type_name(&r.value) != expected
                 }) {
                     violations.push(Violation {
-                        record_uuid: uuid,
+                        metarecord_uuid: uuid,
                         origin: origin.clone(),
                         field: field.clone(),
                         kind: "type",
@@ -250,7 +250,7 @@ pub fn validate_entry_fields(
             let n = rows.len() as u64;
             if n < constraint.min {
                 violations.push(Violation {
-                    record_uuid: uuid,
+                    metarecord_uuid: uuid,
                     origin: origin.clone(),
                     field: field.clone(),
                     kind: "min_cardinality",
@@ -260,7 +260,7 @@ pub fn validate_entry_fields(
             if let Some(max) = constraint.max {
                 if n > max {
                     violations.push(Violation {
-                        record_uuid: uuid,
+                        metarecord_uuid: uuid,
                         origin,
                         field: field.clone(),
                         kind: "max_cardinality",

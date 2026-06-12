@@ -9,7 +9,7 @@ pub trait FrontendNotifier: Send + Sync {
     fn emit(&self, event: &str, payload: Value);
 }
 
-/// Records every emitted event; for tests.
+/// Metarecords every emitted event; for tests.
 #[derive(Default)]
 pub struct RecordingNotifier {
     events: Mutex<Vec<(String, Value)>>,

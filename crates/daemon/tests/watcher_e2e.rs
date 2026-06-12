@@ -84,7 +84,7 @@ async fn test_watcher_tracks_create_rename_delete() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{root_uuid}"),
+        &format!("/repos/{repo}/metarecords/{root_uuid}"),
         Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
     )
     .await;
@@ -95,19 +95,19 @@ async fn test_watcher_tracks_create_rename_delete() {
     let by_name =
         json!({"type": "matches", "field": "mfr_path", "pattern": "^track_me\\.txt$"});
     let hits = wait_for_match(&app, &repo, by_name, 1).await;
-    let record_uuid = hits[0].clone();
+    let metarecord_uuid = hits[0].clone();
 
     // Rename.
     std::fs::rename(root.join("track_me.txt"), root.join("renamed.txt")).unwrap();
     let renamed = json!({"type": "matches", "field": "mfr_path", "pattern": "^renamed\\.txt$"});
     let hits = wait_for_match(&app, &repo, renamed, 1).await;
-    assert_eq!(hits[0], record_uuid, "the entry must survive the rename");
+    assert_eq!(hits[0], metarecord_uuid, "the entry must survive the rename");
 
     // Delete: mfr_path becomes Nothing, the entry is preserved.
     std::fs::remove_file(root.join("renamed.txt")).unwrap();
     let absent = json!({"type": "is_absent", "field": "mfr_path"});
     let hits = wait_for_match(&app, &repo, absent, 1).await;
-    assert_eq!(hits[0], record_uuid, "the entry must be preserved after deletion");
+    assert_eq!(hits[0], metarecord_uuid, "the entry must be preserved after deletion");
 
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -114,7 +114,7 @@ mod tests {
 
         assert!(registry.list(None).iter().any(|c| c.name == "tab:new"));
         assert!(registry
-            .list(Some("record-list"))
+            .list(Some("metarecord-list"))
             .iter()
             .any(|c| c.name == "tab:new"));
     }
@@ -122,22 +122,22 @@ mod tests {
     #[test]
     fn test_panel_command_defaults_to_local_scope() {
         let registry = CommandRegistry::new();
-        registry.register_panel("record-list", "record-list:next", "Next entry", None, false);
+        registry.register_panel("metarecord-list", "metarecord-list:next", "Next entry", None, false);
 
-        let def = registry.get("record-list:next").unwrap();
+        let def = registry.get("metarecord-list:next").unwrap();
         assert_eq!(def.scope, Scope::Local);
-        assert_eq!(def.owner.as_deref(), Some("record-list"));
+        assert_eq!(def.owner.as_deref(), Some("metarecord-list"));
 
         // Listed only when its panel type is focused.
         assert!(registry
-            .list(Some("record-list"))
+            .list(Some("metarecord-list"))
             .iter()
-            .any(|c| c.name == "record-list:next"));
+            .any(|c| c.name == "metarecord-list:next"));
         assert!(!registry
             .list(Some("file"))
             .iter()
-            .any(|c| c.name == "record-list:next"));
-        assert!(!registry.list(None).iter().any(|c| c.name == "record-list:next"));
+            .any(|c| c.name == "metarecord-list:next"));
+        assert!(!registry.list(None).iter().any(|c| c.name == "metarecord-list:next"));
     }
 
     #[test]

@@ -47,21 +47,21 @@ enum Command {
     },
     /// List the loaded repositories (pretty-printed JSON)
     Repos,
-    /// Print all record UUIDs of the repository, one per line
+    /// Print all metarecord UUIDs of the repository, one per line
     List {
         /// Stop after N UUIDs
         #[arg(long)]
         limit: Option<usize>,
     },
-    /// Print the full metadata of the matching records (JSON array)
+    /// Print the full metadata of the matching metarecords (JSON array)
     Get {
-        /// Record UUID or query predicate
+        /// MetaRecord UUID or query predicate
         target: String,
         /// Only include the listed field names (comma-separated)
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
     },
-    /// Create a record with the given fields and print its UUID
+    /// Create a metarecord with the given fields and print its UUID
     Create {
         /// Field spec name:type[=value]; repeatable
         #[arg(long = "field", required = true)]
@@ -72,7 +72,7 @@ enum Command {
     },
     /// Set a field (replaces all rows of that name)
     Set {
-        /// Record UUID or query predicate
+        /// MetaRecord UUID or query predicate
         target: String,
         /// Field spec name:type[=value]
         spec: String,
@@ -97,15 +97,15 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
-    /// Delete the matching records (metadata and all fields)
+    /// Delete the matching metarecords (metadata and all fields)
     Delete {
-        /// Record UUID or query predicate
+        /// MetaRecord UUID or query predicate
         target: String,
         /// Skip the confirmation prompt for predicate targets
         #[arg(long)]
         force: bool,
     },
-    /// Run a query predicate and print the matching records
+    /// Run a query predicate and print the matching metarecords
     Query {
         predicate: String,
         /// Print full metadata restricted to these fields, or '*' for all
@@ -123,16 +123,16 @@ enum Command {
     },
     /// Reconcile the database with the filesystem
     Reconcile {
-        /// Single-record reconcile, scoped to this record's subtree
+        /// Single-metarecord reconcile, scoped to this metarecord's subtree
         #[arg(long)]
-        record: Option<String>,
+        metarecord: Option<String>,
         /// Print the raw JSON response body
         #[arg(long)]
         json: bool,
     },
-    /// Create the record for a single path and print its UUID
+    /// Create the metarecord for a single path and print its UUID
     Track { path: PathBuf },
-    /// Print the filesystem path of a record (walks the mfr_path chain)
+    /// Print the filesystem path of a metarecord (walks the mfr_path chain)
     Path {
         uuid: String,
         /// Print the path relative to the repository root
@@ -231,9 +231,9 @@ enum GuiWorkspaceCommand {
 
 #[derive(Subcommand)]
 enum SchemaCommand {
-    /// Check records against the schema and list the violations
+    /// Check metarecords against the schema and list the violations
     Check {
-        /// Restrict the check to records matching this predicate
+        /// Restrict the check to metarecords matching this predicate
         predicate: Option<String>,
         /// Print the raw JSON response body
         #[arg(long)]
@@ -266,7 +266,7 @@ fn main() {
         Command::Query { predicate, select, sort, limit, values } => {
             commands::query(&ctx, &QueryArgs { predicate, select, sort, limit, values })
         }
-        Command::Reconcile { record, json } => commands::reconcile(&ctx, record.as_deref(), json),
+        Command::Reconcile { metarecord, json } => commands::reconcile(&ctx, metarecord.as_deref(), json),
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),
         Command::Schema { command } => match command {

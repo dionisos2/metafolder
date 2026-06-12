@@ -93,7 +93,7 @@ impl ConfigDir {
 
     /// Writes (or replaces) one user keybinding override and returns the
     /// recompiled merged set. Combos are matched after normalization, so
-    /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` record.
+    /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` metarecord.
     pub fn set_user_keybinding(
         &self,
         combo: &str,
@@ -122,7 +122,7 @@ impl ConfigDir {
     }
 
     /// Removes a user override (reverting to the shipped default);
-    /// missing records are a no-op. Returns the recompiled set.
+    /// missing metarecords are a no-op. Returns the recompiled set.
     pub fn remove_user_keybinding(&self, combo: &str) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;

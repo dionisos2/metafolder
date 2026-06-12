@@ -3,25 +3,25 @@
 
 * Overview
 
-The user schema system lets users declare /record types/ and attach
-/constraints/ to them: which fields a record of a given type may carry, with
+The user schema system lets users declare /metarecord types/ and attach
+/constraints/ to them: which fields a metarecord of a given type may carry, with
 which value types and cardinalities. Constraints can also apply globally (to
-every record in the repository), typically to fix the value type of a field
+every metarecord in the repository), typically to fix the value type of a field
 name database-wide.
 
 The schema is described in a JSON file loaded by the daemon; its location is
 recorded in the repository's =config.json=. The database itself stores no
 constraint: the only schema-related data in the database is the reserved
-=mf_schema= field, which names the type(s) of a record. The daemon validates
+=mf_schema= field, which names the type(s) of a metarecord. The daemon validates
 user writes against the loaded schema and rejects violating writes with
 =400=.
 
 * Concepts
 
-** Record types
+** Metarecord types
 
-A record declares its type(s) with the reserved field =mf_schema=
-(=String=). Because fields are multi-maps, a record may carry several
+A metarecord declares its type(s) with the reserved field =mf_schema=
+(=String=). Because fields are multi-maps, a metarecord may carry several
 =mf_schema= rows and thus several types; the constraints of all its types
 apply cumulatively.
 
@@ -32,14 +32,14 @@ apply cumulatively.
 =mf_schema= values are free-form strings. A value that names a type declared
 in the schema file activates that type's constraints; a value with no
 declaration in the schema file carries no constraints (it can still be used
-as a plain label and queried normally). Records without any =mf_schema= field
+as a plain label and queried normally). Metarecords without any =mf_schema= field
 are /untyped/; only global constraints apply to them.
 
 ** Schema file
 
 The schema is a single JSON document, external to the database. It is a list
 of /constraint groups/; each group declares its targets (one or more type
-names, or ="*"= for every record) and the constraints shared by those targets:
+names, or ="*"= for every metarecord) and the constraints shared by those targets:
 
 #+BEGIN_SRC json
 {
@@ -73,7 +73,7 @@ Each group object:
 
 | Key           | Type                  | Description                                                  |
 |---------------+-----------------------+--------------------------------------------------------------|
-| =targets=     | ="*"= or list<string> | Type names the group applies to; ="*"= = every record (global) |
+| =targets=     | ="*"= or list<string> | Type names the group applies to; ="*"= = every metarecord (global) |
 | =constraints= | list                  | Constraints applying to each target                          |
 
 Each constraint object:
@@ -91,7 +91,7 @@ Each constraint object:
 =externalref=.
 
 The example above expresses: globally, wherever the field =rating= exists on
-any record, it must be an Int; the type ="film"= additionally bounds =rating=
+any metarecord, it must be an Int; the type ="film"= additionally bounds =rating=
 to cardinality 0 or 1; and both ="person"= and ="film"= require exactly one
 =name= of type String.
 
@@ -122,7 +122,7 @@ repository.
 
 ** Constraint semantics
 
-For a given record =E= and field name =F=, the /applicable constraints/ are
+For a given metarecord =E= and field name =F=, the /applicable constraints/ are
 the constraints with =field = F= of:
 
 1. Every group with =targets = "*"=.
@@ -143,7 +143,7 @@ the constraints with =field = F= of:
 Because all applicable constraints apply cumulatively, two applicable
 constraints declaring different =type= values for the same field make every
 non-=Nothing= value invalid for that field. This situation is not detected at
-schema load time (it depends on which types a record combines); it surfaces
+schema load time (it depends on which types a metarecord combines); it surfaces
 as validation errors on write.
 
 ** Restrictions
@@ -153,36 +153,36 @@ as validation errors on write.
   therefore never block the daemon's own writes (watcher, reconcile) nor the
   =mf_schema= mechanism itself.
 - The schema file constrains user data only; it has no effect on link or
-  snapshot records managed by cross-repo sync.
+  snapshot metarecords managed by cross-repo sync.
 
 ** Validation model: delta validation
 
 Validation is triggered by /user writes/ only — the API endpoints that modify
-fields (record creation, =PATCH=, field append/replace/delete, batch =set=).
+fields (metarecord creation, =PATCH=, field append/replace/delete, batch =set=).
 Daemon-internal writes (watcher, reconcile, sync crash-recovery) are never
 validated against the schema.
 
 Validation is /delta-based/: a write only validates the field names it
-touches, against the record state resulting from the write. Fields not touched
+touches, against the metarecord state resulting from the write. Fields not touched
 by the request are not checked, even if they violate constraints (e.g.
 violations that pre-date the constraint). Consequences, by design:
 
-- Pre-existing violations on other fields of the same record do not block
+- Pre-existing violations on other fields of the same metarecord do not block
   unrelated writes.
-- Editing the schema file (or reloading it) never scans existing records;
+- Editing the schema file (or reloading it) never scans existing metarecords;
   existing violations are only surfaced by the check endpoint (see
   [[*=POST /repos/:repo_uuid/schema/check=]]) and only block future writes
   that touch the violating field.
-- Writing =mf_schema= (adding or removing a type on a record) only validates
+- Writing =mf_schema= (adding or removing a type on a metarecord) only validates
   the =mf_schema= field itself — which no constraint can target — so changing
-  a record's type never fails, even if the record violates constraints of the
+  a metarecord's type never fails, even if the metarecord violates constraints of the
   new type. Run a schema check afterwards to list the violations.
 - Deleting a field row is a write touching that field: removing the last row
   of a field with an applicable =min ≥ 1= constraint is rejected. To remove
-  it anyway, first remove the type from the record (or relax the constraint in
+  it anyway, first remove the type from the metarecord (or relax the constraint in
   the schema file and reload).
-- Deleting an /entire record/ (=DELETE /records/:uuid=) is always allowed;
-  cardinality constraints do not apply to record deletion.
+- Deleting an /entire metarecord/ (=DELETE /metarecords/:uuid=) is always allowed;
+  cardinality constraints do not apply to metarecord deletion.
 
 * Daemon
 
@@ -198,11 +198,11 @@ On every user write inside the write transaction, after applying the
 modifications but before committing:
 
 1. Collect the set of touched field names (for batch =set=, per matched
-   record; the single =name= of the request).
+   metarecord; the single =name= of the request).
 2. Skip touched names with a reserved prefix (=mfr_*=, =mf_*=) — these are
    covered by the structural reserved-field checks, not by the schema.
-3. Look up the applicable constraints for each =(record, touched field)= pair
-   (see [[*Constraint semantics]]); this requires the record's resulting
+3. Look up the applicable constraints for each =(metarecord, touched field)= pair
+   (see [[*Constraint semantics]]); this requires the metarecord's resulting
    =mf_schema= values.
 4. Evaluate type and cardinality checks on the resulting rows of the touched
    field.
@@ -217,7 +217,7 @@ modifications but before committing:
 Returns the currently loaded schema as parsed by the daemon (same JSON
 structure as the schema file), or ={"version": 1, "groups": []}= when the
 repository has no schema file. Intended for clients that need to
-discover constraints — e.g. the GUI generating record forms or field
+discover constraints — e.g. the GUI generating metarecord forms or field
 auto-completion.
 
 *** =POST /repos/:repo_uuid/schema/reload=
@@ -231,7 +231,7 @@ Response body on success: the newly loaded schema (as in =GET /schema=).
 
 *** =POST /repos/:repo_uuid/schema/check=
 
-Scans records and reports every constraint violation. Used to audit the
+Scans metarecords and reports every constraint violation. Used to audit the
 repository after adding or tightening constraints (editing the schema file
 never validates retroactively).
 
@@ -240,8 +240,8 @@ Request body (optional):
 {"query": <Query>}
 #+END_SRC
 
-When =query= is given, only matching records are checked; otherwise the whole
-repository (link records excluded, as with normal queries).
+When =query= is given, only matching metarecords are checked; otherwise the whole
+repository (link metarecords excluded, as with normal queries).
 
 Response body:
 #+BEGIN_SRC json
@@ -249,14 +249,14 @@ Response body:
   "checked": 1542,
   "violations": [
     {
-      "record_uuid": "abc...",
+      "metarecord_uuid": "abc...",
       "type": "film",
       "field": "rating",
       "kind": "type",
       "message": "value of type string not allowed (expected: int)"
     },
     {
-      "record_uuid": "abc...",
+      "metarecord_uuid": "abc...",
       "type": null,
       "field": "rating",
       "kind": "max_cardinality",
@@ -283,7 +283,7 @@ query) and prints one line per violation:
 #+BEGIN_SRC
 abc...  film  rating  type             value of type string not allowed (expected: int)
 abc...  -     rating  max_cardinality  3 rows, maximum is 1
-Checked 1542 records, 2 violations.
+Checked 1542 metarecords, 2 violations.
 #+END_SRC
 
 Exit code: =0= when no violation was found, =1= when at least one violation
@@ -305,15 +305,15 @@ invalid — the previous schema then remains in effect.
 
 Calls =GET /schema= and prints the loaded schema as pretty-printed JSON.
 
-** Declaring types on records
+** Declaring types on metarecords
 
-Types are assigned with the standard record commands:
+Types are assigned with the standard metarecord commands:
 
 #+BEGIN_SRC
-# Declare a record as a film
+# Declare a metarecord as a film
 mf set <uuid> mf_schema:string=film
 
-# A record with two types (multi-map append)
+# A metarecord with two types (multi-map append)
 mf add <uuid> mf_schema:string=documentary
 
 # List all films
@@ -326,14 +326,14 @@ mf query 'mf_schema = "film"'
 
 The schema file is per-repository and outside the database: it is not
 recorded in the event log and not propagated by cross-repo sync. Two linked
-repositories that share record types must keep their schema files consistent
+repositories that share metarecord types must keep their schema files consistent
 manually. Whether sync should compare (or copy) schema files is unresolved.
 
-** Full validation at record creation
+** Full validation at metarecord creation
 
-Delta validation means =POST /records= only validates the fields supplied in
-the request: a record created with =mf_schema = "film"= but without a field
-required by a =min ≥ 1= constraint is accepted. Whether record creation should
+Delta validation means =POST /metarecords= only validates the fields supplied in
+the request: a metarecord created with =mf_schema = "film"= but without a field
+required by a =min ≥ 1= constraint is accepted. Whether metarecord creation should
 instead validate the full constraint set of the declared types (stricter, but
 inconsistent with the delta model) is to be revisited with usage experience.
 

@@ -1,5 +1,5 @@
-// record-list panel: records of the active repo filtered by an embedded
-// DSL query; primary selection source (spec-gui "record-list panel type").
+// metarecord-list panel: metarecords of the active repo filtered by an embedded
+// DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
 import { el } from '/__ui.js';
 import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
@@ -23,7 +23,7 @@ const MATCH_ALL = {
 let repo = null;
 let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
 let widths = {}; // column spec -> px; persisted per workspace
-let records = [];
+let metarecords = [];
 let nextCursor = null;
 let loading = false;
 let queryIR = null; // null = match all
@@ -31,7 +31,7 @@ let sort = []; // [{field, order}]
 let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
 let mode = 'table';
-let refCache = new Map(); // uuid -> Promise<record>, for ~target columns
+let refCache = new Map(); // uuid -> Promise<metarecord>, for ~target columns
 
 const rows = document.getElementById('rows');
 const grid = document.getElementById('grid');
@@ -48,9 +48,9 @@ const columnsError = document.getElementById('columns-error');
 // for one result set and is dropped on every reset fetch.
 const displayCtx = {
   resolveTreeRef: (value) => daemon.resolveTreeRef(repo, value),
-  getRecord: (uuid) => {
+  getMetarecord: (uuid) => {
     if (!refCache.has(uuid)) {
-      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/records/${uuid}`));
+      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`));
     }
     return refCache.get(uuid);
   },
@@ -62,11 +62,11 @@ async function fetchPage(reset) {
   try {
     let keepUuid = null;
     if (reset) {
-      // A refresh (new query, records:dirty, …) must not steal the
-      // selection: remember the highlighted record and restore it.
+      // A refresh (new query, metarecords:dirty, …) must not steal the
+      // selection: remember the highlighted metarecord and restore it.
       keepUuid =
-        records[cursorIndex]?.uuid ?? (await workspace.get('selected_record'))?.uuid ?? null;
-      records = [];
+        metarecords[cursorIndex]?.uuid ?? (await workspace.get('selected_metarecord'))?.uuid ?? null;
+      metarecords = [];
       nextCursor = null;
       refCache = new Map();
     }
@@ -83,21 +83,21 @@ async function fetchPage(reset) {
       await statusBar.error(error);
       return;
     }
-    records = records.concat(page.results);
+    metarecords = metarecords.concat(page.results);
     nextCursor = page.next_cursor;
     if (reset) {
-      // Drop checked records that no longer match.
-      const alive = new Set(records.map((e) => e.uuid));
+      // Drop checked metarecords that no longer match.
+      const alive = new Set(metarecords.map((e) => e.uuid));
       if ([...checked].some((uuid) => !alive.has(uuid))) {
         checked = new Set([...checked].filter((uuid) => alive.has(uuid)));
-        await workspace.set('selected_records', [...checked]);
+        await workspace.set('selected_metarecords', [...checked]);
       }
-      const keepIndex = keepUuid === null ? -1 : records.findIndex((e) => e.uuid === keepUuid);
+      const keepIndex = keepUuid === null ? -1 : metarecords.findIndex((e) => e.uuid === keepUuid);
       if (keepIndex >= 0) {
-        // Same record still listed: move the cursor back silently, the
+        // Same metarecord still listed: move the cursor back silently, the
         // selection variables are already correct.
         cursorIndex = keepIndex;
-      } else if (records.length > 0) {
+      } else if (metarecords.length > 0) {
         render();
         await setCursor(0);
         return;
@@ -139,7 +139,7 @@ document.addEventListener('mouseup', () => {
   if (!resizing) return;
   const { moved } = resizing;
   resizing = null;
-  if (moved) void workspace.set('record-list:column-widths', { ...widths });
+  if (moved) void workspace.set('metarecord-list:column-widths', { ...widths });
 });
 
 function renderHeader() {
@@ -163,8 +163,8 @@ function renderHeader() {
   );
 }
 
-function fillCell(node, column, record) {
-  cellText(column, record, displayCtx).then(
+function fillCell(node, column, metarecord) {
+  cellText(column, metarecord, displayCtx).then(
     (text) => (node.textContent = text),
     () => {}, // keep the quick text
   );
@@ -173,26 +173,26 @@ function fillCell(node, column, record) {
 function render() {
   renderHeader();
   rows.replaceChildren(
-    ...records.map((record, index) =>
+    ...metarecords.map((metarecord, index) =>
       el(
         'tr',
         {
-          class: ['row', index === cursorIndex && 'cursor', checked.has(record.uuid) && 'checked'],
+          class: ['row', index === cursorIndex && 'cursor', checked.has(metarecord.uuid) && 'checked'],
           onclick: () => setCursor(index),
           ondblclick: () => openSelected(),
         },
         columns.map((column) => {
-          const td = el('td', {}, cellQuickText(column, record));
-          if (column.deref !== null) fillCell(td, column, record);
+          const td = el('td', {}, cellQuickText(column, metarecord));
+          if (column.deref !== null) fillCell(td, column, metarecord);
           return td;
         }),
       ),
     ),
   );
   grid.replaceChildren(
-    ...records.map((record, index) => {
+    ...metarecords.map((metarecord, index) => {
       const img = el('img', { loading: 'lazy' });
-      void fillThumbnail(img, record);
+      void fillThumbnail(img, metarecord);
       return el(
         'div',
         {
@@ -204,20 +204,20 @@ function render() {
         el(
           'div',
           { class: 'name' },
-          cellQuickText(GRID_NAME_COLUMN, record) || record.uuid.slice(0, 8),
+          cellQuickText(GRID_NAME_COLUMN, metarecord) || metarecord.uuid.slice(0, 8),
         ),
       );
     }),
   );
   statusLine.textContent =
-    `${records.length} record${records.length === 1 ? '' : 's'}` +
+    `${metarecords.length} metarecord${metarecords.length === 1 ? '' : 's'}` +
     (nextCursor ? ' (more available — scroll down)' : '') +
     (checked.size > 0 ? ` — ${checked.size} selected` : '');
 }
 
-async function fillThumbnail(img, record) {
+async function fillThumbnail(img, metarecord) {
   try {
-    const paths = await daemon.recordPaths(repo, record);
+    const paths = await daemon.metarecordPaths(repo, metarecord);
     if (paths.length > 0) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(paths[0])}`;
   } catch {
     /* no preview */
@@ -227,29 +227,29 @@ async function fillThumbnail(img, record) {
 // ── Selection (workspace variables) ─────────────────────────────────────
 
 async function setCursor(index) {
-  cursorIndex = Math.max(0, Math.min(index, records.length - 1));
+  cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
   render();
-  const record = records[cursorIndex];
-  if (!record) return;
+  const metarecord = metarecords[cursorIndex];
+  if (!metarecord) return;
   document.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
-  await workspace.set('selected_record', { uuid: record.uuid, repo });
-  await workspace.set('selected_paths', await daemon.recordPaths(repo, record));
+  await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
+  await workspace.set('selected_paths', await daemon.metarecordPaths(repo, metarecord));
 }
 
 async function toggleChecked() {
-  const record = records[cursorIndex];
-  if (!record) return;
-  if (checked.has(record.uuid)) checked.delete(record.uuid);
-  else checked.add(record.uuid);
+  const metarecord = metarecords[cursorIndex];
+  if (!metarecord) return;
+  if (checked.has(metarecord.uuid)) checked.delete(metarecord.uuid);
+  else checked.add(metarecord.uuid);
   render();
-  await workspace.set('selected_records', [...checked]);
+  await workspace.set('selected_metarecords', [...checked]);
 }
 
 async function openSelected() {
-  const record = records[cursorIndex];
-  if (!record) return;
-  const paths = await daemon.recordPaths(repo, record);
-  await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'record-detail'}`);
+  const metarecord = metarecords[cursorIndex];
+  if (!metarecord) return;
+  const paths = await daemon.metarecordPaths(repo, metarecord);
+  await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
 }
 
 // ── Query and sort ──────────────────────────────────────────────────────
@@ -297,11 +297,11 @@ async function applyColumns() {
   columnsInput.value = columns.map((c) => c.spec).join(' ');
   render();
   // Persisted per workspace; also lets scripts set the columns.
-  await workspace.set('record-list:columns', columns.map((c) => c.spec));
+  await workspace.set('metarecord-list:columns', columns.map((c) => c.spec));
 }
 
 function toggleSort(column) {
-  if (!isSortable(column)) return; // record meta, not a sortable field
+  if (!isSortable(column)) return; // metarecord meta, not a sortable field
   const current = sort.find((s) => s.field === column.name);
   sort = current
     ? current.order === 'asc'
@@ -330,50 +330,50 @@ columnsInput.addEventListener('keydown', (event) => {
 
 await metafolder.ready;
 
-commands.register('record-list:next', {
-  label: 'Record list: move the selection down',
+commands.register('metarecord-list:next', {
+  label: 'Metarecord list: move the selection down',
   handler: () => setCursor(cursorIndex + 1),
 });
-commands.register('record-list:prev', {
-  label: 'Record list: move the selection up',
+commands.register('metarecord-list:prev', {
+  label: 'Metarecord list: move the selection up',
   handler: () => setCursor(cursorIndex - 1),
 });
-commands.register('record-list:select-toggle', {
-  label: 'Record list: toggle multi-selection',
+commands.register('metarecord-list:select-toggle', {
+  label: 'Metarecord list: toggle multi-selection',
   handler: toggleChecked,
 });
-commands.register('record-list:open', {
-  label: 'Record list: open the selection in the other panel',
+commands.register('metarecord-list:open', {
+  label: 'Metarecord list: open the selection in the other panel',
   handler: openSelected,
 });
-commands.register('record-list:set-mode', {
-  label: 'Record list: switch display mode (table | grid)',
+commands.register('metarecord-list:set-mode', {
+  label: 'Metarecord list: switch display mode (table | grid)',
   handler: (newMode) => {
     mode = newMode === 'grid' ? 'grid' : 'table';
     document.body.classList.toggle('grid', mode === 'grid');
   },
 });
-commands.register('record-list:edit-query', {
-  label: 'Record list: focus the query input',
+commands.register('metarecord-list:edit-query', {
+  label: 'Metarecord list: focus the query input',
   handler: () => queryInput.focus(),
 });
-commands.register('record-list:edit-columns', {
-  label: 'Record list: focus the columns input',
+commands.register('metarecord-list:edit-columns', {
+  label: 'Metarecord list: focus the columns input',
   handler: () => columnsInput.focus(),
 });
-commands.register('record-list:refresh', {
-  label: 'Record list: reload from the daemon',
+commands.register('metarecord-list:refresh', {
+  label: 'Metarecord list: reload from the daemon',
   handler: () => fetchPage(true),
 });
 
-metafolder.addKeybinding('record-list:next', 'down');
-metafolder.addKeybinding('record-list:next', 'j');
-metafolder.addKeybinding('record-list:prev', 'up');
-metafolder.addKeybinding('record-list:prev', 'k');
-metafolder.addKeybinding('record-list:select-toggle', 'space');
-metafolder.addKeybinding('record-list:open', 'enter');
-metafolder.addKeybinding('record-list:open', 'right');
-metafolder.addKeybinding('record-list:edit-query', '/');
+metafolder.addKeybinding('metarecord-list:next', 'down');
+metafolder.addKeybinding('metarecord-list:next', 'j');
+metafolder.addKeybinding('metarecord-list:prev', 'up');
+metafolder.addKeybinding('metarecord-list:prev', 'k');
+metafolder.addKeybinding('metarecord-list:select-toggle', 'space');
+metafolder.addKeybinding('metarecord-list:open', 'enter');
+metafolder.addKeybinding('metarecord-list:open', 'right');
+metafolder.addKeybinding('metarecord-list:edit-query', '/');
 
 async function start() {
   repo = await workspace.get('active_repo');
@@ -381,16 +381,16 @@ async function start() {
   if (repo !== null) await fetchPage(true);
 }
 
-// Refresh when record-detail (or another panel) writes records.
-workspace.onChange('records:dirty', () => void fetchPage(true));
+// Refresh when metarecord-detail (or another panel) writes metarecords.
+workspace.onChange('metarecords:dirty', () => void fetchPage(true));
 // The workspace may adopt a repo after startup (repos panel).
 workspace.onChange('active_repo', () => void start());
 // Columns may also be set by a script (mf gui) or another session.
-workspace.onChange('record-list:columns', (value) => {
+workspace.onChange('metarecord-list:columns', (value) => {
   setColumns(value);
   render();
 });
 
-setColumns(await workspace.get('record-list:columns'));
-widths = (await workspace.get('record-list:column-widths')) ?? {};
+setColumns(await workspace.get('metarecord-list:columns'));
+widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
 await start();

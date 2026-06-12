@@ -5,7 +5,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use metafolder_core::record::{Field, Value};
+use metafolder_core::metarecord::{Field, Value};
 
 /// The stat-derived fields of a file or directory: `mfr_type`, `mfr_size`,
 /// `mfr_mtime`, and on Unix `mfr_permissions`, `mfr_uid`, `mfr_gid`.

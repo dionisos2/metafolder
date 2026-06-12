@@ -27,9 +27,9 @@ export const store = $state({
   daemonUrl: '',
   daemonConnected: true,
   splitRatio: 0.5,
-  status: {} as Record<string, StatusMessage | null>,
-  lastCommand: {} as Record<string, string>,
-  inputDrafts: {} as Record<string, string>,
+  status: {} as Metarecord<string, StatusMessage | null>,
+  lastCommand: {} as Metarecord<string, string>,
+  inputDrafts: {} as Metarecord<string, string>,
   ui: {
     /// Bumped on every command-input:activate; the always-visible input
     /// grabs the keyboard focus when it changes.
@@ -75,7 +75,7 @@ export async function refreshCommands() {
   });
 }
 
-const statusTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+const statusTimers: Metarecord<string, ReturnType<typeof setTimeout>> = {};
 
 function showStatus(wsId: string, message: StatusMessage) {
   store.status[wsId] = message;

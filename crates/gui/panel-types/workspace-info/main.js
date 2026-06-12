@@ -6,7 +6,7 @@ import { el } from '/__ui.js';
 
 const { workspace } = metafolder;
 
-const STANDARD = ['active_repo', 'selected_paths', 'selected_record', 'selected_entries'];
+const STANDARD = ['active_repo', 'selected_paths', 'selected_metarecord', 'selected_entries'];
 const values = new Map();
 
 function render() {

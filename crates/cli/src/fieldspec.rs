@@ -1,7 +1,7 @@
 //! Field spec parser: `name:type[=value]` (spec-data-model "* CLI",
 //! "Field specification syntax").
 
-use metafolder_core::record::Value;
+use metafolder_core::metarecord::Value;
 use uuid::Uuid;
 
 /// Parses a CLI field spec into `(field_name, value)`.
@@ -37,10 +37,10 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
         ("ref", Some(v)) => Value::Ref(parse_uuid(v)?),
         ("refbase", Some(v)) => Value::RefBase(parse_uuid(v)?),
         ("externalref", Some(v)) => {
-            let (repo, record) = v.split_once(':').ok_or_else(|| {
-                format!("invalid externalref value '{v}': expected <repo_uuid>:<record_uuid>")
+            let (repo, metarecord) = v.split_once(':').ok_or_else(|| {
+                format!("invalid externalref value '{v}': expected <repo_uuid>:<metarecord_uuid>")
             })?;
-            Value::ExternalRef { repo: parse_uuid(repo)?, record: parse_uuid(record)? }
+            Value::ExternalRef { repo: parse_uuid(repo)?, metarecord: parse_uuid(metarecord)? }
         }
         ("tree_ref", Some(v)) => {
             let (parent, leaf) = v.split_once('/').ok_or_else(|| {
@@ -211,10 +211,10 @@ mod tests {
     #[test]
     fn test_externalref() {
         let repo = Uuid::parse_str("47ab0000000000000000000000000001").unwrap();
-        let record = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+        let metarecord = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
         assert_eq!(
             ok("link_a:externalref=47ab0000000000000000000000000001:8f3a2b1c4d5e6f708192a3b4c5d6e7f8"),
-            ("link_a".into(), Value::ExternalRef { repo, record })
+            ("link_a".into(), Value::ExternalRef { repo, metarecord })
         );
     }
 

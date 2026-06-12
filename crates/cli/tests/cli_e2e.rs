@@ -91,7 +91,7 @@ fn init_repo(prefix: &str) -> (String, PathBuf) {
 }
 
 /// Creates an entry from field specs; returns its UUID.
-fn create_record(repo: &str, specs: &[&str]) -> String {
+fn create_metarecord(repo: &str, specs: &[&str]) -> String {
     let mut args = vec!["--repo", repo, "create"];
     for spec in specs {
         args.push("--field");
@@ -220,7 +220,7 @@ fn test_daemon_error_goes_to_stderr() {
 #[test]
 fn test_create_and_get_by_uuid() {
     let (repo, _) = init_repo("create");
-    let uuid = create_record(&repo, &["rating:int=5", "genre:string=jazz"]);
+    let uuid = create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let entries = get_entries(&repo, &uuid);
     let list = entries.as_array().expect("a JSON array");
     assert_eq!(list.len(), 1);
@@ -254,7 +254,7 @@ fn test_create_reserved_field_requires_force() {
 #[test]
 fn test_get_with_fields_filter() {
     let (repo, _) = init_repo("get_fields");
-    let uuid = create_record(&repo, &["rating:int=5", "genre:string=jazz"]);
+    let uuid = create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["--repo", &repo, "get", &uuid, "--fields", "genre"]);
     assert_ok(&out);
     let entries: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
@@ -266,8 +266,8 @@ fn test_get_with_fields_filter() {
 #[test]
 fn test_get_with_predicate() {
     let (repo, _) = init_repo("get_pred");
-    let jazz = create_record(&repo, &["genre:string=jazz"]);
-    let _rock = create_record(&repo, &["genre:string=rock"]);
+    let jazz = create_metarecord(&repo, &["genre:string=jazz"]);
+    let _rock = create_metarecord(&repo, &["genre:string=rock"]);
     let entries = get_entries(&repo, r#"genre = "jazz""#);
     let list = entries.as_array().unwrap();
     assert_eq!(list.len(), 1);
@@ -277,8 +277,8 @@ fn test_get_with_predicate() {
 #[test]
 fn test_list_prints_uuids_one_per_line() {
     let (repo, _) = init_repo("list");
-    let a = create_record(&repo, &["x:int=1"]);
-    let b = create_record(&repo, &["x:int=2"]);
+    let a = create_metarecord(&repo, &["x:int=1"]);
+    let b = create_metarecord(&repo, &["x:int=2"]);
     let out = mf(&["--repo", &repo, "list"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
@@ -295,7 +295,7 @@ fn test_list_prints_uuids_one_per_line() {
 #[test]
 fn test_set_uuid_replaces_all_rows() {
     let (repo, _) = init_repo("set");
-    let uuid = create_record(&repo, &["tag:string=a", "tag:string=b"]);
+    let uuid = create_metarecord(&repo, &["tag:string=a", "tag:string=b"]);
     let out = mf(&["--repo", &repo, "set", &uuid, "tag:string=c"]);
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
@@ -309,9 +309,9 @@ fn test_set_uuid_replaces_all_rows() {
 #[test]
 fn test_set_with_predicate_prints_updated_count() {
     let (repo, _) = init_repo("set_pred");
-    create_record(&repo, &["genre:string=jazz"]);
-    create_record(&repo, &["genre:string=jazz"]);
-    create_record(&repo, &["genre:string=rock"]);
+    create_metarecord(&repo, &["genre:string=jazz"]);
+    create_metarecord(&repo, &["genre:string=jazz"]);
+    create_metarecord(&repo, &["genre:string=rock"]);
     let out = mf(&["--repo", &repo, "set", r#"genre = "jazz""#, "rating:int=4"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
@@ -323,7 +323,7 @@ fn test_set_with_predicate_prints_updated_count() {
 #[test]
 fn test_set_reserved_field_requires_force() {
     let (repo, _) = init_repo("set_force");
-    let uuid = create_record(&repo, &["x:int=1"]);
+    let uuid = create_metarecord(&repo, &["x:int=1"]);
     let out = mf(&["--repo", &repo, "set", &uuid, "mfr_path:tree_ref=/forced_name"]);
     assert_eq!(out.code, 1, "writing mfr_* without --force must fail");
     assert!(out.stderr.starts_with("error:"));
@@ -335,7 +335,7 @@ fn test_set_reserved_field_requires_force() {
 #[test]
 fn test_add_appends_multimap_row() {
     let (repo, _) = init_repo("add");
-    let uuid = create_record(&repo, &["genre:string=jazz"]);
+    let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
     let out = mf(&["--repo", &repo, "add", &uuid, "genre:string=blues"]);
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
@@ -346,7 +346,7 @@ fn test_add_appends_multimap_row() {
 #[test]
 fn test_unset_deletes_single_row_by_id() {
     let (repo, _) = init_repo("unset");
-    let uuid = create_record(&repo, &["genre:string=jazz", "genre:string=blues"]);
+    let uuid = create_metarecord(&repo, &["genre:string=jazz", "genre:string=blues"]);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
     let jazz_id = fields
@@ -367,7 +367,7 @@ fn test_unset_deletes_single_row_by_id() {
 #[test]
 fn test_delete_by_uuid_prints_count() {
     let (repo, _) = init_repo("delete");
-    let uuid = create_record(&repo, &["x:int=1"]);
+    let uuid = create_metarecord(&repo, &["x:int=1"]);
     let out = mf(&["--repo", &repo, "delete", &uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "1");
@@ -378,8 +378,8 @@ fn test_delete_by_uuid_prints_count() {
 #[test]
 fn test_delete_predicate_asks_for_confirmation() {
     let (repo, _) = init_repo("delete_confirm");
-    create_record(&repo, &["genre:string=del_me"]);
-    create_record(&repo, &["genre:string=del_me"]);
+    create_metarecord(&repo, &["genre:string=del_me"]);
+    create_metarecord(&repo, &["genre:string=del_me"]);
 
     // Refusing the confirmation aborts without deleting.
     let out = mf_full(
@@ -405,8 +405,8 @@ fn test_delete_predicate_asks_for_confirmation() {
 #[test]
 fn test_query_prints_matching_uuids() {
     let (repo, _) = init_repo("query");
-    let high = create_record(&repo, &["rating:int=5"]);
-    let _low = create_record(&repo, &["rating:int=1"]);
+    let high = create_metarecord(&repo, &["rating:int=5"]);
+    let _low = create_metarecord(&repo, &["rating:int=1"]);
     let out = mf(&["--repo", &repo, "query", "rating > 3"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
@@ -415,7 +415,7 @@ fn test_query_prints_matching_uuids() {
 #[test]
 fn test_query_select_star_prints_objects() {
     let (repo, _) = init_repo("query_star");
-    create_record(&repo, &["rating:int=5", "genre:string=jazz"]);
+    create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["--repo", &repo, "query", "rating = 5", "--select", "*"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
@@ -427,7 +427,7 @@ fn test_query_select_star_prints_objects() {
 #[test]
 fn test_query_select_field_list_restricts_fields() {
     let (repo, _) = init_repo("query_select");
-    create_record(&repo, &["rating:int=5", "genre:string=jazz"]);
+    create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["--repo", &repo, "query", "rating = 5", "--select", "genre"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
@@ -439,9 +439,9 @@ fn test_query_select_field_list_restricts_fields() {
 #[test]
 fn test_query_sort_and_limit() {
     let (repo, _) = init_repo("query_sort");
-    let r1 = create_record(&repo, &["rating:int=1", "kind:string=s"]);
-    let r3 = create_record(&repo, &["rating:int=3", "kind:string=s"]);
-    let r2 = create_record(&repo, &["rating:int=2", "kind:string=s"]);
+    let r1 = create_metarecord(&repo, &["rating:int=1", "kind:string=s"]);
+    let r3 = create_metarecord(&repo, &["rating:int=3", "kind:string=s"]);
+    let r2 = create_metarecord(&repo, &["rating:int=2", "kind:string=s"]);
     let out = mf(&["--repo", &repo, "query", r#"kind = "s""#, "--sort", "rating:desc"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
@@ -528,7 +528,7 @@ fn test_reconcile_reports_created_entries() {
 
 #[test]
 fn test_reconcile_single_entry() {
-    let (repo, root) = init_repo("reconcile_record");
+    let (repo, root) = init_repo("reconcile_metarecord");
     std::fs::create_dir_all(root.join("dir")).unwrap();
     std::fs::write(root.join("dir/inside.txt"), b"in").unwrap();
 
@@ -538,7 +538,7 @@ fn test_reconcile_single_entry() {
 
     let out = mf(&["--repo", &repo, "set", &dir_uuid, "mf_watch:bool=true"]);
     assert_ok(&out);
-    let out = mf(&["--repo", &repo, "reconcile", "--record", &dir_uuid]);
+    let out = mf(&["--repo", &repo, "reconcile", "--metarecord", &dir_uuid]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("created: 1"), "unexpected summary: {}", out.stdout);
 }
@@ -548,8 +548,8 @@ fn test_reconcile_single_entry() {
 #[test]
 fn test_query_values_prints_raw_scalars() {
     let (repo, _root) = init_repo("values");
-    create_record(&repo, &["type:string=tag", "name:string=jazz"]);
-    create_record(&repo, &["type:string=tag", "name:string=rock", "weight:int=3"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=jazz"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=rock", "weight:int=3"]);
 
     let out = mf(&["--repo", &repo, "query", "type = \"tag\"", "--select", "name", "--values"]);
     assert_ok(&out);
@@ -611,7 +611,7 @@ fn test_path_of_the_root_entry() {
 #[test]
 fn test_path_fails_on_entry_without_mfr_path() {
     let (repo, _root) = init_repo("path_none");
-    let uuid = create_record(&repo, &["title:string=no path"]);
+    let uuid = create_metarecord(&repo, &["title:string=no path"]);
     let out = mf(&["--repo", &repo, "path", &uuid]);
     assert_eq!(out.code, 1, "stdout: {}", out.stdout);
     assert!(out.stderr.contains("mfr_path"), "stderr: {}", out.stderr);
@@ -632,7 +632,7 @@ fn test_schema_workflow() {
     let (repo, root) = init_repo("schema");
     // Violating entry created before any schema exists (delta validation
     // would reject it afterwards).
-    let bad = create_record(&repo, &["mf_schema:string=film", "rating:string=oops"]);
+    let bad = create_metarecord(&repo, &["mf_schema:string=film", "rating:string=oops"]);
 
     std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
     let out = mf(&["--repo", &repo, "schema", "reload"]);
@@ -647,7 +647,7 @@ fn test_schema_workflow() {
     let out = mf(&["--repo", &repo, "schema", "check"]);
     assert_eq!(out.code, 1, "violations must yield exit code 1\nstdout: {}", out.stdout);
     assert!(out.stdout.contains(&bad), "violation line should name the entry");
-    assert!(out.stdout.contains("Checked 2 records, 1 violation"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("Checked 2 metarecords, 1 violation"), "stdout: {}", out.stdout);
 
     // Fix the entry: no violations left, exit code 0.
     let out = mf(&["--repo", &repo, "set", &bad, "rating:int=5"]);
@@ -666,7 +666,7 @@ fn test_schema_workflow() {
 #[test]
 fn test_schema_check_with_predicate() {
     let (repo, root) = init_repo("schema_pred");
-    create_record(&repo, &["mf_schema:string=film", "rating:string=bad"]);
+    create_metarecord(&repo, &["mf_schema:string=film", "rating:string=bad"]);
     std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
     let out = mf(&["--repo", &repo, "schema", "reload"]);
     assert_ok(&out);
@@ -674,7 +674,7 @@ fn test_schema_check_with_predicate() {
     // The predicate restricts the scan to non-matching entries: no violation.
     let out = mf(&["--repo", &repo, "schema", "check", r#"mf_schema = "documentary""#]);
     assert_ok(&out);
-    assert!(out.stdout.contains("Checked 0 records"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("Checked 0 metarecords"), "stdout: {}", out.stdout);
 }
 
 #[test]

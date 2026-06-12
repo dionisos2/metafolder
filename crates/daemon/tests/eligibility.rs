@@ -1,7 +1,7 @@
 //! Tests for the watch/ignore eligibility algorithm
 //! (spec-file-tracking "Watch and Ignore").
 
-use metafolder_core::record::{Field, Value};
+use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::eligibility::is_eligible;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::TreeCache;
@@ -25,7 +25,7 @@ impl Fixture {
         let db_id = Uuid::new_v4();
         let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
         let root = w
-            .create_record(vec![
+            .create_metarecord(vec![
                 Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
                 Field::new("mf_watch", Value::Bool(watch)),
                 Field::new("mf_ignore", Value::String(r"\.git(/.*)?$".into())),
@@ -43,7 +43,7 @@ impl Fixture {
         )];
         fields.extend(extra);
         let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
-        let uuid = w.create_record(fields).unwrap().uuid;
+        let uuid = w.create_metarecord(fields).unwrap().uuid;
         w.commit().unwrap();
         uuid
     }
@@ -127,7 +127,7 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     db::init_schema(&conn).unwrap();
     let db_id = Uuid::new_v4();
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    w.create_record(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
+    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
         .unwrap();
     w.commit().unwrap();
     let mut cache = TreeCache::new(false);

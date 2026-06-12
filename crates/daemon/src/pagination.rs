@@ -12,10 +12,10 @@ use crate::error::ApiError;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Cursor {
-    /// Sort-key values of the last returned record (empty for UUID-only order).
+    /// Sort-key values of the last returned metarecord (empty for UUID-only order).
     #[serde(default)]
     pub keys: Vec<serde_json::Value>,
-    /// UUID of the last returned record (32-char hex).
+    /// UUID of the last returned metarecord (32-char hex).
     pub uuid: String,
     /// Hash of the (query, sort) context.
     pub h: u64,

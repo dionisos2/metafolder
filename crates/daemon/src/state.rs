@@ -62,7 +62,7 @@ pub struct AppState {
 /// Public description of a loaded repository (`GET /repos`).
 #[derive(Debug, Serialize)]
 pub struct RepoInfo {
-    #[serde(with = "metafolder_core::record::hex_uuid")]
+    #[serde(with = "metafolder_core::metarecord::hex_uuid")]
     pub repo_uuid: Uuid,
     pub name: String,
     pub root: PathBuf,

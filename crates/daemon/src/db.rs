@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
-use metafolder_core::record::{Field, Record, Value, ZERO_UUID};
+use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
 
 /// One row of the `field` table, decoded.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,33 +91,46 @@ pub fn open_database(path: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// Migrates a database created before the metadata→record rename: tables
-/// `metadata`/`metadata_db`, their `metadata_uuid` columns, the old index
-/// names and the `*_entry` op type strings.
+/// Migrates a database created under an earlier name of the metarecord
+/// concept: either the original `metadata`/`metadata_db` tables (with
+/// `metadata_uuid` columns and `*_entry` op types) or the short-lived
+/// `record`/`record_db` intermediate. Both land on the current schema.
 fn migrate_legacy_table_names(conn: &Connection) -> Result<()> {
-    let legacy: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metadata'",
-        [],
-        |r| r.get(0),
-    )?;
-    if legacy == 0 {
-        return Ok(());
+    let has_table = |name: &str| -> Result<bool> {
+        let n: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |r| r.get(0),
+        )?;
+        Ok(n != 0)
+    };
+    for (table, table_db, uuid_col, op_suffix) in [
+        ("metadata", "metadata_db", "metadata_uuid", "entry"),
+        ("record", "record_db", "record_uuid", "record"),
+    ] {
+        if !has_table(table)? {
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "BEGIN;
+             ALTER TABLE {table} RENAME TO metarecord;
+             ALTER TABLE {table_db} RENAME TO metarecord_db;
+             ALTER TABLE metarecord_db RENAME COLUMN {uuid_col} TO metarecord_uuid;
+             ALTER TABLE field RENAME COLUMN {uuid_col} TO metarecord_uuid;
+             DROP INDEX IF EXISTS idx_metadata_db;
+             DROP INDEX IF EXISTS idx_record_db;
+             CREATE INDEX IF NOT EXISTS idx_metarecord_db ON metarecord_db(db_id);
+             DROP INDEX IF EXISTS idx_field_entry;
+             DROP INDEX IF EXISTS idx_field_record;
+             CREATE INDEX IF NOT EXISTS idx_field_metarecord ON field(metarecord_uuid, field_name);
+             UPDATE operation SET op_type = 'create_metarecord' WHERE op_type = 'create_{op_suffix}';
+             UPDATE operation SET op_type = 'delete_metarecord' WHERE op_type = 'delete_{op_suffix}';
+             COMMIT;",
+        ))
+        .with_context(|| format!("Failed to migrate the legacy {table} schema"))?;
+        return Ok(()); // The two legacy states are mutually exclusive.
     }
-    conn.execute_batch(
-        "BEGIN;
-         ALTER TABLE metadata RENAME TO record;
-         ALTER TABLE metadata_db RENAME TO record_db;
-         ALTER TABLE record_db RENAME COLUMN metadata_uuid TO record_uuid;
-         ALTER TABLE field RENAME COLUMN metadata_uuid TO record_uuid;
-         DROP INDEX IF EXISTS idx_metadata_db;
-         CREATE INDEX IF NOT EXISTS idx_record_db ON record_db(db_id);
-         DROP INDEX IF EXISTS idx_field_entry;
-         CREATE INDEX IF NOT EXISTS idx_field_record ON field(record_uuid, field_name);
-         UPDATE operation SET op_type = 'create_record' WHERE op_type = 'create_entry';
-         UPDATE operation SET op_type = 'delete_record' WHERE op_type = 'delete_entry';
-         COMMIT;",
-    )
-    .context("Failed to migrate the legacy metadata/record schema")
+    Ok(())
 }
 
 /// Opens an in-memory database with connection-level settings (for tests).
@@ -132,33 +145,33 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "
         -- ── Data tables (spec-data-model) ───────────────────────────────────
-        CREATE TABLE record (
+        CREATE TABLE metarecord (
             uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
             version  INTEGER NOT NULL DEFAULT 0     -- bumped on every field write
         );
 
-        -- One row per owning repository (usually one; two for link records).
-        CREATE TABLE record_db (
-            record_uuid  BLOB NOT NULL REFERENCES record(uuid) ON DELETE CASCADE,
+        -- One row per owning repository (usually one; two for link metarecords).
+        CREATE TABLE metarecord_db (
+            metarecord_uuid  BLOB NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
             db_id          BLOB NOT NULL,
-            PRIMARY KEY (record_uuid, db_id)
+            PRIMARY KEY (metarecord_uuid, db_id)
         );
-        CREATE INDEX idx_record_db ON record_db(db_id);
+        CREATE INDEX idx_metarecord_db ON metarecord_db(db_id);
 
         CREATE TABLE field (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            record_uuid     BLOB    NOT NULL REFERENCES record(uuid) ON DELETE CASCADE,
+            metarecord_uuid     BLOB    NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
             field_name      TEXT    NOT NULL,
             value_type      TEXT    NOT NULL,
             value_text      TEXT,    -- string, datetime
             value_int       INTEGER, -- int, bool (0/1)
             value_real      REAL,    -- float
-            value_uuid      BLOB,    -- ref/refbase/externalref: record or repo UUID;
+            value_uuid      BLOB,    -- ref/refbase/externalref: metarecord or repo UUID;
                                      -- tree_ref: parent UUID (zero UUID for roots)
             value_ref_repo  BLOB,    -- externalref only: repo UUID
             value_name      TEXT     -- tree_ref: name component
         );
-        CREATE INDEX idx_field_record ON field(record_uuid, field_name);
+        CREATE INDEX idx_field_metarecord ON field(metarecord_uuid, field_name);
         CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
             WHERE value_type IN ('ref', 'externalref');
         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
@@ -229,13 +242,13 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
 
 // ── Read helpers ──────────────────────────────────────────────────────────────
 
-/// Retrieves a record with all its fields, or None if it does not exist.
-pub fn get_record(conn: &Connection, uuid: Uuid) -> Result<Option<Record>> {
+/// Retrieves a metarecord with all its fields, or None if it does not exist.
+pub fn get_metarecord(conn: &Connection, uuid: Uuid) -> Result<Option<MetaRecord>> {
     let Some(version) = get_version(conn, uuid)? else {
         return Ok(None);
     };
     let mut stmt =
-        conn.prepare("SELECT db_id FROM record_db WHERE record_uuid = ?1 ORDER BY db_id")?;
+        conn.prepare("SELECT db_id FROM metarecord_db WHERE metarecord_uuid = ?1 ORDER BY db_id")?;
     let db_ids = stmt
         .query_map(params![uuid_to_bytes(uuid)], |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
@@ -246,13 +259,13 @@ pub fn get_record(conn: &Connection, uuid: Uuid) -> Result<Option<Record>> {
         .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
         .collect();
 
-    Ok(Some(Record { uuid, db_ids, version, fields }))
+    Ok(Some(MetaRecord { uuid, db_ids, version, fields }))
 }
 
-/// Returns the version counter of a record, or None if it does not exist.
+/// Returns the version counter of a metarecord, or None if it does not exist.
 pub fn get_version(conn: &Connection, uuid: Uuid) -> Result<Option<u64>> {
     let v: Option<i64> = conn
-        .prepare_cached("SELECT version FROM record WHERE uuid = ?1")?
+        .prepare_cached("SELECT version FROM metarecord WHERE uuid = ?1")?
         .query_row(params![uuid_to_bytes(uuid)], |r| r.get(0))
         .optional()?;
     Ok(v.map(|v| v as u64))
@@ -276,20 +289,20 @@ fn row_to_field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, R
     Ok((id, name, value))
 }
 
-/// All field rows of a record, with their row ids.
+/// All field rows of a metarecord, with their row ids.
 pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
     let mut stmt = conn.prepare_cached(&format!(
-        "SELECT {FIELD_COLUMNS} FROM field WHERE record_uuid = ?1 ORDER BY id"
+        "SELECT {FIELD_COLUMNS} FROM field WHERE metarecord_uuid = ?1 ORDER BY id"
     ))?;
     let rows = stmt.query_map(params![uuid_to_bytes(uuid)], row_to_field_row)?;
     collect_field_rows(rows)
 }
 
-/// Field rows of a record restricted to one field name.
+/// Field rows of a metarecord restricted to one field name.
 pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
     let mut stmt = conn.prepare_cached(&format!(
         "SELECT {FIELD_COLUMNS} FROM field
-         WHERE record_uuid = ?1 AND field_name = ?2 ORDER BY id"
+         WHERE metarecord_uuid = ?1 AND field_name = ?2 ORDER BY id"
     ))?;
     let rows = stmt.query_map(params![uuid_to_bytes(uuid), name], row_to_field_row)?;
     collect_field_rows(rows)
@@ -305,15 +318,15 @@ fn collect_field_rows<'a>(
     .collect()
 }
 
-/// All record UUIDs owned exclusively by `db_id`, sorted by UUID byte order.
-/// Link records (several owners) are excluded, as mandated by spec-data-model.
+/// All metarecord UUIDs owned exclusively by `db_id`, sorted by UUID byte order.
+/// Link metarecords (several owners) are excluded, as mandated by spec-data-model.
 pub fn list_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
-        "SELECT m1.record_uuid FROM record_db m1
+        "SELECT m1.metarecord_uuid FROM metarecord_db m1
          WHERE m1.db_id = ?1
-           AND (SELECT COUNT(*) FROM record_db m2
-                WHERE m2.record_uuid = m1.record_uuid) = 1
-         ORDER BY m1.record_uuid",
+           AND (SELECT COUNT(*) FROM metarecord_db m2
+                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1
+         ORDER BY m1.metarecord_uuid",
     )?;
     let uuids = stmt
         .query_map(params![uuid_to_bytes(db_id)], |r| r.get::<_, Vec<u8>>(0))?
@@ -322,12 +335,12 @@ pub fn list_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
     Ok(uuids)
 }
 
-/// All records of this repository holding an `mfr_path` TreeRef (i.e. with
+/// All metarecords of this repository holding an `mfr_path` TreeRef (i.e. with
 /// a known tree position, stale or not).
-pub fn all_tracked_records(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
+pub fn all_tracked_metarecords(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT f.record_uuid FROM field f
-         JOIN record_db md ON md.record_uuid = f.record_uuid AND md.db_id = ?1
+        "SELECT DISTINCT f.metarecord_uuid FROM field f
+         JOIN metarecord_db md ON md.metarecord_uuid = f.metarecord_uuid AND md.db_id = ?1
          WHERE f.field_name = 'mfr_path' AND f.value_type = 'tree_ref'",
     )?;
     let uuids = stmt
@@ -337,13 +350,13 @@ pub fn all_tracked_records(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> 
     Ok(uuids)
 }
 
-/// Orphaned records of this repository (`mfr_path` = Nothing) whose stored
+/// Orphaned metarecords of this repository (`mfr_path` = Nothing) whose stored
 /// `mfr_size` matches. First step of the fingerprint cascade.
 pub fn find_orphans_by_size(conn: &Connection, db_id: Uuid, size: i64) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
-        "SELECT p.record_uuid FROM field p
-         JOIN record_db md ON md.record_uuid = p.record_uuid AND md.db_id = ?1
-         JOIN field s ON s.record_uuid = p.record_uuid
+        "SELECT p.metarecord_uuid FROM field p
+         JOIN metarecord_db md ON md.metarecord_uuid = p.metarecord_uuid AND md.db_id = ?1
+         JOIN field s ON s.metarecord_uuid = p.metarecord_uuid
               AND s.field_name = 'mfr_size' AND s.value_type = 'int' AND s.value_int = ?2
          WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'",
     )?;
@@ -354,7 +367,7 @@ pub fn find_orphans_by_size(conn: &Connection, db_id: Uuid, size: i64) -> Result
     Ok(uuids)
 }
 
-/// One page of [`list_entries`]: records after `after` (exclusive), at most
+/// One page of [`list_entries`]: metarecords after `after` (exclusive), at most
 /// `limit` rows, sorted by UUID byte order (keyset pagination).
 pub fn list_entries_page(
     conn: &Connection,
@@ -363,12 +376,12 @@ pub fn list_entries_page(
     limit: usize,
 ) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
-        "SELECT m1.record_uuid FROM record_db m1
+        "SELECT m1.metarecord_uuid FROM metarecord_db m1
          WHERE m1.db_id = ?1
-           AND (?2 IS NULL OR m1.record_uuid > ?2)
-           AND (SELECT COUNT(*) FROM record_db m2
-                WHERE m2.record_uuid = m1.record_uuid) = 1
-         ORDER BY m1.record_uuid LIMIT ?3",
+           AND (?2 IS NULL OR m1.metarecord_uuid > ?2)
+           AND (SELECT COUNT(*) FROM metarecord_db m2
+                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1
+         ORDER BY m1.metarecord_uuid LIMIT ?3",
     )?;
     let uuids = stmt
         .query_map(
@@ -405,7 +418,7 @@ pub fn find_tree_child_opts(
     let uuid: Option<Vec<u8>> = conn
         .query_row(
             &format!(
-                "SELECT record_uuid FROM field
+                "SELECT metarecord_uuid FROM field
                  WHERE field_name = ?1 AND value_type = 'tree_ref'
                    AND value_uuid = ?2 AND value_name = ?3{collate}"
             ),
@@ -424,7 +437,7 @@ pub fn tree_children(
     parent: Uuid,
 ) -> Result<Vec<(Uuid, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT record_uuid, value_name FROM field
+        "SELECT metarecord_uuid, value_name FROM field
          WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_uuid = ?2",
     )?;
     let children = stmt
@@ -439,8 +452,8 @@ pub fn tree_children(
     Ok(children)
 }
 
-/// The first tree position `(parent, name)` of a record for `field_name`,
-/// or None when the record has no such TreeRef field.
+/// The first tree position `(parent, name)` of a metarecord for `field_name`,
+/// or None when the metarecord has no such TreeRef field.
 pub fn tree_position(
     conn: &Connection,
     field_name: &str,
@@ -449,7 +462,7 @@ pub fn tree_position(
     let row: Option<(Vec<u8>, String)> = conn
         .query_row(
             "SELECT value_uuid, value_name FROM field
-             WHERE record_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'
+             WHERE metarecord_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'
              ORDER BY id LIMIT 1",
             params![uuid_to_bytes(uuid), field_name],
             |r| Ok((r.get(0)?, r.get(1)?)),
@@ -462,7 +475,7 @@ pub fn tree_position(
     .transpose()
 }
 
-/// The TreeRef parents of a record for `field_name` (multi-map: one record can
+/// The TreeRef parents of a metarecord for `field_name` (multi-map: one metarecord can
 /// have several positions). `None` in the result means "root".
 pub fn get_tree_parents(
     conn: &Connection,
@@ -471,7 +484,7 @@ pub fn get_tree_parents(
 ) -> Result<Vec<Option<Uuid>>> {
     let mut stmt = conn.prepare(
         "SELECT value_uuid FROM field
-         WHERE record_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'",
+         WHERE metarecord_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'",
     )?;
     let parents = stmt
         .query_map(params![uuid_to_bytes(uuid), field_name], |r| r.get::<_, Vec<u8>>(0))?
@@ -547,9 +560,9 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
             e = EncodedValue::new("refbase");
             e.uuid = Some(uuid_to_bytes(*id));
         }
-        Value::ExternalRef { repo, record } => {
+        Value::ExternalRef { repo, metarecord } => {
             e = EncodedValue::new("externalref");
-            e.uuid = Some(uuid_to_bytes(*record));
+            e.uuid = Some(uuid_to_bytes(*metarecord));
             e.ref_repo = Some(uuid_to_bytes(*repo));
         }
     }
@@ -583,7 +596,7 @@ pub(crate) fn decode_value(
         "refbase" => Ok(Value::RefBase(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
         "externalref" => Ok(Value::ExternalRef {
             repo: bytes_to_uuid(ref_repo.context("value_ref_repo missing")?)?,
-            record: bytes_to_uuid(uuid.context("value_uuid missing")?)?,
+            metarecord: bytes_to_uuid(uuid.context("value_uuid missing")?)?,
         }),
         other => bail!("Unknown value type: '{other}'"),
     }
@@ -593,7 +606,7 @@ pub(crate) fn decode_value(
 /// primary key (used by log navigation); None lets AUTOINCREMENT assign one.
 pub(crate) fn insert_field_row(
     conn: &Connection,
-    record_uuid: Uuid,
+    metarecord_uuid: Uuid,
     name: &str,
     value: &Value,
     explicit_id: Option<i64>,
@@ -609,12 +622,12 @@ pub(crate) fn insert_field_row(
     match explicit_id {
         None => {
             conn.prepare_cached(
-                "INSERT INTO field (record_uuid, field_name, value_type, value_text,
+                "INSERT INTO field (metarecord_uuid, field_name, value_type, value_text,
                                     value_int, value_real, value_uuid, value_ref_repo, value_name)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             )?
             .execute(params![
-                uuid_to_bytes(record_uuid),
+                uuid_to_bytes(metarecord_uuid),
                 name,
                 e.value_type,
                 e.text,
@@ -628,13 +641,13 @@ pub(crate) fn insert_field_row(
         }
         Some(id) => {
             conn.prepare_cached(
-                "INSERT INTO field (id, record_uuid, field_name, value_type, value_text,
+                "INSERT INTO field (id, metarecord_uuid, field_name, value_type, value_text,
                                     value_int, value_real, value_uuid, value_ref_repo, value_name)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?
             .execute(params![
                 id,
-                uuid_to_bytes(record_uuid),
+                uuid_to_bytes(metarecord_uuid),
                 name,
                 e.value_type,
                 e.text,

@@ -53,7 +53,7 @@ function resolverFor(repo) {
       createPathResolver(async (uuid) => {
         const response = await request('daemon.request', {
           method: 'GET',
-          path: `/repos/${repo}/records/${uuid}`,
+          path: `/repos/${repo}/metarecords/${uuid}`,
           body: null,
         });
         if (response.status !== 200) {
@@ -242,13 +242,13 @@ window.metafolder = {
      */
     repoInternalDir: async (repo) => (await repoInfo(repo)).internal_dir,
     /**
-     * Absolute filesystem paths of an record: one per `mfr_path` tree_ref
+     * Absolute filesystem paths of an metarecord: one per `mfr_path` tree_ref
      * (fields are a multi-map), unresolvable (stale) refs skipped.
      */
-    recordPaths: async (repo, record) => {
+    metarecordPaths: async (repo, metarecord) => {
       const root = await window.metafolder.daemon.repoRoot(repo);
       const paths = [];
-      for (const f of record.fields ?? []) {
+      for (const f of metarecord.fields ?? []) {
         if (f.name !== 'mfr_path' || f.value.type !== 'tree_ref') continue;
         try {
           const relative = await resolverFor(repo).resolveTreeRef(f.value.value);

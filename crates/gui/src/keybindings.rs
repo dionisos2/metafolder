@@ -27,7 +27,7 @@ pub struct BindingSpec {
 pub struct CompiledBinding {
     /// Normalized combo sequence, e.g. `["g", "g"]` or `["ctrl+k"]`.
     pub keys: Vec<String>,
-    /// Command invocation string, e.g. `"record-list:set-mode grid"`.
+    /// Command invocation string, e.g. `"metarecord-list:set-mode grid"`.
     pub invocation: String,
     /// Panel type scope; `None` = global.
     pub when: Option<String>,
@@ -195,7 +195,7 @@ mod tests {
     const SPEC_EXAMPLE: &str = r#"
 "escape"  = { command = "editing:unfocus",         text-input = true              }
 "ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
-"j"       = { command = "record-list:next",         when = "record-list"            }
+"j"       = { command = "metarecord-list:next",         when = "metarecord-list"            }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
 "ctrl+t"  = { command = "tab:new"                                                  }
 "#;
@@ -219,8 +219,8 @@ mod tests {
         assert!(escape.text_input);
 
         let j = find(&["j"]);
-        assert_eq!(j.command, "record-list:next");
-        assert_eq!(j.when.as_deref(), Some("record-list"));
+        assert_eq!(j.command, "metarecord-list:next");
+        assert_eq!(j.when.as_deref(), Some("metarecord-list"));
         assert!(!j.text_input);
 
         let ctrl_e = find(&["ctrl+e"]);
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_combo_normalization_applies_to_merge() {
-        // The same combo spelled differently still merges as one record.
+        // The same combo spelled differently still merges as one metarecord.
         let defaults = r#""shift+ctrl+a" = { command = "a" }"#;
         let user = r#""ctrl+shift+A" = { command = "b" }"#;
         let set = KeybindingSet::from_sources(defaults, user).unwrap();
@@ -283,9 +283,9 @@ mod tests {
 
     #[test]
     fn test_suggestion_dropped_on_same_combo_and_scope() {
-        let user = r#""j" = { command = "user:thing", when = "record-list" }"#;
+        let user = r#""j" = { command = "user:thing", when = "metarecord-list" }"#;
         let mut set = KeybindingSet::from_sources("", user).unwrap();
-        set.add_suggestion("j", "record-list:next", Some("record-list"), false)
+        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false)
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 1);
@@ -298,7 +298,7 @@ mod tests {
         // already gives the local binding precedence at match time.
         let user = r#""j" = { command = "user:global-j" }"#;
         let mut set = KeybindingSet::from_sources("", user).unwrap();
-        set.add_suggestion("j", "record-list:next", Some("record-list"), false)
+        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false)
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 2);
@@ -327,15 +327,15 @@ mod tests {
     #[test]
     fn test_compiled_table_carries_scope_dimensions_and_sequences() {
         let defaults = r#"
-"g g" = { command = "record-list:goto-top", when = "record-list" }
+"g g" = { command = "metarecord-list:goto-top", when = "metarecord-list" }
 "escape" = { command = "editing:unfocus", text-input = true }
 "#;
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let table = set.compiled();
 
         let gg = table.iter().find(|b| b.keys == ["g", "g"]).unwrap();
-        assert_eq!(gg.invocation, "record-list:goto-top");
-        assert_eq!(gg.when.as_deref(), Some("record-list"));
+        assert_eq!(gg.invocation, "metarecord-list:goto-top");
+        assert_eq!(gg.when.as_deref(), Some("metarecord-list"));
         assert!(!gg.text_input);
 
         let escape = table.iter().find(|b| b.keys == ["escape"]).unwrap();

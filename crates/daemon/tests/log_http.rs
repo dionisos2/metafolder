@@ -47,7 +47,7 @@ async fn setup(prefix: &str) -> (Router, String, PathBuf) {
 
 async fn create(app: &Router, repo: &str, fields: Value) -> Value {
     let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/records"), Some(json!({"fields": fields})))
+        request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})))
             .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body
@@ -57,7 +57,7 @@ async fn patch(app: &Router, repo: &str, uuid: &str, name: &str, value: Value) -
     let (status, body) = request(
         app,
         "PATCH",
-        &format!("/repos/{repo}/records/{uuid}"),
+        &format!("/repos/{repo}/metarecords/{uuid}"),
         Some(json!({"name": name, "value": value})),
     )
     .await;
@@ -73,7 +73,7 @@ async fn get_log(app: &Router, repo: &str, params: &str) -> Value {
 
 async fn field_of(app: &Router, repo: &str, uuid: &str, name: &str) -> Option<Value> {
     let (status, body) =
-        request(app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
+        request(app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     if status != StatusCode::OK {
         return None;
     }
@@ -108,7 +108,7 @@ async fn test_log_linear_and_filters() {
     assert!(ops[0].get("snapshots_before").is_none(), "snapshots off by default");
 
     // Filter by entry.
-    let filtered = get_log(&app, &repo, &format!("?record_uuid={uuid}")).await;
+    let filtered = get_log(&app, &repo, &format!("?metarecord_uuid={uuid}")).await;
     assert_eq!(filtered["operations"].as_array().unwrap().len(), 2);
 
     // Limit keeps the most recent.
@@ -181,7 +181,7 @@ async fn test_rollback_by_id_and_redo() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|o| o["op_type"] == "create_record" && o["entity_uuid"] == json!(uuid))
+        .find(|o| o["op_type"] == "create_metarecord" && o["entity_uuid"] == json!(uuid))
         .unwrap()["id"]
         .as_i64()
         .unwrap();
@@ -200,7 +200,7 @@ async fn test_rollback_by_id_and_redo() {
     assert_eq!(body["operations_unapplied"], 1);
     assert_eq!(body["operations_applied"], 0);
 
-    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
+    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(after["fields"][0]["value"]["value"], 1, "old value restored");
     assert_eq!(after["version"], 0, "version restored exactly");
 
@@ -214,7 +214,7 @@ async fn test_rollback_by_id_and_redo() {
     .await;
     assert_eq!(status, StatusCode::OK, "redo failed: {body}");
     assert_eq!(body["operations_applied"], 1);
-    let (_, redone) = request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
+    let (_, redone) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(redone["fields"][0]["value"]["value"], 2);
     assert_eq!(redone["version"], 1);
 
@@ -285,7 +285,7 @@ async fn test_rollback_restores_deleted_record_with_field_ids() {
     let version_before = entry["version"].as_u64().unwrap();
 
     let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/records/{uuid}"), None).await;
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     let (status, body) = request(
@@ -298,7 +298,7 @@ async fn test_rollback_restores_deleted_record_with_field_ids() {
     assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
 
     let (status, restored) =
-        request(&app, "GET", &format!("/repos/{repo}/records/{uuid}"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK, "entry must be restored");
     let restored_ids: Vec<i64> = restored["fields"]
         .as_array()
@@ -381,7 +381,7 @@ async fn test_rollback_to_empty_state() {
     assert_eq!(status, StatusCode::OK, "got {body}");
     assert_eq!(body["new_head"], Value::Null);
 
-    let (_, all) = request(&app, "GET", &format!("/repos/{repo}/records"), None).await;
+    let (_, all) = request(&app, "GET", &format!("/repos/{repo}/metarecords"), None).await;
     assert_eq!(all.as_array().unwrap().len(), 0, "empty state");
 
     std::fs::remove_dir_all(root).unwrap();
@@ -414,7 +414,7 @@ async fn test_prune_before_makes_weak_root() {
     let log = get_log(&app, &repo, "").await;
     let ops = log["operations"].as_array().unwrap();
     assert_eq!(ops.len(), 3);
-    let target = ops[1]["id"].as_i64().unwrap(); // our create_record
+    let target = ops[1]["id"].as_i64().unwrap(); // our create_metarecord
 
     let (status, body) = request(
         &app,

@@ -14,12 +14,12 @@ export interface PanelMeta {
 
 interface Instance {
   meta: PanelMeta;
-  post: (message: Record<string, unknown>) => void;
+  post: (message: Metarecord<string, unknown>) => void;
   subscriptions: Set<string>;
 }
 
 export interface BridgeDeps {
-  invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>;
+  invoke: (command: string, args?: Metarecord<string, unknown>) => Promise<unknown>;
   dispatch: (invocation: string) => Promise<void>;
   onCommandsChanged: () => void;
 }
@@ -32,7 +32,7 @@ export function createBridgeCore(deps: BridgeDeps) {
   async function handleRequest(
     instance: Instance,
     method: string,
-    params: Record<string, unknown>,
+    params: Metarecord<string, unknown>,
   ): Promise<unknown> {
     const { wsId, panelType } = instance.meta;
     switch (method) {
@@ -106,7 +106,7 @@ export function createBridgeCore(deps: BridgeDeps) {
 
     async onMessage(source: string, data: unknown) {
       const instance = instances.get(source);
-      const message = data as Record<string, unknown> | null;
+      const message = data as Metarecord<string, unknown> | null;
       if (!instance || !message || message.mf !== true) return;
 
       switch (message.type) {
@@ -116,7 +116,7 @@ export function createBridgeCore(deps: BridgeDeps) {
             const result = await handleRequest(
               instance,
               String(message.method),
-              (message.params ?? {}) as Record<string, unknown>,
+              (message.params ?? {}) as Metarecord<string, unknown>,
             );
             instance.post({ mf: true, type: 'response', id, ok: true, result });
           } catch (error) {

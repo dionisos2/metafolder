@@ -1,9 +1,9 @@
 // file-manager panel: browse the disk (via metafolder.fs, not the
-// daemon), distinguish tracked records, add paths to the DB
+// daemon), distinguish tracked metarecords, add paths to the DB
 // (spec-gui "file-manager panel type").
 
 import { el } from '/__ui.js';
-import { loadTrackedChildren, loadDirRecord, parentDir, isWithin } from './tracked.js';
+import { loadTrackedChildren, loadDirMetarecord, parentDir, isWithin } from './tracked.js';
 
 const { fs, daemon, workspace, commands, statusBar } = metafolder;
 
@@ -14,7 +14,7 @@ let currentDir = null;
 let listing = []; // [{name, path, is_dir}]
 let cursorIndex = -1;
 let constrainToRoot = true;
-let trackedPaths = new Map(); // absolute path -> record uuid (children of currentDir only)
+let trackedPaths = new Map(); // absolute path -> metarecord uuid (children of currentDir only)
 
 const entriesList = document.getElementById('entries');
 const placeholderElement = document.getElementById('placeholder');
@@ -37,8 +37,8 @@ async function refreshTracked(dir) {
     const parent = parentDir(dir);
     const [tracked, selfUuid, parentUuid] = await Promise.all([
       loadTrackedChildren(daemon, repo, repoRoot, dir),
-      loadDirRecord(daemon, repo, repoRoot, dir),
-      loadDirRecord(daemon, repo, repoRoot, parent),
+      loadDirMetarecord(daemon, repo, repoRoot, dir),
+      loadDirMetarecord(daemon, repo, repoRoot, parent),
     ]);
     if (selfUuid) tracked.set(dir, selfUuid);
     if (parentUuid) tracked.set(parent, parentUuid);
@@ -115,7 +115,7 @@ async function select(index) {
   document.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
   await workspace.set('selected_paths', [item.path]);
   const uuid = trackedPaths.get(item.path);
-  await workspace.set('selected_record', uuid ? { uuid, repo } : null);
+  await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
 }
 
 async function activate(index) {
@@ -164,7 +164,7 @@ async function addSelected() {
   await refreshTracked(currentDir);
   render();
   await select(cursorIndex);
-  await workspace.set('records:dirty', Date.now());
+  await workspace.set('metarecords:dirty', Date.now());
 }
 
 async function gotoRoot() {
@@ -240,7 +240,7 @@ async function start() {
 }
 
 workspace.onChange('active_repo', () => void start());
-workspace.onChange('records:dirty', async () => {
+workspace.onChange('metarecords:dirty', async () => {
   if (currentDir === null) return;
   await refreshTracked(currentDir);
   render();

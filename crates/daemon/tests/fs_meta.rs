@@ -4,7 +4,7 @@
 use std::io::Write as _;
 use std::path::PathBuf;
 
-use metafolder_core::record::Value;
+use metafolder_core::metarecord::Value;
 use metafolder_daemon::fingerprint;
 use metafolder_daemon::fs_meta;
 use uuid::Uuid;

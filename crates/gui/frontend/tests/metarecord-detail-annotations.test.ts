@@ -1,10 +1,10 @@
-// record-detail value annotations: the dim secondary line under reference
+// metarecord-detail value annotations: the dim secondary line under reference
 // values — the resolved path of a tree_ref (walked through the same field
 // name on the parent chain) and the "name" field of a ref's target.
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { createAnnotator } from '../../panel-types/record-detail/annotations.js';
+import { createAnnotator } from '../../panel-types/metarecord-detail/annotations.js';
 
 type Field = { name: string; value: { type: string; value?: unknown } };
 type Entry = { uuid: string; fields: Field[] };
@@ -16,12 +16,12 @@ const treeRef = (parent: string | null, name: string) => ({
 
 function annotatorFor(entries: Entry[]) {
   const byUuid = new Map(entries.map((e) => [e.uuid, e]));
-  const getRecord = vi.fn(async (uuid: string) => {
+  const getMetarecord = vi.fn(async (uuid: string) => {
     const entry = byUuid.get(uuid);
     if (!entry) throw new Error(`no entry ${uuid}`);
     return entry;
   });
-  return { annotator: createAnnotator(getRecord), getRecord };
+  return { annotator: createAnnotator(getMetarecord), getMetarecord };
 }
 
 describe('tree_ref annotations', () => {
@@ -40,9 +40,9 @@ describe('tree_ref annotations', () => {
   });
 
   test('a rootless tree_ref needs no annotation (the name is the path)', async () => {
-    const { annotator, getRecord } = annotatorFor([]);
+    const { annotator, getMetarecord } = annotatorFor([]);
     expect(await annotator.annotate('genre', treeRef(null, 'jazz'))).toBeNull();
-    expect(getRecord).not.toHaveBeenCalled();
+    expect(getMetarecord).not.toHaveBeenCalled();
   });
 
   test('a broken chain (parent without the field) yields no annotation', async () => {
@@ -57,10 +57,10 @@ describe('tree_ref annotations', () => {
   });
 
   test('parent entries are fetched once across annotations', async () => {
-    const { annotator, getRecord } = annotatorFor([root, dir]);
+    const { annotator, getMetarecord } = annotatorFor([root, dir]);
     await annotator.annotate('mfr_path', treeRef('d000', 'a.txt'));
     await annotator.annotate('mfr_path', treeRef('d000', 'b.txt'));
-    expect(getRecord.mock.calls.filter(([uuid]) => uuid === 'd000')).toHaveLength(1);
+    expect(getMetarecord.mock.calls.filter(([uuid]) => uuid === 'd000')).toHaveLength(1);
   });
 });
 

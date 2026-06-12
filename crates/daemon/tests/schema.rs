@@ -90,7 +90,7 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Path
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> (StatusCode, Value) {
-    request(app, "POST", &format!("/repos/{repo}/records"), Some(json!({"fields": fields}))).await
+    request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields}))).await
 }
 
 // ── Loading ───────────────────────────────────────────────────────────────────
@@ -203,7 +203,7 @@ async fn test_global_type_constraint_rejects_wrong_type() {
 async fn test_per_type_cardinality() {
     let (app, repo, root) = setup_with_schema("card", film_schema()).await;
 
-    // A film: rating is capped at one row; untyped records are not.
+    // A film: rating is capped at one row; untyped metarecords are not.
     let (status, film) = create(
         &app,
         &repo,
@@ -220,7 +220,7 @@ async fn test_per_type_cardinality() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records/{film_uuid}/fields"),
+        &format!("/repos/{repo}/metarecords/{film_uuid}/fields"),
         Some(json!({"name": "rating", "value": {"type": "int", "value": 4}})),
     )
     .await;
@@ -228,14 +228,14 @@ async fn test_per_type_cardinality() {
     assert_eq!(body["violations"][0]["kind"], "max_cardinality");
     assert_eq!(body["violations"][0]["type"], "film");
 
-    // Untyped record: no film constraints, two ratings allowed.
+    // Untyped metarecord: no film constraints, two ratings allowed.
     let (_, untyped) =
         create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
     let untyped_uuid = untyped["uuid"].as_str().unwrap();
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/records/{untyped_uuid}/fields"),
+        &format!("/repos/{repo}/metarecords/{untyped_uuid}/fields"),
         Some(json!({"name": "rating", "value": {"type": "int", "value": 2}})),
     )
     .await;
@@ -243,7 +243,7 @@ async fn test_per_type_cardinality() {
 
     // min = 1 on name: deleting the last name row is rejected.
     let (_, film_now) =
-        request(&app, "GET", &format!("/repos/{repo}/records/{film_uuid}"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{film_uuid}"), None).await;
     let name_id = film_now["fields"]
         .as_array()
         .unwrap()
@@ -255,16 +255,16 @@ async fn test_per_type_cardinality() {
     let (status, body) = request(
         &app,
         "DELETE",
-        &format!("/repos/{repo}/records/{film_uuid}/fields/{name_id}"),
+        &format!("/repos/{repo}/metarecords/{film_uuid}/fields/{name_id}"),
         None,
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "removing the last name must fail: {body}");
     assert_eq!(body["violations"][0]["kind"], "min_cardinality");
 
-    // Deleting the whole record stays allowed.
+    // Deleting the whole metarecord stays allowed.
     let (status, _) =
-        request(&app, "DELETE", &format!("/repos/{repo}/records/{film_uuid}"), None).await;
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{film_uuid}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -274,24 +274,24 @@ async fn test_per_type_cardinality() {
 async fn test_delta_validation_ignores_untouched_fields() {
     let (app, repo, root) = setup_with_schema("delta", film_schema()).await;
 
-    // A record violating the rating constraint is created while the schema
+    // A metarecord violating the rating constraint is created while the schema
     // ignores it (rating written as int first, then the schema reloaded with
     // a stricter view is simulated by writing another field).
-    let (_, record) = create(
+    let (_, metarecord) = create(
         &app,
         &repo,
         json!([{"name": "rating", "value": {"type": "int", "value": 5}},
                {"name": "genre", "value": {"type": "string", "value": "sf"}}]),
     )
     .await;
-    let uuid = record["uuid"].as_str().unwrap();
+    let uuid = metarecord["uuid"].as_str().unwrap();
 
     // Declaring a type via mf_schema never fails, even if constraints of the
     // new type are violated (film requires one name).
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{uuid}"),
+        &format!("/repos/{repo}/metarecords/{uuid}"),
         Some(json!({"name": "mf_schema", "value": {"type": "string", "value": "film"}})),
     )
     .await;
@@ -301,7 +301,7 @@ async fn test_delta_validation_ignores_untouched_fields() {
     let (status, _) = request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{uuid}"),
+        &format!("/repos/{repo}/metarecords/{uuid}"),
         Some(json!({"name": "genre", "value": {"type": "string", "value": "horror"}})),
     )
     .await;
@@ -353,19 +353,19 @@ async fn test_schema_check_reports_existing_violations() {
     // Bypass validation by writing a wrongly-typed rating… impossible via
     // the API (delta validation), so simulate pre-existing data: write a
     // valid int rating, then tighten via a type declared after the fact.
-    let (_, record) = create(
+    let (_, metarecord) = create(
         &app,
         &repo,
         json!([{"name": "rating", "value": {"type": "int", "value": 1}},
                {"name": "rating", "value": {"type": "int", "value": 2}}]),
     )
     .await;
-    let uuid = record["uuid"].as_str().unwrap();
+    let uuid = metarecord["uuid"].as_str().unwrap();
     // Declare it a film (never validated): now rating max=1 is violated.
     request(
         &app,
         "PATCH",
-        &format!("/repos/{repo}/records/{uuid}"),
+        &format!("/repos/{repo}/metarecords/{uuid}"),
         Some(json!({"name": "mf_schema", "value": {"type": "string", "value": "film"}})),
     )
     .await;

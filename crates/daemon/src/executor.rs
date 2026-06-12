@@ -13,7 +13,7 @@ use anyhow::{Context as _, Result};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use metafolder_core::record::{Field, Value};
+use metafolder_core::metarecord::{Field, Value};
 
 use crate::db;
 use crate::eligibility;
@@ -287,9 +287,9 @@ impl Apply<'_, '_> {
     }
 
     /// Resolves the parent directory entry of `rel`, creating any missing
-    /// intermediate directory records (with their stat fields).
+    /// intermediate directory metarecords (with their stat fields).
     fn ensure_parents(&mut self, rel: &str) -> Result<Uuid> {
-        ensure_parent_records(&mut self.writer, self.cache, self.root, rel, &[])
+        ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel, &[])
     }
 
     fn apply_create(&mut self, rel: &str) -> Result<()> {
@@ -310,12 +310,12 @@ impl Apply<'_, '_> {
             Value::TreeRef { parent: Some(parent), name: name.to_string() },
         )];
         fields.extend(stat);
-        let created = self.writer.create_record(fields)?;
+        let created = self.writer.create_metarecord(fields)?;
         self.cache.apply_insert("mfr_path", Some(parent), name, created.uuid);
         Ok(())
     }
 
-    /// `Remove` / `Rename(From)`: the record is preserved, `mfr_path` becomes
+    /// `Remove` / `Rename(From)`: the metarecord is preserved, `mfr_path` becomes
     /// Nothing, and the whole subtree is cleared in the same transaction.
     fn apply_remove(&mut self, rel: &str) -> Result<()> {
         let Some(uuid) = self.resolve(rel)? else {
@@ -355,7 +355,7 @@ impl Apply<'_, '_> {
         Ok(())
     }
 
-    /// `Rename(To)`: the file arrived from outside. Reuse an orphaned record
+    /// `Rename(To)`: the file arrived from outside. Reuse an orphaned metarecord
     /// when a full-hash fingerprint confirms identity, otherwise create.
     fn apply_arrival(&mut self, rel: &str) -> Result<()> {
         if !self.eligible(rel)? {
@@ -394,7 +394,7 @@ impl Apply<'_, '_> {
         self.apply_create(rel)
     }
 
-    /// Fingerprint search among orphaned records (`mfr_path` = Nothing):
+    /// Fingerprint search among orphaned metarecords (`mfr_path` = Nothing):
     /// size pre-filter, then partial hash, then a stored full hash must
     /// confirm identity (spec watcher `Rename(To)` semantics).
     fn find_orphan_match(&mut self, abs: &Path, size: i64) -> Result<Option<Uuid>> {
@@ -474,10 +474,10 @@ impl Apply<'_, '_> {
 }
 
 /// Resolves the parent directory entry of `rel`, creating any missing
-/// intermediate directory records along the way (with their stat fields and
+/// intermediate directory metarecords along the way (with their stat fields and
 /// `extra_fields` — e.g. `mf_watch = false` for track). Shared between the
 /// executor, reconcile, and the track endpoint.
-pub(crate) fn ensure_parent_records(
+pub(crate) fn ensure_parent_metarecords(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
@@ -506,11 +506,11 @@ pub(crate) fn ensure_parent_records(
         )];
         match fs_meta::stat_fields(&root.join(prefix.trim_start_matches('/'))) {
             Ok(stat) => fields.extend(stat),
-            // Directory already gone: minimal record, reconcile fixes it.
+            // Directory already gone: minimal metarecord, reconcile fixes it.
             Err(_) => fields.push(Field::new("mfr_type", Value::String("dir".into()))),
         }
         fields.extend(extra_fields.iter().cloned());
-        let created = writer.create_record(fields)?;
+        let created = writer.create_metarecord(fields)?;
         cache.apply_insert("mfr_path", Some(parent), comp, created.uuid);
         parent = created.uuid;
     }

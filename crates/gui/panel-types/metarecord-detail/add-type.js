@@ -50,7 +50,7 @@ export function createTypePicker(button, initial = 'string', onChange = () => {}
   };
 }
 
-/** Value from its one-line raw form (record:batch-set arguments). */
+/** Value from its one-line raw form (metarecord:batch-set arguments). */
 export function parseRawValue(type, raw) {
   const parsers = {
     string: () => ({ type, value: raw }),

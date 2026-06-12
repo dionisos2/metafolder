@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use metafolder_core::record::Value;
+use metafolder_core::metarecord::Value;
 use metafolder_daemon::config::RepoConfig;
 use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
@@ -15,7 +15,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
 }
 
 #[test]
-fn test_init_creates_structure_and_root_record() {
+fn test_init_creates_structure_and_root_metarecord() {
     let root = temp_dir("init");
     let opened = repo::init_repository(&root, None).unwrap();
 
@@ -32,7 +32,7 @@ fn test_init_creates_structure_and_root_record() {
     let root_uuid = db::find_tree_child(&opened.conn, "mfr_path", None, "")
         .unwrap()
         .expect("filesystem root entry must exist");
-    let entry = db::get_record(&opened.conn, root_uuid).unwrap().unwrap();
+    let entry = db::get_metarecord(&opened.conn, root_uuid).unwrap().unwrap();
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     let patterns: Vec<&Value> = entry.get_all("mf_ignore");
@@ -44,7 +44,7 @@ fn test_init_creates_structure_and_root_record() {
     // The root entry creation went through the event log.
     let n_ops: i64 = opened
         .conn
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_record'", [], |r| {
+        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
             r.get(0)
         })
         .unwrap();
@@ -144,25 +144,25 @@ fn test_load_migrates_legacy_table_names() {
     let db_path = root.join(".metafolder/internal/db.sqlite");
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute_batch(
-        "ALTER TABLE record RENAME TO metadata;
-         ALTER TABLE record_db RENAME TO metadata_db;
-         ALTER TABLE metadata_db RENAME COLUMN record_uuid TO metadata_uuid;
-         ALTER TABLE field RENAME COLUMN record_uuid TO metadata_uuid;
-         UPDATE operation SET op_type = 'create_entry' WHERE op_type = 'create_record';
-         UPDATE operation SET op_type = 'delete_entry' WHERE op_type = 'delete_record';",
+        "ALTER TABLE metarecord RENAME TO metadata;
+         ALTER TABLE metarecord_db RENAME TO metadata_db;
+         ALTER TABLE metadata_db RENAME COLUMN metarecord_uuid TO metadata_uuid;
+         ALTER TABLE field RENAME COLUMN metarecord_uuid TO metadata_uuid;
+         UPDATE operation SET op_type = 'create_entry' WHERE op_type = 'create_metarecord';
+         UPDATE operation SET op_type = 'delete_entry' WHERE op_type = 'delete_metarecord';",
     )
     .unwrap();
     drop(conn);
 
     let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
-    // The schema is migrated and functional: the root record is readable
+    // The schema is migrated and functional: the root metarecord is readable
     // and its creation op uses the new op type.
     let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
-    assert!(db::get_record(&loaded.conn, root_uuid).unwrap().is_some());
+    assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
     let n: i64 = loaded
         .conn
-        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_record'", [], |r| {
+        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
             r.get(0)
         })
         .unwrap();
@@ -176,6 +176,45 @@ fn test_load_migrates_legacy_table_names() {
         )
         .unwrap();
     assert_eq!(legacy, 0, "the legacy table name must be gone");
+    drop(loaded);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_load_migrates_record_era_table_names() {
+    let root = temp_dir("sql_migrate_rec");
+    let created = repo::init_repository(&root, None).unwrap();
+    let uuid = created.config.repo_uuid;
+    drop(created);
+
+    // Downgrade to the short-lived intermediate naming (record / record_db /
+    // record_uuid columns / *_record op types).
+    let db_path = root.join(".metafolder/internal/db.sqlite");
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute_batch(
+        "ALTER TABLE metarecord RENAME TO record;
+         ALTER TABLE metarecord_db RENAME TO record_db;
+         ALTER TABLE record_db RENAME COLUMN metarecord_uuid TO record_uuid;
+         ALTER TABLE field RENAME COLUMN metarecord_uuid TO record_uuid;
+         UPDATE operation SET op_type = 'create_record' WHERE op_type = 'create_metarecord';
+         UPDATE operation SET op_type = 'delete_record' WHERE op_type = 'delete_metarecord';",
+    )
+    .unwrap();
+    drop(conn);
+
+    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    assert_eq!(loaded.config.repo_uuid, uuid);
+    let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
+    assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
+    let n: i64 = loaded
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 1);
     drop(loaded);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -198,7 +237,7 @@ fn test_exclusive_lock_blocks_second_connection() {
     let second =
         rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
     let res: Result<i64, _> =
-        second.query_row("SELECT COUNT(*) FROM record", [], |r| r.get(0));
+        second.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get(0));
     assert!(res.is_err(), "second connection must be locked out");
 
     drop(opened);

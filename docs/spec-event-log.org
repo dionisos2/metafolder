@@ -3,11 +3,11 @@
 
 * Overview
 
-Every write operation on metadata records is recorded in an append-only event
+Every write operation on metadata metarecords is recorded in an append-only event
 log stored in the same =db.sqlite= file. The log maintains a tree of /operations/
 that enables:
 
-- *Auditing*: full history of changes to any record.
+- *Auditing*: full history of changes to any metarecord.
 - *Rollback*: navigating the history tree to any past or future state.
 - *Non-destructive branching*: after rolling back, any new write creates a new
   branch — previously "future" operations are never lost.
@@ -20,7 +20,7 @@ reproduces the current state of all data tables.
 
 ** Revision and operation
 
-An /operation/ is one atomic change (e.g. setting one field on one record). It
+An /operation/ is one atomic change (e.g. setting one field on one metarecord). It
 is the node of the history tree and the unit of crash-safe rollback.
 
 A /revision/ groups all operations produced by a single API call. It is a
@@ -31,14 +31,14 @@ Direct operation-level navigation is available via =op_id=.
 
 In practice, most revisions contain a single operation (a user editing one
 field). Revisions with many operations arise from batch commands: a =batch_set=
-on K records produces K operations; a =reconcile= creating M files produces M
+on K metarecords produces K operations; a =reconcile= creating M files produces M
 operations; a watcher =Remove= on a directory with N descendants produces N+1
 =file_deleted= operations. For large batches, operations are inserted in bulk.
 
 ** History tree
 
 Operations form a tree: each operation has a =parent_id= pointing to the
-operation it was created from (=NULL= for the root). The /HEAD/ pointer records
+operation it was created from (=NULL= for the root). The /HEAD/ pointer metarecords
 the current operation — the one whose state is reflected in the data tables.
 
 Operations within the same revision form a chain: the first operation's
@@ -64,7 +64,7 @@ No history is ever lost unless explicitly pruned (see [[*Log pruning]]).
 ** HEAD pointer
 
 A singleton table =log_head= records the current operation. All data tables
-(=metadata=, =record_db=, =field=) reflect exactly the state of the
+(=metadata=, =metarecord_db=, =field=) reflect exactly the state of the
 operation at HEAD.
 
 Invariant: HEAD and the data tables are always mutually consistent. Every HEAD
@@ -85,8 +85,8 @@ unique; rollback to a label targets the most recent matching revision.
 
 | =op_type=        | Description                                              | Filesystem coordination   |
 |------------------+----------------------------------------------------------+---------------------------|
-| =create_record=   | New metadata record created                               | None                      |
-| =delete_record=   | Record deleted (all fields cascade)                       | None                      |
+| =create_metarecord=   | New metadata metarecord created                               | None                      |
+| =delete_metarecord=   | Metarecord deleted (all fields cascade)                       | None                      |
 | =set_field=      | All rows for =(uuid, field_name)= replaced               | None                      |
 | =append_field=   | One field row appended (multi-map)                       | None                      |
 | =delete_field=   | One field row removed (by =field_id=)                    | None                      |
@@ -97,7 +97,7 @@ unique; rollback to a label targets the most recent matching revision.
 
 Reversibility is assessed dynamically at rollback time, not stored statically:
 
-- =create_record= … =delete_field=: always fully reversible (pure metadata).
+- =create_metarecord= … =delete_field=: always fully reversible (pure metadata).
 - =file_deleted=, =file_modified=: never fully reversible at the filesystem
   level — the file content is gone. The metadata can still be restored from
   the snapshot rows, but this results in a stale or misleading =mfr_path=.
@@ -125,7 +125,7 @@ CREATE TABLE operation (
     rev_id                INTEGER NOT NULL REFERENCES revision(id) ON DELETE CASCADE,
     seq                   INTEGER NOT NULL,    -- ordering within the revision (1-based, for display)
     op_type               TEXT    NOT NULL,    -- see Operation types
-    entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata record
+    entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata metarecord
     entity_version_before INTEGER,             -- metadata.version before this op; restored on inverse
     field_name            TEXT                 -- for field operations; NULL otherwise
 );
@@ -160,7 +160,7 @@ CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
 CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
 
 -- Pending operations buffer: watcher events and restoration ops awaiting
--- commit. Execution is suspended during rollback lock; records survive a
+-- commit. Execution is suspended during rollback lock; metarecords survive a
 -- daemon crash and are replayed on restart.
 CREATE TABLE pending_operation (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -191,8 +191,8 @@ Per operation type:
 
 | =op_type=       | =is_new=0= rows (before)                             | =is_new=1= rows (after)                          |
 |-----------------+------------------------------------------------------+--------------------------------------------------|
-| =create_record=  | none                                                 | all field rows of the created record              |
-| =delete_record=  | all field rows of the deleted record                  | none                                             |
+| =create_metarecord=  | none                                                 | all field rows of the created metarecord              |
+| =delete_metarecord=  | all field rows of the deleted metarecord                  | none                                             |
 | =set_field=     | all previous rows for =(uuid, field_name)=           | the new single row                               |
 | =append_field=  | none                                                 | the appended row                                 |
 | =delete_field=  | the deleted row                                      | none                                             |
@@ -200,11 +200,11 @@ Per operation type:
 | =file_moved=    | the previous =mfr_path= row(s)                       | the new =mfr_path= row(s)                        |
 | =file_modified= | =mfr_size=, =mfr_mtime=, hash rows before            | new =mfr_size=, =mfr_mtime= rows                 |
 
-=create_record= and =delete_record= also require saving =record_db= rows
+=create_metarecord= and =delete_metarecord= also require saving =metarecord_db= rows
 (the =db_ids=). In v1, =db_ids= is always the single current repo UUID and
-is not stored explicitly; this is deferred to v2 (link records).
+is not stored explicitly; this is deferred to v2 (link metarecords).
 
-For =file_deleted= on a directory: each descendant record receives its own
+For =file_deleted= on a directory: each descendant metarecord receives its own
 =file_deleted= operation within the same revision. Operations and their
 snapshot rows are inserted in bulk for large cascades.
 
@@ -247,10 +247,10 @@ For batch operations, all =operation= rows are inserted together in a single
 =INSERT= after computing all =parent_id= values.
 
 All write operations — including =reconcile= — follow this flow and produce
-log records. If performance ever becomes a concern for large bulk operations,
+log metarecords. If performance ever becomes a concern for large bulk operations,
 an optional =no_log= flag may be added to the relevant API endpoints. When
 used, a single =unknown= operation is inserted at HEAD instead of individual
-change records. It has no =op_snapshot= rows, acts as a weak root (navigation before
+change metarecords. It has no =op_snapshot= rows, acts as a weak root (navigation before
 it is impossible, like after Prune-before), and the =unknown= flag is noted
 in the response.
 
@@ -277,15 +277,15 @@ Given =current= (=log_head.op_id=) and =target=:
 The entire navigation is atomic. A crash leaves HEAD and data tables in their
 pre-navigation state.
 
-If =target= is =NULL= (empty state), all =metadata=, =record_db=, and =field=
+If =target= is =NULL= (empty state), all =metadata=, =metarecord_db=, and =field=
 rows owned by this repository are deleted and =log_head.op_id= is set to =NULL=.
 
 *** Inverse operations
 
 | =op_type=        | Inverse action                                                                                    |
 |------------------+---------------------------------------------------------------------------------------------------|
-| =create_record=   | Delete the record and all its =record_db= and =field= rows                                       |
-| =delete_record=   | Recreate =metadata= (with =entity_version_before=), =record_db=, =field= rows from snapshots   |
+| =create_metarecord=   | Delete the metarecord and all its =metarecord_db= and =field= rows                                       |
+| =delete_metarecord=   | Recreate =metadata= (with =entity_version_before=), =metarecord_db=, =field= rows from snapshots   |
 | =set_field=      | Delete current rows for =(uuid, field_name)=; insert =is_new=0= snapshot rows with original ids  |
 | =append_field=   | Delete the field row whose =id= matches the =is_new=1= snapshot =field_id=                        |
 | =delete_field=   | Insert the =is_new=0= snapshot row with its original =field_id=                                   |
@@ -318,7 +318,7 @@ to match the actual filesystem state:
 
 - =file_moved= skip: restoration sets =mfr_path= back to the file's current
   location (derived from the =is_new=1= snapshot rows — no filesystem check needed).
-- =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-records
+- =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-metarecords
   the deletion since the file is still absent).
 - =file_modified= skip: restoration clears =mfr_partial_hash= and
   =mfr_full_hash= (→ =Nothing=); size and mtime are left stale until the
@@ -364,7 +364,7 @@ straight line.
 
 Coordinated navigation handles =file_moved= operations by coupling each
 metadata change with a CLI-executed =mv= command. It proceeds one operation at
-a time, so a crash leaves at most one file and one metadata record in an
+a time, so a crash leaves at most one file and one metadata metarecord in an
 inconsistent state.
 
 The target may be any operation in the tree: an ancestor (rollback), a
@@ -440,7 +440,7 @@ Query parameters:
 | Parameter            | Default    | Description                                                                          |
 |----------------------+------------+--------------------------------------------------------------------------------------|
 | =mode=               | =linear=   | =linear=: HEAD ancestry path only (root → HEAD); =tree=: all branches               |
-| =record_uuid=         | —          | Only operations whose =entity_uuid= matches this record UUID                          |
+| =metarecord_uuid=         | —          | Only operations whose =entity_uuid= matches this metarecord UUID                          |
 | =limit=              | —          | Maximum number of operations to return (applied after filtering; most recent first)  |
 | =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
 | =until=              | —          | Include only operations in revisions with timestamp ≤ T (Unix ms)                    |
@@ -456,7 +456,7 @@ Response body:
   "head": 3,
   "operations": [
     {"id": 1, "parent_id": null, "rev_id": 1, "seq": 1,
-     "op_type": "create_record", "entity_uuid": "...", "field_name": null},
+     "op_type": "create_metarecord", "entity_uuid": "...", "field_name": null},
     {"id": 2, "parent_id": 1, "rev_id": 2, "seq": 1,
      "op_type": "set_field", "entity_uuid": "...", "field_name": "rating"},
     {"id": 3, "parent_id": 2, "rev_id": 2, "seq": 2,
@@ -588,7 +588,7 @@ Example response:
     {"id": 101, "op_type": "move_file", "entity_uuid": "...",
      "from": "/repo/B.mp3", "to": "/repo/A.mp3"},
     {"id": 102, "op_type": "set_field", "entity_uuid": "..."},
-    {"id": 103, "op_type": "create_record", "entity_uuid": "..."}
+    {"id": 103, "op_type": "create_metarecord", "entity_uuid": "..."}
   ],
   "total": 3
 }
@@ -607,7 +607,7 @@ Example response:
   "by_type": {
     "file_moved": 45,
     "file_deleted": 3,
-    "create_record": 89,
+    "create_metarecord": 89,
     "set_field": 20
   },
   "revisions_affected": 12
@@ -647,7 +647,7 @@ must execute. For =move_file=, =from= and =to= are the paths to pass to =mv=
 types, =from= and =to= are absent — no filesystem action is required.
 
 Note: =op_type= in the coordinated navigation response reflects the *action to
-execute*, not the stored event. A =file_moved= record in the DB produces a
+execute*, not the stored event. A =file_moved= metarecord in the DB produces a
 =move_file= response op; all other DB op types appear unchanged.
 
 The daemon does not check the filesystem state. The CLI inspects it and
@@ -725,7 +725,7 @@ Default output (one line per revision):
 
 #+BEGIN_SRC
 > rev 12  2024-01-15 14:32  "before-cleanup"   ← HEAD
-  rev 11  2024-01-15 14:30  (5 ops: create_record ×3, file_moved ×2)
+  rev 11  2024-01-15 14:30  (5 ops: create_metarecord ×3, file_moved ×2)
   rev 10  2024-01-14 09:12
 #+END_SRC
 
@@ -748,15 +748,15 @@ inactive branches. Exact rendering is left to the implementation.
 |------------------------+--------------------------------------------------------------------------------|
 | =--tree=               | Show all branches, not just the HEAD ancestry path (passes =mode=tree=)        |
 | =--ops=                | Expand each revision to show its individual operations                         |
-| =--record <uuid>=       | Show only revisions/ops that affected this record (passes =record_uuid=)         |
+| =--metarecord <uuid>=       | Show only revisions/ops that affected this metarecord (passes =metarecord_uuid=)         |
 | =--limit N= / =-n N=   | Show at most N revisions (or operations with =--ops=); default: 20             |
 | =--since T=            | Include only revisions with timestamp ≥ T (ISO-8601 or Unix ms)               |
 | =--until T=            | Include only revisions with timestamp ≤ T (ISO-8601 or Unix ms)               |
 | =--all=                | Remove the default limit of 20 (equivalent to =--limit 0=)                    |
 
 =--tree= and =--limit= / =--since= / =--until= can be combined. =--tree= with
-=--record= returns all branches that contain at least one operation touching the
-given record.
+=--metarecord= returns all branches that contain at least one operation touching the
+given metarecord.
 
 *** =mf log show <target>=                                                    :v2:
 

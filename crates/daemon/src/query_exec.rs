@@ -1,6 +1,6 @@
 //! Query compilation and execution (spec-query). A `Query` compiles to a CTE
 //! chain — one CTE per node — over the EAV `field` table; the result is
-//! restricted to records owned exclusively by the current repository.
+//! restricted to metarecords owned exclusively by the current repository.
 //! `Follows`/`FollowsTransitive` path targets are resolved through the tree
 //! cache before SQL generation (hybrid execution). Sorting and keyset
 //! pagination follow spec-data-model "Pagination".
@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use metafolder_core::record::{Value, ZERO_UUID};
+use metafolder_core::metarecord::{Value, ZERO_UUID};
 use metafolder_core::query::{FollowTarget, Query};
 
 use crate::db;
@@ -75,7 +75,7 @@ pub fn execute(
         format!("SELECT uuid FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)"),
     ));
 
-    // One CTE per sort key: the record's representative row for that field
+    // One CTE per sort key: the metarecord's representative row for that field
     // (min for asc, max for desc), normalised into comparable components.
     let mut joins = String::new();
     let mut select_cols = "_res.uuid AS uuid".to_string();
@@ -102,10 +102,10 @@ pub fn execute(
         ctes.push((
             format!("_s{i}"),
             format!(
-                "SELECT record_uuid, grp, vnum, vtext, vblob FROM ( \
-                   SELECT record_uuid, {grp} AS grp, {num} AS vnum, \
+                "SELECT metarecord_uuid, grp, vnum, vtext, vblob FROM ( \
+                   SELECT metarecord_uuid, {grp} AS grp, {num} AS vnum, \
                           {text} AS vtext, {blob} AS vblob, \
-                          ROW_NUMBER() OVER (PARTITION BY record_uuid \
+                          ROW_NUMBER() OVER (PARTITION BY metarecord_uuid \
                               ORDER BY {grp} {dir}, {num} {dir}, {text} {dir}, {blob} {dir}) \
                               AS rn \
                    FROM field WHERE field_name = ? AND value_type != 'nothing' \
@@ -114,13 +114,13 @@ pub fn execute(
         ));
         params.push(SqlValue::Text(key.field.clone()));
 
-        joins.push_str(&format!(" LEFT JOIN _s{i} ON _s{i}.record_uuid = _res.uuid"));
+        joins.push_str(&format!(" LEFT JOIN _s{i} ON _s{i}.metarecord_uuid = _res.uuid"));
         select_cols.push_str(&format!(
-            ", CASE WHEN _s{i}.record_uuid IS NULL THEN 1 ELSE 0 END AS nf{i}, \
+            ", CASE WHEN _s{i}.metarecord_uuid IS NULL THEN 1 ELSE 0 END AS nf{i}, \
                COALESCE(_s{i}.grp, -1) AS g{i}, COALESCE(_s{i}.vnum, {NUM_SENTINEL}) AS n{i}, \
                COALESCE(_s{i}.vtext, '') AS t{i}, COALESCE(_s{i}.vblob, x'') AS b{i}"
         ));
-        // Records without the sort field always come last, whatever `order`.
+        // Metarecords without the sort field always come last, whatever `order`.
         order_by.push(format!("nf{i} ASC"));
         components.push((format!("nf{i}"), true));
         let asc = key.order == SortOrder::Asc;
@@ -204,7 +204,7 @@ pub fn execute(
 }
 
 /// Converts the JSON cursor key components back into typed SQL values, in
-/// component order (5 per sort key, then the record UUID).
+/// component order (5 per sort key, then the metarecord UUID).
 fn cursor_values(cursor: &Cursor, n_sort: usize) -> Result<Vec<SqlValue>, ApiError> {
     let invalid = || ApiError::bad_request("invalid cursor");
     if cursor.keys.len() != 5 * n_sort {
@@ -305,15 +305,15 @@ struct Compiler<'a> {
 
 impl<'a> Compiler<'a> {
     /// The `_repo` CTE (declared first, so its parameter binds first) holds
-    /// the universe: records owned exclusively by the current repository.
+    /// the universe: metarecords owned exclusively by the current repository.
     /// It both isolates results and serves as the complement base for `Not`.
     fn new(conn: &'a Connection, cache: &'a mut TreeCache, db_id: Uuid) -> Self {
         let ctes = vec![(
             "_repo".to_string(),
-            "SELECT m1.record_uuid AS uuid FROM record_db m1 \
+            "SELECT m1.metarecord_uuid AS uuid FROM metarecord_db m1 \
              WHERE m1.db_id = ? \
-               AND (SELECT COUNT(*) FROM record_db m2 \
-                    WHERE m2.record_uuid = m1.record_uuid) = 1"
+               AND (SELECT COUNT(*) FROM metarecord_db m2 \
+                    WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1"
                 .to_string(),
         )];
         let params = vec![SqlValue::Blob(db::uuid_to_bytes(db_id))];
@@ -345,7 +345,7 @@ impl<'a> Compiler<'a> {
             Query::IsPresent { field } => {
                 self.push_text(field);
                 Ok(self.add(
-                    "SELECT DISTINCT record_uuid AS uuid FROM field \
+                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND value_type != 'nothing'"
                         .to_string(),
                 ))
@@ -353,7 +353,7 @@ impl<'a> Compiler<'a> {
             Query::IsAbsent { field } => {
                 self.push_text(field);
                 Ok(self.add(
-                    "SELECT DISTINCT record_uuid AS uuid FROM field \
+                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND value_type = 'nothing'"
                         .to_string(),
                 ))
@@ -362,7 +362,7 @@ impl<'a> Compiler<'a> {
                 self.push_text(field);
                 Ok(self.add(
                     "SELECT uuid FROM _repo WHERE uuid NOT IN \
-                     (SELECT record_uuid FROM field WHERE field_name = ?)"
+                     (SELECT metarecord_uuid FROM field WHERE field_name = ?)"
                         .to_string(),
                 ))
             }
@@ -378,7 +378,7 @@ impl<'a> Compiler<'a> {
                 self.push_text(field);
                 let pred = self.scalar_predicate(value, CmpOp::Eq)?;
                 Ok(self.add(format!(
-                    "SELECT DISTINCT record_uuid AS uuid FROM field \
+                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND value_type != 'nothing' AND NOT ({pred})"
                 )))
             }
@@ -400,7 +400,7 @@ impl<'a> Compiler<'a> {
                 self.push_text(pattern);
                 self.push_text(pattern);
                 Ok(self.add(
-                    "SELECT DISTINCT record_uuid AS uuid FROM field \
+                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND \
                        ((value_type = 'string' AND value_text REGEXP ?) OR \
                         (value_type = 'tree_ref' AND value_name REGEXP ?))"
@@ -413,7 +413,7 @@ impl<'a> Compiler<'a> {
                     let sub = self.compile_node(cond)?;
                     self.push_text(field);
                     Ok(self.add(format!(
-                        "SELECT DISTINCT record_uuid AS uuid FROM field \
+                        "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                          WHERE field_name = ? AND value_type = 'ref' \
                            AND value_uuid IN (SELECT uuid FROM {sub})"
                     )))
@@ -427,7 +427,7 @@ impl<'a> Compiler<'a> {
                             self.push_text(field);
                             self.params.push(SqlValue::Blob(db::uuid_to_bytes(uuid)));
                             Ok(self.add(
-                                "SELECT DISTINCT record_uuid AS uuid FROM field \
+                                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                                  WHERE field_name = ? AND value_type = 'tree_ref' \
                                    AND value_uuid = ?"
                                     .to_string(),
@@ -466,7 +466,7 @@ impl<'a> Compiler<'a> {
         self.push_text(field);
         let pred = self.scalar_predicate(value, op)?;
         Ok(self.add(format!(
-            "SELECT DISTINCT record_uuid AS uuid FROM field \
+            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
              WHERE field_name = ? AND ({pred})"
         )))
     }
@@ -548,11 +548,11 @@ impl<'a> Compiler<'a> {
                 self.push_text(name);
                 Ok("value_type = 'tree_ref' AND value_uuid = ? AND value_name = ?".to_string())
             }
-            Value::ExternalRef { repo, record } => {
+            Value::ExternalRef { repo, metarecord } => {
                 if op.is_ordered() {
                     return Err(ordered_only_eq("externalref"));
                 }
-                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*record)));
+                self.params.push(SqlValue::Blob(db::uuid_to_bytes(*metarecord)));
                 self.params.push(SqlValue::Blob(db::uuid_to_bytes(*repo)));
                 Ok("value_type = 'externalref' AND value_uuid = ? AND value_ref_repo = ?"
                     .to_string())

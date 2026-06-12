@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use metafolder_core::record::{Field, Record, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, Value};
 
 use metafolder_core::query::Query as MetaQuery;
 
@@ -34,10 +34,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
-        .route("/repos/:repo/records", get(list_records).post(create_record_endpoint))
+        .route("/repos/:repo/metarecords", get(list_metarecords).post(create_record_endpoint))
         .route(
-            "/repos/:repo/records/:uuid",
-            get(get_record_endpoint).delete(delete_record_endpoint).patch(patch_record),
+            "/repos/:repo/metarecords/:uuid",
+            get(get_record_endpoint).delete(delete_record_endpoint).patch(patch_metarecord),
         )
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/set", post(batch_set))
@@ -53,10 +53,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/schema/check", post(check_schema))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
-        .route("/repos/:repo/records/:uuid/reconcile", post(record_reconcile))
-        .route("/repos/:repo/records/:uuid/fields", post(append_field))
+        .route("/repos/:repo/metarecords/:uuid/reconcile", post(metarecord_reconcile))
+        .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
         .route(
-            "/repos/:repo/records/:uuid/fields/:field_id",
+            "/repos/:repo/metarecords/:uuid/fields/:field_id",
             put(replace_field).delete(delete_field),
         )
         .with_state(state)
@@ -84,10 +84,10 @@ where
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
 }
 
-/// Fetches the full metadata object of a record, or 404.
-fn record_response(conn: &rusqlite::Connection, uuid: Uuid) -> Result<Record, ApiError> {
-    db::get_record(conn, uuid)?
-        .ok_or_else(|| ApiError::not_found(format!("Record not found: {uuid}")))
+/// Fetches the full metadata object of a metarecord, or 404.
+fn metarecord_response(conn: &rusqlite::Connection, uuid: Uuid) -> Result<MetaRecord, ApiError> {
+    db::get_metarecord(conn, uuid)?
+        .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))
 }
 
 fn check_writable(name: &str, force: bool) -> Result<(), ApiError> {
@@ -173,7 +173,7 @@ async fn load_repo(
     Ok(Json(json!({"repo_uuid": hex(uuid)})))
 }
 
-// ── Record listing ──────────────────────────────────────────────────────────
+// ── MetaRecord listing ──────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct PageParams {
@@ -183,7 +183,7 @@ struct PageParams {
     cursor: Option<String>,
 }
 
-async fn list_records(
+async fn list_metarecords(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
     Query(params): Query<PageParams>,
@@ -198,7 +198,7 @@ async fn list_records(
                 Ok(Json(hexes).into_response())
             }
             Some(limit) => {
-                let hash = pagination::context_hash(&["record-list", &hex(repo_uuid)]);
+                let hash = pagination::context_hash(&["metarecord-list", &hex(repo_uuid)]);
                 let after = match &params.cursor {
                     None => None,
                     Some(token) => Some(pagination::decode(token, hash)?.last_uuid()?),
@@ -219,7 +219,7 @@ async fn list_records(
     .await
 }
 
-// ── Record CRUD ─────────────────────────────────────────────────────────────
+// ── MetaRecord CRUD ─────────────────────────────────────────────────────────────
 
 // ── Event log and rollback ────────────────────────────────────────────────────
 
@@ -304,7 +304,7 @@ struct LogParams {
     #[serde(default)]
     mode: Option<String>,
     #[serde(default)]
-    record_uuid: Option<String>,
+    metarecord_uuid: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
     #[serde(default)]
@@ -321,7 +321,7 @@ async fn get_log(
     Query(params): Query<LogParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let entity_filter = params.record_uuid.as_deref().map(parse_uuid).transpose()?;
+    let entity_filter = params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock().unwrap();
         let head = crate::log::get_head(&conn)?;
@@ -502,7 +502,7 @@ struct RollbackBody {
     target: TargetBody,
 }
 
-/// Record-only atomic rollback (spec-event-log `POST /rollback`).
+/// MetaRecord-only atomic rollback (spec-event-log `POST /rollback`).
 async fn rollback(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -597,7 +597,7 @@ struct CheckBody {
     query: Option<MetaQuery>,
 }
 
-/// Scans records and reports every constraint violation (the schema file is
+/// Scans metarecords and reports every constraint violation (the schema file is
 /// never validated retroactively on edit).
 async fn check_schema(
     State(state): State<Arc<AppState>>,
@@ -646,14 +646,14 @@ async fn full_reconcile(
     .await
 }
 
-async fn record_reconcile(
+async fn metarecord_reconcile(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        Ok(Json(crate::reconcile::reconcile_record(repo_state, uuid)?))
+        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid)?))
     })
     .await
 }
@@ -663,8 +663,8 @@ struct TrackBody {
     path: PathBuf,
 }
 
-/// Creates the record for a single filesystem path without activating
-/// tracking (spec-file-tracking "Single-record track"). Parents are created
+/// Creates the metarecord for a single filesystem path without activating
+/// tracking (spec-file-tracking "Single-metarecord track"). Parents are created
 /// with `mf_watch = false`; no eligibility check applies.
 async fn track(
     State(state): State<Arc<AppState>>,
@@ -702,7 +702,7 @@ async fn track(
         let mut cache = repo_state.cache.lock().unwrap();
         if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel)? {
             return Err(ApiError::conflict(format!(
-                "path already tracked by record {}",
+                "path already tracked by metarecord {}",
                 hex(existing)
             )));
         }
@@ -780,11 +780,11 @@ async fn run_query(
                 };
                 let mut objects = Vec::with_capacity(uuids.len());
                 for uuid in uuids {
-                    let mut record = record_response(&conn, uuid)?;
+                    let mut metarecord = metarecord_response(&conn, uuid)?;
                     if let Some(filter) = &fields_filter {
-                        record.fields.retain(|f| filter.contains(&f.name));
+                        metarecord.fields.retain(|f| filter.contains(&f.name));
                     }
-                    objects.push(serde_json::to_value(record).expect("record serialization"));
+                    objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));
                 }
                 objects
             }
@@ -847,7 +847,7 @@ async fn create_record_endpoint(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
     payload: Result<Json<CreateBody>, JsonRejection>,
-) -> Result<Json<Record>, ApiError> {
+) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
@@ -857,7 +857,7 @@ async fn create_record_endpoint(
         let mut conn = repo_state.conn.lock().unwrap();
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
-        let created = writer.create_record(body.fields)?;
+        let created = writer.create_metarecord(body.fields)?;
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
         writer.commit()?;
         Ok(Json(created))
@@ -868,12 +868,12 @@ async fn create_record_endpoint(
 async fn get_record_endpoint(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
-) -> Result<Json<Record>, ApiError> {
+) -> Result<Json<MetaRecord>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock().unwrap();
-        Ok(Json(record_response(&conn, uuid)?))
+        Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
 }
@@ -887,10 +887,10 @@ async fn delete_record_endpoint(
     with_repo(&state, repo_uuid, move |repo_state| {
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
-            return Err(ApiError::not_found(format!("Record not found: {uuid}")));
+            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
-        writer.delete_record(uuid)?;
+        writer.delete_metarecord(uuid)?;
         writer.commit()?;
         Ok(StatusCode::NO_CONTENT)
     })
@@ -905,11 +905,11 @@ struct SetFieldBody {
     force: bool,
 }
 
-async fn patch_record(
+async fn patch_metarecord(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
     payload: Result<Json<SetFieldBody>, JsonRejection>,
-) -> Result<Json<Record>, ApiError> {
+) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
@@ -917,13 +917,13 @@ async fn patch_record(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
-            return Err(ApiError::not_found(format!("Record not found: {uuid}")));
+            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         writer.set_field(uuid, &body.name, body.value)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&body.name))?;
         writer.commit()?;
-        Ok(Json(record_response(&conn, uuid)?))
+        Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
 }
@@ -932,7 +932,7 @@ async fn append_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
     payload: Result<Json<SetFieldBody>, JsonRejection>,
-) -> Result<Json<Record>, ApiError> {
+) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
@@ -940,13 +940,13 @@ async fn append_field(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
-            return Err(ApiError::not_found(format!("Record not found: {uuid}")));
+            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         writer.append_field(uuid, &body.name, body.value)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&body.name))?;
         writer.commit()?;
-        Ok(Json(record_response(&conn, uuid)?))
+        Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
 }
@@ -958,7 +958,7 @@ struct ReplaceFieldBody {
     force: bool,
 }
 
-/// Finds the field row of a record by id, or 404.
+/// Finds the field row of a metarecord by id, or 404.
 fn owned_field_name(
     conn: &rusqlite::Connection,
     uuid: Uuid,
@@ -977,7 +977,7 @@ async fn replace_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid, field_id)): Path<(String, String, i64)>,
     payload: Result<Json<ReplaceFieldBody>, JsonRejection>,
-) -> Result<Json<Record>, ApiError> {
+) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
@@ -989,7 +989,7 @@ async fn replace_field(
         writer.replace_field(uuid, field_id, body.value)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&name))?;
         writer.commit()?;
-        Ok(Json(record_response(&conn, uuid)?))
+        Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
 }

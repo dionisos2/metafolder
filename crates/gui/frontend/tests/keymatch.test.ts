@@ -58,10 +58,10 @@ describe('createMatcher', () => {
   test('local binding wins over global for the focused panel type', () => {
     const matcher = createMatcher([
       b(['j'], 'global:j'),
-      b(['j'], 'record-list:next', 'record-list'),
+      b(['j'], 'metarecord-list:next', 'metarecord-list'),
     ]);
-    expect(matcher.feed('j', { panelType: 'record-list', textInput: false })).toEqual({
-      invocation: 'record-list:next',
+    expect(matcher.feed('j', { panelType: 'metarecord-list', textInput: false })).toEqual({
+      invocation: 'metarecord-list:next',
     });
     expect(matcher.feed('j', { panelType: 'file', textInput: false })).toEqual({
       invocation: 'global:j',
@@ -71,10 +71,10 @@ describe('createMatcher', () => {
 
   test('text-input=false bindings are suppressed while typing', () => {
     const matcher = createMatcher([
-      b(['j'], 'record-list:next', 'record-list'),
+      b(['j'], 'metarecord-list:next', 'metarecord-list'),
       b(['escape'], 'editing:unfocus', null, true),
     ]);
-    const typing = { panelType: 'record-list', textInput: true };
+    const typing = { panelType: 'metarecord-list', textInput: true };
     expect(matcher.feed('j', typing)).toBeNull();
     expect(matcher.feed('escape', typing)).toEqual({ invocation: 'editing:unfocus' });
   });
@@ -92,10 +92,10 @@ describe('createMatcher', () => {
   });
 
   test('two-key sequences report pending then fire', () => {
-    const matcher = createMatcher([b(['g', 'g'], 'record-list:goto-top', 'record-list')]);
-    const ctx = { panelType: 'record-list', textInput: false };
+    const matcher = createMatcher([b(['g', 'g'], 'metarecord-list:goto-top', 'metarecord-list')]);
+    const ctx = { panelType: 'metarecord-list', textInput: false };
     expect(matcher.feed('g', ctx)).toEqual({ pending: true });
-    expect(matcher.feed('g', ctx)).toEqual({ invocation: 'record-list:goto-top' });
+    expect(matcher.feed('g', ctx)).toEqual({ invocation: 'metarecord-list:goto-top' });
   });
 
   test('an interrupted sequence falls back to single-key matching', () => {

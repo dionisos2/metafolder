@@ -1,10 +1,10 @@
 <!doctype html>
-<!-- Built-in panel type: all fields of the selected record (spec-gui
-     "record-detail panel type"). -->
+<!-- Built-in panel type: all fields of the selected metarecord (spec-gui
+     "metarecord-detail panel type"). -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>record-detail</title>
+    <title>metarecord-detail</title>
     <style>
       body {
         margin: 0;
@@ -31,7 +31,7 @@
       #placeholder.hidden {
         display: none;
       }
-      .record-head {
+      .metarecord-head {
         font-family: var(--mf-font-mono, monospace);
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.85em;
@@ -126,12 +126,12 @@
   </head>
   <body>
     <div id="placeholder">
-      <p>No record selected</p>
-      <button id="new-record-placeholder">New record</button>
+      <p>No metarecord selected</p>
+      <button id="new-metarecord-placeholder">New metarecord</button>
     </div>
 
     <div id="content" class="hidden">
-      <div class="record-head" id="record-head"></div>
+      <div class="metarecord-head" id="metarecord-head"></div>
       <table>
         <tbody id="field-rows"></tbody>
       </table>
@@ -149,11 +149,11 @@
     </div>
 
     <div id="toolbar">
-      <button id="new-record">New record</button>
+      <button id="new-metarecord">New metarecord</button>
       <button id="show-add">Add / set field…</button>
-      <button id="save-new" hidden>Save new record</button>
+      <button id="save-new" hidden>Save new metarecord</button>
       <button id="watch-reconcile" hidden>Watch and reconcile</button>
-      <button id="delete-record">Delete record</button>
+      <button id="delete-metarecord">Delete metarecord</button>
       <label class="force"><input type="checkbox" id="force" /> force (mfr_*)</label>
     </div>
 

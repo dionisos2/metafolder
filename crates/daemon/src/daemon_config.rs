@@ -66,8 +66,8 @@ pub fn read_config(path: &Path) -> Result<DaemonConfig> {
     Ok(DaemonConfig { load })
 }
 
-/// Loads the configured repositories. A failing record is turned into a
-/// warning and does not prevent the remaining records from loading.
+/// Loads the configured repositories. A failing metarecord is turned into a
+/// warning and does not prevent the remaining metarecords from loading.
 pub fn apply(state: &AppState, config: DaemonConfig) -> Vec<String> {
     let mut warnings = Vec::new();
     for locator in config.load {

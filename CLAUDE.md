@@ -59,14 +59,14 @@ Cargo workspace: `core`, `daemon`, `cli`, `gui` (Tauri v2 + Svelte 5), `bench`
 
 Shared data model used by all other crates:
 
-- `record.rs`: `Record` (uuid + `db_ids: Vec<Uuid>` + `version: u64` + fields),
+- `metarecord.rs`: `MetaRecord` (uuid + `db_ids: Vec<Uuid>` + `version: u64` + fields),
   `Field` (`id: Option<i64>` — the DB row id, present in API responses — +
   name + value), `Value` enum. Fields form a **multi-map**: several fields
   with the same name are allowed. `Value::Nothing` is an explicit absence
   ("this field does not apply"), distinct from the field not existing
   ("unknown"). Ten `Value` variants: `Nothing`, `String`, `Int`, `Float`,
   `Bool`, `DateTime`, `Ref(Uuid)`, `TreeRef { parent: Option<Uuid>, name }`,
-  `RefBase(Uuid)`, `ExternalRef { repo, record }`. JSON form is
+  `RefBase(Uuid)`, `ExternalRef { repo, metarecord }`. JSON form is
   `{"type": "...", "value": ...}` with UUIDs as 32-char lowercase hex (serde
   helpers `hex_uuid`, `hex_uuid_opt`, `hex_uuid_vec`).
 - `query.rs`: `Query` enum — the JSON IR for queries (internally tagged with
@@ -90,10 +90,10 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   startup: `load` list of repos to auto-load (`POST /repos/load` shape);
   malformed file aborts startup, a repo that fails to load is a warning.
 - `repo.rs`: repository init/load (`OpenedRepo`), external `.metafolder/`
-  location, the filesystem root record with its defaults (`mf_watch = false`,
+  location, the filesystem root metarecord with its defaults (`mf_watch = false`,
   default `mf_ignore` patterns), case-sensitivity probe.
-- `db.rs`: SQLite layer. EAV schema: `record` (uuid, version),
-  `record_db` (one row per owning repo), `field` (value columns incl.
+- `db.rs`: SQLite layer. EAV schema: `metarecord` (uuid, version),
+  `metarecord_db` (one row per owning repo), `field` (value columns incl.
   `value_uuid`/`value_ref_repo`/`value_name`; UNIQUE tree index on
   `(field_name, value_uuid, value_name)` for `tree_ref` rows) and the event
   log tables (`revision`, `operation`, `op_snapshot`, `log_head`,
@@ -102,7 +102,7 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   `locking_mode = EXCLUSIVE` (one daemon per repo), `REGEXP` UDF.
 - `log.rs`: **all writes go through `Writer`** — one revision per Writer, one
   `operation` row + before/after `op_snapshot` rows per change, running HEAD
-  chain, `record.version` bump per field write. Also: history reading,
+  chain, `metarecord.version` bump per field write. Also: history reading,
   target resolution (id/timestamp/label/prev_revision), atomic navigation
   (LCA, inverse/forward application restoring original `field.id`s and
   versions), pruning (before/linearize). Watcher-originated writes use the
@@ -126,8 +126,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `fingerprint.rs`: xxHash3 partial (first+last 4 KiB) and full hashes.
 - `fs_meta.rs`: stat-derived `mfr_*` fields, dependency-free ISO-8601.
 - `reconcile.rs`: full reconcile (fs walk with eligibility pruning, the
-  fingerprint phase with definitive moves and strong/weak candidates, record
-  creation; never writes `mfr_path = Nothing`) and single-record reconcile.
+  fingerprint phase with definitive moves and strong/weak candidates, metarecord
+  creation; never writes `mfr_path = Nothing`) and single-metarecord reconcile.
 - `query_exec.rs`: compiles a `Query` into a CTE chain (one CTE per node,
   `_repo` CTE = universe/isolation). `FollowsTransitive` is hybrid:
   descendants come from the tree cache and are inlined as literals. Sorting
@@ -207,7 +207,7 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized lazy
   TreeRef path resolution; `ui.js` (served as `/__ui.js`, importable by
   panels): `el()` DOM builder, `formatValue()`, `field()`.
-- `panel-types/`: the built-in panels (repos, record-list, record-detail,
+- `panel-types/`: the built-in panels (repos, metarecord-list, metarecord-detail,
   file, file-manager, message, log, workspace-info, hello example) as
   user-copyable plain HTML/JS.
 - `frontend/`: Svelte shell — TabBar, two Slots + divider, CommandInput
@@ -251,16 +251,16 @@ content. A pre-`internal/` layout is migrated automatically at load
 
 ## Key invariants
 
-- A file record has an `mfr_path` field (`Value::TreeRef`). When the file is
-  deleted, `mfr_path` becomes `Value::Nothing` (the record is preserved).
+- A file metarecord has an `mfr_path` field (`Value::TreeRef`). When the file is
+  deleted, `mfr_path` becomes `Value::Nothing` (the metarecord is preserved).
   Only the watcher and manual `force` writes set `mfr_path` to `Nothing`;
   reconcile leaves stale TreeRefs in place.
-- Repository ownership lives in `record_db`; queries return only records
+- Repository ownership lives in `metarecord_db`; queries return only metarecords
   owned exclusively by the current repository.
 - Tracking is opt-in: nothing is watched until `mf_watch = true` is set
   (inherited through the `mfr_path` tree, filtered by `mf_ignore` regexes).
 - `set_field` replaces **all** rows for `(uuid, field_name)`.
-- `record.version` is managed exclusively by the daemon; incremented on
+- `metarecord.version` is managed exclusively by the daemon; incremented on
   every field write, restored exactly by rollback.
 - Every write goes through `log::Writer`; HEAD (`log_head.op_id`) and the
   data tables are always mutually consistent (single transaction).

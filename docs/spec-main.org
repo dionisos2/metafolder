@@ -5,10 +5,10 @@
 
 Metafolder is a local metadata management system. It tracks files and
 directories in /repositories/ — watched directory trees — and associates
-arbitrary structured metadata with each record. The system is split into
+arbitrary structured metadata with each metarecord. The system is split into
 four crates:
 
-- =core=: shared data model (records, fields, values, queries)
+- =core=: shared data model (metarecords, fields, values, queries)
 - =daemon=: background HTTP server managing repositories and exposing a REST API
 - =cli=: command-line tool that communicates with the daemon
 - =gui=: graphical interface (Tauri v2 + Svelte 5, see spec-gui.org)
@@ -19,7 +19,7 @@ four crates:
 
 The daemon is a long-running background HTTP server that manages one or more
 /repositories/. A repository is a directory tree on the filesystem whose
-records are tracked in a local SQLite database. The daemon exposes a REST API
+metarecords are tracked in a local SQLite database. The daemon exposes a REST API
 consumed by the CLI and GUI.
 
 The daemon is local-only (binds to =127.0.0.1= by default) and handles no
@@ -47,16 +47,16 @@ log/rollback CLI) is deferred to v2.
 
 ** Key invariants
 
-- Every filesystem record in a watched repository has exactly one corresponding
-  metadata record in the database.
-- When a file or directory is deleted, its metadata record is preserved; the
+- Every filesystem metarecord in a watched repository has exactly one corresponding
+  metadata metarecord in the database.
+- When a file or directory is deleted, its metadata metarecord is preserved; the
   =mfr_path= field is set to =Nothing= rather than deleting the row.
 - =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
   fields to a single value.
-- A metadata record whose =db_ids= contains more than one repository UUID (a
-  /link record/) can only be created or modified when every listed repository is
+- A metadata metarecord whose =db_ids= contains more than one repository UUID (a
+  /link metarecord/) can only be created or modified when every listed repository is
   simultaneously loaded in the same daemon instance. [v2]
-- The =version= counter on a metadata record is managed exclusively by the
+- The =version= counter on a metadata metarecord is managed exclusively by the
   daemon; it is incremented on every write to =fields= and cannot be set
   directly by users.
 - A repository database must be held under an exclusive SQLite lock for the
@@ -95,12 +95,12 @@ this path. This file is distinct from the per-repository
   same shape as a =POST /repos/load= body: exactly one of =root= or
   =metafolder=.
 - A missing configuration file is equivalent to an empty one.
-- A malformed configuration file (invalid JSON, unknown keys, a record with
+- A malformed configuration file (invalid JSON, unknown keys, a metarecord with
   both or neither of =root=/=metafolder=) aborts daemon startup with an
   error message.
 - A repository that fails to load (missing path, locked database, ...) is
   reported as a warning on stderr; the daemon starts anyway and the other
-  records are still loaded.
+  metarecords are still loaded.
 
 ** Health
 
@@ -177,11 +177,11 @@ Response body: ={"repo_uuid": "..."}=
 | Situation                              | HTTP status | Notes                          |
 |----------------------------------------+-------------+--------------------------------|
 | Repository not found                   | 404         |                                |
-| Record not found              | 404         |                                |
+| Metarecord not found              | 404         |                                |
 | Repository already initialised         | 409         |                                |
 | Malformed JSON body                    | 400         |                                |
 | Invalid query                          | 400         |                                |
-| TreeRef parent record not found         | 400         |                                |
+| TreeRef parent metarecord not found         | 400         |                                |
 | TreeRef write would create a cycle     | 400         |                                |
 | TreeRef depth exceeds 1000             | 400         |                                |
 | Schema constraint violation            | 400         | =violations= array in body (see [[file:spec-schema.org][spec-schema.org]]) |

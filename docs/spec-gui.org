@@ -4,7 +4,7 @@
 * Overview
 
 The GUI is a graphical interface to the Metafolder daemon. It exposes the full
-CLI surface in visual form: repository management (init/load/list), record
+CLI surface in visual form: repository management (init/load/list), metarecord
 CRUD, query execution, reconcile, and event log inspection. It communicates
 with an already-running daemon over HTTP and does not manage the daemon's
 lifecycle.
@@ -39,7 +39,7 @@ time.
 
 The =active_repo= of a workspace is set when the workspace is created and
 cannot be changed. To work with a different repository, a new workspace is
-created (see [[*Tab bar]]). This prevents =selected_record= and other workspace
+created (see [[*Tab bar]]). This prevents =selected_metarecord= and other workspace
 variables from becoming invalid due to a repo switch.
 
 ** Panel slot
@@ -51,9 +51,9 @@ clicking a tab or using =tab:new=. A workspace can be assigned to zero, one,
 or both slots simultaneously.
 
 When both slots display the same workspace, each slot independently selects
-which panel type to show. This enables, for example, =record-list= on the left
+which panel type to show. This enables, for example, =metarecord-list= on the left
 and =file= on the right within one workspace, sharing its variables
-(=selected_record=, etc.).
+(=selected_metarecord=, etc.).
 
 The two slots are separated by a draggable divider; the width ratio is part of
 the window state (not per-workspace). The focused slot has a visible indicator
@@ -70,8 +70,8 @@ Built-in panel types:
 
 | Name             | Description                                                  |
 |------------------+--------------------------------------------------------------|
-| =record-list=     | Metadata records filtered by an embedded query; primary selection source |
-| =record-detail=   | All fields of the selected record; follows =selected_record=   |
+| =metarecord-list=     | Metadata metarecords filtered by an embedded query; primary selection source |
+| =metarecord-detail=   | All fields of the selected metarecord; follows =selected_metarecord=   |
 | =file=           | Preview of the file at the active path from =selected_paths=        |
 | =file-manager=   | Filesystem tree navigator; browse and add files/dirs to the DB |
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
@@ -92,11 +92,11 @@ previous state unchanged.
 The visual representation used within a panel type that supports several
 layouts. Stored as part of the panel type's state in the workspace.
 
-The =record-list= panel type supports at minimum:
+The =metarecord-list= panel type supports at minimum:
 - =table= — tabular list with configurable columns.
 - =grid= — thumbnail grid, useful for image collections.
 
-For large result sets, =record-list= uses the daemon's cursor pagination
+For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
 [[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
 the user scrolls.
@@ -112,9 +112,9 @@ Standard variables:
 | Key                | Type                          | Description                        |
 |--------------------+-------------------------------+------------------------------------|
 | =active_repo=      | =string \vert null=           | UUID of the active repository      |
-| =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem record (usually one; multiple if the record has several =mfr_path= values) |
-| =selected_record=   | =\{uuid, repo\} \vert null=   | Metadata record for the highlighted path (null if untracked) |
-| =selected_records= | =string[]=                    | UUIDs of all selected records      |
+| =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
+| =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
+| =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
 
 Panel types may define their own variables using namespaced keys (e.g.
 =my-panel:current-node=).
@@ -134,7 +134,7 @@ default to =local=.
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
-sequence) to a command invocation string (e.g. =record-list:set-mode grid=).
+sequence) to a command invocation string (e.g. =metarecord-list:set-mode grid=).
 Keybindings are loaded from a configuration file and can be edited at runtime.
 No keybinding is hard-coded; the defaults ship in the default config file.
 
@@ -147,7 +147,7 @@ Each keybinding has two independent scope dimensions:
 
 - =when= (optional) — restricts the binding to a specific panel type. Absent
   means the binding is *global* (fires regardless of which panel type is
-  focused). A panel type name (e.g. =record-list=) makes it *local* (fires
+  focused). A panel type name (e.g. =metarecord-list=) makes it *local* (fires
   only when that panel type is focused).
 - =text-input= (boolean, default =false=) — whether the binding also fires
   when a text input is focused (command input or field editor). =false= means
@@ -172,7 +172,7 @@ Config file examples:
 #+BEGIN_SRC toml
 "escape"  = { command = "editing:unfocus",         text-input = true              }
 "ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
-"j"       = { command = "record-list:next",         when = "record-list"            }
+"j"       = { command = "metarecord-list:next",         when = "metarecord-list"            }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
 "ctrl+t"  = { command = "tab:new"                                                  }
 #+END_SRC
@@ -227,7 +227,7 @@ An inline editor for a single field value, adapting its widget to the type:
 | =Ref=         | UUID text input (lookup by path available)     |
 | =TreeRef=     | Parent UUID + name, or path string             |
 | =RefBase=     | UUID text input                                |
-| =ExternalRef= | Repo UUID + record UUID                         |
+| =ExternalRef= | Repo UUID + metarecord UUID                         |
 
 ** Script session
 
@@ -312,8 +312,8 @@ The window area (below the tab bar) is divided into:
 =panel:split= shows the right slot. If no workspace was previously assigned
 to it, the focused workspace is shown in both slots; the same panel type
 cannot be displayed twice for one workspace, so the new slot falls back to
-=record-detail= (pairing the list with the detail view is the expected
-split). When the workspace has no active repo, or =record-detail= is
+=metarecord-detail= (pairing the list with the detail view is the expected
+split). When the workspace has no active repo, or =metarecord-detail= is
 already shown in the other slot, the new slot gets no panel type and the
 type picker is presented. No workspace is silently created, except when
 the layout has no focused workspace at all (the only meaningful split
@@ -341,7 +341,7 @@ assignment is remembered either way.
 ** Status bar
 
 Always-visible read-only area at the bottom. Shows:
-- Status messages after commands (e.g. ="Record deleted."=).
+- Status messages after commands (e.g. ="Metarecord deleted."=).
 - Error messages from failed operations.
 - The last executed command name (dim text).
 - A spinner during long-running operations (reconcile, shell commands).
@@ -389,11 +389,11 @@ Behaviours:
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
-| =record:create=       | Clear =record-detail= to create a new record     |
-| =record:delete=       | Delete the selected record                      |
-| =record-list:set-mode <mode>= | Switch record-list display mode        |
-| =record-list:edit-query=  | Focus the query input in record-list        |
-| =record-list:edit-columns= | Focus the columns input in record-list     |
+| =metarecord:create=       | Clear =metarecord-detail= to create a new metarecord     |
+| =metarecord:delete=       | Delete the selected metarecord                      |
+| =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
+| =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
+| =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:prune=          | Prune the event log                            |
@@ -406,7 +406,7 @@ Behaviours:
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
-| =record:batch-set=         | Set a field on all =selected_records=                         |
+| =metarecord:batch-set=         | Set a field on all =selected_metarecords=                         |
 | =file-manager:add=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
@@ -415,14 +415,14 @@ Behaviours:
 
 Every command is reachable from the keyboard. No command requires the mouse.
 
-Within =record-list=:
-- =Up= / =Down= move the selection (updates =selected_record=).
-- =Enter= or =Right= switches the other slot to =record-detail= (or =file= if
+Within =metarecord-list=:
+- =Up= / =Down= move the selection (updates =selected_metarecord=).
+- =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
   =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
-- =Space= toggles selection for multi-select (updates =selected_records=).
+- =Space= toggles selection for multi-select (updates =selected_metarecords=).
 
-Within =record-detail=:
+Within =metarecord-detail=:
 - =Tab= / =Shift-Tab= move focus between field rows.
 - =Enter= on a field starts inline editing; =Enter= again confirms, =Escape=
   cancels.
@@ -438,7 +438,7 @@ interactively; changes take effect immediately.
 The WebView's native context menu (back/forward/reload/inspect…) is
 suppressed everywhere — in the shell and inside every panel iframe — with
 one exception: editable text fields keep the native menu (cut/copy/paste
-has no cheap HTML replacement). Its Inspect Element record is replaced by
+has no cheap HTML replacement). Its Inspect Element metarecord is replaced by
 the =devtools:open= command, which opens the WebKit inspector (no default
 keybinding; the =devtools= Tauri feature keeps it available in release
 builds).
@@ -450,7 +450,7 @@ The shell installs it for its own areas (tab bar, slot headers, status
 bar) and the shim installs one per panel document. It stands down where a
 more specific right-click behaviour exists: editable text fields, the tab
 bar's right-click (assign to the other slot), and any element handler
-that opened its own menu. Panels prepend their own records to it with
+that opened its own menu. Panels prepend their own metarecords to it with
 =metafolder.contextMenu.addDefaultItems(event => items)=.
 
 Where a per-element context menu makes sense, panels show one via
@@ -480,9 +480,9 @@ Panel types live under =~/.config/metafolder-gui/panel-types/=:
 
 #+BEGIN_SRC
 ~/.config/metafolder-gui/panel-types/
-  record-list/
+  metarecord-list/
     index.html        ← entry point
-  record-detail/
+  metarecord-detail/
     index.html
   file/
     index.html
@@ -526,7 +526,7 @@ few helpers:
 const response = await metafolder.daemon.request('GET', '/repos')
 // Same, but throws Error(body.error) on status >= 400 and returns the
 // body directly — the usual form inside try/catch.
-const record = await metafolder.daemon.call('GET', `/repos/${repo}/records/${uuid}`)
+const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`)
 // Compiles a query DSL string to the Query JSON IR (throws on parse error).
 const ir = await metafolder.daemon.parseQuery('rating > 3')
 // Lazy memoized mfr_path resolution (see "Path display").
@@ -538,9 +538,9 @@ const root = await metafolder.daemon.repoRoot(repo)
 // Absolute path of the repo's .metafolder/internal/ directory (cached
 // GET /repos) — the only path always excluded from tracking.
 const internal = await metafolder.daemon.repoInternalDir(repo)
-// Absolute filesystem paths of a record: one per mfr_path tree_ref
+// Absolute filesystem paths of a metarecord: one per mfr_path tree_ref
 // (multi-map), unresolvable (stale) refs skipped.
-const paths = await metafolder.daemon.recordPaths(repo, record)
+const paths = await metafolder.daemon.metarecordPaths(repo, metarecord)
 #+END_SRC
 
 **** =metafolder.workspace=
@@ -548,13 +548,13 @@ const paths = await metafolder.daemon.recordPaths(repo, record)
 Reactive per-workspace key-value store.
 
 #+BEGIN_SRC js
-metafolder.workspace.set('selected_record', { uuid, repo })
-const record = metafolder.workspace.get('selected_record')
-metafolder.workspace.onChange('selected_record', ({ uuid, repo }) => { ... })
+metafolder.workspace.set('selected_metarecord', { uuid, repo })
+const metarecord = metafolder.workspace.get('selected_metarecord')
+metafolder.workspace.onChange('selected_metarecord', ({ uuid, repo }) => { ... })
 #+END_SRC
 
-Standard keys: =active_repo=, =selected_paths=, =selected_record=,
-=selected_records=. Panel types may use namespaced custom keys (e.g.
+Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
+=selected_metarecords=. Panel types may use namespaced custom keys (e.g.
 =my-panel:state=).
 
 **** =metafolder.commands= and =metafolder.addKeybinding=
@@ -594,8 +594,8 @@ panel types; not routed through the daemon.
 
 #+BEGIN_SRC js
 // List directory contents
-const records = await metafolder.fs.readDir('/path/to/dir')
-// records: [{name: "foo.mp3", path: "/path/to/dir/foo.mp3", is_dir: false}, ...]
+const metarecords = await metafolder.fs.readDir('/path/to/dir')
+// metarecords: [{name: "foo.mp3", path: "/path/to/dir/foo.mp3", is_dir: false}, ...]
 
 // Stat a single path
 const info = await metafolder.fs.stat('/path/to/file')
@@ -610,7 +610,7 @@ objects and ='-'= separators; resolves with the chosen item (its
 =action= already run) or =null= when dismissed.
 
 =metafolder.contextMenu.addDefaultItems(event => items)= registers a
-provider whose items appear above the built-in records of the default
+provider whose items appear above the built-in metarecords of the default
 menu (see [[*Context menus]]) when it opens in this panel's document.
 
 #+BEGIN_SRC js
@@ -637,19 +637,19 @@ any panel type (=import { el, formatValue, field } from '/__ui.js'=):
 
 - =el(tag, props, ...children)= — DOM building without =innerHTML=
   (values come from user files; text stays text). =class= accepts a
-  string or an array whose falsy records are dropped; =on*= props attach
+  string or an array whose falsy metarecords are dropped; =on*= props attach
   event listeners; existing IDL properties are assigned and other keys
   become attributes. Child arrays are flattened and
   =null=/=undefined=/=false= children are skipped.
 - =formatValue({type, value})= — the canonical display form of a data
   model =Value= (=∅= for =nothing=, =parent / name= for =tree_ref=,
-  =repo :: record= for =externalref=, =String(value)= otherwise).
-- =valueEl(value, onOpen)= — same display as a DOM node where record
+  =repo :: metarecord= for =externalref=, =String(value)= otherwise).
+- =valueEl(value, onOpen)= — same display as a DOM node where metarecord
   references are clickable links (class =ref-link=, styled by the user
   stylesheet): the uuid of =ref=/=refbase=, the =parent= of a
-  =tree_ref=, the =record= of an =externalref=. Clicking calls
+  =tree_ref=, the =metarecord= of an =externalref=. Clicking calls
   =onOpen(uuid, repo)= with =repo= null except for =externalref=.
-- =field(record, name)= — first field with that name (fields are a
+- =field(metarecord, name)= — first field with that name (fields are a
   multi-map), or =undefined=.
 
 ** Repository management
@@ -680,22 +680,22 @@ assigned to the focused slot.
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:init= / =repos:load= from there.
 
-** Record management
+** Metarecord management
 
-*** =record-list= panel type
+*** =metarecord-list= panel type
 
-Displays records for the active repo (=active_repo= workspace variable)
+Displays metarecords for the active repo (=active_repo= workspace variable)
 filtered by an embedded query. The query editor is always visible at the
-top of the panel; the =record-list:edit-query= command focuses its input.
-It uses the same DSL as the CLI. An empty query matches all records.
+top of the panel; the =metarecord-list:edit-query= command focuses its input.
+It uses the same DSL as the CLI. An empty query matches all metarecords.
 
 Default display mode: =table= with columns =mfr_path~= (resolved path),
-=mfr_type=, =&version=. The =record-list:set-mode= command switches between
+=mfr_type=, =&version=. The =metarecord-list:set-mode= command switches between
 display modes.
 
 The query editor stacks two rows, each with its own /Apply/ button: the
 query input (a new daemon round-trip) above the columns input
-(=record-list:edit-columns= focuses it). The panel always queries with
+(=metarecord-list:edit-columns= focuses it). The panel always queries with
 =select: '*'=, so applying new columns is a pure re-render — no request.
 
 Each column is one token of the columns input (space- or comma-separated;
@@ -709,46 +709,46 @@ the input and the previous columns are kept):
   falls back to its name component). Other value types fall back to the
   raw display.
 - =name~target= — the dereferenced display: a =ref=/=refbase= value is
-  followed and the cell shows the target record's =target= field rows
-  (comma-joined; e.g. =tags~name=). A missing target record or field
+  followed and the cell shows the target metarecord's =target= field rows
+  (comma-joined; e.g. =tags~name=). A missing target metarecord or field
   falls back to the raw uuid; non-reference values to the raw display.
-- =&uuid= / =&version= — the record's own uuid and version. These are
-  record metadata, not fields (=&= cannot appear in a field name), so a
+- =&uuid= / =&version= — the metarecord's own uuid and version. These are
+  metarecord metadata, not fields (=&= cannot appear in a field name), so a
   user field named =version= never collides with them.
 
 Sorting always uses the underlying raw field (the daemon sorts raw
 values): clicking a =tags~name= header sorts by the =tags= uuids. Meta
 (=&=) columns are not sortable. Column widths are adjustable by dragging
 the right edge of a header. The column list and the widths are persisted
-in the =record-list:columns= and =record-list:column-widths= workspace
+in the =metarecord-list:columns= and =metarecord-list:column-widths= workspace
 variables, so they survive the panel and can be set by scripts.
 
-Supports sorting by column, multi-selection (=selected_records=), and full
+Supports sorting by column, multi-selection (=selected_metarecords=), and full
 keyboard navigation.
 
-When the user moves the selection, =record-list= writes the highlighted record
-to =workspace.selected_record= and sets =workspace.selected_paths= to the list
-of resolved absolute paths from all =mfr_path= field rows of that record
-(empty list if the record has no valid =mfr_path=). Other panels update
+When the user moves the selection, =metarecord-list= writes the highlighted metarecord
+to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the list
+of resolved absolute paths from all =mfr_path= field rows of that metarecord
+(empty list if the metarecord has no valid =mfr_path=). Other panels update
 reactively (see [[*Cross-panel selection]]).
 
-*** =record-detail= panel type
+*** =metarecord-detail= panel type
 
-When =selected_record= is =null=, displays a centred "No record selected"
-message and the /New record/ button.
+When =selected_metarecord= is =null=, displays a centred "No metarecord selected"
+message and the /New metarecord/ button.
 
-Otherwise calls =GET .../records/:uuid= and displays all fields. Each field
+Otherwise calls =GET .../metarecords/:uuid= and displays all fields. Each field
 row shows name, value, an edit button, and a delete button.
 
-The panel reloads the displayed record when another panel signals a data
-change through the =records:dirty= workspace variable (log navigation,
+The panel reloads the displayed metarecord when another panel signals a data
+change through the =metarecords:dirty= workspace variable (log navigation,
 file-manager tracking, …) — unless an edit is in progress: reloading
 would silently discard it, so the stale view persists until the edit is
 saved or cancelled.
 
 Reference values are clickable (=valueEl=, see [[*UI helpers: =/__ui.js=]]):
 clicking the uuid of a =ref=/=refbase=, the parent of a =tree_ref= or the
-record of an =externalref= sets =selected_record= to the referenced record —
+metarecord of an =externalref= sets =selected_metarecord= to the referenced metarecord —
 the panel follows it like any other selection change (the edit guard below
 applies). For an =externalref= the target repository is the reference's;
 loading fails with the usual error message when that repository is not
@@ -758,18 +758,18 @@ Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).
 
 At the bottom of the panel:
-- /New record/ button (or =record:create= command) → clears the form and
-  presents an empty field list for creating a new record. Submitting calls
-  =POST .../records=; on success the new record is set as =selected_record=
-  and the list in the linked =record-list= panel (if any) refreshes.
-- /Add field/ → =POST .../records/:uuid/fields=
-- /Set field/ → =PATCH .../records/:uuid=
-- /Delete record/ → confirmation → =DELETE .../records/:uuid=
-- /Watch and reconcile/ → visible when the record's =mf_watch= field is
+- /New metarecord/ button (or =metarecord:create= command) → clears the form and
+  presents an empty field list for creating a new metarecord. Submitting calls
+  =POST .../metarecords=; on success the new metarecord is set as =selected_metarecord=
+  and the list in the linked =metarecord-list= panel (if any) refreshes.
+- /Add field/ → =POST .../metarecords/:uuid/fields=
+- /Set field/ → =PATCH .../metarecords/:uuid=
+- /Delete metarecord/ → confirmation → =DELETE .../metarecords/:uuid=
+- /Watch and reconcile/ → visible when the metarecord's =mf_watch= field is
   =false= or absent. Sets =mf_watch = true= (=PATCH=), then calls
-  =POST .../records/:uuid/reconcile=. A spinner appears in the status bar
+  =POST .../metarecords/:uuid/reconcile=. A spinner appears in the status bar
   during the operation; the result is appended to the =message= panel type.
-  Useful after adding a record via =file-manager:add= to activate tracking and
+  Useful after adding a metarecord via =file-manager:add= to activate tracking and
   populate the subtree.
 
 Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
@@ -779,7 +779,7 @@ a =force= checkbox.
 
 Displays a preview of the file at the currently active path from
 =selected_paths=. When =selected_paths= is empty, shows a "no file selected"
-message. When =selected_paths= has more than one element (record accessible at
+message. When =selected_paths= has more than one element (metarecord accessible at
 multiple locations), a dropdown in the panel header lets the user choose which
 path to preview. Uses the HTML5 =<img>=, =<audio>=, or =<video>= element
 depending on the file type; falls back to a plain-text view for text files;
@@ -797,11 +797,11 @@ A filesystem tree navigator. The GUI backend (Tauri/Rust) reads the disk
 directly; the daemon is not involved in directory listing.
 
 *Display*: a tree/list of files and directories with a visual distinction
-between tracked records (have =mfr_path= metadata in the active repo) and
-untracked ones. When =active_repo= is =null=, all records are shown as
+between tracked metarecords (have =mfr_path= metadata in the active repo) and
+untracked ones. When =active_repo= is =null=, all metarecords are shown as
 untracked (no distinction is possible). The listing starts with two
 synthetic rows, =.= (the displayed directory itself) and =..= (its parent),
-as in a Unix directory listing; this makes the directory's own record —
+as in a Unix directory listing; this makes the directory's own metarecord —
 including the repo root — selectable. The tracked distinction is resolved
 per displayed directory (the direct children plus the =.= / =..= rows),
 never by scanning the whole repository.
@@ -823,7 +823,7 @@ When =active_repo= is =null=, the checkbox is disabled and =file-manager:add=
 
 *Selection*: moving the cursor sets =workspace.selected_paths= to a
 single-element list containing the highlighted path. If the path has an
-existing metadata record in the active repo, =workspace.selected_record= is also
+existing metadata metarecord in the active repo, =workspace.selected_metarecord= is also
 updated; otherwise it is set to =null=.
 
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
@@ -836,43 +836,43 @@ outside the repo root).
 
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
-| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates record with =mf_watch = false=; parent records created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
+| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
 
 *** =workspace-info= panel type
 
 Displays all workspace variables for the current workspace: =active_repo=,
-=selected_paths=, =selected_record=, =selected_records=, and any custom
+=selected_paths=, =selected_metarecord=, =selected_metarecords=, and any custom
 namespaced variables. Values are shown in JSON format and update reactively
 as they change. Read-only; useful for debugging panel type communication and
 for monitoring GUI state from scripts.
 
 *** Cross-panel selection
 
-Selecting a record in =record-list= or =file-manager= updates the workspace
-variables =selected_paths= and/or =selected_record= (see the respective panel
+Selecting a metarecord in =metarecord-list= or =file-manager= updates the workspace
+variables =selected_paths= and/or =selected_metarecord= (see the respective panel
 type sections for details). Any slot in the same workspace displaying
-=record-detail=, =file=, or =workspace-info= subscribes reactively and updates
+=metarecord-detail=, =file=, or =workspace-info= subscribes reactively and updates
 automatically. Slots showing different workspaces are unaffected.
 
-*Double-click* (or =Enter= / =Right= keybinding) in =record-list=: if the
+*Double-click* (or =Enter= / =Right= keybinding) in =metarecord-list=: if the
 other slot shows the same workspace and is displaying a different panel type,
-it is switched to =record-detail= (or =file= if the record has a valid
+it is switched to =metarecord-detail= (or =file= if the metarecord has a valid
 =mfr_path=). If the other slot is hidden, it is opened (showing the same
 workspace).
 
-*Edit guard*: before =record-detail= replaces its content with a new record, it
+*Edit guard*: before =metarecord-detail= replaces its content with a new metarecord, it
 checks whether any field is being edited. If so, an alert is shown:
-="Unsaved changes — discard and switch record? [Confirm / Cancel]"=. The switch
+="Unsaved changes — discard and switch metarecord? [Confirm / Cancel]"=. The switch
 proceeds only if the user confirms.
 
 *** Batch set
 
-When =selected_records= is non-empty, =record:batch-set= opens a dialog for
-field name and value and sets it on every selected record. (v1
+When =selected_metarecords= is non-empty, =metarecord:batch-set= opens a dialog for
+field name and value and sets it on every selected metarecord. (v1
 implementation note: the query IR has no UUID predicate, so this is one
-=PATCH .../records/:uuid= per selected record rather than a single
+=PATCH .../metarecords/:uuid= per selected metarecord rather than a single
 =POST .../set=; to be revisited if a UUID predicate is added.)
 
 ** Message view
@@ -915,7 +915,7 @@ Selecting a revision (=Enter=) expands it to show individual operations.
   operation of the selected revision. The target may be an ancestor
   (rollback) or a descendant / another branch (redo): the same command
   navigates in both directions, which is also how a rollback is undone.
-  Refreshes =record-list= and =record-detail= afterwards (=records:dirty=).
+  Refreshes =metarecord-list= and =metarecord-detail= afterwards (=metarecords:dirty=).
 - =log:mark-checkpoint= [v2] → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log
@@ -991,8 +991,8 @@ is hidden, it is shown first.
 Request body examples:
 
 #+BEGIN_SRC json
-{"type": "record-list"}
-{"type": "record-detail"}
+{"type": "metarecord-list"}
+{"type": "metarecord-detail"}
 {"type": "file", "path": "/absolute/path/to/image.jpg"}
 {"type": "message"}
 {"type": "log"}
@@ -1000,8 +1000,8 @@ Request body examples:
 #+END_SRC
 
 When =type= is =file= and =path= is provided, the workspace variable
-=selected_paths= is set to =[path]= and =selected_record= is set to the
-matching metadata record (or =null= if the file is untracked). Omitting =path=
+=selected_paths= is set to =[path]= and =selected_metarecord= is set to the
+matching metadata metarecord (or =null= if the file is untracked). Omitting =path=
 leaves =selected_paths= unchanged and the =file= panel type displays whatever
 path was already active.
 
@@ -1078,7 +1078,7 @@ Returns the current GUI state.
     {"id": "ws-2", "name": "Workspace 2", "active_repo": null}
   ],
   "layout": {
-    "left":  {"workspace_id": "ws-1", "panel_type": "record-list", "focused": true},
+    "left":  {"workspace_id": "ws-1", "panel_type": "metarecord-list", "focused": true},
     "right": {"workspace_id": "ws-2", "panel_type": "file",        "focused": false}
   },
   "daemon_connected": true,
@@ -1144,7 +1144,7 @@ while true; do
   [ "$KEY" = "escape" ] && break
 
   WINNER=$( [ "$KEY" = "left" ] && echo "$A" || echo "$B" )
-  # record winner as metadata via daemon …
+  # metarecord winner as metadata via daemon …
 done
 
 # Clean up the temporary workspaces
@@ -1183,7 +1183,7 @@ daemon directly (CORS), and the daemon stays GUI-agnostic.
 
 Commands registered by a panel type whose iframe is not instantiated yet in
 the focused workspace are dispatched after lazily creating the hidden
-iframe. Commands registered with =reveal: true= (e.g. =record:create=,
+iframe. Commands registered with =reveal: true= (e.g. =metarecord:create=,
 =log:rollback=) additionally switch a slot to the owning panel type first:
 the other slot when it shows the same workspace, otherwise the focused
 slot. Limitation: a panel type's commands only exist in the registry once
@@ -1193,7 +1193,7 @@ the panel has been instantiated at least once in the session.
 
 Lazy resolution: =metafolder.daemon.resolvePath(repo, uuid)= /
 =resolveTreeRef(repo, value)= walk the =mfr_path= parent chain through the
-daemon API with a per-repo memo cache (=invalidatePath= drops one record
+daemon API with a per-repo memo cache (=invalidatePath= drops one metarecord
 after a move). Paths are repo-root-relative; =metafolder.daemon.repoRoot=
 gives the absolute root.
 

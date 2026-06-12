@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub type RecordId = Uuid;
+pub type MetaRecordId = Uuid;
 pub type DatabaseId = Uuid;
 
 /// The zero UUID is reserved as the sentinel parent of `TreeRef` root nodes
-/// in the database; it must never be assigned to a real record.
+/// in the database; it must never be assigned to a real metarecord.
 pub const ZERO_UUID: Uuid = Uuid::nil();
 
 /// Serde helpers encoding UUIDs as 32-char lowercase hex strings without
@@ -82,10 +82,10 @@ pub enum Value {
     Bool(bool),
     /// ISO-8601 datetime: "2024-03-15T10:30:00Z"
     DateTime(String),
-    /// Reference to another record's UUID (same repo).
-    Ref(#[serde(with = "hex_uuid")] RecordId),
-    /// Position in a named tree: parent record (None for a root) + the name
-    /// component contributed by this record.
+    /// Reference to another metarecord's UUID (same repo).
+    Ref(#[serde(with = "hex_uuid")] MetaRecordId),
+    /// Position in a named tree: parent metarecord (None for a root) + the name
+    /// component contributed by this metarecord.
     #[serde(rename = "tree_ref")]
     TreeRef {
         #[serde(with = "hex_uuid_opt")]
@@ -94,12 +94,12 @@ pub enum Value {
     },
     /// Reference to a repository UUID.
     RefBase(#[serde(with = "hex_uuid")] DatabaseId),
-    /// Cross-repo reference: (repo UUID, record UUID).
+    /// Cross-repo reference: (repo UUID, metarecord UUID).
     ExternalRef {
         #[serde(with = "hex_uuid")]
         repo: DatabaseId,
         #[serde(with = "hex_uuid")]
-        record: RecordId,
+        metarecord: MetaRecordId,
     },
 }
 
@@ -120,22 +120,22 @@ impl Field {
 }
 
 /// The fundamental unit of the system. Files, tags, relations — everything is
-/// a record.
+/// a metarecord.
 ///
 /// `db_ids` normally contains the single owning repository UUID; two UUIDs
-/// mean a link record shared between repositories. `version` is a monotonic
+/// mean a link metarecord shared between repositories. `version` is a monotonic
 /// write counter managed exclusively by the daemon.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Record {
+pub struct MetaRecord {
     #[serde(with = "hex_uuid")]
-    pub uuid: RecordId,
+    pub uuid: MetaRecordId,
     #[serde(with = "hex_uuid_vec")]
     pub db_ids: Vec<DatabaseId>,
     pub version: u64,
     pub fields: Vec<Field>,
 }
 
-impl Record {
+impl MetaRecord {
     pub fn new(db_id: DatabaseId) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -224,12 +224,12 @@ mod tests {
     #[test]
     fn test_value_json_format_externalref() {
         let repo = Uuid::parse_str("47ab0000-0000-0000-0000-000000000001").unwrap();
-        let record = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
-        let v = Value::ExternalRef { repo, record };
+        let metarecord = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
+        let v = Value::ExternalRef { repo, metarecord };
         let json = serde_json::to_string(&v).unwrap();
         assert_eq!(
             json,
-            r#"{"type":"externalref","value":{"repo":"47ab0000000000000000000000000001","record":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8"}}"#
+            r#"{"type":"externalref","value":{"repo":"47ab0000000000000000000000000001","metarecord":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8"}}"#
         );
     }
 
@@ -260,7 +260,7 @@ mod tests {
             Value::TreeRef { parent: Some(id), name: "félins".into() },
             Value::TreeRef { parent: None, name: "tag1".into() },
             Value::RefBase(repo),
-            Value::ExternalRef { repo, record: id },
+            Value::ExternalRef { repo, metarecord: id },
         ];
         for v in cases {
             assert_eq!(roundtrip(&v), v, "roundtrip failed for {v:?}");
@@ -291,13 +291,13 @@ mod tests {
         assert_eq!(f.name, "rating");
     }
 
-    // ── Record: JSON format ────────────────────────────────────────────────
+    // ── MetaRecord: JSON format ────────────────────────────────────────────────
 
     #[test]
     fn test_record_json_format() {
         let uuid = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
         let db_id = Uuid::parse_str("47ab0000-0000-0000-0000-000000000001").unwrap();
-        let m = Record {
+        let m = MetaRecord {
             uuid,
             db_ids: vec![db_id],
             version: 3,
@@ -312,19 +312,19 @@ mod tests {
 
     #[test]
     fn test_record_roundtrip() {
-        let mut m = Record::new(Uuid::new_v4());
+        let mut m = MetaRecord::new(Uuid::new_v4());
         m.version = 7;
         m.fields.push(Field::new("tag", Value::String("jazz".into())));
         m.fields.push(Field::new("tag", Value::String("live".into())));
         let json = serde_json::to_string(&m).unwrap();
-        let back: Record = serde_json::from_str(&json).unwrap();
+        let back: MetaRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back, m);
     }
 
-    // ── Record: accessors ──────────────────────────────────────────────────
+    // ── MetaRecord: accessors ──────────────────────────────────────────────────
 
-    fn make_record() -> Record {
-        let mut e = Record::new(Uuid::new_v4());
+    fn make_metarecord() -> MetaRecord {
+        let mut e = MetaRecord::new(Uuid::new_v4());
         e.fields.push(Field::new("path", Value::String("/music/a.mp3".into())));
         e.fields.push(Field::new("tag", Value::String("jazz".into())));
         e.fields.push(Field::new("tag", Value::String("live".into())));
@@ -333,19 +333,19 @@ mod tests {
 
     #[test]
     fn test_get_returns_first_value() {
-        let e = make_record();
+        let e = make_metarecord();
         assert_eq!(e.get("path"), Some(&Value::String("/music/a.mp3".into())));
     }
 
     #[test]
     fn test_get_unknown_field_returns_none() {
-        let e = make_record();
+        let e = make_metarecord();
         assert_eq!(e.get("rating"), None);
     }
 
     #[test]
     fn test_get_all_multimap() {
-        let e = make_record();
+        let e = make_metarecord();
         let tags = e.get_all("tag");
         assert_eq!(tags.len(), 2);
         assert!(tags.contains(&&Value::String("jazz".into())));
@@ -355,8 +355,8 @@ mod tests {
     #[test]
     fn test_new_record_defaults() {
         let db_id = Uuid::new_v4();
-        let e1 = Record::new(db_id);
-        let e2 = Record::new(db_id);
+        let e1 = MetaRecord::new(db_id);
+        let e2 = MetaRecord::new(db_id);
         assert_ne!(e1.uuid, e2.uuid);
         assert_eq!(e1.db_ids, vec![db_id]);
         assert_eq!(e1.version, 0);

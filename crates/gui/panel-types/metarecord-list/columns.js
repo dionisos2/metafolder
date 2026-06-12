@@ -1,11 +1,11 @@
-// record-list column specs (spec-gui "record-list panel type").
+// metarecord-list column specs (spec-gui "metarecord-list panel type").
 //
 // Grammar of one token of the columns input (tokens separated by
 // whitespace or commas):
-//   &uuid | &version    record metadata (not a field, not sortable)
+//   &uuid | &version    metarecord metadata (not a field, not sortable)
 //   name                raw field value(s)
 //   name~               resolved display: TreeRef -> path from the root
-//   name~target         dereferenced display: Ref -> the target record's
+//   name~target         dereferenced display: Ref -> the target metarecord's
 //                       `target` field
 // The display modifiers never change the underlying sort field (the
 // daemon sorts raw values).
@@ -42,7 +42,7 @@ export function parseColumns(text) {
     });
 }
 
-/** Meta columns are record attributes, not fields: the daemon cannot sort on them. */
+/** Meta columns are metarecord attributes, not fields: the daemon cannot sort on them. */
 export function isSortable(column) {
   return column.kind === 'field';
 }
@@ -65,7 +65,7 @@ async function rowText(column, value, ctx) {
   }
   if (column.deref && (value.type === 'ref' || value.type === 'refbase')) {
     try {
-      const target = await ctx.getRecord(value.value);
+      const target = await ctx.getMetarecord(value.value);
       const rows = fields(target, column.deref);
       if (rows.length > 0) return rows.map((f) => formatValue(f.value)).join(', ');
     } catch {
@@ -76,23 +76,23 @@ async function rowText(column, value, ctx) {
 }
 
 /** Synchronous cell text: exact for meta/raw columns, placeholder for ~ columns. */
-export function cellQuickText(column, record) {
+export function cellQuickText(column, metarecord) {
   if (column.kind === 'meta') {
-    return column.name === 'uuid' ? record.uuid : String(record.version);
+    return column.name === 'uuid' ? metarecord.uuid : String(metarecord.version);
   }
-  return fields(record, column.name)
+  return fields(metarecord, column.name)
     .map((f) => rowQuickText(column, f.value))
     .join(', ');
 }
 
 /**
  * Full cell text; resolves ~ columns through `ctx`
- * (`resolveTreeRef(treeRefValue) -> path`, `getRecord(uuid) -> record`).
+ * (`resolveTreeRef(treeRefValue) -> path`, `getMetarecord(uuid) -> metarecord`).
  */
-export async function cellText(column, record, ctx) {
-  if (column.kind === 'meta') return cellQuickText(column, record);
+export async function cellText(column, metarecord, ctx) {
+  if (column.kind === 'meta') return cellQuickText(column, metarecord);
   const texts = await Promise.all(
-    fields(record, column.name).map((f) => rowText(column, f.value, ctx)),
+    fields(metarecord, column.name).map((f) => rowText(column, f.value, ctx)),
   );
   return texts.join(', ');
 }

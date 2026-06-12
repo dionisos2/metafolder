@@ -122,7 +122,7 @@ async function rollback() {
       `Navigation done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
       8000,
     );
-    await workspace.set('records:dirty', Date.now()); // refresh record-list
+    await workspace.set('metarecords:dirty', Date.now()); // refresh metarecord-list
     await refresh();
   } catch (error) {
     await statusBar.error(error);
@@ -169,7 +169,7 @@ commands.register('log:refresh', {
   handler: refresh,
 });
 
-workspace.onChange('records:dirty', () => void refresh());
+workspace.onChange('metarecords:dirty', () => void refresh());
 workspace.onChange('active_repo', (value) => {
   repo = value;
   void refresh();

@@ -11,7 +11,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
-use metafolder_core::record::{Field, Record, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 
@@ -35,8 +35,8 @@ pub enum OpType {
 impl OpType {
     pub fn as_str(self) -> &'static str {
         match self {
-            OpType::CreateRecord => "create_record",
-            OpType::DeleteRecord => "delete_record",
+            OpType::CreateRecord => "create_metarecord",
+            OpType::DeleteRecord => "delete_metarecord",
             OpType::SetField => "set_field",
             OpType::AppendField => "append_field",
             OpType::DeleteField => "delete_field",
@@ -49,8 +49,8 @@ impl OpType {
 
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
-            "create_record" => OpType::CreateRecord,
-            "delete_record" => OpType::DeleteRecord,
+            "create_metarecord" => OpType::CreateRecord,
+            "delete_metarecord" => OpType::DeleteRecord,
             "set_field" => OpType::SetField,
             "append_field" => OpType::AppendField,
             "delete_field" => OpType::DeleteField,
@@ -332,8 +332,8 @@ pub fn navigate(
             // Empty state: every data row of this repository is removed.
             let unapplied = ancestry(&tx, head)?.len();
             tx.execute(
-                "DELETE FROM record WHERE uuid IN
-                     (SELECT record_uuid FROM record_db WHERE db_id = ?1)",
+                "DELETE FROM metarecord WHERE uuid IN
+                     (SELECT metarecord_uuid FROM metarecord_db WHERE db_id = ?1)",
                 params![db::uuid_to_bytes(db_id)],
             )?;
             tx.execute("UPDATE log_head SET op_id = NULL WHERE singleton = 1", [])?;
@@ -385,7 +385,7 @@ pub fn navigate(
 
 fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Result<()> {
     if let Some(version) = version {
-        tx.prepare_cached("UPDATE record SET version = ?1 WHERE uuid = ?2")?
+        tx.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?
             .execute(params![version as i64, db::uuid_to_bytes(uuid)])?;
     }
     Ok(())
@@ -396,22 +396,22 @@ fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Re
 fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
-        "create_record" => {
+        "create_metarecord" => {
             tx.execute(
-                "DELETE FROM record WHERE uuid = ?1",
+                "DELETE FROM metarecord WHERE uuid = ?1",
                 params![db::uuid_to_bytes(entity)],
             )?;
         }
-        "delete_record" => {
+        "delete_metarecord" => {
             tx.execute(
-                "INSERT INTO record (uuid, version) VALUES (?1, ?2)",
+                "INSERT INTO metarecord (uuid, version) VALUES (?1, ?2)",
                 params![
                     db::uuid_to_bytes(entity),
                     op.entity_version_before.unwrap_or(0) as i64
                 ],
             )?;
             tx.execute(
-                "INSERT INTO record_db (record_uuid, db_id) VALUES (?1, ?2)",
+                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
                 params![db::uuid_to_bytes(entity), db::uuid_to_bytes(db_id)],
             )?;
             for row in snapshots(tx, op.id, 0)? {
@@ -421,7 +421,7 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
         // All set-field-shaped operations (one field name, full replacement).
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.prepare_cached("DELETE FROM field WHERE record_uuid = ?1 AND field_name = ?2")?
+            tx.prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
                 .execute(params![db::uuid_to_bytes(entity), field])?;
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -450,28 +450,28 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
 fn apply_forward(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
-        "create_record" => {
+        "create_metarecord" => {
             tx.execute(
-                "INSERT INTO record (uuid, version) VALUES (?1, 0)",
+                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
                 params![db::uuid_to_bytes(entity)],
             )?;
             tx.execute(
-                "INSERT INTO record_db (record_uuid, db_id) VALUES (?1, ?2)",
+                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
                 params![db::uuid_to_bytes(entity), db::uuid_to_bytes(db_id)],
             )?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
         }
-        "delete_record" => {
+        "delete_metarecord" => {
             tx.execute(
-                "DELETE FROM record WHERE uuid = ?1",
+                "DELETE FROM metarecord WHERE uuid = ?1",
                 params![db::uuid_to_bytes(entity)],
             )?;
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
-            tx.prepare_cached("DELETE FROM field WHERE record_uuid = ?1 AND field_name = ?2")?
+            tx.prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
                 .execute(params![db::uuid_to_bytes(entity), field])?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -691,23 +691,23 @@ impl<'c> Writer<'c> {
         }
         let version_before = self.bump_version(uuid)?;
         self.tx
-            .prepare_cached("DELETE FROM field WHERE record_uuid = ?1 AND field_name = ?2")?
+            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, vec![])?;
         Ok(())
     }
 
-    /// Creates a new record owned by this repository.
-    pub fn create_record(&mut self, fields: Vec<Field>) -> Result<Record> {
+    /// Creates a new metarecord owned by this repository.
+    pub fn create_metarecord(&mut self, fields: Vec<Field>) -> Result<MetaRecord> {
         let uuid = Uuid::new_v4();
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }
         self.tx
-            .prepare_cached("INSERT INTO record (uuid, version) VALUES (?1, 0)")?
+            .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, 0)")?
             .execute(params![db::uuid_to_bytes(uuid)])?;
         self.tx
-            .prepare_cached("INSERT INTO record_db (record_uuid, db_id) VALUES (?1, ?2)")?
+            .prepare_cached("INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)")?
             .execute(params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(self.db_id)])?;
 
         let mut after = Vec::with_capacity(fields.len());
@@ -719,17 +719,17 @@ impl<'c> Writer<'c> {
         }
 
         self.log_op(OpType::CreateRecord, uuid, None, None, vec![], after)?;
-        Ok(Record { uuid, db_ids: vec![self.db_id], version: 0, fields: out_fields })
+        Ok(MetaRecord { uuid, db_ids: vec![self.db_id], version: 0, fields: out_fields })
     }
 
-    /// Deletes a record and all its rows.
-    pub fn delete_record(&mut self, uuid: Uuid) -> Result<()> {
+    /// Deletes a metarecord and all its rows.
+    pub fn delete_metarecord(&mut self, uuid: Uuid) -> Result<()> {
         let version = db::get_version(&self.tx, uuid)?
-            .with_context(|| format!("Record not found: {uuid}"))?;
+            .with_context(|| format!("Metarecord not found: {uuid}"))?;
         let before = db::get_field_rows(&self.tx, uuid)?;
-        // CASCADE removes field and record_db rows.
+        // CASCADE removes field and metarecord_db rows.
         self.tx
-            .execute("DELETE FROM record WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
+            .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
         self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;
         Ok(())
     }
@@ -752,7 +752,7 @@ impl<'c> Writer<'c> {
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
         self.tx
-            .prepare_cached("DELETE FROM field WHERE record_uuid = ?1 AND field_name = ?2")?
+            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
@@ -834,19 +834,19 @@ impl<'c> Writer<'c> {
     /// Increments `metadata.version` and returns the value before the bump.
     fn bump_version(&self, uuid: Uuid) -> Result<u64> {
         let before = db::get_version(&self.tx, uuid)?
-            .with_context(|| format!("Record not found: {uuid}"))?;
+            .with_context(|| format!("Metarecord not found: {uuid}"))?;
         self.tx
-            .prepare_cached("UPDATE record SET version = version + 1 WHERE uuid = ?1")?
+            .prepare_cached("UPDATE metarecord SET version = version + 1 WHERE uuid = ?1")?
             .execute(params![db::uuid_to_bytes(uuid)])?;
         Ok(before)
     }
 
-    /// Fetches a field row, checking it belongs to the given record.
+    /// Fetches a field row, checking it belongs to the given metarecord.
     fn get_owned_row(&self, uuid: Uuid, field_id: i64) -> Result<FieldRow> {
         db::get_field_rows(&self.tx, uuid)?
             .into_iter()
             .find(|r| r.id == field_id)
-            .with_context(|| format!("Field {field_id} not found on record {uuid}"))
+            .with_context(|| format!("Field {field_id} not found on metarecord {uuid}"))
     }
 
     /// Buffers one operation; the log rows are inserted in bulk, in batches
@@ -955,36 +955,36 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// For TreeRef values: the parent must be null (root) or an existing record
+    /// For TreeRef values: the parent must be null (root) or an existing metarecord
     /// carrying a TreeRef of the same field name; the write must not create a
     /// cycle nor exceed [`MAX_TREE_DEPTH`] (spec-main invariants).
-    fn validate_tree_ref(&self, record: Uuid, field_name: &str, value: &Value) -> Result<()> {
+    fn validate_tree_ref(&self, metarecord: Uuid, field_name: &str, value: &Value) -> Result<()> {
         let Value::TreeRef { parent, .. } = value else {
             return Ok(());
         };
         let Some(parent) = parent else {
             return Ok(()); // Root node: nothing to check.
         };
-        if *parent == record {
+        if *parent == metarecord {
             bail!("TreeRef write would create a cycle on '{field_name}'");
         }
         let parent_positions = db::get_tree_parents(&self.tx, field_name, *parent)?;
         if parent_positions.is_empty() {
             bail!(
-                "invalid TreeRef parent {parent}: no such record carrying a \
+                "invalid TreeRef parent {parent}: no such metarecord carrying a \
                  '{field_name}' TreeRef field"
             );
         }
 
         // Walk every ancestor chain (multi-map fields make this a DAG walk):
-        // detect cycles through the record being written and measure depth.
+        // detect cycles through the metarecord being written and measure depth.
         let mut visited: HashSet<Uuid> = HashSet::new();
         let mut frontier = vec![*parent];
         let mut chain_len = 1; // The parent itself.
         loop {
             let mut next = Vec::new();
             for node in frontier {
-                if node == record {
+                if node == metarecord {
                     bail!("TreeRef write would create a cycle on '{field_name}'");
                 }
                 if !visited.insert(node) {

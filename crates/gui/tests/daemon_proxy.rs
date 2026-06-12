@@ -17,7 +17,7 @@ struct Recorded {
     calls: Arc<Mutex<Vec<(String, String, Value)>>>,
 }
 
-/// Stub daemon: records every request; /health answers ok; /fail answers
+/// Stub daemon: metarecords every request; /health answers ok; /fail answers
 /// a daemon-style error.
 async fn spawn_stub() -> (String, Recorded) {
     let recorded = Recorded::default();

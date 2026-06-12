@@ -70,7 +70,7 @@ describe('formatValue', () => {
     expect(formatValue({ type: 'tree_ref', value: { parent: null, name: '' } })).toBe(
       '(root) / ',
     );
-    expect(formatValue({ type: 'externalref', value: { repo: 'r1', record: 'e1' } })).toBe(
+    expect(formatValue({ type: 'externalref', value: { repo: 'r1', metarecord: 'e1' } })).toBe(
       'r1 :: e1',
     );
   });
@@ -113,9 +113,9 @@ describe('valueEl', () => {
     expect(node.querySelector('a')).toBeNull();
   });
 
-  test('externalref: the record is a link carrying its repo', () => {
+  test('externalref: the metarecord is a link carrying its repo', () => {
     const onOpen = vi.fn();
-    const node = valueEl({ type: 'externalref', value: { repo: 'r1', record: 'e1' } }, onOpen);
+    const node = valueEl({ type: 'externalref', value: { repo: 'r1', metarecord: 'e1' } }, onOpen);
     expect(node.textContent).toBe('r1 :: e1');
     const link = node.querySelector('a');
     expect(link?.textContent).toBe('e1');

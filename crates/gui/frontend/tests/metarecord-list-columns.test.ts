@@ -1,11 +1,11 @@
-// record-list column specs (spec-gui "record-list panel type"): the
+// metarecord-list column specs (spec-gui "metarecord-list panel type"): the
 // mini-language of the columns input — `&uuid`/`&version` entry metadata,
 // raw fields, `field~` resolved display (TreeRef -> path from root) and
 // `field~target` dereferenced display (Ref -> target entry's field).
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { parseColumns, isSortable, cellQuickText, cellText } from '../../panel-types/record-list/columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText } from '../../panel-types/metarecord-list/columns.js';
 
 type Value = { type: string; value: unknown };
 type Entry = { uuid: string; version: number; fields: { name: string; value: Value }[] };
@@ -126,7 +126,7 @@ describe('cellQuickText (synchronous placeholder)', () => {
 describe('cellText (asynchronous display)', () => {
   const ctx = (overrides = {}) => ({
     resolveTreeRef: vi.fn(async () => 'music/jazz/take5.mp3'),
-    getRecord: vi.fn(async () => entry([{ name: 'name', value: str('jazz') }])),
+    getMetarecord: vi.fn(async () => entry([{ name: 'name', value: str('jazz') }])),
     ...overrides,
   });
 
@@ -159,7 +159,7 @@ describe('cellText (asynchronous display)', () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
     const c = ctx();
     expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz');
-    expect(c.getRecord).toHaveBeenCalledWith('1111');
+    expect(c.getMetarecord).toHaveBeenCalledWith('1111');
   });
 
   test('a multi-map target field joins every row', async () => {
@@ -168,19 +168,19 @@ describe('cellText (asynchronous display)', () => {
       { name: 'name', value: str('jazz') },
       { name: 'name', value: str('bebop') },
     ]);
-    const c = ctx({ getRecord: vi.fn(async () => target) });
+    const c = ctx({ getMetarecord: vi.fn(async () => target) });
     expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz, bebop');
   });
 
   test('a missing target entry falls back to the raw uuid', async () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const c = ctx({ getRecord: vi.fn(async () => { throw new Error('gone'); }) });
+    const c = ctx({ getMetarecord: vi.fn(async () => { throw new Error('gone'); }) });
     expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('1111');
   });
 
   test('a target entry without the field falls back to the raw uuid', async () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const c = ctx({ getRecord: vi.fn(async () => entry([])) });
+    const c = ctx({ getMetarecord: vi.fn(async () => entry([])) });
     expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('1111');
   });
 
@@ -195,9 +195,9 @@ describe('cellText (asynchronous display)', () => {
       { name: 'tags', value: ref('1111') },
       { name: 'tags', value: ref('2222') },
     ]);
-    const names: Record<string, string> = { '1111': 'jazz', '2222': 'rock' };
+    const names: Metarecord<string, string> = { '1111': 'jazz', '2222': 'rock' };
     const c = ctx({
-      getRecord: vi.fn(async (uuid: string) => entry([{ name: 'name', value: str(names[uuid]) }])),
+      getMetarecord: vi.fn(async (uuid: string) => entry([{ name: 'name', value: str(names[uuid]) }])),
     });
     expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz, rock');
   });
