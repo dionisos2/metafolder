@@ -310,11 +310,14 @@ The window area (below the tab bar) is divided into:
   [[*Status bar]]).
 
 =panel:split= shows the right slot. If no workspace was previously assigned
-to it, the focused workspace is shown in both slots — without a panel type
-for the new slot (the same panel type cannot be displayed twice for one
-workspace), so the type picker is presented. No workspace is silently
-created, except when the layout has no focused workspace at all (the only
-meaningful split then). =panel:unsplit= hides the non-focused slot; the
+to it, the focused workspace is shown in both slots; the same panel type
+cannot be displayed twice for one workspace, so the new slot falls back to
+=entry-detail= (pairing the list with the detail view is the expected
+split). When the workspace has no active repo, or =entry-detail= is
+already shown in the other slot, the new slot gets no panel type and the
+type picker is presented. No workspace is silently created, except when
+the layout has no focused workspace at all (the only meaningful split
+then). =panel:unsplit= hides the non-focused slot; the
 workspace remains in the tab bar. =panel:split-toggle= splits when a single
 slot is visible and unsplits when both are — the everyday command; default
 suggestions: =v= for =panel:split-toggle=, =c= for =panel:unsplit=, =o= for
@@ -331,8 +334,9 @@ The header also carries the mouse equivalents of the layout commands: when
 the slot is the only visible one, a *split button* (=◫=, =panel:split=
 semantics) shows the second slot; when both slots are visible, a *close
 button* (=×=) hides that slot — its own slot, unlike =panel:unsplit= which
-hides the non-focused one. The hidden slot's workspace assignment is
-remembered either way.
+hides the non-focused one — and a *swap button* (=⇄=, =panel:swap=)
+exchanges the panel types of the two slots. The hidden slot's workspace
+assignment is remembered either way.
 
 ** Status bar
 
@@ -384,6 +388,7 @@ Behaviours:
 | =panel:split-toggle= | Split when one slot is visible, unsplit when both are |
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
+| =panel:swap=         | Exchange the two slots' panel types            |
 | =entry:create=       | Clear =entry-detail= to create a new entry     |
 | =entry:delete=       | Delete the selected entry                      |
 | =entry-list:set-mode <mode>= | Switch entry-list display mode        |

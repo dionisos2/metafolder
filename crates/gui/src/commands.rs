@@ -130,6 +130,11 @@ pub fn slot_hide(app: AppHandle, slot: SlotId) {
 }
 
 #[tauri::command]
+pub fn panel_swap(app: AppHandle) -> Result<(), String> {
+    app.gui.panel_swap()
+}
+
+#[tauri::command]
 pub fn panel_focus_next(app: AppHandle) {
     app.gui.focus_next()
 }

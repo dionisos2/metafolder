@@ -57,6 +57,14 @@
       {#if otherVisible}
         <button
           class="slot-button"
+          title="exchange the two panel types (panel:swap)"
+          onclick={(e) => {
+            e.stopPropagation();
+            void invoke('panel_swap');
+          }}>⇄</button
+        >
+        <button
+          class="slot-button"
           title="hide this panel slot"
           onclick={(e) => {
             e.stopPropagation();

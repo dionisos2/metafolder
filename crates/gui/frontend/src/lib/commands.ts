@@ -191,6 +191,9 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'panel:set-type':
         if (args[0]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[0] });
         return;
+      case 'panel:swap':
+        await invoke('panel_swap');
+        return;
       case 'panel:reveal-other': {
         // Shows the given panel type for the SAME workspace in the other
         // slot, opening it if hidden (spec-gui "Cross-panel selection").

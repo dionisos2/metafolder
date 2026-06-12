@@ -85,11 +85,14 @@ impl Inner {
 
     /// Assigns a workspace to a slot, showing the slot and restoring the
     /// workspace's last panel type for it. When that panel type is already
-    /// shown for the same workspace in the other visible slot, the slot
-    /// gets no panel type (the frontend shows the type picker) — one
-    /// iframe exists per (workspace, panel type).
+    /// shown for the same workspace in the other visible slot (one iframe
+    /// exists per (workspace, panel type)), the slot falls back to
+    /// `entry-detail` — pairing the list with the detail view is the
+    /// expected split — and, when that one is taken too or no repo is
+    /// active, gets no panel type (the frontend shows the type picker).
     fn assign(&mut self, ws_id: &str, slot_id: SlotId) -> Result<(), String> {
         let ws = self.workspace(ws_id)?;
+        let has_repo = ws.active_repo.is_some();
         let wanted = ws
             .last_panel
             .get(&slot_id)
@@ -97,14 +100,23 @@ impl Inner {
             .unwrap_or_else(|| default_panel_type(ws.active_repo.as_deref()).to_string());
 
         let other = self.slot(slot_id.other());
-        let collides = other.visible
-            && other.workspace.as_deref() == Some(ws_id)
-            && other.panel_type.as_deref() == Some(wanted.as_str());
+        let other_shows = |panel_type: &str| {
+            other.visible
+                && other.workspace.as_deref() == Some(ws_id)
+                && other.panel_type.as_deref() == Some(panel_type)
+        };
+        let panel_type = if !other_shows(&wanted) {
+            Some(wanted)
+        } else if has_repo && !other_shows("entry-detail") {
+            Some("entry-detail".to_string())
+        } else {
+            None
+        };
 
         let slot = self.slot_mut(slot_id);
         slot.workspace = Some(ws_id.to_string());
         slot.visible = true;
-        slot.panel_type = if collides { None } else { Some(wanted) };
+        slot.panel_type = panel_type;
         Ok(())
     }
 
@@ -435,6 +447,30 @@ impl GuiState {
             .unwrap_or(false)
     }
 
+    /// `panel:swap` — exchanges the panel types of the two visible slots
+    /// (workspace assignments stay put). Swapping cannot create a
+    /// (workspace, panel type) duplicate: when both slots show the same
+    /// workspace their types already differ.
+    pub fn panel_swap(&self) -> Result<(), String> {
+        let mut inner = self.lock();
+        if !(inner.left.visible && inner.right.visible) {
+            return Err("both panel slots must be visible to swap".into());
+        }
+        let left_type = inner.left.panel_type.take();
+        inner.left.panel_type = inner.right.panel_type.take();
+        inner.right.panel_type = left_type;
+        for slot_id in [SlotId::Left, SlotId::Right] {
+            let slot = inner.slot(slot_id);
+            if let (Some(ws_id), Some(panel_type)) =
+                (slot.workspace.clone(), slot.panel_type.clone())
+            {
+                inner.workspace_mut(&ws_id)?.last_panel.insert(slot_id, panel_type);
+            }
+        }
+        self.emit_layout(&inner);
+        Ok(())
+    }
+
     /// `panel:focus-next` — moves focus to the other slot if visible.
     pub fn focus_next(&self) {
         let mut inner = self.lock();
@@ -724,8 +760,68 @@ mod tests {
         assert_eq!(layout.right.workspace_id, layout.left.workspace_id);
         assert_eq!(state.workspaces().len(), count);
         // The focused slot's panel type cannot be duplicated for the same
-        // workspace: the new slot starts typeless (frontend type picker).
-        assert_eq!(layout.right.panel_type, None);
+        // workspace: the new slot pairs the list with the detail view.
+        assert_eq!(layout.right.panel_type.as_deref(), Some("entry-detail"));
+    }
+
+    #[test]
+    fn test_panel_split_without_repo_leaves_the_new_slot_typeless() {
+        let (_, state) = state();
+        // ws-1 has no repo: left shows "repos", and entry-detail is
+        // meaningless without a repository — the type picker is shown.
+        state.panel_split().unwrap();
+        assert_eq!(state.layout().right.panel_type, None);
+    }
+
+    #[test]
+    fn test_assign_collision_falls_back_to_typeless_when_entry_detail_taken() {
+        let (_, state) = state();
+        let ws1 = state.tab_new(Some("repo-1".into()));
+        state.panel_split().unwrap(); // right: ws1 entry-detail
+        // Remember entry-detail as ws1's right-slot panel type.
+        state.set_panel_type(SlotId::Right, "entry-detail").unwrap();
+        // Park another workspace in the right slot, then move the left
+        // slot to entry-detail (no collision: different workspaces).
+        let ws2 = state.create_workspace(Some("repo-1".into()));
+        state.tab_assign(&ws2, SlotId::Right).unwrap();
+        state.set_panel_type(SlotId::Left, "entry-detail").unwrap();
+        // ws1 comes back to the right slot wanting entry-detail, which
+        // the left slot already shows: no fallback left, typeless.
+        state.tab_assign(&ws1, SlotId::Right).unwrap();
+        assert_eq!(state.layout().right.panel_type, None);
+    }
+
+    #[test]
+    fn test_panel_swap_exchanges_the_two_panel_types() {
+        let (notifier, state) = state();
+        state.tab_new(Some("repo-1".into())); // left: entry-list
+        state.panel_split().unwrap(); // right: entry-detail
+        notifier.clear();
+        state.panel_swap().unwrap();
+
+        let layout = state.layout();
+        assert_eq!(layout.left.panel_type.as_deref(), Some("entry-detail"));
+        assert_eq!(layout.right.panel_type.as_deref(), Some("entry-list"));
+        assert!(!notifier.payloads(events::LAYOUT_CHANGED).is_empty());
+    }
+
+    #[test]
+    fn test_panel_swap_requires_both_slots_visible() {
+        let (_, state) = state();
+        assert!(state.panel_swap().is_err());
+    }
+
+    #[test]
+    fn test_panel_swap_updates_the_last_panel_memory() {
+        let (_, state) = state();
+        let ws = state.tab_new(Some("repo-1".into()));
+        state.panel_split().unwrap(); // left: entry-list, right: entry-detail
+        state.panel_swap().unwrap(); // left: entry-detail, right: entry-list
+
+        // Switching away and back restores the swapped types.
+        state.tab_new(None);
+        state.tab_assign(&ws, SlotId::Left).unwrap();
+        assert_eq!(state.layout().left.panel_type.as_deref(), Some("entry-detail"));
     }
 
     #[test]
