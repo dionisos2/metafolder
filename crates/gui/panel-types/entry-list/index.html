@@ -19,14 +19,19 @@
         gap: 6px;
         background: var(--mf-bg-raised, #26262e);
       }
-      #query-input {
-        flex: 1;
+      #query-editor input {
         font-family: var(--mf-font-mono, monospace);
         background: var(--mf-bg, #1e1e24);
         color: var(--mf-fg, #d8d8e0);
         border: 1px solid var(--mf-fg-dim, #8a8a96);
         border-radius: 3px;
         padding: 3px 6px;
+      }
+      #query-input {
+        flex: 2;
+      }
+      #columns-input {
+        flex: 1;
       }
       #query-error {
         color: var(--mf-error, #c44c56);
@@ -126,6 +131,11 @@
   <body>
     <div id="query-editor">
       <input id="query-input" placeholder='query DSL, e.g. rating > 3 AND genre = "jazz" (empty = all)' />
+      <input
+        id="columns-input"
+        placeholder="columns, e.g. mfr_path rating version"
+        title="space-separated field names shown as table columns ('version' is the entry version; empty restores the defaults)"
+      />
       <button id="query-apply">Apply</button>
     </div>
     <div id="query-error"></div>

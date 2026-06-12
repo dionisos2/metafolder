@@ -1,12 +1,12 @@
 // entry-list panel: entries of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "entry-list panel type").
 
-import { el, field, formatValue } from '/__ui.js';
+import { el, field, fields, formatValue } from '/__ui.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 const PAGE_SIZE = 100;
-const COLUMNS = ['mfr_path', 'mfr_type', 'version'];
+const DEFAULT_COLUMNS = ['mfr_path', 'mfr_type', 'version'];
 
 // "Empty query matches all": three-valued tautology on any field.
 const MATCH_ALL = {
@@ -19,6 +19,7 @@ const MATCH_ALL = {
 };
 
 let repo = null;
+let columns = DEFAULT_COLUMNS; // shown as table columns; persisted per workspace
 let entries = [];
 let nextCursor = null;
 let loading = false;
@@ -33,16 +34,19 @@ const grid = document.getElementById('grid');
 const scroll = document.getElementById('scroll');
 const statusLine = document.getElementById('status-line');
 const queryInput = document.getElementById('query-input');
+const columnsInput = document.getElementById('columns-input');
 const queryError = document.getElementById('query-error');
 
 // ── Data access ─────────────────────────────────────────────────────────
 
 function fieldDisplay(entry, name) {
-  const f = field(entry, name);
-  if (!f) return '';
-  // mfr_path column: leaf name only, until the resolved path arrives.
-  if (f.value.type === 'tree_ref') return f.value.value.name || '(root)';
-  return formatValue(f.value);
+  // Multi-map: a column cell shows every row of the field.
+  return fields(entry, name)
+    .map((f) =>
+      // mfr_path column: leaf name only, until the resolved path arrives.
+      f.value.type === 'tree_ref' ? f.value.value.name || '(root)' : formatValue(f.value),
+    )
+    .join(', ');
 }
 
 async function fetchPage(reset) {
@@ -103,7 +107,7 @@ async function fetchPage(reset) {
 
 function renderHeader() {
   document.getElementById('header-row').replaceChildren(
-    ...COLUMNS.map((name) => {
+    ...columns.map((name) => {
       const active = sort.find((s) => s.field === name);
       return el(
         'th',
@@ -125,7 +129,7 @@ function render() {
           onclick: () => setCursor(index),
           ondblclick: () => openSelected(),
         },
-        COLUMNS.map((column) => {
+        columns.map((column) => {
           const td = el(
             'td',
             {},
@@ -227,6 +231,22 @@ async function applyQuery() {
   await fetchPage(true);
 }
 
+// ── Columns ─────────────────────────────────────────────────────────────
+
+function setColumns(value) {
+  columns = Array.isArray(value) && value.length > 0 ? value : DEFAULT_COLUMNS;
+  columnsInput.value = columns.join(' ');
+}
+
+/** Applies the columns input (no daemon round-trip: select is always '*'). */
+async function applyColumns() {
+  const parsed = columnsInput.value.trim().split(/[\s,]+/).filter(Boolean);
+  setColumns(parsed);
+  render();
+  // Persisted per workspace; also lets scripts set the columns.
+  await workspace.set('entry-list:columns', columns);
+}
+
 function toggleSort(column) {
   if (column === 'version') return; // entry meta, not a sortable field
   const current = sort.find((s) => s.field === column);
@@ -244,9 +264,15 @@ scroll.addEventListener('scroll', () => {
   }
 });
 
-document.getElementById('query-apply').addEventListener('click', applyQuery);
+document.getElementById('query-apply').addEventListener('click', () => {
+  void applyColumns();
+  void applyQuery();
+});
 queryInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') void applyQuery();
+});
+columnsInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') void applyColumns();
 });
 
 // ── Wiring ──────────────────────────────────────────────────────────────
@@ -280,6 +306,10 @@ commands.register('entry-list:edit-query', {
   label: 'Entry list: focus the query input',
   handler: () => queryInput.focus(),
 });
+commands.register('entry-list:edit-columns', {
+  label: 'Entry list: focus the columns input',
+  handler: () => columnsInput.focus(),
+});
 commands.register('entry-list:refresh', {
   label: 'Entry list: reload from the daemon',
   handler: () => fetchPage(true),
@@ -304,5 +334,11 @@ async function start() {
 workspace.onChange('entries:dirty', () => void fetchPage(true));
 // The workspace may adopt a repo after startup (repos panel).
 workspace.onChange('active_repo', () => void start());
+// Columns may also be set by a script (mf gui) or another session.
+workspace.onChange('entry-list:columns', (value) => {
+  setColumns(value);
+  render();
+});
 
+setColumns(await workspace.get('entry-list:columns'));
 await start();

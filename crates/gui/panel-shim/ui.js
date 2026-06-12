@@ -51,6 +51,11 @@ export function field(entry, name) {
   return (entry.fields ?? []).find((f) => f.name === name);
 }
 
+/** Every field of an entry with the given name (multi-map rows, in order). */
+export function fields(entry, name) {
+  return (entry.fields ?? []).filter((f) => f.name === name);
+}
+
 /**
  * Like formatValue, but as a DOM node where entry references are
  * clickable: the uuid of ref/refbase, the parent of a tree_ref, the

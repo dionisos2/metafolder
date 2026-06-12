@@ -3,7 +3,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel types
-import { el, field, formatValue, valueEl } from '../../panel-shim/ui.js';
+import { el, field, fields, formatValue, valueEl } from '../../panel-shim/ui.js';
 
 describe('el', () => {
   test('creates an element with properties and text children', () => {
@@ -149,5 +149,12 @@ describe('field', () => {
   test('returns undefined when absent or fields are missing', () => {
     expect(field(entry, 'missing')).toBeUndefined();
     expect(field({ uuid: 'u2' }, 'genre')).toBeUndefined();
+  });
+
+  test('fields returns every row of a multi-map field, in order', () => {
+    expect(fields(entry, 'genre').map((f: { id: number }) => f.id)).toEqual([1, 2]);
+    expect(fields(entry, 'rating')).toHaveLength(1);
+    expect(fields(entry, 'missing')).toEqual([]);
+    expect(fields({ uuid: 'u2' }, 'genre')).toEqual([]);
   });
 });
