@@ -285,7 +285,7 @@ workspace rather than the focused slot's.
 
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
-| =tab:new=         | Create a new workspace and assign it to the focused slot  |
+| =tab:new=         | Create a workspace in the focused slot (inherits the focused repo unless one is given) |
 | =tab:close=       | Close the focused slot's workspace (removes its tab; slot becomes unassigned) |
 | =tab:rename=      | Rename the focused slot's workspace                       |
 | =tab:next=        | Assign the next workspace to the focused slot (wraps)     |

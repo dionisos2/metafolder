@@ -234,8 +234,19 @@ impl GuiState {
     }
 
     /// `tab:new` — creates a workspace and assigns it to the focused slot.
+    /// Without an explicit repo, the focused workspace's repo is inherited:
+    /// staying on the same repo is the expected default, and switching
+    /// costs the same single action either way.
     pub fn tab_new(&self, active_repo: Option<String>) -> String {
         let mut inner = self.lock();
+        let active_repo = active_repo.or_else(|| {
+            inner
+                .slot(inner.focused)
+                .workspace
+                .as_deref()
+                .and_then(|id| inner.workspace(id).ok())
+                .and_then(|w| w.active_repo.clone())
+        });
         let id = inner.new_workspace(active_repo);
         let focused = inner.focused;
         inner.assign(&id, focused).expect("freshly created workspace");
@@ -596,6 +607,17 @@ mod tests {
 
         assert!(!notifier.payloads(events::WORKSPACES_CHANGED).is_empty());
         assert!(!notifier.payloads(events::LAYOUT_CHANGED).is_empty());
+    }
+
+    #[test]
+    fn test_tab_new_inherits_the_focused_repo() {
+        let (_, state) = state();
+        state.tab_new(Some("repo-9".into())); // focused now shows a repo-9 workspace
+        let id = state.tab_new(None);
+        let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
+        // Staying on the same repo is the expected default; picking
+        // another one costs the same single action either way.
+        assert_eq!(info.active_repo.as_deref(), Some("repo-9"));
     }
 
     #[test]
