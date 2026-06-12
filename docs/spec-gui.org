@@ -443,7 +443,17 @@ the =devtools:open= command, which opens the WebKit inspector (no default
 keybinding; the =devtools= Tauri feature keeps it available in release
 builds).
 
-Where a context menu makes sense, panels show an HTML menu instead via
+Right-clicking anywhere else shows the *default menu*: =Copy= (the text
+selection at open time; disabled when nothing is selected), the everyday
+layout commands (=panel:split-toggle=, =panel:swap=) and =devtools:open=.
+The shell installs it for its own areas (tab bar, slot headers, status
+bar) and the shim installs one per panel document. It stands down where a
+more specific right-click behaviour exists: editable text fields, the tab
+bar's right-click (assign to the other slot), and any element handler
+that opened its own menu. Panels prepend their own entries to it with
+=metafolder.contextMenu.addDefaultItems(event => items)=.
+
+Where a per-element context menu makes sense, panels show one via
 =metafolder.contextMenu(event, items)= (see [[*The =metafolder= API]]); the
 shared implementation lives in =/__menu.js=. The menu is rendered in the
 document that opened it (a menu opened inside a panel iframe is clipped
@@ -595,6 +605,10 @@ HTML context menu at the event's position (see [[*Context menus]]; the
 native menu is suppressed). Items are ={label, action?, disabled?}=
 objects and ='-'= separators; resolves with the chosen item (its
 =action= already run) or =null= when dismissed.
+
+=metafolder.contextMenu.addDefaultItems(event => items)= registers a
+provider whose items appear above the built-in entries of the default
+menu (see [[*Context menus]]) when it opens in this panel's document.
 
 #+BEGIN_SRC js
 row.addEventListener('contextmenu', (event) => {

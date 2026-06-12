@@ -5,7 +5,11 @@
 // @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../../panel-shim/keymatch.js';
 // @ts-expect-error plain-JS module shared with the panel shim
-import { hasOpenMenu, installContextMenuSuppression } from '../../../panel-shim/menu.js';
+import {
+  hasOpenMenu,
+  installContextMenuSuppression,
+  installDefaultContextMenu,
+} from '../../../panel-shim/menu.js';
 import { dispatch, hasEditingTarget } from './commands';
 import { focusedPanelType, store } from './store.svelte';
 
@@ -22,8 +26,10 @@ export function isTextInput(element: Element | null): boolean {
 
 export function installKeys() {
   // The native context menu is suppressed everywhere (spec-gui "Context
-  // menus"); devtools:open replaces its Inspect Element entry.
+  // menus"); the default menu (Copy + layout commands) replaces it in the
+  // shell areas — panel iframes install their own copy via the shim.
   installContextMenuSuppression(window);
+  installDefaultContextMenu(window, dispatch);
   const matcher = createMatcher(store.keytable);
   let lastTable = store.keytable;
   window.addEventListener(

@@ -6,7 +6,12 @@
 
 import { comboFromEvent, createMatcher } from '/__keymatch.js';
 import { createPathResolver } from '/__resolve.js';
-import { hasOpenMenu, installContextMenuSuppression, showMenu } from '/__menu.js';
+import {
+  hasOpenMenu,
+  installContextMenuSuppression,
+  installDefaultContextMenu,
+  showMenu,
+} from '/__menu.js';
 
 const pendingRequests = new Map();
 let nextRequestId = 1;
@@ -132,8 +137,15 @@ const EDITING_ACTIONS = {
 };
 
 // The native context menu is suppressed (spec-gui "Context menus");
-// panels show HTML menus via metafolder.contextMenu instead.
+// panels show HTML menus via metafolder.contextMenu instead, and the
+// default menu (Copy + layout commands) answers everywhere else. Element
+// handlers calling metafolder.contextMenu stop propagation, so they
+// always win over the default menu.
 installContextMenuSuppression(window);
+const defaultMenu = installDefaultContextMenu(window, (invocation) =>
+  // Dispatch errors already reach the status bar through the shell.
+  request('commands.invoke', { invocation }).catch(() => {}),
+);
 
 // Key events never cross the iframe boundary: run the shared matcher here
 // and forward resolved invocations to the shell.
@@ -310,6 +322,10 @@ window.metafolder = {
     },
   },
 };
+
+/** Registers a default-menu item provider (`event => items`); the items
+ *  appear above the built-in entries (spec-gui "Context menus"). */
+window.metafolder.contextMenu.addDefaultItems = (provider) => defaultMenu.addItems(provider);
 
 // Announce until the shell answers with init: the very first message can
 // race the WebView's cross-origin WindowProxy swap (the shell cannot

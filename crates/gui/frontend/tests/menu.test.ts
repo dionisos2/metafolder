@@ -6,6 +6,7 @@ import {
   clampPosition,
   hasOpenMenu,
   installContextMenuSuppression,
+  installDefaultContextMenu,
   showMenu,
   // @ts-expect-error plain-JS module shared with the panel types
 } from '../../panel-shim/menu.js';
@@ -136,6 +137,132 @@ describe('clampPosition', () => {
 
   test('never goes negative', () => {
     expect(clampPosition(20, 10, 100, 50, 80, 40)).toEqual({ x: 0, y: 0 });
+  });
+});
+
+describe('installDefaultContextMenu', () => {
+  let menu: { addItems: (provider: (event: MouseEvent) => Item[]) => void; uninstall: () => void };
+  let dispatch: ReturnType<typeof vi.fn>;
+
+  function install() {
+    dispatch = vi.fn().mockResolvedValue(undefined);
+    menu = installDefaultContextMenu(window, dispatch);
+  }
+
+  function rightClick(element: Element) {
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 6,
+    });
+    element.dispatchEvent(event);
+    return event;
+  }
+
+  function target(): HTMLElement {
+    const div = document.createElement('div');
+    document.body.append(div);
+    return div;
+  }
+
+  function itemByLabel(label: string): HTMLElement {
+    const item = itemElements().find((element) => element.textContent === label);
+    expect(item, `menu item "${label}"`).toBeDefined();
+    return item!;
+  }
+
+  afterEach(() => {
+    press('Escape');
+    menu?.uninstall();
+    vi.restoreAllMocks();
+  });
+
+  test('opens on right-click with a disabled Copy when nothing is selected', () => {
+    install();
+    rightClick(target());
+    expect(menuElement()).not.toBeNull();
+    expect(itemByLabel('Copy').classList.contains('disabled')).toBe(true);
+  });
+
+  test('keeps the native menu on editable text fields', () => {
+    install();
+    const input = document.createElement('input');
+    document.body.append(input);
+    rightClick(input);
+    expect(menuElement()).toBeNull();
+  });
+
+  test('stands down when a more specific menu is already open', async () => {
+    install();
+    const promise = open([{ label: 'Panel item' }]);
+    rightClick(target());
+    expect(document.querySelectorAll('.mf-menu')).toHaveLength(1);
+    expect(itemElements()[0].textContent).toBe('Panel item');
+    press('Escape');
+    await promise;
+  });
+
+  test('Copy copies the selection captured at open time', async () => {
+    install();
+    vi.spyOn(window, 'getSelection').mockReturnValue({
+      toString: () => 'hello world',
+    } as Selection);
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+
+    rightClick(target());
+    const copy = itemByLabel('Copy');
+    expect(copy.classList.contains('disabled')).toBe(false);
+    copy.click();
+    await Promise.resolve();
+    expect(writeText).toHaveBeenCalledWith('hello world');
+  });
+
+  test('command items dispatch their invocation', () => {
+    install();
+    rightClick(target());
+    itemByLabel('Swap panel types').click();
+    expect(dispatch).toHaveBeenCalledWith('panel:swap');
+
+    rightClick(target());
+    itemByLabel('Split / unsplit').click();
+    expect(dispatch).toHaveBeenCalledWith('panel:split-toggle');
+
+    rightClick(target());
+    itemByLabel('Open web inspector').click();
+    expect(dispatch).toHaveBeenCalledWith('devtools:open');
+  });
+
+  test('registered items appear before the defaults, separated', () => {
+    install();
+    const action = vi.fn();
+    menu.addItems(() => [{ label: 'Open entry', action }]);
+    menu.addItems(() => []); // an empty provider adds nothing
+
+    rightClick(target());
+    expect(itemElements()[0].textContent).toBe('Open entry');
+    expect(itemElements()[1].textContent).toBe('Copy');
+    itemByLabel('Open entry').click();
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  test('providers receive the originating event', () => {
+    install();
+    const provider = vi.fn().mockReturnValue([]);
+    menu.addItems(provider);
+    const event = rightClick(target());
+    expect(provider).toHaveBeenCalledWith(event);
+  });
+
+  test('uninstall removes the listener', () => {
+    install();
+    menu.uninstall();
+    rightClick(target());
+    expect(menuElement()).toBeNull();
   });
 });
 

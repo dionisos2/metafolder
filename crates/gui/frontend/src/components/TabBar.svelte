@@ -59,6 +59,7 @@
       onclick={() => assign(ws.id, store.layout.focused)}
       oncontextmenu={(e) => {
         e.preventDefault();
+        e.stopPropagation(); // right-click acts here: no default menu
         void assign(ws.id, otherSlot());
       }}
       ondblclick={() => startRename(ws.id, ws.name)}

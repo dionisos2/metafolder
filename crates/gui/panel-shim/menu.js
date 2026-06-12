@@ -165,6 +165,16 @@ export function showMenu(items, { x, y }) {
   });
 }
 
+/** Editable text fields keep the WebView's native menu: cut/copy/paste
+ *  has no cheap HTML replacement. */
+function keepsNativeMenu(element) {
+  const tag = element?.tagName;
+  return (
+    ((tag === 'INPUT' || tag === 'TEXTAREA') && !element.disabled && !element.readOnly) ||
+    element?.isContentEditable
+  );
+}
+
 /**
  * Suppresses the WebView's native context menu (back/forward/...) on the
  * whole document, except over editable text fields, which keep the native
@@ -173,11 +183,58 @@ export function showMenu(items, { x, y }) {
  */
 export function installContextMenuSuppression(target = window) {
   target.addEventListener('contextmenu', (event) => {
-    const element = event.target;
-    const tag = element?.tagName;
-    const editableText =
-      ((tag === 'INPUT' || tag === 'TEXTAREA') && !element.disabled && !element.readOnly) ||
-      element?.isContentEditable;
-    if (!editableText) event.preventDefault();
+    if (!keepsNativeMenu(event.target)) event.preventDefault();
   });
+}
+
+function copyText(text) {
+  if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+  // Non-secure-context fallback: execCommand needs a live selection, and
+  // opening the menu may have cleared the original one.
+  const area = document.createElement('textarea');
+  area.value = text;
+  document.body.append(area);
+  area.select();
+  document.execCommand('copy');
+  area.remove();
+}
+
+/**
+ * Installs the default context menu (spec-gui "Context menus"): right-click
+ * anywhere that is not an editable text field and where no more specific
+ * menu opened shows Copy (the selection, captured at open time) and the
+ * everyday layout commands, sent through `dispatch(invocation)`.
+ *
+ * Returns `{ addItems, uninstall }`; `addItems` registers a provider
+ * (`event => items`) whose items appear above the defaults — panels extend
+ * the menu through `metafolder.contextMenu.addDefaultItems`.
+ */
+export function installDefaultContextMenu(target, dispatch) {
+  const providers = [];
+
+  function onContextMenu(event) {
+    if (keepsNativeMenu(event.target)) return;
+    if (hasOpenMenu()) return; // a more specific handler already answered
+    const selection = String(target.getSelection?.() ?? '');
+    const items = [];
+    for (const provider of providers) {
+      const extra = provider(event) ?? [];
+      if (extra.length > 0) items.push(...extra, '-');
+    }
+    items.push(
+      { label: 'Copy', disabled: selection === '', action: () => void copyText(selection) },
+      '-',
+      { label: 'Split / unsplit', action: () => void dispatch('panel:split-toggle') },
+      { label: 'Swap panel types', action: () => void dispatch('panel:swap') },
+      '-',
+      { label: 'Open web inspector', action: () => void dispatch('devtools:open') },
+    );
+    void showMenu(items, { x: event.clientX, y: event.clientY });
+  }
+
+  target.addEventListener('contextmenu', onContextMenu);
+  return {
+    addItems: (provider) => providers.push(provider),
+    uninstall: () => target.removeEventListener('contextmenu', onContextMenu),
+  };
 }
