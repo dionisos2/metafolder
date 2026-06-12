@@ -27,6 +27,10 @@
 "8" = { command = "tab:goto-8" }
 "9" = { command = "tab:goto-9" }
 
+# Event log navigation (one revision per step, on the active repo).
+"ctrl+z" = { command = "log:undo" }
+"ctrl+shift+z" = { command = "log:redo" }
+
 # Panel slots. panel:split is available via the command input.
 "v" = { command = "panel:split-toggle" }
 "c" = { command = "panel:unsplit" }

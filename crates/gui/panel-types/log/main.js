@@ -161,6 +161,10 @@ async function prune() {
 }
 
 document.getElementById('refresh').addEventListener('click', refresh);
+// Shell builtins (they work on the active repo, no selection needed);
+// the refresh comes back through metarecords:dirty.
+document.getElementById('undo').addEventListener('click', () => void commands.invoke('log:undo'));
+document.getElementById('redo').addEventListener('click', () => void commands.invoke('log:redo'));
 rollbackButton.addEventListener('click', rollback);
 pruneButton.addEventListener('click', prune);
 

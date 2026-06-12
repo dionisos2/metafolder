@@ -405,6 +405,8 @@ Behaviours:
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =log:rollback=       | Rollback to the selected revision              |
+| =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
+| =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
@@ -927,6 +929,16 @@ the revision to show its individual operations (and collapses it again).
   (rollback) or a descendant / another branch (redo): the same command
   navigates in both directions, which is also how a rollback is undone.
   Refreshes =metarecord-list= and =metarecord-detail= afterwards (=metarecords:dirty=).
+- =log:undo= / =log:redo= — shell builtins (they work without the log
+  panel, defaults =ctrl+z= / =ctrl+shift+z=; the log panel also has Undo /
+  Redo toolbar buttons): navigate the active repo's log one revision at a
+  time. Undo targets ={"prev_revision": true}=; redo re-applies the
+  revision of HEAD's child in the operation tree — the daemon has no
+  direct target for it, so the GUI reads =GET .../log?mode=tree= and
+  targets the last operation of that revision (the most recent child when
+  a rollback created several branches). At a tip there is nothing to
+  redo. No confirmation prompt: the operation is itself undoable, that is
+  the point. Refreshes the panels through =metarecords:dirty=.
 - =log:mark-checkpoint= [v2] → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log

@@ -212,6 +212,12 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'reconcile:run':
         if (ws) await invoke('reconcile_run', { wsId: ws });
         return;
+      case 'log:undo':
+        if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
+        return;
+      case 'log:redo':
+        if (ws) await invoke('log_navigate', { wsId: ws, redo: true });
+        return;
       case 'repos:open':
         await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
         return;

@@ -19,6 +19,7 @@ pub mod server;
 pub mod shell_exec;
 pub mod state;
 pub mod style_watcher;
+pub mod undo;
 
 use command_registry::CommandRegistry;
 use config::ConfigDir;
@@ -79,6 +80,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("daemon:set-url", "Change the daemon URL"),
         ("repos:open", "Open the repository panel in the focused slot"),
         ("reconcile:run", "Reconcile the active repository with the filesystem"),
+        ("log:undo", "Undo the last revision of the active repository"),
+        ("log:redo", "Re-apply the revision ahead of HEAD"),
         ("answer:send", "Resolve the pending script input wait"),
     ] {
         registry.register_builtin(name, label);
@@ -253,6 +256,7 @@ pub fn run(options: Options) {
             commands::daemon_health,
             commands::parse_query,
             reconcile::reconcile_run,
+            undo::log_navigate,
             commands::answer_send,
             commands::prompt_resolve,
             commands::panel_ready,
