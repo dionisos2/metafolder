@@ -72,6 +72,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("panel:set-type", "Switch the focused slot's panel type"),
         ("message:clear", "Clear the workspace message log"),
         ("config:open", "Open the settings view"),
+        ("devtools:open", "Open the WebKit web inspector"),
         ("quit", "Exit the GUI"),
         ("daemon:set-url", "Change the daemon URL"),
         ("repos:open", "Open the repository panel in the focused slot"),
@@ -254,8 +255,22 @@ pub fn run(options: Options) {
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,
+            commands::open_devtools,
             commands::quit,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the metafolder GUI");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_devtools_open_is_a_builtin() {
+        let registry = CommandRegistry::new();
+        register_builtins(&registry);
+        let def = registry.get("devtools:open").expect("devtools:open registered");
+        assert_eq!(def.scope, crate::command_registry::Scope::Global);
+    }
 }

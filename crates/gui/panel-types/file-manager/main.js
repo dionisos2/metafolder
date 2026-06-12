@@ -82,6 +82,7 @@ function render() {
           class: [index === cursorIndex && 'cursor', trackedPaths.has(item.path) && 'tracked'],
           onclick: () => select(index),
           ondblclick: () => activate(index),
+          oncontextmenu: (event) => rowMenu(event, index),
         },
         el('span', { class: 'icon' }, item.is_dir ? '▸' : '·'),
         el('span', { class: 'name' }, item.name),
@@ -107,6 +108,23 @@ async function activate(index) {
   if (!item) return;
   if (item.is_dir) await open(item.path);
   else await select(index);
+}
+
+// Right-click on a row: move the cursor there, then offer the row's
+// actions as an HTML context menu (the native menu is suppressed).
+function rowMenu(event, index) {
+  const item = listing[index];
+  if (!item) return;
+  void select(index);
+  void metafolder.contextMenu(event, [
+    item.is_dir && { label: 'Open', action: () => void activate(index) },
+    item.is_dir && '-',
+    {
+      label: 'Track (mf_watch = false)',
+      disabled: !repo || trackedPaths.has(item.path) || !insideRoot(item.path),
+      action: () => void addSelected(),
+    },
+  ].filter(Boolean));
 }
 
 async function goUp() {

@@ -4,6 +4,8 @@
 
 // @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../../panel-shim/keymatch.js';
+// @ts-expect-error plain-JS module shared with the panel shim
+import { hasOpenMenu, installContextMenuSuppression } from '../../../panel-shim/menu.js';
 import { dispatch, hasEditingTarget } from './commands';
 import { focusedPanelType, store } from './store.svelte';
 
@@ -19,11 +21,15 @@ export function isTextInput(element: Element | null): boolean {
 }
 
 export function installKeys() {
+  // The native context menu is suppressed everywhere (spec-gui "Context
+  // menus"); devtools:open replaces its Inspect Element entry.
+  installContextMenuSuppression(window);
   const matcher = createMatcher(store.keytable);
   let lastTable = store.keytable;
   window.addEventListener(
     'keydown',
     (event) => {
+      if (hasOpenMenu()) return; // the menu's own navigation handles the keys
       const combo = comboFromEvent(event);
       if (!combo) return;
       // setBindings resets the sequence buffer: only on real changes.

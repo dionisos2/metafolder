@@ -6,6 +6,7 @@
 
 import { comboFromEvent, createMatcher } from '/__keymatch.js';
 import { createPathResolver } from '/__resolve.js';
+import { hasOpenMenu, installContextMenuSuppression, showMenu } from '/__menu.js';
 
 const pendingRequests = new Map();
 let nextRequestId = 1;
@@ -130,11 +131,16 @@ const EDITING_ACTIONS = {
   },
 };
 
+// The native context menu is suppressed (spec-gui "Context menus");
+// panels show HTML menus via metafolder.contextMenu instead.
+installContextMenuSuppression(window);
+
 // Key events never cross the iframe boundary: run the shared matcher here
 // and forward resolved invocations to the shell.
 window.addEventListener(
   'keydown',
   (event) => {
+    if (hasOpenMenu()) return; // the menu's own navigation handles the keys
     const combo = comboFromEvent(event);
     if (!combo || !initData) return;
     const active = document.activeElement;
@@ -275,6 +281,17 @@ window.metafolder = {
   fs: {
     readDir: (path) => request('fs.readDir', { path }),
     stat: (path) => request('fs.stat', { path }),
+  },
+
+  /**
+   * Shows an HTML context menu at the event's position. `items` is an
+   * array of {label, action?, disabled?} and '-' separators (/__menu.js);
+   * resolves with the chosen item (its action already run) or null.
+   */
+  contextMenu(event, items) {
+    event.preventDefault();
+    event.stopPropagation();
+    return showMenu(items, { x: event.clientX, y: event.clientY });
   },
 
   statusBar: {

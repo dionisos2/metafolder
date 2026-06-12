@@ -15,7 +15,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 metafolder-core = { path = "../core" }
-tauri = { version = "2", features = [] }
+# devtools: the WebKit inspector stays available in release builds via
+# the devtools:open command (the native context menu is disabled).
+tauri = { version = "2", features = ["devtools"] }
 tokio = { version = "1", features = ["full"] }
 # axum 0.7 to match the daemon (same router/test patterns).
 axum = "0.7"

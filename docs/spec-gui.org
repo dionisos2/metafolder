@@ -386,6 +386,7 @@ Behaviours:
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:prune=          | Prune the event log                            |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
+| =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
 | =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
 | =editing:confirm=         | Confirm the current text input (=text-input = true=)          |
@@ -419,6 +420,28 @@ Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
 The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.
+
+** Context menus
+
+The WebView's native context menu (back/forward/reload/inspect…) is
+suppressed everywhere — in the shell and inside every panel iframe — with
+one exception: editable text fields keep the native menu (cut/copy/paste
+has no cheap HTML replacement). Its Inspect Element entry is replaced by
+the =devtools:open= command, which opens the WebKit inspector (no default
+keybinding; the =devtools= Tauri feature keeps it available in release
+builds).
+
+Where a context menu makes sense, panels show an HTML menu instead via
+=metafolder.contextMenu(event, items)= (see [[*The =metafolder= API]]); the
+shared implementation lives in =/__menu.js=. The menu is rendered in the
+document that opened it (a menu opened inside a panel iframe is clipped
+to that iframe), positioned at the pointer (flipped at the viewport
+edges), and dismissed by =Escape=, a click outside, or opening another
+menu. =Up= / =Down= / =Enter= navigate it; while a menu is open the
+keybinding matchers stand down so its navigation keys do not trigger
+panel commands. Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
+=disabled=) and =mf-menu-separator=, with built-in defaults that the user
+stylesheet overrides.
 
 ** Style and theming
 
@@ -552,6 +575,23 @@ const entries = await metafolder.fs.readDir('/path/to/dir')
 // Stat a single path
 const info = await metafolder.fs.stat('/path/to/file')
 // info: {path, is_dir, size, mtime}
+#+END_SRC
+
+**** =metafolder.contextMenu=
+
+HTML context menu at the event's position (see [[*Context menus]]; the
+native menu is suppressed). Items are ={label, action?, disabled?}=
+objects and ='-'= separators; resolves with the chosen item (its
+=action= already run) or =null= when dismissed.
+
+#+BEGIN_SRC js
+row.addEventListener('contextmenu', (event) => {
+  void metafolder.contextMenu(event, [
+    { label: 'Open', action: () => open(item) },
+    '-',
+    { label: 'Track', disabled: alreadyTracked, action: () => track(item) },
+  ])
+})
 #+END_SRC
 
 **** =metafolder.statusBar=
@@ -752,6 +792,11 @@ selection for a file; =Backspace= goes up one level.
 | =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates entry with =mf_watch = false=; parent entries created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
+*Context menu*: right-clicking a row moves the cursor there and opens an
+HTML menu ([[*Context menus]]): =Open= (directories) and =Track= (disabled
+when there is no active repo, the path is already tracked, or it is
+outside the repo root).
+
 
 *** =workspace-info= panel type
 

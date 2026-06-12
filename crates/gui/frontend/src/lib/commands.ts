@@ -220,6 +220,9 @@ export async function dispatch(invocation: string): Promise<void> {
         // Resolves a script's POST /gui/input wait.
         await invoke('answer_send', { value: args.join(' ') });
         return;
+      case 'devtools:open':
+        await invoke('open_devtools');
+        return;
       case 'quit':
         await invoke('quit');
         return;

@@ -361,6 +361,13 @@ pub fn panel_ready(app: AppHandle, ws_id: String, panel_type: String) -> Result<
     app.gui.set_panel_ready(&ws_id, &panel_type)
 }
 
+/// `devtools:open` — the WebKit inspector; replaces the Inspect Element
+/// entry of the suppressed native context menu.
+#[tauri::command]
+pub fn open_devtools(window: tauri::WebviewWindow) {
+    window.open_devtools();
+}
+
 #[tauri::command]
 pub fn quit(window: tauri::Window) {
     let _ = window.close();

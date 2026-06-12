@@ -32,3 +32,7 @@ a.ref-link {
 a.ref-link:hover {
   text-decoration: underline;
 }
+
+/* HTML context menus (/__menu.js) ship built-in defaults; override them
+ * here. Hooks: .mf-menu, .mf-menu-item (.active, .disabled),
+ * .mf-menu-separator. */
