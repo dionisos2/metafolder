@@ -344,6 +344,63 @@ fn test_follows_tree_path_matches_direct_children() {
 }
 
 #[test]
+fn test_follows_tree_empty_path_matches_root_children() {
+    // The file-manager panel resolves the tracked children of the repo root
+    // by querying Follows with an empty path: "" resolves to the root entry
+    // itself (the TreeRef root has the empty string as its name).
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let music = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "music".into() },
+    )]);
+    let docs = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "docs".into() },
+    )]);
+    let _deep = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(music), name: "a.mp3".into() },
+    )]);
+
+    let q = Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("".into()) };
+    assert_same_set(f.run(&q), vec![music, docs]);
+}
+
+#[test]
+fn test_directory_entry_lookup_by_path() {
+    // The file-manager panel resolves the displayed directory's own entry
+    // ("." row) with Matches on the TreeRef name: the root entry is the
+    // only one with an empty name, and a subdirectory is pinned down by
+    // Follows(parent) AND Matches(^name$).
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let music = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "music".into() },
+    )]);
+    let _musical = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "musical".into() },
+    )]);
+    let _deep = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(music), name: "music".into() },
+    )]);
+
+    let q = Query::Matches { field: "mfr_path".into(), pattern: "^$".into() };
+    assert_same_set(f.run(&q), vec![root]);
+
+    let q = Query::And {
+        operands: vec![
+            Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("".into()) },
+            Query::Matches { field: "mfr_path".into(), pattern: "^music$".into() },
+        ],
+    };
+    assert_same_set(f.run(&q), vec![music]);
+}
+
+#[test]
 fn test_follows_transitive_collects_all_descendants() {
     let mut f = Fixture::new();
     let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);

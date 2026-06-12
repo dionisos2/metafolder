@@ -777,7 +777,12 @@ directly; the daemon is not involved in directory listing.
 *Display*: a tree/list of files and directories with a visual distinction
 between tracked entries (have =mfr_path= metadata in the active repo) and
 untracked ones. When =active_repo= is =null=, all entries are shown as
-untracked (no distinction is possible).
+untracked (no distinction is possible). The listing starts with two
+synthetic rows, =.= (the displayed directory itself) and =..= (its parent),
+as in a Unix directory listing; this makes the directory's own entry —
+including the repo root — selectable. The tracked distinction is resolved
+per displayed directory (the direct children plus the =.= / =..= rows),
+never by scanning the whole repository.
 
 *Root behaviour*: a checkbox (default: checked) constrains navigation to the
 =active_repo= root. When unchecked, the user can navigate anywhere on the
@@ -794,16 +799,16 @@ updated; otherwise it is set to =null=.
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
 selection for a file; =Backspace= goes up one level.
 
-| Command                   | Description                                              |
-|---------------------------+----------------------------------------------------------|
-| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates entry with =mf_watch = false=; parent entries created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
-| =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
-| =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
 *Context menu*: right-clicking a row moves the cursor there and opens an
 HTML menu ([[*Context menus]]): =Open= (directories) and =Track= (disabled
 when there is no active repo, the path is already tracked, or it is
 outside the repo root).
 
+| Command                   | Description                                              |
+|---------------------------+----------------------------------------------------------|
+| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates entry with =mf_watch = false=; parent entries created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
+| =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
+| =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
 
 *** =workspace-info= panel type
 

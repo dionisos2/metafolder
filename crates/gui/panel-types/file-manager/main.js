@@ -3,6 +3,7 @@
 // (spec-gui "file-manager panel type").
 
 import { el } from '/__ui.js';
+import { loadTrackedChildren, loadDirEntry, parentDir } from './tracked.js';
 
 const { fs, daemon, workspace, commands, statusBar } = metafolder;
 
@@ -12,7 +13,7 @@ let currentDir = null;
 let listing = []; // [{name, path, is_dir}]
 let cursorIndex = -1;
 let constrainToRoot = true;
-let trackedPaths = new Map(); // absolute path -> entry uuid
+let trackedPaths = new Map(); // absolute path -> entry uuid (children of currentDir only)
 
 const entriesList = document.getElementById('entries');
 const placeholderElement = document.getElementById('placeholder');
@@ -24,32 +25,23 @@ function insideRoot(path) {
   return repoRoot !== null && (path === repoRoot || path.startsWith(`${repoRoot}/`));
 }
 
-// All tracked absolute paths of the repo, resolved once per refresh
-// (paginated query on mfr_path; fine for v1 sizes).
-async function loadTrackedPaths() {
-  trackedPaths = new Map();
-  if (!repo) return;
-  let cursor = null;
-  do {
-    let page;
-    try {
-      page = await daemon.call('POST', `/repos/${repo}/query`, {
-        query: { type: 'is_present', field: 'mfr_path' },
-        select: '*',
-        limit: 500,
-        ...(cursor && { cursor }),
-      });
-    } catch (error) {
-      await statusBar.error(error);
-      return;
-    }
-    for (const entry of page.results) {
-      for (const path of await daemon.entryPaths(repo, entry)) {
-        trackedPaths.set(path, entry.uuid);
-      }
-    }
-    cursor = page.next_cursor;
-  } while (cursor);
+// Tracked status of the displayed directory's children plus the "." and
+// ".." rows (tracked.js); the rest of the repo is never fetched.
+async function refreshTracked(dir) {
+  try {
+    const parent = parentDir(dir);
+    const [tracked, selfUuid, parentUuid] = await Promise.all([
+      loadTrackedChildren(daemon, repo, repoRoot, dir),
+      loadDirEntry(daemon, repo, repoRoot, dir),
+      loadDirEntry(daemon, repo, repoRoot, parent),
+    ]);
+    if (selfUuid) tracked.set(dir, selfUuid);
+    if (parentUuid) tracked.set(parent, parentUuid);
+    trackedPaths = tracked;
+  } catch (error) {
+    trackedPaths = new Map();
+    await statusBar.error(error);
+  }
 }
 
 async function open(dir) {
@@ -57,14 +49,22 @@ async function open(dir) {
     statusBar.message('navigation is constrained to the repo root', 4000);
     return;
   }
+  let items;
   try {
-    listing = await fs.readDir(dir);
-    currentDir = dir;
-    cursorIndex = -1;
-    render();
+    items = await fs.readDir(dir);
   } catch (error) {
     await statusBar.error(error, 5000);
+    return;
   }
+  await refreshTracked(dir);
+  listing = [
+    { name: '.', path: dir, is_dir: true },
+    { name: '..', path: parentDir(dir), is_dir: true },
+    ...items,
+  ];
+  currentDir = dir;
+  cursorIndex = -1;
+  render();
 }
 
 function render() {
@@ -129,8 +129,7 @@ function rowMenu(event, index) {
 
 async function goUp() {
   if (!currentDir || currentDir === '/') return;
-  const parent = currentDir.slice(0, currentDir.lastIndexOf('/')) || '/';
-  await open(parent);
+  await open(parentDir(currentDir));
 }
 
 async function addSelected() {
@@ -147,7 +146,7 @@ async function addSelected() {
     return;
   }
   statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, 5000);
-  await loadTrackedPaths();
+  await refreshTracked(currentDir);
   render();
   await select(cursorIndex);
   await workspace.set('entries:dirty', Date.now());
@@ -214,7 +213,6 @@ async function start() {
   constrainBox.disabled = repo === null;
   if (repo !== null) {
     repoRoot = await daemon.repoRoot(repo);
-    await loadTrackedPaths();
     await open(repoRoot);
   } else {
     // No repo: browse from the home directory, everything untracked.
@@ -225,7 +223,8 @@ async function start() {
 
 workspace.onChange('active_repo', () => void start());
 workspace.onChange('entries:dirty', async () => {
-  await loadTrackedPaths();
+  if (currentDir === null) return;
+  await refreshTracked(currentDir);
   render();
 });
 
