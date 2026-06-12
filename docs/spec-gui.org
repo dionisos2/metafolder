@@ -305,11 +305,15 @@ The window area (below the tab bar) is divided into:
 - *Status bar*: one or two read-only lines at the very bottom (see
   [[*Status bar]]).
 
-=panel:split= shows the right slot. If no workspace was previously assigned to
-it, a new workspace is created (inheriting =active_repo= from the focused
-workspace). =panel:close= hides the non-focused slot; the workspace remains in
-the tab bar. The focused slot has a visible indicator (border highlight —
-theme-controlled); focus switches via =panel:focus-next=.
+=panel:split= shows the right slot. If no workspace was previously assigned
+to it, the focused workspace is shown in both slots — without a panel type
+for the new slot (the same panel type cannot be displayed twice for one
+workspace), so the type picker is presented. No workspace is silently
+created, except when the layout has no focused workspace at all (the only
+meaningful split then). =panel:close= hides the non-focused slot; the
+workspace remains in the tab bar. The focused slot has a visible indicator
+(border highlight — theme-controlled); focus switches via
+=panel:focus-next=.
 
 Each slot has a thin header bar showing the current panel type name and the
 repo indicator. The header contains a dropdown that lists all available panel
@@ -369,7 +373,7 @@ Behaviours:
 | =tab:next=           | Assign the next workspace to the focused slot  |
 | =tab:prev=           | Assign the previous workspace to the focused slot |
 | =tab:goto-N=         | Assign workspace N to the focused slot         |
-| =panel:split=        | Show the right slot (create workspace if unassigned) |
+| =panel:split=        | Show the right slot (focused workspace if unassigned) |
 | =panel:close=        | Hide the non-focused slot (workspace preserved) |
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |

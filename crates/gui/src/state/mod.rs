@@ -338,8 +338,9 @@ impl GuiState {
     // ── Slot commands ────────────────────────────────────────────────────
 
     /// `panel:split` — shows the hidden slot; if it has no remembered
-    /// workspace, creates one inheriting `active_repo` from the focused
-    /// workspace.
+    /// workspace, shows the focused workspace in both slots (the
+    /// collision rule leaves the new slot typeless — same panel type
+    /// twice is impossible for one workspace).
     pub fn panel_split(&self) -> Result<(), String> {
         let mut inner = self.lock();
         let target = if !inner.right.visible {
@@ -353,17 +354,16 @@ impl GuiState {
         let mut created = false;
         match inner.slot(target).workspace.clone() {
             Some(_) => inner.slot_mut(target).visible = true,
-            None => {
-                let inherited = inner
-                    .slot(inner.focused)
-                    .workspace
-                    .as_deref()
-                    .and_then(|id| inner.workspace(id).ok())
-                    .and_then(|w| w.active_repo.clone());
-                let id = inner.new_workspace(inherited);
-                inner.assign(&id, target)?;
-                created = true;
-            }
+            None => match inner.slot(inner.focused).workspace.clone() {
+                Some(ws_id) => inner.assign(&ws_id, target)?,
+                // Empty layout (no focused workspace at all): a fresh
+                // workspace is the only meaningful split.
+                None => {
+                    let id = inner.new_workspace(None);
+                    inner.assign(&id, target)?;
+                    created = true;
+                }
+            },
         }
         if created {
             self.emit_workspaces(&inner);
@@ -676,21 +676,20 @@ mod tests {
     // ── Slots ────────────────────────────────────────────────────────────
 
     #[test]
-    fn test_panel_split_creates_workspace_inheriting_repo() {
+    fn test_panel_split_shows_focused_workspace_without_creating_one() {
         let (_, state) = state();
         state.tab_new(Some("repo-9".into())); // focused shows ws-2 (repo-9)
+        let count = state.workspaces().len();
         state.panel_split().unwrap();
 
         let layout = state.layout();
         assert!(layout.right.visible);
-        let right_ws = layout.right.workspace_id.clone().unwrap();
-        assert_ne!(right_ws, "ws-2");
-        let info = state
-            .workspaces()
-            .into_iter()
-            .find(|w| w.id == right_ws)
-            .unwrap();
-        assert_eq!(info.active_repo.as_deref(), Some("repo-9"));
+        // Same workspace in both slots; no silently created workspace.
+        assert_eq!(layout.right.workspace_id, layout.left.workspace_id);
+        assert_eq!(state.workspaces().len(), count);
+        // The focused slot's panel type cannot be duplicated for the same
+        // workspace: the new slot starts typeless (frontend type picker).
+        assert_eq!(layout.right.panel_type, None);
     }
 
     #[test]
