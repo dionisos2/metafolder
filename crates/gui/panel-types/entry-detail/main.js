@@ -1,7 +1,7 @@
 // entry-detail panel: shows and edits all fields of selected_entry
 // (spec-gui "entry-detail panel type").
 
-import { el, formatValue } from '/__ui.js';
+import { el, formatValue, valueEl } from '/__ui.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
@@ -28,6 +28,11 @@ function showError(message) {
 
 function api(path) {
   return `/repos/${current.repo}/metadata/${current.uuid}${path}`;
+}
+
+/** Follows a reference: the panel itself reacts to selected_entry. */
+function openRef(uuid, repo = null) {
+  void workspace.set('selected_entry', { uuid, repo: repo ?? current.repo });
 }
 
 // ── Value editing widgets ───────────────────────────────────────────────
@@ -142,7 +147,7 @@ function fieldRow(field) {
       () => widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.(),
     );
   } else {
-    value.textContent = formatValue(field.value);
+    value.replaceChildren(valueEl(field.value, openRef));
     ops.append(
       el(
         'button',

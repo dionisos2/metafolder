@@ -50,3 +50,46 @@ export function formatValue({ type, value }) {
 export function field(entry, name) {
   return (entry.fields ?? []).find((f) => f.name === name);
 }
+
+/**
+ * Like formatValue, but as a DOM node where entry references are
+ * clickable: the uuid of ref/refbase, the parent of a tree_ref, the
+ * entry of an externalref. Clicking calls onOpen(uuid, repo) — repo is
+ * null except for externalref (the referenced entry's repository).
+ */
+export function valueEl(value, onOpen) {
+  const link = (uuid, repo = null) =>
+    el(
+      'a',
+      {
+        href: '#',
+        class: 'ref-link',
+        onclick: (event) => {
+          event.preventDefault();
+          onOpen(uuid, repo);
+        },
+      },
+      uuid,
+    );
+  switch (value.type) {
+    case 'ref':
+    case 'refbase':
+      return el('span', {}, link(value.value));
+    case 'tree_ref':
+      return el(
+        'span',
+        {},
+        value.value.parent === null ? '(root)' : link(value.value.parent),
+        ` / ${value.value.name}`,
+      );
+    case 'externalref':
+      return el(
+        'span',
+        {},
+        `${value.value.repo} :: `,
+        link(value.value.entry, value.value.repo),
+      );
+    default:
+      return el('span', {}, formatValue(value));
+  }
+}

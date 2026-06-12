@@ -22,3 +22,13 @@ body {
   color: var(--mf-fg);
   font-family: var(--mf-font);
 }
+
+/* Entry references rendered as clickable links (/__ui.js valueEl). */
+a.ref-link {
+  color: var(--mf-accent);
+  text-decoration: none;
+}
+
+a.ref-link:hover {
+  text-decoration: underline;
+}

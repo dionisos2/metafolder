@@ -557,6 +557,11 @@ any panel type (=import { el, formatValue, field } from '/__ui.js'=):
 - =formatValue({type, value})= — the canonical display form of a data
   model =Value= (=∅= for =nothing=, =parent / name= for =tree_ref=,
   =repo :: entry= for =externalref=, =String(value)= otherwise).
+- =valueEl(value, onOpen)= — same display as a DOM node where entry
+  references are clickable links (class =ref-link=, styled by the user
+  stylesheet): the uuid of =ref=/=refbase=, the =parent= of a
+  =tree_ref=, the =entry= of an =externalref=. Clicking calls
+  =onOpen(uuid, repo)= with =repo= null except for =externalref=.
 - =field(entry, name)= — first field with that name (fields are a
   multi-map), or =undefined=.
 
@@ -617,6 +622,14 @@ message and the /New entry/ button.
 
 Otherwise calls =GET .../metadata/:uuid= and displays all fields. Each field
 row shows name, value, an edit button, and a delete button.
+
+Reference values are clickable (=valueEl=, see [[*UI helpers: =/__ui.js=]]):
+clicking the uuid of a =ref=/=refbase=, the parent of a =tree_ref= or the
+entry of an =externalref= sets =selected_entry= to the referenced entry —
+the panel follows it like any other selection change (the edit guard below
+applies). For an =externalref= the target repository is the reference's;
+loading fails with the usual error message when that repository is not
+loaded.
 
 Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).

@@ -3,7 +3,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel types
-import { el, field, formatValue } from '../../panel-shim/ui.js';
+import { el, field, formatValue, valueEl } from '../../panel-shim/ui.js';
 
 describe('el', () => {
   test('creates an element with properties and text children', () => {
@@ -73,6 +73,61 @@ describe('formatValue', () => {
     expect(formatValue({ type: 'externalref', value: { repo: 'r1', entry: 'e1' } })).toBe(
       'r1 :: e1',
     );
+  });
+});
+
+describe('valueEl', () => {
+  test('scalars and nothing render as plain text, no link', () => {
+    const node = valueEl({ type: 'string', value: 'jazz' }, vi.fn());
+    expect(node.textContent).toBe('jazz');
+    expect(node.querySelector('a')).toBeNull();
+    expect(valueEl({ type: 'nothing' }, vi.fn()).textContent).toBe('∅');
+  });
+
+  test('ref and refbase are links opening the target entry', () => {
+    const onOpen = vi.fn();
+    const node = valueEl({ type: 'ref', value: 'deadbeef'.repeat(4) }, onOpen);
+    const link = node.querySelector('a');
+    expect(link?.textContent).toBe('deadbeef'.repeat(4));
+    link?.click();
+    expect(onOpen).toHaveBeenCalledWith('deadbeef'.repeat(4), null);
+
+    const base = valueEl({ type: 'refbase', value: 'abcd1234' }, onOpen);
+    base.querySelector('a')?.click();
+    expect(onOpen).toHaveBeenCalledWith('abcd1234', null);
+  });
+
+  test('tree_ref: the parent uuid is a link, the name is text', () => {
+    const onOpen = vi.fn();
+    const node = valueEl({ type: 'tree_ref', value: { parent: 'abc', name: 'x.mp3' } }, onOpen);
+    expect(node.textContent).toBe('abc / x.mp3');
+    const link = node.querySelector('a');
+    expect(link?.textContent).toBe('abc');
+    link?.click();
+    expect(onOpen).toHaveBeenCalledWith('abc', null);
+  });
+
+  test('tree_ref with a null parent has no link', () => {
+    const node = valueEl({ type: 'tree_ref', value: { parent: null, name: 'root-child' } }, vi.fn());
+    expect(node.textContent).toBe('(root) / root-child');
+    expect(node.querySelector('a')).toBeNull();
+  });
+
+  test('externalref: the entry is a link carrying its repo', () => {
+    const onOpen = vi.fn();
+    const node = valueEl({ type: 'externalref', value: { repo: 'r1', entry: 'e1' } }, onOpen);
+    expect(node.textContent).toBe('r1 :: e1');
+    const link = node.querySelector('a');
+    expect(link?.textContent).toBe('e1');
+    link?.click();
+    expect(onOpen).toHaveBeenCalledWith('e1', 'r1');
+  });
+
+  test('clicking a link does not navigate (default prevented)', () => {
+    const node = valueEl({ type: 'ref', value: 'abc' }, vi.fn());
+    const event = new MouseEvent('click', { cancelable: true, bubbles: true });
+    node.querySelector('a')?.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
   });
 });
 
