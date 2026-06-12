@@ -80,6 +80,11 @@
       li.tracked .name {
         color: var(--mf-ok, #56c44c);
       }
+      /* .metafolder/internal: hard-excluded from tracking (live database). */
+      li.internal .name,
+      li.internal .badge {
+        color: var(--mf-error, #c44c56);
+      }
       .badge {
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);

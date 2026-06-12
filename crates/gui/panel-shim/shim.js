@@ -27,9 +27,24 @@ const ready = new Promise((resolve) => (resolveReady = resolve));
 
 const matcher = createMatcher([]);
 
-// Per-repo TreeRef path resolvers and repo-root cache.
+// Per-repo TreeRef path resolvers and repo-info cache.
 const resolvers = new Map();
-const repoRoots = new Map();
+const repoInfos = new Map();
+
+// Cached GET /repos lookup (root, internal_dir, ...).
+async function repoInfo(repo) {
+  if (!repoInfos.has(repo)) {
+    const response = await request('daemon.request', {
+      method: 'GET',
+      path: '/repos',
+      body: null,
+    });
+    for (const item of response.body ?? []) repoInfos.set(item.repo_uuid, item);
+  }
+  const info = repoInfos.get(repo);
+  if (info === undefined) throw new Error(`repository ${repo} is not loaded`);
+  return info;
+}
 
 function resolverFor(repo) {
   if (!resolvers.has(repo)) {
@@ -220,19 +235,12 @@ window.metafolder = {
     /** Drops the cached path of an entry (after a move/rename). */
     invalidatePath: (repo, uuid) => resolverFor(repo).invalidate(uuid),
     /** Absolute root directory of a repository (cached GET /repos). */
-    repoRoot: async (repo) => {
-      if (!repoRoots.has(repo)) {
-        const response = await request('daemon.request', {
-          method: 'GET',
-          path: '/repos',
-          body: null,
-        });
-        for (const item of response.body ?? []) repoRoots.set(item.repo_uuid, item.root);
-      }
-      const root = repoRoots.get(repo);
-      if (root === undefined) throw new Error(`repository ${repo} is not loaded`);
-      return root;
-    },
+    repoRoot: async (repo) => (await repoInfo(repo)).root,
+    /**
+     * Absolute path of the repository's `.metafolder/internal/` directory
+     * (cached GET /repos) — the only path always excluded from tracking.
+     */
+    repoInternalDir: async (repo) => (await repoInfo(repo)).internal_dir,
     /**
      * Absolute filesystem paths of an entry: one per `mfr_path` tree_ref
      * (fields are a multi-map), unresolvable (stale) refs skipped.

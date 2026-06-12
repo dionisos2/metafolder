@@ -535,6 +535,9 @@ await metafolder.daemon.resolveTreeRef(repo, { parent, name })
 metafolder.daemon.invalidatePath(repo, uuid)
 // Absolute root directory of a repository (cached GET /repos).
 const root = await metafolder.daemon.repoRoot(repo)
+// Absolute path of the repo's .metafolder/internal/ directory (cached
+// GET /repos) — the only path always excluded from tracking.
+const internal = await metafolder.daemon.repoInternalDir(repo)
 // Absolute filesystem paths of an entry: one per mfr_path tree_ref
 // (multi-map), unresolvable (stale) refs skipped.
 const paths = await metafolder.daemon.entryPaths(repo, entry)
@@ -802,6 +805,14 @@ as in a Unix directory listing; this makes the directory's own entry —
 including the repo root — selectable. The tracked distinction is resolved
 per displayed directory (the direct children plus the =.= / =..= rows),
 never by scanning the whole repository.
+
+The active repo's =.metafolder/internal/= directory and its contents are
+shown in red (=--mf-error=) with an =internal= badge: they are hard-excluded
+from tracking (see [[file:spec-file-tracking.org][spec-file-tracking.org]]),
+so the add-to-DB actions are disabled on them. The path comes from the
+=internal_dir= field of =GET /repos= (=metafolder.daemon.repoInternalDir=) —
+it is matched absolutely, not by name, since the metafolder may live
+anywhere.
 
 *Root behaviour*: a checkbox (default: checked) constrains navigation to the
 =active_repo= root. When unchecked, the user can navigate anywhere on the

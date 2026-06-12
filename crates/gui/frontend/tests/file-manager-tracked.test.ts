@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, loadTrackedChildren, loadDirEntry } from '../../panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirEntry } from '../../panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -53,6 +53,22 @@ describe('parentDir', () => {
 
   test('the filesystem root is its own parent', () => {
     expect(parentDir('/')).toBe('/');
+  });
+});
+
+describe('isWithin', () => {
+  test('the directory itself and its descendants are within', () => {
+    expect(isWithin('/repo/.metafolder/internal', '/repo/.metafolder/internal')).toBe(true);
+    expect(isWithin('/repo/.metafolder/internal/db.sqlite', '/repo/.metafolder/internal')).toBe(
+      true,
+    );
+  });
+
+  test('siblings, prefixes and null are not within', () => {
+    expect(isWithin('/repo/.metafolder/config.json', '/repo/.metafolder/internal')).toBe(false);
+    expect(isWithin('/repo/.metafolder/internals', '/repo/.metafolder/internal')).toBe(false);
+    expect(isWithin('/repo/.metafolder', '/repo/.metafolder/internal')).toBe(false);
+    expect(isWithin('/repo/x', null)).toBe(false);
   });
 });
 

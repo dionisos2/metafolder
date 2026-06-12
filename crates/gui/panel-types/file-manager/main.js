@@ -3,12 +3,13 @@
 // (spec-gui "file-manager panel type").
 
 import { el } from '/__ui.js';
-import { loadTrackedChildren, loadDirEntry, parentDir } from './tracked.js';
+import { loadTrackedChildren, loadDirEntry, parentDir, isWithin } from './tracked.js';
 
 const { fs, daemon, workspace, commands, statusBar } = metafolder;
 
 let repo = null;
 let repoRoot = null;
+let internalDir = null; // .metafolder/internal: hard-excluded from tracking
 let currentDir = null;
 let listing = []; // [{name, path, is_dir}]
 let cursorIndex = -1;
@@ -22,7 +23,11 @@ const addButton = document.getElementById('add');
 const constrainBox = document.getElementById('constrain');
 
 function insideRoot(path) {
-  return repoRoot !== null && (path === repoRoot || path.startsWith(`${repoRoot}/`));
+  return isWithin(path, repoRoot);
+}
+
+function trackable(path) {
+  return insideRoot(path) && !isWithin(path, internalDir);
 }
 
 // Tracked status of the displayed directory's children plus the "." and
@@ -72,23 +77,33 @@ function render() {
   placeholderElement.hidden = true;
   const selected = listing[cursorIndex];
   addButton.disabled =
-    !repo || !selected || trackedPaths.has(selected.path) || !insideRoot(selected.path);
+    !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
 
   entriesList.replaceChildren(
-    ...listing.map((item, index) =>
-      el(
+    ...listing.map((item, index) => {
+      const internal = isWithin(item.path, internalDir);
+      return el(
         'li',
         {
-          class: [index === cursorIndex && 'cursor', trackedPaths.has(item.path) && 'tracked'],
+          class: [
+            index === cursorIndex && 'cursor',
+            trackedPaths.has(item.path) && 'tracked',
+            internal && 'internal',
+          ],
           onclick: () => select(index),
           ondblclick: () => activate(index),
           oncontextmenu: (event) => rowMenu(event, index),
+          ...(internal && { title: 'always excluded from tracking (live database)' }),
         },
         el('span', { class: 'icon' }, item.is_dir ? '▸' : '·'),
         el('span', { class: 'name' }, item.name),
-        el('span', { class: 'badge' }, trackedPaths.has(item.path) ? 'tracked' : ''),
-      ),
-    ),
+        el(
+          'span',
+          { class: 'badge' },
+          internal ? 'internal' : trackedPaths.has(item.path) ? 'tracked' : '',
+        ),
+      );
+    }),
   );
 }
 
@@ -121,7 +136,7 @@ function rowMenu(event, index) {
     item.is_dir && '-',
     {
       label: 'Track (mf_watch = false)',
-      disabled: !repo || trackedPaths.has(item.path) || !insideRoot(item.path),
+      disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
       action: () => void addSelected(),
     },
   ].filter(Boolean));
@@ -213,9 +228,12 @@ async function start() {
   constrainBox.disabled = repo === null;
   if (repo !== null) {
     repoRoot = await daemon.repoRoot(repo);
+    internalDir = await daemon.repoInternalDir(repo);
     await open(repoRoot);
   } else {
     // No repo: browse from the home directory, everything untracked.
+    repoRoot = null;
+    internalDir = null;
     placeholderElement.textContent = 'No active repository — browsing the disk.';
     await open('/');
   }

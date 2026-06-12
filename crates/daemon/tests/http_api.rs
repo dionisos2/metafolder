@@ -88,6 +88,12 @@ async fn test_init_load_and_list_repos() {
     assert_eq!(repos[0]["repo_uuid"].as_str().unwrap(), repo);
     assert_eq!(repos[0]["root"].as_str().unwrap(), root.canonicalize().unwrap().to_str().unwrap());
     assert!(repos[0]["name"].is_string());
+    // The always-excluded directory, exposed so clients (e.g. the GUI
+    // file-manager) can flag it without guessing the metafolder location.
+    assert_eq!(
+        repos[0]["internal_dir"].as_str().unwrap(),
+        root.canonicalize().unwrap().join(".metafolder/internal").to_str().unwrap()
+    );
 
     // Re-init → 409; re-load → same uuid (idempotent).
     let (status, body) =

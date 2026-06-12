@@ -66,6 +66,9 @@ pub struct RepoInfo {
     pub repo_uuid: Uuid,
     pub name: String,
     pub root: PathBuf,
+    /// `.metafolder/internal/`, always excluded from tracking; exposed so
+    /// clients can flag it without guessing the metafolder location.
+    pub internal_dir: PathBuf,
     pub created_at: u64,
 }
 
@@ -146,6 +149,7 @@ impl AppState {
                 repo_uuid: r.config.repo_uuid,
                 name: r.config.name.clone(),
                 root: r.config.root.clone(),
+                internal_dir: r.internal_dir(),
                 created_at: r.config.created_at,
             })
             .collect();

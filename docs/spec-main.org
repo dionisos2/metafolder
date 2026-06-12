@@ -129,6 +129,7 @@ Response body:
   "repo_uuid": "...",
   "name": "...",
   "root": "/path/to/dir",
+  "internal_dir": "/path/to/dir/.metafolder/internal",
   [...]
   }
   ]

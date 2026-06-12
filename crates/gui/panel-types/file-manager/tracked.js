@@ -18,6 +18,11 @@ export function relPath(dir, repoRoot) {
   return dir.slice(repoRoot.length);
 }
 
+// Whether `path` is `dir` or one of its descendants (absolute paths).
+export function isWithin(path, dir) {
+  return dir !== null && (path === dir || path.startsWith(`${dir}/`));
+}
+
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
