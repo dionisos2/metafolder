@@ -383,13 +383,27 @@ impl GuiState {
         Ok(())
     }
 
-    /// `panel:close` — hides the non-focused slot (workspace preserved).
-    pub fn panel_close(&self) -> Result<(), String> {
+    /// `panel:unsplit` — hides the non-focused slot (workspace preserved).
+    pub fn panel_unsplit(&self) -> Result<(), String> {
         let mut inner = self.lock();
         let other = inner.focused.other();
         inner.slot_mut(other).visible = false;
         self.emit_layout(&inner);
         Ok(())
+    }
+
+    /// `panel:split-toggle` — splits when one slot is visible, unsplits
+    /// when both are.
+    pub fn panel_split_toggle(&self) -> Result<(), String> {
+        let both_visible = {
+            let inner = self.lock();
+            inner.left.visible && inner.right.visible
+        };
+        if both_visible {
+            self.panel_unsplit()
+        } else {
+            self.panel_split()
+        }
     }
 
     /// Hides a slot (GUI API `PUT /gui/layout` with null); the workspace
@@ -719,7 +733,7 @@ mod tests {
         let (_, state) = state();
         state.panel_split().unwrap();
         let right_ws = state.layout().right.workspace_id.clone().unwrap();
-        state.panel_close().unwrap();
+        state.panel_unsplit().unwrap();
         assert!(!state.layout().right.visible);
 
         let count = state.workspaces().len();
@@ -729,16 +743,30 @@ mod tests {
     }
 
     #[test]
-    fn test_panel_close_hides_non_focused_and_keeps_tab() {
+    fn test_panel_unsplit_hides_non_focused_and_keeps_tab() {
         let (_, state) = state();
         state.panel_split().unwrap();
         let right_ws = state.layout().right.workspace_id.clone().unwrap();
         assert_eq!(state.layout().focused, SlotId::Left);
-        state.panel_close().unwrap();
+        state.panel_unsplit().unwrap();
 
         let layout = state.layout();
         assert!(!layout.right.visible);
         assert!(state.workspaces().iter().any(|w| w.id == right_ws));
+    }
+
+    #[test]
+    fn test_panel_split_toggle_splits_then_unsplits() {
+        let (_, state) = state();
+        state.panel_split_toggle().unwrap(); // one visible slot: splits
+        assert!(state.layout().right.visible);
+        state.panel_split_toggle().unwrap(); // both visible: unsplits
+        assert!(!state.layout().right.visible);
+        // Toggling again re-splits with the remembered workspace.
+        let count = state.workspaces().len();
+        state.panel_split_toggle().unwrap();
+        assert!(state.layout().right.visible);
+        assert_eq!(state.workspaces().len(), count);
     }
 
     #[test]

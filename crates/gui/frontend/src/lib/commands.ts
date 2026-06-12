@@ -179,8 +179,11 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'panel:split':
         await invoke('panel_split');
         return;
-      case 'panel:close':
-        await invoke('panel_close');
+      case 'panel:unsplit':
+        await invoke('panel_unsplit');
+        return;
+      case 'panel:split-toggle':
+        await invoke('panel_split_toggle');
         return;
       case 'panel:focus-next':
         await invoke('panel_focus_next');

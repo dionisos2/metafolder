@@ -113,12 +113,17 @@ pub fn panel_split(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn panel_close(app: AppHandle) -> Result<(), String> {
-    app.gui.panel_close()
+pub fn panel_unsplit(app: AppHandle) -> Result<(), String> {
+    app.gui.panel_unsplit()
+}
+
+#[tauri::command]
+pub fn panel_split_toggle(app: AppHandle) -> Result<(), String> {
+    app.gui.panel_split_toggle()
 }
 
 /// Mouse path: the slot header's close button hides its own slot,
-/// which is not necessarily the non-focused one (unlike `panel:close`).
+/// which is not necessarily the non-focused one (unlike `panel:unsplit`).
 #[tauri::command]
 pub fn slot_hide(app: AppHandle, slot: SlotId) {
     app.gui.hide_slot(slot)

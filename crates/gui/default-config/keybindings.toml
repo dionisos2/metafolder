@@ -12,22 +12,28 @@
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }
 
-# Tabs (spec default suggestions: alt+t, alt+w, alt+1..9).
-"alt+t" = { command = "tab:new" }
-"alt+w" = { command = "tab:close" }
-"alt+n" = { command = "tab:next" }
-"alt+p" = { command = "tab:prev" }
-"alt+1" = { command = "tab:goto-1" }
-"alt+2" = { command = "tab:goto-2" }
-"alt+3" = { command = "tab:goto-3" }
-"alt+4" = { command = "tab:goto-4" }
-"alt+5" = { command = "tab:goto-5" }
-"alt+6" = { command = "tab:goto-6" }
-"alt+7" = { command = "tab:goto-7" }
-"alt+8" = { command = "tab:goto-8" }
-"alt+9" = { command = "tab:goto-9" }
+# Tabs (spec default suggestions: t, w, 1..9).
+"t" = { command = "tab:new" }
+"w" = { command = "tab:close" }
+"n" = { command = "tab:next" }
+"p" = { command = "tab:prev" }
+"1" = { command = "tab:goto-1" }
+"2" = { command = "tab:goto-2" }
+"3" = { command = "tab:goto-3" }
+"4" = { command = "tab:goto-4" }
+"5" = { command = "tab:goto-5" }
+"6" = { command = "tab:goto-6" }
+"7" = { command = "tab:goto-7" }
+"8" = { command = "tab:goto-8" }
+"9" = { command = "tab:goto-9" }
 
-# Panel slots.
-"alt+v" = { command = "panel:split" }
-"alt+c" = { command = "panel:close" }
-"alt+o" = { command = "panel:focus-next" }
+# Panel slots. panel:split is available via the command input.
+"v" = { command = "panel:split-toggle" }
+"c" = { command = "panel:unsplit" }
+"o" = { command = "panel:focus-next" }
+
+# Panel types suggest their own keybindings (metafolder.addKeybinding);
+# they are the weakest layer, so an entry here overrides them. Scope it
+# to the panel type with `when`, e.g. to rebind entry-list's "open in
+# the other panel" from enter to l:
+# "l" = { command = "entry-list:open", when = "entry-list" }

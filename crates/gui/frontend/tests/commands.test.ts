@@ -65,7 +65,7 @@ describe('gotoIndex', () => {
 
 describe('commonPrefix', () => {
   test('returns the longest shared prefix', () => {
-    expect(commonPrefix(['panel:close', 'panel:split', 'panel:focus-next'])).toBe('panel:');
+    expect(commonPrefix(['panel:unsplit', 'panel:split', 'panel:focus-next'])).toBe('panel:');
     expect(commonPrefix(['tab:new', 'tab:next'])).toBe('tab:ne');
   });
 
@@ -74,7 +74,7 @@ describe('commonPrefix', () => {
   });
 
   test('no shared prefix yields the empty string', () => {
-    expect(commonPrefix(['panel:close', 'tab:close'])).toBe('');
+    expect(commonPrefix(['panel:unsplit', 'tab:close'])).toBe('');
     expect(commonPrefix([])).toBe('');
   });
 });
@@ -118,7 +118,7 @@ describe('shortcutsFor', () => {
 
 describe('filterCommands', () => {
   const all = [
-    { name: 'panel:close', label: 'Hide the non-focused panel slot' },
+    { name: 'panel:unsplit', label: 'Hide the non-focused panel slot' },
     { name: 'panel:split', label: 'Show the second panel slot' },
     { name: 'tab:close', label: "Close the focused slot's workspace" },
     { name: 'tab:new', label: 'Create a workspace' },
@@ -126,11 +126,12 @@ describe('filterCommands', () => {
 
   test('prefix matches come first, then substring matches', () => {
     const names = filterCommands(all, 'pa').map((c) => c.name);
-    expect(names).toEqual(['panel:close', 'panel:split']);
+    expect(names).toEqual(['panel:split', 'panel:unsplit']);
 
-    // Substring matches are alphabetical among themselves.
-    const close = filterCommands(all, 'close').map((c) => c.name);
-    expect(close).toEqual(['panel:close', 'tab:close']);
+    // Substring matches are alphabetical among themselves ("sp" is a
+    // substring of both, a prefix of neither).
+    const sp = filterCommands(all, 'sp').map((c) => c.name);
+    expect(sp).toEqual(['panel:split', 'panel:unsplit']);
   });
 
   test('empty filter lists everything', () => {

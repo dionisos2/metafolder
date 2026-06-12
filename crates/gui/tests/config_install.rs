@@ -93,22 +93,22 @@ fn test_load_keybindings_merges_user_over_defaults() {
     let (_guard, config) = temp_config();
     config.install_defaults().unwrap();
 
-    // Defaults only: alt+t is tab:new (shipped default).
+    // Defaults only: t is tab:new (shipped default).
     let set = config.load_keybindings().unwrap();
     let table = set.compiled();
-    let alt_t = table.iter().find(|b| b.keys == ["alt+t"]).unwrap();
-    assert_eq!(alt_t.invocation, "tab:new");
+    let t = table.iter().find(|b| b.keys == ["t"]).unwrap();
+    assert_eq!(t.invocation, "tab:new");
 
     // User override wins.
     std::fs::write(
         config.root().join("keybindings.toml"),
-        r#""alt+t" = { command = "panel:split" }"#,
+        r#""t" = { command = "panel:split" }"#,
     )
     .unwrap();
     let set = config.load_keybindings().unwrap();
     let table = set.compiled();
-    let alt_t = table.iter().find(|b| b.keys == ["alt+t"]).unwrap();
-    assert_eq!(alt_t.invocation, "panel:split");
+    let t = table.iter().find(|b| b.keys == ["t"]).unwrap();
+    assert_eq!(t.invocation, "panel:split");
 }
 
 #[test]
@@ -196,14 +196,14 @@ fn test_remove_user_keybinding_restores_default() {
     let (_guard, config) = temp_config();
     config.install_defaults().unwrap();
     config
-        .set_user_keybinding("alt+t", "panel:split", None, false)
+        .set_user_keybinding("t", "panel:split", None, false)
         .unwrap();
 
-    let set = config.remove_user_keybinding("alt+t").unwrap();
-    let alt_t = set.compiled().into_iter().find(|b| b.keys == ["alt+t"]).unwrap();
-    assert_eq!(alt_t.invocation, "tab:new"); // shipped default again
+    let set = config.remove_user_keybinding("t").unwrap();
+    let t = set.compiled().into_iter().find(|b| b.keys == ["t"]).unwrap();
+    assert_eq!(t.invocation, "tab:new"); // shipped default again
     // Removing a non-override is a no-op, not an error.
-    config.remove_user_keybinding("alt+t").unwrap();
+    config.remove_user_keybinding("t").unwrap();
 }
 
 #[test]

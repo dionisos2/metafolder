@@ -292,8 +292,12 @@ workspace rather than the focused slot's.
 | =tab:prev=        | Assign the previous workspace to the focused slot         |
 | =tab:goto-N=      | Assign workspace N to the focused slot                    |
 
-Default keybinding suggestions: =alt+t= for =tab:new=, =alt+w= for
-=tab:close=, =alt+1= … =alt+9= for =tab:goto-N=.
+Default keybinding suggestions: =t= for =tab:new=, =w= for =tab:close=,
+=n= / =p= for =tab:next= / =tab:prev=, =1= … =9= for =tab:goto-N=.
+
+Default bindings use plain keys: modifier combos (=ctrl+…=, =alt+…=) are
+reserved for bindings with =text-input = true=, which must fire while a
+text input is focused and therefore cannot use plain printable keys.
 
 ** Layout and panels
 
@@ -310,10 +314,12 @@ to it, the focused workspace is shown in both slots — without a panel type
 for the new slot (the same panel type cannot be displayed twice for one
 workspace), so the type picker is presented. No workspace is silently
 created, except when the layout has no focused workspace at all (the only
-meaningful split then). =panel:close= hides the non-focused slot; the
-workspace remains in the tab bar. The focused slot has a visible indicator
-(border highlight — theme-controlled); focus switches via
-=panel:focus-next=.
+meaningful split then). =panel:unsplit= hides the non-focused slot; the
+workspace remains in the tab bar. =panel:split-toggle= splits when a single
+slot is visible and unsplits when both are — the everyday command; default
+suggestions: =v= for =panel:split-toggle=, =c= for =panel:unsplit=, =o= for
+=panel:focus-next=. The focused slot has a visible indicator (border
+highlight — theme-controlled); focus switches via =panel:focus-next=.
 
 Each slot has a thin header bar showing the current panel type name and the
 repo indicator. The header contains a dropdown that lists all available panel
@@ -324,7 +330,7 @@ configurable keybindings.
 The header also carries the mouse equivalents of the layout commands: when
 the slot is the only visible one, a *split button* (=◫=, =panel:split=
 semantics) shows the second slot; when both slots are visible, a *close
-button* (=×=) hides that slot — its own slot, unlike =panel:close= which
+button* (=×=) hides that slot — its own slot, unlike =panel:unsplit= which
 hides the non-focused one. The hidden slot's workspace assignment is
 remembered either way.
 
@@ -374,7 +380,8 @@ Behaviours:
 | =tab:prev=           | Assign the previous workspace to the focused slot |
 | =tab:goto-N=         | Assign workspace N to the focused slot         |
 | =panel:split=        | Show the right slot (focused workspace if unassigned) |
-| =panel:close=        | Hide the non-focused slot (workspace preserved) |
+| =panel:unsplit=      | Hide the non-focused slot (workspace preserved) |
+| =panel:split-toggle= | Split when one slot is visible, unsplit when both are |
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =entry:create=       | Clear =entry-detail= to create a new entry     |
