@@ -298,7 +298,7 @@ workspace rather than the focused slot's.
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
 | =tab:new=         | Create a workspace in the focused slot (inherits the focused repo unless one is given) |
-| =tab:close=       | Close the focused slot's workspace (removes its tab; slot becomes unassigned) |
+| =tab:close=       | Close the focused slot's workspace (removes its tab; its slots switch to the previous workspace — the next one for the first tab — or become unassigned when none remains) |
 | =tab:rename=      | Rename the focused slot's workspace                       |
 | =tab:next=        | Assign the next workspace to the focused slot (wraps)     |
 | =tab:prev=        | Assign the previous workspace to the focused slot         |
@@ -390,7 +390,7 @@ Behaviours:
 | =repos:init=         | Open init-repo form                            |
 | =repos:load=         | Open load-repo form                            |
 | =tab:new=            | Create a new workspace, assign to focused slot |
-| =tab:close=          | Close the focused slot's workspace (slot becomes unassigned) |
+| =tab:close=          | Close the focused slot's workspace (slot falls back to the previous workspace) |
 | =tab:rename=         | Rename the focused slot's workspace            |
 | =tab:next=           | Assign the next workspace to the focused slot  |
 | =tab:prev=           | Assign the previous workspace to the focused slot |
@@ -986,8 +986,11 @@ Response: ={"id": "ws-3"}=
 
 *** =DELETE /gui/workspaces/:id=
 
-Closes a workspace. Any slot that had this workspace assigned becomes
-unassigned (shows "No workspace selected"). Returns =204 No Content=.
+Closes a workspace. Any slot that had this workspace assigned switches to
+the previous workspace in tab order (the next one when the first tab was
+closed; a slot hidden by =panel:unsplit= stays hidden), or becomes
+unassigned (shows "No workspace selected") when no workspace remains.
+Returns =204 No Content=.
 
 *** =GET /gui/layout=
 

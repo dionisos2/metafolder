@@ -267,8 +267,10 @@ impl GuiState {
         id
     }
 
-    /// Closes a workspace: removes its tab; every slot showing it becomes
-    /// unassigned (but stays visible).
+    /// Closes a workspace: removes its tab; every slot showing it switches
+    /// to the previous workspace in tab order (the next one when the first
+    /// tab was closed), or becomes unassigned (but stays visible) when no
+    /// workspace remains.
     pub fn close_workspace(&self, ws_id: &str) -> Result<(), String> {
         let mut inner = self.lock();
         let index = inner
@@ -277,11 +279,25 @@ impl GuiState {
             .position(|w| w.id == ws_id)
             .ok_or_else(|| format!("unknown workspace: {ws_id}"))?;
         inner.workspaces.remove(index);
+        let replacement = (!inner.workspaces.is_empty())
+            .then(|| inner.workspaces[index.saturating_sub(1)].id.clone());
         for slot_id in [SlotId::Left, SlotId::Right] {
-            let slot = inner.slot_mut(slot_id);
-            if slot.workspace.as_deref() == Some(ws_id) {
-                slot.workspace = None;
-                slot.panel_type = None;
+            if inner.slot(slot_id).workspace.as_deref() != Some(ws_id) {
+                continue;
+            }
+            match &replacement {
+                Some(id) => {
+                    // `assign` shows the slot; a slot hidden by
+                    // panel:unsplit must stay hidden.
+                    let was_visible = inner.slot(slot_id).visible;
+                    inner.assign(id, slot_id)?;
+                    inner.slot_mut(slot_id).visible = was_visible;
+                }
+                None => {
+                    let slot = inner.slot_mut(slot_id);
+                    slot.workspace = None;
+                    slot.panel_type = None;
+                }
             }
         }
         self.emit_workspaces(&inner);
@@ -681,9 +697,9 @@ mod tests {
     }
 
     #[test]
-    fn test_close_workspace_unassigns_every_slot_showing_it() {
+    fn test_close_last_workspace_unassigns_every_slot_showing_it() {
         let (_, state) = state();
-        // Show ws-1 in both slots.
+        // Show ws-1 (the only workspace) in both slots.
         state.panel_split().unwrap();
         state.tab_assign("ws-1", SlotId::Right).unwrap();
         state.close_workspace("ws-1").unwrap();
@@ -698,11 +714,44 @@ mod tests {
     }
 
     #[test]
+    fn test_close_workspace_switches_its_slots_to_the_previous_one() {
+        let (_, state) = state();
+        state.tab_new(None); // ws-2
+        state.tab_new(None); // ws-3, shown in the focused (left) slot
+        state.close_workspace("ws-3").unwrap();
+        assert_eq!(state.layout().left.workspace_id.as_deref(), Some("ws-2"));
+
+        // Closing the first tab falls forward to the next one instead.
+        state.tab_assign("ws-1", SlotId::Left).unwrap();
+        state.close_workspace("ws-1").unwrap();
+        assert_eq!(state.layout().left.workspace_id.as_deref(), Some("ws-2"));
+    }
+
+    #[test]
+    fn test_close_workspace_keeps_a_hidden_slot_hidden() {
+        let (_, state) = state();
+        let id2 = state.tab_new(None); // ws-2 in the focused (left) slot
+        state.panel_split().unwrap(); // right shows ws-2 too
+        state.panel_unsplit().unwrap(); // right hidden, still on ws-2
+        state.close_workspace(&id2).unwrap();
+
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
+        // The hidden slot moves off the closed workspace but stays hidden.
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
+        assert!(!layout.right.visible);
+    }
+
+    #[test]
     fn test_tab_close_closes_focused_workspace() {
         let (_, state) = state();
         state.tab_new(None);
         state.tab_close().unwrap();
         assert_eq!(state.workspaces().len(), 1);
+        // The slot switches to the remaining workspace, so closing keeps
+        // working until none remains.
+        assert_eq!(state.layout().left.workspace_id.as_deref(), Some("ws-1"));
+        state.tab_close().unwrap();
         assert_eq!(state.layout().left.workspace_id, None);
         // Focused slot now unassigned: tab:close errors.
         assert!(state.tab_close().is_err());
