@@ -620,17 +620,39 @@ filtered by an embedded query. The query editor is always visible at the
 top of the panel; the =entry-list:edit-query= command focuses its input.
 It uses the same DSL as the CLI. An empty query matches all entries.
 
-Default display mode: =table= with columns =mfr_path= (resolved path),
-=mfr_type=, =version=. The =entry-list:set-mode= command switches between
+Default display mode: =table= with columns =mfr_path~= (resolved path),
+=mfr_type=, =&version=. The =entry-list:set-mode= command switches between
 display modes.
 
-Columns are edited in a second input of the query bar (space- or
-comma-separated field names; =entry-list:edit-columns= focuses it):
-any field name is accepted, =version= means the entry version (entry
-meta, not sortable), and an empty input restores the defaults. A
-multi-map field shows every row in the cell, comma-joined. The list is
-persisted in the =entry-list:columns= workspace variable, so it survives
-the panel and can be set by scripts.
+The query editor stacks two rows, each with its own /Apply/ button: the
+query input (a new daemon round-trip) above the columns input
+(=entry-list:edit-columns= focuses it). The panel always queries with
+=select: '*'=, so applying new columns is a pure re-render — no request.
+
+Each column is one token of the columns input (space- or comma-separated;
+an empty input restores the defaults; invalid tokens are reported under
+the input and the previous columns are kept):
+
+- =name= — the raw field value(s). A multi-map field shows every row in
+  the cell, comma-joined. =version= is an ordinary field name here.
+- =name~= — the resolved display: a =tree_ref= value shows the path from
+  the repository root (the root itself shows =/=; a stale =tree_ref=
+  falls back to its name component). Other value types fall back to the
+  raw display.
+- =name~target= — the dereferenced display: a =ref=/=refbase= value is
+  followed and the cell shows the target entry's =target= field rows
+  (comma-joined; e.g. =tags~name=). A missing target entry or field
+  falls back to the raw uuid; non-reference values to the raw display.
+- =&uuid= / =&version= — the entry's own uuid and version. These are
+  entry metadata, not fields (=&= cannot appear in a field name), so a
+  user field named =version= never collides with them.
+
+Sorting always uses the underlying raw field (the daemon sorts raw
+values): clicking a =tags~name= header sorts by the =tags= uuids. Meta
+(=&=) columns are not sortable. Column widths are adjustable by dragging
+the right edge of a header. The column list and the widths are persisted
+in the =entry-list:columns= and =entry-list:column-widths= workspace
+variables, so they survive the panel and can be set by scripts.
 
 Supports sorting by column, multi-selection (=selected_entries=), and full
 keyboard navigation.

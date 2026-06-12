@@ -15,11 +15,17 @@
       }
       #query-editor {
         display: flex;
+        flex-direction: column;
         padding: 6px;
-        gap: 6px;
+        gap: 4px;
         background: var(--mf-bg-raised, #26262e);
       }
-      #query-editor input {
+      .editor-row {
+        display: flex;
+        gap: 6px;
+      }
+      .editor-row input {
+        flex: 1;
         font-family: var(--mf-font-mono, monospace);
         background: var(--mf-bg, #1e1e24);
         color: var(--mf-fg, #d8d8e0);
@@ -27,15 +33,12 @@
         border-radius: 3px;
         padding: 3px 6px;
       }
-      #query-input {
-        flex: 2;
-      }
-      #columns-input {
-        flex: 1;
-      }
-      #query-error {
+      .editor-error {
         color: var(--mf-error, #c44c56);
-        padding: 2px 8px;
+        padding: 0 2px;
+      }
+      .editor-error:empty {
+        display: none;
       }
       #scroll {
         flex: 1;
@@ -43,6 +46,7 @@
       }
       table {
         width: 100%;
+        table-layout: fixed;
         border-collapse: collapse;
       }
       th {
@@ -53,13 +57,26 @@
         padding: 4px 8px;
         cursor: pointer;
         user-select: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      th .col-resize {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 100%;
+        cursor: col-resize;
+      }
+      th .col-resize:hover {
+        background: var(--mf-accent, #4c56c4);
       }
       td {
         padding: 3px 8px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        max-width: 28em;
       }
       tr.row {
         cursor: pointer;
@@ -130,15 +147,21 @@
   </head>
   <body>
     <div id="query-editor">
-      <input id="query-input" placeholder='query DSL, e.g. rating > 3 AND genre = "jazz" (empty = all)' />
-      <input
-        id="columns-input"
-        placeholder="columns, e.g. mfr_path rating version"
-        title="space-separated field names shown as table columns ('version' is the entry version; empty restores the defaults)"
-      />
-      <button id="query-apply">Apply</button>
+      <div class="editor-row">
+        <input id="query-input" placeholder='query DSL, e.g. rating > 3 AND genre = "jazz" (empty = all)' />
+        <button id="query-apply">Apply</button>
+      </div>
+      <div id="query-error" class="editor-error"></div>
+      <div class="editor-row">
+        <input
+          id="columns-input"
+          placeholder="columns, e.g. mfr_path~ rating &amp;version"
+          title="space- or comma-separated columns: field (raw value), field~ (resolved: TreeRef shows the path from the root), field~name (Ref shows the target's field), &amp;uuid / &amp;version (entry metadata); empty restores the defaults"
+        />
+        <button id="columns-apply">Apply</button>
+      </div>
+      <div id="columns-error" class="editor-error"></div>
     </div>
-    <div id="query-error"></div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
       <table>

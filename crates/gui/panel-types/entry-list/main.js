@@ -1,12 +1,14 @@
 // entry-list panel: entries of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "entry-list panel type").
 
-import { el, field, fields, formatValue } from '/__ui.js';
+import { el } from '/__ui.js';
+import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
 const PAGE_SIZE = 100;
-const DEFAULT_COLUMNS = ['mfr_path', 'mfr_type', 'version'];
+const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
+const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
 
 // "Empty query matches all": three-valued tautology on any field.
 const MATCH_ALL = {
@@ -19,7 +21,8 @@ const MATCH_ALL = {
 };
 
 let repo = null;
-let columns = DEFAULT_COLUMNS; // shown as table columns; persisted per workspace
+let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
+let widths = {}; // column spec -> px; persisted per workspace
 let entries = [];
 let nextCursor = null;
 let loading = false;
@@ -28,6 +31,7 @@ let sort = []; // [{field, order}]
 let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
 let mode = 'table';
+let refCache = new Map(); // uuid -> Promise<entry>, for ~target columns
 
 const rows = document.getElementById('rows');
 const grid = document.getElementById('grid');
@@ -36,18 +40,21 @@ const statusLine = document.getElementById('status-line');
 const queryInput = document.getElementById('query-input');
 const columnsInput = document.getElementById('columns-input');
 const queryError = document.getElementById('query-error');
+const columnsError = document.getElementById('columns-error');
 
 // ── Data access ─────────────────────────────────────────────────────────
 
-function fieldDisplay(entry, name) {
-  // Multi-map: a column cell shows every row of the field.
-  return fields(entry, name)
-    .map((f) =>
-      // mfr_path column: leaf name only, until the resolved path arrives.
-      f.value.type === 'tree_ref' ? f.value.value.name || '(root)' : formatValue(f.value),
-    )
-    .join(', ');
-}
+// Context for ~ column display (columns.js); the ref target cache lives
+// for one result set and is dropped on every reset fetch.
+const displayCtx = {
+  resolveTreeRef: (value) => daemon.resolveTreeRef(repo, value),
+  getEntry: (uuid) => {
+    if (!refCache.has(uuid)) {
+      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metadata/${uuid}`));
+    }
+    return refCache.get(uuid);
+  },
+};
 
 async function fetchPage(reset) {
   if (!repo || loading) return;
@@ -61,6 +68,7 @@ async function fetchPage(reset) {
         entries[cursorIndex]?.uuid ?? (await workspace.get('selected_entry'))?.uuid ?? null;
       entries = [];
       nextCursor = null;
+      refCache = new Map();
     }
     let page;
     try {
@@ -105,16 +113,60 @@ async function fetchPage(reset) {
 
 // ── Rendering ───────────────────────────────────────────────────────────
 
+let resizing = null; // {column, startX, startWidth, moved}
+
+function startResize(event, column) {
+  event.preventDefault();
+  resizing = {
+    column,
+    startX: event.clientX,
+    startWidth: event.target.closest('th').offsetWidth,
+    moved: false,
+  };
+}
+
+document.addEventListener('mousemove', (event) => {
+  if (!resizing) return;
+  resizing.moved = true;
+  widths[resizing.column.spec] = Math.max(
+    40,
+    resizing.startWidth + event.clientX - resizing.startX,
+  );
+  renderHeader();
+});
+
+document.addEventListener('mouseup', () => {
+  if (!resizing) return;
+  const { moved } = resizing;
+  resizing = null;
+  if (moved) void workspace.set('entry-list:column-widths', { ...widths });
+});
+
 function renderHeader() {
   document.getElementById('header-row').replaceChildren(
-    ...columns.map((name) => {
-      const active = sort.find((s) => s.field === name);
-      return el(
+    ...columns.map((column) => {
+      const active = isSortable(column) && sort.find((s) => s.field === column.name);
+      const th = el(
         'th',
-        { onclick: () => toggleSort(name) },
-        name + (active ? (active.order === 'asc' ? ' ▲' : ' ▼') : ''),
+        { onclick: () => toggleSort(column) },
+        column.spec + (active ? (active.order === 'asc' ? ' ▲' : ' ▼') : ''),
+        el('div', {
+          class: 'col-resize',
+          onmousedown: (event) => startResize(event, column),
+          // A click right after a resize drag must not toggle the sort.
+          onclick: (event) => event.stopPropagation(),
+        }),
       );
+      if (widths[column.spec]) th.style.width = `${widths[column.spec]}px`;
+      return th;
     }),
+  );
+}
+
+function fillCell(node, column, entry) {
+  cellText(column, entry, displayCtx).then(
+    (text) => (node.textContent = text),
+    () => {}, // keep the quick text
   );
 }
 
@@ -130,15 +182,8 @@ function render() {
           ondblclick: () => openSelected(),
         },
         columns.map((column) => {
-          const td = el(
-            'td',
-            {},
-            column === 'version' ? String(entry.version) : fieldDisplay(entry, column),
-          );
-          if (column === 'mfr_path') {
-            td.dataset.uuid = entry.uuid;
-            void fillResolvedPath(td, entry);
-          }
+          const td = el('td', {}, cellQuickText(column, entry));
+          if (column.deref !== null) fillCell(td, column, entry);
           return td;
         }),
       ),
@@ -156,7 +201,11 @@ function render() {
           ondblclick: () => openSelected(),
         },
         img,
-        el('div', { class: 'name' }, fieldDisplay(entry, 'mfr_path') || entry.uuid.slice(0, 8)),
+        el(
+          'div',
+          { class: 'name' },
+          cellQuickText(GRID_NAME_COLUMN, entry) || entry.uuid.slice(0, 8),
+        ),
       );
     }),
   );
@@ -164,16 +213,6 @@ function render() {
     `${entries.length} entr${entries.length === 1 ? 'y' : 'ies'}` +
     (nextCursor ? ' (more available — scroll down)' : '') +
     (checked.size > 0 ? ` — ${checked.size} selected` : '');
-}
-
-async function fillResolvedPath(td, entry) {
-  const f = field(entry, 'mfr_path');
-  if (!f || f.value.type !== 'tree_ref') return;
-  try {
-    td.textContent = await daemon.resolveTreeRef(repo, f.value.value);
-  } catch {
-    /* stale TreeRef: keep the name component */
-  }
 }
 
 async function fillThumbnail(img, entry) {
@@ -234,27 +273,41 @@ async function applyQuery() {
 // ── Columns ─────────────────────────────────────────────────────────────
 
 function setColumns(value) {
-  columns = Array.isArray(value) && value.length > 0 ? value : DEFAULT_COLUMNS;
-  columnsInput.value = columns.join(' ');
+  let parsed = [];
+  try {
+    parsed = parseColumns(Array.isArray(value) ? value.join(' ') : '');
+  } catch {
+    /* stale persisted value: fall back to the defaults */
+  }
+  columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
+  columnsInput.value = columns.map((c) => c.spec).join(' ');
 }
 
 /** Applies the columns input (no daemon round-trip: select is always '*'). */
 async function applyColumns() {
-  const parsed = columnsInput.value.trim().split(/[\s,]+/).filter(Boolean);
-  setColumns(parsed);
+  columnsError.textContent = '';
+  let parsed;
+  try {
+    parsed = parseColumns(columnsInput.value);
+  } catch (error) {
+    columnsError.textContent = String(error.message ?? error);
+    return;
+  }
+  columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
+  columnsInput.value = columns.map((c) => c.spec).join(' ');
   render();
   // Persisted per workspace; also lets scripts set the columns.
-  await workspace.set('entry-list:columns', columns);
+  await workspace.set('entry-list:columns', columns.map((c) => c.spec));
 }
 
 function toggleSort(column) {
-  if (column === 'version') return; // entry meta, not a sortable field
-  const current = sort.find((s) => s.field === column);
+  if (!isSortable(column)) return; // entry meta, not a sortable field
+  const current = sort.find((s) => s.field === column.name);
   sort = current
     ? current.order === 'asc'
-      ? [{ field: column, order: 'desc' }]
+      ? [{ field: column.name, order: 'desc' }]
       : []
-    : [{ field: column, order: 'asc' }];
+    : [{ field: column.name, order: 'asc' }];
   void fetchPage(true);
 }
 
@@ -264,10 +317,8 @@ scroll.addEventListener('scroll', () => {
   }
 });
 
-document.getElementById('query-apply').addEventListener('click', () => {
-  void applyColumns();
-  void applyQuery();
-});
+document.getElementById('query-apply').addEventListener('click', () => void applyQuery());
+document.getElementById('columns-apply').addEventListener('click', () => void applyColumns());
 queryInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') void applyQuery();
 });
@@ -341,4 +392,5 @@ workspace.onChange('entry-list:columns', (value) => {
 });
 
 setColumns(await workspace.get('entry-list:columns'));
+widths = (await workspace.get('entry-list:column-widths')) ?? {};
 await start();
