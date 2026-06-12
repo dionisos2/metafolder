@@ -7,7 +7,7 @@ import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js'
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
-const PAGE_SIZE = 100;
+const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
 
@@ -27,6 +27,7 @@ let widths = {}; // column spec -> px; persisted per workspace
 let metarecords = [];
 let nextCursor = null;
 let total = null; // full result count (daemon-side COUNT, first page only)
+let pageSize = DEFAULT_PAGE_SIZE; // persisted per workspace
 let loading = false;
 let queryIR = null; // null = match all
 let sort = []; // [{field, order}]
@@ -79,7 +80,7 @@ async function fetchPage(reset) {
       page = await daemon.call('POST', `/repos/${repo}/query`, {
         query: queryIR ?? MATCH_ALL,
         select: '*',
-        limit: PAGE_SIZE,
+        limit: pageSize,
         ...(reset && { count: true }), // daemon-side COUNT, no extra pages
         ...(sort.length > 0 && { sort }),
         ...(nextCursor && { cursor: nextCursor }),
@@ -334,6 +335,12 @@ async function applyColumns() {
   await workspace.set('metarecord-list:columns', columns.map((c) => c.spec));
 }
 
+/** A stored/typed page size; anything invalid falls back to the default. */
+function sanitizePageSize(value) {
+  const n = Math.floor(Number(value));
+  return Number.isFinite(n) && n >= 1 ? n : DEFAULT_PAGE_SIZE;
+}
+
 function toggleSort(column) {
   if (!isSortable(column)) return; // metarecord meta, not a sortable field
   const current = sort.find((s) => s.field === column.name);
@@ -399,6 +406,15 @@ commands.register('metarecord-list:refresh', {
   label: 'Metarecord list: reload from the daemon',
   handler: () => fetchPage(true),
 });
+commands.register('metarecord-list:set-page-size', {
+  label: 'Metarecord list: set the page size (results per fetch)',
+  handler: async (raw) => {
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n < 1) throw new Error(`invalid page size: "${raw ?? ''}"`);
+    // The var-change listener applies it (single code path, also for scripts).
+    await workspace.set('metarecord-list:page-size', n);
+  },
+});
 
 metafolder.addKeybinding('metarecord-list:next', 'down');
 metafolder.addKeybinding('metarecord-list:next', 'j');
@@ -424,7 +440,14 @@ workspace.onChange('metarecord-list:columns', (value) => {
   setColumns(value);
   render();
 });
+workspace.onChange('metarecord-list:page-size', (value) => {
+  const next = sanitizePageSize(value);
+  if (next === pageSize) return;
+  pageSize = next;
+  void fetchPage(true);
+});
 
 setColumns(await workspace.get('metarecord-list:columns'));
 widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
+pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
 await start();

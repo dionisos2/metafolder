@@ -99,7 +99,10 @@ The =metarecord-list= panel type supports at minimum:
 For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
 [[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
-the user scrolls.
+the user scrolls. The page size defaults to 100 and is configurable per
+workspace: =metarecord-list:set-page-size <n>= persists it in the
+=metarecord-list:page-size= workspace variable (also settable by scripts);
+invalid stored values fall back to the default.
 
 Orphaned metarecords — a metarecord with =mfr_path= whose file no longer
 exists on disk, either =mfr_path = Nothing= (the watcher saw the deletion)
@@ -416,6 +419,7 @@ Behaviours:
 | =metarecord:create=       | Clear =metarecord-detail= to create a new metarecord     |
 | =metarecord:delete=       | Delete the selected metarecord                      |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
+| =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
 | =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
