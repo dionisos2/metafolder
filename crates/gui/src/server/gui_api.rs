@@ -1,5 +1,6 @@
 //! `/gui/*` scripting endpoints (spec-gui "Scripting / GUI API").
 
+use metafolder_core::sync::MutexExt;
 use super::ServerState;
 use crate::events;
 use crate::keybindings::CompiledBinding;
@@ -296,7 +297,7 @@ pub struct InputBody {
 
 /// Pushes the compiled table plus the temporary `answer:send` bindings.
 fn push_keytable(state: &ServerState, temp_keys: &[String]) {
-    let mut bindings: Vec<CompiledBinding> = state.keybindings.lock().unwrap().compiled();
+    let mut bindings: Vec<CompiledBinding> = state.keybindings.lock_recover().compiled();
     for key in temp_keys {
         if let Ok(keys) = crate::keybindings::parse_combo(key) {
             bindings.push(CompiledBinding {

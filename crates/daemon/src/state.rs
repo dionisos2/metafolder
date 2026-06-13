@@ -2,8 +2,9 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
+use metafolder_core::sync::MutexExt;
 use rusqlite::Connection;
 use serde::Serialize;
 use uuid::Uuid;
@@ -57,9 +58,28 @@ impl RepoState {
         }
     }
 
+    /// Locks the tree cache, recovering from a poisoned mutex. Unlike the
+    /// connection (whose writes are transactional, so a panic mid-write is
+    /// already rolled back), the in-memory cache can be left half-updated by a
+    /// panic — and out of step with the rolled-back write — so its contents
+    /// are discarded on recovery; it repopulates lazily from the DB. The
+    /// poison flag is cleared so later locks take the normal fast path.
+    /// See `docs/review-followups.md` (#5).
+    pub fn lock_cache(&self) -> MutexGuard<'_, TreeCache> {
+        match self.cache.lock() {
+            Ok(guard) => guard,
+            Err(poison) => {
+                self.cache.clear_poison();
+                let mut guard = poison.into_inner();
+                guard.clear();
+                guard
+            }
+        }
+    }
+
     /// True while a coordinated rollback navigation holds the lock.
     pub fn is_rollback_locked(&self) -> bool {
-        self.rollback_lock.lock().unwrap().is_some()
+        self.rollback_lock.lock_recover().is_some()
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation
@@ -110,7 +130,7 @@ impl AppState {
         let opened = repo::init_repository(root, metafolder)?;
         let uuid = opened.config.repo_uuid;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
-        self.repos.lock().unwrap().insert(uuid, repo_state);
+        self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }
 
@@ -122,12 +142,12 @@ impl AppState {
         let schema =
             crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
                 .map_err(ApiError::bad_request)?;
-        *repo_state.schema.lock().unwrap() = schema;
+        *repo_state.schema.lock_recover() = schema;
         crate::executor::flush_pending(&repo_state)?;
         let quiet = std::time::Duration::from_millis(500);
         let executor = crate::executor::spawn(&repo_state, quiet);
         let watcher = crate::watcher::start(&repo_state, executor.pinger())?;
-        *repo_state.handles.lock().unwrap() = Some(RepoHandles { watcher, executor });
+        *repo_state.handles.lock_recover() = Some(RepoHandles { watcher, executor });
         Ok(repo_state)
     }
 
@@ -148,29 +168,28 @@ impl AppState {
         };
         if RepoConfig::exists(&metafolder_dir) {
             let config = RepoConfig::read(&metafolder_dir)?;
-            if self.repos.lock().unwrap().contains_key(&config.repo_uuid) {
+            if self.repos.lock_recover().contains_key(&config.repo_uuid) {
                 return Ok(config.repo_uuid);
             }
         }
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
         let uuid = opened.config.repo_uuid;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
-        self.repos.lock().unwrap().insert(uuid, repo_state);
+        self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }
 
     /// Fetches a loaded repository or fails with 404.
     pub fn repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
         self.repos
-            .lock()
-            .unwrap()
+            .lock_recover()
             .get(&repo_uuid)
             .cloned()
             .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))
     }
 
     pub fn list_repos(&self) -> Vec<RepoInfo> {
-        let repos = self.repos.lock().unwrap();
+        let repos = self.repos.lock_recover();
         let mut infos: Vec<RepoInfo> = repos
             .values()
             .map(|r| RepoInfo {

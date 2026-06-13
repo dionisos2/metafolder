@@ -16,6 +16,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, MetaRecord, Value};
+use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
 
@@ -108,7 +109,7 @@ fn validate_schema(
     uuid: Uuid,
     touched: &[String],
 ) -> Result<(), ApiError> {
-    let guard = repo_state.schema.lock().unwrap();
+    let guard = repo_state.schema.lock_recover();
     let Some(schema) = guard.as_ref() else {
         return Ok(());
     };
@@ -195,7 +196,7 @@ async fn list_metarecords(
 ) -> Result<Response, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         match params.limit {
             None => {
                 let uuids = db::list_entries(&conn, repo_uuid)?;
@@ -328,7 +329,7 @@ async fn get_log(
     let repo_uuid = parse_uuid(&repo)?;
     let entity_filter = params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let mode = params.mode.as_deref().unwrap_or("linear");
 
@@ -404,7 +405,7 @@ async fn get_revision(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let rev_id: i64 = if rev_id == "head" {
             let head = head
@@ -460,7 +461,7 @@ async fn patch_revision(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let changed = conn
             .execute(
                 "UPDATE revision SET label = ?1 WHERE id = ?2",
@@ -518,11 +519,11 @@ async fn rollback(
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let result = crate::log::navigate(&mut conn, repo_uuid, resolved)?;
         // Navigation rewrites tree positions arbitrarily: drop the cache.
-        repo_state.cache.lock().unwrap().clear();
+        repo_state.lock_cache().clear();
         Ok(Json(result))
     })
     .await
@@ -553,7 +554,7 @@ async fn prune_log(
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         let resolved = crate::log::resolve_target(&conn, &target)?
             .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
         let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
@@ -659,11 +660,11 @@ async fn rollback_plan(
     let repo_uuid = parse_uuid(&repo)?;
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let path = crate::log::nav_path(&conn, head, resolved)?;
-        let mut cache = repo_state.cache.lock().unwrap();
+        let mut cache = repo_state.lock_cache();
         let mut ops = Vec::with_capacity(path.len());
         for (op, dir) in &path {
             ops.push(action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?);
@@ -682,7 +683,7 @@ async fn rollback_plan_summary(
     let repo_uuid = parse_uuid(&repo)?;
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let path = crate::log::nav_path(&conn, head, resolved)?;
@@ -713,7 +714,7 @@ async fn rollback_start(
         if repo_state.is_rollback_locked() {
             return Err(ApiError::conflict("a rollback navigation is already in progress"));
         }
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         if resolved == head {
@@ -722,12 +723,12 @@ async fn rollback_start(
         }
         let path = crate::log::nav_path(&conn, head, resolved)?;
         let (op, dir) = path.first().expect("non-empty path when head != target");
-        let mut cache = repo_state.cache.lock().unwrap();
+        let mut cache = repo_state.lock_cache();
         let first = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
         let remaining = path.len() - 1;
         drop(cache);
         drop(conn);
-        *repo_state.rollback_lock.lock().unwrap() = Some(RollbackLock { target: resolved });
+        *repo_state.rollback_lock.lock_recover() = Some(RollbackLock { target: resolved });
         Ok(Json(json!({"op": first, "remaining": remaining})))
     })
     .await
@@ -749,7 +750,7 @@ async fn rollback_step(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let target = {
-            let guard = repo_state.rollback_lock.lock().unwrap();
+            let guard = repo_state.rollback_lock.lock_recover();
             let lock = guard.as_ref().ok_or_else(|| {
                 ApiError::conflict("no rollback navigation in progress; call start first")
             })?;
@@ -757,13 +758,13 @@ async fn rollback_step(
         };
 
         let done = {
-            let mut conn = repo_state.conn.lock().unwrap();
+            let mut conn = repo_state.conn.lock_recover();
             let new_head = crate::log::coordinated_step(&mut conn, repo_uuid, target, skip)?;
             // The step rewrote tree positions arbitrarily: drop the cache.
-            repo_state.cache.lock().unwrap().clear();
+            repo_state.lock_cache().clear();
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
-                let mut cache = repo_state.cache.lock().unwrap();
+                let mut cache = repo_state.lock_cache();
                 let op_json =
                     action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
                 let remaining = next.len() - 1;
@@ -774,7 +775,7 @@ async fn rollback_step(
 
         if done {
             // HEAD reached the target: release the lock, replay the buffer.
-            *repo_state.rollback_lock.lock().unwrap() = None;
+            *repo_state.rollback_lock.lock_recover() = None;
             crate::executor::flush_pending(repo_state)?;
         }
         Ok(Json(json!({"op": null, "remaining": 0})))
@@ -789,14 +790,14 @@ async fn rollback_abort(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         {
-            let mut guard = repo_state.rollback_lock.lock().unwrap();
+            let mut guard = repo_state.rollback_lock.lock_recover();
             if guard.is_none() {
                 return Err(ApiError::conflict("no rollback navigation in progress"));
             }
             *guard = None;
         }
         crate::executor::flush_pending(repo_state)?;
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         Ok(Json(json!({"head": head})))
     })
@@ -811,7 +812,7 @@ async fn get_schema(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let repo_state = state.repo(repo_uuid)?;
-    let guard = repo_state.schema.lock().unwrap();
+    let guard = repo_state.schema.lock_recover();
     Ok(Json(match guard.as_ref() {
         Some(schema) => schema.raw().clone(),
         None => crate::schema::CompiledSchema::empty_raw(),
@@ -832,7 +833,7 @@ async fn reload_schema(
             .as_ref()
             .map(|s| s.raw().clone())
             .unwrap_or_else(crate::schema::CompiledSchema::empty_raw);
-        *repo_state.schema.lock().unwrap() = loaded;
+        *repo_state.schema.lock_recover() = loaded;
         Ok(Json(raw))
     })
     .await
@@ -854,15 +855,15 @@ async fn check_schema(
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         let uuids = match &body.query {
             None => db::list_entries(&conn, repo_uuid)?,
             Some(query) => {
-                let mut cache = repo_state.cache.lock().unwrap();
+                let mut cache = repo_state.lock_cache();
                 query_exec::execute(&conn, &mut cache, repo_uuid, query, &[], None, None)?.0
             }
         };
-        let guard = repo_state.schema.lock().unwrap();
+        let guard = repo_state.schema.lock_recover();
         let mut violations: Vec<serde_json::Value> = Vec::new();
         if let Some(schema) = guard.as_ref() {
             let fields = schema.constrained_fields();
@@ -982,8 +983,8 @@ async fn track(
             return Err(ApiError::bad_request("cannot track the repository root itself"));
         }
 
-        let mut conn = repo_state.conn.lock().unwrap();
-        let mut cache = repo_state.cache.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
         if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel)? {
             return Err(ApiError::conflict(format!(
                 "path already tracked by metarecord {}",
@@ -1044,8 +1045,8 @@ async fn run_query(
             // The unwrapped (bare array) response has nowhere to carry it.
             return Err(ApiError::bad_request("'count' requires 'limit'"));
         }
-        let conn = repo_state.conn.lock().unwrap();
-        let mut cache = repo_state.cache.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
         let (uuids, next_cursor) = query_exec::execute(
             &conn,
             &mut cache,
@@ -1116,8 +1117,8 @@ async fn batch_set(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock().unwrap();
-        let mut cache = repo_state.cache.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
         let (uuids, _) =
             query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
         drop(cache);
@@ -1152,7 +1153,7 @@ async fn create_record_endpoint(
         for field in &body.fields {
             check_writable(&field.name, body.force)?;
         }
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         let created = writer.create_metarecord(body.fields)?;
@@ -1170,7 +1171,7 @@ async fn get_record_endpoint(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock().unwrap();
+        let conn = repo_state.conn.lock_recover();
         Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
@@ -1184,7 +1185,7 @@ async fn delete_record_endpoint(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
@@ -1215,7 +1216,7 @@ async fn patch_metarecord(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
@@ -1239,7 +1240,7 @@ async fn append_field(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
@@ -1284,7 +1285,7 @@ async fn replace_field(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         let name = owned_field_name(&conn, uuid, field_id)?;
         check_writable(&name, body.force)?;
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
@@ -1312,7 +1313,7 @@ async fn delete_field(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock().unwrap();
+        let mut conn = repo_state.conn.lock_recover();
         let name = owned_field_name(&conn, uuid, field_id)?;
         check_writable(&name, force)?;
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;

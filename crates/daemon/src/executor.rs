@@ -14,6 +14,7 @@ use rusqlite::{params, Connection};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::sync::MutexExt;
 
 use crate::db;
 use crate::eligibility;
@@ -209,8 +210,8 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     if repo.is_rollback_locked() {
         return Ok(FlushStats::default());
     }
-    let mut conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let mut conn = repo.conn.lock_recover();
+    let mut cache = repo.lock_cache();
 
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.

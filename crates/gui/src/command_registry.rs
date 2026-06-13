@@ -5,6 +5,7 @@
 //! the owning panel type, so acting on an unfocused (or hidden) panel is
 //! legitimate; keybindings scope with `when` where focus matters.
 
+use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -32,8 +33,7 @@ impl CommandRegistry {
 
     fn insert(&self, def: CommandDef) {
         self.commands
-            .lock()
-            .expect("CommandRegistry lock poisoned")
+            .lock_recover()
             .insert(def.name.clone(), def);
     }
 
@@ -61,8 +61,7 @@ impl CommandRegistry {
 
     pub fn get(&self, name: &str) -> Option<CommandDef> {
         self.commands
-            .lock()
-            .expect("CommandRegistry lock poisoned")
+            .lock_recover()
             .get(name)
             .cloned()
     }
@@ -70,7 +69,7 @@ impl CommandRegistry {
     /// Autocomplete listing: every registered command, sorted by name
     /// (the fuzzy filter narrows it down; execution routes to the owner).
     pub fn list(&self) -> Vec<CommandDef> {
-        let commands = self.commands.lock().expect("CommandRegistry lock poisoned");
+        let commands = self.commands.lock_recover();
         let mut listed: Vec<CommandDef> = commands.values().cloned().collect();
         listed.sort_by(|a, b| a.name.cmp(&b.name));
         listed

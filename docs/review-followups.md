@@ -1,38 +1,35 @@
 # Suivi de revue — points à traiter
 
 Notes issues d'une revue globale du projet (juin 2026). Ce fichier regroupe les
-points laissés volontairement de côté pour décision/relecture ultérieure.
+points laissés de côté pour décision/relecture ultérieure.
 
-## 5. Empoisonnement des mutex en cascade (robustesse)
+## 5. Empoisonnement des mutex en cascade (robustesse) — ✅ RÉSOLU
 
-**Constat.** Tous les handlers du daemon (et du serveur GUI) prennent les
-verrous via `.lock().unwrap()` : `repo.conn`, `repo.cache`, `repo.schema`,
-`repo.rollback_lock`, etc. Si **un seul** handler panique alors qu'il détient
-l'un de ces verrous, le `Mutex` est *empoisonné* (`PoisonError`) et **toutes**
-les requêtes suivantes sur ce repository paniquent à leur tour sur le
-`.unwrap()`, rendant le repo définitivement inutilisable jusqu'au redémarrage
-du daemon.
+**Constat (historique).** Tous les handlers du daemon (et du serveur GUI)
+prenaient les verrous via `.lock().unwrap()` / `.lock().expect(...)`. Si **un
+seul** handler paniquait en tenant un verrou, le `Mutex` était *empoisonné*
+(`PoisonError`) et **toutes** les requêtes suivantes paniquaient à leur tour,
+rendant le repo (ou le GUI) inutilisable jusqu'au redémarrage.
 
-**Où.** Principalement `crates/daemon/src/routes.rs` (très nombreux
-`.lock().unwrap()`), `crates/daemon/src/state.rs`, et le serveur GUI
-(`crates/gui/src/server/*`, `crates/gui/src/state/*`).
+**Correction appliquée.**
+- Trait partagé `metafolder_core::sync::MutexExt::lock_recover()` : récupère le
+  guard même empoisonné (`PoisonError::into_inner`) **et** efface le drapeau
+  (`Mutex::clear_poison`, Rust ≥ 1.77) pour que les accès suivants reprennent
+  le chemin rapide. Couvert par un test unitaire dans `core/src/sync.rs`.
+- Daemon : tous les `.lock().unwrap()` migrés vers `lock_recover()`. Cas
+  spécial du **cache d'arbre** → `RepoState::lock_cache()`, qui **vide** le
+  cache en cas de poison (son état mémoire peut être incohérent et désynchro
+  d'un write annulé ; il se repeuple paresseusement depuis la DB).
+- GUI : état central `GuiState::lock()`, `CommandRegistry`, `InputWait`,
+  `DaemonProxy`, keybindings, etc. migrés vers `lock_recover()`. L'état GUI
+  étant sa propre source de vérité, on récupère le guard sans le vider.
+- `RecordingNotifier` (helper de test) laissé tel quel : cascade non
+  pertinente.
 
-**Pistes.**
-- Récupérer les données même en cas de poison :
-  `let guard = mutex.lock().unwrap_or_else(|e| e.into_inner());`
-  (acceptable car les données protégées restent cohérentes : tout write passe
-  par une transaction SQLite atomique, donc un panic au milieu d'un write a
-  déjà *rollback* la transaction — l'état en mémoire du cache d'arbre pourrait
-  en revanche être partiellement à jour ; à vider par sécurité).
-- Centraliser via une petite extension/`helper` (`fn lock_recover<T>(m) -> MutexGuard`)
-  pour ne pas dupliquer le pattern partout.
-- Alternative plus lourde : isoler chaque write dans un `catch_unwind` ou
-  s'appuyer sur `parking_lot::Mutex` (pas d'empoisonnement par construction).
-
-**Décision attendue.** Choisir entre `unwrap_or_else(into_inner)` généralisé
-(simple, peu invasif) ou bascule `parking_lot`. Penser à vider le cache d'arbre
-(`cache.clear()`) sur le chemin de récupération, car son état mémoire peut être
-incohérent après un panic en cours de mutation.
+Justification du « pas de panic » côté données : tout write SQLite passe par
+une transaction atomique, donc un panic en cours de write est déjà *rollback*
+par le `Drop` de `Transaction` de rusqlite (mode `unwind`, vérifié : pas de
+`panic = "abort"`).
 
 ## 6. `enqueue_restoration` appelée aussi en direction `Forward`
 

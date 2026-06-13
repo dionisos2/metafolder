@@ -12,6 +12,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::sync::MutexExt;
 
 use crate::db;
 use crate::eligibility;
@@ -70,8 +71,8 @@ pub fn reconcile_full(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    let mut conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let mut conn = repo.conn.lock_recover();
+    let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
     let db_id = repo.config.repo_uuid;
     let mut writer = Writer::begin(&mut conn, db_id, None)?;
@@ -289,8 +290,8 @@ pub fn reconcile_metarecord(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    let mut conn = repo.conn.lock().unwrap();
-    let mut cache = repo.cache.lock().unwrap();
+    let mut conn = repo.conn.lock_recover();
+    let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
     let db_id = repo.config.repo_uuid;
 

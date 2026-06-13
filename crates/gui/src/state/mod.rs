@@ -6,6 +6,7 @@
 pub mod layout;
 pub mod workspace;
 
+use metafolder_core::sync::MutexExt;
 use crate::events;
 use crate::notifier::FrontendNotifier;
 use layout::{LayoutView, Slot, SlotId, SlotPayload};
@@ -163,7 +164,12 @@ impl GuiState {
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
-        self.inner.lock().expect("GuiState lock poisoned")
+        // Recover rather than cascade panics if a previous holder panicked.
+        // The GUI state is its own source of truth (nothing to repopulate it
+        // from), so the guard is reclaimed as-is; a panic mid-mutation may
+        // leave a minor inconsistency, far preferable to a permanently dead
+        // GUI. See `docs/review-followups.md` (#5).
+        self.inner.lock_recover()
     }
 
     /// Emits an arbitrary event through the frontend notifier (used by

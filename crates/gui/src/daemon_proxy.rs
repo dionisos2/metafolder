@@ -4,6 +4,7 @@
 //! daemon must stay GUI-agnostic). Tracks reachability and emits
 //! `daemon-health-changed` on transitions.
 
+use metafolder_core::sync::MutexExt;
 use crate::events;
 use crate::state::GuiState;
 use serde::Serialize;
@@ -37,11 +38,11 @@ impl DaemonProxy {
     }
 
     pub fn base_url(&self) -> String {
-        self.base_url.lock().unwrap().clone()
+        self.base_url.lock_recover().clone()
     }
 
     pub fn set_url(&self, url: String) {
-        *self.base_url.lock().unwrap() = url;
+        *self.base_url.lock_recover() = url;
     }
 
     /// Forwards one request to the daemon. Daemon-level errors (4xx/5xx)
@@ -82,7 +83,7 @@ impl DaemonProxy {
 
     /// Last health-check outcome; `None` before the first check.
     pub fn last_connected(&self) -> Option<bool> {
-        *self.connected.lock().unwrap()
+        *self.connected.lock_recover()
     }
 
     /// One health probe; emits `daemon-health-changed` when the state
@@ -92,7 +93,7 @@ impl DaemonProxy {
             self.request("GET", "/health", None).await,
             Ok(ProxyResponse { status: 200, .. })
         );
-        let mut connected = self.connected.lock().unwrap();
+        let mut connected = self.connected.lock_recover();
         if *connected != Some(healthy) {
             *connected = Some(healthy);
             gui.notify(events::DAEMON_HEALTH_CHANGED, json!({ "connected": healthy }));

@@ -9,6 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
+use metafolder_core::sync::MutexExt;
 
 /// One row of the `field` table, decoded.
 #[derive(Debug, Clone, PartialEq)]
@@ -67,7 +68,7 @@ fn configure_connection(conn: &Connection) -> Result<()> {
             // SQLite: X REGEXP Y → regexp(Y, X), so arg 0 is the pattern.
             let pattern: String = ctx.get(0)?;
             let text: String = ctx.get(1)?;
-            let mut cache = regex_cache.lock().unwrap();
+            let mut cache = regex_cache.lock_recover();
             if !cache.contains_key(&pattern) {
                 if cache.len() >= 64 {
                     cache.clear();

@@ -2,6 +2,7 @@
 //! engine modules. No logic here — everything testable lives in
 //! `state`, `keybindings`, `command_registry` and `config`.
 
+use metafolder_core::sync::MutexExt;
 use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
@@ -47,7 +48,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
     Ok(InitialState {
         workspaces: app.gui.workspaces(),
         layout: app.gui.layout(),
-        keybindings: app.keybindings.lock().unwrap().compiled(),
+        keybindings: app.keybindings.lock_recover().compiled(),
         commands: app.registry.list(),
         panel_types: app.config.list_panel_types()?,
         style_css: app.config.load_style(),
@@ -189,7 +190,7 @@ pub fn suggest_keybinding(
     when: Option<String>,
     text_input: Option<bool>,
 ) -> Result<Vec<CompiledBinding>, String> {
-    let mut keybindings = app.keybindings.lock().unwrap();
+    let mut keybindings = app.keybindings.lock_recover();
     keybindings.add_suggestion(
         &combo,
         &invocation,
@@ -203,7 +204,7 @@ pub fn suggest_keybinding(
 
 #[tauri::command]
 pub fn get_compiled_keybindings(app: AppHandle) -> Vec<CompiledBinding> {
-    app.keybindings.lock().unwrap().compiled()
+    app.keybindings.lock_recover().compiled()
 }
 
 /// Settings view: writes a user keybinding override to keybindings.toml,
@@ -223,7 +224,7 @@ pub fn set_user_keybinding(
         text_input.unwrap_or(false),
     )?;
     let compiled = set.compiled();
-    *app.keybindings.lock().unwrap() = set;
+    *app.keybindings.lock_recover() = set;
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
 }
@@ -236,7 +237,7 @@ pub fn remove_user_keybinding(
 ) -> Result<Vec<CompiledBinding>, String> {
     let set = app.config.remove_user_keybinding(&combo)?;
     let compiled = set.compiled();
-    *app.keybindings.lock().unwrap() = set;
+    *app.keybindings.lock_recover() = set;
     crate::push_keybindings(&app.gui, &compiled);
     Ok(compiled)
 }

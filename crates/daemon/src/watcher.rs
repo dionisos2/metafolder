@@ -9,6 +9,8 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use notify::Watcher as _;
 
+use metafolder_core::sync::MutexExt;
+
 use crate::executor::{self, ExecutorPinger, FsEvent};
 use crate::state::RepoState;
 
@@ -123,7 +125,7 @@ fn handle_event(
     if events.is_empty() {
         return;
     }
-    let conn = repo.conn.lock().unwrap();
+    let conn = repo.conn.lock_recover();
     for ev in &events {
         if let Err(err) = executor::enqueue(&conn, ev) {
             eprintln!("[watcher] failed to enqueue {ev:?}: {err:#}");
