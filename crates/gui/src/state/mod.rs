@@ -146,6 +146,22 @@ impl Inner {
     }
 }
 
+/// The frontend events a mutation asks [`GuiState::mutate`] / [`GuiState::update`]
+/// to emit once it returns. Making this the return value of the mutation
+/// closure means a state change cannot silently forget to notify the frontend.
+#[derive(Clone, Copy)]
+struct Emit {
+    workspaces: bool,
+    layout: bool,
+}
+
+impl Emit {
+    const NONE: Emit = Emit { workspaces: false, layout: false };
+    const WORKSPACES: Emit = Emit { workspaces: true, layout: false };
+    const LAYOUT: Emit = Emit { workspaces: false, layout: true };
+    const BOTH: Emit = Emit { workspaces: true, layout: true };
+}
+
 impl GuiState {
     /// Initial state: one empty workspace assigned to the visible left slot.
     pub fn new(notifier: Arc<dyn FrontendNotifier>) -> Self {
@@ -191,6 +207,38 @@ impl GuiState {
             events::LAYOUT_CHANGED,
             serde_json::to_value(view).expect("layout serializes"),
         );
+    }
+
+    fn dispatch(&self, inner: &Inner, emit: Emit) {
+        if emit.workspaces {
+            self.emit_workspaces(inner);
+        }
+        if emit.layout {
+            self.emit_layout(inner);
+        }
+    }
+
+    /// Runs a fallible mutation under the lock, then emits exactly the events
+    /// it returns — and only on success (an error emits nothing, just as the
+    /// hand-written `return Err(..)` paths did). Centralizing the
+    /// lock → mutate → emit sequence keeps a mutation from silently skipping
+    /// the frontend notification.
+    fn mutate<T>(
+        &self,
+        f: impl FnOnce(&mut Inner) -> Result<(T, Emit), String>,
+    ) -> Result<T, String> {
+        let mut inner = self.lock();
+        let (value, emit) = f(&mut inner)?;
+        self.dispatch(&inner, emit);
+        Ok(value)
+    }
+
+    /// Infallible counterpart of [`mutate`](Self::mutate).
+    fn update<T>(&self, f: impl FnOnce(&mut Inner) -> (T, Emit)) -> T {
+        let mut inner = self.lock();
+        let (value, emit) = f(&mut inner);
+        self.dispatch(&inner, emit);
+        value
     }
 
     // ── Read accessors ───────────────────────────────────────────────────
@@ -245,10 +293,7 @@ impl GuiState {
 
     /// Creates a workspace without assigning it to a slot (GUI HTTP API).
     pub fn create_workspace(&self, active_repo: Option<String>) -> String {
-        let mut inner = self.lock();
-        let id = inner.new_workspace(active_repo);
-        self.emit_workspaces(&inner);
-        id
+        self.update(|inner| (inner.new_workspace(active_repo), Emit::WORKSPACES))
     }
 
     /// `tab:new` — creates a workspace and assigns it to the focused slot.
@@ -256,21 +301,20 @@ impl GuiState {
     /// staying on the same repo is the expected default, and switching
     /// costs the same single action either way.
     pub fn tab_new(&self, active_repo: Option<String>) -> String {
-        let mut inner = self.lock();
-        let active_repo = active_repo.or_else(|| {
-            inner
-                .slot(inner.focused)
-                .workspace
-                .as_deref()
-                .and_then(|id| inner.workspace(id).ok())
-                .and_then(|w| w.active_repo.clone())
-        });
-        let id = inner.new_workspace(active_repo);
-        let focused = inner.focused;
-        inner.assign(&id, focused).expect("freshly created workspace");
-        self.emit_workspaces(&inner);
-        self.emit_layout(&inner);
-        id
+        self.update(|inner| {
+            let active_repo = active_repo.or_else(|| {
+                inner
+                    .slot(inner.focused)
+                    .workspace
+                    .as_deref()
+                    .and_then(|id| inner.workspace(id).ok())
+                    .and_then(|w| w.active_repo.clone())
+            });
+            let id = inner.new_workspace(active_repo);
+            let focused = inner.focused;
+            inner.assign(&id, focused).expect("freshly created workspace");
+            (id, Emit::BOTH)
+        })
     }
 
     /// Closes a workspace: removes its tab; every slot showing it switches
@@ -278,37 +322,36 @@ impl GuiState {
     /// tab was closed), or becomes unassigned (but stays visible) when no
     /// workspace remains.
     pub fn close_workspace(&self, ws_id: &str) -> Result<(), String> {
-        let mut inner = self.lock();
-        let index = inner
-            .workspaces
-            .iter()
-            .position(|w| w.id == ws_id)
-            .ok_or_else(|| format!("unknown workspace: {ws_id}"))?;
-        inner.workspaces.remove(index);
-        let replacement = (!inner.workspaces.is_empty())
-            .then(|| inner.workspaces[index.saturating_sub(1)].id.clone());
-        for slot_id in [SlotId::Left, SlotId::Right] {
-            if inner.slot(slot_id).workspace.as_deref() != Some(ws_id) {
-                continue;
-            }
-            match &replacement {
-                Some(id) => {
-                    // `assign` shows the slot; a slot hidden by
-                    // panel:unsplit must stay hidden.
-                    let was_visible = inner.slot(slot_id).visible;
-                    inner.assign(id, slot_id)?;
-                    inner.slot_mut(slot_id).visible = was_visible;
+        self.mutate(|inner| {
+            let index = inner
+                .workspaces
+                .iter()
+                .position(|w| w.id == ws_id)
+                .ok_or_else(|| format!("unknown workspace: {ws_id}"))?;
+            inner.workspaces.remove(index);
+            let replacement = (!inner.workspaces.is_empty())
+                .then(|| inner.workspaces[index.saturating_sub(1)].id.clone());
+            for slot_id in [SlotId::Left, SlotId::Right] {
+                if inner.slot(slot_id).workspace.as_deref() != Some(ws_id) {
+                    continue;
                 }
-                None => {
-                    let slot = inner.slot_mut(slot_id);
-                    slot.workspace = None;
-                    slot.panel_type = None;
+                match &replacement {
+                    Some(id) => {
+                        // `assign` shows the slot; a slot hidden by
+                        // panel:unsplit must stay hidden.
+                        let was_visible = inner.slot(slot_id).visible;
+                        inner.assign(id, slot_id)?;
+                        inner.slot_mut(slot_id).visible = was_visible;
+                    }
+                    None => {
+                        let slot = inner.slot_mut(slot_id);
+                        slot.workspace = None;
+                        slot.panel_type = None;
+                    }
                 }
             }
-        }
-        self.emit_workspaces(&inner);
-        self.emit_layout(&inner);
-        Ok(())
+            Ok(((), Emit::BOTH))
+        })
     }
 
     /// `tab:close` — closes the focused slot's workspace.
@@ -320,20 +363,20 @@ impl GuiState {
     }
 
     pub fn rename_workspace(&self, ws_id: &str, name: &str) -> Result<(), String> {
-        let mut inner = self.lock();
-        inner.workspace_mut(ws_id)?.name = name.to_string();
-        self.emit_workspaces(&inner);
-        Ok(())
+        self.mutate(|inner| {
+            inner.workspace_mut(ws_id)?.name = name.to_string();
+            Ok(((), Emit::WORKSPACES))
+        })
     }
 
     /// Assigns an existing workspace to a slot (tab click), showing the
     /// slot if it was hidden, and restoring the workspace's last panel
     /// type for that slot.
     pub fn tab_assign(&self, ws_id: &str, slot: SlotId) -> Result<(), String> {
-        let mut inner = self.lock();
-        inner.assign(ws_id, slot)?;
-        self.emit_layout(&inner);
-        Ok(())
+        self.mutate(|inner| {
+            inner.assign(ws_id, slot)?;
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     /// `tab:next` — assigns the next workspace (tab order, wrapping) to the
@@ -348,36 +391,36 @@ impl GuiState {
     }
 
     fn tab_step(&self, direction: isize) -> Result<(), String> {
-        let mut inner = self.lock();
-        if inner.workspaces.is_empty() {
-            return Err("no workspaces".into());
-        }
-        let len = inner.workspaces.len() as isize;
-        let current = inner.slot(inner.focused).workspace.clone();
-        let target = match current
-            .and_then(|id| inner.workspaces.iter().position(|w| w.id == id))
-        {
-            Some(pos) => (pos as isize + direction).rem_euclid(len) as usize,
-            None => 0,
-        };
-        let ws_id = inner.workspaces[target].id.clone();
-        let focused = inner.focused;
-        inner.assign(&ws_id, focused)?;
-        self.emit_layout(&inner);
-        Ok(())
+        self.mutate(|inner| {
+            if inner.workspaces.is_empty() {
+                return Err("no workspaces".into());
+            }
+            let len = inner.workspaces.len() as isize;
+            let current = inner.slot(inner.focused).workspace.clone();
+            let target = match current
+                .and_then(|id| inner.workspaces.iter().position(|w| w.id == id))
+            {
+                Some(pos) => (pos as isize + direction).rem_euclid(len) as usize,
+                None => 0,
+            };
+            let ws_id = inner.workspaces[target].id.clone();
+            let focused = inner.focused;
+            inner.assign(&ws_id, focused)?;
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     /// `tab:goto-N` — assigns workspace N (1-based tab position).
     pub fn tab_goto(&self, n: usize) -> Result<(), String> {
-        let mut inner = self.lock();
-        if n == 0 || n > inner.workspaces.len() {
-            return Err(format!("no workspace at position {n}"));
-        }
-        let ws_id = inner.workspaces[n - 1].id.clone();
-        let focused = inner.focused;
-        inner.assign(&ws_id, focused)?;
-        self.emit_layout(&inner);
-        Ok(())
+        self.mutate(|inner| {
+            if n == 0 || n > inner.workspaces.len() {
+                return Err(format!("no workspace at position {n}"));
+            }
+            let ws_id = inner.workspaces[n - 1].id.clone();
+            let focused = inner.focused;
+            inner.assign(&ws_id, focused)?;
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     // ── Slot commands ────────────────────────────────────────────────────
@@ -387,43 +430,40 @@ impl GuiState {
     /// collision rule leaves the new slot typeless — same panel type
     /// twice is impossible for one workspace).
     pub fn panel_split(&self) -> Result<(), String> {
-        let mut inner = self.lock();
-        let target = if !inner.right.visible {
-            SlotId::Right
-        } else if !inner.left.visible {
-            SlotId::Left
-        } else {
-            return Ok(()); // both slots already visible
-        };
+        self.mutate(|inner| {
+            let target = if !inner.right.visible {
+                SlotId::Right
+            } else if !inner.left.visible {
+                SlotId::Left
+            } else {
+                return Ok(((), Emit::NONE)); // both slots already visible
+            };
 
-        let mut created = false;
-        match inner.slot(target).workspace.clone() {
-            Some(_) => inner.slot_mut(target).visible = true,
-            None => match inner.slot(inner.focused).workspace.clone() {
-                Some(ws_id) => inner.assign(&ws_id, target)?,
-                // Empty layout (no focused workspace at all): a fresh
-                // workspace is the only meaningful split.
-                None => {
-                    let id = inner.new_workspace(None);
-                    inner.assign(&id, target)?;
-                    created = true;
-                }
-            },
-        }
-        if created {
-            self.emit_workspaces(&inner);
-        }
-        self.emit_layout(&inner);
-        Ok(())
+            let mut created = false;
+            match inner.slot(target).workspace.clone() {
+                Some(_) => inner.slot_mut(target).visible = true,
+                None => match inner.slot(inner.focused).workspace.clone() {
+                    Some(ws_id) => inner.assign(&ws_id, target)?,
+                    // Empty layout (no focused workspace at all): a fresh
+                    // workspace is the only meaningful split.
+                    None => {
+                        let id = inner.new_workspace(None);
+                        inner.assign(&id, target)?;
+                        created = true;
+                    }
+                },
+            }
+            Ok(((), Emit { workspaces: created, layout: true }))
+        })
     }
 
     /// `panel:unsplit` — hides the non-focused slot (workspace preserved).
     pub fn panel_unsplit(&self) -> Result<(), String> {
-        let mut inner = self.lock();
-        let other = inner.focused.other();
-        inner.slot_mut(other).visible = false;
-        self.emit_layout(&inner);
-        Ok(())
+        self.mutate(|inner| {
+            let other = inner.focused.other();
+            inner.slot_mut(other).visible = false;
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     /// `panel:split-toggle` — splits when one slot is visible, unsplits
@@ -443,12 +483,13 @@ impl GuiState {
     /// Hides a slot (GUI API `PUT /gui/layout` with null); the workspace
     /// assignment is remembered. Focus falls back to the other slot.
     pub fn hide_slot(&self, slot_id: SlotId) {
-        let mut inner = self.lock();
-        inner.slot_mut(slot_id).visible = false;
-        if inner.focused == slot_id && inner.slot(slot_id.other()).visible {
-            inner.focused = slot_id.other();
-        }
-        self.emit_layout(&inner);
+        self.update(|inner| {
+            inner.slot_mut(slot_id).visible = false;
+            if inner.focused == slot_id && inner.slot(slot_id.other()).visible {
+                inner.focused = slot_id.other();
+            }
+            ((), Emit::LAYOUT)
+        })
     }
 
     /// Marks a (workspace, panel type) instance as ready (iframe loaded
@@ -474,63 +515,65 @@ impl GuiState {
     /// (workspace, panel type) duplicate: when both slots show the same
     /// workspace their types already differ.
     pub fn panel_swap(&self) -> Result<(), String> {
-        let mut inner = self.lock();
-        if !(inner.left.visible && inner.right.visible) {
-            return Err("both panel slots must be visible to swap".into());
-        }
-        let left_type = inner.left.panel_type.take();
-        inner.left.panel_type = inner.right.panel_type.take();
-        inner.right.panel_type = left_type;
-        for slot_id in [SlotId::Left, SlotId::Right] {
-            let slot = inner.slot(slot_id);
-            if let (Some(ws_id), Some(panel_type)) =
-                (slot.workspace.clone(), slot.panel_type.clone())
-            {
-                inner.workspace_mut(&ws_id)?.last_panel.insert(slot_id, panel_type);
+        self.mutate(|inner| {
+            if !(inner.left.visible && inner.right.visible) {
+                return Err("both panel slots must be visible to swap".into());
             }
-        }
-        self.emit_layout(&inner);
-        Ok(())
+            let left_type = inner.left.panel_type.take();
+            inner.left.panel_type = inner.right.panel_type.take();
+            inner.right.panel_type = left_type;
+            for slot_id in [SlotId::Left, SlotId::Right] {
+                let slot = inner.slot(slot_id);
+                if let (Some(ws_id), Some(panel_type)) =
+                    (slot.workspace.clone(), slot.panel_type.clone())
+                {
+                    inner.workspace_mut(&ws_id)?.last_panel.insert(slot_id, panel_type);
+                }
+            }
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     /// `panel:focus-next` — moves focus to the other slot if visible.
     pub fn focus_next(&self) {
-        let mut inner = self.lock();
-        let other = inner.focused.other();
-        if inner.slot(other).visible {
-            inner.focused = other;
-            self.emit_layout(&inner);
-        }
+        self.update(|inner| {
+            let other = inner.focused.other();
+            let changed = inner.slot(other).visible;
+            if changed {
+                inner.focused = other;
+            }
+            ((), Emit { workspaces: false, layout: changed })
+        })
     }
 
     /// `panel:set-type` — switches the panel type displayed in a slot.
     /// Rejected when the other slot already shows the same panel type of
     /// the same workspace (one iframe per (workspace, panel type)).
     pub fn set_panel_type(&self, slot_id: SlotId, panel_type: &str) -> Result<(), String> {
-        let mut inner = self.lock();
-        let ws_id = inner
-            .slot(slot_id)
-            .workspace
-            .clone()
-            .ok_or("no workspace assigned to this slot")?;
+        self.mutate(|inner| {
+            let ws_id = inner
+                .slot(slot_id)
+                .workspace
+                .clone()
+                .ok_or("no workspace assigned to this slot")?;
 
-        let other = inner.slot(slot_id.other());
-        if other.visible
-            && other.workspace.as_deref() == Some(ws_id.as_str())
-            && other.panel_type.as_deref() == Some(panel_type)
-        {
-            return Err(format!(
-                "'{panel_type}' is already displayed for this workspace in the other panel"
-            ));
-        }
+            let other = inner.slot(slot_id.other());
+            if other.visible
+                && other.workspace.as_deref() == Some(ws_id.as_str())
+                && other.panel_type.as_deref() == Some(panel_type)
+            {
+                return Err(format!(
+                    "'{panel_type}' is already displayed for this workspace in the other panel"
+                ));
+            }
 
-        inner.slot_mut(slot_id).panel_type = Some(panel_type.to_string());
-        inner
-            .workspace_mut(&ws_id)?
-            .last_panel
-            .insert(slot_id, panel_type.to_string());
-        self.emit_layout(&inner);
-        Ok(())
+            inner.slot_mut(slot_id).panel_type = Some(panel_type.to_string());
+            inner
+                .workspace_mut(&ws_id)?
+                .last_panel
+                .insert(slot_id, panel_type.to_string());
+            Ok(((), Emit::LAYOUT))
+        })
     }
 
     /// Sets `active_repo` on a workspace that does not have one yet
