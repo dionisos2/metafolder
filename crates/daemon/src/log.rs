@@ -5,12 +5,12 @@
 //! transaction.
 
 use std::collections::{HashMap, HashSet};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
+pub use metafolder_core::date::now_ms;
 use metafolder_core::metarecord::{Field, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
@@ -63,12 +63,6 @@ impl OpType {
     }
 }
 
-pub fn now_ms() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as i64
-}
 
 // ── History reading ───────────────────────────────────────────────────────────
 

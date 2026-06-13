@@ -8,6 +8,8 @@ use std::io::Write as _;
 
 use serde_json::{json, Value as Json};
 
+use metafolder_core::date;
+
 use crate::client::CliError;
 use crate::commands::Ctx;
 
@@ -527,68 +529,20 @@ fn parse_timestamp(s: &str) -> Result<i64, CliError> {
     if let Ok(ms) = s.parse::<i64>() {
         return Ok(ms);
     }
-    iso_to_ms(s)
+    date::iso_to_ms(s)
         .ok_or_else(|| CliError::Usage(format!("invalid timestamp '{s}' (use Unix ms or ISO-8601)")))
-}
-
-/// Minimal ISO-8601 → Unix ms (UTC). Returns None on a malformed string.
-fn iso_to_ms(s: &str) -> Option<i64> {
-    let s = s.trim_end_matches('Z');
-    let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00:00"));
-    let mut d = date.split('-');
-    let year: i64 = d.next()?.parse().ok()?;
-    let month: i64 = d.next()?.parse().ok()?;
-    let day: i64 = d.next()?.parse().ok()?;
-    let mut t = time.split(':');
-    let hour: i64 = t.next()?.parse().ok()?;
-    let min: i64 = t.next().unwrap_or("0").parse().ok()?;
-    let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
-    let days = days_from_civil(year, month as u32, day as u32);
-    Some((days * 86_400 + hour * 3600 + min * 60 + sec) * 1000)
 }
 
 /// `YYYY-MM-DD HH:MM` (UTC) from Unix ms.
 fn fmt_minute(ms: i64) -> String {
-    let (y, mo, d, h, mi, _) = civil(ms);
+    let (y, mo, d, h, mi, _) = date::ms_to_civil(ms);
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}")
 }
 
 /// `YYYY-MM-DD HH:MM:SS` (UTC) from Unix ms.
 fn fmt_second(ms: i64) -> String {
-    let (y, mo, d, h, mi, s) = civil(ms);
+    let (y, mo, d, h, mi, s) = date::ms_to_civil(ms);
     format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
-}
-
-fn civil(ms: i64) -> (i64, u32, u32, u64, u64, u64) {
-    let secs = ms.div_euclid(1000).max(0) as u64;
-    let days = (secs / 86_400) as i64;
-    let rem = secs % 86_400;
-    let (y, mo, d) = civil_from_days(days);
-    (y, mo, d, rem / 3600, (rem % 3600) / 60, rem % 60)
-}
-
-/// Days-since-epoch → (year, month, day) (Howard Hinnant's algorithm).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
-
-/// (year, month, day) → days-since-epoch (Howard Hinnant's algorithm).
-fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as i64 + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]

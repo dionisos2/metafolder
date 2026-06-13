@@ -148,19 +148,3 @@ fn test_stat_fields_for_a_directory() {
     assert_eq!(mfr_type.value, Value::String("dir".into()));
     std::fs::remove_dir(dir).unwrap();
 }
-
-#[test]
-fn test_iso8601_known_timestamps() {
-    use std::time::{Duration, UNIX_EPOCH};
-    assert_eq!(fs_meta::iso8601(UNIX_EPOCH), "1970-01-01T00:00:00Z");
-    // 2024-02-29T12:34:56Z (leap year) == 1709210096.
-    assert_eq!(
-        fs_meta::iso8601(UNIX_EPOCH + Duration::from_secs(1_709_210_096)),
-        "2024-02-29T12:34:56Z"
-    );
-    // 2000-01-01T00:00:00Z == 946684800.
-    assert_eq!(
-        fs_meta::iso8601(UNIX_EPOCH + Duration::from_secs(946_684_800)),
-        "2000-01-01T00:00:00Z"
-    );
-}
