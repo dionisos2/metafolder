@@ -1,5 +1,6 @@
 target/
 benchmarks/bench_data/
+benchmarks/bench_data_big/
 benchmarks/result*.txt
 benchmarks/.metafolder/
 .claude/
