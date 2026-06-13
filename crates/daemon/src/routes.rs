@@ -145,6 +145,43 @@ fn validate_schema(
     }
 }
 
+/// Shared scaffold for the single-metarecord write handlers (`patch`,
+/// `append`, `replace`, `delete`): runs on the blocking pool, gates on
+/// repository writability, opens a logged [`Writer`], lets `write` resolve the
+/// touched field name(s) and perform the mutation, then runs schema delta
+/// validation over those names and commits. Returns the resulting metarecord
+/// (handlers that answer 204 simply discard it). A validation failure or any
+/// closure error drops the Writer, rolling the whole write back.
+async fn write_record<F>(
+    state: &AppState,
+    repo_uuid: Uuid,
+    uuid: Uuid,
+    write: F,
+) -> Result<MetaRecord, ApiError>
+where
+    F: FnOnce(&mut Writer) -> Result<Vec<String>, ApiError> + Send + 'static,
+{
+    with_repo(state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let touched = write(&mut writer)?;
+        validate_schema(repo_state, writer.connection(), uuid, &touched)?;
+        writer.commit()?;
+        metarecord_response(&conn, uuid)
+    })
+    .await
+}
+
+/// 404 unless the metarecord exists. Shared by the write handlers that target
+/// a metarecord by uuid rather than by an existing field row.
+fn ensure_exists(conn: &rusqlite::Connection, uuid: Uuid) -> Result<(), ApiError> {
+    if db::get_version(conn, uuid)?.is_none() {
+        return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
+    }
+    Ok(())
+}
+
 // ── Health and repositories ───────────────────────────────────────────────────
 
 async fn health() -> Json<serde_json::Value> {
@@ -1237,20 +1274,14 @@ async fn patch_metarecord(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        if db::get_version(&conn, uuid)?.is_none() {
-            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
-        }
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        ensure_exists(writer.connection(), uuid)?;
         writer.set_field(uuid, &body.name, body.value)?;
-        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&body.name))?;
-        writer.commit()?;
-        Ok(Json(metarecord_response(&conn, uuid)?))
+        Ok(vec![body.name])
     })
     .await
+    .map(Json)
 }
 
 async fn append_field(
@@ -1261,20 +1292,14 @@ async fn append_field(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        if db::get_version(&conn, uuid)?.is_none() {
-            return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
-        }
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        ensure_exists(writer.connection(), uuid)?;
         writer.append_field(uuid, &body.name, body.value)?;
-        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&body.name))?;
-        writer.commit()?;
-        Ok(Json(metarecord_response(&conn, uuid)?))
+        Ok(vec![body.name])
     })
     .await
+    .map(Json)
 }
 
 #[derive(Deserialize)]
@@ -1307,18 +1332,14 @@ async fn replace_field(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
-        let name = owned_field_name(&conn, uuid, field_id)?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
+        let name = owned_field_name(writer.connection(), uuid, field_id)?;
         check_writable(&name, body.force)?;
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         writer.replace_field(uuid, field_id, body.value)?;
-        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&name))?;
-        writer.commit()?;
-        Ok(Json(metarecord_response(&conn, uuid)?))
+        Ok(vec![name])
     })
     .await
+    .map(Json)
 }
 
 #[derive(Deserialize, Default)]
@@ -1335,16 +1356,12 @@ async fn delete_field(
     let force = payload.map(|Json(b)| b.force).unwrap_or(false);
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
-        let name = owned_field_name(&conn, uuid, field_id)?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
+        let name = owned_field_name(writer.connection(), uuid, field_id)?;
         check_writable(&name, force)?;
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         writer.delete_field(uuid, field_id)?;
-        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&name))?;
-        writer.commit()?;
-        Ok(StatusCode::NO_CONTENT)
+        Ok(vec![name])
     })
-    .await
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
