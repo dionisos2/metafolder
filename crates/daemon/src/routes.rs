@@ -895,11 +895,15 @@ struct ReconcileBody {
     /// Compute `mfr_mime` for files that lack it (default true).
     #[serde(default = "default_true")]
     mime: bool,
+    /// Refresh the stat-derived `mfr_*` fields of files/directories still at
+    /// their recorded path, catching in-place edits (default true).
+    #[serde(default = "default_true")]
+    refresh: bool,
 }
 
 impl Default for ReconcileBody {
     fn default() -> Self {
-        Self { threshold: None, mime: true }
+        Self { threshold: None, mime: true, refresh: true }
     }
 }
 
@@ -917,7 +921,7 @@ async fn full_reconcile(
     }
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_full(repo_state, body.threshold, body.mime)?))
+        Ok(Json(crate::reconcile::reconcile_full(repo_state, body.threshold, body.mime, body.refresh)?))
     })
     .await
 }
@@ -929,10 +933,10 @@ async fn metarecord_reconcile(
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    let mime = payload.map(|Json(b)| b.mime).unwrap_or(true);
+    let body = payload.map(|Json(b)| b).unwrap_or_default();
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid, mime)?))
+        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid, body.mime, body.refresh)?))
     })
     .await
 }

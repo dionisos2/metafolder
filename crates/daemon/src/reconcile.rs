@@ -49,9 +49,9 @@ pub struct ReconcileResult {
     pub candidates: Vec<Candidate>,
 }
 
-/// Full reconcile without the similarity or MIME phases (v1 behaviour).
+/// Full reconcile without the similarity, MIME or refresh phases (v1 behaviour).
 pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
-    reconcile_full(repo, None, false)
+    reconcile_full(repo, None, false, false)
 }
 
 /// Full reconcile: walk the repository root and synchronise the database.
@@ -60,11 +60,15 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
 /// score-based candidates for still-unmatched orphans and new files
 /// (spec-file-tracking "File Similarity"). When `compute_mime` is set, files
 /// without an `mfr_mime` get one from content analysis (spec-platform "MIME
-/// detection").
+/// detection"). When `refresh` is set, files and directories still at their
+/// recorded path get their stat-derived `mfr_*` fields refreshed (catching
+/// in-place edits made while the watcher was not running), the same way
+/// single-metarecord reconcile does.
 pub fn reconcile_full(
     repo: &RepoState,
     threshold: Option<f64>,
     compute_mime: bool,
+    refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
@@ -79,15 +83,16 @@ pub fn reconcile_full(
     walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths)?;
 
     // New files: paths with no metarecord at that tree position. The regular
-    // files (existing or new) are kept for the optional MIME pass below.
+    // files (existing or new) are kept for the optional MIME pass below;
+    // `fs_paths` is kept whole for the optional refresh pass.
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
     let mut disk_files: Vec<String> = Vec::new();
-    for (rel, meta) in fs_paths {
+    for (rel, meta) in &fs_paths {
         if meta.is_file() {
             disk_files.push(rel.clone());
         }
-        if cache.resolve_path(writer.connection(), "mfr_path", &rel)?.is_none() {
-            new_files.push((rel, meta));
+        if cache.resolve_path(writer.connection(), "mfr_path", rel)?.is_none() {
+            new_files.push((rel.clone(), meta.clone()));
         }
     }
 
@@ -211,7 +216,7 @@ pub fn reconcile_full(
                 if claimed.contains(rel) || meta.is_dir() != state.is_dir {
                     continue;
                 }
-                let new_size = meta.is_file().then(|| meta.len() as i64);
+                let new_size = meta.is_file().then_some(meta.len() as i64);
                 let score = similarity_score(&orphan_sig, &FileSig::from_path(rel, new_size));
                 if score >= threshold {
                     state
@@ -246,6 +251,20 @@ pub fn reconcile_full(
         result.created += 1;
     }
 
+    // Step 5b — refresh phase (option): every file/directory still at its
+    // recorded path gets its stat-derived `mfr_*` fields refreshed, catching
+    // in-place edits made while the watcher was not running. Records just
+    // created or moved above already hold current stat fields, so
+    // `refresh_stat_fields` (which writes only changed fields) is a no-op for
+    // them. Same behaviour as single-metarecord reconcile.
+    if refresh {
+        for (rel, _) in &fs_paths {
+            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+                refresh_stat_fields(&mut writer, &root, uuid, rel)?;
+            }
+        }
+    }
+
     // Step 6 — MIME phase (spec-platform): every eligible file on disk now has
     // a record; fill in mfr_mime where it is still absent.
     if compute_mime {
@@ -261,12 +280,14 @@ pub fn reconcile_full(
 }
 
 /// Single-metarecord reconcile: same semantics scoped to the subtree rooted at
-/// the given metarecord, without the fingerprint phase. Existing metarecords get
-/// their `mfr_*` stat fields refreshed.
+/// the given metarecord, without the fingerprint phase. When `refresh` is set,
+/// existing metarecords still at their recorded path get their `mfr_*` stat
+/// fields refreshed (same option as full reconcile).
 pub fn reconcile_metarecord(
     repo: &RepoState,
     uuid: Uuid,
     compute_mime: bool,
+    refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
@@ -298,7 +319,11 @@ pub fn reconcile_metarecord(
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
         match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
-            Some(existing) => refresh_stat_fields(&mut writer, &root, existing, rel)?,
+            Some(existing) => {
+                if refresh {
+                    refresh_stat_fields(&mut writer, &root, existing, rel)?;
+                }
+            }
             None => {
                 create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
                 result.created += 1;

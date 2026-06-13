@@ -140,6 +140,42 @@ fn test_reconcile_never_clears_paths() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// ── In-place modification refresh (option) ─────────────────────────────────────
+
+#[test]
+fn test_full_reconcile_refreshes_in_place_modifications_when_enabled() {
+    let (repo, root) = setup("refresh_on");
+    write_file(&root, "note.txt", b"hi");
+    reconcile::reconcile_full(&repo, None, false, true).unwrap();
+    let uuid = resolve(&repo, "/note.txt").unwrap();
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
+
+    // The file is edited in place (same path) while no watcher runs.
+    write_file(&root, "note.txt", b"hello!");
+    let result = reconcile::reconcile_full(&repo, None, false, true).unwrap();
+    assert_eq!(result.created, 0);
+    assert_eq!(result.moved, 0);
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(6)));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_full_reconcile_leaves_in_place_modifications_when_disabled() {
+    let (repo, root) = setup("refresh_off");
+    write_file(&root, "note.txt", b"hi");
+    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    let uuid = resolve(&repo, "/note.txt").unwrap();
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
+
+    write_file(&root, "note.txt", b"hello!");
+    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    // Without the refresh option, the stale size is left untouched.
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── Fingerprint phase ─────────────────────────────────────────────────────────
 
 #[test]
@@ -227,7 +263,7 @@ fn test_reconcile_computes_mime_when_enabled() {
     let (repo, root) = setup("mime");
     write_file(&root, "pic.png", PNG_MAGIC);
     write_file(&root, "notes.txt", b"hello"); // not magic-detectable → no mime
-    reconcile::reconcile_full(&repo, None, true).unwrap();
+    reconcile::reconcile_full(&repo, None, true, false).unwrap();
 
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
@@ -241,7 +277,7 @@ fn test_reconcile_computes_mime_when_enabled() {
 fn test_reconcile_skips_mime_when_disabled() {
     let (repo, root) = setup("nomime");
     write_file(&root, "pic.png", PNG_MAGIC);
-    reconcile::reconcile_full(&repo, None, false).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false).unwrap();
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), None);
     std::fs::remove_dir_all(root).unwrap();
@@ -251,11 +287,11 @@ fn test_reconcile_skips_mime_when_disabled() {
 fn test_reconcile_mime_is_idempotent() {
     let (repo, root) = setup("mime_idem");
     write_file(&root, "pic.png", PNG_MAGIC);
-    reconcile::reconcile_full(&repo, None, true).unwrap();
+    reconcile::reconcile_full(&repo, None, true, false).unwrap();
     let after_first = op_count(&repo);
 
     // A second mime reconcile must not rewrite the existing mfr_mime.
-    let result = reconcile::reconcile_full(&repo, None, true).unwrap();
+    let result = reconcile::reconcile_full(&repo, None, true, false).unwrap();
     assert_eq!(result.created, 0);
     assert_eq!(op_count(&repo), after_first, "mime must not be recomputed");
 
@@ -281,7 +317,7 @@ fn test_similarity_phase_proposes_renamed_modified_file() {
     assert!(v1.candidates.is_empty(), "no similarity phase without a threshold");
     assert_eq!(v1.created, 1);
     // The orphan keeps its stale path.
-    assert_eq!(field_value(&repo, uuid, "mfr_path").is_some(), true);
+    assert!(field_value(&repo, uuid, "mfr_path").is_some());
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -296,7 +332,7 @@ fn test_similarity_candidate_carries_a_score() {
     std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
     write_file(&root, "music/old_song_v2.mp3", &vec![b'b'; 1100]);
 
-    let result = reconcile::reconcile_full(&repo, Some(0.6), false).unwrap();
+    let result = reconcile::reconcile_full(&repo, Some(0.6), false, false).unwrap();
     assert_eq!(result.moved, 0);
     assert_eq!(result.candidates.len(), 1, "{:?}", result.candidates);
     let candidate = &result.candidates[0];

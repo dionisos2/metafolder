@@ -414,7 +414,8 @@ Behaviour:
 - Walks the directory on disk (or refreshes a single file).
 - For each filesystem path found inside the subtree, evaluates eligibility
   (=mf_watch= / =mf_ignore=) and creates missing metarecords with all =mfr_*=
-  fields; updates =mfr_*= fields for metarecords that already exist.
+  fields; refreshes the =mfr_*= stat fields of metarecords that already exist
+  (the same refresh phase as full reconcile, disabled with ={"refresh": false}=).
 - Does not perform fingerprint or similarity matching (no orphan detection).
   For orphan detection, use the full [[*Reconcile]].
 - Creates missing parent directory metarecords along the path if needed.
@@ -436,7 +437,12 @@ Walks the repository root on the filesystem and synchronises the database.
 An optional ={"threshold": <0..1>}= body enables the similarity phase and
 sets the minimum similarity score (absent disables it; v1 behaviour). The
 optional ={"mime": false}= disables MIME computation (on by default; see
-[[file:spec-platform.org][spec-platform.org]] "MIME detection").
+[[file:spec-platform.org][spec-platform.org]] "MIME detection"). The optional
+={"refresh": false}= disables the refresh phase (on by default), which
+re-reads the stat-derived =mfr_*= fields of files and directories still at
+their recorded path — catching in-place edits made while the watcher was not
+running. This makes the full and single-metarecord reconcile behave the same
+way for unmoved files.
 
 *Steps:*
 
@@ -472,7 +478,14 @@ optional ={"mime": false}= disables MIME computation (on by default; see
 6. Orphaned metarecords not matched by fingerprint and not present in any candidate
    pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
    to =Nothing=.*
-7. *MIME phase* — unless disabled (={"mime": false}=), every eligible file on
+7. *Refresh phase* — unless disabled (={"refresh": false}=), every metarecord
+   still at its recorded path (file or directory) has its stat-derived =mfr_*=
+   fields (=mfr_size=, =mfr_mtime=, =mfr_type=, =mfr_btime=, =mfr_permissions=,
+   =mfr_uid=, =mfr_gid=) re-read from disk and rewritten where they changed,
+   catching in-place edits. Only changed fields are written (idempotent runs do
+   not grow the log); content hashes are left untouched, like elsewhere in
+   reconcile.
+8. *MIME phase* — unless disabled (={"mime": false}=), every eligible file on
    disk that has no =mfr_mime= gets one from content analysis
    (see [[file:spec-platform.org][spec-platform.org]] "MIME detection"). Idempotent: existing values are
    not recomputed.
@@ -541,10 +554,13 @@ Candidates are informational: the CLI never auto-confirms a match. To confirm
 one, the user updates the orphaned metarecord's =mfr_path= as shown (a =force=
 write, since =mfr_path= is an =mfr_*= field).
 
-| Flag                | Description                                                          |
-|---------------------+----------------------------------------------------------------------|
-| =--metarecord <uuid>=    | Single-metarecord reconcile: calls =POST /metarecords/:uuid/reconcile= instead, scoped to that metarecord's subtree |
-| =--json=            | Print the raw JSON response body                                     |
+| Flag                  | Description                                                          |
+|-----------------------+----------------------------------------------------------------------|
+| =--metarecord <uuid>= | Single-metarecord reconcile: calls =POST /metarecords/:uuid/reconcile= instead, scoped to that metarecord's subtree |
+| =--threshold <0..1>=  | Enable the similarity phase with this minimum score (full reconcile only) |
+| =--no-mime=           | Do not compute =mfr_mime= for files that lack it (sends =mime: false=) |
+| =--no-refresh=        | Do not refresh =mfr_*= stat fields of in-place (unmoved) files (sends =refresh: false=) |
+| =--json=              | Print the raw JSON response body                                     |
 
 ** =mf track <path>=
 

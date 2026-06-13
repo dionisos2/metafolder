@@ -480,6 +480,7 @@ pub fn reconcile(
     entry: Option<&str>,
     threshold: Option<f64>,
     mime: bool,
+    refresh: bool,
     raw_json: bool,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
@@ -489,10 +490,10 @@ pub fn reconcile(
                 .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
             // The similarity threshold applies to full reconcile only.
             let path = format!("{base}/metarecords/{}/reconcile", uuid.as_simple());
-            ctx.client.request("POST", &path, &[], Some(&json!({"mime": mime})))?
+            ctx.client.request("POST", &path, &[], Some(&json!({"mime": mime, "refresh": refresh})))?
         }
         None => {
-            let mut body = json!({"mime": mime});
+            let mut body = json!({"mime": mime, "refresh": refresh});
             if let Some(t) = threshold {
                 body["threshold"] = json!(t);
             }
