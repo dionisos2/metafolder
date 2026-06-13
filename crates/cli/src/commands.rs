@@ -30,7 +30,7 @@ impl Ctx {
     /// Resolves `--repo` / `METAFOLDER_REPO` into the `/repos/<uuid>` URL
     /// prefix; missing or invalid is a usage error (exit 2), raised before
     /// any daemon round-trip.
-    fn repo_base(&self) -> Result<String, CliError> {
+    pub(crate) fn repo_base(&self) -> Result<String, CliError> {
         let raw = self.repo.as_deref().ok_or_else(|| {
             CliError::Usage("--repo <UUID> (or METAFOLDER_REPO) is required for this command".into())
         })?;

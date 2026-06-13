@@ -1,0 +1,408 @@
+//! Event-log CLI commands (spec-event-log "* CLI"): `mf log`, `mf log show`,
+//! `mf prune`, and the coordinated-navigation `mf rollback`. All are thin
+//! formatters over the daemon's `/log`, `/rollback`, and `/log/prune`
+//! endpoints. Target resolution (`--id`, `--timestamp`, `<label>`, or the
+//! implicit previous revision) is shared by rollback and prune.
+
+use std::io::Write as _;
+
+use serde_json::{json, Value as Json};
+
+use crate::client::CliError;
+use crate::commands::Ctx;
+
+// ── Target resolution ─────────────────────────────────────────────────────────
+
+/// A rollback/prune target as the four daemon body forms.
+pub struct TargetArgs {
+    /// Positional label (`mf rollback <label>`).
+    pub label: Option<String>,
+    pub id: Option<i64>,
+    /// `--timestamp` accepts Unix ms or ISO-8601.
+    pub timestamp: Option<String>,
+}
+
+impl TargetArgs {
+    /// Builds the daemon `{"target": ...}` body. When nothing is specified the
+    /// target is the previous revision (`{"prev_revision": true}`).
+    fn into_body(self) -> Result<Json, CliError> {
+        let set = [self.id.is_some(), self.timestamp.is_some(), self.label.is_some()]
+            .iter()
+            .filter(|x| **x)
+            .count();
+        if set > 1 {
+            return Err(CliError::Usage(
+                "give at most one of <label>, --id, or --timestamp".into(),
+            ));
+        }
+        let target = if let Some(id) = self.id {
+            json!({"id": id})
+        } else if let Some(ts) = self.timestamp {
+            json!({"timestamp": parse_timestamp(&ts)?})
+        } else if let Some(label) = self.label {
+            json!({"label": label})
+        } else {
+            json!({"prev_revision": true})
+        };
+        Ok(json!({"target": target}))
+    }
+
+}
+
+// ── mf log ────────────────────────────────────────────────────────────────────
+
+pub struct LogArgs {
+    pub tree: bool,
+    pub ops: bool,
+    pub metarecord: Option<String>,
+    pub limit: Option<usize>,
+    pub since: Option<String>,
+    pub until: Option<String>,
+    pub all: bool,
+}
+
+pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut query: Vec<(&str, String)> = Vec::new();
+    if args.tree {
+        query.push(("mode", "tree".into()));
+    }
+    if let Some(uuid) = &args.metarecord {
+        query.push(("metarecord_uuid", uuid.clone()));
+    }
+    if let Some(since) = &args.since {
+        query.push(("since", parse_timestamp(since)?.to_string()));
+    }
+    if let Some(until) = &args.until {
+        query.push(("until", parse_timestamp(until)?.to_string()));
+    }
+    let resp = ctx.client.get(&format!("{base}/log"), &query)?;
+
+    let head = resp["head"].as_i64();
+    let ops: Vec<&Json> = resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>)> =
+        std::collections::HashMap::new();
+    for rev in resp["revisions"].as_array().into_iter().flatten() {
+        if let Some(id) = rev["id"].as_i64() {
+            let ts = rev["timestamp"].as_i64().unwrap_or(0);
+            let label = rev["label"].as_str().map(str::to_string);
+            rev_meta.insert(id, (ts, label));
+        }
+    }
+
+    // Group operations by revision, most recent first. Operations of one
+    // revision are contiguous in the chain; we order revisions by their
+    // highest operation id.
+    let mut groups: Vec<(i64, Vec<&Json>)> = Vec::new();
+    for op in &ops {
+        let rev_id = op["rev_id"].as_i64().unwrap_or(0);
+        match groups.iter_mut().find(|(r, _)| *r == rev_id) {
+            Some((_, list)) => list.push(op),
+            None => groups.push((rev_id, vec![op])),
+        }
+    }
+    groups.sort_by_key(|(_, list)| {
+        std::cmp::Reverse(list.iter().filter_map(|o| o["id"].as_i64()).max().unwrap_or(0))
+    });
+
+    // The HEAD revision is the one containing the HEAD operation.
+    let head_rev = head.and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
+        .and_then(|o| o["rev_id"].as_i64());
+
+    // The set of operation ids on the HEAD ancestry path (for branch marking
+    // in tree mode), reconstructed from parent_id.
+    let on_head_path = head_path(&ops, head);
+
+    let limit = if args.all { None } else { args.limit.or(Some(20)) };
+
+    if groups.is_empty() {
+        println!("(empty history)");
+        return Ok(0);
+    }
+
+    let mut shown_ops = 0usize;
+    let mut shown_revs = 0usize;
+    for (rev_id, list) in &groups {
+        // Operations within a revision are displayed by descending seq.
+        let mut ops_sorted = list.clone();
+        ops_sorted.sort_by_key(|o| std::cmp::Reverse(o["seq"].as_i64().unwrap_or(0)));
+
+        let is_head = Some(*rev_id) == head_rev;
+        let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
+        let marker = if is_head { ">" } else { " " };
+        let branch = if args.tree && !on_head_path.is_empty()
+            && !ops_sorted.iter().any(|o| o["id"].as_i64().is_some_and(|id| on_head_path.contains(&id)))
+        {
+            "  (branch)"
+        } else {
+            ""
+        };
+        let mut line = format!("{marker} rev {rev_id}  {}", fmt_minute(ts));
+        if let Some(label) = &label {
+            line.push_str(&format!("  \"{label}\""));
+        } else if ops_sorted.len() > 1 {
+            line.push_str(&format!("  ({})", op_breakdown(&ops_sorted)));
+        }
+        if is_head {
+            line.push_str("   \u{2190} HEAD");
+        }
+        line.push_str(branch);
+        println!("{line}");
+        shown_revs += 1;
+
+        if args.ops {
+            for op in &ops_sorted {
+                println!("    {}", fmt_op_line(op));
+                shown_ops += 1;
+                if let Some(n) = limit {
+                    if shown_ops >= n {
+                        return Ok(0);
+                    }
+                }
+            }
+        } else if let Some(n) = limit {
+            if shown_revs >= n {
+                return Ok(0);
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// `op 23  set_field(rating)  on <uuid>`.
+fn fmt_op_line(op: &Json) -> String {
+    let id = op["id"].as_i64().unwrap_or(0);
+    let op_type = op["op_type"].as_str().unwrap_or("?");
+    let field = op["field_name"].as_str();
+    let entity = op["entity_uuid"].as_str().unwrap_or("?");
+    let label = match field {
+        Some(f) => format!("{op_type}({f})"),
+        None => op_type.to_string(),
+    };
+    format!("op {id}  {label}  on {entity}")
+}
+
+/// `5 ops: create_metarecord ×3, file_moved ×2`, counts descending.
+fn op_breakdown(ops: &[&Json]) -> String {
+    let mut counts: Vec<(String, usize)> = Vec::new();
+    for op in ops {
+        let t = op["op_type"].as_str().unwrap_or("?").to_string();
+        match counts.iter_mut().find(|(name, _)| *name == t) {
+            Some((_, c)) => *c += 1,
+            None => counts.push((t, 1)),
+        }
+    }
+    counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    let parts: Vec<String> =
+        counts.iter().map(|(name, c)| format!("{name} \u{00d7}{c}")).collect();
+    format!("{} ops: {}", ops.len(), parts.join(", "))
+}
+
+/// Operation ids on the HEAD ancestry path, walked from `head` via parent_id.
+fn head_path(ops: &[&Json], head: Option<i64>) -> std::collections::HashSet<i64> {
+    let mut set = std::collections::HashSet::new();
+    let by_id: std::collections::HashMap<i64, &Json> =
+        ops.iter().filter_map(|o| o["id"].as_i64().map(|id| (id, *o))).collect();
+    let mut cur = head;
+    while let Some(id) = cur {
+        if !set.insert(id) {
+            break;
+        }
+        cur = by_id.get(&id).and_then(|o| o["parent_id"].as_i64());
+    }
+    set
+}
+
+// ── mf log show ───────────────────────────────────────────────────────────────
+
+pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let rev = if target.eq_ignore_ascii_case("head") {
+        "head".to_string()
+    } else {
+        target
+            .parse::<i64>()
+            .map(|n| n.to_string())
+            .map_err(|_| CliError::Usage(format!("invalid revision target '{target}' (expected a number or HEAD)")))?
+    };
+    let resp = ctx.client.get(&format!("{base}/log/revisions/{rev}"), &[])?;
+    if raw {
+        println!("{}", serde_json::to_string_pretty(&resp).expect("JSON"));
+        return Ok(0);
+    }
+
+    let revision = &resp["revision"];
+    let id = revision["id"].as_i64().unwrap_or(0);
+    let ts = revision["timestamp"].as_i64().unwrap_or(0);
+    let mut header = format!("Revision {id}  [{}]", fmt_second(ts));
+    if let Some(label) = revision["label"].as_str() {
+        header.push_str(&format!("  \"{label}\""));
+    }
+    if revision["is_head"].as_bool() == Some(true) {
+        header.push_str("  \u{2190} HEAD");
+    }
+    println!("{header}");
+
+    for op in resp["operations"].as_array().into_iter().flatten() {
+        println!();
+        println!("  {}", fmt_op_line(op));
+        let before = op["snapshots_before"].as_array();
+        let after = op["snapshots_after"].as_array();
+        let empty = before.is_none_or(|a| a.is_empty()) && after.is_none_or(|a| a.is_empty());
+        if empty {
+            println!("    (no snapshot — unknown operation)");
+            continue;
+        }
+        // For field-scoped ops (set_field, file_*) the field name precedes the
+        // before/after to make multi-field revisions readable.
+        let prefix = op["field_name"].as_str().map(|f| format!("{f} ")).unwrap_or_default();
+        println!("    {prefix}before:  {}", fmt_snapshots(before));
+        println!("    {prefix}after:   {}", fmt_snapshots(after));
+    }
+    Ok(0)
+}
+
+/// Formats a list of snapshot rows as a comma-separated value list. For
+/// `tree_ref` values only the `value_name` component is shown (spec note).
+fn fmt_snapshots(rows: Option<&Vec<Json>>) -> String {
+    let Some(rows) = rows else { return "(absent)".into() };
+    if rows.is_empty() {
+        return "(absent)".into();
+    }
+    let parts: Vec<String> = rows.iter().map(fmt_snapshot_value).collect();
+    parts.join(", ")
+}
+
+fn fmt_snapshot_value(row: &Json) -> String {
+    match row["value_type"].as_str().unwrap_or("") {
+        "nothing" => "Nothing".into(),
+        "string" => format!("\"{}\"", row["value_text"].as_str().unwrap_or("")),
+        "int" => row["value_int"].as_i64().map(|n| n.to_string()).unwrap_or_default(),
+        "float" => row["value_real"].as_f64().map(|n| n.to_string()).unwrap_or_default(),
+        "bool" => (row["value_int"].as_i64().unwrap_or(0) != 0).to_string(),
+        "datetime" => row["value_text"].as_str().unwrap_or("").to_string(),
+        "ref" | "refbase" | "externalref" => row["value_uuid"].as_str().unwrap_or("").to_string(),
+        "tree_ref" => row["value_name"].as_str().unwrap_or("").to_string(),
+        other => format!("<{other}>"),
+    }
+}
+
+// ── mf prune ──────────────────────────────────────────────────────────────────
+
+pub fn prune(
+    ctx: &Ctx,
+    mode: &str,
+    target: TargetArgs,
+    force: bool,
+    silent: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut body = target.into_body()?;
+    body["mode"] = json!(mode);
+
+    if !force {
+        let prompt = format!(
+            "Prune ({mode}) is irreversible — deleted operations cannot be recovered. Proceed? [y/N] "
+        );
+        if !confirm(&prompt)? {
+            eprintln!("aborted");
+            return Ok(1);
+        }
+    }
+    let resp = ctx.client.post(&format!("{base}/log/prune"), &body)?;
+    if !silent {
+        let ops = resp["pruned_operations"].as_i64().unwrap_or(0);
+        let revs = resp["pruned_revisions"].as_i64().unwrap_or(0);
+        let tail = match mode {
+            "linearize" => " History linearized.".to_string(),
+            _ => String::new(),
+        };
+        println!("Pruned {ops} operations across {revs} revisions.{tail}");
+    }
+    Ok(0)
+}
+
+// ── Shared helpers ─────────────────────────────────────────────────────────────
+
+/// Prompts on stderr and reads one line from stdin; only `y`/`yes` confirm.
+pub fn confirm(prompt: &str) -> Result<bool, CliError> {
+    eprint!("{prompt}");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| CliError::Op(format!("cannot read the confirmation: {e}")))?;
+    let answer = answer.trim().to_ascii_lowercase();
+    Ok(answer == "y" || answer == "yes")
+}
+
+/// Parses a timestamp given as Unix milliseconds or an ISO-8601 UTC datetime
+/// (`YYYY-MM-DDTHH:MM:SS[Z]`, also accepting a space separator) into Unix ms.
+fn parse_timestamp(s: &str) -> Result<i64, CliError> {
+    let s = s.trim();
+    if let Ok(ms) = s.parse::<i64>() {
+        return Ok(ms);
+    }
+    iso_to_ms(s)
+        .ok_or_else(|| CliError::Usage(format!("invalid timestamp '{s}' (use Unix ms or ISO-8601)")))
+}
+
+/// Minimal ISO-8601 → Unix ms (UTC). Returns None on a malformed string.
+fn iso_to_ms(s: &str) -> Option<i64> {
+    let s = s.trim_end_matches('Z');
+    let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00:00"));
+    let mut d = date.split('-');
+    let year: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next()?.parse().ok()?;
+    let day: i64 = d.next()?.parse().ok()?;
+    let mut t = time.split(':');
+    let hour: i64 = t.next()?.parse().ok()?;
+    let min: i64 = t.next().unwrap_or("0").parse().ok()?;
+    let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
+    let days = days_from_civil(year, month as u32, day as u32);
+    Some(((days * 86_400 + hour * 3600 + min * 60 + sec) * 1000) as i64)
+}
+
+/// `YYYY-MM-DD HH:MM` (UTC) from Unix ms.
+fn fmt_minute(ms: i64) -> String {
+    let (y, mo, d, h, mi, _) = civil(ms);
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}")
+}
+
+/// `YYYY-MM-DD HH:MM:SS` (UTC) from Unix ms.
+fn fmt_second(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = civil(ms);
+    format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
+}
+
+fn civil(ms: i64) -> (i64, u32, u32, u64, u64, u64) {
+    let secs = ms.div_euclid(1000).max(0) as u64;
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (y, mo, d) = civil_from_days(days);
+    (y, mo, d, rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+/// Days-since-epoch → (year, month, day) (Howard Hinnant's algorithm).
+fn civil_from_days(z: i64) -> (i64, u32, u32) {
+    let z = z + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+/// (year, month, day) → days-since-epoch (Howard Hinnant's algorithm).
+fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as i64;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as i64 + 2) / 5 + d as i64 - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}

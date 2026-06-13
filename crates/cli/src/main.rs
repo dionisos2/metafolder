@@ -8,6 +8,7 @@ use clap::{Parser, Subcommand};
 
 use metafolder_cli::commands::{self, Ctx, QueryArgs};
 use metafolder_cli::gui::{self, GuiCtx};
+use metafolder_cli::log;
 
 #[derive(Parser)]
 #[command(name = "mf", about = "metafolder CLI — thin client over the daemon HTTP API")]
@@ -139,6 +140,38 @@ enum Command {
         #[arg(long)]
         relative: bool,
     },
+    /// Display the revision/operation history
+    Log {
+        /// `mf log show <N|HEAD>` — full details of one revision
+        #[command(subcommand)]
+        show: Option<LogShow>,
+        /// Show all branches, not just the HEAD ancestry path
+        #[arg(long)]
+        tree: bool,
+        /// Expand each revision to show its individual operations
+        #[arg(long)]
+        ops: bool,
+        /// Only revisions/ops that affected this metarecord
+        #[arg(long)]
+        metarecord: Option<String>,
+        /// Show at most N revisions (or operations with --ops); default 20
+        #[arg(long = "limit", short = 'n')]
+        limit: Option<usize>,
+        /// Only revisions with timestamp ≥ T (ISO-8601 or Unix ms)
+        #[arg(long)]
+        since: Option<String>,
+        /// Only revisions with timestamp ≤ T (ISO-8601 or Unix ms)
+        #[arg(long)]
+        until: Option<String>,
+        /// Remove the default limit of 20
+        #[arg(long)]
+        all: bool,
+    },
+    /// Permanently remove operations from the history (irreversible)
+    Prune {
+        #[command(subcommand)]
+        command: PruneCommand,
+    },
     /// User schema commands
     Schema {
         #[command(subcommand)]
@@ -230,6 +263,63 @@ enum GuiWorkspaceCommand {
 }
 
 #[derive(Subcommand)]
+enum LogShow {
+    /// Show full details of one revision (a revision id, or HEAD)
+    Show {
+        target: String,
+        /// Print the raw JSON response body
+        #[arg(long)]
+        raw: bool,
+    },
+}
+
+/// A rollback/prune target: a revision label, --id, or --timestamp.
+#[derive(clap::Args)]
+struct TargetOpts {
+    /// Revision label (most recent on the HEAD ancestry path)
+    target: Option<String>,
+    /// Target operation by id
+    #[arg(long)]
+    id: Option<i64>,
+    /// Most recent operation whose revision timestamp ≤ T (ISO-8601 or Unix ms)
+    #[arg(long)]
+    timestamp: Option<String>,
+}
+
+impl TargetOpts {
+    fn into_args(self) -> metafolder_cli::log::TargetArgs {
+        metafolder_cli::log::TargetArgs { label: self.target, id: self.id, timestamp: self.timestamp }
+    }
+    fn is_empty(&self) -> bool {
+        self.target.is_none() && self.id.is_none() && self.timestamp.is_none()
+    }
+}
+
+#[derive(Subcommand)]
+enum PruneCommand {
+    /// Make <target> the new root, deleting all older operations
+    Before {
+        #[command(flatten)]
+        target: TargetOpts,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+        /// Suppress informational output
+        #[arg(long)]
+        silent: bool,
+    },
+    /// Delete branch operations diverging from the HEAD path up to <target>
+    Linearize {
+        #[command(flatten)]
+        target: TargetOpts,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        silent: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum SchemaCommand {
     /// Check metarecords against the schema and list the violations
     Check {
@@ -269,6 +359,33 @@ fn main() {
         Command::Reconcile { metarecord, json } => commands::reconcile(&ctx, metarecord.as_deref(), json),
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),
+        Command::Log { show, tree, ops, metarecord, limit, since, until, all } => match show {
+            Some(LogShow::Show { target, raw }) => log::log_show(&ctx, &target, raw),
+            None => log::log(
+                &ctx,
+                &log::LogArgs { tree, ops, metarecord, limit, since, until, all },
+            ),
+        },
+        Command::Prune { command } => match command {
+            PruneCommand::Before { target, force, silent } => {
+                if target.is_empty() {
+                    Err(metafolder_cli::client::CliError::Usage(
+                        "mf prune before requires a target (<label>, --id, or --timestamp)".into(),
+                    ))
+                } else {
+                    log::prune(&ctx, "before", target.into_args(), force, silent)
+                }
+            }
+            PruneCommand::Linearize { target, force, silent } => {
+                if target.is_empty() {
+                    Err(metafolder_cli::client::CliError::Usage(
+                        "mf prune linearize requires a target (<label>, --id, or --timestamp)".into(),
+                    ))
+                } else {
+                    log::prune(&ctx, "linearize", target.into_args(), force, silent)
+                }
+            }
+        },
         Command::Schema { command } => match command {
             SchemaCommand::Check { predicate, json } => {
                 commands::schema_check(&ctx, predicate.as_deref(), json)
