@@ -33,6 +33,7 @@ enum Tok {
     Str(String),
     Int(i64),
     Float(f64),
+    DateTime(i64), // @"<iso>" or @<unix-ms>
     Ident(String),
     // Keywords (case-sensitive uppercase, except the boolean literals).
     And,
@@ -62,6 +63,7 @@ fn describe(tok: &Tok) -> String {
         Tok::Str(s) => format!("string \"{s}\""),
         Tok::Int(n) => format!("number {n}"),
         Tok::Float(f) => format!("number {f}"),
+        Tok::DateTime(ms) => format!("datetime {ms}"),
         Tok::Ident(name) => format!("identifier '{name}'"),
         Tok::And => "'AND'".into(),
         Tok::Or => "'OR'".into(),
@@ -137,6 +139,32 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
                 }
             }
             '"' => tokens.push(lex_string(&chars, &mut i)?),
+            '@' => {
+                i += 1; // consume '@'
+                match chars.get(i) {
+                    Some('"') => {
+                        let Tok::Str(s) = lex_string(&chars, &mut i)? else {
+                            unreachable!("lex_string returns Tok::Str")
+                        };
+                        let ms = crate::date::iso_to_ms(&s)
+                            .ok_or_else(|| format!("invalid datetime literal: '{s}'"))?;
+                        tokens.push(Tok::DateTime(ms));
+                    }
+                    // A bare integer of Unix ms, possibly negative (pre-epoch).
+                    Some(c)
+                        if c.is_ascii_digit()
+                            || (*c == '-' && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())) =>
+                    {
+                        match lex_number(&chars, &mut i)? {
+                            Tok::Int(ms) => tokens.push(Tok::DateTime(ms)),
+                            _ => return Err("datetime literal '@<ms>' must be an integer".into()),
+                        }
+                    }
+                    _ => {
+                        return Err("expected a quoted datetime or milliseconds after '@'".into())
+                    }
+                }
+            }
             c if c.is_ascii_digit() => tokens.push(lex_number(&chars, &mut i)?),
             c if c.is_alphabetic() || c == '_' => tokens.push(lex_word(&chars, &mut i)),
             other => return Err(format!("unexpected character '{other}'")),
@@ -367,6 +395,7 @@ impl Parser {
         match self.next() {
             Some(Tok::Int(n)) => Ok(Value::Int(n)),
             Some(Tok::Float(f)) => Ok(Value::Float(f)),
+            Some(Tok::DateTime(ms)) => Ok(Value::DateTime(ms)),
             Some(Tok::Str(s)) => Ok(Value::String(s)),
             Some(Tok::True) => Ok(Value::Bool(true)),
             Some(Tok::False) => Ok(Value::Bool(false)),
@@ -422,6 +451,52 @@ mod tests {
     #[test]
     fn test_float_literal() {
         assert_eq!(ok("score >= 3.5"), Query::Gte { field: "score".into(), value: Value::Float(3.5) });
+    }
+
+    #[test]
+    fn test_datetime_literal_quoted_iso() {
+        let ms = crate::date::iso_to_ms("2024-01-01").unwrap();
+        assert_eq!(
+            ok(r#"mfr_mtime > @"2024-01-01""#),
+            Query::Gt { field: "mfr_mtime".into(), value: Value::DateTime(ms) }
+        );
+    }
+
+    #[test]
+    fn test_datetime_literal_accepts_space_separated_iso() {
+        let ms = crate::date::iso_to_ms("2024-01-01 12:30:00").unwrap();
+        assert_eq!(
+            ok(r#"mfr_mtime <= @"2024-01-01 12:30:00""#),
+            Query::Lte { field: "mfr_mtime".into(), value: Value::DateTime(ms) }
+        );
+    }
+
+    #[test]
+    fn test_datetime_literal_raw_millis() {
+        assert_eq!(
+            ok("mfr_mtime >= @1704067200000"),
+            Query::Gte { field: "mfr_mtime".into(), value: Value::DateTime(1_704_067_200_000) }
+        );
+    }
+
+    #[test]
+    fn test_datetime_literal_negative_millis() {
+        // Pre-epoch instants are valid; relative-date macros can compute them.
+        assert_eq!(
+            ok("mfr_mtime > @-1000"),
+            Query::Gt { field: "mfr_mtime".into(), value: Value::DateTime(-1000) }
+        );
+    }
+
+    #[test]
+    fn test_datetime_literal_rejects_invalid_iso() {
+        err(r#"mfr_mtime > @"not-a-date""#);
+    }
+
+    #[test]
+    fn test_datetime_literal_rejects_bare_at() {
+        err("mfr_mtime > @");
+        err("mfr_mtime > @AND");
     }
 
     #[test]

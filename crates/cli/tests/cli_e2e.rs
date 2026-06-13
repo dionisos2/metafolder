@@ -427,6 +427,26 @@ fn test_query_simplified_expands_before_running() {
 }
 
 #[test]
+fn test_query_simplified_date_macro_filters() {
+    let (repo, _) = init_repo("query_date_macro");
+    // mfr_btime is reserved, so set it with --force. The datetime field spec
+    // parses the ISO string to Unix ms.
+    let recent = mf(&[
+        "--repo", &repo, "create", "--field", "mfr_btime:datetime=2024-06-01", "--force",
+    ]);
+    assert_ok(&recent);
+    let recent = recent.stdout.trim().to_string();
+    let old = mf(&[
+        "--repo", &repo, "create", "--field", "mfr_btime:datetime=2020-01-01", "--force",
+    ]);
+    assert_ok(&old);
+    // `created since "2023-01-01"` → mfr_btime >= @"2023-01-01": only the recent one.
+    let out = mf(&["--repo", &repo, "query", "-s", "created since \"2023-01-01\""]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), recent);
+}
+
+#[test]
 fn test_query_select_star_prints_objects() {
     let (repo, _) = init_repo("query_star");
     create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);

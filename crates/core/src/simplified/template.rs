@@ -111,8 +111,10 @@ fn flush(parts: &mut Vec<TplPart>, text: &mut String) {
     }
 }
 
-/// Renders a template against the given captures.
-pub fn render(t: &Template, caps: &Captures) -> Result<String, String> {
+/// Renders a template against the given captures. `now_ms` is the current time
+/// (Unix milliseconds) seen by the `now()` function — injected so callers can
+/// make expansion deterministic in tests.
+pub fn render(t: &Template, caps: &Captures, now_ms: i64) -> Result<String, String> {
     let mut out = String::new();
     for part in &t.parts {
         match part {
@@ -123,7 +125,7 @@ pub fn render(t: &Template, caps: &Captures) -> Result<String, String> {
                     return Err(format!("cannot interpolate list '${name}' directly; use join()"))
                 }
             },
-            TplPart::Eval(e) => out.push_str(&render_value(eval(e, caps)?)?),
+            TplPart::Eval(e) => out.push_str(&render_value(eval(e, caps, now_ms)?)?),
         }
     }
     Ok(out)
@@ -141,7 +143,7 @@ enum TValue {
     List(Vec<String>),
 }
 
-fn eval(e: &TExpr, caps: &Captures) -> Result<TValue, String> {
+fn eval(e: &TExpr, caps: &Captures, now_ms: i64) -> Result<TValue, String> {
     match e {
         TExpr::Var(name) => Ok(match lookup(caps, name)? {
             Capture::Text(s) => TValue::Text(s.clone()),
@@ -150,8 +152,8 @@ fn eval(e: &TExpr, caps: &Captures) -> Result<TValue, String> {
         TExpr::NumLit(n) => Ok(TValue::Num(*n)),
         TExpr::StrLit(s) => Ok(TValue::Text(s.clone())),
         TExpr::Bin(a, op, b) => {
-            let x = as_num(eval(a, caps)?)?;
-            let y = as_num(eval(b, caps)?)?;
+            let x = as_num(eval(a, caps, now_ms)?)?;
+            let y = as_num(eval(b, caps, now_ms)?)?;
             let r = match op {
                 '+' => x + y,
                 '-' => x - y,
@@ -172,11 +174,11 @@ fn eval(e: &TExpr, caps: &Captures) -> Result<TValue, String> {
             };
             Ok(TValue::Num(r))
         }
-        TExpr::Call(name, args) => eval_call(name, args, caps),
+        TExpr::Call(name, args) => eval_call(name, args, caps, now_ms),
     }
 }
 
-fn eval_call(name: &str, args: &[TExpr], caps: &Captures) -> Result<TValue, String> {
+fn eval_call(name: &str, args: &[TExpr], caps: &Captures, now_ms: i64) -> Result<TValue, String> {
     let arity = |n: usize| -> Result<(), String> {
         if args.len() == n {
             Ok(())
@@ -185,9 +187,13 @@ fn eval_call(name: &str, args: &[TExpr], caps: &Captures) -> Result<TValue, Stri
         }
     };
     match name {
+        "now" => {
+            arity(0)?;
+            Ok(TValue::Num(now_ms as f64))
+        }
         "num" => {
             arity(1)?;
-            match eval(&args[0], caps)? {
+            match eval(&args[0], caps, now_ms)? {
                 TValue::Num(n) => Ok(TValue::Num(n)),
                 TValue::Text(s) => s
                     .trim()
@@ -199,7 +205,7 @@ fn eval_call(name: &str, args: &[TExpr], caps: &Captures) -> Result<TValue, Stri
         }
         "str" => {
             arity(1)?;
-            let text = match eval(&args[0], caps)? {
+            let text = match eval(&args[0], caps, now_ms)? {
                 TValue::Text(s) => s,
                 TValue::Num(n) => fmt_num(n),
                 TValue::List(_) => return Err("str() expects text, got a list".into()),
@@ -208,11 +214,11 @@ fn eval_call(name: &str, args: &[TExpr], caps: &Captures) -> Result<TValue, Stri
         }
         "join" => {
             arity(2)?;
-            let sep = match eval(&args[0], caps)? {
+            let sep = match eval(&args[0], caps, now_ms)? {
                 TValue::Text(s) => s,
                 _ => return Err("join(): separator must be text".into()),
             };
-            let list = match eval(&args[1], caps)? {
+            let list = match eval(&args[1], caps, now_ms)? {
                 TValue::List(items) => items,
                 _ => return Err("join(): second argument must be a list".into()),
             };
@@ -458,7 +464,25 @@ mod tests {
         pairs.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
     }
     fn rs(src: &str, caps: Captures) -> Result<String, String> {
-        render(&parse_template(src)?, &caps)
+        render(&parse_template(src)?, &caps, 0)
+    }
+    fn rs_at(src: &str, caps: Captures, now_ms: i64) -> Result<String, String> {
+        render(&parse_template(src)?, &caps, now_ms)
+    }
+
+    #[test]
+    fn now_returns_the_injected_clock() {
+        assert_eq!(rs_at("{now()}", cap(vec![]), 5000).unwrap(), "5000");
+    }
+
+    #[test]
+    fn now_arithmetic_for_relative_dates() {
+        assert_eq!(rs_at("@{now() - num($d)}", cap(vec![("d", t("1000"))]), 5000).unwrap(), "@4000");
+    }
+
+    #[test]
+    fn now_takes_no_arguments() {
+        assert!(rs_at("{now(1)}", cap(vec![]), 5000).is_err());
     }
 
     #[test]

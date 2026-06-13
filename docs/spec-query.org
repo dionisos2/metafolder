@@ -219,7 +219,8 @@ predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field "->*" ( string | "(" query ")" )
 
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
-literal   := int | float | string | "true" | "false"
+literal   := int | float | string | "true" | "false" | datetime
+datetime  := "@" string | "@" int        # ISO-8601 string, or raw Unix ms
 field     := identifier
 string    := '"' ... '"'
 #+END_SRC
@@ -236,6 +237,12 @@ string    := '"' ... '"'
 - =field ->* "path"= / =field ->* (predicate)= compiles to
   =FollowsTransitive= (TreeRef only), with the same two right-hand-side
   forms as =->=.
+- A *datetime literal* is =@= followed by either a quoted ISO-8601 string
+  (=@"2024-01-01"=, =@"2024-01-01 12:30:00"=; any form =core::date::iso_to_ms=
+  accepts, UTC) or a bare integer of Unix milliseconds (=@1704067200000=). It
+  compiles to =Value::DateTime= (Unix ms); an unparsable ISO string is rejected.
+  This is what makes =mfr_mtime > @"2024-01-01"= compare against =datetime= rows
+  (a plain string would not — see [[file:spec-data-model.org][spec-data-model.org]]).
 
 Examples:
 
@@ -359,6 +366,7 @@ Inside ={ }=:
 | =num(x)=            | parse text =x= as a number (error if not numeric)                               |
 | =str(x)=            | render =x= as a DSL string literal — idempotent quoting (quote a bare word, leave an already-quoted string) |
 | =join(sep, list)=   | join a repetition's captured list with =sep=                                     |
+| =now()=             | current time as Unix milliseconds (a number); makes relative-date rules time-dependent, hence expansion of those rules is not reproducible across calls |
 
 Arithmetic is integer unless an operand is a float; the result is reformatted to
 text. Text concatenation needs no ={ }= — adjacent literals and =$captures= in
@@ -391,6 +399,12 @@ predicate =
   | f:field ">=" n:number   => $f >= $n
   | f:field "?"             => $f IS PRESENT
   | "under" v:value         => mfr_path ->* {str($v)}
+  # date macros — see below
+  | df:datefield "younger" d:duration            => $df > @{now() - num($d)}
+  | df:datefield "older"   d:duration            => $df < @{now() - num($d)}
+  | df:datefield "since"   v:value               => $df >= @{str($v)}
+  | df:datefield "before"  v:value               => $df < @{str($v)}
+  | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
   | "tag"                   => tag = "test"      # bare-word alias, kept as a fallback
   | "fav"                   => rating >= 4
 
@@ -402,11 +416,30 @@ value  = STRING | WORD
 number = n:NUMBER "MB"   => {num($n) * 1048576}
        | n:NUMBER "mins" => {num($n) * 60}
        | n:NUMBER        => $n
+
+# date fields and durations (durations are milliseconds)
+datefield = "modified" => mfr_mtime
+          | "created"  => mfr_btime
+duration  = n:NUMBER u:dur_unit => {num($n) * num($u)}
+dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
+          | ("min" | "mins" | "minute" | "minutes")       => 60000
+          | ("h" | "hr" | "hrs" | "hour" | "hours")        => 3600000
+          | ("d" | "day" | "days")                         => 86400000
+          | ("w" | "week" | "weeks")                       => 604800000
 #+END_SRC
 
 Ordering matters under ordered choice: the operator forms (=:=, =~=, =?=) precede
 the bare-word aliases (=tag=, =fav=), so =tag:jazz= and =tag?= still parse as
 predicates and only a lone =tag= triggers its alias.
+
+The date macros read as English: =modified younger 3d= (modified within the last
+three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →
+=mfr_btime < @<now − 2 weeks>=; =created since "2024-01-01"= → =mfr_btime >= @"2024-01-01"=;
+=modified between "2024-01-01" and "2024-06-01"= →
+=mfr_mtime >= @"2024-01-01" AND mfr_mtime <= @"2024-06-01"=. Durations accept the
+unit words above and their abbreviations, with or without a space (=30min=, =3d=,
+=2 weeks=); absolute dates are quoted ISO-8601. =modified= maps to =mfr_mtime= and
+=created= to =mfr_btime=; edit the grammar to target other datetime fields.
 
 ** Validation
 
@@ -415,19 +448,24 @@ production =query= is present, and **left recursion is rejected** (=or = or ...=
 would loop forever) with an error naming the offending production. Grammar and
 expansion errors carry the position in the simplified input.
 
-** Dates                                                                  :v2:
+** Dates
 
-Relative or absolute date filters (e.g. "modified in the last 10 minutes")
-require a real datetime literal in the normal DSL first. The prerequisite —
-datetime stored as a number rather than a plain string — is *done*:
-=mfr_mtime=/=mfr_btime= are now stored as Unix milliseconds (=datetime= ⇒
-=value_int=) and compared numerically (see [[file:spec-data-model.org][spec-data-model.org]]). A datetime
-comparison is already expressible through the typed query IR (=Gt= with a
-=datetime= value) and the CLI (=mf … field:datetime==…). What remains for this
-v2 item is the **DSL datetime literal** (so =mfr_mtime > "..."= parses as a
-=datetime= rather than a =string=) and the relative-date grammar rules; until
-those land the default grammar ships **no** date rules. Numeric unit conversion
-(sizes, durations as integers) is unaffected and available in v1.
+Relative and absolute date filters are supported, on three layers:
+
+1. =datetime= values are stored as Unix milliseconds and compared numerically
+   (see [[file:spec-data-model.org][spec-data-model.org]]).
+2. The normal DSL has a *datetime literal* =@"<iso>"= / =@<ms>= (see
+   [[*Grammar][the DSL grammar]]), so =mfr_mtime > @"2024-01-01"= compiles to a real
+   =datetime= comparison.
+3. The template language exposes =now()= (current Unix ms), and the default
+   grammar ships the =modified=/=created= date macros (=younger=/=older=/=since=/
+   =before=/=between=, see [[*Default grammar]]). Relative forms expand to
+   =@{now() − duration}=.
+
+Because =now()= is read at expansion time, expanding a relative-date macro is
+time-dependent (not reproducible across calls). Calendar-aware durations
+(months, years) are intentionally left out; the supplied units run from seconds
+to weeks. Richer relative grammars are a matter of editing the grammar file.
 
 ** HTTP API
 

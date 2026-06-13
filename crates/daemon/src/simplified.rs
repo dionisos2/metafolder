@@ -31,6 +31,13 @@ predicate =
   | f:field ">=" n:number   => $f >= $n
   | f:field "?"             => $f IS PRESENT
   | "under" v:value         => mfr_path ->* {str($v)}
+  # Date macros: `modified`/`created` pick the field; relative (younger/older)
+  # and absolute (since/before/between) forms. Dates are quoted ISO-8601.
+  | df:datefield "younger" d:duration            => $df > @{now() - num($d)}
+  | df:datefield "older"   d:duration            => $df < @{now() - num($d)}
+  | df:datefield "since"   v:value               => $df >= @{str($v)}
+  | df:datefield "before"  v:value               => $df < @{str($v)}
+  | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
   | "tag"                   => tag = "test"
   | "fav"                   => rating >= 4
 
@@ -42,6 +49,16 @@ value  = STRING | WORD
 number = n:NUMBER "MB"   => {num($n) * 1048576}
        | n:NUMBER "mins" => {num($n) * 60}
        | n:NUMBER        => $n
+
+# Date fields and durations (durations are milliseconds).
+datefield = "modified" => mfr_mtime
+          | "created"  => mfr_btime
+duration  = n:NUMBER u:dur_unit => {num($n) * num($u)}
+dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
+          | ("min" | "mins" | "minute" | "minutes")       => 60000
+          | ("h" | "hr" | "hrs" | "hour" | "hours")        => 3600000
+          | ("d" | "day" | "days")                         => 86400000
+          | ("w" | "week" | "weeks")                       => 604800000
 "#;
 
 /// `$XDG_CONFIG_HOME/metafolder/query-grammar`.
@@ -112,6 +129,56 @@ mod tests {
             "rating >= 4 AND genre = \"jazz\""
         );
         assert_eq!(expand(&g, "a:x OR b:y").unwrap(), "a = \"x\" OR b = \"y\"");
+    }
+
+    #[test]
+    fn default_grammar_expands_relative_date_macros() {
+        use metafolder_core::simplified::engine::expand_at;
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        let now = 1_000_000_000_000;
+        // younger = more recent than (now - duration); older = before it.
+        assert_eq!(
+            expand_at(&g, "modified younger 3d", now).unwrap(),
+            format!("mfr_mtime > @{}", now - 3 * 86_400_000)
+        );
+        assert_eq!(
+            expand_at(&g, "created older 2 weeks", now).unwrap(),
+            format!("mfr_btime < @{}", now - 2 * 604_800_000)
+        );
+        // Abbreviations and word/number juxtaposition both tokenize alike.
+        assert_eq!(
+            expand_at(&g, "modified younger 30min", now).unwrap(),
+            format!("mfr_mtime > @{}", now - 30 * 60_000)
+        );
+        assert_eq!(
+            expand_at(&g, "modified older 6h", now).unwrap(),
+            format!("mfr_mtime < @{}", now - 6 * 3_600_000)
+        );
+    }
+
+    #[test]
+    fn default_grammar_expands_absolute_date_macros() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        assert_eq!(
+            expand(&g, "modified since \"2024-01-01\"").unwrap(),
+            "mfr_mtime >= @\"2024-01-01\""
+        );
+        assert_eq!(
+            expand(&g, "created before \"2024-06-01\"").unwrap(),
+            "mfr_btime < @\"2024-06-01\""
+        );
+        assert_eq!(
+            expand(&g, "created between \"2023-01-01\" and \"2024-01-01\"").unwrap(),
+            "mfr_btime >= @\"2023-01-01\" AND mfr_btime <= @\"2024-01-01\""
+        );
+    }
+
+    #[test]
+    fn date_macros_produce_valid_dsl() {
+        // The expanded text must be accepted by the normal DSL parser.
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        let dsl = expand(&g, "modified since \"2024-01-01\"").unwrap();
+        metafolder_core::dsl::parse_query(&dsl).expect("expanded date macro is valid DSL");
     }
 
     #[test]

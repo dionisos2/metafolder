@@ -16,9 +16,16 @@ use super::template::{parse_template, render, Capture, Captures};
 const MAX_DEPTH: usize = 1000;
 
 /// Expands simplified-language `input` to normal DSL text using `grammar`.
+/// Relative-date rules read the current time via the template `now()`.
 pub fn expand(grammar: &Grammar, input: &str) -> Result<String, String> {
+    expand_at(grammar, input, crate::date::now_ms())
+}
+
+/// [`expand`] with an explicit current time (Unix milliseconds) for `now()`,
+/// so callers — chiefly tests — can make expansion deterministic.
+pub fn expand_at(grammar: &Grammar, input: &str, now_ms: i64) -> Result<String, String> {
     let tokens = lex(input)?;
-    let eng = Engine { grammar, tokens: &tokens };
+    let eng = Engine { grammar, tokens: &tokens, now_ms };
     match eng.match_prod("query", 0, 0)? {
         Some((out, next)) if next == tokens.len() => Ok(out),
         Some((_, next)) => Err(format!(
@@ -32,6 +39,7 @@ pub fn expand(grammar: &Grammar, input: &str) -> Result<String, String> {
 struct Engine<'a> {
     grammar: &'a Grammar,
     tokens: &'a [Tok],
+    now_ms: i64,
 }
 
 /// `Ok(None)` = no match (backtrack); `Err` = a hard error (missing production
@@ -53,7 +61,7 @@ impl Engine<'_> {
         for alt in &prod.alts {
             if let Some((caps, next)) = self.match_seq(&alt.seq, pos, depth + 1)? {
                 let out = match &alt.template {
-                    Some(src) => render(&parse_template(src)?, &caps)?,
+                    Some(src) => render(&parse_template(src)?, &caps, self.now_ms)?,
                     None => self.raw_text(pos, next),
                 };
                 return Ok(Some((out, next)));
