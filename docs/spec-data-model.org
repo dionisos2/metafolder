@@ -111,7 +111,7 @@ The stored fields for a file/directory metarecord are:
 | =mfr_type=         | mfr    | String     | ="file"= or ="dir"=                                                                                        |
 | =mfr_size=         | mfr    | Int        | File size in bytes at last watcher/reconcile update                                                        |
 | =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =stat=)                                                               |
-| =mfr_btime=        | mfr    | DateTime   | File creation time, when the platform/filesystem provides one; absent otherwise (see [[file:spec-platform.org][spec-platform.org]]) [v2] |
+| =mfr_btime=        | mfr    | DateTime   | File creation time, when the platform/filesystem provides one; absent otherwise (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
 | =mfr_gid=          | mfr    | Int        | Owner group ID; Unix only, never written on Windows                                                        |

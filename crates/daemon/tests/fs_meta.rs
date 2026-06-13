@@ -115,6 +115,32 @@ fn test_stat_fields_for_a_file() {
 }
 
 #[test]
+fn test_btime_present_when_platform_supports_it() {
+    // Create the probe file next to the crate (a real filesystem that, unlike
+    // some `/tmp` tmpfs mounts, usually records a birth time) so the positive
+    // branch is actually exercised where the platform supports it.
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("mf_btime_{}", Uuid::new_v4()));
+    std::fs::write(&path, b"birthday").unwrap();
+    // `mfr_btime` mirrors `std::fs::Metadata::created()`, which is itself
+    // platform/filesystem dependent (spec-platform "File metadata fields").
+    let supported = std::fs::metadata(&path).unwrap().created().is_ok();
+    let fields = fs_meta::stat_fields(&path).unwrap();
+    let btime = fields.iter().find(|f| f.name == "mfr_btime");
+    match (supported, btime) {
+        (true, Some(f)) => match &f.value {
+            Value::DateTime(s) => {
+                assert!(s.ends_with('Z') && s.contains('T'), "ISO-8601 expected: {s}");
+            }
+            other => panic!("mfr_btime must be a DateTime, got {other:?}"),
+        },
+        (true, None) => panic!("mfr_btime should be present when created() is supported"),
+        (false, btime) => assert!(btime.is_none(), "mfr_btime must be absent when unsupported"),
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn test_stat_fields_for_a_directory() {
     let dir = std::env::temp_dir().join(format!("metafolder_statdir_{}", Uuid::new_v4()));
     std::fs::create_dir(&dir).unwrap();
