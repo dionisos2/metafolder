@@ -543,6 +543,32 @@ fn test_reconcile_single_entry() {
     assert!(out.stdout.starts_with("created: 1"), "unexpected summary: {}", out.stdout);
 }
 
+#[test]
+fn test_reconcile_threshold_yields_similarity_candidate() {
+    let (repo, root) = init_repo("reconcile_sim");
+    std::fs::create_dir_all(root.join("music")).unwrap();
+    std::fs::write(root.join("music/old_song.mp3"), vec![b'a'; 1000]).unwrap();
+
+    let root_uuid = mf(&["--repo", &repo, "list"]).stdout.trim().to_string();
+    assert_ok(&mf(&["--repo", &repo, "set", &root_uuid, "mf_watch:bool=true"]));
+    assert_ok(&mf(&["--repo", &repo, "reconcile"]));
+
+    // Move + modify: different name and size defeat the fingerprint phase.
+    std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
+    std::fs::write(root.join("music/old_song_v2.mp3"), vec![b'b'; 1100]).unwrap();
+
+    let out = mf(&["--repo", &repo, "reconcile", "--threshold", "0.6", "--json"]);
+    assert_ok(&out);
+    let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let matches = &parsed["candidates"][0]["matches"][0];
+    assert_eq!(matches["fingerprint"], "similarity", "body: {}", out.stdout);
+    assert!(matches["score"].as_f64().unwrap() >= 0.6);
+
+    // An out-of-range threshold is rejected by the daemon.
+    let bad = mf(&["--repo", &repo, "reconcile", "--threshold", "2"]);
+    assert_eq!(bad.code, 1, "stderr: {}", bad.stderr);
+}
+
 // ── Query --values ────────────────────────────────────────────────────────────
 
 #[test]

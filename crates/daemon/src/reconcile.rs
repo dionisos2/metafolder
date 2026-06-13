@@ -26,8 +26,12 @@ use crate::tree_cache::TreeCache;
 #[derive(Debug, Serialize)]
 pub struct CandidateMatch {
     pub path: String,
-    /// `"partial_hash"` (strong) or `"size"` (weak).
+    /// `"partial_hash"` (strong), `"size"` (weak), or `"similarity"` (v2).
     pub fingerprint: &'static str,
+    /// Similarity score in [0, 1] for `"similarity"` matches (spec-file-tracking
+    /// "File Similarity"); absent for fingerprint matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -45,9 +49,20 @@ pub struct ReconcileResult {
     pub candidates: Vec<Candidate>,
 }
 
-/// Full reconcile: walk the repository root and synchronise the database.
-/// Everything runs in a single transaction (one revision).
+/// Full reconcile without the similarity phase (v1 behaviour).
 pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
+    reconcile_with_threshold(repo, None)
+}
+
+/// Full reconcile: walk the repository root and synchronise the database.
+/// Everything runs in a single transaction (one revision). When `threshold`
+/// is `Some`, the v2 similarity phase runs after fingerprinting, appending
+/// score-based candidates for still-unmatched orphans and new files
+/// (spec-file-tracking "File Similarity").
+pub fn reconcile_with_threshold(
+    repo: &RepoState,
+    threshold: Option<f64>,
+) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
     let root = repo.config.root.clone();
@@ -85,23 +100,39 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
     }
 
     // Step 3 — fingerprint phase. Hashes of disk files are computed lazily
-    // and memoised across orphans.
+    // and memoised across orphans. Per-orphan match lists are kept so the
+    // similarity phase can extend them.
     let mut partial_cache: HashMap<String, String> = HashMap::new();
     let mut full_cache: HashMap<String, String> = HashMap::new();
     let mut claimed: HashSet<String> = HashSet::new();
 
+    struct OrphanState {
+        uuid: Uuid,
+        stale_path: String,
+        is_dir: bool,
+        size: Option<i64>,
+        matches: Vec<CandidateMatch>,
+        moved: bool,
+    }
+    let mut states: Vec<OrphanState> = Vec::with_capacity(orphans.len());
+
     for (orphan, stale_path) in orphans {
-        // Directories have no fingerprint (matched only by path).
-        if string_field(&writer, orphan, "mfr_type")?.as_deref() == Some("dir") {
+        let is_dir = string_field(&writer, orphan, "mfr_type")?.as_deref() == Some("dir");
+        let size = int_field(&writer, orphan, "mfr_size")?;
+        let mut state =
+            OrphanState { uuid: orphan, stale_path, is_dir, size, matches: Vec::new(), moved: false };
+
+        // Directories have no fingerprint (matched only by path); orphans with
+        // no stored size have no fingerprint either. Both can still be matched
+        // by the similarity phase below.
+        if is_dir || size.is_none() {
+            states.push(state);
             continue;
         }
-        let Some(size) = int_field(&writer, orphan, "mfr_size")? else {
-            continue; // No fingerprint available at all: skipped.
-        };
+        let size = size.unwrap();
         let stored_partial = string_field(&writer, orphan, "mfr_partial_hash")?;
         let stored_full = string_field(&writer, orphan, "mfr_full_hash")?;
 
-        let mut matches: Vec<CandidateMatch> = Vec::new();
         let mut definitive: Option<String> = None;
         for (rel, meta) in &new_files {
             if claimed.contains(rel) || !meta.is_file() || meta.len() as i64 != size {
@@ -109,7 +140,9 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
             }
             let abs = root.join(rel.trim_start_matches('/'));
             match &stored_partial {
-                None => matches.push(CandidateMatch { path: rel.clone(), fingerprint: "size" }),
+                None => state
+                    .matches
+                    .push(CandidateMatch { path: rel.clone(), fingerprint: "size", score: None }),
                 Some(stored_partial) => {
                     let partial = match partial_cache.get(rel) {
                         Some(p) => p.clone(),
@@ -123,8 +156,11 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
                         continue;
                     }
                     match &stored_full {
-                        None => matches
-                            .push(CandidateMatch { path: rel.clone(), fingerprint: "partial_hash" }),
+                        None => state.matches.push(CandidateMatch {
+                            path: rel.clone(),
+                            fingerprint: "partial_hash",
+                            score: None,
+                        }),
                         Some(stored_full) => {
                             let full = match full_cache.get(rel) {
                                 Some(f) => f.clone(),
@@ -147,14 +183,45 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
         if let Some(rel) = definitive {
             claimed.insert(rel.clone());
             apply_move(&mut writer, &mut cache, &root, orphan, &rel)?;
+            state.moved = true;
             result.moved += 1;
-        } else if !matches.is_empty() {
-            // Candidate files wait for explicit confirmation: they are
-            // neither auto-matched nor auto-created.
-            for m in &matches {
+        } else {
+            // Fingerprint candidate files wait for confirmation: not auto-created.
+            for m in &state.matches {
                 claimed.insert(m.path.clone());
             }
-            result.candidates.push(Candidate { metarecord_uuid: orphan, stale_path, matches });
+        }
+        states.push(state);
+    }
+
+    // Step 4 — similarity phase (v2): for each still-unmatched orphan and each
+    // still-unmatched new path of the same kind, append score-based candidates.
+    if let Some(threshold) = threshold {
+        for state in states.iter_mut().filter(|s| !s.moved) {
+            let orphan_sig = FileSig::from_path(&state.stale_path, state.size);
+            for (rel, meta) in &new_files {
+                if claimed.contains(rel) || meta.is_dir() != state.is_dir {
+                    continue;
+                }
+                let new_size = meta.is_file().then(|| meta.len() as i64);
+                let score = similarity_score(&orphan_sig, &FileSig::from_path(rel, new_size));
+                if score >= threshold {
+                    state
+                        .matches
+                        .push(CandidateMatch { path: rel.clone(), fingerprint: "similarity", score: Some(score) });
+                    claimed.insert(rel.clone()); // Candidate: not auto-created.
+                }
+            }
+        }
+    }
+
+    for state in states {
+        if !state.moved && !state.matches.is_empty() {
+            result.candidates.push(Candidate {
+                metarecord_uuid: state.uuid,
+                stale_path: state.stale_path,
+                matches: state.matches,
+            });
         }
     }
 
@@ -339,4 +406,128 @@ fn int_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<i64>> {
             Value::Int(n) => Some(n),
             _ => None,
         }))
+}
+
+// ── File similarity (spec-file-tracking "File Similarity") ──────────────────────
+
+/// Filename signature for similarity scoring.
+struct FileSig {
+    /// Basename without extension, lowercased.
+    base: String,
+    /// Extension without the dot, lowercased ("" when none).
+    ext: String,
+    size: Option<i64>,
+    /// Directory components, lowercased.
+    dirs: Vec<String>,
+}
+
+impl FileSig {
+    fn from_path(rel: &str, size: Option<i64>) -> Self {
+        let rel = rel.trim_start_matches('/');
+        let (dir, name) = match rel.rfind('/') {
+            Some(i) => (&rel[..i], &rel[i + 1..]),
+            None => ("", rel),
+        };
+        // A leading dot is part of the name, not an extension separator.
+        let (base, ext) = match name.rfind('.') {
+            Some(i) if i > 0 => (&name[..i], &name[i + 1..]),
+            _ => (name, ""),
+        };
+        let dirs =
+            if dir.is_empty() { Vec::new() } else { dir.split('/').map(str::to_lowercase).collect() };
+        FileSig { base: base.to_lowercase(), ext: ext.to_lowercase(), size, dirs }
+    }
+}
+
+/// Character trigrams of a string (the whole string when shorter than 3 chars).
+fn trigrams(s: &str) -> HashSet<String> {
+    let chars: Vec<char> = s.chars().collect();
+    let mut set = HashSet::new();
+    if chars.len() < 3 {
+        if !s.is_empty() {
+            set.insert(s.to_string());
+        }
+        return set;
+    }
+    for w in chars.windows(3) {
+        set.insert(w.iter().collect());
+    }
+    set
+}
+
+fn jaccard(a: &HashSet<String>, b: &HashSet<String>) -> f64 {
+    let union = a.union(b).count();
+    if union == 0 {
+        return 0.0;
+    }
+    a.intersection(b).count() as f64 / union as f64
+}
+
+/// Weighted four-signal similarity score in [0, 1]: trigram Jaccard of the
+/// basename (0.5), extension match (0.2), size proximity (0.2), common
+/// directory prefix (0.1).
+fn similarity_score(a: &FileSig, b: &FileSig) -> f64 {
+    let name_sim = jaccard(&trigrams(&a.base), &trigrams(&b.base));
+    let ext_match = if a.ext == b.ext { 1.0 } else { 0.0 };
+    let size_proximity = match (a.size, b.size) {
+        (Some(x), Some(y)) => {
+            let max = x.max(y);
+            if max == 0 {
+                1.0
+            } else {
+                (1.0 - (x - y).abs() as f64 / max as f64).max(0.0)
+            }
+        }
+        _ => 0.0,
+    };
+    let max_depth = a.dirs.len().max(b.dirs.len());
+    let path_sim = if max_depth == 0 {
+        1.0
+    } else {
+        let common = a.dirs.iter().zip(&b.dirs).take_while(|(x, y)| x == y).count();
+        common as f64 / max_depth as f64
+    };
+    0.5 * name_sim + 0.2 * ext_match + 0.2 * size_proximity + 0.1 * path_sim
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identical_files_score_one() {
+        let a = FileSig::from_path("/music/jazz/song.mp3", Some(1000));
+        assert!((similarity_score(&a, &a) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn renamed_same_dir_scores_above_threshold() {
+        // A moved+modified file: same dir, same ext, similar name, close size.
+        let a = FileSig::from_path("/music/jazz/old_song.mp3", Some(1000));
+        let b = FileSig::from_path("/music/jazz/old_song_v2.mp3", Some(1100));
+        assert!(similarity_score(&a, &b) >= 0.6, "score {}", similarity_score(&a, &b));
+    }
+
+    #[test]
+    fn unrelated_files_score_low() {
+        let a = FileSig::from_path("/music/jazz/song.mp3", Some(1000));
+        let b = FileSig::from_path("/docs/report.pdf", Some(50));
+        assert!(similarity_score(&a, &b) < 0.3, "score {}", similarity_score(&a, &b));
+    }
+
+    #[test]
+    fn extension_mismatch_drops_the_ext_signal() {
+        let a = FileSig::from_path("/a/name.mp3", Some(100));
+        let b = FileSig::from_path("/a/name.wav", Some(100));
+        // name_sim 1.0*0.5 + ext 0 + size 1.0*0.2 + path 1.0*0.1 = 0.8.
+        assert!((similarity_score(&a, &b) - 0.8).abs() < 1e-9);
+    }
+
+    #[test]
+    fn unknown_size_zeroes_the_size_signal() {
+        let a = FileSig::from_path("/a/name.mp3", None);
+        let b = FileSig::from_path("/a/name.mp3", Some(100));
+        // name 0.5 + ext 0.2 + size 0 + path 0.1 = 0.8.
+        assert!((similarity_score(&a, &b) - 0.8).abs() < 1e-9);
+    }
 }

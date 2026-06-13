@@ -43,7 +43,7 @@ The root directory metarecord has =mfr_path= with =value_uuid = x'00...00'= and
 =value_uuid=. The root is looked up by
 =WHERE field_name = 'mfr_path' AND value_uuid = x'00...00' AND value_name = ''=.
 
-** File Similarity                                                        :v2:
+** File Similarity
 
 Used by reconcile as a fallback when fingerprint matching fails — either because
 no =mfr_partial_hash= is stored for the orphaned metarecord, or because the file was both
@@ -91,6 +91,13 @@ size-sorted list, O(n log n)) is applied first to further reduce the candidate
 set before banding.
 
 Only pairs with =score ≥ threshold= are included in the reconcile response.
+
+*Implementation note*: the current implementation evaluates the four-signal
+score directly over the residual sets — the orphaned metarecords and new paths
+left *unmatched after the fingerprint phase*, which are typically small — rather
+than MinHash banding. Only same-kind pairs (file↔file, dir↔dir) are compared.
+MinHash banding (above) remains the planned optimisation for repositories whose
+*unmatched* sets are themselves very large.
 
 ** Watch and Ignore
 
@@ -426,8 +433,8 @@ POST /repos/:repo_uuid/reconcile
 
 Walks the repository root on the filesystem and synchronises the database.
 
-No request body required for v1. [v2] will add a =threshold= parameter
-(range [0, 1]) to control the minimum similarity score for the similarity phase.
+An optional ={"threshold": <0..1>}= body enables the similarity phase and
+sets the minimum similarity score (absent disables it; v1 behaviour).
 
 *Steps:*
 
@@ -451,12 +458,12 @@ No request body required for v1. [v2] will add a =threshold= parameter
    - No =mfr_size= stored: metarecord skipped (no fingerprint available).
    New files that appear as a fingerprint candidate are *not* auto-created;
    they wait for explicit confirmation.
-4. *Similarity phase* [v2] — for each still-unmatched orphaned metarecord and each
+4. *Similarity phase* — for each still-unmatched orphaned metarecord and each
    still-unmatched new path, compute the similarity score (see [[*File Similarity]]).
    Pairs with =score ≥ threshold= are appended to =candidates=. New files that
    appear as a candidate for at least one orphaned metarecord are *not* auto-created
    as new metarecords; they wait for explicit confirmation.
-5. *Create* — new files not claimed by fingerprint (or similarity [v2]) → create
+5. *Create* — new files not claimed by fingerprint (or similarity) → create
    metarecord with =mfr_path= TreeRef and all =mfr_*= fields (=mfr_size=, =mfr_mtime=,
    =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_type=); create missing parent
    directory metarecords if needed.
@@ -502,7 +509,8 @@ Response body:
 }
 #+END_SRC
 
-[v2] Similarity-based candidates add a =score= field alongside =fingerprint=:
+Similarity-based candidates carry =fingerprint = "similarity"= and a =score=
+field:
 #+BEGIN_SRC json
 {"path": "/archive/old_renamed.mp3", "fingerprint": "partial_hash", "score": 0.82}
 #+END_SRC

@@ -214,6 +214,54 @@ fn test_reconcile_size_only_match_is_a_weak_candidate() {
 }
 
 #[test]
+fn test_similarity_phase_proposes_renamed_modified_file() {
+    let (repo, root) = setup("similarity");
+    write_file(&root, "music/old_song.mp3", &vec![b'a'; 1000]);
+    run(&repo);
+    let uuid = resolve(&repo, "/music/old_song.mp3").unwrap();
+
+    // Moved AND modified: different name and size, so the fingerprint phase
+    // (size pre-filter) cannot match it.
+    std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
+    write_file(&root, "music/old_song_v2.mp3", &vec![b'b'; 1100]);
+
+    // Without a threshold the new file is just created (v1 behaviour).
+    let v1 = reconcile::reconcile(&repo).unwrap();
+    assert!(v1.candidates.is_empty(), "no similarity phase without a threshold");
+    assert_eq!(v1.created, 1);
+    // The orphan keeps its stale path.
+    assert_eq!(field_value(&repo, uuid, "mfr_path").is_some(), true);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_similarity_candidate_carries_a_score() {
+    let (repo, root) = setup("sim_score");
+    write_file(&root, "music/old_song.mp3", &vec![b'a'; 1000]);
+    run(&repo);
+    let uuid = resolve(&repo, "/music/old_song.mp3").unwrap();
+
+    std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
+    write_file(&root, "music/old_song_v2.mp3", &vec![b'b'; 1100]);
+
+    let result = reconcile::reconcile_with_threshold(&repo, Some(0.6)).unwrap();
+    assert_eq!(result.moved, 0);
+    assert_eq!(result.candidates.len(), 1, "{:?}", result.candidates);
+    let candidate = &result.candidates[0];
+    assert_eq!(candidate.metarecord_uuid, uuid);
+    let m = &candidate.matches[0];
+    assert_eq!(m.path, "/music/old_song_v2.mp3");
+    assert_eq!(m.fingerprint, "similarity");
+    assert!(m.score.unwrap() >= 0.6, "score {:?}", m.score);
+    // The candidate file is not auto-created.
+    assert!(resolve(&repo, "/music/old_song_v2.mp3").is_none());
+    assert_eq!(result.created, 0);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_reconcile_mismatched_partial_creates_new_metarecord() {
     let (repo, root) = setup("mismatch");
     write_file(&root, "a.bin", b"AAAAA");

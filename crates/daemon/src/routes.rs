@@ -882,14 +882,29 @@ async fn check_schema(
 
 // ── Reconcile and track ───────────────────────────────────────────────────────
 
+#[derive(Deserialize, Default)]
+struct ReconcileBody {
+    /// Minimum similarity score for the v2 similarity phase, range [0, 1].
+    /// Absent disables similarity (v1 behaviour).
+    #[serde(default)]
+    threshold: Option<f64>,
+}
+
 async fn full_reconcile(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
+    payload: Option<Json<ReconcileBody>>,
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
+    let threshold = payload.map(|Json(b)| b.threshold).unwrap_or(None);
+    if let Some(t) = threshold {
+        if !(0.0..=1.0).contains(&t) {
+            return Err(ApiError::bad_request("threshold must be in the range [0, 1]"));
+        }
+    }
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile(repo_state)?))
+        Ok(Json(crate::reconcile::reconcile_with_threshold(repo_state, threshold)?))
     })
     .await
 }
