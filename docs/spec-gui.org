@@ -162,6 +162,13 @@ panel type once at startup (hidden, see [[*Panel type]]), so all command
 names are known from the start. The registry survives iframe removal
 (workspace closed): a later dispatch re-instantiates the owner lazily.
 
+Each command carries a =log= flag (default =true=): when set, every
+invocation is echoed to the workspace [[*Message view][message panel]] as
+=​> name args= before the command runs. Panels register commands with
+=log= (=metafolder.commands.register=); the builtin editing primitives
+(=editing:*=, =command-input:activate=) register with =log: false= so
+keystroke-level actions do not flood the log.
+
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
@@ -619,6 +626,8 @@ Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
 // listed and invocable whatever panel is focused)
 metafolder.commands.register('my-panel:change-mode', {
   label: 'My Panel: Change display mode',
+  // log defaults to true: each invocation is echoed to the message panel.
+  // Pass log: false for high-frequency commands that would flood the log.
   handler: ({ mode }) => { ... }
 })
 
@@ -969,7 +978,12 @@ implementation note: the query IR has no UUID predicate, so this is one
 The =message= panel type is a scrollable, append-only log, *per-workspace*.
 It receives:
 - All messages posted to the active workspace's status bar (with timestamp).
-- stdout/stderr of shell commands run via =!= in this workspace.
+- Every command invocation dispatched in this workspace, echoed as
+  =​> name args= before the command runs — unless the command opted out of
+  logging at registration (see "Command", the =log= flag). Basic editing
+  primitives (=editing:*=, =command-input:activate=) opt out to avoid noise.
+- stdout/stderr of shell commands run via =!= in this workspace (echoed as
+  =$ command=).
 - Reconcile progress and results triggered from this workspace.
 - Any message posted by a script via =POST /gui/message= targeting this
   workspace (also shown in the status bar as a transient notification).

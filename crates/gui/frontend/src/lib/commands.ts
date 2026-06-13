@@ -43,6 +43,15 @@ export function shortcutsFor(
     .map((binding) => binding.keys.join(' '));
 }
 
+/** Whether an invocation of `name` should be echoed to the message panel.
+ *  Looks the command up in the registry; commands not found (e.g. the
+ *  parameterized `tab:goto-3`, registered as `tab:goto-N`) default to
+ *  logging. */
+export function shouldLogCommand(commands: { name: string; log: boolean }[], name: string): boolean {
+  const command = commands.find((c) => c.name === name);
+  return command ? command.log : true;
+}
+
 /** Whether every term appears in the name, in order, without overlapping
  *  ("con def" matches like the regex `.*con.*def.*`). */
 function fuzzyMatch(name: string, terms: string[]): boolean {
@@ -136,6 +145,13 @@ export async function dispatch(invocation: string): Promise<void> {
   const { name, args } = parsed;
   const ws = focusedWs();
   if (ws) store.lastCommand[ws] = name;
+
+  // Echo the invocation to the message panel (unless the command opts out,
+  // e.g. the basic editing primitives). Awaited so it lands before any
+  // output the command itself appends.
+  if (ws && shouldLogCommand(store.commands, name)) {
+    await invoke('append_message', { wsId: ws, text: `> ${invocation.trim()}` });
+  }
 
   try {
     switch (name) {

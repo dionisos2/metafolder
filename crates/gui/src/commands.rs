@@ -176,9 +176,15 @@ pub fn register_command(
     name: String,
     label: String,
     reveal: Option<bool>,
+    log: Option<bool>,
 ) -> Result<(), String> {
-    app.registry
-        .register_panel(&panel_type, &name, &label, reveal.unwrap_or(false));
+    app.registry.register_panel(
+        &panel_type,
+        &name,
+        &label,
+        reveal.unwrap_or(false),
+        log.unwrap_or(true),
+    );
     Ok(())
 }
 
@@ -294,6 +300,13 @@ pub fn get_messages(app: AppHandle, ws_id: String) -> Result<Vec<MessageEntry>, 
 #[tauri::command]
 pub fn clear_messages(app: AppHandle, ws_id: String) -> Result<(), String> {
     app.gui.clear_messages(&ws_id)
+}
+
+/// Appends a line to the workspace message log (used by the command
+/// dispatcher to echo command invocations).
+#[tauri::command]
+pub fn append_message(app: AppHandle, ws_id: String, text: String) -> Result<(), String> {
+    app.gui.append_message(&ws_id, &text)
 }
 
 // ── Daemon ───────────────────────────────────────────────────────────────

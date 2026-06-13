@@ -124,6 +124,7 @@ describe('bridge core', () => {
       name: 'hello:greet',
       label: 'Greet',
       reveal: true,
+      log: true,
     });
     expect(onCommandsChanged).toHaveBeenCalled();
   });

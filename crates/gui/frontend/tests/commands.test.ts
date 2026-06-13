@@ -9,6 +9,7 @@ import {
   gotoIndex,
   parseInvocation,
   shortcutsFor,
+  shouldLogCommand,
 } from '../src/lib/commands';
 
 describe('parseInvocation', () => {
@@ -96,6 +97,27 @@ describe('shortcutsFor', () => {
   test('no binding yields an empty list, not a partial-name match', () => {
     expect(shortcutsFor(table, 'tab:close')).toEqual([]);
     expect(shortcutsFor(table, 'metarecord-list:go')).toEqual([]);
+  });
+});
+
+describe('shouldLogCommand', () => {
+  const commands = [
+    { name: 'reconcile:run', log: true },
+    { name: 'editing:confirm', log: false },
+    { name: 'tab:goto-N', log: true },
+  ];
+
+  test('logs a command whose definition opts in', () => {
+    expect(shouldLogCommand(commands, 'reconcile:run')).toBe(true);
+  });
+
+  test('does not log a command that opts out', () => {
+    expect(shouldLogCommand(commands, 'editing:confirm')).toBe(false);
+  });
+
+  test('unknown commands (e.g. parameterized tab:goto-3) default to logging', () => {
+    expect(shouldLogCommand(commands, 'tab:goto-3')).toBe(true);
+    expect(shouldLogCommand(commands, 'p:never-registered')).toBe(true);
   });
 });
 

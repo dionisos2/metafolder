@@ -34,6 +34,8 @@ export interface CommandDef {
   label: string;
   owner: string | null;
   reveal: boolean;
+  /** Whether each invocation is echoed to the workspace message panel. */
+  log: boolean;
 }
 
 export interface StatusMessage {

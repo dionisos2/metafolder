@@ -67,6 +67,7 @@ export function createBridgeCore(deps: BridgeDeps) {
           name: params.name,
           label: params.label ?? String(params.name),
           reveal: params.reveal ?? false,
+          log: params.log ?? true,
         });
         deps.onCommandsChanged();
         return null;

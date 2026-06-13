@@ -55,37 +55,40 @@ pub(crate) fn push_keybindings(gui: &GuiState, compiled: &[CompiledBinding]) {
 /// Shell builtins shown in the command input autocomplete (spec-gui
 /// "Command names"). Handlers live in the frontend dispatcher.
 fn register_builtins(registry: &CommandRegistry) {
-    for (name, label) in [
-        ("command-input:activate", "Focus the command input"),
-        ("editing:unfocus", "Leave the focused text input"),
-        ("editing:discard", "Clear and leave the focused text input"),
-        ("editing:confirm", "Confirm the focused text input"),
-        ("editing:goto-line-start", "Move the cursor to the line start"),
-        ("editing:goto-line-end", "Move the cursor to the line end"),
-        ("tab:new", "Create a workspace in the focused slot"),
-        ("tab:close", "Close the focused slot's workspace"),
-        ("tab:rename", "Rename the focused slot's workspace"),
-        ("tab:next", "Show the next workspace"),
-        ("tab:prev", "Show the previous workspace"),
-        ("tab:goto-N", "Show workspace number N"),
-        ("panel:split", "Show the second panel slot"),
-        ("panel:unsplit", "Hide the non-focused panel slot"),
-        ("panel:split-toggle", "Split when single, unsplit when split"),
-        ("panel:focus-next", "Focus the other panel slot"),
-        ("panel:set-type", "Switch the focused slot's panel type"),
-        ("panel:swap", "Exchange the two slots' panel types"),
-        ("message:clear", "Clear the workspace message log"),
-        ("config:open", "Open the settings view"),
-        ("devtools:open", "Open the WebKit web inspector"),
-        ("quit", "Exit the GUI"),
-        ("daemon:set-url", "Change the daemon URL"),
-        ("repos:open", "Open the repository panel in the focused slot"),
-        ("reconcile:run", "Reconcile the active repository with the filesystem"),
-        ("log:undo", "Undo the last revision of the active repository"),
-        ("log:redo", "Re-apply the revision ahead of HEAD"),
-        ("answer:send", "Resolve the pending script input wait"),
+    // The `log` column controls whether an invocation is echoed to the
+    // message panel. Basic editing primitives (which fire on nearly every
+    // keystroke) opt out to keep the log readable.
+    for (name, label, log) in [
+        ("command-input:activate", "Focus the command input", false),
+        ("editing:unfocus", "Leave the focused text input", false),
+        ("editing:discard", "Clear and leave the focused text input", false),
+        ("editing:confirm", "Confirm the focused text input", false),
+        ("editing:goto-line-start", "Move the cursor to the line start", false),
+        ("editing:goto-line-end", "Move the cursor to the line end", false),
+        ("tab:new", "Create a workspace in the focused slot", true),
+        ("tab:close", "Close the focused slot's workspace", true),
+        ("tab:rename", "Rename the focused slot's workspace", true),
+        ("tab:next", "Show the next workspace", true),
+        ("tab:prev", "Show the previous workspace", true),
+        ("tab:goto-N", "Show workspace number N", true),
+        ("panel:split", "Show the second panel slot", true),
+        ("panel:unsplit", "Hide the non-focused panel slot", true),
+        ("panel:split-toggle", "Split when single, unsplit when split", true),
+        ("panel:focus-next", "Focus the other panel slot", true),
+        ("panel:set-type", "Switch the focused slot's panel type", true),
+        ("panel:swap", "Exchange the two slots' panel types", true),
+        ("message:clear", "Clear the workspace message log", true),
+        ("config:open", "Open the settings view", true),
+        ("devtools:open", "Open the WebKit web inspector", true),
+        ("quit", "Exit the GUI", true),
+        ("daemon:set-url", "Change the daemon URL", true),
+        ("repos:open", "Open the repository panel in the focused slot", true),
+        ("reconcile:run", "Reconcile the active repository with the filesystem", true),
+        ("log:undo", "Undo the last revision of the active repository", true),
+        ("log:redo", "Re-apply the revision ahead of HEAD", true),
+        ("answer:send", "Resolve the pending script input wait", true),
     ] {
-        registry.register_builtin(name, label);
+        registry.register_builtin(name, label, log);
     }
 }
 
@@ -264,6 +267,7 @@ pub fn run(options: Options) {
             commands::post_status,
             commands::get_messages,
             commands::clear_messages,
+            commands::append_message,
             commands::open_devtools,
             commands::quit,
         ])

@@ -327,13 +327,14 @@ window.metafolder = {
     // `scope` is accepted for backward compatibility and ignored: every
     // command is invocable regardless of focus (dispatch routes to the
     // owning panel type).
-    register(name, { label, textInput, reveal, handler } = {}) {
+    register(name, { label, textInput, reveal, log, handler } = {}) {
       if (handler) commandHandlers.set(name, handler);
       return request('commands.register', {
         name,
         label: label ?? name,
         textInput: textInput ?? false,
         reveal: reveal ?? false,
+        log: log ?? true,
       });
     },
     invoke: (invocation) => request('commands.invoke', { invocation }),
