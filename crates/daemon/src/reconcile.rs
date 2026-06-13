@@ -49,19 +49,22 @@ pub struct ReconcileResult {
     pub candidates: Vec<Candidate>,
 }
 
-/// Full reconcile without the similarity phase (v1 behaviour).
+/// Full reconcile without the similarity or MIME phases (v1 behaviour).
 pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
-    reconcile_with_threshold(repo, None)
+    reconcile_full(repo, None, false)
 }
 
 /// Full reconcile: walk the repository root and synchronise the database.
 /// Everything runs in a single transaction (one revision). When `threshold`
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
 /// score-based candidates for still-unmatched orphans and new files
-/// (spec-file-tracking "File Similarity").
-pub fn reconcile_with_threshold(
+/// (spec-file-tracking "File Similarity"). When `compute_mime` is set, files
+/// without an `mfr_mime` get one from content analysis (spec-platform "MIME
+/// detection").
+pub fn reconcile_full(
     repo: &RepoState,
     threshold: Option<f64>,
+    compute_mime: bool,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
@@ -75,9 +78,14 @@ pub fn reconcile_with_threshold(
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
     walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths)?;
 
-    // New files: paths with no metarecord at that tree position.
+    // New files: paths with no metarecord at that tree position. The regular
+    // files (existing or new) are kept for the optional MIME pass below.
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
+    let mut disk_files: Vec<String> = Vec::new();
     for (rel, meta) in fs_paths {
+        if meta.is_file() {
+            disk_files.push(rel.clone());
+        }
         if cache.resolve_path(writer.connection(), "mfr_path", &rel)?.is_none() {
             new_files.push((rel, meta));
         }
@@ -238,6 +246,16 @@ pub fn reconcile_with_threshold(
         result.created += 1;
     }
 
+    // Step 6 — MIME phase (spec-platform): every eligible file on disk now has
+    // a record; fill in mfr_mime where it is still absent.
+    if compute_mime {
+        for rel in &disk_files {
+            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+                maybe_compute_mime(&mut writer, &root, uuid, rel)?;
+            }
+        }
+    }
+
     writer.commit()?;
     Ok(result)
 }
@@ -245,7 +263,11 @@ pub fn reconcile_with_threshold(
 /// Single-metarecord reconcile: same semantics scoped to the subtree rooted at
 /// the given metarecord, without the fingerprint phase. Existing metarecords get
 /// their `mfr_*` stat fields refreshed.
-pub fn reconcile_metarecord(repo: &RepoState, uuid: Uuid) -> Result<ReconcileResult, ApiError> {
+pub fn reconcile_metarecord(
+    repo: &RepoState,
+    uuid: Uuid,
+    compute_mime: bool,
+) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
     let root = repo.config.root.clone();
@@ -280,6 +302,17 @@ pub fn reconcile_metarecord(repo: &RepoState, uuid: Uuid) -> Result<ReconcileRes
             None => {
                 create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
                 result.created += 1;
+            }
+        }
+    }
+
+    if compute_mime {
+        for (rel, meta) in &fs_paths {
+            if !meta.is_file() {
+                continue;
+            }
+            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+                maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
     }
@@ -406,6 +439,29 @@ fn int_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<i64>> {
             Value::Int(n) => Some(n),
             _ => None,
         }))
+}
+
+// ── MIME detection (spec-platform "MIME detection") ─────────────────────────────
+
+/// Content-based MIME detection with the pure-Rust `infer` crate (magic bytes).
+/// Returns `None` for unreadable files and for types `infer` cannot recognise
+/// (e.g. plain text), leaving `mfr_mime` absent in those cases.
+fn detect_mime(abs: &Path) -> Option<String> {
+    infer::get_from_path(abs).ok().flatten().map(|t| t.mime_type().to_string())
+}
+
+/// Sets `mfr_mime` on a file record that does not have one yet. Idempotent: an
+/// existing `mfr_mime` is never recomputed (so re-running reconcile does not
+/// grow the log; content changes are out of scope, like the hashes).
+fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -> Result<()> {
+    if !db::get_field_rows_named(writer.connection(), uuid, "mfr_mime")?.is_empty() {
+        return Ok(());
+    }
+    let abs = root.join(rel.trim_start_matches('/'));
+    if let Some(mime) = detect_mime(&abs) {
+        writer.set_field_as(OpType::FileModified, uuid, "mfr_mime", Value::String(mime))?;
+    }
+    Ok(())
 }
 
 // ── File similarity (spec-file-tracking "File Similarity") ──────────────────────

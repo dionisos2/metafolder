@@ -569,6 +569,28 @@ fn test_reconcile_threshold_yields_similarity_candidate() {
     assert_eq!(bad.code, 1, "stderr: {}", bad.stderr);
 }
 
+#[test]
+fn test_reconcile_computes_and_can_disable_mime() {
+    let (repo, root) = init_repo("reconcile_mime");
+    // PNG magic header → infer detects image/png.
+    std::fs::write(root.join("pic.png"), [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).unwrap();
+
+    let root_uuid = mf(&["--repo", &repo, "list"]).stdout.trim().to_string();
+    assert_ok(&mf(&["--repo", &repo, "set", &root_uuid, "mf_watch:bool=true"]));
+
+    // With --no-mime, no mfr_mime is written.
+    assert_ok(&mf(&["--repo", &repo, "reconcile", "--no-mime"]));
+    let q = mf(&["--repo", &repo, "query", "mfr_mime IS PRESENT"]);
+    assert_ok(&q);
+    assert!(q.stdout.trim().is_empty(), "no mime expected, got: {}", q.stdout);
+
+    // A default reconcile computes it.
+    assert_ok(&mf(&["--repo", &repo, "reconcile"]));
+    let pic = mf(&["--repo", &repo, "query", "mfr_mime = \"image/png\"", "--select", "mfr_mime"]);
+    assert_ok(&pic);
+    assert!(pic.stdout.contains("image/png"), "stdout: {}", pic.stdout);
+}
+
 // ── Query --values ────────────────────────────────────────────────────────────
 
 #[test]

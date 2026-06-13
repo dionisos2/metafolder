@@ -213,6 +213,57 @@ fn test_reconcile_size_only_match_is_a_weak_candidate() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// ── MIME detection (spec-platform "MIME detection") ─────────────────────────────
+
+const PNG_MAGIC: &[u8] = &[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+
+fn op_count(repo: &RepoState) -> i64 {
+    let conn = repo.conn.lock().unwrap();
+    conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0)).unwrap()
+}
+
+#[test]
+fn test_reconcile_computes_mime_when_enabled() {
+    let (repo, root) = setup("mime");
+    write_file(&root, "pic.png", PNG_MAGIC);
+    write_file(&root, "notes.txt", b"hello"); // not magic-detectable → no mime
+    reconcile::reconcile_full(&repo, None, true).unwrap();
+
+    let pic = resolve(&repo, "/pic.png").unwrap();
+    assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
+    let notes = resolve(&repo, "/notes.txt").unwrap();
+    assert_eq!(field_value(&repo, notes, "mfr_mime"), None, "undetectable → mfr_mime absent");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_reconcile_skips_mime_when_disabled() {
+    let (repo, root) = setup("nomime");
+    write_file(&root, "pic.png", PNG_MAGIC);
+    reconcile::reconcile_full(&repo, None, false).unwrap();
+    let pic = resolve(&repo, "/pic.png").unwrap();
+    assert_eq!(field_value(&repo, pic, "mfr_mime"), None);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_reconcile_mime_is_idempotent() {
+    let (repo, root) = setup("mime_idem");
+    write_file(&root, "pic.png", PNG_MAGIC);
+    reconcile::reconcile_full(&repo, None, true).unwrap();
+    let after_first = op_count(&repo);
+
+    // A second mime reconcile must not rewrite the existing mfr_mime.
+    let result = reconcile::reconcile_full(&repo, None, true).unwrap();
+    assert_eq!(result.created, 0);
+    assert_eq!(op_count(&repo), after_first, "mime must not be recomputed");
+
+    let pic = resolve(&repo, "/pic.png").unwrap();
+    assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn test_similarity_phase_proposes_renamed_modified_file() {
     let (repo, root) = setup("similarity");
@@ -245,7 +296,7 @@ fn test_similarity_candidate_carries_a_score() {
     std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
     write_file(&root, "music/old_song_v2.mp3", &vec![b'b'; 1100]);
 
-    let result = reconcile::reconcile_with_threshold(&repo, Some(0.6)).unwrap();
+    let result = reconcile::reconcile_full(&repo, Some(0.6), false).unwrap();
     assert_eq!(result.moved, 0);
     assert_eq!(result.candidates.len(), 1, "{:?}", result.candidates);
     let candidate = &result.candidates[0];

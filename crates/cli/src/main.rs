@@ -130,6 +130,9 @@ enum Command {
         /// Enable the similarity phase with this minimum score, range [0, 1]
         #[arg(long)]
         threshold: Option<f64>,
+        /// Do not compute mfr_mime for files that lack it
+        #[arg(long = "no-mime")]
+        no_mime: bool,
         /// Print the raw JSON response body
         #[arg(long)]
         json: bool,
@@ -381,8 +384,8 @@ fn main() {
         Command::Query { predicate, select, sort, limit, values } => {
             commands::query(&ctx, &QueryArgs { predicate, select, sort, limit, values })
         }
-        Command::Reconcile { metarecord, threshold, json } => {
-            commands::reconcile(&ctx, metarecord.as_deref(), threshold, json)
+        Command::Reconcile { metarecord, threshold, no_mime, json } => {
+            commands::reconcile(&ctx, metarecord.as_deref(), threshold, !no_mime, json)
         }
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),

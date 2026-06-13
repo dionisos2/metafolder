@@ -882,12 +882,25 @@ async fn check_schema(
 
 // ── Reconcile and track ───────────────────────────────────────────────────────
 
-#[derive(Deserialize, Default)]
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Deserialize)]
 struct ReconcileBody {
     /// Minimum similarity score for the v2 similarity phase, range [0, 1].
     /// Absent disables similarity (v1 behaviour).
     #[serde(default)]
     threshold: Option<f64>,
+    /// Compute `mfr_mime` for files that lack it (default true).
+    #[serde(default = "default_true")]
+    mime: bool,
+}
+
+impl Default for ReconcileBody {
+    fn default() -> Self {
+        Self { threshold: None, mime: true }
+    }
 }
 
 async fn full_reconcile(
@@ -896,15 +909,15 @@ async fn full_reconcile(
     payload: Option<Json<ReconcileBody>>,
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let threshold = payload.map(|Json(b)| b.threshold).unwrap_or(None);
-    if let Some(t) = threshold {
+    let body = payload.map(|Json(b)| b).unwrap_or_default();
+    if let Some(t) = body.threshold {
         if !(0.0..=1.0).contains(&t) {
             return Err(ApiError::bad_request("threshold must be in the range [0, 1]"));
         }
     }
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_with_threshold(repo_state, threshold)?))
+        Ok(Json(crate::reconcile::reconcile_full(repo_state, body.threshold, body.mime)?))
     })
     .await
 }
@@ -912,12 +925,14 @@ async fn full_reconcile(
 async fn metarecord_reconcile(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
+    payload: Option<Json<ReconcileBody>>,
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
+    let mime = payload.map(|Json(b)| b.mime).unwrap_or(true);
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid)?))
+        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid, mime)?))
     })
     .await
 }

@@ -115,7 +115,7 @@ The stored fields for a file/directory metarecord are:
 | =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
 | =mfr_gid=          | mfr    | Int        | Owner group ID; Unix only, never written on Windows                                                        |
-| =mfr_mime=         | mfr    | String     | MIME type from content analysis (platform-dependent backend, see [[file:spec-platform.org][spec-platform.org]]); absent if not yet computed [v2] |
+| =mfr_mime=         | mfr    | String     | MIME type from content analysis (see [[file:spec-platform.org][spec-platform.org]]); computed by reconcile (opt-out) for files that lack it; absent when undetectable or not yet computed |
 | =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
 | =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[*Watch and Ignore]])  |

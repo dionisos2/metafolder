@@ -434,7 +434,9 @@ POST /repos/:repo_uuid/reconcile
 Walks the repository root on the filesystem and synchronises the database.
 
 An optional ={"threshold": <0..1>}= body enables the similarity phase and
-sets the minimum similarity score (absent disables it; v1 behaviour).
+sets the minimum similarity score (absent disables it; v1 behaviour). The
+optional ={"mime": false}= disables MIME computation (on by default; see
+[[file:spec-platform.org][spec-platform.org]] "MIME detection").
 
 *Steps:*
 
@@ -470,6 +472,10 @@ sets the minimum similarity score (absent disables it; v1 behaviour).
 6. Orphaned metarecords not matched by fingerprint and not present in any candidate
    pair keep their stale =mfr_path= TreeRef unchanged. *Reconcile never sets =mfr_path=
    to =Nothing=.*
+7. *MIME phase* — unless disabled (={"mime": false}=), every eligible file on
+   disk that has no =mfr_mime= gets one from content analysis
+   (see [[file:spec-platform.org][spec-platform.org]] "MIME detection"). Idempotent: existing values are
+   not recomputed.
 
 *Directory identification*: directories have no fingerprint and are matched only
 by their path string. A directory metarecord whose path no longer exists on disk

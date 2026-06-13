@@ -68,13 +68,20 @@ Availability of the =mfr_*= stat-derived fields per platform:
 - Hashing (=mfr_partial_hash=, =mfr_full_hash=) is pure content-based
   (=xxhash-rust=) and fully portable.
 
-** MIME detection                                                        :v2:
+** MIME detection
 
-=mfr_mime= is computed by content analysis. The backend is
-platform-dependent: =libmagic= where available (Linux, macOS), with a
-pure-Rust content-detection fallback on Windows (exact crate TBD). The stored
-value is always a standard MIME string, so the producing backend does not
-matter to consumers.
+=mfr_mime= is computed by content analysis. The backend is the pure-Rust
+=infer= crate (magic-byte signatures) on every platform — no system
+=libmagic= dependency. The stored value is always a standard MIME string.
+=infer= recognises common binary formats (images, audio, video, archives,
+documents); types it cannot classify from magic bytes (e.g. plain text) leave
+=mfr_mime= absent.
+
+Detection is triggered by =reconcile= (full and single-metarecord), which fills
+=mfr_mime= for files that do not already have one. It is enabled by default and
+opted out per call with =mime: false= in the request body (CLI: =--no-mime=).
+Computation is idempotent — an existing =mfr_mime= is never recomputed, so a
+content change is not reflected until the field is cleared.
 
 ** File watcher backends
 
