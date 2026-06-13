@@ -535,7 +535,7 @@ fn iso_to_ms(s: &str) -> Option<i64> {
     let min: i64 = t.next().unwrap_or("0").parse().ok()?;
     let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
     let days = days_from_civil(year, month as u32, day as u32);
-    Some(((days * 86_400 + hour * 3600 + min * 60 + sec) * 1000) as i64)
+    Some((days * 86_400 + hour * 3600 + min * 60 + sec) * 1000)
 }
 
 /// `YYYY-MM-DD HH:MM` (UTC) from Unix ms.
@@ -576,7 +576,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = (y - era * 400) as i64;
+    let yoe = y - era * 400;
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as i64 + 2) / 5 + d as i64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468

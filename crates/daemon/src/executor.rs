@@ -268,7 +268,9 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache, db_id: Uuid)
         "SELECT id, op_type, path, from_path, to_path FROM pending_operation
          WHERE op_type LIKE 'restore_%' ORDER BY id",
     )?;
-    let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> = stmt
+    // (id, op_type, path, from_path, to_path)
+    type RestoreRow = (i64, String, Option<String>, Option<String>, Option<String>);
+    let rows: Vec<RestoreRow> = stmt
         .query_map([], |r| {
             Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
         })?

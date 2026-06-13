@@ -38,26 +38,26 @@ impl InputWait {
         self.active.lock().unwrap().is_some()
     }
 
-    /// Registers an input wait; `Err` when another wait holds the lock.
-    pub fn begin_input(&self) -> Result<oneshot::Receiver<InputOutcome>, ()> {
+    /// Registers an input wait; `None` when another wait holds the lock.
+    pub fn begin_input(&self) -> Option<oneshot::Receiver<InputOutcome>> {
         let mut active = self.active.lock().unwrap();
         if active.is_some() {
-            return Err(());
+            return None;
         }
         let (sender, receiver) = oneshot::channel();
         *active = Some(Active::Input(sender));
-        Ok(receiver)
+        Some(receiver)
     }
 
     /// Registers a prompt wait; same lock as input waits.
-    pub fn begin_prompt(&self) -> Result<oneshot::Receiver<PromptOutcome>, ()> {
+    pub fn begin_prompt(&self) -> Option<oneshot::Receiver<PromptOutcome>> {
         let mut active = self.active.lock().unwrap();
         if active.is_some() {
-            return Err(());
+            return None;
         }
         let (sender, receiver) = oneshot::channel();
         *active = Some(Active::Prompt(sender));
-        Ok(receiver)
+        Some(receiver)
     }
 
     /// `answer:send <value>` — resolves the active input wait. Returns

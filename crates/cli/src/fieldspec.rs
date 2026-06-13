@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_float() {
-        assert_eq!(ok("score:float=3.14"), ("score".into(), Value::Float(3.14)));
+        assert_eq!(ok("score:float=3.25"), ("score".into(), Value::Float(3.25)));
     }
 
     #[test]

@@ -147,9 +147,9 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 ### `crates/cli`
 
 The `mf` binary (package `metafolder-cli`): a thin client over the daemon's
-HTTP API, specified in the `* CLI` sections of the spec files (the
-log/rollback/prune and sync commands are v2 and not implemented). Library +
-thin `main.rs`:
+HTTP API, specified in the `* CLI` sections of the spec files (the log,
+rollback and prune commands are implemented in `log.rs`; only the sync
+commands remain v2 and unimplemented). Library + thin `main.rs`:
 
 - `fieldspec.rs`: parses `name:type[=value]` field specs into
   `(String, Value)`.
@@ -166,6 +166,10 @@ thin `main.rs`:
 - `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
   mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
   port discovery via the `gui.port` file, `--gui-url`/`METAFOLDER_GUI_URL`.
+- `log.rs`: `mf log` / `mf log show`, `mf rollback` (+ `rollback plan`, with
+  the `--on-move-available/-unavailable` skip policies driving the coordinated
+  navigation), `mf prune before|linearize`, and a dependency-free ISO-8601 ↔
+  Unix-ms date helper for timestamp targets and revision display.
 
 Repo-scoped commands require `--repo`/`METAFOLDER_REPO` (checked before any
 HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to

@@ -1,7 +1,7 @@
 //! Integration tests for the daemon configuration file
 //! (`~/.config/metafolder/config.json`, spec-main "Daemon configuration").
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use metafolder_daemon::daemon_config::{self, DaemonConfig};
 use metafolder_daemon::repo::{self, RepoLocator};
@@ -14,7 +14,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
     path
 }
 
-fn write_config(dir: &PathBuf, contents: &str) -> PathBuf {
+fn write_config(dir: &Path, contents: &str) -> PathBuf {
     let path = dir.join("config.json");
     std::fs::write(&path, contents).unwrap();
     path

@@ -27,14 +27,15 @@ fn map_state_error(error: String) -> Response {
     error_response(status, &error)
 }
 
-fn parse_slot(slot: &str) -> Result<SlotId, Response> {
+/// The error is boxed because a `Response` is large relative to a `SlotId`.
+fn parse_slot(slot: &str) -> Result<SlotId, Box<Response>> {
     match slot {
         "left" => Ok(SlotId::Left),
         "right" => Ok(SlotId::Right),
-        other => Err(error_response(
+        other => Err(Box::new(error_response(
             StatusCode::BAD_REQUEST,
             &format!("unknown slot: {other} (left | right)"),
-        )),
+        ))),
     }
 }
 
@@ -132,7 +133,7 @@ pub async fn put_panel_view(
 ) -> Response {
     let slot_id = match parse_slot(&slot) {
         Ok(slot_id) => slot_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     // Show the slot first; an unassigned slot inherits the focused
@@ -238,7 +239,7 @@ pub async fn get_panel_view(
 ) -> Response {
     let slot_id = match parse_slot(&slot) {
         Ok(slot_id) => slot_id,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
     let layout = state.gui.layout();
     let payload = match slot_id {
@@ -321,7 +322,7 @@ pub async fn post_input(
     body: Option<Json<InputBody>>,
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
-    let Ok(receiver) = state.input.begin_input() else {
+    let Some(receiver) = state.input.begin_input() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
     push_keytable(&state, &body.keys);
@@ -358,7 +359,7 @@ pub async fn post_prompt(
     State(state): State<ServerState>,
     Json(body): Json<PromptBody>,
 ) -> Response {
-    let Ok(receiver) = state.input.begin_prompt() else {
+    let Some(receiver) = state.input.begin_prompt() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
     state.gui.notify(
