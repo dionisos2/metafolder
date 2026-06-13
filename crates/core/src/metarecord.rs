@@ -67,6 +67,24 @@ pub mod hex_uuid_vec {
     }
 }
 
+/// Serde helper for `DateTime`: stored internally as Unix milliseconds (UTC),
+/// but encoded on the JSON wire as an ISO-8601 string (`YYYY-MM-DDTHH:MM:SSZ`)
+/// for readability. Deserialization rejects a non-parsable datetime string.
+pub mod iso_ms {
+    use crate::date;
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(ms: &i64, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&date::iso8601_from_ms(*ms))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+        let s = String::deserialize(d)?;
+        date::iso_to_ms(&s)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid ISO-8601 datetime: {s}")))
+    }
+}
+
 /// A field value. `Nothing` represents an explicit absence ("this field does
 /// not apply"), distinct from the absence of the field itself ("unknown").
 ///
@@ -80,8 +98,9 @@ pub enum Value {
     Int(i64),
     Float(f64),
     Bool(bool),
-    /// ISO-8601 datetime: "2024-03-15T10:30:00Z"
-    DateTime(String),
+    /// A datetime as Unix milliseconds (UTC), encoded on the JSON wire as an
+    /// ISO-8601 string ("2024-03-15T10:30:00Z"). See [`iso_ms`].
+    DateTime(#[serde(with = "iso_ms")] i64),
     /// Reference to another metarecord's UUID (same repo).
     Ref(#[serde(with = "hex_uuid")] MetaRecordId),
     /// Position in a named tree: parent metarecord (None for a root) + the name
@@ -185,8 +204,23 @@ mod tests {
 
     #[test]
     fn test_value_json_format_datetime() {
-        let json = serde_json::to_string(&Value::DateTime("2024-03-15T10:30:00Z".into())).unwrap();
+        let ms = crate::date::iso_to_ms("2024-03-15T10:30:00Z").unwrap();
+        let json = serde_json::to_string(&Value::DateTime(ms)).unwrap();
         assert_eq!(json, r#"{"type":"datetime","value":"2024-03-15T10:30:00Z"}"#);
+    }
+
+    #[test]
+    fn test_value_datetime_deserializes_iso_to_ms() {
+        let v: Value =
+            serde_json::from_str(r#"{"type":"datetime","value":"2024-03-15T10:30:00Z"}"#).unwrap();
+        assert_eq!(v, Value::DateTime(crate::date::iso_to_ms("2024-03-15T10:30:00Z").unwrap()));
+    }
+
+    #[test]
+    fn test_value_datetime_rejects_invalid_iso() {
+        let r: Result<Value, _> =
+            serde_json::from_str(r#"{"type":"datetime","value":"not-a-date"}"#);
+        assert!(r.is_err(), "invalid ISO-8601 datetime must be rejected");
     }
 
     #[test]
@@ -255,7 +289,7 @@ mod tests {
             Value::Float(3.25),
             Value::Bool(true),
             Value::Bool(false),
-            Value::DateTime("2024-03-15T10:30:00Z".into()),
+            Value::DateTime(crate::date::iso_to_ms("2024-03-15T10:30:00Z").unwrap()),
             Value::Ref(id),
             Value::TreeRef { parent: Some(id), name: "félins".into() },
             Value::TreeRef { parent: None, name: "tag1".into() },

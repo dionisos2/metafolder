@@ -53,6 +53,10 @@ fn s(v: &str) -> Value {
     Value::String(v.into())
 }
 
+fn dt(iso: &str) -> Value {
+    Value::DateTime(metafolder_core::date::iso_to_ms(iso).unwrap())
+}
+
 fn sort_asc(field: &str) -> SortKey {
     SortKey { field: field.into(), order: SortOrder::Asc }
 }
@@ -108,7 +112,7 @@ fn test_eq_other_types() {
     let e_bool = f.create(vec![Field::new("seen", Value::Bool(true))]);
     let e_float = f.create(vec![Field::new("score", Value::Float(2.5))]);
     let e_ref = f.create(vec![Field::new("author", Value::Ref(target))]);
-    let e_dt = f.create(vec![Field::new("added", Value::DateTime("2024-01-01T00:00:00Z".into()))]);
+    let e_dt = f.create(vec![Field::new("added", dt("2024-01-01T00:00:00Z"))]);
 
     assert_same_set(f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(true) }), vec![e_bool]);
     assert!(f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(false) }).is_empty());
@@ -123,7 +127,7 @@ fn test_eq_other_types() {
     assert_same_set(
         f.run(&Query::Eq {
             field: "added".into(),
-            value: Value::DateTime("2024-01-01T00:00:00Z".into()),
+            value: dt("2024-01-01T00:00:00Z"),
         }),
         vec![e_dt],
     );
@@ -242,22 +246,22 @@ fn test_ordered_comparisons_numeric() {
 #[test]
 fn test_ordered_comparisons_datetime_and_string() {
     let mut f = Fixture::new();
-    let old = f.create(vec![Field::new("added", Value::DateTime("2023-01-01T00:00:00Z".into()))]);
-    let new = f.create(vec![Field::new("added", Value::DateTime("2024-06-01T00:00:00Z".into()))]);
+    let old = f.create(vec![Field::new("added", dt("2023-01-01T00:00:00Z"))]);
+    let new = f.create(vec![Field::new("added", dt("2024-06-01T00:00:00Z"))]);
     let a = f.create(vec![Field::new("title", s("alpha"))]);
     let z = f.create(vec![Field::new("title", s("zulu"))]);
 
     assert_same_set(
         f.run(&Query::Gt {
             field: "added".into(),
-            value: Value::DateTime("2023-12-31T00:00:00Z".into()),
+            value: dt("2023-12-31T00:00:00Z"),
         }),
         vec![new],
     );
     assert_same_set(
         f.run(&Query::Lte {
             field: "added".into(),
-            value: Value::DateTime("2023-01-01T00:00:00Z".into()),
+            value: dt("2023-01-01T00:00:00Z"),
         }),
         vec![old],
     );
@@ -651,7 +655,7 @@ fn test_sort_mixed_types_follow_precedence() {
     let e_str = f.create(vec![Field::new("v", s("alpha")), Field::new("k", s("x"))]);
     let e_bool = f.create(vec![Field::new("v", Value::Bool(true)), Field::new("k", s("x"))]);
     let e_dt = f.create(vec![
-        Field::new("v", Value::DateTime("2024-01-01T00:00:00Z".into())),
+        Field::new("v", dt("2024-01-01T00:00:00Z")),
         Field::new("k", s("x")),
     ]);
     let e_int = f.create(vec![Field::new("v", Value::Int(99)), Field::new("k", s("x"))]);

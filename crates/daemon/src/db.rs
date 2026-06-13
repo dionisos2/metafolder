@@ -164,8 +164,8 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             metarecord_uuid     BLOB    NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
             field_name      TEXT    NOT NULL,
             value_type      TEXT    NOT NULL,
-            value_text      TEXT,    -- string, datetime
-            value_int       INTEGER, -- int, bool (0/1)
+            value_text      TEXT,    -- string
+            value_int       INTEGER, -- int, bool (0/1), datetime (Unix ms)
             value_real      REAL,    -- float
             value_uuid      BLOB,    -- ref/refbase/externalref: metarecord or repo UUID;
                                      -- tree_ref: parent UUID (zero UUID for roots)
@@ -544,9 +544,9 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
             e = EncodedValue::new("bool");
             e.int = Some(*b as i64);
         }
-        Value::DateTime(s) => {
+        Value::DateTime(ms) => {
             e = EncodedValue::new("datetime");
-            e.text = Some(s.clone());
+            e.int = Some(*ms);
         }
         Value::Ref(id) => {
             e = EncodedValue::new("ref");
@@ -585,7 +585,7 @@ pub(crate) fn decode_value(
         "int" => Ok(Value::Int(int.context("value_int missing")?)),
         "float" => Ok(Value::Float(real.context("value_real missing")?)),
         "bool" => Ok(Value::Bool(int.context("value_int missing")? != 0)),
-        "datetime" => Ok(Value::DateTime(text.context("value_text missing")?)),
+        "datetime" => Ok(Value::DateTime(int.context("value_int missing")?)),
         "ref" => Ok(Value::Ref(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
         "tree_ref" => {
             let parent = bytes_to_uuid(uuid.context("value_uuid missing")?)?;

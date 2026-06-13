@@ -33,7 +33,10 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
             "false" => Value::Bool(false),
             _ => return Err(format!("invalid bool value: '{v}' (expected true or false)")),
         },
-        ("datetime", Some(v)) => Value::DateTime(v.to_string()),
+        ("datetime", Some(v)) => Value::DateTime(
+            metafolder_core::date::iso_to_ms(v)
+                .ok_or_else(|| format!("invalid datetime value: '{v}' (expected ISO-8601 UTC)"))?,
+        ),
         ("ref", Some(v)) => Value::Ref(parse_uuid(v)?),
         ("refbase", Some(v)) => Value::RefBase(parse_uuid(v)?),
         ("externalref", Some(v)) => {
@@ -168,10 +171,13 @@ mod tests {
 
     #[test]
     fn test_datetime() {
-        assert_eq!(
-            ok("added:datetime=2024-01-01T12:00:00Z"),
-            ("added".into(), Value::DateTime("2024-01-01T12:00:00Z".into()))
-        );
+        let ms = metafolder_core::date::iso_to_ms("2024-01-01T12:00:00Z").unwrap();
+        assert_eq!(ok("added:datetime=2024-01-01T12:00:00Z"), ("added".into(), Value::DateTime(ms)));
+    }
+
+    #[test]
+    fn test_datetime_invalid() {
+        err("added:datetime=not-a-date");
     }
 
     // ── ref / refbase / externalref ──────────────────────────────────────────

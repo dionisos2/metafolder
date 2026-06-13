@@ -116,9 +116,11 @@ pub fn execute(
              WHEN 'string' THEN 2 WHEN 'datetime' THEN 3 \
              WHEN 'ref' THEN 4 WHEN 'refbase' THEN 4 WHEN 'externalref' THEN 4 \
              WHEN 'tree_ref' THEN 5 ELSE 6 END";
-        let num = "CASE WHEN value_type IN ('bool', 'int') THEN CAST(value_int AS REAL) \
+        // datetime is stored as Unix ms in value_int, so it sorts numerically;
+        // its own `grp` (3) keeps it from interleaving with bool/int/float.
+        let num = "CASE WHEN value_type IN ('bool', 'int', 'datetime') THEN CAST(value_int AS REAL) \
              WHEN value_type = 'float' THEN value_real END";
-        let text = "CASE WHEN value_type IN ('string', 'datetime') THEN value_text \
+        let text = "CASE WHEN value_type = 'string' THEN value_text \
              WHEN value_type = 'tree_ref' THEN value_name END";
         let blob = "CASE WHEN value_type IN ('ref', 'refbase', 'externalref') \
              THEN value_uuid END";
@@ -584,9 +586,11 @@ impl<'a> Compiler<'a> {
                      (value_type = 'tree_ref' AND value_name {sym} ?)"
                 ))
             }
-            Value::DateTime(s) => {
-                self.push_text(s);
-                Ok(format!("value_type = 'datetime' AND value_text {sym} ?"))
+            Value::DateTime(ms) => {
+                // datetime is stored as Unix ms in value_int and compares
+                // numerically, but only against other datetime values.
+                self.params.push(SqlValue::Integer(*ms));
+                Ok(format!("value_type = 'datetime' AND value_int {sym} ?"))
             }
             Value::Bool(b) => {
                 if op.is_ordered() {

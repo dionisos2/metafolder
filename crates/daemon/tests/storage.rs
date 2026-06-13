@@ -111,7 +111,10 @@ fn test_all_value_types_roundtrip() {
         Field::new("d", Value::Float(1.25)),
         Field::new("e", Value::Bool(false)),
         Field::new("f", Value::Bool(true)),
-        Field::new("g", Value::DateTime("2023-06-01T12:00:00Z".into())),
+        Field::new(
+            "g",
+            Value::DateTime(metafolder_core::date::iso_to_ms("2023-06-01T12:00:00Z").unwrap()),
+        ),
         Field::new("h", Value::Ref(target.uuid)),
         Field::new("parent", Value::TreeRef { parent: Some(root.uuid), name: "félins".into() }),
         Field::new("j", Value::RefBase(repo2)),

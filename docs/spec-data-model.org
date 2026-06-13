@@ -67,7 +67,7 @@ A field is a =(name, value)= pair. Value is one of:
 | =Int=      | =i64=           | 64-bit signed integer                        |
 | =Float=    | =f64=           | 64-bit float                                 |
 | =Bool=     | =bool=          |                                              |
-| =DateTime= | =String=        | ISO-8601 datetime (=YYYY-MM-DDTHH:MM:SSZ=)   |
+| =DateTime= | =i64=           | Unix milliseconds (UTC); JSON wire form is an ISO-8601 string (=YYYY-MM-DDTHH:MM:SSZ=) |
 | =Ref=          | =UUID=         | Reference to another metarecord's UUID (same repo)              |
 | =TreeRef=      | =(UUID?, String)= | Position in a named tree: =(parent_uuid, name)=             |
 | =RefBase=      | =UUID=         | Reference to a repository UUID                             |
@@ -93,6 +93,8 @@ Path-to-UUID resolution is accelerated by the *Tree Cache* (see [[*Tree Cache]])
 - field absent entirely → "unknown" (IsUnknown)
 
 All values serialize to JSON as ={"type": "<variant>", "value": <json_value>}=.
+=DateTime= is held internally as Unix milliseconds but encoded on the wire as an
+ISO-8601 UTC string; a non-parsable datetime string is rejected on deserialization.
 
 ** Reserved fields
 
@@ -221,8 +223,8 @@ CREATE TABLE field (
     value_type      TEXT    NOT NULL,  -- nothing | string | int | float | bool |
                                        -- datetime | ref |
                                        -- tree_ref | refbase | externalref
-    value_text      TEXT,              -- string, datetime
-    value_int       INTEGER,           -- int, bool (0/1), duration (ms)
+    value_text      TEXT,              -- string
+    value_int       INTEGER,           -- int, bool (0/1), datetime (Unix ms)
     value_real      REAL,              -- float
     value_uuid      BLOB,              -- ref/externalref: metarecord UUID; tree_ref: parent UUID (zero UUID for root)
     value_ref_repo  BLOB,              -- externalref only: repo UUID
@@ -278,7 +280,8 @@ Sort semantics per metarecord for a sort field =F=:
   ="asc"=, its largest for ="desc"=.
 - When rows of =F= have mixed value types across metarecords, a fixed type
   precedence orders the groups: bool < int/float (compared together
-  numerically) < string < datetime < ref/refbase/externalref (by UUID bytes)
+  numerically) < string < datetime (its own group, compared numerically by its
+  Unix-ms =value_int=) < ref/refbase/externalref (by UUID bytes)
   < tree_ref (by =value_name=). Values are compared within their group using
   their natural order.
 

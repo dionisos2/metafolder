@@ -204,7 +204,10 @@ mod tests {
             Query::Neq { field: "a".into(), value: Value::Float(1.5) },
             Query::Lt { field: "a".into(), value: Value::Int(1) },
             Query::Lte { field: "a".into(), value: Value::Int(2) },
-            Query::Gt { field: "a".into(), value: Value::DateTime("2024-01-01T00:00:00Z".into()) },
+            Query::Gt {
+                field: "a".into(),
+                value: Value::DateTime(crate::date::iso_to_ms("2024-01-01T00:00:00Z").unwrap()),
+            },
             Query::Gte { field: "a".into(), value: Value::String("x".into()) },
         ];
         for q in cases {

@@ -48,12 +48,23 @@ pub fn ms_to_civil(ms: i64) -> (i64, u32, u32, u64, u64, u64) {
     (y, mo, d, rem / 3600, (rem % 3600) / 60, rem % 60)
 }
 
+/// Formats Unix milliseconds as an ISO-8601 UTC datetime
+/// (`YYYY-MM-DDTHH:MM:SSZ`). Negative inputs (pre-epoch) clamp to the epoch.
+/// Sub-second precision is dropped (the format has no fractional part).
+pub fn iso8601_from_ms(ms: i64) -> String {
+    let (y, mo, d, h, mi, s) = ms_to_civil(ms);
+    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+}
+
 /// Formats a [`SystemTime`] as an ISO-8601 UTC datetime
 /// (`YYYY-MM-DDTHH:MM:SSZ`). Times before the Unix epoch clamp to the epoch.
 pub fn iso8601(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
-    let (y, mo, d, h, mi, s) = ms_to_civil((secs as i64) * 1000);
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z")
+    iso8601_from_ms(ms_from_systemtime(t))
+}
+
+/// A [`SystemTime`] as Unix milliseconds. Times before the epoch clamp to 0.
+pub fn ms_from_systemtime(t: SystemTime) -> i64 {
+    t.duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as i64
 }
 
 /// Minimal ISO-8601 → Unix ms (UTC). Accepts `T` or a space as the
@@ -149,6 +160,36 @@ mod tests {
         let t = UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let s = iso8601(t);
         assert_eq!(iso_to_ms(&s), Some(1_700_000_000_000));
+    }
+
+    #[test]
+    fn iso8601_from_ms_matches_iso8601() {
+        // 2024-02-29T12:34:56Z == 1_709_210_096 s.
+        assert_eq!(iso8601_from_ms(1_709_210_096_000), "2024-02-29T12:34:56Z");
+    }
+
+    #[test]
+    fn iso8601_from_ms_clamps_pre_epoch() {
+        assert_eq!(iso8601_from_ms(-10_000), "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn iso8601_from_ms_and_iso_to_ms_round_trip() {
+        // iso_to_ms only carries second precision, so use a whole-second instant.
+        let ms = 1_700_000_000_000;
+        assert_eq!(iso_to_ms(&iso8601_from_ms(ms)), Some(ms));
+    }
+
+    #[test]
+    fn ms_from_systemtime_reads_milliseconds() {
+        let t = UNIX_EPOCH + std::time::Duration::from_millis(1_709_210_096_123);
+        assert_eq!(ms_from_systemtime(t), 1_709_210_096_123);
+    }
+
+    #[test]
+    fn ms_from_systemtime_clamps_pre_epoch() {
+        let t = UNIX_EPOCH - std::time::Duration::from_secs(10);
+        assert_eq!(ms_from_systemtime(t), 0);
     }
 
     #[test]

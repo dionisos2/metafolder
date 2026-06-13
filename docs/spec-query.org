@@ -418,11 +418,15 @@ expansion errors carry the position in the simplified input.
 ** Dates                                                                  :v2:
 
 Relative or absolute date filters (e.g. "modified in the last 10 minutes")
-require a real datetime literal in the normal DSL first: =mfr_mtime=/=mfr_btime=
-are stored as =datetime= text, and the DSL has no datetime literal, so a string
-comparison (=mfr_mtime > "..."=) is typed =string= and matches no =datetime=
-row. Until that lands (its own work item — datetime should stop being a plain
-string), the default grammar ships **no** date rules. Numeric unit conversion
+require a real datetime literal in the normal DSL first. The prerequisite —
+datetime stored as a number rather than a plain string — is *done*:
+=mfr_mtime=/=mfr_btime= are now stored as Unix milliseconds (=datetime= ⇒
+=value_int=) and compared numerically (see [[file:spec-data-model.org][spec-data-model.org]]). A datetime
+comparison is already expressible through the typed query IR (=Gt= with a
+=datetime= value) and the CLI (=mf … field:datetime==…). What remains for this
+v2 item is the **DSL datetime literal** (so =mfr_mtime > "..."= parses as a
+=datetime= rather than a =string=) and the relative-date grammar rules; until
+those land the default grammar ships **no** date rules. Numeric unit conversion
 (sizes, durations as integers) is unaffected and available in v1.
 
 ** HTTP API

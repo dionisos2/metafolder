@@ -92,9 +92,9 @@ fn test_stat_fields_for_a_file() {
     assert_eq!(get("mfr_type"), Value::String("file".into()));
     assert_eq!(get("mfr_size"), Value::Int(10));
     match get("mfr_mtime") {
-        Value::DateTime(s) => {
-            assert!(s.ends_with('Z') && s.contains('T'), "ISO-8601 expected: {s}");
-            assert!(s.starts_with("20"), "plausible year expected: {s}");
+        // Unix ms; expect a plausible recent instant (after the year 2000).
+        Value::DateTime(ms) => {
+            assert!(ms > 946_684_800_000, "plausible recent ms expected: {ms}");
         }
         other => panic!("mfr_mtime must be a DateTime, got {other:?}"),
     }
@@ -128,8 +128,8 @@ fn test_btime_present_when_platform_supports_it() {
     let btime = fields.iter().find(|f| f.name == "mfr_btime");
     match (supported, btime) {
         (true, Some(f)) => match &f.value {
-            Value::DateTime(s) => {
-                assert!(s.ends_with('Z') && s.contains('T'), "ISO-8601 expected: {s}");
+            Value::DateTime(ms) => {
+                assert!(*ms > 946_684_800_000, "plausible recent ms expected: {ms}");
             }
             other => panic!("mfr_btime must be a DateTime, got {other:?}"),
         },
