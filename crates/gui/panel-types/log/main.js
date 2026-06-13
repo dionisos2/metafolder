@@ -17,6 +17,7 @@ const table = document.querySelector('table');
 const placeholderElement = document.getElementById('placeholder');
 const rollbackButton = document.getElementById('rollback');
 const pruneButton = document.getElementById('prune');
+const checkpointButton = document.getElementById('checkpoint');
 
 async function refresh() {
   if (!repo) {
@@ -106,6 +107,7 @@ function render() {
   table.hidden = revisions.length === 0;
   rollbackButton.disabled = selectedRev === null;
   pruneButton.disabled = selectedRev === null;
+  checkpointButton.disabled = selectedRev === null;
 
   rows.replaceChildren(
     ...revisions.flatMap((rev) =>
@@ -160,6 +162,29 @@ async function prune() {
   }
 }
 
+// Sets or clears a revision's label, turning it into a named checkpoint
+// (spec-gui "Revision commands": PATCH .../log/revisions/:rev_id).
+async function markCheckpoint() {
+  if (selectedRev === null) return;
+  const current = revisions.find((rev) => rev.id === selectedRev);
+  const label = prompt(`Checkpoint label for revision #${selectedRev} (empty to clear):`, current?.label ?? '');
+  if (label === null) return; // cancelled
+  try {
+    await daemon.call('PATCH', `/repos/${repo}/log/revisions/${selectedRev}`, {
+      label: label === '' ? null : label,
+    });
+    statusBar.message(
+      label === ''
+        ? `Cleared the label on revision #${selectedRev}.`
+        : `Marked revision #${selectedRev} as "${label}".`,
+      5000,
+    );
+    await refresh();
+  } catch (error) {
+    await statusBar.error(error);
+  }
+}
+
 document.getElementById('refresh').addEventListener('click', refresh);
 // Shell builtins (they work on the active repo, no selection needed);
 // the refresh comes back through metarecords:dirty.
@@ -167,6 +192,7 @@ document.getElementById('undo').addEventListener('click', () => void commands.in
 document.getElementById('redo').addEventListener('click', () => void commands.invoke('log:redo'));
 rollbackButton.addEventListener('click', rollback);
 pruneButton.addEventListener('click', prune);
+checkpointButton.addEventListener('click', markCheckpoint);
 
 await metafolder.ready;
 commands.register('log:rollback', {
@@ -178,6 +204,11 @@ commands.register('log:prune', {
   label: 'Log: prune history before the selected revision',
   reveal: true,
   handler: prune,
+});
+commands.register('log:mark-checkpoint', {
+  label: 'Log: set or clear the selected revision label',
+  reveal: true,
+  handler: markCheckpoint,
 });
 commands.register('log:refresh', {
   label: 'Log: refresh from the daemon',

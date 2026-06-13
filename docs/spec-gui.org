@@ -979,7 +979,7 @@ the revision to show its individual operations (and collapses it again).
   a rollback created several branches). At a tip there is nothing to
   redo. No confirmation prompt: the operation is itself undoable, that is
   the point. Refreshes the panels through =metarecords:dirty=.
-- =log:mark-checkpoint= [v2] → =PATCH .../log/revisions/:rev_id=.
+- =log:mark-checkpoint= → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log
 
