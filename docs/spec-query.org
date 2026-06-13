@@ -444,9 +444,14 @@ unit words above and their abbreviations, with or without a space (=30min=, =3d=
 ** Validation
 
 At load the grammar is checked: every referenced production exists, the start
-production =query= is present, and **left recursion is rejected** (=or = or ...=
-would loop forever) with an error naming the offending production. Grammar and
-expansion errors carry the position in the simplified input.
+production =query= is present, **left recursion is rejected** (=or = or ...=
+would loop forever) with an error naming the offending production, and every
+string literal must tokenize to **exactly one token** under the fixed lexer.
+A literal matches one input token by text, so one that lexes to several tokens
+(e.g. =\"/fav\"= → =/= , =fav=) or to none (whitespace-only) could never match;
+it is rejected with an error naming the pieces and suggesting the split form
+(=\"/\" \"fav\"=). Grammar and expansion errors carry the position in the
+simplified input.
 
 ** Dates
 

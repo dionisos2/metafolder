@@ -219,7 +219,8 @@ fn check_refs_expr(prod: &str, expr: &Expr, names: &HashSet<&str>) -> Result<(),
         Expr::Rule(n) if !names.contains(n.as_str()) => {
             Err(format!("production '{prod}' references unknown rule '{n}'"))
         }
-        Expr::Rule(_) | Expr::Lit(_) | Expr::Class(_) => Ok(()),
+        Expr::Lit(lit) => check_literal(prod, lit),
+        Expr::Rule(_) | Expr::Class(_) => Ok(()),
         Expr::Group(seqs) => {
             for s in seqs {
                 check_refs(prod, s, names)?;
@@ -233,6 +234,29 @@ fn check_refs_expr(prod: &str, expr: &Expr, names: &HashSet<&str>) -> Result<(),
             }
             Ok(())
         }
+    }
+}
+
+/// A grammar literal matches exactly one input token by text, so a literal
+/// that does not itself tokenize to a single token can never match — a silent
+/// footgun (e.g. `"/fav"`, which lexes to `/` and `fav`). Reject it at load
+/// time with a message that names the pieces and points at the fix.
+fn check_literal(prod: &str, lit: &str) -> Result<(), String> {
+    match lex(lit) {
+        Ok(toks) if toks.len() == 1 => Ok(()),
+        Ok(toks) if toks.is_empty() => Err(format!(
+            "production '{prod}': literal \"{lit}\" cannot match — it is empty or whitespace-only"
+        )),
+        Ok(toks) => {
+            let pieces = toks.iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(" , ");
+            Err(format!(
+                "production '{prod}': literal \"{lit}\" cannot match — it tokenizes into {} \
+                 tokens ({pieces}); write it as separate literals (e.g. {})",
+                toks.len(),
+                toks.iter().map(|t| format!("\"{}\"", t.text)).collect::<Vec<_>>().join(" ")
+            ))
+        }
+        Err(e) => Err(format!("production '{prod}': literal \"{lit}\" is not lexable: {e}")),
     }
 }
 
@@ -400,6 +424,28 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
     #[test]
     fn validate_rejects_unknown_rule() {
         assert!(validate(&parse_grammar("query = x:foo => $x").unwrap()).is_err());
+    }
+
+    #[test]
+    fn validate_rejects_multi_token_literal() {
+        // "/fav" lexes into two tokens (/ , fav), so it could never match a
+        // single token — a silent footgun, caught at load time.
+        let g = parse_grammar("query = \"/fav\" => rating >= 4").unwrap();
+        let err = validate(&g).unwrap_err();
+        assert!(err.contains("/fav") && err.contains("token"), "unhelpful error: {err}");
+    }
+
+    #[test]
+    fn validate_accepts_split_literals() {
+        // The two-token form is the correct way to match `/fav`.
+        let g = parse_grammar("query = \"/\" \"fav\" => rating >= 4").unwrap();
+        assert!(validate(&g).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_whitespace_only_literal() {
+        let g = parse_grammar("query = \" \" => x").unwrap();
+        assert!(validate(&g).is_err());
     }
 
     #[test]
