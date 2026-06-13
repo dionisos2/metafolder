@@ -462,7 +462,7 @@ pub fn coordinated_step(
     };
     let tx = conn.transaction()?;
     if skip {
-        enqueue_restoration(&tx, &op)?;
+        enqueue_restoration(&tx, &op, dir)?;
     }
     let new_head = match dir {
         NavDir::Inverse => {
@@ -481,15 +481,28 @@ pub fn coordinated_step(
 
 /// Enqueues the restoration operation for a skipped file op: a synthetic
 /// metadata write replayed after the lock is released, correcting the metadata
-/// to match the actual filesystem (spec-event-log "skip"). Path values are
-/// derived from the operation's `is_new=1` snapshot — no filesystem check.
-fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
+/// to match the actual filesystem (spec-event-log "skip"). No filesystem check.
+///
+/// For `file_moved` the restoration *rewinds* `mfr_path` to the location the
+/// file is recorded at **before this step** — i.e. the snapshot that is *not*
+/// the one the step just applied. On an inverse step the step applied the
+/// pre-move location (`is_new=0`), so we rewind to `is_new=1`; on a forward
+/// (redo) step it applied the post-move location (`is_new=1`), so we rewind to
+/// `is_new=0`. Taking the wrong side leaves the metadata where the (skipped,
+/// hence not performed) move would have put it. See `docs/review-followups.md`
+/// (#6).
+fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow, dir: NavDir) -> Result<()> {
     let entity = op.entity_uuid.as_simple().to_string();
     match op.op_type.as_str() {
-        // The file is still at its post-move location: re-record it there.
+        // Rewind to the file's recorded location before this step (the side the
+        // step did *not* apply): is_new=1 for an inverse, is_new=0 for a redo.
         "file_moved" => {
-            let after = snapshots(tx, op.id, 1)?;
-            let Some(row) = after.iter().find(|r| r.name == "mfr_path") else {
+            let recorded_is_new = match dir {
+                NavDir::Inverse => 1,
+                NavDir::Forward => 0,
+            };
+            let rows = snapshots(tx, op.id, recorded_is_new)?;
+            let Some(row) = rows.iter().find(|r| r.name == "mfr_path") else {
                 return Ok(());
             };
             if let Value::TreeRef { parent, name } = &row.value {

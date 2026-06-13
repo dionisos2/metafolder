@@ -189,11 +189,20 @@ fn decide_move(op: &Json, policies: &RollbackPolicies, silent: bool) -> Result<b
         policy = ask_move(from, to, available)?;
     }
     match policy {
+        // Apply: the metadata follows the navigation to `to` (via `step {}`).
+        // Move the file there when it is present; when it is gone there is
+        // nothing to move — the metadata still follows the rollback, keeping
+        // the recorded path rather than rewinding to a location the file is
+        // not at (spec-event-log "Policies for move_file"; review #6).
         Policy::Apply => {
-            std::fs::rename(from, to)
-                .map_err(|e| CliError::Op(format!("mv {from} -> {to} failed: {e}")))?;
-            if !silent {
-                eprintln!("moved {from} -> {to}");
+            if available {
+                std::fs::rename(from, to)
+                    .map_err(|e| CliError::Op(format!("mv {from} -> {to} failed: {e}")))?;
+                if !silent {
+                    eprintln!("moved {from} -> {to}");
+                }
+            } else if !silent {
+                eprintln!("kept rolled-back path for {to} (source {from} is gone)");
             }
             Ok(false)
         }
@@ -580,4 +589,58 @@ fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) as i64 + 2) / 5 + d as i64 - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     era * 146_097 + doe - 719_468
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn move_op(from: &str, to: &str) -> Json {
+        json!({"op_type": "move_file", "from": from, "to": to})
+    }
+
+    fn policies(on_available: Policy, on_unavailable: Policy) -> RollbackPolicies {
+        RollbackPolicies { on_available, on_unavailable }
+    }
+
+    // `apply` on a gone file: no `mv` is attempted (nothing to move) and the
+    // step is a plain `step {}` — the metadata follows the rollback instead of
+    // erroring or rewinding to a location the file is not at (review #6).
+    #[test]
+    fn apply_on_a_gone_file_keeps_the_rolled_back_path_without_moving() {
+        let tmp = std::env::temp_dir().join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
+        let from = tmp.join("gone.txt");
+        let to = tmp.join("target.txt");
+        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
+
+        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), true).unwrap();
+        assert!(!skip, "apply must produce a plain step {{}} (no skip)");
+        assert!(!to.exists(), "no file should have been created at the target");
+    }
+
+    // `skip` is available for a gone file too ("on ne sait jamais"): it yields
+    // a `step {skip:true}` (rewind), never touching the filesystem.
+    #[test]
+    fn skip_is_available_for_a_gone_file() {
+        let from = std::env::temp_dir().join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
+        let op = move_op(from.to_str().unwrap(), "/whatever");
+        let skip = decide_move(&op, &policies(Policy::Skip, Policy::Skip), true).unwrap();
+        assert!(skip, "skip must request the rewind even when the file is gone");
+    }
+
+    // `apply` on a present file performs the `mv` and produces `step {}`.
+    #[test]
+    fn apply_on_a_present_file_moves_it() {
+        let tmp = std::env::temp_dir().join(format!("mf_present_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let from = tmp.join("here.txt");
+        let to = tmp.join("moved.txt");
+        std::fs::write(&from, b"x").unwrap();
+        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
+
+        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), true).unwrap();
+        assert!(!skip);
+        assert!(!from.exists() && to.exists(), "the file should have been moved");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

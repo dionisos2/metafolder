@@ -310,14 +310,20 @@ Three op types require attention at rollback time:
   is gone). The CLI calls =step= with =skip: true= when it does not want
   the metadata left in a stale state.
 
-When =skip: true= is used, the daemon *still applies the metadata inverse*
-(maintaining the HEAD↔data invariant). It additionally enqueues a
-/restoration operation/ in the watcher buffer — a synthetic write that is
-replayed as a new branch after navigation completes, correcting the metadata
-to match the actual filesystem state:
+When =skip: true= is used, the daemon *still applies the step's metadata change*
+(the inverse on a rollback step, the forward action on a redo step — maintaining
+the HEAD↔data invariant). It additionally enqueues a /restoration operation/ in
+the watcher buffer — a synthetic write that is replayed as a new branch after
+navigation completes, correcting the metadata to match the actual filesystem
+state:
 
-- =file_moved= skip: restoration sets =mfr_path= back to the file's current
-  location (derived from the =is_new=1= snapshot rows — no filesystem check needed).
+- =file_moved= skip: restoration *rewinds* =mfr_path= to the location the file
+  is recorded at *before this step* — the snapshot the step did not just apply.
+  On a rollback (inverse) step that is the =is_new=1= snapshot (post-move); on a
+  redo (forward) step it is the =is_new=0= snapshot (pre-move). No filesystem
+  check is needed. Skip is meant for a file that is still present but could not
+  be moved, so the rewind keeps the metadata truthful; when the file is *gone*,
+  the CLI uses =step {}= instead (see [[*Policies for move_file]]).
 - =file_deleted= skip: restoration sets =mfr_path= to =Nothing= (re-metarecords
   the deletion since the file is still absent).
 - =file_modified= skip: restoration clears =mfr_partial_hash= and
@@ -835,15 +841,23 @@ Target forms:
 
 *** Policies for =move_file=
 
+All four policies are available in both situations (some combinations are
+unusual but never forbidden):
+
 | Situation           | Default  | Available                     |
 |---------------------+----------+-------------------------------|
 | File available      | =apply=  | =apply=, =skip=, =abort=, =ask= |
 | File unavailable    | =ask=    | =apply=, =skip=, =abort=, =ask= |
 
-- =apply=: execute =mv from to=, then call =step {}=
-- =skip=: call =step {"skip": true}= without moving the file (metadata
-  restored; restoration op re-records the file's actual location on the new
-  branch)
+- =apply=: the metadata follows the navigation (call =step {}=). When the file
+  is present, =mv from to= is executed first; when it is *gone*, no =mv= is
+  attempted — the metadata still follows the rollback, keeping the recorded
+  path rather than =Nothing= (a later reconcile corrects it).
+- =skip=: call =step {"skip": true}= without touching the filesystem — the
+  metadata is rewound to the file's current recorded location (restoration op,
+  see above). Intended for a file that is present but could not be moved; it is
+  still selectable for a gone file (the rewind then points at a missing
+  location, the caller's choice).
 - =abort=: call =POST /rollback/abort= and exit with a non-zero status
 - =ask=: prompt the user to choose between =apply=, =skip=, and =abort=
 

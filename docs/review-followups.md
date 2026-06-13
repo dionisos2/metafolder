@@ -31,30 +31,26 @@ une transaction atomique, donc un panic en cours de write est déjà *rollback*
 par le `Drop` de `Transaction` de rusqlite (mode `unwind`, vérifié : pas de
 `panic = "abort"`).
 
-## 6. `enqueue_restoration` appelée aussi en direction `Forward`
+## 6. `enqueue_restoration` ignorait la direction — ✅ RÉSOLU
 
-**Constat.** Dans `crates/daemon/src/log.rs`, `coordinated_step()` appelle
-`enqueue_restoration(&tx, &op)` dès que `skip == true`, **quelle que soit la
-direction** (`NavDir::Inverse` *ou* `NavDir::Forward`).
+**Constat (historique).** `coordinated_step()` dérivait toujours la restauration
+d'un `file_moved` skippé du snapshot `is_new=1`, **quelle que soit la
+direction**. Correct pour un pas *inverse* (rollback), mais en pas *forward*
+(redo) cela laissait `mfr_path` sur la destination du move (que le `skip`, donc
+le `mv` non exécuté, n'a justement pas atteint) → métadonnée incohérente.
 
-La sémantique « skip » de spec-event-log ("skip") est définie pour le **rollback**
-(direction inverse) : ne pas défaire l'état du système de fichiers, et donc
-ré-enregistrer après coup la métadonnée correspondant à l'état réel du disque.
-En direction *forward* (redo vers un descendant), enfiler une opération de
-restauration dérivée du snapshot `is_new = 1` n'a pas de sens établi par la spec
-et pourrait produire une métadonnée incohérente.
+**Correction appliquée.** `enqueue_restoration` prend désormais `dir` et rewind
+vers l'emplacement enregistré *avant le pas* — le snapshot que le pas n'a pas
+appliqué : `is_new=1` en inverse, `is_new=0` en forward. Tests :
+`crates/daemon/tests/coordinated_skip.rs` (forward → pré-move, inverse →
+post-move).
 
-**Où.** `crates/daemon/src/log.rs`, fonction `coordinated_step` (appel
-`if skip { enqueue_restoration(&tx, &op)?; }` avant le `match dir { ... }`).
-
-**Pistes.**
-- Restreindre l'enfilage au cas inverse :
-  `if skip && dir == NavDir::Inverse { enqueue_restoration(&tx, &op)?; }`.
-- Ou bien définir explicitement la sémantique de `skip` en redo dans
-  spec-event-log si on veut la conserver.
-- Ajouter un test (TDD) : rollback coordonné qui traverse une LCA (donc une
-  phase forward) avec `skip = true`, et vérifier qu'aucune opération de
-  restauration parasite n'est rejouée pour les pas forward.
-
-**Décision attendue.** Confirmer que `skip` ne concerne que la direction inverse
-(quasi certain), puis ajouter la garde + le test.
+**Sémantique « skip » clarifiée (présent vs disparu).** Suite à la relecture de
+la spec, le rewind n'a de sens que pour un fichier **présent mais non
+déplaçable** (il garde la métadonnée vraie). Pour un fichier **disparu**, le CLI
+utilise désormais `step {}` (politique `apply`) : la métadonnée suit le rollback
+et conserve le chemin post-rollback, plutôt qu'un rewind vers un emplacement
+vide ou un `Nothing`. Les quatre politiques (`apply|skip|abort|ask`) restent
+disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
+(`decide_move` ne tente le `mv` que si le fichier est présent), spec mise à jour
+(`spec-event-log.org` : section « skip » + « Policies for move_file »).
