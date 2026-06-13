@@ -579,6 +579,9 @@ const response = await metafolder.daemon.request('GET', '/repos')
 const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`)
 // Compiles a query DSL string to the Query JSON IR (throws on parse error).
 const ir = await metafolder.daemon.parseQuery('rating > 3')
+// Expands simplified-language text to normal DSL text via POST /query/expand
+// (throws Error(body.error) on a grammar/expansion error).
+const dsl = await metafolder.daemon.expandQuery('genre:jazz rating>=4')
 // Lazy memoized mfr_path resolution (see "Path display").
 await metafolder.daemon.resolvePath(repo, uuid)
 await metafolder.daemon.resolveTreeRef(repo, { parent, name })
@@ -729,18 +732,18 @@ The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 *** =metarecord-list= panel type
 
 Displays metarecords for the active repo (=active_repo= workspace variable)
-filtered by an embedded query. The query editor is always visible at the
-top of the panel; the =metarecord-list:edit-query= command focuses its input.
-It uses the same DSL as the CLI. An empty query matches all metarecords.
+filtered by an embedded query written in the two-zone query editor at the top
+of the panel (see [[*Query editor (two zones)]]). An empty query matches all
+metarecords.
 
 Default display mode: =table= with columns =mfr_path~= (resolved path),
 =mfr_type=, =&version=. The =metarecord-list:set-mode= command switches between
 display modes.
 
-The query editor stacks two rows, each with its own /Apply/ button: the
-query input (a new daemon round-trip) above the columns input
-(=metarecord-list:edit-columns= focuses it). The panel always queries with
-=select: '*'=, so applying new columns is a pure re-render — no request.
+The columns input is a separate row below the query editor, with its own
+/Apply/ button (=metarecord-list:edit-columns= focuses it). The panel always
+queries with =select: '*'=, so applying new columns is a pure re-render — no
+request.
 
 Each column is one token of the columns input (space- or comma-separated;
 an empty input restores the defaults; invalid tokens are reported under
@@ -775,6 +778,41 @@ to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the li
 of resolved absolute paths from all =mfr_path= field rows of that metarecord
 (empty list if the metarecord has no valid =mfr_path=). Other panels update
 reactively (see [[*Cross-panel selection]]).
+
+**** Query editor (two zones)
+
+The query is written in the [[file:spec-query.org][simplified query language]]
+and transpiled to the normal DSL before execution. The editor exposes both
+forms, so the user can write quickly *and* drop to the full DSL when a query is
+too specific for the simplified surface — and learn the mapping by watching it.
+
+- *Zone A (simplified)* is always visible and has its own /Apply/ button;
+  =metarecord-list:edit-query= focuses it. An empty zone A matches all.
+- A toggle reveals *zone B (normal DSL)* below A. While B is shown and **not
+  frozen**, it is a read-only live mirror of =expand(A)= (debounced ~120–150 ms,
+  via =metafolder.daemon.expandQuery=). A *Freeze* checkbox next to B decouples
+  it: B becomes editable and authoritative, and editing A no longer changes it.
+  Unfreezing re-syncs B from =expand(A)= — manual edits to B are then discarded
+  (accepted).
+
+Execution always runs the content of B; when B is hidden, B is computed as
+=expand(A)= on Apply. The resulting DSL text is compiled with
+=metafolder.daemon.parseQuery= and the query is issued (with =select: '*'=, as
+above).
+
+Errors appear under the zone that produced them: a grammar/expansion error under
+A, a =parse_query= error under B (where the offending DSL text is visible when B
+is shown).
+
+The editor state persists in workspace variables, so it survives the panel and
+can be set by scripts:
+
+| Variable                        | Meaning                                                                    |
+|---------------------------------+----------------------------------------------------------------------------|
+| =metarecord-list:query=         | zone A text (simplified)                                                   |
+| =metarecord-list:normal-shown=  | whether zone B is revealed                                                 |
+| =metarecord-list:normal-frozen= | whether zone B is frozen (decoupled, authoritative)                        |
+| =metarecord-list:normal-query=  | zone B text — authoritative while frozen, otherwise a cache of =expand(A)= |
 
 *** =metarecord-detail= panel type
 

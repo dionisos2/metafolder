@@ -40,6 +40,20 @@
       .editor-error:empty {
         display: none;
       }
+      .editor-row input[readonly] {
+        opacity: 0.55;
+      }
+      #normal-toggle {
+        align-self: flex-start;
+        font-size: 11px;
+      }
+      .freeze-label {
+        display: flex;
+        align-items: center;
+        gap: 3px;
+        white-space: nowrap;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       #scroll {
         flex: 1;
         overflow-y: auto;
@@ -153,10 +167,20 @@
   <body>
     <div id="query-editor">
       <div class="editor-row">
-        <input id="query-input" placeholder='query DSL, e.g. rating > 3 AND genre = "jazz" (empty = all)' />
+        <input id="query-input" placeholder='simplified query, e.g. fav genre:jazz (empty = all)' />
         <button id="query-apply">Apply</button>
       </div>
       <div id="query-error" class="editor-error"></div>
+      <button id="normal-toggle" type="button">Show normal DSL</button>
+      <div id="normal-editor" hidden>
+        <div class="editor-row">
+          <input id="normal-input" readonly placeholder="normal DSL" />
+          <label class="freeze-label" title="Freeze to edit the normal DSL by hand; it then drives the query. Unfreeze to mirror the simplified query again.">
+            <input id="normal-freeze" type="checkbox" /> Freeze
+          </label>
+        </div>
+        <div id="normal-error" class="editor-error"></div>
+      </div>
       <div class="editor-row">
         <input
           id="columns-input"

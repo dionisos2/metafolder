@@ -23,8 +23,11 @@ fn daemon_url() -> &'static str {
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
             rt.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                let state = std::sync::Arc::new(metafolder_daemon::state::AppState::new());
-                let app = metafolder_daemon::routes::build(state);
+                let mut app_state = metafolder_daemon::state::AppState::new();
+                app_state.set_simplified_grammar(Some(
+                    metafolder_daemon::simplified::default_grammar(),
+                ));
+                let app = metafolder_daemon::routes::build(std::sync::Arc::new(app_state));
                 axum::serve(listener, app).await.unwrap();
             });
         });
@@ -408,6 +411,17 @@ fn test_query_prints_matching_uuids() {
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
     let out = mf(&["--repo", &repo, "query", "rating > 3"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), high);
+}
+
+#[test]
+fn test_query_simplified_expands_before_running() {
+    let (repo, _) = init_repo("query_simplified");
+    let high = create_metarecord(&repo, &["rating:int=5"]);
+    let _low = create_metarecord(&repo, &["rating:int=1"]);
+    // `rating:5` expands to `rating = 5` via the daemon grammar.
+    let out = mf(&["--repo", &repo, "query", "-s", "rating:5"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
 }

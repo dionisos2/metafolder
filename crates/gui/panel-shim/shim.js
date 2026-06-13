@@ -260,6 +260,22 @@ window.metafolder = {
     },
     /** Compiles a query DSL string to the Query JSON IR. */
     parseQuery: (dsl) => request('daemon.parseQuery', { dsl }),
+    /**
+     * Expands simplified-language text to normal DSL text via the daemon's
+     * `POST /query/expand` (the grammar lives in the daemon). Throws
+     * Error(body.error) on a grammar/expansion error.
+     */
+    expandQuery: async (simplified) => {
+      const response = await request('daemon.request', {
+        method: 'POST',
+        path: '/query/expand',
+        body: { simplified },
+      });
+      if (response.status >= 400) {
+        throw new Error(response.body?.error ?? `expand: HTTP ${response.status}`);
+      }
+      return response.body.dsl;
+    },
     /** Repo-root-relative path of an entry (lazy walk, memoized). */
     resolvePath: (repo, uuid) => resolverFor(repo).resolveUuid(uuid),
     /** Same, for a raw tree_ref value {parent, name}. */

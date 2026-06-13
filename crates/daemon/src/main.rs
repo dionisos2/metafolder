@@ -36,7 +36,10 @@ async fn main() {
         None => Default::default(),
     };
 
-    let state = Arc::new(AppState::new());
+    let grammar = metafolder_daemon::simplified::init();
+    let mut state = AppState::new();
+    state.set_simplified_grammar(grammar);
+    let state = Arc::new(state);
 
     let startup_state = state.clone();
     let warnings = tokio::task::spawn_blocking(move || {

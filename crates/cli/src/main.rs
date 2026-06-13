@@ -121,6 +121,9 @@ enum Command {
         /// Print the selected field's raw values, one per line
         #[arg(long, requires = "select")]
         values: bool,
+        /// Treat <predicate> as simplified-language text and expand it first
+        #[arg(short = 's', long)]
+        simplified: bool,
     },
     /// Reconcile the database with the filesystem
     Reconcile {
@@ -384,8 +387,8 @@ fn main() {
             commands::unset(&ctx, &uuid, field_id, force)
         }
         Command::Delete { target, force } => commands::delete(&ctx, &target, force),
-        Command::Query { predicate, select, sort, limit, values } => {
-            commands::query(&ctx, &QueryArgs { predicate, select, sort, limit, values })
+        Command::Query { predicate, select, sort, limit, values, simplified } => {
+            commands::query(&ctx, &QueryArgs { predicate, select, sort, limit, values, simplified })
         }
         Command::Reconcile { metarecord, threshold, no_mime, no_refresh, json } => {
             commands::reconcile(&ctx, metarecord.as_deref(), threshold, !no_mime, !no_refresh, json)

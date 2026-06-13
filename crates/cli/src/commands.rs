@@ -293,6 +293,9 @@ pub struct QueryArgs {
     /// Print the selected field's raw values, one per line, instead of
     /// metarecord JSON (requires `--select` with exactly one field).
     pub values: bool,
+    /// Treat `predicate` as simplified-language text and expand it to the
+    /// normal DSL first (via the daemon's `POST /query/expand`).
+    pub simplified: bool,
 }
 
 /// `--values` line format: scalars are printed bare, references as the
@@ -311,7 +314,16 @@ fn raw_value_line(value: &Json) -> Option<String> {
 
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let query = parse_dsl(&args.predicate)?;
+    let predicate = if args.simplified {
+        let resp = ctx.client.post("/query/expand", &json!({"simplified": args.predicate}))?;
+        resp["dsl"]
+            .as_str()
+            .ok_or_else(|| CliError::Op("daemon returned no 'dsl' for the simplified query".into()))?
+            .to_string()
+    } else {
+        args.predicate.clone()
+    };
+    let query = parse_dsl(&predicate)?;
     let sort = parse_sort(&args.sort)?;
     if args.values {
         let single = args

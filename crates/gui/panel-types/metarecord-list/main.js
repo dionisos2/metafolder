@@ -30,6 +30,10 @@ let total = null; // full result count (daemon-side COUNT, first page only)
 let pageSize = DEFAULT_PAGE_SIZE; // persisted per workspace
 let loading = false;
 let queryIR = null; // null = match all
+let normalShown = false; // zone B (normal DSL) revealed?
+let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
+let queryInitialized = false; // first query compiled on first display
+let livePreviewTimer = null;
 let sort = []; // [{field, order}]
 let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
@@ -45,6 +49,11 @@ const queryInput = document.getElementById('query-input');
 const columnsInput = document.getElementById('columns-input');
 const queryError = document.getElementById('query-error');
 const columnsError = document.getElementById('columns-error');
+const normalToggle = document.getElementById('normal-toggle');
+const normalEditor = document.getElementById('normal-editor');
+const normalInput = document.getElementById('normal-input');
+const normalError = document.getElementById('normal-error');
+const normalFreeze = document.getElementById('normal-freeze');
 
 // ── Data access ─────────────────────────────────────────────────────────
 
@@ -287,22 +296,98 @@ async function openSelected() {
   await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
 }
 
-// ── Query and sort ──────────────────────────────────────────────────────
+// ── Query (two-zone editor) ─────────────────────────────────────────────
+//
+// Zone A (#query-input) holds the simplified query; zone B (#normal-input)
+// the normal DSL. When B is shown and not frozen it is a read-only live mirror
+// of expand(A); the Freeze checkbox decouples it so it becomes editable and
+// authoritative. The query that runs is always B's content (computed as
+// expand(A) when B is hidden). See spec-gui "Query editor (two zones)".
 
-async function applyQuery() {
+/** Recomputes `queryIR` from the current editor state (no fetch). Returns true
+ *  on success; on error fills the relevant slot and leaves `queryIR` as-is. */
+async function recomputeQuery() {
   queryError.textContent = '';
-  const dsl = queryInput.value.trim();
+  normalError.textContent = '';
+  let dsl;
+  if (normalShown && normalFrozen) {
+    dsl = normalInput.value.trim(); // frozen normal DSL is authoritative
+  } else {
+    const simplified = queryInput.value.trim();
+    if (simplified === '') {
+      dsl = '';
+    } else {
+      try {
+        dsl = (await daemon.expandQuery(simplified)).trim();
+      } catch (error) {
+        queryError.textContent = String(error.message ?? error);
+        return false;
+      }
+    }
+    if (normalShown) normalInput.value = dsl; // reflect in B
+  }
   if (dsl === '') {
-    queryIR = null;
+    queryIR = null; // empty = match all
   } else {
     try {
       queryIR = await daemon.parseQuery(dsl);
     } catch (error) {
-      queryError.textContent = String(error.message ?? error);
-      return;
+      // The offending DSL is visible in B when shown; otherwise show under A.
+      (normalShown ? normalError : queryError).textContent = String(error.message ?? error);
+      return false;
     }
   }
-  await fetchPage(true);
+  return true;
+}
+
+async function applyQuery() {
+  const ok = await recomputeQuery();
+  await persistQueryState();
+  if (ok) await fetchPage(true);
+}
+
+async function persistQueryState() {
+  await workspace.set('metarecord-list:query', queryInput.value);
+  await workspace.set('metarecord-list:normal-query', normalInput.value);
+}
+
+/** Debounced live mirror of expand(A) into B (preview only — does not run). */
+function scheduleLivePreview() {
+  if (!normalShown || normalFrozen) return;
+  clearTimeout(livePreviewTimer);
+  livePreviewTimer = setTimeout(() => void refreshPreview(), 130);
+}
+
+async function refreshPreview() {
+  if (!normalShown || normalFrozen) return;
+  queryError.textContent = '';
+  const simplified = queryInput.value.trim();
+  if (simplified === '') {
+    normalInput.value = '';
+    return;
+  }
+  try {
+    normalInput.value = (await daemon.expandQuery(simplified)).trim();
+  } catch (error) {
+    queryError.textContent = String(error.message ?? error);
+  }
+}
+
+async function setNormalShown(shown) {
+  normalShown = shown;
+  normalEditor.hidden = !shown;
+  normalToggle.textContent = shown ? 'Hide normal DSL' : 'Show normal DSL';
+  if (shown && !normalFrozen) await refreshPreview();
+  await workspace.set('metarecord-list:normal-shown', shown);
+}
+
+async function setNormalFrozen(frozen) {
+  normalFrozen = frozen;
+  normalFreeze.checked = frozen;
+  normalInput.readOnly = !frozen;
+  // Unfreezing re-syncs B from A (manual edits discarded — accepted).
+  if (!frozen && normalShown) await refreshPreview();
+  await workspace.set('metarecord-list:normal-frozen', frozen);
 }
 
 // ── Columns ─────────────────────────────────────────────────────────────
@@ -363,6 +448,12 @@ document.getElementById('columns-apply').addEventListener('click', () => void ap
 queryInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') void applyQuery();
 });
+queryInput.addEventListener('input', scheduleLivePreview);
+normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
+normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
+normalInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') void applyQuery();
+});
 columnsInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') void applyColumns();
 });
@@ -398,6 +489,10 @@ commands.register('metarecord-list:edit-query', {
   label: 'Metarecord list: focus the query input',
   handler: () => queryInput.focus(),
 });
+commands.register('metarecord-list:toggle-normal', {
+  label: 'Metarecord list: show/hide the normal DSL editor',
+  handler: () => setNormalShown(!normalShown),
+});
 commands.register('metarecord-list:edit-columns', {
   label: 'Metarecord list: focus the columns input',
   handler: () => columnsInput.focus(),
@@ -428,6 +523,12 @@ metafolder.addKeybinding('metarecord-list:edit-query', '/');
 async function start() {
   repo = await workspace.get('active_repo');
   document.getElementById('no-repo').hidden = repo !== null;
+  if (!queryInitialized) {
+    // First display: compile the (possibly restored) query once. Kept off the
+    // construction path so a hidden pre-instantiated panel makes no daemon call.
+    queryInitialized = true;
+    await recomputeQuery();
+  }
   if (repo !== null) await fetchPage(true);
 }
 
@@ -456,4 +557,16 @@ workspace.onChange('metarecord-list:page-size', (value) => {
 setColumns(await workspace.get('metarecord-list:columns'));
 widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
 pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
+
+// Restore the two-zone query editor (values only — no daemon call here; the
+// first expand/parse happens in start() on the first display).
+queryInput.value = (await workspace.get('metarecord-list:query')) ?? '';
+normalInput.value = (await workspace.get('metarecord-list:normal-query')) ?? '';
+normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) ?? false;
+normalFreeze.checked = normalFrozen;
+normalInput.readOnly = !normalFrozen;
+normalShown = (await workspace.get('metarecord-list:normal-shown')) ?? false;
+normalEditor.hidden = !normalShown;
+normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
+
 metafolder.whenVisible(deferredStart);

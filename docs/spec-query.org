@@ -199,6 +199,10 @@ The parser is shared code: it lives in the =core= crate
 (=metafolder_core::dsl::parse_query=) and is used by both the CLI and the
 GUI (the =metarecord-list= query editor, see [[file:spec-gui.org][spec-gui.org]]).
 
+A higher-level, user-configurable surface that transpiles to this DSL — the
+/simplified query language/ — is specified in [[*Simplified query language]]; it
+is the default input of the GUI query editor.
+
 *** Grammar
 
 #+BEGIN_SRC
@@ -256,5 +260,190 @@ and streams the output.
 | =--sort field[:asc\vert{}desc]=  | Sort results; repeatable for secondary keys                          |
 | =--limit N=                | Stop after N results                                                 |
 | =--values=                 | With =--select <one field>=: print the field's raw values, one per line (multi-map: one line per row; =nothing= rows skipped; scalars bare, refs as 32-hex uuids, structured values as compact JSON) |
+| =--simplified= / =-s=      | Treat =<predicate>= as [[*Simplified query language][simplified-language]] text and expand it to the normal DSL first (via =POST /query/expand=) before compiling |
+
+* Simplified query language
+
+The normal DSL ([[*Query DSL]]) is precise but verbose for everyday filtering
+(=genre = "jazz"=, =AND=, =IS PRESENT=…). The /simplified query language/ is an
+ergonomic surface that **transpiles to normal DSL text**, which is then parsed
+by =parse_query= as usual. Its entire syntax is defined by a grammar the user
+can edit — nothing is hard-coded; the shipped conveniences are default grammar
+rules, not built-ins.
+
+** Pipeline
+
+#+BEGIN_SRC
+simplified text → [ lexer → grammar engine ] → normal DSL text → parse_query → Query IR
+#+END_SRC
+
+The grammar engine lives in the =core= crate: a small hand-written
+recursive-descent / PEG-style interpreter with output templates (no external
+parser library — runtime-loadable grammars are rare and the template layer is
+ours regardless). It emits normal DSL *text*; the existing =parse_query= turns
+that text into the =Query= IR. The two stages have distinct error surfaces: a
+/grammar error/ (the simplified input does not parse under the grammar) is
+separate from a /DSL error/ (the produced text is rejected by =parse_query=).
+
+The simplified language is **not** a superset of the normal DSL: a grammar may
+accept neither, either, or a mix. Expansion is therefore **not idempotent** on
+normal-DSL input. Consumers keep the two explicit — the GUI editor shows both
+(see [[file:spec-gui.org][spec-gui.org]], =metarecord-list= panel), and the CLI gates simplified
+input behind =mf query --simplified=.
+
+** Configuration
+
+The grammar is a single file in the daemon config directory,
+=~/.config/metafolder/query-grammar=. It is installed with an editable default
+grammar on first run and never overwritten once edited (same policy as the GUI
+config files); deleting it restores the default on next start. It is **global**
+(not per-repo) and read by the daemon at startup, so the CLI and GUI share one
+grammar. An empty file = no rules = the simplified language accepts nothing. A
+malformed grammar is reported and the simplified language is disabled; the
+normal DSL is unaffected.
+
+** Lexer (fixed)
+
+A fixed tokenizer (not user-configurable) turns the input into a token stream,
+discarding whitespace between tokens:
+
+| Token     | Matches                                                                   |
+|-----------+---------------------------------------------------------------------------|
+| =WORD=    | =[A-Za-z_][A-Za-z0-9_]*=                                                   |
+| =NUMBER=  | integer or float literal                                                  |
+| =STRING=  | a double-quoted literal ='"' … '"'= (with escapes)                        |
+| =SYMBOL=  | a maximal run of punctuation characters (=:=, =~=, =>=, =>==, =..=, =+=, …) |
+| =(= =)=   | grouping, each its own token                                              |
+
+Whitespace is insignificant except as a token separator: =genre:jazz= and
+=genre : jazz= tokenize identically, and so do =100MB= and =100 MB=. Maximal
+munch on =WORD= gives free word boundaries — a literal ="tag"= in the grammar
+never matches the token =tags=.
+
+** Grammar notation
+
+A grammar is a list of named productions; the start production is =query=.
+
+| Form                  | Meaning                                                                       |
+|-----------------------+-------------------------------------------------------------------------------|
+| =name = ...=          | production definition                                                         |
+| =a b=                 | sequence                                                                      |
+| =a \vert{} b=         | ordered choice — first alternative that succeeds wins, no backtracking afterwards |
+| =a*= =a+= =a?=        | repetition: zero+, one+, optional (adjacent)                                  |
+| =a ** s= =a ++ s=     | repetition separated by =s=: zero+, one+                                      |
+| =( ... )=             | grouping                                                                       |
+| ="lit"=               | matches one token whose text equals =lit=                                     |
+| =WORD= =NUMBER= =STRING= | matches a token of that class                                              |
+| =label:item=          | binds =item='s match to =label= (a single value, or the list for a repetition) |
+| =item => template=    | the production's output template                                              |
+
+A production **without** =>= returns the raw source text it matched (so =STRING=
+keeps its quotes and =WORD= stays bare).
+
+** Template language
+
+Right of =>=, a template is literal text with two kinds of holes:
+
+- =$name= — interpolate the capture =name= (its text) verbatim.
+- ={ expr }= — evaluate =expr= and interpolate the result.
+
+The base type is **text**; every capture is text. There is **no implicit
+coercion** — converting text to a number is explicit, which keeps text fidelity
+(e.g. ="007"= stays ="007"=) and leaves room for future text/date functions.
+Inside ={ }=:
+
+| Construct           | Notes                                                                            |
+|---------------------+----------------------------------------------------------------------------------|
+| =$name=             | the capture's text                                                               |
+| =+ - * / %=         | arithmetic — operands must be numbers                                            |
+| =num(x)=            | parse text =x= as a number (error if not numeric)                               |
+| =str(x)=            | render =x= as a DSL string literal — idempotent quoting (quote a bare word, leave an already-quoted string) |
+| =join(sep, list)=   | join a repetition's captured list with =sep=                                     |
+
+Arithmetic is integer unless an operand is a float; the result is reformatted to
+text. Text concatenation needs no ={ }= — adjacent literals and =$captures= in
+the template already concatenate. The v1 set above is intentionally minimal;
+more functions are localized engine additions that do not break existing
+grammars (no migration; pre-v0.2).
+
+** Default grammar
+
+Installed and fully editable. It routes =:= by token class so typed values keep
+their DSL type (=rating:4= → =rating = 4=, not ="4"=; =seen:true= → =seen = true=):
+
+#+BEGIN_SRC
+query = q:or                       => $q
+or    = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
+and   = items:unary +              => {join(" AND ", $items)}    # juxtaposition
+unary = "!" u:unary                => NOT $u
+      | a:atom                     => $a
+atom  = "(" q:query ")"            => ($q)
+      | p:predicate                => $p
+
+# the part edited most of the time: the predicate alternatives
+predicate =
+    f:field ":"  v:STRING   => $f = $v
+  | f:field ":"  n:NUMBER   => $f = $n
+  | f:field ":"  "true"     => $f = true
+  | f:field ":"  "false"    => $f = false
+  | f:field ":"  w:WORD     => $f = {str($w)}
+  | f:field "~"  v:value    => $f MATCHES {str($v)}
+  | f:field ">=" n:number   => $f >= $n
+  | f:field "?"             => $f IS PRESENT
+  | "under" v:value         => mfr_path ->* {str($v)}
+  | "tag"                   => tag = "test"      # bare-word alias, kept as a fallback
+  | "fav"                   => rating >= 4
+
+# field aliases: map a few names, pass the rest through
+field  = "path" => mfr_path
+       | "size" => mfr_size
+       | w:WORD => $w
+value  = STRING | WORD
+number = n:NUMBER "MB"   => {num($n) * 1048576}
+       | n:NUMBER "mins" => {num($n) * 60}
+       | n:NUMBER        => $n
+#+END_SRC
+
+Ordering matters under ordered choice: the operator forms (=:=, =~=, =?=) precede
+the bare-word aliases (=tag=, =fav=), so =tag:jazz= and =tag?= still parse as
+predicates and only a lone =tag= triggers its alias.
+
+** Validation
+
+At load the grammar is checked: every referenced production exists, the start
+production =query= is present, and **left recursion is rejected** (=or = or ...=
+would loop forever) with an error naming the offending production. Grammar and
+expansion errors carry the position in the simplified input.
+
+** Dates                                                                  :v2:
+
+Relative or absolute date filters (e.g. "modified in the last 10 minutes")
+require a real datetime literal in the normal DSL first: =mfr_mtime=/=mfr_btime=
+are stored as =datetime= text, and the DSL has no datetime literal, so a string
+comparison (=mfr_mtime > "..."=) is typed =string= and matches no =datetime=
+row. Until that lands (its own work item — datetime should stop being a plain
+string), the default grammar ships **no** date rules. Numeric unit conversion
+(sizes, durations as integers) is unaffected and available in v1.
+
+** HTTP API
+
+*** =POST /query/expand=
+
+Expands simplified text to normal DSL text using the loaded grammar. Global
+(not repo-scoped), since the grammar is global.
+
+Request body:
+#+BEGIN_SRC json
+{ "simplified": "<text>" }
+#+END_SRC
+
+Response body:
+#+BEGIN_SRC json
+{ "dsl": "<normal DSL text>" }
+#+END_SRC
+
+On a grammar/expansion error, returns =400= with ={"error": "..."}= (the GUI
+shows this under the simplified input; a subsequent =parse_query= failure on the
+produced text is a separate error shown under the normal-DSL input).
 
 * Open questions
