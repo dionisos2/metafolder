@@ -42,8 +42,8 @@ events), reconcile (fingerprint phase only), query language, reserved fields
 ([[file:spec-schema.org][spec-schema.org]]), cursor pagination, and the
 daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]):
 logged write flow, =pending_operation= buffer, atomic metadata-only rollback,
-log reading and pruning. Only the coordinated navigation protocol (and the
-log/rollback CLI) is deferred to v2.
+log reading and pruning. The coordinated navigation protocol and the
+log/rollback/prune CLI (originally v2) are now implemented as well.
 
 ** Key invariants
 
@@ -211,7 +211,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-query.org][spec-query.org]]             | =mf query=, query DSL grammar                     |
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema check=, =mf schema reload=, =mf schema show= |
-| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log=, =mf rollback=, =mf prune= (all v2)      |
+| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log=, =mf rollback=, =mf prune=               |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
 
 ** Global options

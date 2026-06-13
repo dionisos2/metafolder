@@ -25,6 +25,16 @@ pub struct RepoState {
     pub handles: Mutex<Option<RepoHandles>>,
     /// Loaded user schema; replaced atomically on reload (spec-schema).
     pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
+    /// Coordinated-rollback lock (spec-event-log): `Some` while a rollback
+    /// navigation is in progress, carrying its resolved target. Never
+    /// persisted — a crash restarts unlocked.
+    pub rollback_lock: Mutex<Option<RollbackLock>>,
+}
+
+/// State of an in-progress coordinated rollback navigation.
+pub struct RollbackLock {
+    /// Resolved target operation id; `None` is the empty state.
+    pub target: Option<i64>,
 }
 
 impl RepoState {
@@ -43,6 +53,24 @@ impl RepoState {
             case_insensitive: opened.case_insensitive,
             handles: Mutex::new(None),
             schema: Mutex::new(None),
+            rollback_lock: Mutex::new(None),
+        }
+    }
+
+    /// True while a coordinated rollback navigation holds the lock.
+    pub fn is_rollback_locked(&self) -> bool {
+        self.rollback_lock.lock().unwrap().is_some()
+    }
+
+    /// Rejects a metadata write with `423 Locked` while a rollback navigation
+    /// is in progress (spec-event-log "Rollback lock").
+    pub fn ensure_writable(&self) -> Result<(), ApiError> {
+        if self.is_rollback_locked() {
+            Err(ApiError::locked(
+                "repository is in rollback lock; complete or abort the navigation first",
+            ))
+        } else {
+            Ok(())
         }
     }
 }

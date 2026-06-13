@@ -167,6 +167,28 @@ enum Command {
         #[arg(long)]
         all: bool,
     },
+    /// Navigate the history with coordinated filesystem moves
+    Rollback {
+        /// "plan" to preview, optionally a target label; or a target label.
+        /// Omitted: undo the last revision.
+        #[arg(num_args = 0..=2)]
+        args: Vec<String>,
+        /// Target operation by id
+        #[arg(long)]
+        id: Option<i64>,
+        /// Target by revision timestamp (ISO-8601 or Unix ms)
+        #[arg(long)]
+        timestamp: Option<String>,
+        /// Policy when the file is present: apply|skip|abort|ask (default apply)
+        #[arg(long = "on-move-available")]
+        on_move_available: Option<String>,
+        /// Policy when the file is missing: apply|skip|abort|ask (default ask)
+        #[arg(long = "on-move-unavailable")]
+        on_move_unavailable: Option<String>,
+        /// Suppress informational output (still prompts for ask)
+        #[arg(long)]
+        silent: bool,
+    },
     /// Permanently remove operations from the history (irreversible)
     Prune {
         #[command(subcommand)]
@@ -366,6 +388,43 @@ fn main() {
                 &log::LogArgs { tree, ops, metarecord, limit, since, until, all },
             ),
         },
+        Command::Rollback {
+            args,
+            id,
+            timestamp,
+            on_move_available,
+            on_move_unavailable,
+            silent,
+        } => {
+            let (is_plan, label) = match args.split_first() {
+                Some((first, rest)) if first == "plan" => (true, rest.first().cloned()),
+                Some((first, _)) => (false, Some(first.clone())),
+                None => (false, None),
+            };
+            let target = log::TargetArgs { label, id, timestamp };
+            if is_plan {
+                log::rollback_plan(&ctx, target)
+            } else {
+                let policies = || -> Result<log::RollbackPolicies, metafolder_cli::client::CliError> {
+                    Ok(log::RollbackPolicies {
+                        on_available: on_move_available
+                            .as_deref()
+                            .map(log::Policy::parse)
+                            .transpose()?
+                            .unwrap_or(log::Policy::Apply),
+                        on_unavailable: on_move_unavailable
+                            .as_deref()
+                            .map(log::Policy::parse)
+                            .transpose()?
+                            .unwrap_or(log::Policy::Ask),
+                    })
+                }();
+                match policies {
+                    Ok(policies) => log::rollback_run(&ctx, target, policies, silent),
+                    Err(e) => Err(e),
+                }
+            }
+        }
         Command::Prune { command } => match command {
             PruneCommand::Before { target, force, silent } => {
                 if target.is_empty() {

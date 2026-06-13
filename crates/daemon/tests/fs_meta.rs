@@ -116,11 +116,10 @@ fn test_stat_fields_for_a_file() {
 
 #[test]
 fn test_btime_present_when_platform_supports_it() {
-    // Create the probe file next to the crate (a real filesystem that, unlike
-    // some `/tmp` tmpfs mounts, usually records a birth time) so the positive
-    // branch is actually exercised where the platform supports it.
-    let path =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("mf_btime_{}", Uuid::new_v4()));
+    // Probe under the cargo target tmp dir (a real on-disk filesystem that,
+    // unlike some `/tmp` tmpfs mounts, usually records a birth time) so the
+    // positive branch is actually exercised where the platform supports it.
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("mf_btime_{}", Uuid::new_v4()));
     std::fs::write(&path, b"birthday").unwrap();
     // `mfr_btime` mirrors `std::fs::Metadata::created()`, which is itself
     // platform/filesystem dependent (spec-platform "File metadata fields").

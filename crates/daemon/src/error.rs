@@ -35,6 +35,12 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 
+    /// `423 Locked`: a metadata write was attempted while the repository is in
+    /// coordinated-rollback lock mode (spec-event-log "Rollback lock").
+    pub fn locked(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::LOCKED, message)
+    }
+
     pub fn with_violations(mut self, violations: Vec<serde_json::Value>) -> Self {
         self.violations = Some(violations);
         self

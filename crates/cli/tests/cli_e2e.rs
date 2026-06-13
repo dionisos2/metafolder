@@ -783,6 +783,45 @@ fn test_prune_requires_a_target() {
 }
 
 #[test]
+fn test_rollback_plan_previews_operations() {
+    let (repo, _) = init_repo("rbk_plan");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    let out = mf(&["--repo", &repo, "rollback", "plan"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("set_field"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("operations."), "stdout: {}", out.stdout);
+}
+
+#[test]
+fn test_rollback_undoes_last_revision_and_releases_lock() {
+    let (repo, _) = init_repo("rbk_run");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+
+    let out = mf(&["--repo", &repo, "rollback", "--silent"]);
+    assert_ok(&out);
+
+    // The last set was undone.
+    let entries = get_entries(&repo, &uuid);
+    let rating =
+        entries[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "rating").unwrap();
+    assert_eq!(rating["value"]["value"], 3, "rating should revert to 3");
+
+    // The lock was released: a subsequent write succeeds.
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]));
+}
+
+#[test]
+fn test_rollback_bad_move_policy_is_usage_error() {
+    let (repo, _) = init_repo("rbk_policy");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    let out = mf(&["--repo", &repo, "rollback", "--on-move-available", "bogus"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
+#[test]
 fn test_prune_without_force_aborts_on_no() {
     let (repo, _) = init_repo("prune_confirm");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);

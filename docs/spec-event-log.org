@@ -326,7 +326,7 @@ to match the actual filesystem state:
 
 For the v1 atomic rollback (=POST /rollback=), the daemon always applies all
 metadata changes. The CLI should inspect the plan first (=GET /rollback/plan=)
-and use the coordinated navigation protocol [v2] if selective per-operation
+and use the coordinated navigation protocol if selective per-operation
 handling is needed.
 
 ** Log pruning
@@ -360,8 +360,7 @@ X must be an ancestor of HEAD. Deletes all branch operations that diverge from
 the HEAD path between the root and X. After this, the segment root→X is a
 straight line.
 
-** Coordinated navigation                                                 :v2:
-
+** Coordinated navigation
 Coordinated navigation handles =file_moved= operations by coupling each
 metadata change with a CLI-executed =mv= command. It proceeds one operation at
 a time, so a crash leaves at most one file and one metadata metarecord in an
@@ -421,7 +420,7 @@ POST  /repos/:repo_uuid/log/prune
 POST  /repos/:repo_uuid/rollback
 #+END_SRC
 
-[v2] Coordinated navigation:
+Coordinated navigation:
 #+BEGIN_SRC
 GET  /repos/:repo_uuid/rollback/plan
 GET  /repos/:repo_uuid/rollback/plan/summary
@@ -533,7 +532,7 @@ Request body: ={"label": "before-cleanup"}= or ={"label": null}=
 
 Metadata-only rollback: navigates HEAD to the target in a single atomic SQLite
 transaction. For =file_moved= operations in the path, only the metadata change
-is applied — the file is not moved. Use the coordinated navigation protocol [v2]
+is applied — the file is not moved. Use the coordinated navigation protocol
 if filesystem coordination is needed.
 
 Request body:
@@ -572,8 +571,7 @@ Request body:
 
 Response body: ={"pruned_operations": 47, "pruned_revisions": 12}=
 
-*** =GET /repos/:repo_uuid/rollback/plan=                                 :v2:
-
+*** =GET /repos/:repo_uuid/rollback/plan=
 Returns the full ordered list of operations that would be processed to reach
 the target, without entering lock mode. Operations are listed in execution
 order (unapply path first, then apply path).
@@ -594,8 +592,7 @@ Example response:
 }
 #+END_SRC
 
-*** =GET /repos/:repo_uuid/rollback/plan/summary=                         :v2:
-
+*** =GET /repos/:repo_uuid/rollback/plan/summary=
 Returns statistics for the navigation without entering lock mode.
 
 Query parameters: same as =GET /rollback/plan=.
@@ -614,8 +611,7 @@ Example response:
 }
 #+END_SRC
 
-*** =POST /repos/:repo_uuid/rollback/start=                               :v2:
-
+*** =POST /repos/:repo_uuid/rollback/start=
 Enters rollback lock, suspends pending operation execution, stores the target
 internally, and returns the first operation to process.
 
@@ -653,8 +649,7 @@ execute*, not the stored event. A =file_moved= metarecord in the DB produces a
 The daemon does not check the filesystem state. The CLI inspects it and
 decides whether to proceed with the =mv= or call =step= with =skip: true=.
 
-*** =POST /repos/:repo_uuid/rollback/step=                                :v2:
-
+*** =POST /repos/:repo_uuid/rollback/step=
 Applies the inverse of the current operation atomically (SQLite transaction),
 advances HEAD, and returns the next operation to process. The daemon always
 knows the current position (=log_head.op_id=) and the target (stored at lock
@@ -690,8 +685,7 @@ Response body (navigation complete — =op= is =null=):
 When =op= is =null=, HEAD has reached the target. The lock is automatically
 released and the watcher buffer is replayed.
 
-*** =POST /repos/:repo_uuid/rollback/abort=                               :v2:
-
+*** =POST /repos/:repo_uuid/rollback/abort=
 Releases the lock and replays the watcher buffer. HEAD remains at its current
 position — operations already applied by previous =step= calls are not undone.
 
@@ -702,11 +696,10 @@ Response body: ={"head": <current_op_id>}=
 
 * CLI
 
-The log and rollback system is entirely v2. No v1 CLI commands are defined for
-this feature.
+The log and rollback CLI (=mf log=, =mf log show=, =mf rollback=,
+=mf prune=) is implemented over the daemon endpoints described above.
 
-** =mf log=                                                                   :v2:
-
+** =mf log=
 Displays the history of revisions or operations.
 
 *** Synopsis
@@ -758,8 +751,7 @@ inactive branches. Exact rendering is left to the implementation.
 =--metarecord= returns all branches that contain at least one operation touching the
 given metarecord.
 
-*** =mf log show <target>=                                                    :v2:
-
+*** =mf log show <target>=
 Displays the full details of a single revision: its operations and the
 before/after field values for each one.
 
@@ -867,8 +859,7 @@ Calls =GET /rollback/plan= and displays the full ordered list of operations
 that would be processed, without executing anything. Target is optional; omitted
 defaults to the previous revision (same as =mf rollback= with no target).
 
-** =mf prune=                                                                 :v2:
-
+** =mf prune=
 Permanently removes operations from the history. Both sub-commands are
 *irreversible* — deleted operations cannot be recovered via rollback. Use
 =mf log --tree= beforehand to visualise what will be removed.

@@ -383,6 +383,143 @@ pub fn navigate(
     })
 }
 
+/// Direction of one step in a coordinated navigation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavDir {
+    /// Undo the operation (rollback toward an ancestor / the LCA).
+    Inverse,
+    /// Re-apply the operation (redo toward a descendant target).
+    Forward,
+}
+
+/// The unapply and apply id lists from `head` toward `target`, one operation
+/// at a time (unlike [`navigate`], the empty-state case is not bulk-deleted).
+fn step_paths(
+    conn: &rusqlite::Connection,
+    head: Option<i64>,
+    target: Option<i64>,
+) -> Result<(Vec<i64>, Vec<i64>)> {
+    Ok(match (head, target) {
+        (None, None) => (vec![], vec![]),
+        (Some(h), None) => (ancestry(conn, h)?, vec![]),
+        (None, Some(t)) => {
+            let mut chain = ancestry(conn, t)?;
+            chain.reverse();
+            (vec![], chain)
+        }
+        (Some(h), Some(t)) => {
+            let h_anc = ancestry(conn, h)?;
+            let h_set: HashSet<i64> = h_anc.iter().copied().collect();
+            let t_anc = ancestry(conn, t)?;
+            let lca = t_anc.iter().find(|id| h_set.contains(id)).copied();
+            let unapply: Vec<i64> = h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
+            let mut apply: Vec<i64> =
+                t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
+            apply.reverse();
+            (unapply, apply)
+        }
+    })
+}
+
+/// The full ordered list of operations to process to move HEAD from `head` to
+/// `target`: each unapply op (most recent first) as [`NavDir::Inverse`], then
+/// each apply op (oldest first) as [`NavDir::Forward`]. Empty when already at
+/// the target (spec-event-log "Coordinated navigation").
+pub fn nav_path(
+    conn: &rusqlite::Connection,
+    head: Option<i64>,
+    target: Option<i64>,
+) -> Result<Vec<(OpRow, NavDir)>> {
+    if head == target {
+        return Ok(vec![]);
+    }
+    let (unapply, apply) = step_paths(conn, head, target)?;
+    let mut out = Vec::with_capacity(unapply.len() + apply.len());
+    for id in unapply {
+        out.push((get_op(conn, id)?.context("operation vanished during navigation")?, NavDir::Inverse));
+    }
+    for id in apply {
+        out.push((get_op(conn, id)?.context("operation vanished during navigation")?, NavDir::Forward));
+    }
+    Ok(out)
+}
+
+/// Applies the *first* operation on the path from the current HEAD toward
+/// `target` (one atomic step) and advances HEAD. Returns the new HEAD. When
+/// `skip` is set and the operation is a file op, a restoration entry is
+/// enqueued in `pending_operation` (replayed as a new branch once the lock is
+/// released — spec-event-log "skip").
+pub fn coordinated_step(
+    conn: &mut rusqlite::Connection,
+    db_id: Uuid,
+    target: Option<i64>,
+    skip: bool,
+) -> Result<Option<i64>> {
+    let head = get_head(conn)?;
+    let path = nav_path(conn, head, target)?;
+    let Some((op, dir)) = path.into_iter().next() else {
+        return Ok(head); // Already at the target.
+    };
+    let tx = conn.transaction()?;
+    if skip {
+        enqueue_restoration(&tx, &op)?;
+    }
+    let new_head = match dir {
+        NavDir::Inverse => {
+            apply_inverse(&tx, db_id, &op)?;
+            op.parent_id
+        }
+        NavDir::Forward => {
+            apply_forward(&tx, db_id, &op)?;
+            Some(op.id)
+        }
+    };
+    tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![new_head])?;
+    tx.commit()?;
+    Ok(new_head)
+}
+
+/// Enqueues the restoration operation for a skipped file op: a synthetic
+/// metadata write replayed after the lock is released, correcting the metadata
+/// to match the actual filesystem (spec-event-log "skip"). Path values are
+/// derived from the operation's `is_new=1` snapshot — no filesystem check.
+fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
+    let entity = op.entity_uuid.as_simple().to_string();
+    match op.op_type.as_str() {
+        // The file is still at its post-move location: re-record it there.
+        "file_moved" => {
+            let after = snapshots(tx, op.id, 1)?;
+            let Some(row) = after.iter().find(|r| r.name == "mfr_path") else {
+                return Ok(());
+            };
+            if let Value::TreeRef { parent, name } = &row.value {
+                let parent_hex = parent.map(|p| p.as_simple().to_string()).unwrap_or_default();
+                tx.execute(
+                    "INSERT INTO pending_operation (op_type, path, from_path, to_path)
+                     VALUES ('restore_set_path', ?1, ?2, ?3)",
+                    params![entity, parent_hex, name],
+                )?;
+            }
+        }
+        // The file is gone: re-record the deletion.
+        "file_deleted" => {
+            tx.execute(
+                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', ?1)",
+                params![entity],
+            )?;
+        }
+        // The content changed: invalidate the hashes (size/mtime left stale).
+        "file_modified" => {
+            tx.execute(
+                "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_hashes', ?1)",
+                params![entity],
+            )?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Result<()> {
     if let Some(version) = version {
         tx.prepare_cached("UPDATE metarecord SET version = ?1 WHERE uuid = ?2")?

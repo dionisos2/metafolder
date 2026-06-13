@@ -26,7 +26,7 @@ use crate::pagination::{self, Cursor, Page};
 use crate::query_exec::{self, SortKey};
 use crate::repo::RepoLocator;
 use crate::reserved;
-use crate::state::{AppState, RepoState};
+use crate::state::{AppState, RepoState, RollbackLock};
 
 pub fn build(state: Arc<AppState>) -> Router {
     Router::new()
@@ -48,6 +48,11 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/repos/:repo/log/prune", post(prune_log))
         .route("/repos/:repo/rollback", post(rollback))
+        .route("/repos/:repo/rollback/plan", get(rollback_plan))
+        .route("/repos/:repo/rollback/plan/summary", get(rollback_plan_summary))
+        .route("/repos/:repo/rollback/start", post(rollback_start))
+        .route("/repos/:repo/rollback/step", post(rollback_step))
+        .route("/repos/:repo/rollback/abort", post(rollback_abort))
         .route("/repos/:repo/schema", get(get_schema))
         .route("/repos/:repo/schema/reload", post(reload_schema))
         .route("/repos/:repo/schema/check", post(check_schema))
@@ -512,6 +517,7 @@ async fn rollback(
     let repo_uuid = parse_uuid(&repo)?;
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock().unwrap();
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let result = crate::log::navigate(&mut conn, repo_uuid, resolved)?;
@@ -546,12 +552,253 @@ async fn prune_log(
     };
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock().unwrap();
         let resolved = crate::log::resolve_target(&conn, &target)?
             .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
         let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
             .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
         Ok(Json(json!({"pruned_operations": ops, "pruned_revisions": revisions})))
+    })
+    .await
+}
+
+// ── Coordinated navigation (spec-event-log "Coordinated navigation") ────────────
+
+/// Query-parameter target form for the plan endpoints.
+#[derive(Deserialize)]
+struct PlanParams {
+    #[serde(default)]
+    target_id: Option<i64>,
+    #[serde(default)]
+    target_label: Option<String>,
+    #[serde(default)]
+    target_timestamp: Option<i64>,
+    #[serde(default)]
+    target_prev_revision: Option<bool>,
+}
+
+impl PlanParams {
+    fn into_target(self) -> Result<crate::log::Target, ApiError> {
+        match (self.target_id, self.target_timestamp, self.target_label, self.target_prev_revision)
+        {
+            (Some(id), None, None, None) => Ok(crate::log::Target::Id(id)),
+            (None, Some(ts), None, None) => Ok(crate::log::Target::Timestamp(ts)),
+            (None, None, Some(label), None) => Ok(crate::log::Target::Label(label)),
+            (None, None, None, Some(true)) => Ok(crate::log::Target::PrevRevision),
+            _ => Err(ApiError::bad_request(
+                "target must be exactly one of target_id, target_timestamp, target_label, target_prev_revision",
+            )),
+        }
+    }
+}
+
+/// Resolves the `mfr_path` of one operation snapshot to an OS-native absolute
+/// path, for the `from`/`to` of a `move_file` action.
+fn snapshot_abs_path(
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    root: &std::path::Path,
+    op_id: i64,
+    is_new: i64,
+) -> Result<Option<String>, ApiError> {
+    for row in crate::log::snapshots(conn, op_id, is_new)? {
+        if row.name == "mfr_path" {
+            if let Value::TreeRef { parent, name } = row.value {
+                let parent_rel = match parent {
+                    Some(p) => cache.path_of(conn, "mfr_path", p)?.unwrap_or_default(),
+                    None => String::new(),
+                };
+                let rel = format!("{parent_rel}/{name}");
+                let abs = root.join(rel.trim_start_matches('/'));
+                return Ok(Some(abs.to_string_lossy().into_owned()));
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// Builds the action JSON for one navigation step (spec-event-log: the
+/// response `op_type` reflects the *action to execute* — a stored `file_moved`
+/// becomes `move_file` with `from`/`to`; everything else is unchanged).
+fn action_op_json(
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    root: &std::path::Path,
+    op: &crate::log::OpRow,
+    dir: crate::log::NavDir,
+) -> Result<serde_json::Value, ApiError> {
+    let is_move = op.op_type == "file_moved";
+    let action = if is_move { "move_file" } else { op.op_type.as_str() };
+    let mut value = json!({
+        "id": op.id,
+        "op_type": action,
+        "entity_uuid": hex(op.entity_uuid),
+    });
+    if is_move {
+        // Inverse: undo the move (after → before). Forward: redo (before → after).
+        let (from_is_new, to_is_new) = match dir {
+            crate::log::NavDir::Inverse => (1, 0),
+            crate::log::NavDir::Forward => (0, 1),
+        };
+        let from = snapshot_abs_path(conn, cache, root, op.id, from_is_new)?;
+        let to = snapshot_abs_path(conn, cache, root, op.id, to_is_new)?;
+        if let (Some(from), Some(to)) = (from, to) {
+            value["from"] = json!(from);
+            value["to"] = json!(to);
+        }
+    }
+    Ok(value)
+}
+
+async fn rollback_plan(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<PlanParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let target = params.into_target()?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock().unwrap();
+        let head = crate::log::get_head(&conn)?;
+        let resolved = crate::log::resolve_target(&conn, &target)?;
+        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let mut cache = repo_state.cache.lock().unwrap();
+        let mut ops = Vec::with_capacity(path.len());
+        for (op, dir) in &path {
+            ops.push(action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?);
+        }
+        let total = ops.len();
+        Ok(Json(json!({"operations": ops, "total": total})))
+    })
+    .await
+}
+
+async fn rollback_plan_summary(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<PlanParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let target = params.into_target()?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock().unwrap();
+        let head = crate::log::get_head(&conn)?;
+        let resolved = crate::log::resolve_target(&conn, &target)?;
+        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let mut by_type: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut revs = std::collections::HashSet::new();
+        for (op, _) in &path {
+            *by_type.entry(op.op_type.clone()).or_insert(0) += 1;
+            revs.insert(op.rev_id);
+        }
+        Ok(Json(json!({
+            "total_operations": path.len(),
+            "by_type": by_type,
+            "revisions_affected": revs.len(),
+        })))
+    })
+    .await
+}
+
+async fn rollback_start(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<RollbackBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let target = body.target.into_target()?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        if repo_state.is_rollback_locked() {
+            return Err(ApiError::conflict("a rollback navigation is already in progress"));
+        }
+        let conn = repo_state.conn.lock().unwrap();
+        let head = crate::log::get_head(&conn)?;
+        let resolved = crate::log::resolve_target(&conn, &target)?;
+        if resolved == head {
+            // Nothing to do: the lock is not entered.
+            return Ok(Json(json!({"op": null, "remaining": 0})));
+        }
+        let path = crate::log::nav_path(&conn, head, resolved)?;
+        let (op, dir) = path.first().expect("non-empty path when head != target");
+        let mut cache = repo_state.cache.lock().unwrap();
+        let first = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
+        let remaining = path.len() - 1;
+        drop(cache);
+        drop(conn);
+        *repo_state.rollback_lock.lock().unwrap() = Some(RollbackLock { target: resolved });
+        Ok(Json(json!({"op": first, "remaining": remaining})))
+    })
+    .await
+}
+
+#[derive(Deserialize, Default)]
+struct StepBody {
+    #[serde(default)]
+    skip: bool,
+}
+
+async fn rollback_step(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<StepBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // The body is optional: `{}` and an empty body both mean "apply inverse".
+    let skip = payload.map(|Json(b)| b.skip).unwrap_or(false);
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let target = {
+            let guard = repo_state.rollback_lock.lock().unwrap();
+            let lock = guard.as_ref().ok_or_else(|| {
+                ApiError::conflict("no rollback navigation in progress; call start first")
+            })?;
+            lock.target
+        };
+
+        let done = {
+            let mut conn = repo_state.conn.lock().unwrap();
+            let new_head = crate::log::coordinated_step(&mut conn, repo_uuid, target, skip)?;
+            // The step rewrote tree positions arbitrarily: drop the cache.
+            repo_state.cache.lock().unwrap().clear();
+            let next = crate::log::nav_path(&conn, new_head, target)?;
+            if let Some((op, dir)) = next.first() {
+                let mut cache = repo_state.cache.lock().unwrap();
+                let op_json =
+                    action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
+                let remaining = next.len() - 1;
+                return Ok(Json(json!({"op": op_json, "remaining": remaining})));
+            }
+            true
+        };
+
+        if done {
+            // HEAD reached the target: release the lock, replay the buffer.
+            *repo_state.rollback_lock.lock().unwrap() = None;
+            crate::executor::flush_pending(repo_state)?;
+        }
+        Ok(Json(json!({"op": null, "remaining": 0})))
+    })
+    .await
+}
+
+async fn rollback_abort(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        {
+            let mut guard = repo_state.rollback_lock.lock().unwrap();
+            if guard.is_none() {
+                return Err(ApiError::conflict("no rollback navigation in progress"));
+            }
+            *guard = None;
+        }
+        crate::executor::flush_pending(repo_state)?;
+        let conn = repo_state.conn.lock().unwrap();
+        let head = crate::log::get_head(&conn)?;
+        Ok(Json(json!({"head": head})))
     })
     .await
 }
@@ -641,6 +888,7 @@ async fn full_reconcile(
 ) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         Ok(Json(crate::reconcile::reconcile(repo_state)?))
     })
     .await
@@ -653,6 +901,7 @@ async fn metarecord_reconcile(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid)?))
     })
     .await
@@ -674,6 +923,7 @@ async fn track(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let abs = body
             .path
             .canonicalize()
@@ -830,6 +1080,7 @@ async fn batch_set(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock().unwrap();
         let mut cache = repo_state.cache.lock().unwrap();
@@ -863,6 +1114,7 @@ async fn create_record_endpoint(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         for field in &body.fields {
             check_writable(&field.name, body.force)?;
         }
@@ -897,6 +1149,7 @@ async fn delete_record_endpoint(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
@@ -926,6 +1179,7 @@ async fn patch_metarecord(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
@@ -949,6 +1203,7 @@ async fn append_field(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock().unwrap();
         if db::get_version(&conn, uuid)?.is_none() {
@@ -994,6 +1249,7 @@ async fn replace_field(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock().unwrap();
         let name = owned_field_name(&conn, uuid, field_id)?;
         check_writable(&name, body.force)?;
@@ -1021,6 +1277,7 @@ async fn delete_field(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock().unwrap();
         let name = owned_field_name(&conn, uuid, field_id)?;
         check_writable(&name, force)?;

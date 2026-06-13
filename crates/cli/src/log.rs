@@ -14,6 +14,7 @@ use crate::commands::Ctx;
 // ── Target resolution ─────────────────────────────────────────────────────────
 
 /// A rollback/prune target as the four daemon body forms.
+#[derive(Clone)]
 pub struct TargetArgs {
     /// Positional label (`mf rollback <label>`).
     pub label: Option<String>,
@@ -47,6 +48,180 @@ impl TargetArgs {
         Ok(json!({"target": target}))
     }
 
+    /// Query-parameter form for `GET /rollback/plan` and `plan/summary`.
+    fn into_query(self) -> Result<Vec<(&'static str, String)>, CliError> {
+        let body = self.into_body()?;
+        let target = &body["target"];
+        let mut q = Vec::new();
+        if let Some(id) = target["id"].as_i64() {
+            q.push(("target_id", id.to_string()));
+        } else if let Some(ts) = target["timestamp"].as_i64() {
+            q.push(("target_timestamp", ts.to_string()));
+        } else if let Some(label) = target["label"].as_str() {
+            q.push(("target_label", label.to_string()));
+        } else {
+            q.push(("target_prev_revision", "true".into()));
+        }
+        Ok(q)
+    }
+}
+
+// ── mf rollback (coordinated navigation) ────────────────────────────────────────
+
+/// What to do with a `move_file` step (spec-event-log "Policies for move_file").
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Policy {
+    Apply,
+    Skip,
+    Abort,
+    Ask,
+}
+
+impl Policy {
+    pub fn parse(s: &str) -> Result<Self, CliError> {
+        match s {
+            "apply" => Ok(Policy::Apply),
+            "skip" => Ok(Policy::Skip),
+            "abort" => Ok(Policy::Abort),
+            "ask" => Ok(Policy::Ask),
+            other => Err(CliError::Usage(format!(
+                "invalid move policy '{other}' (expected apply, skip, abort, or ask)"
+            ))),
+        }
+    }
+}
+
+pub struct RollbackPolicies {
+    pub on_available: Policy,
+    pub on_unavailable: Policy,
+}
+
+/// `mf rollback plan [<target>]`: previews the operations without executing.
+pub fn rollback_plan(ctx: &Ctx, target: TargetArgs) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.get(&format!("{base}/rollback/plan"), &target.into_query()?)?;
+    let ops = resp["operations"].as_array().cloned().unwrap_or_default();
+    if ops.is_empty() {
+        println!("(nothing to do — already at the target)");
+        return Ok(0);
+    }
+    for op in &ops {
+        let id = op["id"].as_i64().unwrap_or(0);
+        let op_type = op["op_type"].as_str().unwrap_or("?");
+        let entity = op["entity_uuid"].as_str().unwrap_or("?");
+        println!("op {id}  {op_type}  on {entity}");
+        if let (Some(from), Some(to)) = (op["from"].as_str(), op["to"].as_str()) {
+            println!("    mv {from} -> {to}");
+        }
+    }
+    println!("{} operations.", resp["total"].as_i64().unwrap_or(ops.len() as i64));
+    Ok(0)
+}
+
+/// `mf rollback [<target>]`: drives the coordinated navigation, executing the
+/// `mv` for each `move_file` step per the configured policies.
+pub fn rollback_run(
+    ctx: &Ctx,
+    target: TargetArgs,
+    policies: RollbackPolicies,
+    silent: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = target.clone().into_body()?;
+
+    if !silent {
+        let summary =
+            ctx.client.get(&format!("{base}/rollback/plan/summary"), &target.into_query()?)?;
+        let total = summary["total_operations"].as_i64().unwrap_or(0);
+        if total == 0 {
+            println!("Nothing to do — already at the target.");
+            return Ok(0);
+        }
+        eprintln!("Navigating {total} operations.");
+    }
+
+    let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
+    let mut op = start["op"].clone();
+    let mut processed = 0usize;
+
+    // Run the loop, always releasing the lock (abort) on any error.
+    let outcome = (|| -> Result<(), CliError> {
+        while !op.is_null() {
+            let op_type = op["op_type"].as_str().unwrap_or("");
+            let skip = match op_type {
+                "move_file" => decide_move(&op, &policies, silent)?,
+                // No filesystem action is possible: restore metadata on the
+                // new branch via a restoration op.
+                "file_deleted" | "file_modified" => true,
+                _ => false,
+            };
+            let step_body = if skip { json!({"skip": true}) } else { json!({}) };
+            let resp = ctx.client.post(&format!("{base}/rollback/step"), &step_body)?;
+            processed += 1;
+            op = resp["op"].clone();
+        }
+        Ok(())
+    })();
+
+    match outcome {
+        Ok(()) => {
+            if !silent {
+                println!("Rollback complete: {processed} operations processed.");
+            }
+            Ok(0)
+        }
+        Err(err) => {
+            // Release the lock; the caller is responsible for any executed mv.
+            let _ = ctx.client.post(&format!("{base}/rollback/abort"), &json!({}));
+            Err(err)
+        }
+    }
+}
+
+/// Decides a `move_file` step, executing the `mv` for the apply policy.
+/// Returns whether to `skip` (no filesystem move) when calling `step`.
+fn decide_move(op: &Json, policies: &RollbackPolicies, silent: bool) -> Result<bool, CliError> {
+    let from = op["from"].as_str().unwrap_or_default();
+    let to = op["to"].as_str().unwrap_or_default();
+    let available = std::path::Path::new(from).exists();
+    let mut policy = if available { policies.on_available } else { policies.on_unavailable };
+    if policy == Policy::Ask {
+        policy = ask_move(from, to, available)?;
+    }
+    match policy {
+        Policy::Apply => {
+            std::fs::rename(from, to)
+                .map_err(|e| CliError::Op(format!("mv {from} -> {to} failed: {e}")))?;
+            if !silent {
+                eprintln!("moved {from} -> {to}");
+            }
+            Ok(false)
+        }
+        Policy::Skip => {
+            if !silent {
+                eprintln!("skipped move {from} -> {to}");
+            }
+            Ok(true)
+        }
+        Policy::Abort => Err(CliError::Op("rollback aborted by move policy".into())),
+        Policy::Ask => unreachable!("ask is resolved above"),
+    }
+}
+
+/// Interactive `ask` policy for a `move_file` step.
+fn ask_move(from: &str, to: &str, available: bool) -> Result<Policy, CliError> {
+    let status = if available { "available" } else { "MISSING" };
+    eprint!("move ({status}) {from} -> {to}  [a]pply / [s]kip / a[b]ort? ");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| CliError::Op(format!("cannot read the answer: {e}")))?;
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "a" | "apply" => Ok(Policy::Apply),
+        "s" | "skip" => Ok(Policy::Skip),
+        _ => Ok(Policy::Abort),
+    }
 }
 
 // ── mf log ────────────────────────────────────────────────────────────────────

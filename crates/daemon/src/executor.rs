@@ -203,12 +203,23 @@ pub struct FlushStats {
 /// Processes the whole pending buffer: compaction, grouping, application.
 /// Also used at load time to replay a buffer left by a previous daemon run.
 pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
+    // While a coordinated rollback holds the lock, pending operations (watcher
+    // events and restoration ops) accumulate but are not committed; they are
+    // replayed once the lock is released (spec-event-log "Rollback lock").
+    if repo.is_rollback_locked() {
+        return Ok(FlushStats::default());
+    }
     let mut conn = repo.conn.lock().unwrap();
     let mut cache = repo.cache.lock().unwrap();
 
+    // Restoration ops from skipped rollback steps are replayed first, as their
+    // own revision, before the watcher events recorded during the lock.
+    let mut revisions_from_restore = 0;
+    revisions_from_restore += flush_restorations(&mut conn, &mut cache, repo.config.repo_uuid)?;
+
     let (events, max_id) = load_pending(&conn)?;
     if events.is_empty() {
-        return Ok(FlushStats::default());
+        return Ok(FlushStats { events: 0, revisions: revisions_from_restore });
     }
     let events = compact(events);
     let n_events = events.len();
@@ -242,8 +253,68 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
         }
     }
 
-    conn.execute("DELETE FROM pending_operation WHERE id <= ?1", params![max_id])?;
-    Ok(FlushStats { events: n_events, revisions })
+    conn.execute(
+        "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
+        params![max_id],
+    )?;
+    Ok(FlushStats { events: n_events, revisions: revisions + revisions_from_restore })
+}
+
+/// Replays restoration ops left by skipped coordinated-rollback steps as a
+/// single revision (spec-event-log "skip"), then deletes them. The tree cache
+/// is cleared afterwards because `mfr_path` restorations move tree positions.
+fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache, db_id: Uuid) -> Result<usize> {
+    let mut stmt = conn.prepare(
+        "SELECT id, op_type, path, from_path, to_path FROM pending_operation
+         WHERE op_type LIKE 'restore_%' ORDER BY id",
+    )?;
+    let rows: Vec<(i64, String, Option<String>, Option<String>, Option<String>)> = stmt
+        .query_map([], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+    if rows.is_empty() {
+        return Ok(0);
+    }
+    let max_id = rows.iter().map(|r| r.0).max().unwrap_or(0);
+
+    let parse_uuid = |s: &str| -> Result<Uuid> {
+        Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
+    };
+
+    let mut writer = Writer::begin(conn, db_id, None)?;
+    for (_, op_type, path, from_path, to_path) in &rows {
+        let entity = parse_uuid(path.as_deref().context("restoration op missing entity")?)?;
+        match op_type.as_str() {
+            "restore_set_path" => {
+                let parent = match from_path.as_deref() {
+                    Some(p) if !p.is_empty() => Some(parse_uuid(p)?),
+                    _ => None,
+                };
+                let name = to_path.clone().unwrap_or_default();
+                writer.set_field_as(
+                    OpType::FileMoved,
+                    entity,
+                    "mfr_path",
+                    Value::TreeRef { parent, name },
+                )?;
+            }
+            "restore_clear_path" => {
+                writer.set_field_as(OpType::FileDeleted, entity, "mfr_path", Value::Nothing)?;
+            }
+            "restore_clear_hashes" => {
+                writer.clear_field_as(OpType::FileModified, entity, "mfr_partial_hash")?;
+                writer.clear_field_as(OpType::FileModified, entity, "mfr_full_hash")?;
+            }
+            other => anyhow::bail!("unknown restoration op_type '{other}'"),
+        }
+    }
+    let wrote = writer.op_count() > 0;
+    writer.commit()?;
+    cache.clear();
+    conn.execute("DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'", params![max_id])?;
+    Ok(if wrote { 1 } else { 0 })
 }
 
 /// Application context for one revision (one group of events).
