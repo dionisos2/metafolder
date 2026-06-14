@@ -35,6 +35,15 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      #path-bar button.nav {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 0 8px;
+        cursor: pointer;
+      }
       #viewer {
         flex: 1;
         display: flex;
@@ -58,6 +67,60 @@
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.9em;
         white-space: pre-wrap;
+      }
+      /* Directory view: the active path is a folder, show its contents. */
+      #viewer .dir-grid {
+        align-self: stretch;
+        flex: 1;
+        margin: 0;
+        padding: 10px;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+        gap: 10px;
+        align-content: start;
+        overflow: auto;
+      }
+      .tile {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        padding: 6px;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        background: none;
+        color: inherit;
+        font: inherit;
+        text-align: center;
+      }
+      .tile:hover {
+        background: var(--mf-bg-raised, #26262e);
+        border-color: var(--mf-fg-dim, #8a8a96);
+      }
+      .tile .thumb {
+        width: 96px;
+        height: 96px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+      }
+      .tile .thumb img {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+      }
+      .tile .glyph {
+        font-size: 40px;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .tile .name {
+        width: 100%;
+        font-size: 0.85em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .placeholder {
         color: var(--mf-fg-dim, #8a8a96);

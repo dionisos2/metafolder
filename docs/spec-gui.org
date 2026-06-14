@@ -877,6 +877,12 @@ depending on the file type; falls back to a plain-text view for text files;
 shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
+When the active path is a directory, the panel instead lists its contents as
+a thumbnail grid (images as thumbnails, other entries as a glyph). Clicking an
+entry drills in — into a subdirectory's listing, or a file's inline preview —
+and a back button in the header steps back out, returning to the selection
+once the originally selected path is reached.
+
 Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer
 elements are missing, shows an explanatory message instead of attempting
