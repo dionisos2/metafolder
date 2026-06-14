@@ -42,6 +42,7 @@
 "v" = { command = "panel:split-toggle" }
 "c" = { command = "panel:unsplit" }
 "o" = { command = "panel:focus-next" }
+"x" = { command = "panel:swap" }
 
 # Panel type switching: "s" then one letter (the status bar lists the
 # continuations while the sequence is pending; escape cancels it).

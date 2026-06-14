@@ -320,6 +320,10 @@ mod tests {
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         assert!(set.compiled().iter().any(|b| b.invocation == "tab:new"));
         assert!(set.compiled().iter().any(|b| b.keys == [":"]));
+        assert!(set
+            .compiled()
+            .iter()
+            .any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
     }
 
     // ── Compilation ──────────────────────────────────────────────────────
