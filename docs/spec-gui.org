@@ -212,7 +212,9 @@ above the status bar — also for sequences typed inside a panel iframe
 (the panel matcher forwards its pending state to the shell). =escape=
 cancels the pending sequence (it never matches an =escape= binding in
 that state); a key that fits no continuation aborts the sequence and is
-retried on its own. The defaults use this for panel type switching: =s=
+*swallowed* — it does not fall back to its own single-key binding (a combo
+in progress takes priority), and the shell flashes ='<sequence>' is
+undefined=. The defaults use this for panel type switching: =s=
 followed by one letter (=s l= metarecord-list, =s d= metarecord-detail, =s f=
 file, =s m= file-manager, =s o= log, =s r= repos, =s g= message, =s w=
 workspace-info).
