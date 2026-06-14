@@ -2,7 +2,7 @@
 // operations; rollback and prune (spec-gui "Event log").
 
 import { el } from '/__ui.js';
-import { moveSelection } from './selection.js';
+import { moveSelection, edgeSelection } from './selection.js';
 
 const { daemon, workspace, commands, statusBar } = metafolder;
 
@@ -61,6 +61,11 @@ function selectRevision(id, { toggleOps = false } = {}) {
 
 function moveBy(delta) {
   const id = moveSelection(revisions, selectedRev, delta);
+  if (id !== null) selectRevision(id);
+}
+
+function moveToEdge(edge) {
+  const id = edgeSelection(revisions, edge);
   if (id !== null) selectRevision(id);
 }
 
@@ -222,6 +227,14 @@ commands.register('log:prev', {
   label: 'Log: move the selection up',
   handler: () => moveBy(-1),
 });
+commands.register('log:first', {
+  label: 'Log: move the selection to the newest revision',
+  handler: () => moveToEdge('first'),
+});
+commands.register('log:last', {
+  label: 'Log: move the selection to the oldest revision',
+  handler: () => moveToEdge('last'),
+});
 commands.register('log:toggle-ops', {
   label: 'Log: expand/collapse the selected revision',
   handler: () => {
@@ -233,6 +246,8 @@ metafolder.addKeybinding('log:next', 'down');
 metafolder.addKeybinding('log:next', 'j');
 metafolder.addKeybinding('log:prev', 'up');
 metafolder.addKeybinding('log:prev', 'k');
+metafolder.addKeybinding('log:first', 'home');
+metafolder.addKeybinding('log:last', 'end');
 metafolder.addKeybinding('log:toggle-ops', 'enter');
 
 // The log fetch (the whole tree) waits for the first actual display:

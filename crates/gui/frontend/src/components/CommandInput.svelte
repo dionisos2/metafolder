@@ -76,12 +76,22 @@
     selectedIndex = 0;
   });
 
-  function moveSelection(delta: number) {
-    if (suggestions.length === 0) return;
-    selectedIndex = (selectedIndex + delta + suggestions.length) % suggestions.length;
+  function scrollSelectionIntoView() {
     requestAnimationFrame(() =>
       document.querySelector('.suggestions .selected')?.scrollIntoView({ block: 'nearest' }),
     );
+  }
+
+  function moveSelection(delta: number) {
+    if (suggestions.length === 0) return;
+    selectedIndex = (selectedIndex + delta + suggestions.length) % suggestions.length;
+    scrollSelectionIntoView();
+  }
+
+  /** Home/End: jump to the first/last suggestion. */
+  function selectEdge(index: number) {
+    selectedIndex = index;
+    scrollSelectionIntoView();
   }
 
   /** Writes the suggestion into the input (does not execute it). A prompt
@@ -159,6 +169,12 @@
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       moveSelection(-1);
+    } else if (event.key === 'Home' && suggestions.length > 0) {
+      event.preventDefault();
+      selectEdge(0);
+    } else if (event.key === 'End' && suggestions.length > 0) {
+      event.preventDefault();
+      selectEdge(suggestions.length - 1);
     }
   }
 

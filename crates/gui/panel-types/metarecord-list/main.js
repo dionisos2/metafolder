@@ -470,6 +470,14 @@ commands.register('metarecord-list:prev', {
   label: 'Metarecord list: move the selection up',
   handler: () => setCursor(cursorIndex - 1),
 });
+commands.register('metarecord-list:first', {
+  label: 'Metarecord list: move the selection to the first row',
+  handler: () => setCursor(0),
+});
+commands.register('metarecord-list:last', {
+  label: 'Metarecord list: move the selection to the last loaded row',
+  handler: () => setCursor(metarecords.length - 1),
+});
 commands.register('metarecord-list:select-toggle', {
   label: 'Metarecord list: toggle multi-selection',
   handler: toggleChecked,
@@ -515,6 +523,8 @@ metafolder.addKeybinding('metarecord-list:next', 'down');
 metafolder.addKeybinding('metarecord-list:next', 'j');
 metafolder.addKeybinding('metarecord-list:prev', 'up');
 metafolder.addKeybinding('metarecord-list:prev', 'k');
+metafolder.addKeybinding('metarecord-list:first', 'home');
+metafolder.addKeybinding('metarecord-list:last', 'end');
 metafolder.addKeybinding('metarecord-list:select-toggle', 'space');
 metafolder.addKeybinding('metarecord-list:open', 'enter');
 metafolder.addKeybinding('metarecord-list:open', 'right');

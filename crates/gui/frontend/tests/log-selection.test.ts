@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'vitest';
 // @ts-expect-error plain-JS module shared with the log panel type
-import { moveSelection } from '../../panel-types/log/selection.js';
+import { moveSelection, edgeSelection } from '../../panel-types/log/selection.js';
 
 const revisions = [{ id: 9 }, { id: 7 }, { id: 3 }]; // newest first
 
@@ -30,5 +30,17 @@ describe('moveSelection', () => {
 
   test('an empty log has nothing to select', () => {
     expect(moveSelection([], null, 1)).toBe(null);
+  });
+});
+
+describe('edgeSelection', () => {
+  test('first is the newest, last is the oldest', () => {
+    expect(edgeSelection(revisions, 'first')).toBe(9);
+    expect(edgeSelection(revisions, 'last')).toBe(3);
+  });
+
+  test('an empty log has no edge', () => {
+    expect(edgeSelection([], 'first')).toBe(null);
+    expect(edgeSelection([], 'last')).toBe(null);
   });
 });

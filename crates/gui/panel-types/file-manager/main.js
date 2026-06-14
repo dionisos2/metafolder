@@ -207,6 +207,14 @@ commands.register('file-manager:prev', {
   label: 'File manager: move up',
   handler: () => select(cursorIndex - 1),
 });
+commands.register('file-manager:first', {
+  label: 'File manager: move to the first entry',
+  handler: () => select(0),
+});
+commands.register('file-manager:last', {
+  label: 'File manager: move to the last entry',
+  handler: () => select(listing.length - 1),
+});
 commands.register('file-manager:activate', {
   label: 'File manager: open directory / confirm file',
   handler: () => activate(cursorIndex),
@@ -220,6 +228,8 @@ metafolder.addKeybinding('file-manager:next', 'down');
 metafolder.addKeybinding('file-manager:next', 'j');
 metafolder.addKeybinding('file-manager:prev', 'up');
 metafolder.addKeybinding('file-manager:prev', 'k');
+metafolder.addKeybinding('file-manager:first', 'home');
+metafolder.addKeybinding('file-manager:last', 'end');
 metafolder.addKeybinding('file-manager:activate', 'enter');
 metafolder.addKeybinding('file-manager:parent', 'backspace');
 

@@ -13,3 +13,12 @@ export function moveSelection(revisions, selectedRev, delta) {
   const next = Math.max(0, Math.min(index + delta, revisions.length - 1));
   return revisions[next].id;
 }
+
+/**
+ * Returns the revision id at the start (`'first'`, newest) or end
+ * (`'last'`, oldest) of the list; null when the log is empty.
+ */
+export function edgeSelection(revisions, edge) {
+  if (revisions.length === 0) return null;
+  return edge === 'last' ? revisions[revisions.length - 1].id : revisions[0].id;
+}
