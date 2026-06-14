@@ -724,17 +724,20 @@ but the GUI does not expose it). The =root= input is paired with a *Browse…*
 button opening an in-panel folder picker (a =metafolder.fs.readDir= navigator,
 no native dialog) whose chosen folder fills the input — and prefills the name
 with the folder name when blank. Submitting calls =POST /repos/init=. On
-success a new workspace is created with the new repo as =active_repo= and
-assigned to the focused slot. On =409= an error message appears in the status
-bar and the form remains open.
+success the new repo is adopted in place when the current workspace has no
+=active_repo= yet (the focused panel switches to =metarecord-list=); when the
+workspace already has a repo, the new one is only added to the list (a status
+message points the user to it). Init never spawns a workspace. On =409= an
+error message appears in the status bar and the form remains open.
 
 *** Load repo
 
 =repos:load= is a command of the =repos= panel type. It transforms the
 =repos= panel to show an inline form with a single =root= input, also paired
 with the *Browse…* folder picker. Submitting calls =POST /repos/load=. On
-success a new workspace is created with the loaded repo as =active_repo= and
-assigned to the focused slot.
+success the loaded repo is adopted in place when the current workspace has no
+=active_repo= yet, otherwise it is only added to the list; like init, load
+never spawns a workspace.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:init= / =repos:load= from there.

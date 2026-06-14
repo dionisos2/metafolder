@@ -136,9 +136,20 @@ async function submit(form, path, payload, errorElement) {
   try {
     const created = await daemon.call('POST', path, payload);
     toggleForm(form, false);
-    statusBar.message(`Repository ready: ${created.repo_uuid.slice(0, 8)}…`, 5000);
     await refresh();
-    await commands.invoke(`tab:new ${created.repo_uuid}`);
+    // Init/load never spawns a workspace: adopt the repo in place when the
+    // current workspace has none yet (the common startup case), otherwise
+    // leave it in the list for the user to open explicitly.
+    const current = await workspace.get('active_repo');
+    if (current === null) {
+      await workspace.adoptRepo(created.repo_uuid);
+      await commands.invoke('panel:set-type metarecord-list');
+    } else {
+      statusBar.message(
+        `Repository ready: ${created.repo_uuid.slice(0, 8)}… (open it from the list)`,
+        6000,
+      );
+    }
   } catch (error) {
     errorElement.textContent = String(error.message ?? error);
   }
