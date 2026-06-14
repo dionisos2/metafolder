@@ -18,7 +18,7 @@ use uuid::Uuid;
 fn setup_move(prefix: &str) -> (Arc<RepoState>, Uuid, i64, i64) {
     let root = std::env::temp_dir().join(format!("metafolder_cskip_{prefix}_{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
-    let opened = repo::init_repository(&root, None).unwrap();
+    let opened = repo::init_repository(&root, None, None).unwrap();
     let repo = Arc::new(RepoState::from_opened(opened));
     let db_id = repo.config.repo_uuid;
 

@@ -21,7 +21,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
 /// Initialises a repository with tracking enabled on the root.
 fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf, Uuid) {
     let root = temp_dir(prefix);
-    let opened = repo::init_repository(&root, None).unwrap();
+    let opened = repo::init_repository(&root, None, None).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let db_id = repo_state.config.repo_uuid;
 

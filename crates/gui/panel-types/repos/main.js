@@ -3,7 +3,7 @@
 
 import { el } from '/__ui.js';
 
-const { daemon, workspace, commands, statusBar } = metafolder;
+const { daemon, workspace, commands, statusBar, fs } = metafolder;
 
 const list = document.getElementById('repo-list');
 const empty = document.getElementById('empty');
@@ -12,7 +12,84 @@ const loadForm = document.getElementById('load-form');
 
 function toggleForm(form, show) {
   form.classList.toggle('hidden', !show);
+  if (!show) closeBrowser();
   if (show) form.querySelector('input').focus();
+}
+
+// ── Folder picker ─────────────────────────────────────────────────────────────
+// An in-panel directory browser (no native dialog): navigate with
+// metafolder.fs.readDir and fill the target form input with the chosen
+// folder, so the root path need not be typed by hand.
+
+const browser = document.getElementById('browser');
+const browserList = document.getElementById('browser-list');
+const browserPath = document.getElementById('browser-path');
+let browserDir = '/';
+let browserTarget = null; // the <input> to fill on "Use this folder"
+
+function parentDir(path) {
+  const index = path.lastIndexOf('/');
+  return index <= 0 ? '/' : path.slice(0, index);
+}
+
+function basename(path) {
+  return path.split('/').filter(Boolean).pop() ?? path;
+}
+
+async function browseTo(dir) {
+  let entries;
+  try {
+    entries = await fs.readDir(dir);
+  } catch (error) {
+    // Unreadable target (e.g. a stale input value): fall back to the root.
+    if (dir !== '/') {
+      await browseTo('/');
+      return;
+    }
+    await statusBar.error(error);
+    return;
+  }
+  browserDir = dir;
+  browserPath.textContent = dir;
+  const dirs = entries.filter((entry) => entry.is_dir);
+  if (dirs.length === 0) {
+    browserList.replaceChildren(el('li', { class: 'browser-empty' }, '(no subfolders)'));
+    return;
+  }
+  browserList.replaceChildren(
+    ...dirs.map((entry) =>
+      el(
+        'li',
+        { onclick: () => void browseTo(entry.path) },
+        el('span', { class: 'icon' }, '📁'),
+        el('span', { class: 'name' }, entry.name),
+      ),
+    ),
+  );
+}
+
+function openBrowser(targetInput) {
+  browserTarget = targetInput;
+  browser.classList.remove('hidden');
+  const start = targetInput.value.trim();
+  void browseTo(start || '/');
+}
+
+function closeBrowser() {
+  browser.classList.add('hidden');
+  browserTarget = null;
+}
+
+function pickFolder() {
+  if (browserTarget) {
+    browserTarget.value = browserDir;
+    // Prefill the init name with the folder name when left blank.
+    if (browserTarget.id === 'init-root') {
+      const nameInput = document.getElementById('init-name');
+      if (!nameInput.value.trim()) nameInput.value = basename(browserDir);
+    }
+  }
+  closeBrowser();
 }
 
 async function refresh() {
@@ -70,7 +147,9 @@ async function submit(form, path, payload, errorElement) {
 initForm.addEventListener('submit', (event) => {
   event.preventDefault();
   const root = document.getElementById('init-root').value.trim();
-  void submit(initForm, '/repos/init', { root }, document.getElementById('init-error'));
+  const name = document.getElementById('init-name').value.trim();
+  const payload = name ? { root, name } : { root };
+  void submit(initForm, '/repos/init', payload, document.getElementById('init-error'));
 });
 
 loadForm.addEventListener('submit', (event) => {
@@ -85,6 +164,14 @@ document.getElementById('refresh').addEventListener('click', refresh);
 for (const button of document.querySelectorAll('.cancel')) {
   button.addEventListener('click', () => toggleForm(button.closest('form'), false));
 }
+for (const button of document.querySelectorAll('.browse')) {
+  button.addEventListener('click', () =>
+    openBrowser(document.getElementById(button.dataset.target)),
+  );
+}
+document.getElementById('browser-up').addEventListener('click', () => void browseTo(parentDir(browserDir)));
+document.getElementById('browser-pick').addEventListener('click', pickFolder);
+document.getElementById('browser-cancel').addEventListener('click', closeBrowser);
 
 await metafolder.ready;
 commands.register('repos:init', {

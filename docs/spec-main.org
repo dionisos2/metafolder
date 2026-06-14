@@ -152,6 +152,12 @@ database). Defaults to =<root>/.metafolder/=.
 {"root": "/data/music", "metafolder": "/ssd/meta/music"}
 #+END_SRC
 
+Optional: =name= sets the repository name. When absent (or empty), the name is
+derived from the root directory's file name.
+#+BEGIN_SRC json
+{"root": "/data/music", "name": "My Music"}
+#+END_SRC
+
 Response body: ={"repo_uuid": "..."}=
 
 *** =POST /repos/load=

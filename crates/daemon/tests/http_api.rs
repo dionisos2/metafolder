@@ -110,6 +110,25 @@ async fn test_init_load_and_list_repos() {
 }
 
 #[tokio::test]
+async fn test_init_with_explicit_name_is_reflected_in_the_repo_list() {
+    let app = app();
+    let root = temp_dir("init_named_http");
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/repos/init",
+        Some(json!({"root": root.to_str().unwrap(), "name": "My Music"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+
+    let (_, repos) = request(&app, "GET", "/repos", None).await;
+    assert_eq!(repos[0]["name"].as_str().unwrap(), "My Music");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_init_with_missing_root_is_bad_request() {
     let (status, body) =
         request(&app(), "POST", "/repos/init", Some(json!({"root": "/nonexistent/xyz"}))).await;

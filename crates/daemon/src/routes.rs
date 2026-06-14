@@ -197,6 +197,8 @@ struct InitBody {
     root: PathBuf,
     #[serde(default)]
     metafolder: Option<PathBuf>,
+    #[serde(default)]
+    name: Option<String>,
 }
 
 async fn init_repo(
@@ -204,8 +206,10 @@ async fn init_repo(
     payload: Result<Json<InitBody>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
+    // An empty/whitespace name falls back to the directory-derived default.
+    let name = body.name.filter(|n| !n.trim().is_empty());
     let uuid = tokio::task::spawn_blocking(move || {
-        state.init_repo(&body.root, body.metafolder.as_deref())
+        state.init_repo(&body.root, body.metafolder.as_deref(), name.as_deref())
     })
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;

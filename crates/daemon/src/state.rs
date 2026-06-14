@@ -141,8 +141,13 @@ impl AppState {
     }
 
     /// Initialises a new repository and registers it as loaded.
-    pub fn init_repo(&self, root: &Path, metafolder: Option<&Path>) -> Result<Uuid, ApiError> {
-        let opened = repo::init_repository(root, metafolder)?;
+    pub fn init_repo(
+        &self,
+        root: &Path,
+        metafolder: Option<&Path>,
+        name: Option<&str>,
+    ) -> Result<Uuid, ApiError> {
+        let opened = repo::init_repository(root, metafolder, name)?;
         let uuid = opened.config.repo_uuid;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
         self.repos.lock_recover().insert(uuid, repo_state);

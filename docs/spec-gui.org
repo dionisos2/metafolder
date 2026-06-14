@@ -718,19 +718,22 @@ Repo indicator and the =repos= panel type.
 *** Init repo
 
 =repos:init= is a command of the =repos= panel type. It transforms the
-=repos= panel to show an inline form
-with a single =root= input (the daemon API also accepts an external
-=metafolder= location, but the GUI does not expose it). Submitting calls
-=POST /repos/init=. On success a new workspace is created with the new repo
-as =active_repo= and assigned to the focused slot. On =409= an error
-message appears in the status bar and the form remains open.
+=repos= panel to show an inline form with an optional =name= input and a
+=root= input (the daemon API also accepts an external =metafolder= location,
+but the GUI does not expose it). The =root= input is paired with a *Browse…*
+button opening an in-panel folder picker (a =metafolder.fs.readDir= navigator,
+no native dialog) whose chosen folder fills the input — and prefills the name
+with the folder name when blank. Submitting calls =POST /repos/init=. On
+success a new workspace is created with the new repo as =active_repo= and
+assigned to the focused slot. On =409= an error message appears in the status
+bar and the form remains open.
 
 *** Load repo
 
 =repos:load= is a command of the =repos= panel type. It transforms the
-=repos= panel to show an inline form
-with a single =root= input. Submitting calls =POST /repos/load=. On success
-a new workspace is created with the loaded repo as =active_repo= and
+=repos= panel to show an inline form with a single =root= input, also paired
+with the *Browse…* folder picker. Submitting calls =POST /repos/load=. On
+success a new workspace is created with the loaded repo as =active_repo= and
 assigned to the focused slot.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
