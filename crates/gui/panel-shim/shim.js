@@ -196,6 +196,17 @@ window.addEventListener(
       send({ type: 'key-pending', pending: null });
     }
     if (!result) return;
+    // A key that does not continue a pending combo: swallow it and surface
+    // the dead sequence on the shell's status bar.
+    if (result.unknown) {
+      event.preventDefault();
+      event.stopPropagation();
+      request('statusBar.message', {
+        text: `'${result.sequence.join(' ')}' is undefined`,
+        timeoutMs: 3000,
+      }).catch(() => {});
+      return;
+    }
     if (result.invocation && result.invocation in EDITING_ACTIONS) {
       const action = EDITING_ACTIONS[result.invocation];
       if (action) {

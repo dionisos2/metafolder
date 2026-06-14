@@ -91,6 +91,13 @@ function showStatus(wsId: string, message: StatusMessage) {
   }
 }
 
+/// Shows a transient status message on the focused workspace's status bar
+/// (used for shell-side notices such as an undefined key sequence).
+export function flashStatus(text: string, timeoutMs = 3000) {
+  const ws = focusedWs();
+  if (ws) showStatus(ws, { text, kind: 'info', timeout_ms: timeoutMs });
+}
+
 export async function initStore() {
   const initial = await invoke<InitialState>('get_initial_state');
   store.workspaces = initial.workspaces;

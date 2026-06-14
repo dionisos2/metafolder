@@ -11,7 +11,7 @@ import {
   installDefaultContextMenu,
 } from '../../../panel-shim/menu.js';
 import { dispatch, hasEditingTarget } from './commands';
-import { focusedPanelType, store } from './store.svelte';
+import { flashStatus, focusedPanelType, store } from './store.svelte';
 
 export function isTextInput(element: Element | null): boolean {
   if (!element) return false;
@@ -52,6 +52,15 @@ export function installKeys() {
       store.ui.pendingKeys = result?.pending
         ? { prefix: result.prefix, candidates: result.candidates }
         : null;
+      // A key that does not continue a pending combo: swallow it (a combo in
+      // progress takes priority over any single-key binding) and report the
+      // dead sequence.
+      if (result?.unknown) {
+        flashStatus(`'${result.sequence.join(' ')}' is undefined`);
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       if (!result) return;
       // editing:* only fires where a handler is registered (the command
       // input); otherwise the key keeps its native behaviour (e.g. Enter

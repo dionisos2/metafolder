@@ -86,18 +86,23 @@ export function createMatcher(bindings) {
     // prefix, candidates} (sequence in progress — the caller should
     // preventDefault; candidates are the bindings that can still complete
     // it, for the hint display), {cancelled: true} (escape dropped the
-    // pending sequence), or null. A pending sequence never expires.
+    // pending sequence), {unknown: true, sequence} (a key that does not
+    // continue the pending sequence — the combo is swallowed and aborted,
+    // no other binding fires), or null. A pending sequence never expires.
     feed(combo, context) {
       if (buffer.length > 0 && combo === 'escape') {
         buffer = [];
         return { cancelled: true };
       }
 
-      let result = tryMatch([...buffer, combo], context);
+      const result = tryMatch([...buffer, combo], context);
       if (result === null && buffer.length > 0) {
-        // Aborted sequence: retry the key on its own.
+        // A combo is in progress and this key does not continue it: swallow
+        // it (do NOT fall back to single-key matching) and report the dead
+        // sequence so the caller can surface it.
+        const sequence = [...buffer, combo];
         buffer = [];
-        result = tryMatch([combo], context);
+        return { unknown: true, sequence };
       }
 
       buffer = result?.pending ? result.prefix : [];

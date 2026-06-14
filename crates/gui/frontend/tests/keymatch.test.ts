@@ -109,14 +109,26 @@ describe('createMatcher', () => {
     });
   });
 
-  test('an interrupted sequence falls back to single-key matching', () => {
+  test('an unknown continuation aborts the sequence without firing another binding', () => {
     const matcher = createMatcher([
       b(['g', 'g'], 'goto-top'),
       b(['x'], 'cut'),
     ]);
     expect(matcher.feed('g', noInput)).toMatchObject({ pending: true });
-    // 'x' aborts the sequence but still matches its own binding.
+    // 'x' is not a valid continuation of 'g': a combo in progress swallows
+    // other keys, so the standalone 'x' binding must NOT fire.
+    expect(matcher.feed('x', noInput)).toEqual({ unknown: true, sequence: ['g', 'x'] });
+    // The sequence was dropped: 'x' on its own now fires its binding.
     expect(matcher.feed('x', noInput)).toEqual({ invocation: 'cut' });
+  });
+
+  test('a pending prefix swallows an unrelated single-key binding (s then t)', () => {
+    const setType = b(['s', 'l'], 'panel:set-type metarecord-list');
+    const tab = b(['t'], 'tab:new');
+    const matcher = createMatcher([setType, tab]);
+    expect(matcher.feed('s', noInput)).toMatchObject({ pending: true, prefix: ['s'] });
+    // 't' would fire tab:new on its own, but the 's' combo is in progress.
+    expect(matcher.feed('t', noInput)).toEqual({ unknown: true, sequence: ['s', 't'] });
   });
 
   test('escape cancels a pending sequence instead of matching', () => {
