@@ -217,6 +217,9 @@ export async function dispatch(invocation: string): Promise<void> {
       case 'panel:unsplit':
         await invoke('panel_unsplit');
         return;
+      case 'panel:hide':
+        await invoke('slot_hide', { slot: store.layout.focused });
+        return;
       case 'panel:split-toggle':
         await invoke('panel_split_toggle');
         return;

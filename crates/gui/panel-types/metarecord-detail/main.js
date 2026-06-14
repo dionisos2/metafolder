@@ -386,15 +386,20 @@ function confirmDiscardIfEditing() {
 
 // ── Wiring ──────────────────────────────────────────────────────────────
 
-document.getElementById('new-metarecord').addEventListener('click', startNewMetarecord);
-document.getElementById('new-metarecord-placeholder').addEventListener('click', startNewMetarecord);
+// Buttons dispatch through their registered commands (so every control is
+// reachable from the palette/keyboard too); the commands are registered
+// after metafolder.ready, below.
+const invoke = (name) => () => void commands.invoke(name);
+document.getElementById('new-metarecord').addEventListener('click', invoke('metarecord:create'));
+document
+  .getElementById('new-metarecord-placeholder')
+  .addEventListener('click', invoke('metarecord:create'));
 document.getElementById('save-new').addEventListener('click', saveNewEntry);
-document.getElementById('delete-metarecord').addEventListener('click', deleteEntry);
-document.getElementById('watch-reconcile').addEventListener('click', watchAndReconcile);
-document.getElementById('show-add').addEventListener('click', () => {
-  addForm.classList.toggle('open');
-  document.getElementById('add-name').focus();
-});
+document.getElementById('delete-metarecord').addEventListener('click', invoke('metarecord:delete'));
+document
+  .getElementById('watch-reconcile')
+  .addEventListener('click', invoke('metarecord:watch-reconcile'));
+document.getElementById('show-add').addEventListener('click', invoke('metarecord:add-field'));
 document.getElementById('add-append').addEventListener('click', () => addField(false));
 document.getElementById('add-set').addEventListener('click', () => addField(true));
 document.getElementById('add-cancel').addEventListener('click', () => addForm.classList.remove('open'));
@@ -410,6 +415,18 @@ commands.register('metarecord:create', {
 commands.register('metarecord:delete', {
   label: 'Delete the selected metarecord',
   handler: deleteEntry,
+});
+commands.register('metarecord:watch-reconcile', {
+  label: 'Enable tracking and reconcile the selected metarecord',
+  handler: watchAndReconcile,
+});
+commands.register('metarecord:add-field', {
+  label: 'Add a field to the selected metarecord (detail form)',
+  reveal: true,
+  handler: () => {
+    addForm.classList.add('open');
+    document.getElementById('add-name').focus();
+  },
 });
 commands.register('metarecord:batch-set', {
   label: 'Set a field on all selected metarecords',

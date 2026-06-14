@@ -162,6 +162,21 @@ panel type once at startup (hidden, see [[*Panel type]]), so all command
 names are known from the start. The registry survives iframe removal
 (workspace closed): a later dispatch re-instantiates the owner lazily.
 
+Discoverability rule: every interactive control's action is reachable as a
+registered command, and every edit zone has a command that focuses (or
+opens) it. So each top-level action button in a panel or the shell maps to a
+command (the button invokes it), and each text input has a focus command —
+the command input (=command-input:activate=), the metarecord-list query and
+columns inputs (=metarecord-list:edit-query=, =metarecord-list:edit-columns=),
+the workspace rename (=tab:rename=), the metarecord-detail add-field form
+(=metarecord:add-field=). Shell controls map to the panel commands
+(=panel:set-type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
+controls *inside* a flow already opened by a command — a form's =Cancel=, a
+folder picker's navigation, a form's submit — and inherently positional
+controls — an individual tab or a specific slot's =×= (their action is
+covered by =tab:goto-N= / =tab:close= / =panel:hide=) — need not each carry
+their own command.
+
 Each command carries a =log= flag (default =true=): when set, every
 invocation is echoed to the workspace [[*Message view][message panel]] as
 =​> name args= before the command runs. Panels register commands with
@@ -440,6 +455,7 @@ Behaviours:
 | =tab:goto-N=         | Assign workspace N to the focused slot         |
 | =panel:split=        | Show the right slot (focused workspace if unassigned) |
 | =panel:unsplit=      | Hide the non-focused slot (workspace preserved) |
+| =panel:hide=         | Hide the focused slot (workspace preserved)    |
 | =panel:split-toggle= | Split when one slot is visible, unsplit when both are |
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |

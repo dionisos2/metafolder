@@ -73,6 +73,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("tab:goto-N", "Show workspace number N", true),
         ("panel:split", "Show the second panel slot", true),
         ("panel:unsplit", "Hide the non-focused panel slot", true),
+        ("panel:hide", "Hide the focused panel slot", true),
         ("panel:split-toggle", "Split when single, unsplit when split", true),
         ("panel:focus-next", "Focus the other panel slot", true),
         ("panel:set-type", "Switch the focused slot's panel type", true),
@@ -285,5 +286,12 @@ mod tests {
         register_builtins(&registry);
         let def = registry.get("devtools:open").expect("devtools:open registered");
         assert_eq!(def.owner, None);
+    }
+
+    #[test]
+    fn test_panel_hide_is_a_builtin() {
+        let registry = CommandRegistry::new();
+        register_builtins(&registry);
+        assert!(registry.get("panel:hide").is_some(), "panel:hide registered");
     }
 }

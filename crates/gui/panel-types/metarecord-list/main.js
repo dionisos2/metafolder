@@ -443,8 +443,12 @@ scroll.addEventListener('scroll', () => {
   }
 });
 
-document.getElementById('query-apply').addEventListener('click', () => void applyQuery());
-document.getElementById('columns-apply').addEventListener('click', () => void applyColumns());
+document
+  .getElementById('query-apply')
+  .addEventListener('click', () => void commands.invoke('metarecord-list:apply-query'));
+document
+  .getElementById('columns-apply')
+  .addEventListener('click', () => void commands.invoke('metarecord-list:apply-columns'));
 queryInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') void applyQuery();
 });
@@ -504,6 +508,14 @@ commands.register('metarecord-list:toggle-normal', {
 commands.register('metarecord-list:edit-columns', {
   label: 'Metarecord list: focus the columns input',
   handler: () => columnsInput.focus(),
+});
+commands.register('metarecord-list:apply-query', {
+  label: 'Metarecord list: apply the query',
+  handler: () => applyQuery(),
+});
+commands.register('metarecord-list:apply-columns', {
+  label: 'Metarecord list: apply the displayed columns',
+  handler: () => applyColumns(),
 });
 commands.register('metarecord-list:refresh', {
   label: 'Metarecord list: reload from the daemon',
