@@ -125,7 +125,7 @@ async fn test_full_reconcile_endpoint() {
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
     assert_eq!(status, StatusCode::OK, "reconcile failed: {body}");
-    assert_eq!(body["created"], 4, "one.txt + two.txt + .metafolder + config.json");
+    assert_eq!(body["created"], 2, "one.txt + two.txt (.metafolder ignored by default)");
     assert_eq!(body["moved"], 0);
     assert_eq!(body["candidates"], json!([]));
 

@@ -74,7 +74,7 @@ fn test_reconcile_creates_records_for_new_files() {
     write_file(&root, "sub/b.txt", b"bb");
 
     let result = run(&repo);
-    assert_eq!(result.created, 5, "a.txt + sub + sub/b.txt + .metafolder + config.json");
+    assert_eq!(result.created, 3, "a.txt + sub + sub/b.txt (.metafolder ignored by default)");
     assert_eq!(result.moved, 0);
     assert!(result.candidates.is_empty());
 
@@ -97,18 +97,26 @@ fn test_reconcile_respects_eligibility() {
     write_file(&root, "ok.txt", b"y");
 
     let result = run(&repo);
-    assert_eq!(result.created, 3, "ok.txt + .metafolder + config.json; .git is ignored");
+    assert_eq!(result.created, 1, "ok.txt only; .git and .metafolder are ignored");
     assert!(resolve(&repo, "/.git").is_none());
 
     std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
-fn test_reconcile_tracks_metafolder_but_skips_internal() {
+fn test_reconcile_skips_internal_even_when_metafolder_is_tracked() {
     let (repo, root) = setup("metafolder");
+    // .metafolder is ignored by default; replace the root's mf_ignore with a
+    // pattern that matches nothing so it becomes ordinary trackable content
+    // again, isolating the internal/ (absolute-path) exclusion under test.
+    let root_uuid = {
+        let conn = repo.conn.lock().unwrap();
+        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+    };
+    set_field(&repo, root_uuid, "mf_ignore", Value::String("^$".into()));
 
     run(&repo);
-    // .metafolder/ is ordinary trackable content (the root has mf_watch)...
+    // .metafolder/ is now trackable content (the root has mf_watch)...
     assert!(resolve(&repo, "/.metafolder/config.json").is_some());
     // ...but internal/ (live database and other daemon-managed files) is
     // always excluded, by absolute path.
