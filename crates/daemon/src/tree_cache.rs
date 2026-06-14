@@ -164,6 +164,32 @@ impl TreeCache {
         anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} for entry {uuid}")
     }
 
+    /// All filesystem-style paths of a metarecord in `field`'s forest, one per
+    /// position (fields are a multi-map: e.g. hardlinks give several
+    /// `mfr_path`). Positions whose parent is not in the forest (stale) are
+    /// skipped. The reverse of [`Self::resolve_path`].
+    pub fn paths_of(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Vec<String>> {
+        let mut paths = Vec::new();
+        for (parent, name) in db::tree_positions(conn, field, uuid)? {
+            match parent {
+                None => paths.push(name),
+                Some(parent) => {
+                    if let Some(parent_path) = self.path_of(conn, field, parent)? {
+                        let joined = if parent_path.is_empty() {
+                            name
+                        } else {
+                            format!("{parent_path}/{name}")
+                        };
+                        // `path_of` keeps the empty repo-root as a leading "/";
+                        // paths are root-relative for clients, so drop it.
+                        paths.push(joined.strip_prefix('/').map(str::to_string).unwrap_or(joined));
+                    }
+                }
+            }
+        }
+        Ok(paths)
+    }
+
     /// Collects all descendants of a metarecord (excluding itself), walking the
     /// tree breadth-first from the database.
     pub fn descendants(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Vec<Uuid>> {

@@ -476,6 +476,30 @@ pub fn tree_position(
     .transpose()
 }
 
+/// All tree positions `(parent, name)` of a metarecord for `field_name`, in id
+/// order. Fields are a multi-map, so a metarecord may sit at several positions.
+pub fn tree_positions(
+    conn: &Connection,
+    field_name: &str,
+    uuid: Uuid,
+) -> Result<Vec<(Option<Uuid>, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT value_uuid, value_name FROM field
+         WHERE metarecord_uuid = ?1 AND field_name = ?2 AND value_type = 'tree_ref'
+         ORDER BY id",
+    )?;
+    let rows = stmt.query_map(params![uuid_to_bytes(uuid), field_name], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut positions = Vec::new();
+    for row in rows {
+        let (parent, name) = row?;
+        let parent = bytes_to_uuid(parent)?;
+        positions.push((if parent == ZERO_UUID { None } else { Some(parent) }, name));
+    }
+    Ok(positions)
+}
+
 /// The TreeRef parents of a metarecord for `field_name` (multi-map: one metarecord can
 /// have several positions). `None` in the result means "root".
 pub fn get_tree_parents(

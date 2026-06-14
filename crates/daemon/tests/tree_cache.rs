@@ -61,6 +61,70 @@ fn test_resolve_tag_tree_without_leading_slash() {
     assert_eq!(cache.resolve_path(&conn, "parent", "tag2").unwrap(), None, "tag2 is not a root");
 }
 
+// ── Multi-map path resolution (paths_of) ────────────────────────────────────
+
+#[test]
+fn test_paths_of_single_position() {
+    let (mut conn, db_id) = test_conn();
+    let (_root, _music, jazz, file) = build_tree(&mut conn, db_id);
+    let mut cache = TreeCache::new(false);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["music/jazz/file.mp3"]);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", jazz).unwrap(), vec!["music/jazz"]);
+}
+
+#[test]
+fn test_paths_of_root_level_value() {
+    let (mut conn, db_id) = test_conn();
+    let root = tree_entry(&mut conn, db_id, "mfr_path", None, "");
+    let top = tree_entry(&mut conn, db_id, "mfr_path", Some(root), "top.txt");
+    let mut cache = TreeCache::new(false);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", top).unwrap(), vec!["top.txt"]);
+}
+
+#[test]
+fn test_paths_of_multi_map() {
+    // A metarecord at two positions in the same forest (e.g. hardlinks).
+    let (mut conn, db_id) = test_conn();
+    let root = tree_entry(&mut conn, db_id, "mfr_path", None, "");
+    let dir = tree_entry(&mut conn, db_id, "mfr_path", Some(root), "dir");
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let m = w
+        .create_metarecord(vec![
+            Field::new("mfr_path", Value::TreeRef { parent: Some(root), name: "a.txt".into() }),
+            Field::new("mfr_path", Value::TreeRef { parent: Some(dir), name: "b.txt".into() }),
+        ])
+        .unwrap();
+    w.commit().unwrap();
+    let mut cache = TreeCache::new(false);
+    let mut paths = cache.paths_of(&conn, "mfr_path", m.uuid).unwrap();
+    paths.sort();
+    assert_eq!(paths.iter().map(String::as_str).collect::<Vec<_>>(), vec!["a.txt", "dir/b.txt"]);
+}
+
+#[test]
+fn test_paths_of_skips_stale_parent() {
+    let (mut conn, db_id) = test_conn();
+    let root = tree_entry(&mut conn, db_id, "mfr_path", None, "");
+    let dir = tree_entry(&mut conn, db_id, "mfr_path", Some(root), "dir");
+    let child = tree_entry(&mut conn, db_id, "mfr_path", Some(dir), "file.txt");
+    // Simulate the parent dir being deleted: drop its position from the DB.
+    conn.execute(
+        "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = 'mfr_path'",
+        rusqlite::params![db::uuid_to_bytes(dir)],
+    )
+    .unwrap();
+    let mut cache = TreeCache::new(false);
+    assert!(cache.paths_of(&conn, "mfr_path", child).unwrap().is_empty());
+}
+
+#[test]
+fn test_paths_of_without_the_field_is_empty() {
+    let (mut conn, db_id) = test_conn();
+    let m = tree_entry(&mut conn, db_id, "parent", None, "x");
+    let mut cache = TreeCache::new(false);
+    assert!(cache.paths_of(&conn, "mfr_path", m).unwrap().is_empty());
+}
+
 #[test]
 fn test_resolution_is_cached() {
     let (mut conn, db_id) = test_conn();

@@ -41,6 +41,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             get(get_record_endpoint).delete(delete_record_endpoint).patch(patch_metarecord),
         )
         .route("/repos/:repo/query", post(run_query))
+        .route("/repos/:repo/tree/resolve", post(tree_resolve))
         .route("/repos/:repo/set", post(batch_set))
         .route("/repos/:repo/log", get(get_log))
         .route(
@@ -88,6 +89,49 @@ where
     tokio::task::spawn_blocking(move || f(&repo))
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
+}
+
+#[derive(Deserialize)]
+struct TreeResolveBody {
+    #[serde(default = "default_tree_field")]
+    field: String,
+    #[serde(default)]
+    uuids: Vec<String>,
+}
+
+fn default_tree_field() -> String {
+    "mfr_path".to_string()
+}
+
+/// `POST /repos/:repo/tree/resolve`: resolves each metarecord's TreeRef
+/// positions for `field` (default `mfr_path`) to repo-root-relative paths.
+/// A field is a multi-map, so each metarecord maps to an array of paths
+/// (positions whose parent is stale are skipped). Resolution uses the in-memory
+/// tree cache — one round-trip whatever the depth.
+async fn tree_resolve(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<TreeResolveBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let Json(body) = payload?;
+    let uuids = body
+        .uuids
+        .iter()
+        .map(|s| parse_uuid(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    let field = body.field;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let mut out = serde_json::Map::new();
+        for uuid in uuids {
+            let paths = cache.paths_of(&conn, &field, uuid)?;
+            out.insert(hex(uuid), json!(paths));
+        }
+        Ok(Json(serde_json::Value::Object(out)).into_response())
+    })
+    .await
 }
 
 /// Fetches the full metadata object of a metarecord, or 404.

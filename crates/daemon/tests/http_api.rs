@@ -421,6 +421,45 @@ async fn test_tree_ref_validation_is_bad_request() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn test_tree_resolve_endpoint() {
+    let (app, repo, root_dir) = app_with_repo("treeresolve").await;
+    // A custom (non-reserved) TreeRef field: the endpoint is general, mfr_path
+    // is only the default. The repo already owns the mfr_path root.
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let uuid = |m: Value| m["uuid"].as_str().unwrap().to_string();
+    let all = uuid(create_metarecord(&app, &repo, treeref(None, "all")).await);
+    let music = uuid(create_metarecord(&app, &repo, treeref(Some(&all), "music")).await);
+    let jazz = uuid(create_metarecord(&app, &repo, treeref(Some(&music), "jazz")).await);
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/tree/resolve"),
+        Some(json!({"field": "cat", "uuids": [jazz, music]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(body[&jazz], json!(["all/music/jazz"]));
+    assert_eq!(body[&music], json!(["all/music"]));
+
+    // `field` defaults to mfr_path, which `jazz` does not carry → empty array.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/tree/resolve"),
+        Some(json!({"uuids": [jazz]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[&jazz], json!([]));
+
+    std::fs::remove_dir_all(root_dir).unwrap();
+}
+
 // ── Listing and pagination ────────────────────────────────────────────────────
 
 #[tokio::test]
