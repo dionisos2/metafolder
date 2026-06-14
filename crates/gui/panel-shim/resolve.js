@@ -1,9 +1,10 @@
-// Lazy TreeRef path resolution with a memo cache (spec-gui "Path
-// display"). Paths are repo-root-relative ('/'-joined names; the root
-// metarecord contributes an empty name). The shim exposes this per repo as
-// metafolder.daemon.resolvePath / resolveTreeRef / invalidatePath.
+// TreeRef path resolution with a memo cache (spec-gui "Path display"). Paths
+// are repo-root-relative ('/'-joined names). Resolution is delegated to the
+// daemon's tree-resolve endpoint (one round-trip, no client-side chain walk);
+// `resolvePaths(uuids)` returns `{ uuid: [paths] }`. The shim exposes this per
+// repo as metafolder.daemon.resolvePath / resolveTreeRef / invalidatePath.
 
-export function createPathResolver(getMetarecord) {
+export function createPathResolver(resolvePaths) {
   const cache = new Map(); // uuid -> Promise<relative path>
 
   function resolveUuid(uuid) {
@@ -17,12 +18,10 @@ export function createPathResolver(getMetarecord) {
   }
 
   async function compute(uuid) {
-    const metarecord = await getMetarecord(uuid);
-    const field = (metarecord.fields ?? []).find(
-      (f) => f.name === 'mfr_path' && f.value?.type === 'tree_ref',
-    );
-    if (!field) throw new Error(`metarecord ${uuid} has no mfr_path TreeRef`);
-    return resolveTreeRef(field.value.value);
+    const byUuid = await resolvePaths([uuid]);
+    const paths = byUuid[uuid] ?? [];
+    if (paths.length === 0) throw new Error(`metarecord ${uuid} has no resolvable mfr_path`);
+    return paths[0]; // first position (multi-map: hardlinks etc.)
   }
 
   async function resolveTreeRef({ parent, name }) {

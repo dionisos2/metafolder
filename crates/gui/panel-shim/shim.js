@@ -52,16 +52,16 @@ function resolverFor(repo) {
   if (!resolvers.has(repo)) {
     resolvers.set(
       repo,
-      createPathResolver(async (uuid) => {
+      createPathResolver(async (uuids) => {
         const response = await request('daemon.request', {
-          method: 'GET',
-          path: `/repos/${repo}/metarecords/${uuid}`,
-          body: null,
+          method: 'POST',
+          path: `/repos/${repo}/tree/resolve`,
+          body: { uuids },
         });
         if (response.status !== 200) {
-          throw new Error(response.body?.error ?? `entry ${uuid} not found`);
+          throw new Error(response.body?.error ?? `tree/resolve failed (HTTP ${response.status})`);
         }
-        return response.body;
+        return response.body; // { uuid: [paths] }
       }),
     );
   }

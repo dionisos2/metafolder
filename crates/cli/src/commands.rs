@@ -432,48 +432,30 @@ pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// Maximum `mfr_path` chain length, mirroring the daemon's tree depth limit.
-const MAX_PATH_DEPTH: usize = 1000;
-
-/// Resolves a metarecord to its filesystem path by walking the `mfr_path`
-/// parent chain up to the root metarecord. Relative paths are repo-root-relative
-/// and start with `/` (the root metarecord itself is `/`).
+/// Resolves a metarecord to its filesystem path via the daemon's tree-resolve
+/// endpoint (one round-trip; the daemon walks the chain through its tree cache).
+/// Relative paths are repo-root-relative and start with `/` (the root metarecord
+/// itself is `/`). A multi-positioned metarecord resolves to its first path.
 pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let mut current = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
-    let mut components: Vec<String> = Vec::new();
-    loop {
-        if components.len() >= MAX_PATH_DEPTH {
-            return Err(CliError::Op(format!("mfr_path chain deeper than {MAX_PATH_DEPTH}")));
-        }
-        let entry = ctx.client.get(&format!("{base}/metarecords/{}", current.as_simple()), &[])?;
-        let tree_ref = entry["fields"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|f| f["name"] == "mfr_path" && f["value"]["type"] == "tree_ref")
-            .map(|f| &f["value"]["value"])
-            .ok_or_else(|| {
-                CliError::Op(format!("entry {} has no mfr_path tree_ref", current.as_simple()))
-            })?;
-        match tree_ref["parent"].as_str() {
-            None => break, // the repository root entry
-            Some(parent) => {
-                components.push(tree_ref["name"].as_str().unwrap_or_default().to_string());
-                current = Uuid::parse_str(parent)
-                    .map_err(|_| CliError::Op(format!("malformed parent uuid: '{parent}'")))?;
-            }
-        }
-    }
-    components.reverse();
-    let rel = format!("/{}", components.join("/"));
+    let key = Uuid::parse_str(uuid)
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?
+        .as_simple()
+        .to_string();
+    let resp = ctx.client.post(&format!("{base}/tree/resolve"), &json!({ "uuids": [key] }))?;
+    let rel = resp[&key]
+        .as_array()
+        .and_then(|paths| paths.first())
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| CliError::Op(format!("entry {key} has no resolvable mfr_path")))?;
+    // The endpoint returns root-relative paths without a leading slash; `mf path`
+    // uses "/…" (the root metarecord itself is "/").
+    let rel = format!("/{rel}");
     if relative {
         println!("{rel}");
     } else {
         let repos = ctx.client.get("/repos", &[])?;
-        let repo_simple = ctx.repo_base()?; // "/repos/<simple uuid>"
-        let repo_simple = repo_simple.trim_start_matches("/repos/");
+        let repo_simple = base.trim_start_matches("/repos/");
         let root = repos
             .as_array()
             .into_iter()
@@ -483,7 +465,7 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
             .ok_or_else(|| CliError::Op(format!("repository {repo_simple} is not loaded")))?
             .trim_end_matches('/')
             .to_string();
-        if components.is_empty() {
+        if rel == "/" {
             println!("{root}");
         } else {
             println!("{root}{rel}");
