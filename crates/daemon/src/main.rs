@@ -36,9 +36,15 @@ async fn main() {
         None => Default::default(),
     };
 
-    let grammar = metafolder_daemon::simplified::init();
+    let grammar = match metafolder_daemon::simplified::init() {
+        Ok(grammar) => grammar,
+        Err(e) => {
+            eprintln!("[daemon] Invalid simplified-query grammar: {e}");
+            std::process::exit(1);
+        }
+    };
     let mut state = AppState::new();
-    state.set_simplified_grammar(grammar);
+    state.set_simplified_grammar(Some(grammar));
     let state = Arc::new(state);
 
     let startup_state = state.clone();

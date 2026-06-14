@@ -1,158 +1,60 @@
-//! Config directory management: first-run installation of editable
-//! defaults (panel types, keybindings, stylesheet), the always-refreshed
-//! defaults mirror, keybinding loading, and the port discovery file.
+//! Config directory access in the git-backed model (spec-config): reading the
+//! keybindings/stylesheet/panel types installed by `metafolder-sync-config`,
+//! the single-file keybinding semantics, and the port discovery file. There is
+//! no runtime install or embedded fallback any more.
 
 use metafolder_gui::config::ConfigDir;
 
+mod common;
+
 fn temp_config() -> (tempfile::TempDir, ConfigDir) {
     let dir = tempfile::tempdir().unwrap();
-    let config = ConfigDir::at(dir.path().join("metafolder-gui"));
+    let config = ConfigDir::at(dir.path().join("gui"));
     (dir, config)
 }
 
 #[test]
-fn test_first_run_installs_defaults() {
+fn test_installed_defaults_are_readable() {
     let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
+    common::install_defaults(&config);
 
     assert!(config.root().join("keybindings.toml").exists());
     assert!(config.root().join("style.css").exists());
     assert!(config.root().join("panel-types/hello/index.html").exists());
-    // The mirror lets users diff their edits against shipped defaults.
-    assert!(config
-        .root()
-        .join("panel-types-defaults/hello/index.html")
-        .exists());
+    assert!(config.load_keybindings().is_ok());
+    assert!(config.load_style().is_ok());
 }
 
 #[test]
-fn test_user_edits_are_never_overwritten() {
+fn test_load_keybindings_errors_without_config() {
     let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-
-    let keybindings = config.root().join("keybindings.toml");
-    let panel = config.root().join("panel-types/hello/index.html");
-    std::fs::write(&keybindings, "# my edits\n").unwrap();
-    std::fs::write(&panel, "<html>custom</html>").unwrap();
-
-    config.install_defaults().unwrap();
-    assert_eq!(std::fs::read_to_string(&keybindings).unwrap(), "# my edits\n");
-    assert_eq!(std::fs::read_to_string(&panel).unwrap(), "<html>custom</html>");
+    // No install: a missing file is an error, not a silent default.
+    let err = config.load_keybindings().err().expect("expected an error");
+    assert!(err.contains("missing"), "got: {err}");
+    assert!(err.contains("metafolder-sync-config"), "got: {err}");
 }
 
 #[test]
-fn test_pristine_panel_copies_are_upgraded() {
+fn test_load_style_errors_without_config() {
     let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-
-    // Simulate the leftovers of an older binary's startup: the same old
-    // shipped content in the user copy and in the defaults mirror.
-    let user = config.root().join("panel-types/hello/index.html");
-    let mirror = config.root().join("panel-types-defaults/hello/index.html");
-    std::fs::write(&user, "<html>old shipped</html>").unwrap();
-    std::fs::write(&mirror, "<html>old shipped</html>").unwrap();
-
-    config.install_defaults().unwrap();
-    // The user copy was never edited (identical to the previous
-    // defaults): it is upgraded to the currently shipped version.
-    assert_eq!(
-        std::fs::read_to_string(&user).unwrap(),
-        std::fs::read_to_string(&mirror).unwrap(),
-    );
-    assert!(std::fs::read_to_string(&user).unwrap().contains("Example panel type"));
+    assert!(config.load_style().is_err());
 }
 
 #[test]
-fn test_edited_panel_copies_survive_upgrades() {
+fn test_load_keybindings_reads_the_single_file_as_the_full_set() {
     let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
+    common::install_defaults(&config);
 
-    let user = config.root().join("panel-types/hello/index.html");
-    let mirror = config.root().join("panel-types-defaults/hello/index.html");
-    std::fs::write(&user, "<html>my edits</html>").unwrap();
-    std::fs::write(&mirror, "<html>old shipped</html>").unwrap();
-
-    config.install_defaults().unwrap();
-    // Edited (differs from the previous defaults): left untouched.
-    assert_eq!(std::fs::read_to_string(&user).unwrap(), "<html>my edits</html>");
-}
-
-#[test]
-fn test_defaults_mirror_is_always_refreshed() {
-    let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-
-    let mirrored = config.root().join("panel-types-defaults/hello/index.html");
-    std::fs::write(&mirrored, "stale").unwrap();
-    config.install_defaults().unwrap();
-    assert_ne!(std::fs::read_to_string(&mirrored).unwrap(), "stale");
-}
-
-#[test]
-fn test_load_keybindings_merges_user_over_defaults() {
-    let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-
-    // Defaults only: t is tab:new (shipped default).
+    // The shipped file carries the default binding.
     let set = config.load_keybindings().unwrap();
-    let table = set.compiled();
-    let t = table.iter().find(|b| b.keys == ["t"]).unwrap();
+    let t = set.compiled().into_iter().find(|b| b.keys == ["t"]).unwrap();
     assert_eq!(t.invocation, "tab:new");
-
-    // User override wins.
-    std::fs::write(
-        config.root().join("keybindings.toml"),
-        r#""t" = { command = "panel:split" }"#,
-    )
-    .unwrap();
-    let set = config.load_keybindings().unwrap();
-    let table = set.compiled();
-    let t = table.iter().find(|b| b.keys == ["t"]).unwrap();
-    assert_eq!(t.invocation, "panel:split");
 }
 
 #[test]
-fn test_load_keybindings_works_without_user_file() {
+fn test_set_user_keybinding_upserts_and_persists() {
     let (_guard, config) = temp_config();
-    // No install at all: shipped defaults still load.
-    let set = config.load_keybindings().unwrap();
-    assert!(set.compiled().iter().any(|b| b.invocation == "tab:new"));
-}
-
-#[test]
-fn test_list_panel_types_includes_custom_directories() {
-    let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-
-    let custom = config.root().join("panel-types/my-custom-panel");
-    std::fs::create_dir_all(&custom).unwrap();
-    std::fs::write(custom.join("index.html"), "<html></html>").unwrap();
-    // A directory without index.html is not a panel type.
-    std::fs::create_dir_all(config.root().join("panel-types/broken")).unwrap();
-
-    let types = config.list_panel_types().unwrap();
-    assert!(types.contains(&"hello".to_string()));
-    assert!(types.contains(&"my-custom-panel".to_string()));
-    assert!(!types.contains(&"broken".to_string()));
-}
-
-#[test]
-fn test_panel_dir_resolution() {
-    let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
-    assert_eq!(
-        config.panel_dir("hello").unwrap(),
-        config.root().join("panel-types/hello")
-    );
-    assert!(config.panel_dir("nope").is_none());
-    // Path traversal in a panel name must not resolve.
-    assert!(config.panel_dir("../escape").is_none());
-}
-
-#[test]
-fn test_set_user_keybinding_overrides_and_persists() {
-    let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
+    common::install_defaults(&config);
 
     let set = config
         .set_user_keybinding("alt+t", "panel:split", None, false)
@@ -161,14 +63,11 @@ fn test_set_user_keybinding_overrides_and_persists() {
     assert_eq!(alt_t.len(), 1);
     assert_eq!(alt_t[0].invocation, "panel:split");
 
-    // Persisted: a fresh load sees the override.
+    // Persisted: a fresh load sees the new binding, and the shipped ones remain.
     let reloaded = config.load_keybindings().unwrap();
-    let alt_t = reloaded
-        .compiled()
-        .into_iter()
-        .find(|b| b.keys == ["alt+t"])
-        .unwrap();
-    assert_eq!(alt_t.invocation, "panel:split");
+    let compiled = reloaded.compiled();
+    assert!(compiled.iter().any(|b| b.keys == ["alt+t"] && b.invocation == "panel:split"));
+    assert!(compiled.iter().any(|b| b.keys == ["t"] && b.invocation == "tab:new"));
 }
 
 #[test]
@@ -192,18 +91,49 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
 }
 
 #[test]
-fn test_remove_user_keybinding_restores_default() {
+fn test_remove_user_keybinding_unbinds_the_combo() {
     let (_guard, config) = temp_config();
-    config.install_defaults().unwrap();
+    common::install_defaults(&config);
     config
         .set_user_keybinding("t", "panel:split", None, false)
         .unwrap();
 
+    // In the single-file model, removing unbinds the combo entirely (there is
+    // no separate default layer to fall back to).
     let set = config.remove_user_keybinding("t").unwrap();
-    let t = set.compiled().into_iter().find(|b| b.keys == ["t"]).unwrap();
-    assert_eq!(t.invocation, "tab:new"); // shipped default again
-    // Removing a non-override is a no-op, not an error.
+    assert!(set.compiled().iter().all(|b| b.keys != ["t"]));
+    // Removing a missing combo is a no-op, not an error.
     config.remove_user_keybinding("t").unwrap();
+}
+
+#[test]
+fn test_list_panel_types_includes_custom_directories() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+
+    let custom = config.root().join("panel-types/my-custom-panel");
+    std::fs::create_dir_all(&custom).unwrap();
+    std::fs::write(custom.join("index.html"), "<html></html>").unwrap();
+    // A directory without index.html is not a panel type.
+    std::fs::create_dir_all(config.root().join("panel-types/broken")).unwrap();
+
+    let types = config.list_panel_types().unwrap();
+    assert!(types.contains(&"hello".to_string()));
+    assert!(types.contains(&"my-custom-panel".to_string()));
+    assert!(!types.contains(&"broken".to_string()));
+}
+
+#[test]
+fn test_panel_dir_resolution() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    assert_eq!(
+        config.panel_dir("hello").unwrap(),
+        config.root().join("panel-types/hello")
+    );
+    assert!(config.panel_dir("nope").is_none());
+    // Path traversal in a panel name must not resolve.
+    assert!(config.panel_dir("../escape").is_none());
 }
 
 #[test]

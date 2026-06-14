@@ -1,3 +1,6 @@
+pub mod config;
+#[cfg(feature = "sync-config")]
+pub mod config_sync;
 pub mod date;
 pub mod dsl;
 pub mod metarecord;

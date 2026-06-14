@@ -48,7 +48,8 @@ pub fn build_router(state: ServerState) -> Router {
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {
                 use axum::response::IntoResponse;
-                ([("content-type", "text/css")], state.config.load_style()).into_response()
+                let css = state.config.load_style().unwrap_or_default();
+                ([("content-type", "text/css")], css).into_response()
             }),
         )
         .route(

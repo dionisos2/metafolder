@@ -1,0 +1,60 @@
+# Simplified query grammar — edit freely; transpiles to the normal DSL.
+# Boolean skeleton: space or AND = AND, OR (or +), ! = NOT, parentheses.
+query = q:or                       => $q
+or    = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
+and   = items:andterm +            => {join(" AND ", $items)}
+andterm = "AND" u:unary            => $u
+        | u:unary                  => $u
+unary = "!" u:unary                => NOT $u
+      | a:atom                     => $a
+atom  = "(" q:query ")"            => ($q)
+      | p:predicate                => $p
+
+# Predicates — the part you edit most of the time. Comparison operators mirror
+# the normal DSL (=, !=, <, <=, >, >=); ~ is regex match.
+predicate =
+    f:field "="  v:STRING   => $f = $v
+  | f:field "="  n:NUMBER   => $f = $n
+  | f:field "="  "true"     => $f = true
+  | f:field "="  "false"    => $f = false
+  | f:field "="  w:WORD     => $f = {str($w)}
+  | f:field "!=" v:STRING   => $f != $v
+  | f:field "!=" n:NUMBER   => $f != $n
+  | f:field "!=" "true"     => $f != true
+  | f:field "!=" "false"    => $f != false
+  | f:field "!=" w:WORD     => $f != {str($w)}
+  | f:field "~"  v:value    => $f MATCHES {str($v)}
+  | f:field ">=" n:number   => $f >= $n
+  | f:field "<=" n:number   => $f <= $n
+  | f:field ">"  n:number   => $f > $n
+  | f:field "<"  n:number   => $f < $n
+  | f:field "?"             => $f IS PRESENT
+  | "under" v:value         => mfr_path ->* {str($v)}
+  # Date macros: `modified`/`created` pick the field; relative (younger/older)
+  # and absolute (since/before/between) forms. Dates are quoted ISO-8601.
+  | df:datefield "younger" d:duration            => $df > @{now() - num($d)}
+  | df:datefield "older"   d:duration            => $df < @{now() - num($d)}
+  | df:datefield "since"   v:value               => $df >= @{str($v)}
+  | df:datefield "before"  v:value               => $df < @{str($v)}
+  | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
+  | "tag"                   => tag = "test"
+  | "fav"                   => rating >= 4
+
+# Field aliases: map a few names, pass the rest through.
+field  = "path" => mfr_path
+       | "size" => mfr_size
+       | w:WORD => $w
+value  = STRING | WORD
+number = n:NUMBER "MB"   => {num($n) * 1048576}
+       | n:NUMBER "mins" => {num($n) * 60}
+       | n:NUMBER        => $n
+
+# Date fields and durations (durations are milliseconds).
+datefield = "modified" => mfr_mtime
+          | "created"  => mfr_btime
+duration  = n:NUMBER u:dur_unit => {num($n) * num($u)}
+dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
+          | ("min" | "mins" | "minute" | "minutes")       => 60000
+          | ("h" | "hr" | "hrs" | "hour" | "hours")        => 3600000
+          | ("d" | "day" | "days")                         => 86400000
+          | ("w" | "week" | "weeks")                       => 604800000

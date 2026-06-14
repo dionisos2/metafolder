@@ -1,126 +1,43 @@
 //! Loading of the global simplified-query grammar (spec-query "Simplified
-//! query language" / "Configuration"): `$XDG_CONFIG_HOME/metafolder/
-//! query-grammar`, installed with an editable default on first run, parsed and
-//! validated at startup. A missing file is installed; a malformed grammar
-//! disables the simplified language (the normal DSL is unaffected).
+//! query language" / "Configuration"): `$XDG_CONFIG_HOME/metafolder/daemon/
+//! query-grammar`, installed by `metafolder-sync-config` (spec-config) and
+//! parsed/validated at startup. A missing or malformed grammar is a hard
+//! error; there is no embedded fallback. The normal DSL needs no grammar.
 
 use std::path::{Path, PathBuf};
 
 use metafolder_core::simplified::engine::validate;
 use metafolder_core::simplified::grammar::{parse_grammar, Grammar};
 
-/// The default grammar installed on first run (spec-query "Default grammar").
-pub const DEFAULT_GRAMMAR: &str = r#"# Simplified query grammar — edit freely; transpiles to the normal DSL.
-# Boolean skeleton: space or AND = AND, OR (or +), ! = NOT, parentheses.
-query = q:or                       => $q
-or    = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
-and   = items:andterm +            => {join(" AND ", $items)}
-andterm = "AND" u:unary            => $u
-        | u:unary                  => $u
-unary = "!" u:unary                => NOT $u
-      | a:atom                     => $a
-atom  = "(" q:query ")"            => ($q)
-      | p:predicate                => $p
 
-# Predicates — the part you edit most of the time. Comparison operators mirror
-# the normal DSL (=, !=, <, <=, >, >=); ~ is regex match.
-predicate =
-    f:field "="  v:STRING   => $f = $v
-  | f:field "="  n:NUMBER   => $f = $n
-  | f:field "="  "true"     => $f = true
-  | f:field "="  "false"    => $f = false
-  | f:field "="  w:WORD     => $f = {str($w)}
-  | f:field "!=" v:STRING   => $f != $v
-  | f:field "!=" n:NUMBER   => $f != $n
-  | f:field "!=" "true"     => $f != true
-  | f:field "!=" "false"    => $f != false
-  | f:field "!=" w:WORD     => $f != {str($w)}
-  | f:field "~"  v:value    => $f MATCHES {str($v)}
-  | f:field ">=" n:number   => $f >= $n
-  | f:field "<=" n:number   => $f <= $n
-  | f:field ">"  n:number   => $f > $n
-  | f:field "<"  n:number   => $f < $n
-  | f:field "?"             => $f IS PRESENT
-  | "under" v:value         => mfr_path ->* {str($v)}
-  # Date macros: `modified`/`created` pick the field; relative (younger/older)
-  # and absolute (since/before/between) forms. Dates are quoted ISO-8601.
-  | df:datefield "younger" d:duration            => $df > @{now() - num($d)}
-  | df:datefield "older"   d:duration            => $df < @{now() - num($d)}
-  | df:datefield "since"   v:value               => $df >= @{str($v)}
-  | df:datefield "before"  v:value               => $df < @{str($v)}
-  | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "tag"                   => tag = "test"
-  | "fav"                   => rating >= 4
-
-# Field aliases: map a few names, pass the rest through.
-field  = "path" => mfr_path
-       | "size" => mfr_size
-       | w:WORD => $w
-value  = STRING | WORD
-number = n:NUMBER "MB"   => {num($n) * 1048576}
-       | n:NUMBER "mins" => {num($n) * 60}
-       | n:NUMBER        => $n
-
-# Date fields and durations (durations are milliseconds).
-datefield = "modified" => mfr_mtime
-          | "created"  => mfr_btime
-duration  = n:NUMBER u:dur_unit => {num($n) * num($u)}
-dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
-          | ("min" | "mins" | "minute" | "minutes")       => 60000
-          | ("h" | "hr" | "hrs" | "hour" | "hours")        => 3600000
-          | ("d" | "day" | "days")                         => 86400000
-          | ("w" | "week" | "weeks")                       => 604800000
-"#;
-
-/// `$XDG_CONFIG_HOME/metafolder/query-grammar`.
+/// `$XDG_CONFIG_HOME/metafolder/daemon/query-grammar`.
 pub fn grammar_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("metafolder").join("query-grammar"))
+    metafolder_core::config::crate_config_dir("daemon").map(|d| d.join("query-grammar"))
 }
 
-/// Reads the grammar at `path`, installing the default if the file is missing,
-/// then parses and validates it.
+/// Reads, parses and validates the grammar at `path`. A missing or malformed
+/// file is an error; there is no fall back to a shipped default (spec-config).
 pub fn load_grammar(path: &Path) -> Result<Grammar, String> {
-    let src = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("creating {}: {e}", parent.display()))?;
-            }
-            std::fs::write(path, DEFAULT_GRAMMAR)
-                .map_err(|e| format!("installing default grammar at {}: {e}", path.display()))?;
-            DEFAULT_GRAMMAR.to_string()
-        }
-        Err(e) => return Err(format!("reading {}: {e}", path.display())),
-    };
+    let src = metafolder_core::config::read_required(path)?;
     let grammar = parse_grammar(&src)?;
     validate(&grammar)?;
     Ok(grammar)
 }
 
-/// The parsed default grammar. Panics only if [`DEFAULT_GRAMMAR`] is malformed,
-/// which a unit test guards against; handy for tests and seeding.
-pub fn default_grammar() -> Grammar {
-    parse_grammar(DEFAULT_GRAMMAR).expect("DEFAULT_GRAMMAR is valid")
-}
-
-/// Startup entry point: resolves the path, installs/loads the grammar, and
-/// returns `None` (with a logged reason) if it cannot be used.
-pub fn init() -> Option<Grammar> {
-    let path = grammar_path()?;
-    match load_grammar(&path) {
-        Ok(g) => Some(g),
-        Err(e) => {
-            eprintln!("[daemon] Warning: simplified query language disabled: {e}");
-            None
-        }
-    }
+/// Startup entry point: resolves the path, then loads, parses and validates
+/// the grammar. A missing or malformed grammar is a hard error (spec-config).
+pub fn init() -> Result<Grammar, String> {
+    let path = grammar_path().ok_or("cannot determine the daemon configuration directory")?;
+    load_grammar(&path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use metafolder_core::simplified::engine::expand;
+
+    /// The shipped grammar, embedded for tests only (never a runtime fallback).
+    const DEFAULT_GRAMMAR: &str = include_str!("../default-config/query-grammar");
 
     #[test]
     fn default_grammar_parses_and_validates() {
@@ -213,14 +130,12 @@ mod tests {
     }
 
     #[test]
-    fn load_installs_default_when_missing() {
+    fn load_grammar_errors_when_missing() {
         let dir = std::env::temp_dir().join(format!("mf-grammar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("query-grammar");
-        let g = load_grammar(&path).expect("installs and loads default");
-        assert!(path.exists(), "default grammar file was written");
-        let g2 = load_grammar(&path).expect("re-loads the existing file");
-        assert_eq!(g, g2);
-        let _ = std::fs::remove_dir_all(&dir);
+        let err = load_grammar(&path).unwrap_err();
+        assert!(err.contains("missing"), "got: {err}");
+        assert!(!path.exists(), "no default is installed");
     }
 }

@@ -7,10 +7,14 @@ use axum::Router;
 use http_body_util::BodyExt;
 use metafolder_core::simplified::grammar::parse_grammar;
 use metafolder_daemon::routes;
-use metafolder_daemon::simplified::DEFAULT_GRAMMAR;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
+
+/// The shipped grammar, embedded into this test binary (a fixture, not a
+/// runtime fallback — see spec-config "No runtime fallback").
+const DEFAULT_GRAMMAR: &str =
+    include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/default-config/query-grammar"));
 
 fn app_with_grammar(grammar_src: Option<&str>) -> Router {
     let mut state = AppState::new();

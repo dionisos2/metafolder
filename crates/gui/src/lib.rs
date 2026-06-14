@@ -98,15 +98,18 @@ pub fn run(options: Options) {
     let config = Arc::new(
         ConfigDir::default_location().expect("cannot resolve the user config directory"),
     );
-    config
-        .install_defaults()
-        .expect("cannot install default configuration");
 
     let registry = Arc::new(CommandRegistry::new());
     register_builtins(&registry);
-    let keybindings = config
-        .load_keybindings()
-        .expect("invalid keybindings configuration");
+    // The configuration is installed by `metafolder-sync-config`; a missing or
+    // invalid file is fatal (spec-config "No runtime fallback").
+    let keybindings = match config.load_keybindings() {
+        Ok(keybindings) => keybindings,
+        Err(error) => {
+            eprintln!("metafolder-gui: {error}");
+            std::process::exit(1);
+        }
+    };
 
     let gui_port = options.gui_port;
     let daemon = Arc::new(daemon_proxy::DaemonProxy::new(options.daemon_url.clone()));

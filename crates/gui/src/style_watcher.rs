@@ -32,7 +32,7 @@ pub fn watch(config: Arc<ConfigDir>, gui: Arc<GuiState>) -> Result<StyleWatcher,
         if touches_style && relevant {
             gui.notify(
                 events::STYLE_CHANGED,
-                serde_json::json!({ "css": config.load_style() }),
+                serde_json::json!({ "css": config.load_style().unwrap_or_default() }),
             );
         }
     })
@@ -53,8 +53,8 @@ mod tests {
     #[test]
     fn test_style_change_emits_event_with_new_css() {
         let dir = tempfile::tempdir().unwrap();
-        let config = Arc::new(ConfigDir::at(dir.path().join("metafolder-gui")));
-        config.install_defaults().unwrap();
+        let config = Arc::new(ConfigDir::at(dir.path().join("gui")));
+        std::fs::create_dir_all(config.root()).unwrap();
 
         let notifier = Arc::new(RecordingNotifier::new());
         let gui = Arc::new(GuiState::new(notifier.clone()));

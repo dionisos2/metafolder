@@ -24,8 +24,14 @@ fn daemon_url() -> &'static str {
             rt.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
                 let mut app_state = metafolder_daemon::state::AppState::new();
+                // The shipped grammar, parsed from the daemon's default-config
+                // (a test fixture, not a runtime fallback — spec-config).
+                const GRAMMAR_SRC: &str = include_str!(concat!(
+                    env!("CARGO_MANIFEST_DIR"),
+                    "/../daemon/default-config/query-grammar"
+                ));
                 app_state.set_simplified_grammar(Some(
-                    metafolder_daemon::simplified::default_grammar(),
+                    metafolder_core::simplified::grammar::parse_grammar(GRAMMAR_SRC).unwrap(),
                 ));
                 let app = metafolder_daemon::routes::build(std::sync::Arc::new(app_state));
                 axum::serve(listener, app).await.unwrap();

@@ -7,3 +7,13 @@ edition = "2021"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
+# Only the config-sync command links libgit2; reading configuration never does.
+git2 = { version = "0.19", default-features = false, optional = true }
+
+[features]
+# Enables the `metafolder-sync-config` binary and its git-backed sync module.
+sync-config = ["dep:git2"]
+
+[[bin]]
+name = "metafolder-sync-config"
+required-features = ["sync-config"]

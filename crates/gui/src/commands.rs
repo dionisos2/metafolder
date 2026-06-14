@@ -51,7 +51,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         keybindings: app.keybindings.lock_recover().compiled(),
         commands: app.registry.list(),
         panel_types: app.config.list_panel_types()?,
-        style_css: app.config.load_style(),
+        style_css: app.config.load_style()?,
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
     })
@@ -213,8 +213,8 @@ pub fn get_compiled_keybindings(app: AppHandle) -> Vec<CompiledBinding> {
     app.keybindings.lock_recover().compiled()
 }
 
-/// Settings view: writes a user keybinding override to keybindings.toml,
-/// swaps in the recompiled set and pushes it to every document.
+/// Settings view: upserts a keybinding in keybindings.toml, swaps in the
+/// recompiled set and pushes it to every document.
 #[tauri::command]
 pub fn set_user_keybinding(
     app: AppHandle,
@@ -235,7 +235,8 @@ pub fn set_user_keybinding(
     Ok(compiled)
 }
 
-/// Settings view: removes a user override (reverting to the default).
+/// Settings view: unbinds a combo in keybindings.toml (reverting to a shipped
+/// default is a git operation on the config repo, not done here).
 #[tauri::command]
 pub fn remove_user_keybinding(
     app: AppHandle,
@@ -253,10 +254,11 @@ pub fn list_panel_types(app: AppHandle) -> Result<Vec<String>, String> {
     app.config.list_panel_types()
 }
 
-/// Current stylesheet (user file or shipped default), for manual reloads.
+/// Current stylesheet, for manual reloads. An unreadable file yields empty CSS
+/// at this runtime path; startup already fails when configuration is missing.
 #[tauri::command]
 pub fn load_style(app: AppHandle) -> String {
-    app.config.load_style()
+    app.config.load_style().unwrap_or_default()
 }
 
 /// Config paths shown in the settings view.

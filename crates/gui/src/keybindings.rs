@@ -112,6 +112,13 @@ impl KeybindingSet {
         Ok(KeybindingSet { config, suggestions: Vec::new() })
     }
 
+    /// The complete set from a single source. In the git-backed config model
+    /// (spec-config) the user's `keybindings.toml` already is the shipped
+    /// defaults merged with their edits, so there is no separate defaults layer.
+    pub fn from_source(source: &str) -> Result<Self, String> {
+        Self::from_sources(source, "")
+    }
+
     /// `metafolder.addKeybinding` — applied only when no configured
     /// binding has the same combo and the same `when` scope.
     pub fn add_suggestion(

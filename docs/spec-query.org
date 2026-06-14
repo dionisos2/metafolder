@@ -301,13 +301,12 @@ input behind =mf query --simplified=.
 ** Configuration
 
 The grammar is a single file in the daemon config directory,
-=~/.config/metafolder/query-grammar=. It is installed with an editable default
-grammar on first run and never overwritten once edited (same policy as the GUI
-config files); deleting it restores the default on next start. It is **global**
-(not per-repo) and read by the daemon at startup, so the CLI and GUI share one
-grammar. An empty file = no rules = the simplified language accepts nothing. A
-malformed grammar is reported and the simplified language is disabled; the
-normal DSL is unaffected.
+=~/.config/metafolder/daemon/query-grammar=, installed by
+=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]). It is
+**global** (not per-repo) and read by the daemon at startup, so the CLI and GUI
+share one grammar. An empty file = no rules = the simplified language accepts
+nothing. A *missing* or *malformed* grammar is a startup error (no fall back to
+an embedded default); the normal DSL needs no grammar and is unaffected.
 
 ** Lexer (fixed)
 

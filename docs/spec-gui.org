@@ -542,19 +542,21 @@ stylesheet overrides.
 
 ** Style and theming
 
-The GUI loads =~/.config/metafolder-gui/style.css= at startup and applies it
-globally to the WebView. The GUI ships a default stylesheet the user copies
-and modifies. The =config:open= settings view shows the active CSS path and
-offers a reload button; the GUI also auto-reloads on file change via inotify.
+The GUI loads =~/.config/metafolder/gui/style.css= at startup and applies it
+globally to the WebView. The stylesheet is shipped and installed by
+=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]); a missing
+or unreadable file is a startup error, not a fall back to an embedded default.
+The =config:open= settings view shows the active CSS path and offers a reload
+button; the GUI also auto-reloads on file change via inotify.
 
 ** Panel type system
 
 *** Directory layout
 
-Panel types live under =~/.config/metafolder-gui/panel-types/=:
+Panel types live under =~/.config/metafolder/gui/panel-types/=:
 
 #+BEGIN_SRC
-~/.config/metafolder-gui/panel-types/
+~/.config/metafolder/gui/panel-types/
   metarecord-list/
     index.html        ← entry point
   metarecord-detail/
@@ -571,14 +573,11 @@ Panel types live under =~/.config/metafolder-gui/panel-types/=:
     index.html
 #+END_SRC
 
-Built-in types ship as pre-populated examples. The user can edit them freely;
-the GUI never overwrites an edited file. On startup, installation writes
-missing files under =panel-types/= and *upgrades the never-edited ones*: a
-user file whose content is identical to =panel-types-defaults/= (a sibling
-mirror directory holding the versions shipped by the previous run) carries
-no user edit and is replaced with the new shipped version. The mirror is
-then rewritten with the current shipped versions, so the user can also diff
-their edits against the defaults after an upgrade.
+Built-in types ship as pre-populated examples installed by
+=metafolder-sync-config= (see [[file:spec-config.org][spec-config]]). The user
+edits them freely on the config repository's =main= branch; upgrades are a git
+merge of the shipped =default= branch, not a copy-if-unmodified pass. There is
+no =panel-types-defaults/= mirror.
 
 Panel types are served to the WebView by the GUI's own HTTP server (the
 GUI API port, default 7524): =GET /panel/<name>/<file>=. HTML documents get
@@ -1357,7 +1356,9 @@ calls fail immediately with =409= (no queueing).
 
 ** Panel type update strategy
 
-Resolved by the =panel-types-defaults/= mirror (see [[*Directory layout]]).
+Resolved by the git-backed config repository: =metafolder-sync-config= merges
+the shipped =default= branch into the user's =main= branch (see
+[[file:spec-config.org][spec-config]]).
 
 * Open questions
 

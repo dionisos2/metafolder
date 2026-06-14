@@ -13,10 +13,12 @@ use metafolder_gui::state::GuiState;
 use std::sync::Arc;
 use tower::util::ServiceExt;
 
+mod common;
+
 fn setup() -> (tempfile::TempDir, Arc<ConfigDir>, axum::Router) {
     let dir = tempfile::tempdir().unwrap();
-    let config = Arc::new(ConfigDir::at(dir.path().join("metafolder-gui")));
-    config.install_defaults().unwrap();
+    let config = Arc::new(ConfigDir::at(dir.path().join("gui")));
+    common::install_defaults(&config);
     let state = ServerState {
         config: config.clone(),
         gui: Arc::new(GuiState::new(Arc::new(RecordingNotifier::new()))),

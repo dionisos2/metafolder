@@ -1,16 +1,15 @@
-//! `~/.config/metafolder-gui/` management (spec-gui "Panel type system",
-//! "Style and theming"): first-run installation of editable defaults,
-//! the always-refreshed `panel-types-defaults/` mirror users can diff
-//! against after upgrades, keybinding loading, and the port discovery
-//! file for scripts.
+//! `~/.config/metafolder/gui/` access (spec-config; spec-gui "Panel type
+//! system", "Style and theming"): reading the keybindings, stylesheet and
+//! panel types that `metafolder-sync-config` installed, plus the port
+//! discovery file for scripts.
+//!
+//! There is no installation or embedded fallback here. The configuration is
+//! materialised by `metafolder-sync-config` into the git-backed config repo;
+//! at runtime a missing configuration file is an error, never a fall back to a
+//! shipped default (spec-config "No runtime fallback").
 
 use crate::keybindings::KeybindingSet;
-use include_dir::{include_dir, Dir};
 use std::path::{Path, PathBuf};
-
-static PANEL_TYPES: Dir<'_> = include_dir!("$CARGO_MANIFEST_DIR/panel-types");
-const DEFAULT_KEYBINDINGS: &str = include_str!("../default-config/keybindings.toml");
-const DEFAULT_STYLE: &str = include_str!("../default-config/style.css");
 
 pub struct ConfigDir {
     root: PathBuf,
@@ -20,13 +19,12 @@ pub struct ConfigDir {
 }
 
 impl ConfigDir {
-    /// The real user config dir: `~/.config/metafolder-gui` (respecting
+    /// The real user config dir: `~/.config/metafolder/gui` (respecting
     /// `$XDG_CONFIG_HOME`); the port file goes to
     /// `$XDG_RUNTIME_DIR/metafolder/` when available.
     pub fn default_location() -> Result<Self, String> {
-        let root = dirs::config_dir()
-            .ok_or("cannot determine the user configuration directory")?
-            .join("metafolder-gui");
+        let root = metafolder_core::config::crate_config_dir("gui")
+            .ok_or("cannot determine the user configuration directory")?;
         let port_dir = std::env::var_os("XDG_RUNTIME_DIR")
             .map(|dir| PathBuf::from(dir).join("metafolder"))
             .unwrap_or_else(|| root.clone());
@@ -43,57 +41,22 @@ impl ConfigDir {
         &self.root
     }
 
-    // ── Installation ─────────────────────────────────────────────────────
-
-    /// Installs the shipped defaults: `keybindings.toml`, `style.css` and
-    /// `panel-types/*` are written only when missing (user edits are never
-    /// overwritten); `panel-types-defaults/*` is always rewritten so users
-    /// can diff their edits against the current defaults. A user panel
-    /// file identical to the previous defaults mirror was never edited,
-    /// so it is upgraded to the new shipped version in place.
-    pub fn install_defaults(&self) -> Result<(), String> {
-        let io = |e: std::io::Error| format!("config install failed: {e}");
-        std::fs::create_dir_all(&self.root).map_err(io)?;
-
-        for (name, content) in [
-            ("keybindings.toml", DEFAULT_KEYBINDINGS),
-            ("style.css", DEFAULT_STYLE),
-        ] {
-            let path = self.root.join(name);
-            if !path.exists() {
-                std::fs::write(&path, content).map_err(io)?;
-            }
-        }
-
-        // Before the mirror refresh: it still holds the defaults shipped
-        // by the previous run, the reference for "never edited".
-        upgrade_pristine(
-            &PANEL_TYPES,
-            &self.root.join("panel-types"),
-            &self.root.join("panel-types-defaults"),
-        )?;
-        install_dir(&PANEL_TYPES, &self.root.join("panel-types"), false)?;
-        install_dir(&PANEL_TYPES, &self.root.join("panel-types-defaults"), true)?;
-        Ok(())
-    }
-
     // ── Keybindings ──────────────────────────────────────────────────────
 
-    /// Shipped defaults merged with the user's `keybindings.toml` (which
-    /// may not exist).
-    pub fn load_keybindings(&self) -> Result<KeybindingSet, String> {
-        let user_path = self.root.join("keybindings.toml");
-        let user = match std::fs::read_to_string(&user_path) {
-            Ok(content) => content,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-            Err(e) => return Err(format!("cannot read {}: {e}", user_path.display())),
-        };
-        KeybindingSet::from_sources(DEFAULT_KEYBINDINGS, &user)
+    pub fn keybindings_path(&self) -> PathBuf {
+        self.root.join("keybindings.toml")
     }
 
-    /// Writes (or replaces) one user keybinding override and returns the
-    /// recompiled merged set. Combos are matched after normalization, so
-    /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` metarecord.
+    /// The complete keybinding set, read from the single user file. A missing
+    /// or invalid file is an error (spec-config "No runtime fallback").
+    pub fn load_keybindings(&self) -> Result<KeybindingSet, String> {
+        let src = metafolder_core::config::read_required(&self.keybindings_path())?;
+        KeybindingSet::from_source(&src)
+    }
+
+    /// Writes (upserts) one keybinding into `keybindings.toml` and returns the
+    /// recompiled set. Combos are matched after normalization, so
+    /// `"shift+ctrl+a"` replaces an existing `"ctrl+shift+a"` entry.
     pub fn set_user_keybinding(
         &self,
         combo: &str,
@@ -121,8 +84,9 @@ impl ConfigDir {
         self.load_keybindings()
     }
 
-    /// Removes a user override (reverting to the shipped default);
-    /// missing metarecords are a no-op. Returns the recompiled set.
+    /// Removes (unbinds) one combo from `keybindings.toml`; a missing combo is
+    /// a no-op. Reverting to a shipped default is a git operation on the config
+    /// repo, not handled here (spec-config). Returns the recompiled set.
     pub fn remove_user_keybinding(&self, combo: &str) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;
@@ -136,7 +100,7 @@ impl ConfigDir {
     }
 
     fn read_user_keybindings_table(&self) -> Result<toml::Table, String> {
-        let path = self.root.join("keybindings.toml");
+        let path = self.keybindings_path();
         match std::fs::read_to_string(&path) {
             Ok(content) => {
                 toml::from_str(&content).map_err(|e| format!("invalid keybindings file: {e}"))
@@ -149,7 +113,7 @@ impl ConfigDir {
     fn write_user_keybindings_table(&self, table: &toml::Table) -> Result<(), String> {
         std::fs::create_dir_all(&self.root)
             .map_err(|e| format!("cannot create {}: {e}", self.root.display()))?;
-        let path = self.root.join("keybindings.toml");
+        let path = self.keybindings_path();
         let serialized =
             toml::to_string_pretty(table).map_err(|e| format!("cannot serialize: {e}"))?;
         std::fs::write(&path, serialized).map_err(|e| format!("cannot write {}: {e}", path.display()))
@@ -161,10 +125,9 @@ impl ConfigDir {
         self.root.join("style.css")
     }
 
-    /// The user stylesheet, falling back to the shipped default.
-    pub fn load_style(&self) -> String {
-        std::fs::read_to_string(self.style_css_path())
-            .unwrap_or_else(|_| DEFAULT_STYLE.to_string())
+    /// The user stylesheet. A missing file is an error (no embedded fallback).
+    pub fn load_style(&self) -> Result<String, String> {
+        metafolder_core::config::read_required(&self.style_css_path())
     }
 
     // ── Panel types ──────────────────────────────────────────────────────
@@ -223,45 +186,4 @@ impl ConfigDir {
     pub fn remove_port_file(&self) {
         let _ = std::fs::remove_file(self.port_file_path());
     }
-}
-
-/// Upgrades the never-edited user copies of shipped files: a user file
-/// whose content equals the previous defaults mirror (`old_defaults`,
-/// written by the last run) carries no user edit and is rewritten with
-/// the new shipped content. Anything else — edited, missing, or without
-/// a mirror counterpart (first run) — is left to `install_dir`.
-fn upgrade_pristine(source: &Dir<'_>, user: &Path, old_defaults: &Path) -> Result<(), String> {
-    let io = |e: std::io::Error| format!("config install failed: {e}");
-    for dir in source.dirs() {
-        upgrade_pristine(dir, user, old_defaults)?;
-    }
-    for file in source.files() {
-        let user_path = user.join(file.path());
-        let Ok(current) = std::fs::read(&user_path) else { continue };
-        let Ok(previous) = std::fs::read(old_defaults.join(file.path())) else { continue };
-        if current == previous && current != file.contents() {
-            std::fs::write(&user_path, file.contents()).map_err(io)?;
-        }
-    }
-    Ok(())
-}
-
-/// Copies an embedded directory tree to disk. With `overwrite`, existing
-/// files are rewritten; otherwise they are left untouched.
-fn install_dir(source: &Dir<'_>, target: &Path, overwrite: bool) -> Result<(), String> {
-    let io = |e: std::io::Error| format!("config install failed: {e}");
-    for dir in source.dirs() {
-        std::fs::create_dir_all(target.join(dir.path())).map_err(io)?;
-        install_dir(dir, target, overwrite)?;
-    }
-    for file in source.files() {
-        let path = target.join(file.path());
-        if overwrite || !path.exists() {
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(io)?;
-            }
-            std::fs::write(&path, file.contents()).map_err(io)?;
-        }
-    }
-    Ok(())
 }

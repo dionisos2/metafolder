@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+mod common;
+
 struct Ctx {
     _guard: tempfile::TempDir,
     notifier: Arc<RecordingNotifier>,
@@ -49,8 +51,8 @@ async fn spawn_stub_daemon() -> String {
 
 async fn setup_with_daemon(daemon_url: &str) -> Ctx {
     let guard = tempfile::tempdir().unwrap();
-    let config = Arc::new(ConfigDir::at(guard.path().join("metafolder-gui")));
-    config.install_defaults().unwrap();
+    let config = Arc::new(ConfigDir::at(guard.path().join("gui")));
+    common::install_defaults(&config);
 
     let notifier = Arc::new(RecordingNotifier::new());
     let gui = Arc::new(GuiState::new(notifier.clone()));

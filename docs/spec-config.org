@@ -1,0 +1,206 @@
+#+TITLE: metafolder — user configuration (spec)
+#+STARTUP: showeverything
+
+This spec defines how user-editable configuration is stored, shipped, and
+updated across all crates. It supersedes the install/update parts of:
+
+- spec-gui "Style and theming", "Panel type system / Directory layout",
+  "Panel type update strategy";
+- spec-query "Configuration" (the install-if-missing / never-overwrite policy).
+
+The behaviour those sections describe — first-run installation of editable
+defaults, the "never overwrite an edited file" rule, the
+=panel-types-defaults/= diff mirror, and the embedded runtime fallbacks — is
+*removed* and replaced by the git-backed model below.
+
+* Motivation
+
+The previous model copied shipped defaults into the user config directory
+"only if not modified", kept a parallel =panel-types-defaults/= mirror so the
+user could diff after an upgrade, and embedded each default in the binary as a
+compile-time fallback. This is a hand-rolled, incomplete three-way merge: it
+only ever upgrades files the user never touched; once a file is edited the
+user is frozen on the old version and must merge by hand against the mirror.
+
+A real three-way merge is exactly what git does. We make the user config
+directory a git repository: a =default= branch holds the shipped defaults
+(the merge base), a =main= branch holds the user's working configuration, and
+updates are a =merge default -> main=.
+
+* On-disk layout
+
+A single git repository at =~/.config/metafolder/= (respecting
+=$XDG_CONFIG_HOME=), one tracked subdirectory per crate:
+
+#+BEGIN_SRC
+~/.config/metafolder/            ← git repository (branches: default, main)
+  .gitignore
+  core/                          ← shared configuration
+  daemon/
+    config.json                  ← repos to auto-load
+    query-grammar                ← simplified-query grammar
+  gui/
+    keybindings.toml
+    style.css
+    panel-types/
+      <name>/index.html ...
+  cli/                           ← (no config yet; reserved)
+#+END_SRC
+
+The runtime/ephemeral state that is *not* configuration is git-ignored and
+never committed: the GUI port discovery file (=gui.port=, which moreover lives
+under =$XDG_RUNTIME_DIR/metafolder/= when available). =.gitignore= is part of
+the shipped defaults (committed on =default=).
+
+The obsolete =panel-types-defaults/= mirror does not exist in this model: the
+=default= branch *is* the mirror, done correctly and extended to every
+configuration file.
+
+** Shipped defaults in the source tree
+
+Every default is a *file*, never an inline string. Each crate carries its
+shipped configuration under =crates/<name>/default-config/=, mirroring the
+on-disk subdirectory it targets:
+
+#+BEGIN_SRC
+crates/core/default-config/...
+crates/daemon/default-config/query-grammar, config.json, ...
+crates/gui/default-config/keybindings.toml, style.css, panel-types/...
+crates/cli/default-config/...            ← may be empty
+#+END_SRC
+
+=crates/<name>/default-config/= maps to =~/.config/metafolder/<name>/=.
+There are no =include_str!=/=include_dir!= copies of these in any binary: a
+binary never holds its own defaults (see "No runtime fallback").
+
+* Branch model
+
+- =default= — the shipped defaults. Updated only by =metafolder-sync-config=,
+  never checked out; its commits form the three-way merge base. Each update
+  appends one commit (parent = previous =default= tip) whose tree is the union
+  of all crates' =default-config/= placed under their subdirectories.
+- =main= — the user's working configuration. Checked out for the whole life of
+  the repository; this is the only branch the daemon, GUI and CLI ever read.
+  The user edits files here (by hand or through the GUI config editor); those
+  edits are ordinary working-tree changes / commits on =main=.
+
+Reverting a file to its shipped default is a git operation (e.g.
+=git checkout default -- gui/style.css=), not a delete-the-override gesture.
+
+* =metafolder-sync-config=
+
+A command in =core= (binary =metafolder-sync-config=) is the *only* git actor.
+The daemon, GUI and CLI never run git; they only read files from the =main=
+working tree. The command is run as an install/update step (e.g. after pulling
+a new source checkout), not from any long-running process.
+
+Inputs:
+- =--source <dir>= — the source checkout whose =crates/*/default-config/= are
+  gathered. Defaults to the current working directory (the git-checkout install
+  case). [v2: a binary-only install would embed the defaults instead.]
+- =--config-dir <dir>= — target. Defaults to =~/.config/metafolder/=.
+
+** First run (repository absent)
+
+1. =git init= at the config dir; write all =default-config/= trees into the
+   working tree under their subdirectories; commit on =default=.
+2. Create =main= at the same commit and check it out.
+
+** Update (repository present)
+
+In this exact order:
+
+1. *Preserve user edits.* If the =main= working tree is dirty, stage and commit
+   everything as an automatic "user edits" commit. (Committing rather than
+   stashing keeps a single conflict point and a trivial restore; the user's
+   history is preserved.)
+2. *Refresh defaults.* Regenerate the default tree from =--source= and commit
+   it on =default= (parent = previous =default= tip). Built via plumbing/an
+   in-memory tree so =main='s checkout is never disturbed. If the tree is
+   unchanged, stop — nothing to do.
+3. *Merge.* =merge default -> main=.
+4. *Outcome.*
+   - Clean merge: write the merge commit, update =main=, checkout the result.
+   - Conflicts: =reset --hard= =main= to the commit recorded before step 1,
+     clear the in-progress merge state, and report the conflict to the user
+     (which files, and that nothing was changed). The default is conservative:
+     no partial state is ever left behind. A power user is told they can redo
+     the merge by hand (it is a normal git repository).
+
+The pre-operation =main= tip is captured up front so restoration is exact.
+
+* No runtime fallback
+
+A missing or malformed configuration file is a hard error: the affected
+program prints a diagnostic identifying the file and the problem, and stops.
+It never falls back to an embedded or shipped default, because the canonical
+default may legitimately be absent (deleted by the user after install). Per
+file kind:
+
+- =daemon/query-grammar=: missing or malformed ⇒ daemon startup error
+  (previously: install default if missing; malformed ⇒ disable the simplified
+  language). An *empty* file stays valid (no rules = the simplified language
+  accepts nothing); only a *missing* or *malformed* file is an error. The
+  normal DSL needs no grammar and is unaffected in all cases.
+- =gui/style.css=: missing ⇒ error (previously: fall back to the embedded
+  default).
+- =gui/keybindings.toml=: see below.
+- =daemon/config.json=: unchanged — already an error when malformed; absence
+  means "no repos to auto-load", which stays valid.
+
+* Keybindings: single-file model
+
+The two-layer "embedded defaults + user override deltas, merged at load"
+model is removed. =gui/keybindings.toml= on =main= is the *complete* effective
+set: the shipped defaults (from =default=) merged with the user's edits (by
+git). Consequences:
+
+- Loading reads the one file as the full set; there is no load-time merge with
+  an embedded default set.
+- The GUI keybinding editor writes directly into the =main= working tree (an
+  ordinary file edit). "Reset a binding to its default" is
+  =git checkout default -- gui/keybindings.toml= (or the per-key equivalent),
+  not the removal of an override entry.
+- Panel =addKeybinding= suggestions still apply only when they do not conflict
+  with the file's bindings; that logic is unchanged, it just reads the single
+  file.
+
+* =core= configuration API
+
+=core= owns, with no heavy dependency, the resolution of configuration paths
+and the reading helpers, so daemon/GUI/CLI do not each recompute them:
+
+- Path resolution: =~/.config/metafolder/<crate>/...= from =$XDG_CONFIG_HOME=
+  / =$HOME= using =std::env= only (no =dirs= crate), in the spirit of the
+  project's dependency-free ISO-8601 handling.
+- Reading helpers that return the "missing or malformed ⇒ error" diagnostics
+  described above.
+
+The git machinery (=metafolder-sync-config=) lives in =core= too but is
+separate from the readers: only the sync command pulls in =git2=; reading
+configuration never touches git.
+
+* What is removed
+
+- Embedded defaults: =DEFAULT_GRAMMAR= (daemon), =DEFAULT_KEYBINDINGS= /
+  =DEFAULT_STYLE= and the =include_dir!= of =panel-types= (gui).
+- =ConfigDir::install_defaults= and =upgrade_pristine= (gui =config.rs=), and
+  the GUI startup call that auto-installs defaults.
+- The =panel-types-defaults/= mirror and the "upgrade never-edited files" rule.
+- The keybinding override-delta table (=set_user_keybinding= /
+  =remove_user_keybinding= as override mutators) in favour of direct file edits.
+- =load_grammar='s install-if-missing and =load_style='s fallback.
+
+* Open questions / v2
+
+- *Binary-only install.* Installing from a pre-built binary or OS package, with
+  no source checkout to read =default-config/= from, needs the defaults
+  embedded in =metafolder-sync-config= (=include_dir!=) instead of read from
+  =--source=. Deferred; the git-checkout install is the v0.x target.
+- *Editing during sync.* The sync command assumes no GUI/daemon is mutating
+  the working tree concurrently (it is an explicit install step). If that
+  assumption needs hardening, a lock file in the config dir is the obvious
+  mechanism.
+- *Conflict resolution UX.* The default is restore-and-warn. A future option
+  could leave the conflicted merge in place for users who want to resolve it
+  with their own git tooling.

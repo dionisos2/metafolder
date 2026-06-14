@@ -1,5 +1,5 @@
 //! Daemon configuration file (spec-main "Daemon configuration"):
-//! `$XDG_CONFIG_HOME/metafolder/config.json`, read once at startup.
+//! `$XDG_CONFIG_HOME/metafolder/daemon/config.json`, read once at startup.
 //! Distinct from the per-repository `.metafolder/config.json`.
 
 use std::path::{Path, PathBuf};
@@ -35,9 +35,9 @@ struct RawLoadEntry {
 }
 
 /// Default configuration file path:
-/// `$XDG_CONFIG_HOME/metafolder/config.json`.
+/// `$XDG_CONFIG_HOME/metafolder/daemon/config.json`.
 pub fn default_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("metafolder").join("config.json"))
+    metafolder_core::config::crate_config_dir("daemon").map(|dir| dir.join("config.json"))
 }
 
 /// Reads and validates the configuration file. A missing file is
