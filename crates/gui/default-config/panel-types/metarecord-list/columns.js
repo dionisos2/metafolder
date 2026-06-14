@@ -11,16 +11,17 @@
 // daemon sorts raw values).
 //
 // Data/view split (spec-gui "metarecord-list panel type"): the `~` columns need
-// daemon work (path resolution, Ref dereferencing). That work is done once, in
-// batch, by `resolveColumns` after a page is fetched; rendering (`cellText`) is
-// then synchronous and never touches the daemon.
+// daemon data (path resolution, Ref dereferencing). main.js fetches it in batch
+// after a page loads; this module only *formats* — `treeRefFields` /
+// `refTargetUuids` say what to fetch, `fillColumns` fills the display text from
+// the resolved data, and `cellText` reads it synchronously (never the daemon).
 
 import { fields, formatValue } from '/__ui.js';
 
 const META_COLUMNS = ['uuid', 'version'];
 
 // Resolved display text per metarecord, keyed by column spec. Filled by
-// resolveColumns, read by cellText. The WeakMap drops entries with the metarecord.
+// fillColumns, read by cellText. The WeakMap drops entries with the metarecord.
 const derived = new WeakMap();
 
 function setDerived(metarecord, column, text) {
@@ -82,39 +83,54 @@ export function cellQuickText(column, metarecord) {
     .join(', ');
 }
 
-/** Synchronous cell text: the resolved value (if `resolveColumns` ran) else the quick text. */
+/** Synchronous cell text: the resolved value (if `fillColumns` ran) else the quick text. */
 export function cellText(column, metarecord) {
   const resolved = derived.get(metarecord)?.get(column.spec);
   return resolved !== undefined ? resolved : cellQuickText(column, metarecord);
 }
 
+/** The distinct field names the `~` (TreeRef → path) columns need resolved. */
+export function treeRefFields(columns) {
+  return [
+    ...new Set(columns.filter((c) => c.kind === 'field' && c.deref === '').map((c) => c.name)),
+  ];
+}
+
+/** The distinct Ref target uuids the `~target` columns need dereferenced. */
+export function refTargetUuids(columns, metarecords) {
+  const uuids = new Set();
+  for (const column of columns) {
+    if (column.kind !== 'field' || !column.deref) continue; // deref is a non-empty target
+    for (const m of metarecords) {
+      for (const f of fields(m, column.name)) {
+        if (f.value.type === 'ref' || f.value.type === 'refbase') uuids.add(f.value.value);
+      }
+    }
+  }
+  return [...uuids];
+}
+
 /**
- * Resolves every `~` column of `columns` for a page of `metarecords`, in batch,
- * and memoizes the display text (read later by `cellText`). `ctx` provides:
- *   resolvePaths(field, uuids) -> { uuid: [path] }   (the daemon tree-resolve endpoint)
- *   getMetarecords(uuids)      -> { uuid: metarecord } (Ref-deref targets)
+ * Fills the display text of every `~` column from already-resolved data and
+ * memoizes it (read later by `cellText`). Pure — no daemon access:
+ *   pathsByField: { field: { uuid: [relPath] } }   (TreeRef → path columns)
+ *   targets:      { uuid: metarecord }              (Ref-deref targets)
  */
-export async function resolveColumns(columns, metarecords, ctx) {
-  if (metarecords.length === 0) return;
+export function fillColumns(columns, metarecords, { pathsByField, targets }) {
   for (const column of columns) {
     if (column.kind !== 'field' || column.deref === null) continue;
     if (column.deref === '') {
-      await resolveTreePaths(column, metarecords, ctx);
+      applyTreePaths(column, metarecords, pathsByField[column.name] ?? {});
     } else {
-      await resolveRefs(column, metarecords, ctx);
+      applyRefs(column, metarecords, targets);
     }
   }
 }
 
-// `name~`: the metarecord's own positions in the `name` TreeRef forest, resolved
-// to paths by one batch endpoint call (the root path "" renders as "/").
-async function resolveTreePaths(column, metarecords, ctx) {
-  const relevant = metarecords.filter((m) =>
-    fields(m, column.name).some((f) => f.value.type === 'tree_ref'),
-  );
-  if (relevant.length === 0) return;
-  const byUuid = await ctx.resolvePaths(column.name, relevant.map((m) => m.uuid));
-  for (const m of relevant) {
+// `name~`: the metarecord's resolved positions in the `name` forest (root "" → "/").
+function applyTreePaths(column, metarecords, byUuid) {
+  for (const m of metarecords) {
+    if (fields(m, column.name).length === 0) continue;
     const paths = byUuid[m.uuid] ?? [];
     if (paths.length > 0) {
       setDerived(m, column, paths.map((p) => (p === '' ? '/' : p)).join(', '));
@@ -124,15 +140,7 @@ async function resolveTreePaths(column, metarecords, ctx) {
 }
 
 // `name~target`: dereference each Ref to its target metarecord's `target` field.
-async function resolveRefs(column, metarecords, ctx) {
-  const targetUuids = new Set();
-  for (const m of metarecords) {
-    for (const f of fields(m, column.name)) {
-      if (f.value.type === 'ref' || f.value.type === 'refbase') targetUuids.add(f.value.value);
-    }
-  }
-  if (targetUuids.size === 0) return;
-  const targets = await ctx.getMetarecords([...targetUuids]);
+function applyRefs(column, metarecords, targets) {
   for (const m of metarecords) {
     const list = fields(m, column.name);
     if (list.length === 0) continue;

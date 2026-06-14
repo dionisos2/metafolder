@@ -3,9 +3,9 @@
 // raw fields, `field~` resolved display (TreeRef -> path from root) and
 // `field~target` dereferenced display (Ref -> target entry's field).
 
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { parseColumns, isSortable, cellQuickText, cellText, resolveColumns } from '../../default-config/panel-types/metarecord-list/columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from '../../default-config/panel-types/metarecord-list/columns.js';
 
 type Value = { type: string; value: unknown };
 type Entry = { uuid: string; version: number; fields: { name: string; value: Value }[] };
@@ -123,24 +123,30 @@ describe('cellQuickText (synchronous placeholder)', () => {
   });
 });
 
-describe('resolveColumns + cellText (resolved display)', () => {
-  const paths = (mapping: Record<string, string[]>) =>
-    vi.fn(async (_field: string, uuids: string[]) =>
-      Object.fromEntries(uuids.map((u) => [u, mapping[u] ?? []])),
-    );
-  const targetsBy = (mapping: Record<string, Entry>) =>
-    vi.fn(async (uuids: string[]) =>
-      Object.fromEntries(uuids.flatMap((u) => (mapping[u] ? [[u, mapping[u]]] : []))),
-    );
-  const ctx = (over = {}) => ({
-    resolvePaths: paths({ aaaa: ['music/jazz/take5.mp3'] }),
-    getMetarecords: targetsBy({ '1111': entry([{ name: 'name', value: str('jazz') }]) }),
-    ...over,
+describe('treeRefFields / refTargetUuids (what to resolve)', () => {
+  test('treeRefFields lists the distinct fields of the ~ columns', () => {
+    expect(treeRefFields(parseColumns('mfr_path~ rating tags~name mfr_path~ cat~'))).toEqual([
+      'mfr_path',
+      'cat',
+    ]);
   });
-  // Resolve the page, then read the (now synchronous) cell.
-  async function resolved(spec: string, e: Entry, c = ctx()) {
+
+  test('refTargetUuids collects the Ref targets of the ~target columns', () => {
+    const e = entry([
+      { name: 'tags', value: ref('1111') },
+      { name: 'tags', value: ref('2222') },
+    ]);
+    expect(refTargetUuids(parseColumns('tags~name'), [e])).toEqual(['1111', '2222']);
+    // tree_ref and raw columns contribute no targets.
+    expect(refTargetUuids(parseColumns('mfr_path~ tags'), [e])).toEqual([]);
+  });
+});
+
+describe('fillColumns + cellText (resolved display)', () => {
+  // Apply pre-resolved data (no daemon), then read the synchronous cell.
+  function applied(spec: string, e: Entry, data: { pathsByField?: unknown; targets?: unknown } = {}) {
     const cols = parseColumns(spec);
-    await resolveColumns(cols, [e], c);
+    fillColumns(cols, [e], { pathsByField: data.pathsByField ?? {}, targets: data.targets ?? {} });
     return cellText(cols[0], e);
   }
 
@@ -150,70 +156,64 @@ describe('resolveColumns + cellText (resolved display)', () => {
     expect(cellText(parseColumns('&version')[0], e)).toBe('7');
   });
 
-  test('field~ resolves tree_refs to the path (one batch call for the page)', async () => {
+  test('field~ shows the resolved path', () => {
     const e = entry([{ name: 'mfr_path', value: treeRef('bbbb', 'take5.mp3') }]);
-    const c = ctx();
-    expect(await resolved('mfr_path~', e, c)).toBe('music/jazz/take5.mp3');
-    expect(c.resolvePaths).toHaveBeenCalledWith('mfr_path', ['aaaa']);
+    const pathsByField = { mfr_path: { aaaa: ['music/jazz/take5.mp3'] } };
+    expect(applied('mfr_path~', e, { pathsByField })).toBe('music/jazz/take5.mp3');
   });
 
-  test('the repository root resolves to /', async () => {
+  test('the repository root resolves to /', () => {
     const e = entry([{ name: 'mfr_path', value: treeRef(null, '') }]);
-    expect(await resolved('mfr_path~', e, ctx({ resolvePaths: paths({ aaaa: [''] }) }))).toBe('/');
+    expect(applied('mfr_path~', e, { pathsByField: { mfr_path: { aaaa: [''] } } })).toBe('/');
   });
 
-  test('a stale tree_ref falls back to the leaf name', async () => {
+  test('a stale tree_ref falls back to the leaf name', () => {
     const e = entry([{ name: 'mfr_path', value: treeRef('gone', 'orphan.mp3') }]);
-    expect(await resolved('mfr_path~', e, ctx({ resolvePaths: paths({ aaaa: [] }) }))).toBe('orphan.mp3');
+    expect(applied('mfr_path~', e, { pathsByField: { mfr_path: {} } })).toBe('orphan.mp3');
   });
 
-  test('field~target follows refs and shows the target field', async () => {
+  test('field~target shows the target field', () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const c = ctx();
-    expect(await resolved('tags~name', e, c)).toBe('jazz');
-    expect(c.getMetarecords).toHaveBeenCalledWith(['1111']);
+    const targets = { '1111': entry([{ name: 'name', value: str('jazz') }]) };
+    expect(applied('tags~name', e, { targets })).toBe('jazz');
   });
 
-  test('a multi-map target field joins every row', async () => {
+  test('a multi-map target field joins every row', () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const target = entry([
-      { name: 'name', value: str('jazz') },
-      { name: 'name', value: str('bebop') },
-    ]);
-    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({ '1111': target }) }))).toBe(
-      'jazz, bebop',
-    );
+    const targets = {
+      '1111': entry([
+        { name: 'name', value: str('jazz') },
+        { name: 'name', value: str('bebop') },
+      ]),
+    };
+    expect(applied('tags~name', e, { targets })).toBe('jazz, bebop');
   });
 
-  test('a missing target entry falls back to the raw uuid', async () => {
+  test('a missing target entry falls back to the raw uuid', () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({}) }))).toBe('1111');
+    expect(applied('tags~name', e, { targets: {} })).toBe('1111');
   });
 
-  test('a target entry without the field falls back to the raw uuid', async () => {
+  test('a target entry without the field falls back to the raw uuid', () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({ '1111': entry([]) }) }))).toBe(
-      '1111',
-    );
+    expect(applied('tags~name', e, { targets: { '1111': entry([]) } })).toBe('1111');
   });
 
-  test('~ modifiers on non-reference values fall back to the raw display', async () => {
+  test('~ modifiers on non-reference values fall back to the raw display', () => {
     const e = entry([{ name: 'tags', value: str('plain') }]);
-    expect(await resolved('tags~name', e)).toBe('plain');
-    expect(await resolved('tags~', e)).toBe('plain');
+    expect(applied('tags~name', e)).toBe('plain');
+    expect(applied('tags~', e)).toBe('plain');
   });
 
-  test('multi-map refs resolve independently', async () => {
+  test('multi-map refs resolve independently', () => {
     const e = entry([
       { name: 'tags', value: ref('1111') },
       { name: 'tags', value: ref('2222') },
     ]);
-    const c = ctx({
-      getMetarecords: targetsBy({
-        '1111': entry([{ name: 'name', value: str('jazz') }]),
-        '2222': entry([{ name: 'name', value: str('rock') }]),
-      }),
-    });
-    expect(await resolved('tags~name', e, c)).toBe('jazz, rock');
+    const targets = {
+      '1111': entry([{ name: 'name', value: str('jazz') }]),
+      '2222': entry([{ name: 'name', value: str('rock') }]),
+    };
+    expect(applied('tags~name', e, { targets })).toBe('jazz, rock');
   });
 });

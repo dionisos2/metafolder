@@ -1,9 +1,9 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
-import { el } from '/__ui.js';
+import { el, fields } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { parseColumns, isSortable, cellQuickText, cellText, resolveColumns } from './columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
 
 const { daemon, workspace, commands, statusBar, query } = metafolder;
 
@@ -59,15 +59,27 @@ const normalFreeze = document.getElementById('normal-freeze');
 
 const repoRoots = {}; // repo uuid -> absolute root path (cached)
 
-/** A daemon path resolver memoized per field for one enrichment pass. */
-function makeResolvePaths() {
-  const cache = new Map(); // field -> { uuid: [relPath] }
-  return async (field, uuids) => {
-    if (!cache.has(field)) {
-      cache.set(field, await daemon.call('POST', `/repos/${repo}/tree/resolve`, { field, uuids }));
-    }
-    return cache.get(field);
-  };
+function hasTreeRef(metarecord, field) {
+  return fields(metarecord, field).some((f) => f.value.type === 'tree_ref');
+}
+
+/** Resolves one TreeRef field of a page to root-relative paths (one daemon call). */
+function resolvePaths(field, uuids) {
+  return uuids.length > 0
+    ? daemon.call('POST', `/repos/${repo}/tree/resolve`, { field, uuids })
+    : Promise.resolve({});
+}
+
+/** Resolves each named TreeRef field over the metarecords that carry it. */
+async function resolveTreeFields(fieldNames, metarecords) {
+  const byField = {};
+  await Promise.all(
+    [...fieldNames].map(async (field) => {
+      const uuids = metarecords.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid);
+      byField[field] = await resolvePaths(field, uuids);
+    }),
+  );
+  return byField;
 }
 
 /** Ref-deref targets for the ~target columns; one batch call, cached per result set. */
@@ -89,25 +101,31 @@ async function getMetarecords(uuids) {
   return out;
 }
 
+/** Fetches the ~target Refs of the columns and fills their display text. */
+async function formatColumns(subset, pathsByField) {
+  const targets = await getMetarecords(refTargetUuids(columns, subset));
+  fillColumns(columns, subset, { pathsByField, targets });
+}
+
 // Pre-resolves all daemon-backed display data for a freshly fetched page so the
 // view layer stays synchronous: absolute mfr_path(s) per metarecord (selection,
-// orphan check, thumbnail) and the ~ columns' resolved text. No daemon traffic
-// happens during rendering.
+// orphan check, thumbnail) and the ~ columns' resolved text. `mfr_path` and the
+// ~ column fields are resolved in a single pass; rendering makes no daemon calls.
 async function enrich(subset) {
   if (subset.length === 0) return;
   if (!repoRoots[repo]) repoRoots[repo] = await daemon.repoRoot(repo);
   const root = repoRoots[repo];
-  const resolvePaths = makeResolvePaths();
-  const mfr = await resolvePaths('mfr_path', subset.map((m) => m.uuid));
+  const pathsByField = await resolveTreeFields(new Set(['mfr_path', ...treeRefFields(columns)]), subset);
   for (const m of subset) {
-    m.paths = (mfr[m.uuid] ?? []).map((rel) => (rel === '' ? root : `${root}/${rel}`));
+    m.paths = (pathsByField.mfr_path[m.uuid] ?? []).map((rel) => (rel === '' ? root : `${root}/${rel}`));
   }
-  await resolveColumns(columns, subset, { resolvePaths, getMetarecords });
+  await formatColumns(subset, pathsByField);
 }
 
 /** Re-derives the ~ columns over the loaded metarecords (after a column change). */
 async function reresolveColumns() {
-  await resolveColumns(columns, metarecords, { resolvePaths: makeResolvePaths(), getMetarecords });
+  const pathsByField = await resolveTreeFields(new Set(treeRefFields(columns)), metarecords);
+  await formatColumns(metarecords, pathsByField);
 }
 
 async function fetchPage(reset) {
