@@ -23,8 +23,16 @@ pub const DB_FILE: &str = "db.sqlite";
 pub const INTERNAL_DIR: &str = "internal";
 
 /// Default `mf_ignore` patterns written on the root metarecord at init.
-pub const DEFAULT_IGNORE_PATTERNS: &[&str] =
-    &[r"\.git(/.*)?$", r"node_modules(/.*)?$", r"__pycache__(/.*)?$"];
+/// The hidden-entry pattern (`(^|/)\.[^/]+`) already covers `.git` and
+/// `.metafolder`; the more specific patterns are kept as separate entries so a
+/// user can drop "ignore all hidden files" without also un-ignoring those.
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    r"\.git(/.*)?$",
+    r"node_modules(/.*)?$",
+    r"__pycache__(/.*)?$",
+    r"\.metafolder(/.*)?$",
+    r"(^|/)\.[^/]+",
+];
 
 /// An initialised or loaded repository: its config, its open (exclusive)
 /// database connection, and the location of its `.metafolder/` directory.

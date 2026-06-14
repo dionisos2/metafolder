@@ -78,6 +78,36 @@ fn test_ignore_pattern_blocks_matching_paths() {
 }
 
 #[test]
+fn test_default_patterns_ignore_metafolder_and_hidden() {
+    // A root carrying the shipped default ignore patterns: the .metafolder
+    // config directory and any hidden (dot-prefixed) entry are excluded.
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let db_id = Uuid::new_v4();
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut fields = vec![
+        Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
+        Field::new("mf_watch", Value::Bool(true)),
+    ];
+    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+        fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
+    }
+    w.create_metarecord(fields).unwrap();
+    w.commit().unwrap();
+
+    let mut cache = TreeCache::new(false);
+    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+    assert!(!elig("/.metafolder"));
+    assert!(!elig("/.metafolder/config.json"));
+    assert!(!elig("/.config"), "hidden file at the root");
+    assert!(!elig("/dir/.hidden"), "hidden entry in a subdirectory");
+    assert!(!elig("/dir/.hidden/inside.txt"), "anything under a hidden directory");
+    assert!(!elig("/.gitignore"), "a dotfile is hidden, hence ignored");
+    assert!(elig("/foo.bar"), "a dot not at the start of a name is not hidden");
+    assert!(elig("/src/main.rs"));
+}
+
+#[test]
 fn test_subdir_watch_false_blocks_subtree() {
     let mut f = Fixture::new(true);
     let root = f.root;
