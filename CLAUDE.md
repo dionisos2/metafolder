@@ -100,6 +100,8 @@ Shared data model used by all other crates:
   `load` module reading `~/.config/metafolder/core/query-grammar`). Expansion
   (simplified → normal DSL) is a **pure, client-side** transformation: the GUI
   and CLI call it directly; the daemon never does (no `/query/expand`).
+- `dsl.rs`: the query DSL parser (DSL text → `Query` IR), shared by the daemon,
+  CLI and GUI. `date.rs`: the single dependency-free ISO-8601 ↔ Unix-ms helper.
 
 ### `crates/daemon`
 
@@ -140,6 +142,9 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `tree_cache.rs`: per-repo in-memory path→UUID cache shared across TreeRef
   field names; lazy population from the DB, O(1) rename/move, LRU eviction
   via a lazy min-heap of leaves; descendant collection walks the DB.
+  `path_of`/`paths_of` resolve a metarecord's position(s) to root-relative
+  paths — exposed as `POST /repos/:repo/tree/resolve` so the CLI/GUI never
+  re-walk the chain client-side.
 - `eligibility.rs`: watch/ignore algorithm (`mf_watch` inherited, direct
   override, nearest-ancestor `mf_ignore` pattern set, no merging).
 - `watcher.rs` + `executor.rs`: the watcher (notify/inotify) enqueues raw
@@ -151,7 +156,7 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   load. Both hold `Weak<RepoState>` (an Arc would leak the repo and its
   exclusive lock).
 - `fingerprint.rs`: xxHash3 partial (first+last 4 KiB) and full hashes.
-- `fs_meta.rs`: stat-derived `mfr_*` fields, dependency-free ISO-8601.
+- `fs_meta.rs`: stat-derived `mfr_*` fields (ISO-8601 via `core::date`).
 - `reconcile.rs`: full reconcile (fs walk with eligibility pruning, the
   fingerprint phase with definitive moves and strong/weak candidates, metarecord
   creation; never writes `mfr_path = Nothing`) and single-metarecord reconcile.
@@ -180,23 +185,24 @@ commands remain v2 and unimplemented). Library + thin `main.rs`:
 
 - `fieldspec.rs`: parses `name:type[=value]` field specs into
   `(String, Value)`.
-- `dsl.rs`: hand-written lexer + recursive-descent parser compiling the
-  query DSL (`rating > 3 AND genre = "jazz"`, `->`, `->*`, `IS PRESENT`...)
-  to the `Query` JSON IR.
+- The query DSL parser is shared from core (`lib.rs` re-exports
+  `metafolder_core::dsl`); the simplified→DSL expansion is also done locally
+  via `metafolder_core::simplified` (no daemon round-trip).
 - `client.rs`: `ureq`-based HTTP client; `CliError::Usage` (exit 2) vs
   `CliError::Op` (exit 1), daemon/GUI `{"error": ...}` bodies become
   `error: <message>` on stderr.
 - `commands.rs`: one function per command; `<query|uuid>` targets, internal
   pagination (`PAGE_SIZE` 500, follows `next_cursor`), reconcile/violation
   formatting, confirmation prompt for predicate `mf delete`, `mf path`
-  (mfr_path chain walk), `mf query --values` (raw values, one per line).
+  (one `POST /tree/resolve` call), `mf query --values` (raw values, one per line).
 - `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
   mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
   port discovery via the `gui.port` file, `--gui-url`/`METAFOLDER_GUI_URL`.
 - `log.rs`: `mf log` / `mf log show`, `mf rollback` (+ `rollback plan`, with
   the `--on-move-available/-unavailable` skip policies driving the coordinated
-  navigation), `mf prune before|linearize`, and a dependency-free ISO-8601 ↔
-  Unix-ms date helper for timestamp targets and revision display.
+  navigation), `mf prune before|linearize`. ISO-8601 ↔ Unix-ms conversion is
+  shared from `metafolder_core::date` (the single dependency-free date helper,
+  also used by the daemon's `fs_meta`).
 
 Repo-scoped commands require `--repo`/`METAFOLDER_REPO` (checked before any
 HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
@@ -237,9 +243,10 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   (`metafolder.fs`), `reconcile.rs` (`reconcile:run` flow).
 - `panel-shim/shim.js`: injected into every panel document; provides
   `window.metafolder` (daemon/workspace/commands/fs/statusBar/messages +
-  `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized lazy
-  TreeRef path resolution; `ui.js` (served as `/__ui.js`, importable by
-  panels): `el()` DOM builder, `formatValue()`, `field()`.
+  `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized path
+  resolution over the daemon's `tree/resolve` endpoint (no client-side walk);
+  `ui.js` (served as `/__ui.js`, importable by panels): `el()` DOM builder,
+  `formatValue()`, `byName()`/`field()`/`fields()` (memoized field index).
 - `default-config/panel-types/`: the built-in panels (repos, metarecord-list,
   metarecord-detail, file, file-manager, message, log, workspace-info, hello
   example) as plain HTML/JS, shipped into the user config repo by
