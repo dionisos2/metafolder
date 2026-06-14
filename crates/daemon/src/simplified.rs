@@ -11,24 +11,35 @@ use metafolder_core::simplified::grammar::{parse_grammar, Grammar};
 
 /// The default grammar installed on first run (spec-query "Default grammar").
 pub const DEFAULT_GRAMMAR: &str = r#"# Simplified query grammar — edit freely; transpiles to the normal DSL.
-# Boolean skeleton: space = AND, OR (or +), ! = NOT, parentheses.
+# Boolean skeleton: space or AND = AND, OR (or +), ! = NOT, parentheses.
 query = q:or                       => $q
 or    = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
-and   = items:unary +              => {join(" AND ", $items)}
+and   = items:andterm +            => {join(" AND ", $items)}
+andterm = "AND" u:unary            => $u
+        | u:unary                  => $u
 unary = "!" u:unary                => NOT $u
       | a:atom                     => $a
 atom  = "(" q:query ")"            => ($q)
       | p:predicate                => $p
 
-# Predicates — the part you edit most of the time.
+# Predicates — the part you edit most of the time. Comparison operators mirror
+# the normal DSL (=, !=, <, <=, >, >=); ~ is regex match.
 predicate =
-    f:field ":"  v:STRING   => $f = $v
-  | f:field ":"  n:NUMBER   => $f = $n
-  | f:field ":"  "true"     => $f = true
-  | f:field ":"  "false"    => $f = false
-  | f:field ":"  w:WORD     => $f = {str($w)}
+    f:field "="  v:STRING   => $f = $v
+  | f:field "="  n:NUMBER   => $f = $n
+  | f:field "="  "true"     => $f = true
+  | f:field "="  "false"    => $f = false
+  | f:field "="  w:WORD     => $f = {str($w)}
+  | f:field "!=" v:STRING   => $f != $v
+  | f:field "!=" n:NUMBER   => $f != $n
+  | f:field "!=" "true"     => $f != true
+  | f:field "!=" "false"    => $f != false
+  | f:field "!=" w:WORD     => $f != {str($w)}
   | f:field "~"  v:value    => $f MATCHES {str($v)}
   | f:field ">=" n:number   => $f >= $n
+  | f:field "<=" n:number   => $f <= $n
+  | f:field ">"  n:number   => $f > $n
+  | f:field "<"  n:number   => $f < $n
   | f:field "?"             => $f IS PRESENT
   | "under" v:value         => mfr_path ->* {str($v)}
   # Date macros: `modified`/`created` pick the field; relative (younger/older)
@@ -120,15 +131,35 @@ mod tests {
     #[test]
     fn default_grammar_expands_examples() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
-        assert_eq!(expand(&g, "genre:jazz").unwrap(), "genre = \"jazz\"");
-        assert_eq!(expand(&g, "rating:4").unwrap(), "rating = 4");
-        assert_eq!(expand(&g, "seen:true").unwrap(), "seen = true");
+        assert_eq!(expand(&g, "genre=jazz").unwrap(), "genre = \"jazz\"");
+        assert_eq!(expand(&g, "rating=4").unwrap(), "rating = 4");
+        assert_eq!(expand(&g, "seen=true").unwrap(), "seen = true");
         assert_eq!(expand(&g, "size>=100MB").unwrap(), "mfr_size >= 104857600");
         assert_eq!(
-            expand(&g, "fav genre:jazz").unwrap(),
+            expand(&g, "fav genre=jazz").unwrap(),
             "rating >= 4 AND genre = \"jazz\""
         );
-        assert_eq!(expand(&g, "a:x OR b:y").unwrap(), "a = \"x\" OR b = \"y\"");
+        assert_eq!(expand(&g, "a=x OR b=y").unwrap(), "a = \"x\" OR b = \"y\"");
+    }
+
+    #[test]
+    fn default_grammar_supports_all_comparison_operators() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        assert_eq!(expand(&g, "rating>3").unwrap(), "rating > 3");
+        assert_eq!(expand(&g, "rating<3").unwrap(), "rating < 3");
+        assert_eq!(expand(&g, "rating>=3").unwrap(), "rating >= 3");
+        assert_eq!(expand(&g, "rating<=3").unwrap(), "rating <= 3");
+        assert_eq!(expand(&g, "rating!=3").unwrap(), "rating != 3");
+        assert_eq!(expand(&g, "genre!=jazz").unwrap(), "genre != \"jazz\"");
+    }
+
+    #[test]
+    fn default_grammar_accepts_explicit_and() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        // Juxtaposition and the explicit AND keyword are equivalent.
+        let expected = "a = \"x\" AND b = \"y\"";
+        assert_eq!(expand(&g, "a=x b=y").unwrap(), expected);
+        assert_eq!(expand(&g, "a=x AND b=y").unwrap(), expected);
     }
 
     #[test]

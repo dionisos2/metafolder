@@ -322,8 +322,8 @@ discarding whitespace between tokens:
 | =SYMBOL=  | a maximal run of punctuation characters (=:=, =~=, =>=, =>==, =..=, =+=, …) |
 | =(= =)=   | grouping, each its own token                                              |
 
-Whitespace is insignificant except as a token separator: =genre:jazz= and
-=genre : jazz= tokenize identically, and so do =100MB= and =100 MB=. Maximal
+Whitespace is insignificant except as a token separator: =genre=jazz= and
+=genre = jazz= tokenize identically, and so do =100MB= and =100 MB=. Maximal
 munch on =WORD= gives free word boundaries — a literal ="tag"= in the grammar
 never matches the token =tags=.
 
@@ -376,13 +376,17 @@ grammars (no migration; pre-v0.2).
 
 ** Default grammar
 
-Installed and fully editable. It routes =:= by token class so typed values keep
-their DSL type (=rating:4= → =rating = 4=, not ="4"=; =seen:true= → =seen = true=):
+Installed and fully editable. Comparison operators mirror the normal DSL (=,
+!=, <, <=, >, >=); =field = value= routes by token class so typed values keep
+their DSL type (=rating=4= → =rating = 4=, not ="4"=; =seen=true= → =seen = true=).
+Conjunction is juxtaposition or the explicit =AND= keyword (=a b= ≡ =a AND b=):
 
 #+BEGIN_SRC
 query = q:or                       => $q
 or    = items:and ++ ("OR" | "+")  => {join(" OR ", $items)}
-and   = items:unary +              => {join(" AND ", $items)}    # juxtaposition
+and   = items:andterm +            => {join(" AND ", $items)}    # juxtaposition or AND
+andterm = "AND" u:unary            => $u
+        | u:unary                  => $u
 unary = "!" u:unary                => NOT $u
       | a:atom                     => $a
 atom  = "(" q:query ")"            => ($q)
@@ -390,13 +394,21 @@ atom  = "(" q:query ")"            => ($q)
 
 # the part edited most of the time: the predicate alternatives
 predicate =
-    f:field ":"  v:STRING   => $f = $v
-  | f:field ":"  n:NUMBER   => $f = $n
-  | f:field ":"  "true"     => $f = true
-  | f:field ":"  "false"    => $f = false
-  | f:field ":"  w:WORD     => $f = {str($w)}
+    f:field "="  v:STRING   => $f = $v
+  | f:field "="  n:NUMBER   => $f = $n
+  | f:field "="  "true"     => $f = true
+  | f:field "="  "false"    => $f = false
+  | f:field "="  w:WORD     => $f = {str($w)}
+  | f:field "!=" v:STRING   => $f != $v
+  | f:field "!=" n:NUMBER   => $f != $n
+  | f:field "!=" "true"     => $f != true
+  | f:field "!=" "false"    => $f != false
+  | f:field "!=" w:WORD     => $f != {str($w)}
   | f:field "~"  v:value    => $f MATCHES {str($v)}
   | f:field ">=" n:number   => $f >= $n
+  | f:field "<=" n:number   => $f <= $n
+  | f:field ">"  n:number   => $f > $n
+  | f:field "<"  n:number   => $f < $n
   | f:field "?"             => $f IS PRESENT
   | "under" v:value         => mfr_path ->* {str($v)}
   # date macros — see below
@@ -428,9 +440,9 @@ dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
           | ("w" | "week" | "weeks")                       => 604800000
 #+END_SRC
 
-Ordering matters under ordered choice: the operator forms (=:=, =~=, =?=) precede
-the bare-word aliases (=tag=, =fav=), so =tag:jazz= and =tag?= still parse as
-predicates and only a lone =tag= triggers its alias.
+Ordering matters under ordered choice: the operator forms (=,= =!=,= =~=, =?=…)
+precede the bare-word aliases (=tag=, =fav=), so =tag=jazz= and =tag?= still
+parse as predicates and only a lone =tag= triggers its alias.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →

@@ -420,8 +420,8 @@ fn test_query_simplified_expands_before_running() {
     let (repo, _) = init_repo("query_simplified");
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
-    // `rating:5` expands to `rating = 5` via the daemon grammar.
-    let out = mf(&["--repo", &repo, "query", "-s", "rating:5"]);
+    // `rating=5` expands to `rating = 5` via the daemon grammar.
+    let out = mf(&["--repo", &repo, "query", "-s", "rating=5"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
 }

@@ -588,7 +588,7 @@ const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecor
 const ir = await metafolder.daemon.parseQuery('rating > 3')
 // Expands simplified-language text to normal DSL text via POST /query/expand
 // (throws Error(body.error) on a grammar/expansion error).
-const dsl = await metafolder.daemon.expandQuery('genre:jazz rating>=4')
+const dsl = await metafolder.daemon.expandQuery('genre=jazz rating>=4')
 // Lazy memoized mfr_path resolution (see "Path display").
 await metafolder.daemon.resolvePath(repo, uuid)
 await metafolder.daemon.resolveTreeRef(repo, { parent, name })

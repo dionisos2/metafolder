@@ -34,9 +34,9 @@ async fn expand(app: &Router, simplified: &str) -> (StatusCode, Value) {
 #[tokio::test]
 async fn expands_with_the_default_grammar() {
     let app = app_with_grammar(Some(DEFAULT_GRAMMAR));
-    let (status, body) = expand(&app, "genre:jazz rating:4").await;
+    let (status, body) = expand(&app, "genre=jazz rating>=4").await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["dsl"], "genre = \"jazz\" AND rating = 4");
+    assert_eq!(body["dsl"], "genre = \"jazz\" AND rating >= 4");
 }
 
 #[tokio::test]
@@ -50,7 +50,7 @@ async fn grammar_error_is_bad_request() {
 #[tokio::test]
 async fn disabled_when_no_grammar() {
     let app = app_with_grammar(None);
-    let (status, body) = expand(&app, "genre:jazz").await;
+    let (status, body) = expand(&app, "genre=jazz").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(body["error"].as_str().unwrap().contains("not configured"));
 }
