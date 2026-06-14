@@ -77,6 +77,20 @@ export function filterCommands<C extends { name: string }>(commands: C[], query:
   return [...starts, ...rest];
 }
 
+/** What the command input runs on Enter (command mode only): the
+ *  highlighted suggestion when the list is non-empty, otherwise the raw
+ *  typed text. Commands with arguments (e.g. `panel:set-type file`) empty
+ *  the suggestion list, so they fall through to the typed text. */
+export function resolveSubmission(
+  draft: string,
+  suggestions: { name: string }[],
+  selectedIndex: number,
+): string {
+  if (suggestions.length === 0) return draft;
+  const index = Math.min(Math.max(selectedIndex, 0), suggestions.length - 1);
+  return suggestions[index].name;
+}
+
 /** Autocomplete filter for script prompt completions (POST /gui/prompt):
  *  same prefix-then-substring ranking as the command list. */
 export function filterCompletions(completions: string[], draft: string): string[] {

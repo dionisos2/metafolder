@@ -5,6 +5,7 @@
     dispatch,
     filterCommands,
     filterCompletions,
+    resolveSubmission,
     setEditingTarget,
     shortcutsFor,
   } from '../lib/commands';
@@ -119,10 +120,14 @@
     element?.blur();
   }
 
-  // Enter always runs what is typed (a suggestion is always selected, so
-  // it cannot double as "accept the suggestion" — that is Tab's job).
+  // Enter runs the highlighted suggestion when the list is non-empty,
+  // otherwise the typed text (resolveSubmission). Snapshot before clearing
+  // the draft, since `suggestions` recomputes from it. The script-prompt
+  // path always confirms with the raw text.
   async function submit() {
     const input = draft;
+    const picked =
+      store.ui.promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
     draft = '';
     const ws = currentWs;
     if (ws !== null) store.inputDrafts[ws] = '';
@@ -135,7 +140,7 @@
       return;
     }
     element?.blur();
-    await dispatch(input);
+    await dispatch(picked);
   }
 
   function onKeydown(event: KeyboardEvent) {

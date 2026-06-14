@@ -8,6 +8,7 @@ import {
   filterCompletions,
   gotoIndex,
   parseInvocation,
+  resolveSubmission,
   shortcutsFor,
   shouldLogCommand,
 } from '../src/lib/commands';
@@ -180,5 +181,24 @@ describe('filterCompletions', () => {
   test('space-separated terms match fuzzily, in order', () => {
     expect(filterCompletions(tags, 'ja be')).toEqual(['jazz/bebop']);
     expect(filterCompletions(tags, 'be ja')).toEqual([]);
+  });
+});
+
+describe('resolveSubmission', () => {
+  const sugg = [{ name: 'panel:swap' }, { name: 'panel:split' }];
+
+  test('runs the highlighted suggestion when the list is non-empty', () => {
+    expect(resolveSubmission('pan', sugg, 0)).toBe('panel:swap');
+    expect(resolveSubmission('pan', sugg, 1)).toBe('panel:split');
+  });
+
+  test('clamps an out-of-range selection', () => {
+    expect(resolveSubmission('pan', sugg, 9)).toBe('panel:split');
+    expect(resolveSubmission('pan', sugg, -1)).toBe('panel:swap');
+  });
+
+  test('falls back to the typed text when there is no suggestion', () => {
+    expect(resolveSubmission('panel:set-type file', [], 0)).toBe('panel:set-type file');
+    expect(resolveSubmission('!ls', [], 0)).toBe('!ls');
   });
 });
