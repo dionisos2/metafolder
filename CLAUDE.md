@@ -35,7 +35,17 @@ npm --prefix crates/gui/frontend run build
 # Run the GUI (binary name: mf-gui; build the frontend first)
 cargo run -p metafolder-gui
 cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
+
+# Install/update the user configuration repo at ~/.config/metafolder/
+# (feature-gated: NOT built by a plain `cargo build`). Run from the checkout
+# root; gathers crates/*/default-config/ and applies them via git.
+cargo run -p metafolder-core --features sync-config --bin metafolder-sync-config
 ```
+
+The daemon and GUI read their configuration from `~/.config/metafolder/<crate>/`
+and **do not** install or fall back to embedded defaults: a missing or invalid
+config file is a hard startup error. `metafolder-sync-config` must have run
+first (see `docs/spec-config.org`).
 
 Building the gui crate needs the Tauri system libraries (Arch:
 `webkit2gtk-4.1 gtk3 librsvg`) and `npm`. Plain `cargo build` works without
@@ -46,9 +56,10 @@ window will be empty until `npm run build` has produced the real bundle.
 
 The implementation follows the specs under `docs/` (`spec-main.org`,
 `spec-data-model.org`, `spec-query.org`, `spec-file-tracking.org`,
-`spec-event-log.org`, `spec-schema.org`, `spec-platform.org`; `spec-sync.org`
-and parts tagged `:v2:` are deferred). When changing daemon behaviour, check
-the relevant spec section first; when deviating, update the spec.
+`spec-event-log.org`, `spec-schema.org`, `spec-platform.org`, `spec-config.org`;
+`spec-sync.org` and parts tagged `:v2:` are deferred). When changing daemon
+behaviour, check the relevant spec section first; when deviating, update the
+spec.
 
 ## Architecture
 
@@ -75,6 +86,16 @@ Shared data model used by all other crates:
   `Matches` (regex), and traversal: `Follows { field, target }` where target
   is a path string (TreeRef) or a sub-query (Ref), and
   `FollowsTransitive { field, path }` (TreeRef only).
+- `config.rs`: std-only resolution of the user config paths
+  (`~/.config/metafolder/<crate>/` from `$XDG_CONFIG_HOME`/`$HOME`, no `dirs`
+  crate) + `read_required` (a missing config file is an error, never a fall
+  back to a shipped default — spec-config "No runtime fallback").
+- `config_sync.rs` + the `metafolder-sync-config` binary (behind the
+  `sync-config` feature; `git2`/libgit2): the **only** git actor. Gathers
+  `crates/*/default-config/` and applies them to the git-backed config repo —
+  `default` branch = shipped defaults (merge base), `main` = user's working
+  config; updates auto-commit dirty `main`, then merge `default`→`main`,
+  restoring `main` untouched on conflict. See `docs/spec-config.org`.
 
 ### `crates/daemon`
 
@@ -86,9 +107,12 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `config.rs`: `RepoConfig` persisted as `.metafolder/config.json`
   (repo_uuid, name, version, root, optional schema path, created_at).
 - `daemon_config.rs`: optional daemon config
-  `~/.config/metafolder/config.json` (`--config` overrides), read at
+  `~/.config/metafolder/daemon/config.json` (`--config` overrides), read at
   startup: `load` list of repos to auto-load (`POST /repos/load` shape);
   malformed file aborts startup, a repo that fails to load is a warning.
+  `simplified.rs` loads the global query grammar from
+  `~/.config/metafolder/daemon/query-grammar`; missing/malformed = startup
+  error (no embedded default). Both paths come from `core::config`.
 - `repo.rs`: repository init/load (`OpenedRepo`), external `.metafolder/`
   location, the filesystem root metarecord with its defaults (`mf_watch = false`,
   default `mf_ignore` patterns), case-sensitivity probe.
@@ -186,16 +210,18 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   per-workspace variables and message logs. Every mutation emits an event
   through the `FrontendNotifier` trait (`notifier.rs`; tests use
   `RecordingNotifier`).
-- `keybindings.rs`: combo/sequence parsing, TOML model, defaults + user +
+- `keybindings.rs`: combo/sequence parsing, TOML model, single-file +
   panel-suggestion merge, compiled table consumed by the shared JS matcher
   (`panel-shim/keymatch.js`, used identically by the shell and inside each
   iframe — key events do not cross iframe boundaries).
 - `command_registry.rs`: builtin + panel-registered commands, autocomplete
   listing (global + focused panel's local commands).
-- `config.rs`: `~/.config/metafolder-gui/` — first-run install of editable
-  defaults (`keybindings.toml`, `style.css`, `panel-types/*`; user edits are
-  never overwritten), always-refreshed `panel-types-defaults/` diff mirror,
-  user keybinding override persistence, `gui.port` discovery file.
+- `config.rs`: `~/.config/metafolder/gui/` — reads the keybindings, stylesheet
+  and panel types that `metafolder-sync-config` installed (no install, mirror
+  or embedded fallback here; missing files error). `keybindings.toml` is the
+  **complete** set (single-file model: `set` upserts, `remove` unbinds, and
+  reverting to a default is a git op on the config repo); `gui.port` discovery
+  file. Shipped defaults live in `crates/gui/default-config/`.
 - `server/`: Axum router on 127.0.0.1:7524 — panel assets with shim+style
   injection (`panel_assets.rs`), raw files with Range support (`fsraw.rs`),
   and the `/gui/*` scripting API (`gui_api.rs`, `input_wait.rs`: workspaces,
@@ -211,9 +237,10 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized lazy
   TreeRef path resolution; `ui.js` (served as `/__ui.js`, importable by
   panels): `el()` DOM builder, `formatValue()`, `field()`.
-- `panel-types/`: the built-in panels (repos, metarecord-list, metarecord-detail,
-  file, file-manager, message, log, workspace-info, hello example) as
-  user-copyable plain HTML/JS.
+- `default-config/panel-types/`: the built-in panels (repos, metarecord-list,
+  metarecord-detail, file, file-manager, message, log, workspace-info, hello
+  example) as plain HTML/JS, shipped into the user config repo by
+  `metafolder-sync-config`.
 - `frontend/`: Svelte shell — TabBar, two Slots + divider, CommandInput
   (per-workspace drafts, autocomplete, script prompts), StatusBar(s),
   ConfigOverlay (paths + keybinding editor), PanelHost (iframe pool, one
@@ -226,12 +253,11 @@ on an ephemeral port); `npm --prefix crates/gui/frontend test` (vitest:
 keymatch, commands parsing, bridge, resolve).
 
 GUI dev gotchas (learned the hard way):
-- Panels are served from `~/.config/metafolder-gui/panel-types/` (the user
-  copy). Never-edited copies (identical to the `panel-types-defaults/`
-  mirror) are auto-upgraded at startup; a copy the user has edited is never
-  overwritten and must be deleted by hand to pick up new built-in panel
-  code. Launching a stale binary is harmless since the next fresh launch
-  upgrades the copies it left behind.
+- Panels are served from `~/.config/metafolder/gui/panel-types/` (the config
+  repo's `main` branch). To pick up new built-in panel code after editing the
+  source, re-run `metafolder-sync-config`: it merges the shipped `default`
+  branch into `main` (a real git 3-way merge, conflicts restore `main`
+  untouched). The GUI itself never installs or upgrades anything at startup.
 - Never post `$state` proxies through `postMessage` (DataCloneError, and
   the rejection is silent in an async handler): `$state.snapshot()` first.
 - WebKitGTK swaps the iframe WindowProxy on cross-origin navigation:
@@ -252,6 +278,13 @@ external location recorded in the config) contains:
 and the reconcile walk; the rest of `.metafolder/` is ordinary trackable
 content. A pre-`internal/` layout is migrated automatically at load
 (`db.sqlite*` moved into `internal/`).
+
+The **user configuration** (distinct from per-repo data) is a single git
+repository at `~/.config/metafolder/`, one subdirectory per crate
+(`core/`, `daemon/`, `gui/`, `cli/`), with a `default` branch (shipped
+defaults / merge base) and a `main` branch (the user's edits, the only branch
+read at runtime). Managed exclusively by `metafolder-sync-config`; the shipped
+sources are `crates/*/default-config/`. See `docs/spec-config.org`.
 
 ## Key invariants
 
