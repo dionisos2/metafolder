@@ -56,17 +56,34 @@
   .key-hints {
     display: flex;
     flex-wrap: wrap;
-    align-items: baseline;
-    gap: 4px 14px;
-    padding: 3px 8px;
+    align-items: center;
+    gap: 6px 16px;
+    padding: 6px 10px;
     background: var(--mf-bg-raised, #26262e);
-    border-top: 1px solid var(--mf-bg, #1e1e24);
-    font-size: 0.9em;
+    border-top: 2px solid var(--mf-accent, #4c56c4);
+    font-size: 1em;
   }
+  .key-hints .hint {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+  /* Keycap badges make the pending prefix and its continuations stand out. */
   .key-hints .prefix,
   .key-hints .keys {
     font-family: var(--mf-font-mono, monospace);
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--mf-accent, #4c56c4);
+  }
+  .key-hints .prefix {
+    background: var(--mf-accent, #4c56c4);
+    color: #fff;
+  }
+  .key-hints .keys {
     color: var(--mf-accent, #4c56c4);
+    background: var(--mf-bg, #1e1e24);
   }
   .key-hints .hint.dim {
     margin-left: auto;

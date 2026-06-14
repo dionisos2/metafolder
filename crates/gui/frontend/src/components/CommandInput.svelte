@@ -296,13 +296,21 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Keycap badge so the bound shortcut is easy to spot in the list. */
   .suggestions .shortcut {
     margin-left: auto;
     font-family: var(--mf-font-mono, monospace);
+    font-size: 0.85em;
+    padding: 0 6px;
+    border: 1px solid var(--mf-fg-dim, #8a8a96);
+    border-radius: 4px;
+    background: var(--mf-bg, #1e1e24);
     color: var(--mf-accent, #4c56c4);
     white-space: nowrap;
   }
   .suggestions li.selected .shortcut {
-    color: rgba(255, 255, 255, 0.85);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.6);
+    background: transparent;
   }
 </style>
