@@ -460,6 +460,35 @@ async fn test_tree_resolve_endpoint() {
     std::fs::remove_dir_all(root_dir).unwrap();
 }
 
+#[tokio::test]
+async fn test_batch_get_metarecords() {
+    let (app, repo, root_dir) = app_with_repo("batchget").await;
+    let uuid = |m: Value| m["uuid"].as_str().unwrap().to_string();
+    let a = uuid(
+        create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}]))
+            .await,
+    );
+    let b = uuid(
+        create_metarecord(&app, &repo, json!([{"name": "genre", "value": {"type": "string", "value": "jazz"}}]))
+            .await,
+    );
+    let missing = Uuid::new_v4().as_simple().to_string();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords/batch"),
+        Some(json!({"uuids": [a, b, missing]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(body[&a]["uuid"], json!(a));
+    assert_eq!(body[&b]["fields"][0]["name"], json!("genre"));
+    assert!(body.get(&missing).is_none(), "unknown uuid is omitted");
+
+    std::fs::remove_dir_all(root_dir).unwrap();
+}
+
 // ── Listing and pagination ────────────────────────────────────────────────────
 
 #[tokio::test]

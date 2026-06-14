@@ -36,6 +36,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
         .route("/repos/:repo/metarecords", get(list_metarecords).post(create_record_endpoint))
+        .route("/repos/:repo/metarecords/batch", post(batch_get_records))
         .route(
             "/repos/:repo/metarecords/:uuid",
             get(get_record_endpoint).delete(delete_record_endpoint).patch(patch_metarecord),
@@ -128,6 +129,42 @@ async fn tree_resolve(
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
             out.insert(hex(uuid), json!(paths));
+        }
+        Ok(Json(serde_json::Value::Object(out)).into_response())
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct BatchGetBody {
+    #[serde(default)]
+    uuids: Vec<String>,
+}
+
+/// `POST /repos/:repo/metarecords/batch`: fetches several metarecords in one
+/// round-trip, keyed by uuid. Unknown uuids are omitted (not an error). Lets
+/// clients dereference a page of `Ref`s without N requests.
+async fn batch_get_records(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchGetBody>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let Json(body) = payload?;
+    let uuids = body
+        .uuids
+        .iter()
+        .map(|s| parse_uuid(s))
+        .collect::<Result<Vec<_>, _>>()?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut out = serde_json::Map::new();
+        for uuid in uuids {
+            if let Some(record) = db::get_metarecord(&conn, uuid)? {
+                let value = serde_json::to_value(record)
+                    .map_err(|e| ApiError::internal(format!("serializing metarecord: {e}")))?;
+                out.insert(hex(uuid), value);
+            }
         }
         Ok(Json(serde_json::Value::Object(out)).into_response())
     })

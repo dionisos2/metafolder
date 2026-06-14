@@ -70,14 +70,18 @@ function makeResolvePaths() {
   };
 }
 
-/** Ref-deref targets for the ~target columns; cached for one result set. */
+/** Ref-deref targets for the ~target columns; one batch call, cached per result set. */
 async function getMetarecords(uuids) {
+  const missing = uuids.filter((uuid) => !refCache.has(uuid));
+  if (missing.length > 0) {
+    const batch = daemon
+      .call('POST', `/repos/${repo}/metarecords/batch`, { uuids: missing })
+      .catch(() => ({}));
+    for (const uuid of missing) refCache.set(uuid, batch.then((byUuid) => byUuid[uuid] ?? null));
+  }
   const out = {};
   await Promise.all(
     uuids.map(async (uuid) => {
-      if (!refCache.has(uuid)) {
-        refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`).catch(() => null));
-      }
       const target = await refCache.get(uuid);
       if (target) out[uuid] = target;
     }),
