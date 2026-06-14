@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord } from '../../panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 

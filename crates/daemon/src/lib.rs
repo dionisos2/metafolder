@@ -14,7 +14,6 @@ pub mod repo;
 pub mod reserved;
 pub mod routes;
 pub mod schema;
-pub mod simplified;
 pub mod state;
 pub mod tree_cache;
 pub mod watcher;

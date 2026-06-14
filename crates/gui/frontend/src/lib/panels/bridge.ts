@@ -50,8 +50,10 @@ export function createBridgeCore(deps: BridgeDeps) {
           path: params.path,
           body: params.body ?? null,
         });
-      case 'daemon.parseQuery':
+      case 'query.parse':
         return deps.invoke('parse_query', { dsl: params.dsl });
+      case 'query.expand':
+        return deps.invoke('expand_query', { text: params.text });
       case 'workspace.get':
         return deps.invoke('ws_get_var', { wsId, key: params.key });
       case 'workspace.set':

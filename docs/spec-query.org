@@ -267,7 +267,7 @@ and streams the output.
 | =--sort field[:asc\vert{}desc]=  | Sort results; repeatable for secondary keys                          |
 | =--limit N=                | Stop after N results                                                 |
 | =--values=                 | With =--select <one field>=: print the field's raw values, one per line (multi-map: one line per row; =nothing= rows skipped; scalars bare, refs as 32-hex uuids, structured values as compact JSON) |
-| =--simplified= / =-s=      | Treat =<predicate>= as [[*Simplified query language][simplified-language]] text and expand it to the normal DSL first (via =POST /query/expand=) before compiling |
+| =--simplified= / =-s=      | Treat =<predicate>= as [[*Simplified query language][simplified-language]] text and expand it locally to the normal DSL first (shared grammar in core, no daemon round-trip) before compiling |
 
 * Simplified query language
 
@@ -300,13 +300,14 @@ input behind =mf query --simplified=.
 
 ** Configuration
 
-The grammar is a single file in the daemon config directory,
-=~/.config/metafolder/daemon/query-grammar=, installed by
+The grammar is a single file in the shared (core) config directory,
+=~/.config/metafolder/core/query-grammar=, installed by
 =metafolder-sync-config= (see [[file:spec-config.org][spec-config]]). It is
-**global** (not per-repo) and read by the daemon at startup, so the CLI and GUI
-share one grammar. An empty file = no rules = the simplified language accepts
-nothing. A *missing* or *malformed* grammar is a startup error (no fall back to
-an embedded default); the normal DSL needs no grammar and is unaffected.
+**global** (not per-repo) and read by each client (GUI/CLI) for client-side
+expansion — the daemon never reads it. An empty file = no rules = the
+simplified language accepts nothing. A *missing* or *malformed* grammar is an
+error when a client loads it (no fall back to an embedded default); the normal
+DSL needs no grammar and is unaffected.
 
 ** Lexer (fixed)
 
@@ -483,25 +484,19 @@ time-dependent (not reproducible across calls). Calendar-aware durations
 (months, years) are intentionally left out; the supplied units run from seconds
 to weeks. Richer relative grammars are a matter of editing the grammar file.
 
-** HTTP API
+** Where expansion runs
 
-*** =POST /query/expand=
+Expansion is a **pure, client-side transformation**: it depends only on the
+grammar file and the input text, never on the daemon or any repository. The
+GUI and CLI link =metafolder-core= and call the shared engine directly
+(`core::simplified::engine::expand`) — there is *no* daemon endpoint for it.
+The GUI loads the grammar at startup and exposes a local backend command
+(=metafolder.query.expand=, see spec-gui); the CLI loads it when
+=--simplified= is used. Relative-date macros (=now()=) therefore resolve
+against the **client's** local clock.
 
-Expands simplified text to normal DSL text using the loaded grammar. Global
-(not repo-scoped), since the grammar is global.
-
-Request body:
-#+BEGIN_SRC json
-{ "simplified": "<text>" }
-#+END_SRC
-
-Response body:
-#+BEGIN_SRC json
-{ "dsl": "<normal DSL text>" }
-#+END_SRC
-
-On a grammar/expansion error, returns =400= with ={"error": "..."}= (the GUI
-shows this under the simplified input; a subsequent =parse_query= failure on the
-produced text is a separate error shown under the normal-DSL input).
+A grammar/expansion error is reported by the client (the GUI shows it under
+the simplified input; a subsequent normal-DSL parse failure is a separate
+error shown under the normal-DSL input).
 
 * Open questions

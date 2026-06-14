@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { parseColumns, isSortable, cellQuickText, cellText } from '../../panel-types/metarecord-list/columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText } from '../../default-config/panel-types/metarecord-list/columns.js';
 
 type Value = { type: string; value: unknown };
 type Entry = { uuid: string; version: number; fields: { name: string; value: Value }[] };

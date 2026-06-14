@@ -351,13 +351,13 @@ mod tests {
         let (source, config) = (area.join("src"), area.join("cfg"));
         make_source(
             &source,
-            &[("gui/style.css", "body{}"), ("daemon/query-grammar", "g1")],
+            &[("gui/style.css", "body{}"), ("core/query-grammar", "g1")],
         );
 
         let out = sync(&source, &config).unwrap();
         assert!(out.initialized);
         assert_eq!(read(&config, "gui/style.css").as_deref(), Some("body{}"));
-        assert_eq!(read(&config, "daemon/query-grammar").as_deref(), Some("g1"));
+        assert_eq!(read(&config, "core/query-grammar").as_deref(), Some("g1"));
         assert!(config.join(".gitignore").exists());
         assert!(config.join(".git").is_dir());
     }

@@ -1,43 +1,43 @@
-//! Loading of the global simplified-query grammar (spec-query "Simplified
-//! query language" / "Configuration"): `$XDG_CONFIG_HOME/metafolder/daemon/
-//! query-grammar`, installed by `metafolder-sync-config` (spec-config) and
-//! parsed/validated at startup. A missing or malformed grammar is a hard
-//! error; there is no embedded fallback. The normal DSL needs no grammar.
+//! Loading the global simplified-query grammar from the user configuration
+//! (spec-config; spec-query "Configuration"):
+//! `$XDG_CONFIG_HOME/metafolder/core/query-grammar`, installed by
+//! `metafolder-sync-config`. A missing or malformed grammar is an error; there
+//! is no embedded fallback. Expansion is a pure, client-side transformation
+//! (GUI/CLI call [`crate::simplified::engine`] directly) — never the daemon.
 
 use std::path::{Path, PathBuf};
 
-use metafolder_core::simplified::engine::validate;
-use metafolder_core::simplified::grammar::{parse_grammar, Grammar};
+use crate::config;
+use crate::simplified::engine::validate;
+use crate::simplified::grammar::{parse_grammar, Grammar};
 
-
-/// `$XDG_CONFIG_HOME/metafolder/daemon/query-grammar`.
+/// `$XDG_CONFIG_HOME/metafolder/core/query-grammar`.
 pub fn grammar_path() -> Option<PathBuf> {
-    metafolder_core::config::crate_config_dir("daemon").map(|d| d.join("query-grammar"))
+    config::crate_config_dir("core").map(|dir| dir.join("query-grammar"))
 }
 
 /// Reads, parses and validates the grammar at `path`. A missing or malformed
 /// file is an error; there is no fall back to a shipped default (spec-config).
 pub fn load_grammar(path: &Path) -> Result<Grammar, String> {
-    let src = metafolder_core::config::read_required(path)?;
+    let src = config::read_required(path)?;
     let grammar = parse_grammar(&src)?;
     validate(&grammar)?;
     Ok(grammar)
 }
 
-/// Startup entry point: resolves the path, then loads, parses and validates
-/// the grammar. A missing or malformed grammar is a hard error (spec-config).
-pub fn init() -> Result<Grammar, String> {
-    let path = grammar_path().ok_or("cannot determine the daemon configuration directory")?;
+/// Resolves the configured path and loads the grammar.
+pub fn load() -> Result<Grammar, String> {
+    let path = grammar_path().ok_or("cannot determine the configuration directory")?;
     load_grammar(&path)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use metafolder_core::simplified::engine::expand;
+    use crate::simplified::engine::{expand, expand_at};
 
     /// The shipped grammar, embedded for tests only (never a runtime fallback).
-    const DEFAULT_GRAMMAR: &str = include_str!("../default-config/query-grammar");
+    const DEFAULT_GRAMMAR: &str = include_str!("../../default-config/query-grammar");
 
     #[test]
     fn default_grammar_parses_and_validates() {
@@ -73,7 +73,6 @@ mod tests {
     #[test]
     fn default_grammar_accepts_explicit_and() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
-        // Juxtaposition and the explicit AND keyword are equivalent.
         let expected = "a = \"x\" AND b = \"y\"";
         assert_eq!(expand(&g, "a=x b=y").unwrap(), expected);
         assert_eq!(expand(&g, "a=x AND b=y").unwrap(), expected);
@@ -81,10 +80,8 @@ mod tests {
 
     #[test]
     fn default_grammar_expands_relative_date_macros() {
-        use metafolder_core::simplified::engine::expand_at;
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let now = 1_000_000_000_000;
-        // younger = more recent than (now - duration); older = before it.
         assert_eq!(
             expand_at(&g, "modified younger 3d", now).unwrap(),
             format!("mfr_mtime > @{}", now - 3 * 86_400_000)
@@ -93,7 +90,6 @@ mod tests {
             expand_at(&g, "created older 2 weeks", now).unwrap(),
             format!("mfr_btime < @{}", now - 2 * 604_800_000)
         );
-        // Abbreviations and word/number juxtaposition both tokenize alike.
         assert_eq!(
             expand_at(&g, "modified younger 30min", now).unwrap(),
             format!("mfr_mtime > @{}", now - 30 * 60_000)
@@ -123,15 +119,14 @@ mod tests {
 
     #[test]
     fn date_macros_produce_valid_dsl() {
-        // The expanded text must be accepted by the normal DSL parser.
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let dsl = expand(&g, "modified since \"2024-01-01\"").unwrap();
-        metafolder_core::dsl::parse_query(&dsl).expect("expanded date macro is valid DSL");
+        crate::dsl::parse_query(&dsl).expect("expanded date macro is valid DSL");
     }
 
     #[test]
     fn load_grammar_errors_when_missing() {
-        let dir = std::env::temp_dir().join(format!("mf-grammar-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("mf-core-grammar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("query-grammar");
         let err = load_grammar(&path).unwrap_err();

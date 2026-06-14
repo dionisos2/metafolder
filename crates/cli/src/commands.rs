@@ -294,7 +294,8 @@ pub struct QueryArgs {
     /// metarecord JSON (requires `--select` with exactly one field).
     pub values: bool,
     /// Treat `predicate` as simplified-language text and expand it to the
-    /// normal DSL first (via the daemon's `POST /query/expand`).
+    /// normal DSL first, locally via the shared grammar in core (no daemon
+    /// round-trip).
     pub simplified: bool,
 }
 
@@ -315,11 +316,15 @@ fn raw_value_line(value: &Json) -> Option<String> {
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let predicate = if args.simplified {
-        let resp = ctx.client.post("/query/expand", &json!({"simplified": args.predicate}))?;
-        resp["dsl"]
-            .as_str()
-            .ok_or_else(|| CliError::Op("daemon returned no 'dsl' for the simplified query".into()))?
-            .to_string()
+        // Expansion is a pure transformation: done locally via the shared
+        // grammar in core, never a daemon round-trip (spec-query).
+        let grammar = metafolder_core::simplified::load::load().map_err(CliError::Op)?;
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        metafolder_core::simplified::engine::expand_at(&grammar, &args.predicate, now_ms)
+            .map_err(CliError::Op)?
     } else {
         args.predicate.clone()
     };

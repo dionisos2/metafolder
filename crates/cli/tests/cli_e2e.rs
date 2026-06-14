@@ -23,16 +23,8 @@ fn daemon_url() -> &'static str {
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
             rt.block_on(async move {
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                let mut app_state = metafolder_daemon::state::AppState::new();
-                // The shipped grammar, parsed from the daemon's default-config
-                // (a test fixture, not a runtime fallback — spec-config).
-                const GRAMMAR_SRC: &str = include_str!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/../daemon/default-config/query-grammar"
-                ));
-                app_state.set_simplified_grammar(Some(
-                    metafolder_core::simplified::grammar::parse_grammar(GRAMMAR_SRC).unwrap(),
-                ));
+                // Expansion is client-side now: the daemon needs no grammar.
+                let app_state = metafolder_daemon::state::AppState::new();
                 let app = metafolder_daemon::routes::build(std::sync::Arc::new(app_state));
                 axum::serve(listener, app).await.unwrap();
             });
@@ -73,6 +65,30 @@ fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bo
 
 fn mf(args: &[&str]) -> Out {
     mf_full(args, None, &[], true)
+}
+
+/// `XDG_CONFIG_HOME` for a config dir with the shipped grammar installed at
+/// `metafolder/core/query-grammar`, so `mf query --simplified` can expand
+/// locally (the daemon no longer does).
+fn config_xdg() -> &'static str {
+    use std::sync::OnceLock;
+    static XDG: OnceLock<String> = OnceLock::new();
+    XDG.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("mf-cli-cfg-{}", std::process::id()));
+        let core = dir.join("metafolder").join("core");
+        std::fs::create_dir_all(&core).unwrap();
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../core/default-config/query-grammar"),
+            core.join("query-grammar"),
+        )
+        .unwrap();
+        dir.to_str().unwrap().to_string()
+    })
+}
+
+/// Like `mf`, but with a config dir holding the grammar (for `--simplified`).
+fn mf_cfg(args: &[&str]) -> Out {
+    mf_full(args, None, &[("XDG_CONFIG_HOME", config_xdg())], true)
 }
 
 fn assert_ok(out: &Out) {
@@ -426,8 +442,8 @@ fn test_query_simplified_expands_before_running() {
     let (repo, _) = init_repo("query_simplified");
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
-    // `rating=5` expands to `rating = 5` via the daemon grammar.
-    let out = mf(&["--repo", &repo, "query", "-s", "rating=5"]);
+    // `rating=5` expands to `rating = 5` locally via the core grammar.
+    let out = mf_cfg(&["--repo", &repo, "query", "-s", "rating=5"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
 }
@@ -447,7 +463,7 @@ fn test_query_simplified_date_macro_filters() {
     ]);
     assert_ok(&old);
     // `created since "2023-01-01"` → mfr_btime >= @"2023-01-01": only the recent one.
-    let out = mf(&["--repo", &repo, "query", "-s", "created since \"2023-01-01\""]);
+    let out = mf_cfg(&["--repo", &repo, "query", "-s", "created since \"2023-01-01\""]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), recent);
 }

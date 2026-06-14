@@ -36,9 +36,9 @@ A single git repository at =~/.config/metafolder/= (respecting
 ~/.config/metafolder/            ← git repository (branches: default, main)
   .gitignore
   core/                          ← shared configuration
+    query-grammar                ← simplified-query grammar (client-side expansion)
   daemon/
     config.json                  ← repos to auto-load
-    query-grammar                ← simplified-query grammar
   gui/
     keybindings.toml
     style.css
@@ -63,8 +63,8 @@ shipped configuration under =crates/<name>/default-config/=, mirroring the
 on-disk subdirectory it targets:
 
 #+BEGIN_SRC
-crates/core/default-config/...
-crates/daemon/default-config/query-grammar, config.json, ...
+crates/core/default-config/query-grammar
+crates/daemon/default-config/config.json
 crates/gui/default-config/keybindings.toml, style.css, panel-types/...
 crates/cli/default-config/...            ← may be empty
 #+END_SRC
@@ -137,11 +137,11 @@ It never falls back to an embedded or shipped default, because the canonical
 default may legitimately be absent (deleted by the user after install). Per
 file kind:
 
-- =daemon/query-grammar=: missing or malformed ⇒ daemon startup error
-  (previously: install default if missing; malformed ⇒ disable the simplified
-  language). An *empty* file stays valid (no rules = the simplified language
-  accepts nothing); only a *missing* or *malformed* file is an error. The
-  normal DSL needs no grammar and is unaffected in all cases.
+- =core/query-grammar=: read **client-side** (GUI at startup, CLI on
+  =--simplified=) — the daemon never reads it. Missing or malformed ⇒ error
+  when a client loads it (previously: the daemon installed a default if
+  missing). An *empty* file stays valid (no rules = the simplified language
+  accepts nothing). The normal DSL needs no grammar and is unaffected.
 - =gui/style.css=: missing ⇒ error (previously: fall back to the embedded
   default).
 - =gui/keybindings.toml=: see below.

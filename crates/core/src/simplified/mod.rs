@@ -7,4 +7,5 @@
 pub mod engine;
 pub mod grammar;
 pub mod lexer;
+pub mod load;
 pub mod template;

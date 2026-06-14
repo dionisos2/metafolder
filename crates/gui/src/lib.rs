@@ -110,6 +110,15 @@ pub fn run(options: Options) {
             std::process::exit(1);
         }
     };
+    // The simplified-query grammar (shared, in core): expansion is done locally
+    // by the GUI backend, never proxied to the daemon (spec-query).
+    let grammar = match metafolder_core::simplified::load::load() {
+        Ok(grammar) => grammar,
+        Err(error) => {
+            eprintln!("metafolder-gui: {error}");
+            std::process::exit(1);
+        }
+    };
 
     let gui_port = options.gui_port;
     let daemon = Arc::new(daemon_proxy::DaemonProxy::new(options.daemon_url.clone()));
@@ -132,6 +141,7 @@ pub fn run(options: Options) {
                 registry,
                 config: config.clone(),
                 keybindings: keybindings.clone(),
+                grammar,
                 gui_port,
                 daemon: daemon.clone(),
                 input: input.clone(),
@@ -263,6 +273,7 @@ pub fn run(options: Options) {
             commands::daemon_set_url,
             commands::daemon_health,
             commands::parse_query,
+            commands::expand_query,
             reconcile::reconcile_run,
             undo::log_navigate,
             commands::answer_send,

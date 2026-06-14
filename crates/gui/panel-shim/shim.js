@@ -269,24 +269,10 @@ window.metafolder = {
       }
       return response.body;
     },
-    /** Compiles a query DSL string to the Query JSON IR. */
-    parseQuery: (dsl) => request('daemon.parseQuery', { dsl }),
-    /**
-     * Expands simplified-language text to normal DSL text via the daemon's
-     * `POST /query/expand` (the grammar lives in the daemon). Throws
-     * Error(body.error) on a grammar/expansion error.
-     */
-    expandQuery: async (simplified) => {
-      const response = await request('daemon.request', {
-        method: 'POST',
-        path: '/query/expand',
-        body: { simplified },
-      });
-      if (response.status >= 400) {
-        throw new Error(response.body?.error ?? `expand: HTTP ${response.status}`);
-      }
-      return response.body.dsl;
-    },
+    /** @deprecated use metafolder.query.parse — kept for older panels. */
+    parseQuery: (dsl) => window.metafolder.query.parse(dsl),
+    /** @deprecated use metafolder.query.expand — kept for older panels. */
+    expandQuery: (simplified) => window.metafolder.query.expand(simplified),
     /** Repo-root-relative path of an entry (lazy walk, memoized). */
     resolvePath: (repo, uuid) => resolverFor(repo).resolveUuid(uuid),
     /** Same, for a raw tree_ref value {parent, name}. */
@@ -318,6 +304,17 @@ window.metafolder = {
       }
       return paths;
     },
+  },
+
+  /**
+   * Pure query transformations — run locally in the GUI backend (core),
+   * never a daemon round-trip.
+   */
+  query: {
+    /** Compiles normal DSL text to the Query JSON IR. */
+    parse: (dsl) => request('query.parse', { dsl }),
+    /** Expands simplified-language text to normal DSL text. */
+    expand: (text) => request('query.expand', { text }),
   },
 
   workspace: {

@@ -4,7 +4,7 @@
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { TYPES, createTypePicker, parseRawValue } from '../../panel-types/metarecord-detail/add-type.js';
+import { TYPES, createTypePicker, parseRawValue } from '../../default-config/panel-types/metarecord-detail/add-type.js';
 
 function press(key: string) {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));

@@ -96,6 +96,10 @@ Shared data model used by all other crates:
   `default` branch = shipped defaults (merge base), `main` = user's working
   config; updates auto-commit dirty `main`, then merge `default`→`main`,
   restoring `main` untouched on conflict. See `docs/spec-config.org`.
+- `simplified/`: the simplified-query language (engine/grammar/template + a
+  `load` module reading `~/.config/metafolder/core/query-grammar`). Expansion
+  (simplified → normal DSL) is a **pure, client-side** transformation: the GUI
+  and CLI call it directly; the daemon never does (no `/query/expand`).
 
 ### `crates/daemon`
 
@@ -107,12 +111,11 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `config.rs`: `RepoConfig` persisted as `.metafolder/config.json`
   (repo_uuid, name, version, root, optional schema path, created_at).
 - `daemon_config.rs`: optional daemon config
-  `~/.config/metafolder/daemon/config.json` (`--config` overrides), read at
-  startup: `load` list of repos to auto-load (`POST /repos/load` shape);
-  malformed file aborts startup, a repo that fails to load is a warning.
-  `simplified.rs` loads the global query grammar from
-  `~/.config/metafolder/daemon/query-grammar`; missing/malformed = startup
-  error (no embedded default). Both paths come from `core::config`.
+  `~/.config/metafolder/daemon/config.json` (`--config` overrides; path from
+  `core::config`), read at startup: `load` list of repos to auto-load
+  (`POST /repos/load` shape); malformed file aborts startup, a repo that fails
+  to load is a warning. The daemon does **not** handle the simplified-query
+  grammar — expansion is client-side (see `crates/core` → `simplified/`).
 - `repo.rs`: repository init/load (`OpenedRepo`), external `.metafolder/`
   location, the filesystem root metarecord with its defaults (`mf_watch = false`,
   default `mf_ignore` patterns), case-sensitivity probe.

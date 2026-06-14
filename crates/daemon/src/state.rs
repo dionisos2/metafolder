@@ -4,7 +4,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use metafolder_core::simplified::grammar::Grammar;
 use metafolder_core::sync::MutexExt;
 use rusqlite::Connection;
 use serde::Serialize;
@@ -106,9 +105,6 @@ pub struct RepoHandles {
 #[derive(Default)]
 pub struct AppState {
     repos: Mutex<HashMap<Uuid, Arc<RepoState>>>,
-    /// The global simplified-query grammar, loaded once at startup. `None`
-    /// when absent/malformed — the simplified language is then disabled.
-    simplified_grammar: Option<Grammar>,
 }
 
 /// Public description of a loaded repository (`GET /repos`).
@@ -127,17 +123,6 @@ pub struct RepoInfo {
 impl AppState {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Sets the global simplified-query grammar (called once at startup, before
-    /// the state is shared).
-    pub fn set_simplified_grammar(&mut self, grammar: Option<Grammar>) {
-        self.simplified_grammar = grammar;
-    }
-
-    /// The loaded simplified-query grammar, if any.
-    pub fn simplified_grammar(&self) -> Option<&Grammar> {
-        self.simplified_grammar.as_ref()
     }
 
     /// Initialises a new repository and registers it as loaded.

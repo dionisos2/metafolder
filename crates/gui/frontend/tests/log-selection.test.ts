@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'vitest';
 // @ts-expect-error plain-JS module shared with the log panel type
-import { moveSelection, edgeSelection } from '../../panel-types/log/selection.js';
+import { moveSelection, edgeSelection } from '../../default-config/panel-types/log/selection.js';
 
 const revisions = [{ id: 9 }, { id: 7 }, { id: 3 }]; // newest first
 

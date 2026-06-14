@@ -21,6 +21,8 @@ pub struct App {
     pub config: Arc<ConfigDir>,
     /// Shared with the GUI HTTP server (temporary /gui/input bindings).
     pub keybindings: Arc<Mutex<KeybindingSet>>,
+    /// The simplified-query grammar (read-only), for local query expansion.
+    pub grammar: metafolder_core::simplified::grammar::Grammar,
     pub gui_port: u16,
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
@@ -349,6 +351,18 @@ pub async fn daemon_health(app: AppHandle<'_>) -> Result<bool, String> {
 pub fn parse_query(dsl: String) -> Result<Value, String> {
     let query = metafolder_core::dsl::parse_query(&dsl)?;
     serde_json::to_value(query).map_err(|e| format!("cannot serialize the query: {e}"))
+}
+
+/// Expands simplified-language text to normal DSL text locally, via the shared
+/// grammar in core — no daemon round-trip (spec-query). Relative date macros
+/// resolve against the local clock.
+#[tauri::command]
+pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    metafolder_core::simplified::engine::expand_at(&app.grammar, &text, now_ms)
 }
 
 // ── Scripting waits ──────────────────────────────────────────────────────

@@ -19,7 +19,6 @@ use metafolder_core::metarecord::{Field, MetaRecord, Value};
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
-use metafolder_core::simplified::engine::expand;
 
 use crate::db;
 use crate::error::ApiError;
@@ -36,7 +35,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
-        .route("/query/expand", post(expand_query))
         .route("/repos/:repo/metarecords", get(list_metarecords).post(create_record_endpoint))
         .route(
             "/repos/:repo/metarecords/:uuid",
@@ -68,28 +66,6 @@ pub fn build(state: Arc<AppState>) -> Router {
             put(replace_field).delete(delete_field),
         )
         .with_state(state)
-}
-
-// ── Simplified query expansion ──────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct ExpandBody {
-    simplified: String,
-}
-
-/// `POST /query/expand`: expands simplified-language text to normal DSL text
-/// using the global grammar (spec-query "POST /query/expand"). Global, not
-/// repo-scoped. A grammar/expansion error is a 400.
-async fn expand_query(
-    State(state): State<Arc<AppState>>,
-    payload: Result<Json<ExpandBody>, JsonRejection>,
-) -> Result<Response, ApiError> {
-    let Json(body) = payload?;
-    let grammar = state
-        .simplified_grammar()
-        .ok_or_else(|| ApiError::bad_request("simplified query language is not configured"))?;
-    let dsl = expand(grammar, &body.simplified).map_err(ApiError::bad_request)?;
-    Ok(Json(json!({ "dsl": dsl })).into_response())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

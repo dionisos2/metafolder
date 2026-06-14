@@ -601,11 +601,6 @@ const response = await metafolder.daemon.request('GET', '/repos')
 // Same, but throws Error(body.error) on status >= 400 and returns the
 // body directly — the usual form inside try/catch.
 const metarecord = await metafolder.daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`)
-// Compiles a query DSL string to the Query JSON IR (throws on parse error).
-const ir = await metafolder.daemon.parseQuery('rating > 3')
-// Expands simplified-language text to normal DSL text via POST /query/expand
-// (throws Error(body.error) on a grammar/expansion error).
-const dsl = await metafolder.daemon.expandQuery('genre=jazz rating>=4')
 // Lazy memoized mfr_path resolution (see "Path display").
 await metafolder.daemon.resolvePath(repo, uuid)
 await metafolder.daemon.resolveTreeRef(repo, { parent, name })
@@ -619,6 +614,23 @@ const internal = await metafolder.daemon.repoInternalDir(repo)
 // (multi-map), unresolvable (stale) refs skipped.
 const paths = await metafolder.daemon.metarecordPaths(repo, metarecord)
 #+END_SRC
+
+**** =metafolder.query=
+
+Pure query transformations, run **locally** in the GUI backend (the shared
+=metafolder-core= engine) — never a daemon round-trip. Both throw on a
+parse/grammar error.
+
+#+BEGIN_SRC js
+// Compiles normal DSL text to the Query JSON IR.
+const ir = await metafolder.query.parse('rating > 3')
+// Expands simplified-language text to normal DSL text (relative-date macros
+// use the local clock).
+const dsl = await metafolder.query.expand('genre=jazz rating>=4')
+#+END_SRC
+
+(=metafolder.daemon.parseQuery= / =expandQuery= remain as deprecated aliases
+for older panels.)
 
 **** =metafolder.workspace=
 
@@ -822,14 +834,14 @@ too specific for the simplified surface — and learn the mapping by watching it
   =metarecord-list:edit-query= focuses it. An empty zone A matches all.
 - A toggle reveals *zone B (normal DSL)* below A. While B is shown and **not
   frozen**, it is a read-only live mirror of =expand(A)= (debounced ~120–150 ms,
-  via =metafolder.daemon.expandQuery=). A *Freeze* checkbox next to B decouples
+  via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples
   it: B becomes editable and authoritative, and editing A no longer changes it.
   Unfreezing re-syncs B from =expand(A)= — manual edits to B are then discarded
   (accepted).
 
 Execution always runs the content of B; when B is hidden, B is computed as
 =expand(A)= on Apply. The resulting DSL text is compiled with
-=metafolder.daemon.parseQuery= and the query is issued (with =select: '*'=, as
+=metafolder.query.parse= and the query is issued (with =select: '*'=, as
 above).
 
 Errors appear under the zone that produced them: a grammar/expansion error under

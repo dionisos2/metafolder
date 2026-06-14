@@ -5,7 +5,7 @@ import { el } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
 
-const { daemon, workspace, commands, statusBar } = metafolder;
+const { daemon, workspace, commands, statusBar, query } = metafolder;
 
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
@@ -318,7 +318,7 @@ async function recomputeQuery() {
       dsl = '';
     } else {
       try {
-        dsl = (await daemon.expandQuery(simplified)).trim();
+        dsl = (await query.expand(simplified)).trim();
       } catch (error) {
         queryError.textContent = String(error.message ?? error);
         return false;
@@ -330,7 +330,7 @@ async function recomputeQuery() {
     queryIR = null; // empty = match all
   } else {
     try {
-      queryIR = await daemon.parseQuery(dsl);
+      queryIR = await query.parse(dsl);
     } catch (error) {
       // The offending DSL is visible in B when shown; otherwise show under A.
       (normalShown ? normalError : queryError).textContent = String(error.message ?? error);
@@ -367,7 +367,7 @@ async function refreshPreview() {
     return;
   }
   try {
-    normalInput.value = (await daemon.expandQuery(simplified)).trim();
+    normalInput.value = (await query.expand(simplified)).trim();
   } catch (error) {
     queryError.textContent = String(error.message ?? error);
   }
