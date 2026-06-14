@@ -3,7 +3,7 @@
 
 import { el } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { parseColumns, isSortable, cellQuickText, cellText } from './columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText, resolveColumns } from './columns.js';
 
 const { daemon, workspace, commands, statusBar, query } = metafolder;
 
@@ -57,17 +57,54 @@ const normalFreeze = document.getElementById('normal-freeze');
 
 // ── Data access ─────────────────────────────────────────────────────────
 
-// Context for ~ column display (columns.js); the ref target cache lives
-// for one result set and is dropped on every reset fetch.
-const displayCtx = {
-  resolveTreeRef: (value) => daemon.resolveTreeRef(repo, value),
-  getMetarecord: (uuid) => {
-    if (!refCache.has(uuid)) {
-      refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`));
+const repoRoots = {}; // repo uuid -> absolute root path (cached)
+
+/** A daemon path resolver memoized per field for one enrichment pass. */
+function makeResolvePaths() {
+  const cache = new Map(); // field -> { uuid: [relPath] }
+  return async (field, uuids) => {
+    if (!cache.has(field)) {
+      cache.set(field, await daemon.call('POST', `/repos/${repo}/tree/resolve`, { field, uuids }));
     }
-    return refCache.get(uuid);
-  },
-};
+    return cache.get(field);
+  };
+}
+
+/** Ref-deref targets for the ~target columns; cached for one result set. */
+async function getMetarecords(uuids) {
+  const out = {};
+  await Promise.all(
+    uuids.map(async (uuid) => {
+      if (!refCache.has(uuid)) {
+        refCache.set(uuid, daemon.call('GET', `/repos/${repo}/metarecords/${uuid}`).catch(() => null));
+      }
+      const target = await refCache.get(uuid);
+      if (target) out[uuid] = target;
+    }),
+  );
+  return out;
+}
+
+// Pre-resolves all daemon-backed display data for a freshly fetched page so the
+// view layer stays synchronous: absolute mfr_path(s) per metarecord (selection,
+// orphan check, thumbnail) and the ~ columns' resolved text. No daemon traffic
+// happens during rendering.
+async function enrich(subset) {
+  if (subset.length === 0) return;
+  if (!repoRoots[repo]) repoRoots[repo] = await daemon.repoRoot(repo);
+  const root = repoRoots[repo];
+  const resolvePaths = makeResolvePaths();
+  const mfr = await resolvePaths('mfr_path', subset.map((m) => m.uuid));
+  for (const m of subset) {
+    m.paths = (mfr[m.uuid] ?? []).map((rel) => (rel === '' ? root : `${root}/${rel}`));
+  }
+  await resolveColumns(columns, subset, { resolvePaths, getMetarecords });
+}
+
+/** Re-derives the ~ columns over the loaded metarecords (after a column change). */
+async function reresolveColumns() {
+  await resolveColumns(columns, metarecords, { resolvePaths: makeResolvePaths(), getMetarecords });
+}
 
 async function fetchPage(reset) {
   if (!repo || loading) return;
@@ -100,6 +137,7 @@ async function fetchPage(reset) {
     }
     metarecords = metarecords.concat(page.results);
     nextCursor = page.next_cursor;
+    await enrich(page.results); // pre-resolve display data; rendering stays sync
     if (reset) total = page.total ?? null;
     if (reset) {
       // Drop checked metarecords that no longer match.
@@ -179,16 +217,10 @@ function renderHeader() {
   );
 }
 
-function fillCell(node, column, metarecord) {
-  cellText(column, metarecord, displayCtx).then(
-    (text) => (node.textContent = text),
-    () => {}, // keep the quick text
-  );
-}
-
-// Orphan check environment (one disk stat per metarecord per result set).
+// Orphan check environment: paths are pre-resolved (enrich), so this is just a
+// disk stat (no daemon traffic during rendering).
 const orphanCtx = {
-  metarecordPaths: (metarecord) => daemon.metarecordPaths(repo, metarecord),
+  metarecordPaths: (metarecord) => metarecord.paths ?? [],
   exists: (path) =>
     metafolder.fs.stat(path).then(
       () => true,
@@ -219,11 +251,7 @@ function render() {
           onclick: () => setCursor(index),
           ondblclick: () => openSelected(),
         },
-        columns.map((column) => {
-          const td = el('td', {}, cellQuickText(column, metarecord));
-          if (column.deref !== null) fillCell(td, column, metarecord);
-          return td;
-        }),
+        columns.map((column) => el('td', {}, cellText(column, metarecord))),
       );
       fillOrphan(tr, metarecord);
       return tr;
@@ -232,7 +260,7 @@ function render() {
   grid.replaceChildren(
     ...metarecords.map((metarecord, index) => {
       const img = el('img', { loading: 'lazy' });
-      void fillThumbnail(img, metarecord);
+      fillThumbnail(img, metarecord);
       const card = el(
         'div',
         {
@@ -259,13 +287,9 @@ function render() {
     (checked.size > 0 ? ` — ${checked.size} selected` : '');
 }
 
-async function fillThumbnail(img, metarecord) {
-  try {
-    const paths = await daemon.metarecordPaths(repo, metarecord);
-    if (paths.length > 0) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(paths[0])}`;
-  } catch {
-    /* no preview */
-  }
+function fillThumbnail(img, metarecord) {
+  const path = metarecord.paths?.[0];
+  if (path) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
 }
 
 // ── Selection (workspace variables) ─────────────────────────────────────
@@ -277,7 +301,7 @@ async function setCursor(index) {
   if (!metarecord) return;
   document.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
   await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
-  await workspace.set('selected_paths', await daemon.metarecordPaths(repo, metarecord));
+  await workspace.set('selected_paths', metarecord.paths ?? []);
 }
 
 async function toggleChecked() {
@@ -292,7 +316,7 @@ async function toggleChecked() {
 async function openSelected() {
   const metarecord = metarecords[cursorIndex];
   if (!metarecord) return;
-  const paths = await daemon.metarecordPaths(repo, metarecord);
+  const paths = metarecord.paths ?? [];
   await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
 }
 
@@ -415,6 +439,7 @@ async function applyColumns() {
   }
   columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
   columnsInput.value = columns.map((c) => c.spec).join(' ');
+  await reresolveColumns();
   render();
   // Persisted per workspace; also lets scripts set the columns.
   await workspace.set('metarecord-list:columns', columns.map((c) => c.spec));
@@ -565,8 +590,9 @@ workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredSta
 // The workspace may adopt a repo after startup (repos panel).
 workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
 // Columns may also be set by a script (mf gui) or another session.
-workspace.onChange('metarecord-list:columns', (value) => {
+workspace.onChange('metarecord-list:columns', async (value) => {
   setColumns(value);
+  await reresolveColumns();
   render();
 });
 workspace.onChange('metarecord-list:page-size', (value) => {

@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { parseColumns, isSortable, cellQuickText, cellText } from '../../default-config/panel-types/metarecord-list/columns.js';
+import { parseColumns, isSortable, cellQuickText, cellText, resolveColumns } from '../../default-config/panel-types/metarecord-list/columns.js';
 
 type Value = { type: string; value: unknown };
 type Entry = { uuid: string; version: number; fields: { name: string; value: Value }[] };
@@ -123,43 +123,55 @@ describe('cellQuickText (synchronous placeholder)', () => {
   });
 });
 
-describe('cellText (asynchronous display)', () => {
-  const ctx = (overrides = {}) => ({
-    resolveTreeRef: vi.fn(async () => 'music/jazz/take5.mp3'),
-    getMetarecord: vi.fn(async () => entry([{ name: 'name', value: str('jazz') }])),
-    ...overrides,
+describe('resolveColumns + cellText (resolved display)', () => {
+  const paths = (mapping: Record<string, string[]>) =>
+    vi.fn(async (_field: string, uuids: string[]) =>
+      Object.fromEntries(uuids.map((u) => [u, mapping[u] ?? []])),
+    );
+  const targetsBy = (mapping: Record<string, Entry>) =>
+    vi.fn(async (uuids: string[]) =>
+      Object.fromEntries(uuids.flatMap((u) => (mapping[u] ? [[u, mapping[u]]] : []))),
+    );
+  const ctx = (over = {}) => ({
+    resolvePaths: paths({ aaaa: ['music/jazz/take5.mp3'] }),
+    getMetarecords: targetsBy({ '1111': entry([{ name: 'name', value: str('jazz') }]) }),
+    ...over,
+  });
+  // Resolve the page, then read the (now synchronous) cell.
+  async function resolved(spec: string, e: Entry, c = ctx()) {
+    const cols = parseColumns(spec);
+    await resolveColumns(cols, [e], c);
+    return cellText(cols[0], e);
+  }
+
+  test('cellText is synchronous and falls back to the quick text before resolution', () => {
+    const e = entry([{ name: 'mfr_path', value: treeRef('bbbb', 'take5.mp3') }]);
+    expect(cellText(parseColumns('mfr_path~')[0], e)).toBe('take5.mp3');
+    expect(cellText(parseColumns('&version')[0], e)).toBe('7');
   });
 
-  test('meta and raw columns need no context', async () => {
-    const e = entry([{ name: 'rating', value: { type: 'int', value: 5 } }]);
-    expect(await cellText(parseColumns('&version')[0], e, ctx())).toBe('7');
-    expect(await cellText(parseColumns('rating')[0], e, ctx())).toBe('5');
-  });
-
-  test('field~ resolves tree_refs to the path from the root', async () => {
+  test('field~ resolves tree_refs to the path (one batch call for the page)', async () => {
     const e = entry([{ name: 'mfr_path', value: treeRef('bbbb', 'take5.mp3') }]);
     const c = ctx();
-    expect(await cellText(parseColumns('mfr_path~')[0], e, c)).toBe('music/jazz/take5.mp3');
-    expect(c.resolveTreeRef).toHaveBeenCalledWith({ parent: 'bbbb', name: 'take5.mp3' });
+    expect(await resolved('mfr_path~', e, c)).toBe('music/jazz/take5.mp3');
+    expect(c.resolvePaths).toHaveBeenCalledWith('mfr_path', ['aaaa']);
   });
 
   test('the repository root resolves to /', async () => {
     const e = entry([{ name: 'mfr_path', value: treeRef(null, '') }]);
-    const c = ctx({ resolveTreeRef: vi.fn(async () => '') });
-    expect(await cellText(parseColumns('mfr_path~')[0], e, c)).toBe('/');
+    expect(await resolved('mfr_path~', e, ctx({ resolvePaths: paths({ aaaa: [''] }) }))).toBe('/');
   });
 
   test('a stale tree_ref falls back to the leaf name', async () => {
     const e = entry([{ name: 'mfr_path', value: treeRef('gone', 'orphan.mp3') }]);
-    const c = ctx({ resolveTreeRef: vi.fn(async () => { throw new Error('stale'); }) });
-    expect(await cellText(parseColumns('mfr_path~')[0], e, c)).toBe('orphan.mp3');
+    expect(await resolved('mfr_path~', e, ctx({ resolvePaths: paths({ aaaa: [] }) }))).toBe('orphan.mp3');
   });
 
   test('field~target follows refs and shows the target field', async () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
     const c = ctx();
-    expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz');
-    expect(c.getMetarecord).toHaveBeenCalledWith('1111');
+    expect(await resolved('tags~name', e, c)).toBe('jazz');
+    expect(c.getMetarecords).toHaveBeenCalledWith(['1111']);
   });
 
   test('a multi-map target field joins every row', async () => {
@@ -168,37 +180,40 @@ describe('cellText (asynchronous display)', () => {
       { name: 'name', value: str('jazz') },
       { name: 'name', value: str('bebop') },
     ]);
-    const c = ctx({ getMetarecord: vi.fn(async () => target) });
-    expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz, bebop');
+    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({ '1111': target }) }))).toBe(
+      'jazz, bebop',
+    );
   });
 
   test('a missing target entry falls back to the raw uuid', async () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const c = ctx({ getMetarecord: vi.fn(async () => { throw new Error('gone'); }) });
-    expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('1111');
+    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({}) }))).toBe('1111');
   });
 
   test('a target entry without the field falls back to the raw uuid', async () => {
     const e = entry([{ name: 'tags', value: ref('1111') }]);
-    const c = ctx({ getMetarecord: vi.fn(async () => entry([])) });
-    expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('1111');
+    expect(await resolved('tags~name', e, ctx({ getMetarecords: targetsBy({ '1111': entry([]) }) }))).toBe(
+      '1111',
+    );
   });
 
   test('~ modifiers on non-reference values fall back to the raw display', async () => {
     const e = entry([{ name: 'tags', value: str('plain') }]);
-    expect(await cellText(parseColumns('tags~name')[0], e, ctx())).toBe('plain');
-    expect(await cellText(parseColumns('tags~')[0], e, ctx())).toBe('plain');
+    expect(await resolved('tags~name', e)).toBe('plain');
+    expect(await resolved('tags~', e)).toBe('plain');
   });
 
-  test('multi-map rows resolve independently', async () => {
+  test('multi-map refs resolve independently', async () => {
     const e = entry([
       { name: 'tags', value: ref('1111') },
       { name: 'tags', value: ref('2222') },
     ]);
-    const names: Metarecord<string, string> = { '1111': 'jazz', '2222': 'rock' };
     const c = ctx({
-      getMetarecord: vi.fn(async (uuid: string) => entry([{ name: 'name', value: str(names[uuid]) }])),
+      getMetarecords: targetsBy({
+        '1111': entry([{ name: 'name', value: str('jazz') }]),
+        '2222': entry([{ name: 'name', value: str('rock') }]),
+      }),
     });
-    expect(await cellText(parseColumns('tags~name')[0], e, c)).toBe('jazz, rock');
+    expect(await resolved('tags~name', e, c)).toBe('jazz, rock');
   });
 });

@@ -46,14 +46,34 @@ export function formatValue({ type, value }) {
   }
 }
 
+// Memoized `name -> field[]` index per metarecord object (built once, reused by
+// every cell). The WeakMap is keyed by the metarecord, so entries vanish when a
+// result set is dropped.
+const byNameCache = new WeakMap();
+
+/** A `name -> field[]` map of a metarecord's fields (a multi-map), built once. */
+export function byName(metarecord) {
+  let map = byNameCache.get(metarecord);
+  if (!map) {
+    map = new Map();
+    for (const f of metarecord.fields ?? []) {
+      const list = map.get(f.name);
+      if (list) list.push(f);
+      else map.set(f.name, [f]);
+    }
+    byNameCache.set(metarecord, map);
+  }
+  return map;
+}
+
 /** First field of an metarecord with the given name (fields are a multi-map). */
 export function field(metarecord, name) {
-  return (metarecord.fields ?? []).find((f) => f.name === name);
+  return byName(metarecord).get(name)?.[0];
 }
 
 /** Every field of an metarecord with the given name (multi-map rows, in order). */
 export function fields(metarecord, name) {
-  return (metarecord.fields ?? []).filter((f) => f.name === name);
+  return byName(metarecord).get(name) ?? [];
 }
 
 /**

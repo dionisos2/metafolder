@@ -292,17 +292,13 @@ window.metafolder = {
      */
     metarecordPaths: async (repo, metarecord) => {
       const root = await window.metafolder.daemon.repoRoot(repo);
-      const paths = [];
-      for (const f of metarecord.fields ?? []) {
-        if (f.name !== 'mfr_path' || f.value.type !== 'tree_ref') continue;
-        try {
-          const relative = await resolverFor(repo).resolveTreeRef(f.value.value);
-          paths.push(relative === '' ? root : `${root}/${relative}`);
-        } catch {
-          /* stale TreeRef: skip */
-        }
-      }
-      return paths;
+      const response = await request('daemon.request', {
+        method: 'POST',
+        path: `/repos/${repo}/tree/resolve`,
+        body: { uuids: [metarecord.uuid] },
+      });
+      const relatives = response.body?.[metarecord.uuid] ?? [];
+      return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
     },
   },
 
