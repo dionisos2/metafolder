@@ -3,7 +3,7 @@
 // from the GET /log/since change feed.
 
 import { describe, expect, test, vi } from 'vitest';
-import { createCache } from '../src/lib/panels/cache';
+import { createCache, REFRESH } from '../src/lib/panels/cache';
 
 const ok = (body: unknown) => ({ status: 200, body });
 const rec = (uuid: string, version = 1) => ({ uuid, version, fields: [{ name: 'x' }] });
@@ -127,5 +127,50 @@ describe('cache — sync / invalidation', () => {
     expect(cache._stats().entities).toBe(0);
     expect(cache._stats().queries).toBe(0);
     expect(cache._lastHead('r')).toBe(7);
+  });
+});
+
+describe('cache — explicit fetch/read API', () => {
+  test('query returns uuids + pagination meta and populates entities', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async () => ok({ results: [rec('a1'), rec('b2')], next_cursor: '2', total: 5 }));
+    const res = await cache.query('r', { query: {}, select: '*', count: true }, raw);
+    expect(res).toEqual({ uuids: ['a1', 'b2'], nextCursor: '2', total: 5 });
+    // entities populated → readMetarecord hits without a daemon call.
+    const calls = raw.mock.calls.length;
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1'));
+    expect(raw.mock.calls.length).toBe(calls);
+  });
+
+  test('the returned uuid list is a copy (panel owns it)', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async () => ok({ results: [rec('a1')], next_cursor: null }));
+    const a = (await cache.query('r', { query: {} }, raw)).uuids;
+    const b = (await cache.query('r', { query: {} }, raw)).uuids; // cached
+    expect(a).toEqual(['a1']);
+    expect(a).not.toBe(b); // distinct arrays
+  });
+
+  test('fetchTreeRefs + readTreeRef; readMetarecord/readTreeRef return REFRESH when absent', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async () => ok({ a1: ['/x/a'] }));
+    expect(cache.readMetarecord('r', 'a1')).toBe(REFRESH);
+    expect(cache.readTreeRef('r', 'mfr_path', 'a1')).toBe(REFRESH);
+    await cache.fetchTreeRefs('r', 'mfr_path', ['a1'], raw);
+    expect(cache.readTreeRef('r', 'mfr_path', 'a1')).toEqual(['/x/a']);
+  });
+
+  test('an invalidated metarecord reads as REFRESH after sync', async () => {
+    const cache = createCache();
+    await cache.query('r', { query: {} }, async () => ok({ results: [rec('a1')], next_cursor: null }));
+    let head = 5;
+    let ops: { id: number; entity_uuid: string }[] = [];
+    const feed = vi.fn(async () => ok({ head, operations: ops }));
+    await cache.sync('r', feed); // baseline
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1'));
+    head = 7;
+    ops = [{ id: 7, entity_uuid: 'a1' }];
+    await cache.sync('r', feed);
+    expect(cache.readMetarecord('r', 'a1')).toBe(REFRESH); // dropped by the delta
   });
 });

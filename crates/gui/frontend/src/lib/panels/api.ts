@@ -116,18 +116,15 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     return `mf:daemon ${method} ${norm}`;
   }
 
+  // Performs a real (bench-instrumented) daemon round-trip — the cache's miss
+  // path. Cache hits never reach here, so they cost nothing and record nothing.
+  const rawFetch: RawFetcher = (m, p, b) =>
+    benchMeasure(daemonLabel(m, p), () =>
+      invoke('daemon_request', { method: m, path: p, body: b }),
+    ) as Promise<DaemonResponse>;
+
   function daemonRequest(method: string, path: string, body: unknown = null): Promise<DaemonResponse> {
-    // Through the shared cache: a hit returns without a daemon round-trip (so
-    // it is not bench-instrumented either); a miss runs the instrumented call.
-    return sharedCache.request(
-      method,
-      path,
-      body,
-      (m, p, b) =>
-        benchMeasure(daemonLabel(m, p), () =>
-          invoke('daemon_request', { method: m, path: p, body: b }),
-        ) as Promise<DaemonResponse>,
-    );
+    return sharedCache.request(method, path, body, rawFetch);
   }
 
   // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized
@@ -218,6 +215,22 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         const relatives = (response.body as Record<string, string[]>)?.[metarecord.uuid] ?? [];
         return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));
       },
+    },
+
+    // Shared daemon-data cache: fetch (async, populates) then read (sync, for
+    // render). `read*` returns `cache.REFRESH` when a datum is absent — the
+    // panel renders a placeholder and schedules a refresh. Cached data is
+    // read-only (never mutate it).
+    cache: {
+      query: (repo: string, body: Record<string, unknown>) => sharedCache.query(repo, body, rawFetch),
+      fetchMetarecords: (repo: string, uuids: string[]) =>
+        sharedCache.fetchMetarecords(repo, uuids, rawFetch),
+      fetchTreeRefs: (repo: string, field: string, uuids: string[]) =>
+        sharedCache.fetchTreeRefs(repo, field, uuids, rawFetch),
+      readMetarecord: (repo: string, uuid: string) => sharedCache.readMetarecord(repo, uuid),
+      readTreeRef: (repo: string, field: string, uuid: string) =>
+        sharedCache.readTreeRef(repo, field, uuid),
+      REFRESH: sharedCache.REFRESH,
     },
 
     // Pure query transformations — run locally in the GUI backend (core).

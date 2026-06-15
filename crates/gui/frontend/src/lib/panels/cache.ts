@@ -27,6 +27,10 @@ export type RawFetcher = (
 
 const ok = (body: unknown): DaemonResponse => ({ status: 200, body });
 
+/** Returned by a synchronous read when the datum is absent/invalidated: the
+ *  panel should render a placeholder and schedule a refresh. */
+export const REFRESH = Symbol('cache:refresh');
+
 // Path patterns of the cacheable daemon endpoints (repo uuid captured).
 const QUERY = /^\/repos\/([^/]+)\/query$/;
 const BATCH = /^\/repos\/([^/]+)\/metarecords\/batch$/;
@@ -198,6 +202,48 @@ export function createCache() {
     lastHead.set(repo, head);
   }
 
+  // ── Explicit fetch/read API (panels use this; reads are synchronous) ─────
+
+  /**
+   * Fetches a query (daemon call unless an identical body is already cached
+   * and fresh), populating the entity cache from its `select: '*'` results.
+   * Returns a fresh copy of the page's uuids plus pagination metadata, so the
+   * panel owns its list across query-cache invalidations.
+   */
+  async function query(
+    repo: string,
+    body: Record<string, unknown>,
+    raw: RawFetcher,
+  ): Promise<{ uuids: string[]; nextCursor: string | null; total: number | null }> {
+    const res = await request('POST', `/repos/${repo}/query`, body, raw);
+    const b = (res.body ?? {}) as { results?: Metarecord[]; next_cursor?: string | null; total?: number };
+    return {
+      uuids: (b.results ?? []).map((r) => r.uuid),
+      nextCursor: b.next_cursor ?? null,
+      total: b.total ?? null,
+    };
+  }
+
+  /** Ensures the given metarecords are in the entity cache (fetches only the missing). */
+  async function fetchMetarecords(repo: string, uuids: string[], raw: RawFetcher): Promise<void> {
+    if (uuids.length > 0) await request('POST', `/repos/${repo}/metarecords/batch`, { uuids }, raw);
+  }
+
+  /** Ensures the (field, uuid) paths are cached (fetches only the missing). */
+  async function fetchTreeRefs(repo: string, field: string, uuids: string[], raw: RawFetcher): Promise<void> {
+    if (uuids.length > 0) await request('POST', `/repos/${repo}/tree/resolve`, { field, uuids }, raw);
+  }
+
+  /** Synchronous read; REFRESH when the metarecord is absent/invalidated. */
+  function readMetarecord(repo: string, uuid: string): Metarecord | typeof REFRESH {
+    return entities.get(eKey(repo, uuid)) ?? REFRESH;
+  }
+
+  /** Synchronous read of a (field, uuid)'s paths; REFRESH when absent. */
+  function readTreeRef(repo: string, field: string, uuid: string): string[] | typeof REFRESH {
+    return treeRefs.get(tKey(repo, field, uuid)) ?? REFRESH;
+  }
+
   /** Every repo the cache holds data for (drives the background sync). */
   function trackedRepos(): string[] {
     const repos = new Set<string>();
@@ -211,6 +257,12 @@ export function createCache() {
     sync,
     clearRepo,
     trackedRepos,
+    query,
+    fetchMetarecords,
+    fetchTreeRefs,
+    readMetarecord,
+    readTreeRef,
+    REFRESH,
     /** Test/introspection helpers. */
     _stats: () => ({ entities: entities.size, treeRefs: treeRefs.size, queries: queries.size }),
     _lastHead: (repo: string) => lastHead.get(repo),
