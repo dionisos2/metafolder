@@ -2189,6 +2189,7 @@ dependencies = [
  "metafolder-daemon",
  "serde_json",
  "tokio",
+ "toml 0.8.23",
  "ureq",
  "uuid",
 ]

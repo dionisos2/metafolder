@@ -197,7 +197,7 @@ commands remain v2 and unimplemented). Library + thin `main.rs`:
   (one `POST /tree/resolve` call), `mf query --values` (raw values, one per line).
 - `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
   mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
-  port discovery via the `gui.port` file, `--gui-url`/`METAFOLDER_GUI_URL`.
+  port discovery via the GUI `config.toml` (`gui-port`), `--gui-url`/`METAFOLDER_GUI_URL`.
 - `log.rs`: `mf log` / `mf log show`, `mf rollback` (+ `rollback plan`, with
   the `--on-move-available/-unavailable` skip policies driving the coordinated
   navigation), `mf prune before|linearize`. ISO-8601 ↔ Unix-ms conversion is
@@ -228,12 +228,15 @@ shared data cache). `index.html` is markup only; `main.js` is the entry.
   DOM to the shell, so text-input detection uses `composedPath()`).
 - `command_registry.rs`: builtin + panel-registered commands, autocomplete
   listing (global + focused panel's local commands).
-- `config.rs`: `~/.config/metafolder/gui/` — reads the keybindings, stylesheet
-  and panel types that `metafolder-sync-config` installed (no install, mirror
-  or embedded fallback here; missing files error). `keybindings.toml` is the
-  **complete** set (single-file model: `set` upserts, `remove` unbinds, and
-  reverting to a default is a git op on the config repo); `gui.port` discovery
-  file. Shipped defaults live in `crates/gui/default-config/`.
+- `config.rs`: `~/.config/metafolder/gui/` — reads `config.toml` (`GuiConfig`:
+  `daemon-url`, default the daemon's default port, + `gui-port`, default 7524;
+  CLI flags override), the keybindings, stylesheet and panel types that
+  `metafolder-sync-config` installed (no install, mirror or embedded fallback
+  here; missing files error). `keybindings.toml` is the **complete** set
+  (single-file model: `set` upserts, `remove` unbinds, and reverting to a
+  default is a git op on the config repo). The GUI binds the configured
+  `gui-port` (the CLI reads the same file — no `gui.port` discovery file).
+  Shipped defaults live in `crates/gui/default-config/`.
 - `server/`: Axum router on 127.0.0.1:7524 (permissive CORS so the shell can
   fetch/`import()` panel files cross-origin) — panel assets served verbatim
   (`panel_assets.rs`), raw files with Range support (`fsraw.rs`),

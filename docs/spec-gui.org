@@ -324,8 +324,11 @@ in place instead.
 
 ** Connection to the daemon
 
-The GUI connects to a daemon URL configured by the user (default
-=http://127.0.0.1:7523=), editable via the =daemon:set-url= command.
+The GUI connects to a daemon URL configured by the user: =daemon-url= in
+=~/.config/metafolder/gui/config.toml= (default =http://127.0.0.1:7523=, the
+daemon's own default port — so a fresh install connects with no flag),
+overridable at launch with =--daemon-url= and at runtime via the
+=daemon:set-url= command.
 
 On startup (and whenever the URL changes) the GUI calls =GET /health=. If the
 daemon is unreachable or returns a non-200 response, a prominent error banner
@@ -1121,9 +1124,9 @@ calls =POST .../log/prune=.
 
 ** Scripting / GUI API
 
-The GUI exposes a local HTTP API on =127.0.0.1:7524= (configurable via
-=--gui-port=). External scripts can drive the GUI: set panel types, display
-messages, wait for user input.
+The GUI exposes a local HTTP API on =127.0.0.1:7524= (=gui-port= in
+=gui/config.toml=, overridable with =--gui-port=). External scripts can drive
+the GUI: set panel types, display messages, wait for user input.
 
 All endpoints are available as long as the GUI is running, regardless of
 daemon connectivity.
@@ -1333,8 +1336,9 @@ Returns the current GUI state.
 
 The =mf= CLI exposes the scripting API as plain-text subcommands, so shell
 scripts need neither =curl= nor =jq=. The GUI base URL comes from
-=--gui-url= / =METAFOLDER_GUI_URL=, else the =gui.port= file (see
-[[*GUI API port persistence]]), else the default =http://127.0.0.1:7524=.
+=--gui-url= / =METAFOLDER_GUI_URL=, else =gui-port= in the GUI
+=config.toml= (see [[*GUI API port persistence]]), else the default
+=http://127.0.0.1:7524=.
 
 | Command                                              | Effect                                                             |
 |------------------------------------------------------+--------------------------------------------------------------------|
@@ -1485,8 +1489,10 @@ rendering itself makes no daemon calls.
 
 ** GUI API port persistence
 
-The actually-bound port is written to =$XDG_RUNTIME_DIR/metafolder/gui.port=
-(fallback: =~/.config/metafolder/gui/gui.port=) and removed on clean exit.
+The GUI binds the =gui-port= configured in =~/.config/metafolder/gui/config.toml=
+(default 7524; overridable with =--gui-port=). The CLI reads that same
+=config.toml=, so the port is a fixed, shared setting — there is no runtime
+=gui.port= discovery file to write or clean up.
 
 ** Concurrent script sessions
 

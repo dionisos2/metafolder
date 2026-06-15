@@ -34,11 +34,12 @@ pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String
     }
 }
 
-/// The repo-root `.gitignore` shipped on the `default` branch: only ephemeral
-/// runtime state is excluded.
+/// The repo-root `.gitignore` shipped on the `default` branch: reserved for
+/// ephemeral runtime state (spec-config). Nothing is currently excluded — the
+/// GUI port now lives in `gui/config.toml` (committed configuration), so the
+/// former `gui.port` discovery file is gone.
 pub const GITIGNORE: &str = "\
 # Ephemeral runtime state (spec-config) — never configuration.
-gui.port
 ";
 
 fn gerr(e: git2::Error) -> String {

@@ -29,10 +29,11 @@ use state::GuiState;
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
 
-/// Startup options, from CLI flags.
+/// Startup options, from CLI flags. Each is an optional override of the
+/// corresponding `config.toml` setting (which itself defaults sensibly).
 pub struct Options {
-    pub gui_port: u16,
-    pub daemon_url: String,
+    pub gui_port: Option<u16>,
+    pub daemon_url: Option<String>,
 }
 
 /// Production notifier: forwards engine events to the WebView.
@@ -123,8 +124,18 @@ pub fn run(options: Options) {
         }
     };
 
-    let gui_port = options.gui_port;
-    let daemon = Arc::new(daemon_proxy::DaemonProxy::new(options.daemon_url.clone()));
+    // GUI settings (config.toml), with the CLI flags as optional overrides.
+    // A missing config file is fatal (spec-config "No runtime fallback").
+    let gui_config = match config.load_config() {
+        Ok(gui_config) => gui_config,
+        Err(error) => {
+            eprintln!("metafolder-gui: {error}");
+            std::process::exit(1);
+        }
+    };
+    let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
+    let daemon_url = options.daemon_url.unwrap_or(gui_config.daemon_url);
+    let daemon = Arc::new(daemon_proxy::DaemonProxy::new(daemon_url));
 
     tauri::Builder::default()
         .setup(move |tauri_app| {
@@ -203,7 +214,6 @@ pub fn run(options: Options) {
             });
 
             // The GUI HTTP server: panel assets, /fsraw, scripting API.
-            let server_config = config.clone();
             let server_state = server::ServerState {
                 config: config.clone(),
                 gui: gui.clone(),
@@ -218,10 +228,8 @@ pub fn run(options: Options) {
                 let address = std::net::SocketAddr::from(([127, 0, 0, 1], gui_port));
                 match tokio::net::TcpListener::bind(address).await {
                     Ok(listener) => {
-                        let bound = listener.local_addr().map(|a| a.port()).unwrap_or(gui_port);
-                        if let Err(error) = server_config.write_port_file(bound) {
-                            eprintln!("metafolder-gui: {error}");
-                        }
+                        // The bound port is fixed by config.toml (the CLI reads
+                        // the same file); there is no longer a gui.port file.
                         if let Err(error) = axum::serve(listener, router).await {
                             eprintln!("metafolder-gui: HTTP server failed: {error}");
                         }
@@ -239,7 +247,6 @@ pub fn run(options: Options) {
                     let handle = tauri::Manager::app_handle(window);
                     let app: tauri::State<'_, Arc<commands::App>> =
                         tauri::Manager::state(handle);
-                    app.config.remove_port_file();
                     // Pending script waits resolve with "closed".
                     app.input.close_all();
                     app.commands.close_all();

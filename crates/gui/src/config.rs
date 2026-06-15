@@ -9,36 +9,63 @@
 //! shipped default (spec-config "No runtime fallback").
 
 use crate::keybindings::KeybindingSet;
+use serde::Deserialize;
 use std::path::{Path, PathBuf};
+
+/// GUI settings read from `~/.config/metafolder/gui/config.toml` (spec-config;
+/// spec-gui "Connection to the daemon"). Missing fields fall back to the
+/// defaults below — notably the daemon's own default port, so a fresh install
+/// connects without any flag or extra file.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct GuiConfig {
+    /// Base URL of the daemon the GUI talks to.
+    pub daemon_url: String,
+    /// Port the GUI's own HTTP server (panel assets + scripting API) binds.
+    pub gui_port: u16,
+}
+
+impl Default for GuiConfig {
+    fn default() -> Self {
+        GuiConfig { daemon_url: "http://127.0.0.1:7523".to_string(), gui_port: 7524 }
+    }
+}
 
 pub struct ConfigDir {
     root: PathBuf,
-    /// Where `gui.port` is written; the config root unless the platform
-    /// runtime dir is used (see [`ConfigDir::default_location`]).
-    port_dir: PathBuf,
 }
 
 impl ConfigDir {
     /// The real user config dir: `~/.config/metafolder/gui` (respecting
-    /// `$XDG_CONFIG_HOME`); the port file goes to
-    /// `$XDG_RUNTIME_DIR/metafolder/` when available.
+    /// `$XDG_CONFIG_HOME`).
     pub fn default_location() -> Result<Self, String> {
         let root = metafolder_core::config::crate_config_dir("gui")
             .ok_or("cannot determine the user configuration directory")?;
-        let port_dir = std::env::var_os("XDG_RUNTIME_DIR")
-            .map(|dir| PathBuf::from(dir).join("metafolder"))
-            .unwrap_or_else(|| root.clone());
-        Ok(ConfigDir { root, port_dir })
+        Ok(ConfigDir { root })
     }
 
     /// A config dir at an explicit location (tests).
     pub fn at(root: PathBuf) -> Self {
-        let port_dir = root.clone();
-        ConfigDir { root, port_dir }
+        ConfigDir { root }
     }
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    // ── General settings ─────────────────────────────────────────────────
+
+    pub fn config_path(&self) -> PathBuf {
+        self.root.join("config.toml")
+    }
+
+    /// The GUI settings, read from `config.toml`. A missing file is an error
+    /// (spec-config "No runtime fallback"); the shipped default-config file
+    /// supplies the defaults, so this normally succeeds once
+    /// `metafolder-sync-config` has run.
+    pub fn load_config(&self) -> Result<GuiConfig, String> {
+        let src = metafolder_core::config::read_required(&self.config_path())?;
+        toml::from_str(&src).map_err(|e| format!("invalid GUI config file: {e}"))
     }
 
     // ── Keybindings ──────────────────────────────────────────────────────
@@ -165,25 +192,46 @@ impl ConfigDir {
             None
         }
     }
+}
 
-    // ── Port discovery file ──────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    pub fn port_file_path(&self) -> PathBuf {
-        self.port_dir.join("gui.port")
+    #[test]
+    fn test_config_defaults_to_the_daemon_default_port() {
+        // An empty config still yields the daemon's default URL and the GUI
+        // default port, so no flag or extra file is needed out of the box.
+        let parsed: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(parsed.daemon_url, "http://127.0.0.1:7523");
+        assert_eq!(parsed.gui_port, 7524);
     }
 
-    /// Writes the bound GUI port for script discovery; returns the path.
-    pub fn write_port_file(&self, port: u16) -> Result<PathBuf, String> {
-        std::fs::create_dir_all(&self.port_dir)
-            .map_err(|e| format!("cannot create {}: {e}", self.port_dir.display()))?;
-        let path = self.port_file_path();
-        std::fs::write(&path, format!("{port}\n"))
-            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        Ok(path)
+    #[test]
+    fn test_config_overrides_each_field() {
+        let parsed: GuiConfig =
+            toml::from_str("daemon-url = \"http://127.0.0.1:9000\"\ngui-port = 8800\n").unwrap();
+        assert_eq!(parsed.daemon_url, "http://127.0.0.1:9000");
+        assert_eq!(parsed.gui_port, 8800);
     }
 
-    /// Removes the port file (clean exit); missing file is not an error.
-    pub fn remove_port_file(&self) {
-        let _ = std::fs::remove_file(self.port_file_path());
+    #[test]
+    fn test_load_config_errors_when_the_file_is_missing() {
+        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let config = ConfigDir::at(dir);
+        assert!(config.load_config().is_err());
+    }
+
+    #[test]
+    fn test_load_config_reads_the_file() {
+        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.toml"), "gui-port = 7600\n").unwrap();
+        let config = ConfigDir::at(dir.clone());
+        let loaded = config.load_config().unwrap();
+        assert_eq!(loaded.gui_port, 7600);
+        // Unspecified field keeps the default.
+        assert_eq!(loaded.daemon_url, "http://127.0.0.1:7523");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

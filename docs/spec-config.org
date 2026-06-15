@@ -40,6 +40,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   daemon/
     config.json                  ← repos to auto-load
   gui/
+    config.toml                  ← daemon-url + gui-port
     keybindings.toml
     style.css
     panel-types/
@@ -47,10 +48,11 @@ A single git repository at =~/.config/metafolder/= (respecting
   cli/                           ← (no config yet; reserved)
 #+END_SRC
 
-The runtime/ephemeral state that is *not* configuration is git-ignored and
-never committed: the GUI port discovery file (=gui.port=, which moreover lives
-under =$XDG_RUNTIME_DIR/metafolder/= when available). =.gitignore= is part of
-the shipped defaults (committed on =default=).
+The GUI reads =gui/config.toml= for the daemon URL it connects to
+(=daemon-url=, default the daemon's own default port) and the port its own
+HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI reads the same
+=gui-port=, so there is no runtime port discovery file. =.gitignore= is part
+of the shipped defaults (committed on =default=).
 
 The obsolete =panel-types-defaults/= mirror does not exist in this model: the
 =default= branch *is* the mirror, done correctly and extended to every

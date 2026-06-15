@@ -213,7 +213,7 @@ enum Command {
     },
     /// Drive the GUI through its scripting HTTP API
     Gui {
-        /// GUI base URL (default: discovered via the gui.port file)
+        /// GUI base URL (default: gui-port from the GUI config.toml)
         #[arg(long, env = "METAFOLDER_GUI_URL")]
         gui_url: Option<String>,
         #[command(subcommand)]
@@ -481,7 +481,7 @@ fn main() {
             SchemaCommand::Show => commands::schema_show(&ctx),
         },
         Command::Gui { gui_url, command } => {
-            let url = gui::base_url(gui_url, &gui::port_file_candidates());
+            let url = gui::base_url(gui_url, &gui::config_path_candidates());
             let gui_ctx = GuiCtx::new(&url);
             match command {
                 GuiCommand::Status => gui::status(&gui_ctx),

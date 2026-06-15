@@ -10,15 +10,15 @@ use crate::client::{Client, CliError};
 const DEFAULT_GUI_URL: &str = "http://127.0.0.1:7524";
 
 /// Resolves the GUI base URL: the explicit value (`--gui-url` /
-/// `METAFOLDER_GUI_URL`) wins, then the first readable `gui.port` file
-/// among `candidates`, then the default port.
+/// `METAFOLDER_GUI_URL`) wins, then the `gui-port` of the first readable GUI
+/// `config.toml` among `candidates`, then the default port.
 pub fn base_url(explicit: Option<String>, candidates: &[PathBuf]) -> String {
     if let Some(url) = explicit {
         return url;
     }
     for path in candidates {
         if let Ok(content) = std::fs::read_to_string(path) {
-            if let Ok(port) = content.trim().parse::<u16>() {
+            if let Some(port) = gui_port_from_config(&content) {
                 return format!("http://127.0.0.1:{port}");
             }
         }
@@ -26,17 +26,21 @@ pub fn base_url(explicit: Option<String>, candidates: &[PathBuf]) -> String {
     DEFAULT_GUI_URL.to_string()
 }
 
-/// The `gui.port` locations written by the GUI (spec-gui "GUI API port
-/// persistence"): `$XDG_RUNTIME_DIR/metafolder/`, else the config root.
-pub fn port_file_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") {
-        candidates.push(PathBuf::from(dir).join("metafolder").join("gui.port"));
-    }
-    if let Some(home) = std::env::var_os("HOME") {
-        candidates.push(PathBuf::from(home).join(".config/metafolder-gui/gui.port"));
-    }
-    candidates
+/// The `gui-port` setting from a GUI `config.toml` (the same file the GUI
+/// reads); `None` when absent or not a valid port.
+fn gui_port_from_config(content: &str) -> Option<u16> {
+    let table: toml::Table = toml::from_str(content).ok()?;
+    table.get("gui-port")?.as_integer()?.try_into().ok()
+}
+
+/// The GUI config file location (spec-config):
+/// `~/.config/metafolder/gui/config.toml`. The GUI no longer writes a
+/// `gui.port` discovery file — its port lives in this config.
+pub fn config_path_candidates() -> Vec<PathBuf> {
+    metafolder_core::config::crate_config_dir("gui")
+        .map(|dir| dir.join("config.toml"))
+        .into_iter()
+        .collect()
 }
 
 pub struct GuiCtx {
@@ -259,29 +263,29 @@ mod tests {
     }
 
     #[test]
-    fn test_base_url_reads_the_first_existing_port_file() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_port_{}", uuid::Uuid::new_v4()));
+    fn test_base_url_reads_gui_port_from_the_first_existing_config() {
+        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let missing = dir.join("missing/gui.port");
-        let present = dir.join("gui.port");
-        std::fs::write(&present, "7600\n").unwrap();
+        let missing = dir.join("missing/config.toml");
+        let present = dir.join("config.toml");
+        std::fs::write(&present, "gui-port = 7600\n").unwrap();
         assert_eq!(base_url(None, &[missing, present]), "http://127.0.0.1:7600");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn test_base_url_falls_back_to_the_default_port() {
-        let bogus = PathBuf::from("/nonexistent/gui.port");
+        let bogus = PathBuf::from("/nonexistent/config.toml");
         assert_eq!(base_url(None, &[bogus]), "http://127.0.0.1:7524");
     }
 
     #[test]
-    fn test_base_url_ignores_unparsable_port_files() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_bad_port_{}", uuid::Uuid::new_v4()));
+    fn test_base_url_ignores_a_config_without_a_gui_port() {
+        let dir = std::env::temp_dir().join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
-        let bad = dir.join("gui.port");
-        std::fs::write(&bad, "not a port").unwrap();
-        assert_eq!(base_url(None, &[bad]), "http://127.0.0.1:7524");
+        let no_port = dir.join("config.toml");
+        std::fs::write(&no_port, "daemon-url = \"http://127.0.0.1:7523\"\n").unwrap();
+        assert_eq!(base_url(None, &[no_port]), "http://127.0.0.1:7524");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

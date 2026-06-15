@@ -1,6 +1,6 @@
 //! Config directory access in the git-backed model (spec-config): reading the
-//! keybindings/stylesheet/panel types installed by `metafolder-sync-config`,
-//! the single-file keybinding semantics, and the port discovery file. There is
+//! config.toml/keybindings/stylesheet/panel types installed by
+//! `metafolder-sync-config` and the single-file keybinding semantics. There is
 //! no runtime install or embedded fallback any more.
 
 use metafolder_gui::config::ConfigDir;
@@ -18,11 +18,16 @@ fn test_installed_defaults_are_readable() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
 
+    assert!(config.root().join("config.toml").exists());
     assert!(config.root().join("keybindings.toml").exists());
     assert!(config.root().join("style.css").exists());
     assert!(config.root().join("panel-types/hello/index.html").exists());
     assert!(config.load_keybindings().is_ok());
     assert!(config.load_style().is_ok());
+    // The shipped config defaults to the daemon's own default port.
+    let gui_config = config.load_config().unwrap();
+    assert_eq!(gui_config.daemon_url, "http://127.0.0.1:7523");
+    assert_eq!(gui_config.gui_port, 7524);
 }
 
 #[test]
@@ -137,10 +142,9 @@ fn test_panel_dir_resolution() {
 }
 
 #[test]
-fn test_port_file_roundtrip() {
+fn test_load_config_errors_without_a_config_file() {
+    // Like the keybindings/style, a missing config.toml is an error (no
+    // runtime fallback) — metafolder-sync-config must have installed it.
     let (_guard, config) = temp_config();
-    let path = config.write_port_file(7524).unwrap();
-    assert_eq!(std::fs::read_to_string(&path).unwrap().trim(), "7524");
-    config.remove_port_file();
-    assert!(!path.exists());
+    assert!(config.load_config().is_err());
 }

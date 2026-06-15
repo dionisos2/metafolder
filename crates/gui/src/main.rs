@@ -6,11 +6,13 @@ use clap::Parser;
 #[command(name = "metafolder-gui", about = "Metafolder graphical interface")]
 struct Args {
     /// Port of the GUI HTTP server (panel assets + scripting API).
-    #[arg(long, default_value_t = 7524)]
-    gui_port: u16,
-    /// Base URL of the metafolder daemon.
-    #[arg(long, default_value = "http://127.0.0.1:7523")]
-    daemon_url: String,
+    /// Overrides `gui-port` in config.toml (default 7524).
+    #[arg(long)]
+    gui_port: Option<u16>,
+    /// Base URL of the metafolder daemon. Overrides `daemon-url` in
+    /// config.toml (default http://127.0.0.1:7523, the daemon's default).
+    #[arg(long)]
+    daemon_url: Option<String>,
 }
 
 fn main() {
