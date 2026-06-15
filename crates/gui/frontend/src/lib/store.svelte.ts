@@ -2,6 +2,7 @@
 // Frontend-only UI state (divider ratio, command-input drafts, overlay
 // visibility) also lives here.
 
+import { dispatch } from './commands';
 import { invoke, listen } from './ipc';
 import type {
   Binding,
@@ -135,6 +136,18 @@ export async function initStore() {
     store.ui.promptText = event.payload.prompt;
     store.ui.promptCompletions = event.payload.completions ?? [];
     store.ui.commandInputFocusTick += 1;
+  });
+  // An external POST /gui/command: run it through the very same dispatch()
+  // the command input and keybindings use, then report the outcome back so
+  // the waiting HTTP handler resolves.
+  await listen<{ invocation_id: string; invocation: string }>('command-requested', async (event) => {
+    const { invocation_id, invocation } = event.payload;
+    const result = await dispatch(invocation);
+    await invoke('command_done', {
+      invocationId: invocation_id,
+      ok: result.ok,
+      error: result.ok ? null : result.error,
+    });
   });
 
   store.ready = true;

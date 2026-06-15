@@ -150,11 +150,21 @@ export async function runShell(commandLine: string): Promise<void> {
   }
 }
 
-/** Executes one invocation string (from a keybinding or the command input). */
-export async function dispatch(invocation: string): Promise<void> {
+/** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
+export type DispatchResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Executes one invocation string (from a keybinding, the command input, or an
+ * external `POST /gui/command`). The result lets external callers observe
+ * success/failure; internal callers (keybindings, command input) ignore it.
+ */
+export async function dispatch(invocation: string): Promise<DispatchResult> {
   const parsed = parseInvocation(invocation);
-  if (parsed === null) return;
-  if ('shell' in parsed) return runShell(parsed.shell);
+  if (parsed === null) return { ok: true };
+  if ('shell' in parsed) {
+    await runShell(parsed.shell);
+    return { ok: true };
+  }
 
   const { name, args } = parsed;
   const ws = focusedWs();
@@ -168,130 +178,147 @@ export async function dispatch(invocation: string): Promise<void> {
   }
 
   try {
-    switch (name) {
-      case 'command-input:activate':
-        // The input is always visible: activation means focusing it.
-        store.ui.commandInputFocusTick += 1;
-        return;
-      case 'editing:unfocus':
-        editingTarget?.unfocus();
-        return;
-      case 'editing:discard':
-        editingTarget?.discard();
-        return;
-      case 'editing:confirm':
-        editingTarget?.confirm();
-        return;
-      case 'editing:goto-line-start':
-        editingTarget?.lineStart();
-        return;
-      case 'editing:goto-line-end':
-        editingTarget?.lineEnd();
-        return;
-      case 'tab:new':
-        // Optional parameter: the repo UUID of the new workspace
-        // (used by the repos panel).
-        await invoke('tab_new', { activeRepo: args[0] ?? null });
-        return;
-      case 'tab:close':
-        await invoke('tab_close');
-        return;
-      case 'tab:rename':
-        if (args.length === 0) {
-          // No name given: prefill the command input instead.
-          if (ws) store.inputDrafts[ws] = 'tab:rename ';
-          store.ui.commandInputFocusTick += 1;
-          return;
-        }
-        if (ws) await invoke('tab_rename', { wsId: ws, name: args.join(' ') });
-        return;
-      case 'tab:next':
-        await invoke('tab_next');
-        return;
-      case 'tab:prev':
-        await invoke('tab_prev');
-        return;
-      case 'panel:split':
-        await invoke('panel_split');
-        return;
-      case 'panel:unsplit':
-        await invoke('panel_unsplit');
-        return;
-      case 'panel:hide':
-        await invoke('slot_hide', { slot: store.layout.focused });
-        return;
-      case 'panel:split-toggle':
-        await invoke('panel_split_toggle');
-        return;
-      case 'panel:focus-next':
-        await invoke('panel_focus_next');
-        return;
-      case 'panel:set-type':
-        if (args[0]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[0] });
-        return;
-      case 'panel:swap':
-        await invoke('panel_swap');
-        return;
-      case 'panel:reveal-other': {
-        // Shows the given panel type for the SAME workspace in the other
-        // slot, opening it if hidden (spec-gui "Cross-panel selection").
-        if (!args[0] || !ws) return;
-        const other = store.layout.focused === 'left' ? 'right' : 'left';
-        await invoke('tab_assign', { wsId: ws, slot: other });
-        await invoke('panel_set_type', { slot: other, panelType: args[0] });
-        return;
-      }
-      case 'message:clear':
-        if (ws) await invoke('clear_messages', { wsId: ws });
-        return;
-      case 'config:open':
-        store.ui.configOpen = true;
-        return;
-      case 'reconcile:run':
-        if (ws) await invoke('reconcile_run', { wsId: ws });
-        return;
-      case 'log:undo':
-        if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
-        return;
-      case 'log:redo':
-        if (ws) await invoke('log_navigate', { wsId: ws, redo: true });
-        return;
-      case 'repos:open':
-        await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
-        return;
-      case 'daemon:set-url':
-        if (args[0]) {
-          const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });
-          store.daemonUrl = args[0];
-          await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
-        }
-        return;
-      case 'answer:send':
-        // Resolves a script's POST /gui/input wait.
-        await invoke('answer_send', { value: args.join(' ') });
-        return;
-      case 'devtools:open':
-        await invoke('open_devtools');
-        return;
-      case 'quit':
-        await invoke('quit');
-        return;
+    const handled = await runCommand(name, args, ws);
+    if (!handled) {
+      const message = `unknown command: ${name}`;
+      await status(message);
+      return { ok: false, error: message };
     }
-
-    const n = gotoIndex(name);
-    if (n !== null) {
-      await invoke('tab_goto', { n });
-      return;
-    }
-
-    // Not a shell builtin: a command registered by a panel type.
-    const command = store.commands.find((c) => c.name === name);
-    if (command && command.owner && panelDispatch) {
-      await panelDispatch(command, args);
-      return;
-    }
-    await status(`unknown command: ${name}`);
+    return { ok: true };
   } catch (error) {
-    await status(String(error));
+    const message = String(error);
+    await status(message);
+    return { ok: false, error: message };
   }
+}
+
+/**
+ * Routes a parsed command to its handler. Returns true when the command was
+ * recognised (a shell builtin, a goto-tab shortcut, or a panel command),
+ * false for an unknown name. Throws on handler failure (caught by `dispatch`).
+ */
+async function runCommand(name: string, args: string[], ws: string | null): Promise<boolean> {
+  switch (name) {
+    case 'command-input:activate':
+      // The input is always visible: activation means focusing it.
+      store.ui.commandInputFocusTick += 1;
+      return true;
+    case 'editing:unfocus':
+      editingTarget?.unfocus();
+      return true;
+    case 'editing:discard':
+      editingTarget?.discard();
+      return true;
+    case 'editing:confirm':
+      editingTarget?.confirm();
+      return true;
+    case 'editing:goto-line-start':
+      editingTarget?.lineStart();
+      return true;
+    case 'editing:goto-line-end':
+      editingTarget?.lineEnd();
+      return true;
+    case 'tab:new':
+      // Optional parameter: the repo UUID of the new workspace
+      // (used by the repos panel).
+      await invoke('tab_new', { activeRepo: args[0] ?? null });
+      return true;
+    case 'tab:close':
+      await invoke('tab_close');
+      return true;
+    case 'tab:rename':
+      if (args.length === 0) {
+        // No name given: prefill the command input instead.
+        if (ws) store.inputDrafts[ws] = 'tab:rename ';
+        store.ui.commandInputFocusTick += 1;
+        return true;
+      }
+      if (ws) await invoke('tab_rename', { wsId: ws, name: args.join(' ') });
+      return true;
+    case 'tab:next':
+      await invoke('tab_next');
+      return true;
+    case 'tab:prev':
+      await invoke('tab_prev');
+      return true;
+    case 'panel:split':
+      await invoke('panel_split');
+      return true;
+    case 'panel:unsplit':
+      await invoke('panel_unsplit');
+      return true;
+    case 'panel:hide':
+      await invoke('slot_hide', { slot: store.layout.focused });
+      return true;
+    case 'panel:split-toggle':
+      await invoke('panel_split_toggle');
+      return true;
+    case 'panel:focus-next':
+      await invoke('panel_focus_next');
+      return true;
+    case 'panel:set-type':
+      if (args[0]) await invoke('panel_set_type', { slot: store.layout.focused, panelType: args[0] });
+      return true;
+    case 'panel:swap':
+      await invoke('panel_swap');
+      return true;
+    case 'panel:reveal-other': {
+      // Shows the given panel type for the SAME workspace in the other
+      // slot, opening it if hidden (spec-gui "Cross-panel selection").
+      if (!args[0] || !ws) return true;
+      const other = store.layout.focused === 'left' ? 'right' : 'left';
+      await invoke('tab_assign', { wsId: ws, slot: other });
+      await invoke('panel_set_type', { slot: other, panelType: args[0] });
+      return true;
+    }
+    case 'message:clear':
+      if (ws) await invoke('clear_messages', { wsId: ws });
+      return true;
+    case 'config:open':
+      store.ui.configOpen = true;
+      return true;
+    case 'reconcile:run':
+      if (ws) await invoke('reconcile_run', { wsId: ws });
+      return true;
+    case 'log:undo':
+      if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
+      return true;
+    case 'log:redo':
+      if (ws) await invoke('log_navigate', { wsId: ws, redo: true });
+      return true;
+    case 'repos:open':
+      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
+      return true;
+    case 'daemon:set-url':
+      if (args[0]) {
+        const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });
+        store.daemonUrl = args[0];
+        await status(`daemon URL set; ${connected ? 'connected' : 'unreachable'}`, 'info');
+      }
+      return true;
+    case 'answer:send':
+      // Resolves a script's POST /gui/input wait.
+      await invoke('answer_send', { value: args.join(' ') });
+      return true;
+    case 'devtools:open':
+      await invoke('open_devtools');
+      return true;
+    case 'quit':
+      await invoke('quit');
+      return true;
+  }
+
+  const n = gotoIndex(name);
+  if (n !== null) {
+    await invoke('tab_goto', { n });
+    return true;
+  }
+
+  // Not a shell builtin: a command registered by a panel type.
+  const command = store.commands.find((c) => c.name === name);
+  if (command && command.owner && panelDispatch) {
+    await panelDispatch(command, args);
+    return true;
+  }
+  return false;
 }

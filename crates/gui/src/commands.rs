@@ -27,6 +27,8 @@ pub struct App {
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
     pub input: Arc<crate::server::input_wait::InputWait>,
+    /// Shared /gui/command dispatch wait registry.
+    pub commands: Arc<crate::server::command_wait::CommandWait>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
 }
@@ -375,6 +377,23 @@ pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
     } else {
         Err("no script is waiting for input".into())
     }
+}
+
+/// Reports the outcome of a `POST /gui/command` invocation back to the waiting
+/// HTTP handler. Called by the frontend after its `dispatch()` resolves.
+#[tauri::command]
+pub fn command_done(app: AppHandle, invocation_id: String, ok: bool, error: Option<String>) {
+    use crate::server::command_wait::CommandOutcome;
+    let Ok(id) = uuid::Uuid::parse_str(&invocation_id) else {
+        return;
+    };
+    let outcome = if ok {
+        CommandOutcome::Ok
+    } else {
+        CommandOutcome::Error(error.unwrap_or_else(|| "command failed".into()))
+    };
+    // A missing wait (already timed out) is fine: nothing to resolve.
+    app.commands.resolve(id, outcome);
 }
 
 /// Command-input resolution of a `POST /gui/prompt` wait.

@@ -172,6 +172,22 @@ pub fn message(
     Ok(0)
 }
 
+/// Runs an arbitrary command invocation through the GUI's dispatcher (the
+/// same path as the command input). Blocks until the command resolves; exit 1
+/// on error/timeout/close.
+pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Result<i32, CliError> {
+    let body = json!({"invocation": invocation, "timeout_ms": timeout_ms});
+    let resp = ctx.client.post("/gui/command", &body)?;
+    match resp["event"].as_str() {
+        Some("ok") => Ok(0),
+        Some("error") => Err(CliError::Op(
+            resp["message"].as_str().unwrap_or("command failed").to_string(),
+        )),
+        Some(other) => Err(CliError::Op(format!("command did not run: {other}"))),
+        None => Err(CliError::Op("malformed GUI response".into())),
+    }
+}
+
 /// Blocks until one of `keys` is pressed and prints it; exit 1 on
 /// timeout or when the GUI closes the wait.
 pub fn input(ctx: &GuiCtx, keys: &[String], timeout_ms: Option<u64>) -> Result<i32, CliError> {

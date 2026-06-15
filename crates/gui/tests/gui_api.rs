@@ -11,6 +11,7 @@ use metafolder_gui::daemon_proxy::DaemonProxy;
 use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::server::{self, ServerState};
+use metafolder_gui::server::command_wait::{CommandOutcome, CommandWait};
 use metafolder_gui::server::input_wait::InputWait;
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
@@ -24,6 +25,7 @@ struct Ctx {
     notifier: Arc<RecordingNotifier>,
     gui: Arc<GuiState>,
     input: Arc<InputWait>,
+    commands: Arc<CommandWait>,
     router: axum::Router,
 }
 
@@ -59,6 +61,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
     let daemon = Arc::new(DaemonProxy::new(daemon_url.to_string()));
     let keybindings = Arc::new(std::sync::Mutex::new(config.load_keybindings().unwrap()));
     let input = Arc::new(InputWait::new());
+    let commands = Arc::new(CommandWait::new());
 
     let state = ServerState {
         config,
@@ -66,12 +69,14 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         daemon,
         keybindings,
         input: input.clone(),
+        commands: commands.clone(),
     };
     Ctx {
         _guard: guard,
         notifier,
         gui,
         input: input.clone(),
+        commands: commands.clone(),
         router: server::build_router(state),
     }
 }
@@ -465,4 +470,113 @@ async fn test_media_support_endpoint() {
     let has = |element: &str| !missing.iter().any(|m| m == element);
     assert_eq!(body["audio"], json!(has("autoaudiosink")));
     assert_eq!(body["video"], json!(has("autoaudiosink") && has("autovideosink")));
+}
+
+// ── Command dispatch (POST /gui/command) ──────────────────────────────────
+
+/// Reads the single `command-requested` payload and returns its
+/// (invocation_id, invocation).
+fn last_command_request(ctx: &Ctx) -> (uuid::Uuid, String) {
+    let payloads = ctx.notifier.payloads(events::COMMAND_REQUESTED);
+    let last = payloads.last().expect("a command-requested event");
+    let id = last["invocation_id"].as_str().expect("invocation_id");
+    let invocation = last["invocation"].as_str().expect("invocation");
+    (uuid::Uuid::parse_str(id).unwrap(), invocation.to_string())
+}
+
+#[tokio::test]
+async fn test_command_dispatch_resolves_ok() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/command", Some(json!({"invocation": "panel:split"}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // The invocation string was forwarded verbatim to the frontend.
+    let (id, invocation) = last_command_request(&ctx);
+    assert_eq!(invocation, "panel:split");
+
+    assert!(ctx.commands.resolve(id, CommandOutcome::Ok));
+    let (status, body) = waiting.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"event": "ok"}));
+
+    // The wait is gone after resolution.
+    assert!(!ctx.commands.resolve(id, CommandOutcome::Ok));
+}
+
+#[tokio::test]
+async fn test_command_dispatch_reports_error() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/command", Some(json!({"invocation": "bogus:cmd"}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let (id, _) = last_command_request(&ctx);
+    assert!(ctx.commands.resolve(id, CommandOutcome::Error("unknown command: bogus:cmd".into())));
+    let (status, body) = waiting.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"event": "error", "message": "unknown command: bogus:cmd"}));
+}
+
+#[tokio::test]
+async fn test_command_dispatch_missing_invocation_is_400() {
+    let ctx = setup().await;
+    let (status, _) = request(&ctx.router, "POST", "/gui/command", Some(json!({}))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_command_dispatch_timeout() {
+    let ctx = setup().await;
+    let (status, body) = request(
+        &ctx.router,
+        "POST",
+        "/gui/command",
+        Some(json!({"invocation": "panel:split", "timeout_ms": 50})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"event": "timeout"}));
+}
+
+#[tokio::test]
+async fn test_concurrent_command_dispatch_allowed() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let r1 = ctx.router.clone();
+    let w1 = tokio::spawn(async move {
+        request(&r1, "POST", "/gui/command", Some(json!({"invocation": "a:one"}))).await
+    });
+    let r2 = ctx.router.clone();
+    let w2 = tokio::spawn(async move {
+        request(&r2, "POST", "/gui/command", Some(json!({"invocation": "b:two"}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Two independent waits, distinct ids — no 409.
+    let payloads = ctx.notifier.payloads(events::COMMAND_REQUESTED);
+    assert_eq!(payloads.len(), 2);
+    let ids: Vec<uuid::Uuid> = payloads
+        .iter()
+        .map(|p| uuid::Uuid::parse_str(p["invocation_id"].as_str().unwrap()).unwrap())
+        .collect();
+    assert_ne!(ids[0], ids[1]);
+
+    for id in ids {
+        assert!(ctx.commands.resolve(id, CommandOutcome::Ok));
+    }
+    for w in [w1, w2] {
+        let (status, body) = w.await.unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, json!({"event": "ok"}));
+    }
 }

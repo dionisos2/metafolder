@@ -4,6 +4,7 @@ use metafolder_core::sync::MutexExt;
 use super::ServerState;
 use crate::events;
 use crate::keybindings::CompiledBinding;
+use crate::server::command_wait::CommandOutcome;
 use crate::server::input_wait::{InputOutcome, PromptOutcome};
 use crate::state::layout::SlotId;
 use axum::extract::{Path, Query, State};
@@ -256,6 +257,56 @@ pub async fn get_panel_view(
         "loading"
     };
     Json(json!({ "type": panel_type, "status": status })).into_response()
+}
+
+// ── Command dispatch ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CommandBody {
+    invocation: String,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+/// Runs an arbitrary command invocation through the frontend's own
+/// `dispatch()` — the same path as the command input and keybindings, so
+/// external and internal invocation stay in lockstep. Blocks until the
+/// frontend reports the outcome via the `command_done` Tauri command, or
+/// until the optional timeout elapses. Concurrent calls are allowed; each
+/// gets its own id.
+pub async fn post_command(
+    State(state): State<ServerState>,
+    body: Option<Json<CommandBody>>,
+) -> Response {
+    let Some(Json(body)) = body else {
+        return error_response(StatusCode::BAD_REQUEST, "missing invocation");
+    };
+    if body.invocation.trim().is_empty() {
+        return error_response(StatusCode::BAD_REQUEST, "missing invocation");
+    }
+
+    let (id, receiver) = state.commands.begin();
+    state.gui.notify(
+        events::COMMAND_REQUESTED,
+        json!({"invocation_id": id.simple().to_string(), "invocation": body.invocation}),
+    );
+
+    let outcome = match body.timeout_ms {
+        Some(ms) => tokio::time::timeout(Duration::from_millis(ms), receiver)
+            .await
+            .ok()
+            .and_then(Result::ok),
+        None => receiver.await.ok(),
+    };
+    state.commands.end(id); // release on the timeout path
+
+    let payload = match outcome {
+        Some(CommandOutcome::Ok) => json!({"event": "ok"}),
+        Some(CommandOutcome::Error(message)) => json!({"event": "error", "message": message}),
+        Some(CommandOutcome::Closed) => json!({"event": "closed"}),
+        None => json!({"event": "timeout"}),
+    };
+    Json(payload).into_response()
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────

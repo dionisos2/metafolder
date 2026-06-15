@@ -262,6 +262,14 @@ enum GuiCommand {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
+    /// Run a command invocation through the GUI (same as the command input)
+    Command {
+        /// The command invocation, e.g. `panel:set-type file`
+        #[arg(required = true, trailing_var_arg = true)]
+        invocation: Vec<String>,
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+    },
     /// Wait for one of the given keys and print it
     Input {
         /// Keys to bind for the duration of the wait (e.g. y n escape)
@@ -490,6 +498,9 @@ fn main() {
                 ),
                 GuiCommand::Message { text, workspace, timeout_ms } => {
                     gui::message(&gui_ctx, &text, workspace.as_deref(), timeout_ms)
+                }
+                GuiCommand::Command { invocation, timeout_ms } => {
+                    gui::command(&gui_ctx, &invocation.join(" "), timeout_ms)
                 }
                 GuiCommand::Input { keys, timeout_ms } => {
                     gui::input(&gui_ctx, &keys, timeout_ms)

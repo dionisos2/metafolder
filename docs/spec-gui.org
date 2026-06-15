@@ -1171,6 +1171,32 @@ Response: =200 OK=, body ={}=.
 Returns the current panel type descriptor for slot =:slot=, including a
 =status= field (="loading"= / ="ready"=).
 
+*** =POST /gui/command=
+
+Runs an arbitrary command invocation through the *same dispatcher the command
+input and keybindings use* — there is a single command path, so internal and
+external invocation stay in lockstep. The =invocation= string is parsed exactly
+like command-input text (whitespace-separated name and arguments, quotes
+honoured); a leading =!= runs a shell command.
+
+The request blocks until the command resolves: the GUI shell runs =dispatch()=
+and reports the outcome. Unlike =POST /gui/input= / =POST /gui/prompt=,
+concurrent command calls are allowed (each gets its own id), since this is
+external control rather than a modal wait.
+
+Request body:
+#+BEGIN_SRC json
+{"invocation": "panel:set-type file", "timeout_ms": null}
+#+END_SRC
+
+Responses: ={"event": "ok"}= / ={"event": "error", "message": "unknown command: …"}=
+/ ={"event": "timeout"}= / ={"event": "closed"}=. A missing or empty
+=invocation= is a =400=.
+
+Note: the call resolves when =dispatch()= and its awaited work complete, which
+for commands that open or refresh a panel does *not* include the panel's own
+asynchronous render inside its iframe.
+
 *** =POST /gui/message=
 
 Posts a message to a workspace's status bar (transient) and appends it to
@@ -1261,6 +1287,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui layout [<slot> [<ws or ->]]=                 | Prints both slots / one slot / assigns (=-= hides the slot)        |
 | =mf gui view <slot> [<type>] [--path] [--state]=     | Prints or sets the panel type of a slot                            |
 | =mf gui message <text> [--workspace] [--timeout-ms]= | Posts a status bar message                                         |
+| =mf gui command <invocation>... [--timeout-ms]=      | Runs a command invocation through the GUI (exit 1 on error/timeout) |
 | =mf gui input <key>... [--timeout-ms]=               | Waits for one of the keys, prints it (exit 1 on timeout/close)     |
 | =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
