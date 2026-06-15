@@ -3,7 +3,17 @@
 // (spec-gui "file-manager panel type").
 
 import { el } from '/__ui.js';
-import { loadTrackedChildren, loadDirMetarecord, parentDir, isWithin } from './tracked.js';
+import {
+  loadTrackedChildren,
+  loadDirMetarecord,
+  parentDir,
+  isWithin,
+  entriesFooter,
+} from './tracked.js';
+
+// Render the directory in windows of this many rows (plus more on scroll),
+// so a directory with thousands of entries does not build a huge DOM.
+const PAGE = 200;
 
 export async function mount(root, metafolder) {
   const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
@@ -12,7 +22,8 @@ export async function mount(root, metafolder) {
   let repoRoot = null;
   let internalDir = null; // .metafolder/internal: hard-excluded from tracking
   let currentDir = null;
-  let listing = []; // [{name, path, is_dir}]
+  let listing = []; // [{name, path, is_dir}] — "." and ".." then the entries
+  let rendered = 0; // number of `listing` rows currently in the DOM (windowed)
   let cursorIndex = -1;
   let constrainToRoot = true;
   let trackedPaths = new Map(); // absolute path -> metarecord uuid (children of currentDir only)
@@ -22,6 +33,8 @@ export async function mount(root, metafolder) {
   const pathElement = root.getElementById('current-path');
   const addButton = root.getElementById('add');
   const constrainBox = root.getElementById('constrain');
+  const statusLine = root.getElementById('status-line');
+  const listingElement = root.getElementById('listing');
 
   function insideRoot(path) {
     return isWithin(path, repoRoot);
@@ -73,6 +86,7 @@ export async function mount(root, metafolder) {
     ];
     currentDir = dir;
     cursorIndex = -1;
+    rendered = Math.min(PAGE, listing.length);
     render();
   }
 
@@ -88,7 +102,7 @@ export async function mount(root, metafolder) {
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
 
     entriesList.replaceChildren(
-      ...listing.map((item, index) => {
+      ...listing.slice(0, rendered).map((item, index) => {
         const internal = isWithin(item.path, internalDir);
         return el(
           'li',
@@ -113,10 +127,19 @@ export async function mount(root, metafolder) {
         );
       }),
     );
+
+    // Footer count excludes the synthetic "." and ".." rows, so it reflects
+    // the directory's actual entries (mirrors metarecord-list).
+    const total = Math.max(0, listing.length - 2);
+    const shown = Math.max(0, Math.min(rendered, listing.length) - 2);
+    statusLine.textContent = entriesFooter(shown, total);
   }
 
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
+    // Keep the cursor inside the rendered window (jumping to the last entry
+    // expands it so the row exists in the DOM to scroll to).
+    if (cursorIndex >= rendered) rendered = cursorIndex + 1;
     render();
     const item = listing[cursorIndex];
     if (!item) return;
@@ -185,11 +208,32 @@ export async function mount(root, metafolder) {
     await open(repoRoot);
   }
 
+  // Re-read the current directory and its tracked status from disk/daemon,
+  // preserving the cursor position.
+  async function refresh() {
+    if (currentDir === null) return;
+    const keep = cursorIndex;
+    if (repo) await cache.sync(repo);
+    await open(currentDir);
+    if (keep >= 0) await select(keep);
+  }
+
+  // Reveal the next window of rows as the listing is scrolled to its end.
+  function maybeLoadMore() {
+    if (rendered >= listing.length) return;
+    if (listingElement.scrollTop + listingElement.clientHeight > listingElement.scrollHeight - 200) {
+      rendered = Math.min(listing.length, rendered + PAGE);
+      render();
+    }
+  }
+
   constrainBox.addEventListener('change', () => {
     constrainToRoot = constrainBox.checked;
   });
+  listingElement.addEventListener('scroll', maybeLoadMore);
   root.getElementById('up').addEventListener('click', goUp);
   root.getElementById('goto-root').addEventListener('click', gotoRoot);
+  root.getElementById('refresh').addEventListener('click', refresh);
   addButton.addEventListener('click', addSelected);
 
   commands.register('file-manager:add', {
@@ -199,6 +243,10 @@ export async function mount(root, metafolder) {
   commands.register('file-manager:goto-root', {
     label: 'File manager: jump to the repo root',
     handler: gotoRoot,
+  });
+  commands.register('file-manager:refresh', {
+    label: 'File manager: reload the current directory',
+    handler: refresh,
   });
   commands.register('file-manager:toggle-root', {
     label: 'File manager: toggle the root constraint',
@@ -240,6 +288,7 @@ export async function mount(root, metafolder) {
   metafolder.addKeybinding('file-manager:last', 'end');
   metafolder.addKeybinding('file-manager:activate', 'enter');
   metafolder.addKeybinding('file-manager:parent', 'backspace');
+  metafolder.addKeybinding('file-manager:refresh', 'r');
 
   async function start() {
     repo = await workspace.get('active_repo');

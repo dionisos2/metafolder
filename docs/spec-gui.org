@@ -492,6 +492,7 @@ Behaviours:
 | =metarecord:batch-set=         | Set a field on all =selected_metarecords=                         |
 | =file-manager:add=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
+| =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 
 ** Keyboard navigation
@@ -990,7 +991,13 @@ existing metadata metarecord in the active repo, =workspace.selected_metarecord=
 updated; otherwise it is set to =null=.
 
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
-selection for a file; =Backspace= goes up one level.
+selection for a file; =Backspace= goes up one level; =r= refreshes.
+
+*Listing*: the directory's entries are rendered in windows (a fixed page
+size, with more revealed on scroll), so a directory with many thousands of
+files stays responsive; a footer shows =shown/total entries= (mirroring the
+=metarecord-list= count). =file-manager:refresh= re-reads the current
+directory and its tracked status, preserving the cursor.
 
 *Context menu*: right-clicking a row moves the cursor there and opens an
 HTML menu ([[*Context menus]]): =Open= (directories) and =Track= (disabled
@@ -1001,6 +1008,7 @@ outside the repo root).
 |---------------------------+----------------------------------------------------------|
 | =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
+| =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
 
 *** =workspace-info= panel type

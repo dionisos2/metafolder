@@ -2,6 +2,16 @@
 // metarecords whose mfr_path parent is the displayed directory (Follows with
 // a path target), instead of paginating the whole repository.
 
+// File-manager footer summary (spec-gui "file-manager panel type"): how
+// many of the directory's entries are currently rendered. The listing is
+// windowed (only the first `shown` rows are in the DOM) so a directory with
+// thousands of files stays responsive, mirroring metarecord-list's footer.
+export function entriesFooter(shown, total) {
+  const word = total === 1 ? 'entry' : 'entries';
+  const n = Math.min(shown, total);
+  return `${n}/${total} ${word}${n < total ? ' (more — scroll down)' : ''}`;
+}
+
 // Parent directory of an absolute path; the filesystem root is its own
 // parent (as on Linux, where /.. is /).
 export function parentDir(path) {

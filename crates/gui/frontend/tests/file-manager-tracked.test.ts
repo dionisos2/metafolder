@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -53,6 +53,25 @@ describe('parentDir', () => {
 
   test('the filesystem root is its own parent', () => {
     expect(parentDir('/')).toBe('/');
+  });
+});
+
+describe('entriesFooter', () => {
+  test('counts the rendered window against the directory total', () => {
+    expect(entriesFooter(200, 3500)).toBe('200/3500 entries (more — scroll down)');
+  });
+
+  test('no hint once everything is rendered', () => {
+    expect(entriesFooter(3500, 3500)).toBe('3500/3500 entries');
+  });
+
+  test('singular for a lone entry, and an empty directory', () => {
+    expect(entriesFooter(1, 1)).toBe('1/1 entry');
+    expect(entriesFooter(0, 0)).toBe('0/0 entries');
+  });
+
+  test('the shown count is clamped to the total', () => {
+    expect(entriesFooter(250, 3)).toBe('3/3 entries');
   });
 });
 

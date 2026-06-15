@@ -94,12 +94,19 @@
         text-align: center;
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #status-line {
+        padding: 2px 10px;
+        border-top: 1px solid var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.85em;
+      }
     </style>
   </head>
   <body>
     <div id="toolbar">
       <button id="up">↑ up</button>
       <button id="goto-root">repo root</button>
+      <button id="refresh">⟳ refresh</button>
       <button id="add" disabled>Add to DB</button>
       <label><input type="checkbox" id="constrain" checked /> constrain to repo root</label>
       <span id="current-path"></span>
@@ -108,5 +115,6 @@
       <p class="placeholder" id="placeholder">Loading…</p>
       <ul id="entries"></ul>
     </div>
+    <div id="status-line"></div>
   </body>
 </html>
