@@ -10,7 +10,7 @@ import {
   installContextMenuSuppression,
   installDefaultContextMenu,
 } from '../../../panel-shim/menu.js';
-import { dispatch, hasEditingTarget } from './commands';
+import { dispatch, hasEditingTarget, setFullscreen } from './commands';
 import { flashStatus, focusedPanelType, store } from './store.svelte';
 
 // The shell owns the single default context menu now (panels no longer run in
@@ -50,6 +50,14 @@ export function installKeys() {
     'keydown',
     (event) => {
       if (hasOpenMenu()) return; // the menu's own navigation handles the keys
+      // Escape always leaves fullscreen first (even from inside a panel
+      // text input), before any other key handling.
+      if (store.ui.fullscreen && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        void setFullscreen(false);
+        return;
+      }
       const combo = comboFromEvent(event);
       if (!combo) return;
       // setBindings resets the sequence buffer: only on real changes.

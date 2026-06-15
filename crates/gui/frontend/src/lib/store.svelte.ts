@@ -36,6 +36,9 @@ export const store = $state({
     /// Bumped on every command-input:activate; the always-visible input
     /// grabs the keyboard focus when it changes.
     commandInputFocusTick: 0,
+    /// Immersive mode: only the focused panel shows (chrome hidden, OS
+    /// window fullscreen). Toggled by panel:fullscreen, exited with escape.
+    fullscreen: false,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
     /// Non-null while a script's POST /gui/prompt waits for the input.

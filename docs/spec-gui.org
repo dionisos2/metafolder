@@ -412,7 +412,14 @@ semantics) shows the second slot; when both slots are visible, a *close
 button* (=×=) hides that slot — its own slot, unlike =panel:unsplit= which
 hides the non-focused one — and a *swap button* (=⇄=, =panel:swap=)
 exchanges the panel types of the two slots. The hidden slot's workspace
-assignment is remembered either way.
+assignment is remembered either way. A *fullscreen button* (=⛶=,
+=panel:fullscreen=) focuses the slot and enters fullscreen.
+
+*Fullscreen*: =panel:fullscreen= toggles an immersive mode showing only the
+focused panel — the tab bar, command input, status bar, slot header and the
+other slot are all hidden, and the OS window itself goes fullscreen (like a
+video player). =Escape= leaves fullscreen (even from inside a panel text
+input); the canonical flag lives in the Rust-owned GUI state.
 
 ** Status bar
 
@@ -468,6 +475,7 @@ Behaviours:
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
+| =panel:fullscreen=   | Show only the focused panel fullscreen (escape exits) |
 | =metarecord:create=       | Clear =metarecord-detail= to create a new metarecord     |
 | =metarecord:delete=       | Delete the selected metarecord                      |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |

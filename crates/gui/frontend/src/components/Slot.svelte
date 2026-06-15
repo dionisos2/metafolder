@@ -1,9 +1,17 @@
 <script lang="ts">
   import { invoke } from '../lib/ipc';
+  import { dispatch } from '../lib/commands';
   import { focusedWs, slotPayload, store, workspaceById } from '../lib/store.svelte';
   import type { SlotId } from '../lib/types';
 
-  let { id }: { id: SlotId } = $props();
+  // `chrome` is false in fullscreen, where only the panel body is shown.
+  let { id, chrome = true }: { id: SlotId; chrome?: boolean } = $props();
+
+  async function fullscreenMe(event: Event) {
+    event.stopPropagation();
+    if (!isFocused) await invoke('panel_focus_next');
+    await dispatch('panel:fullscreen');
+  }
 
   const payload = $derived(slotPayload(id));
   const workspace = $derived(workspaceById(payload.workspace_id));
@@ -32,7 +40,8 @@
 
 <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 <section class="slot" class:focused={isFocused} onclick={focusMe} data-slot={id}>
-  <header class="slot-header">
+  {#if chrome}
+    <header class="slot-header">
     <select
       class="panel-type"
       value={payload.panel_type ?? ''}
@@ -81,8 +90,14 @@
           }}>◫</button
         >
       {/if}
+      <button
+        class="slot-button"
+        title="show only this panel fullscreen (panel:fullscreen; escape exits)"
+        onclick={fullscreenMe}>⛶</button
+      >
     </span>
-  </header>
+    </header>
+  {/if}
   <div class="slot-body" data-slot-body={id}>
     {#if payload.workspace_id === null}
       <p class="placeholder">No workspace selected</p>

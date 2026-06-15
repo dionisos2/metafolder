@@ -434,6 +434,14 @@ pub fn open_devtools(window: tauri::WebviewWindow) {
     window.open_devtools();
 }
 
+/// `panel:fullscreen` — drives the OS window in/out of fullscreen; the
+/// frontend pairs this with hiding the chrome so only the focused panel
+/// shows (spec-gui "Fullscreen").
+#[tauri::command]
+pub fn set_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), String> {
+    window.set_fullscreen(on).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub fn quit(window: tauri::Window) {
     let _ = window.close();

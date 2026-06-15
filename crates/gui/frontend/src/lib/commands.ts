@@ -140,6 +140,17 @@ async function status(text: string, kind = 'error') {
   if (ws) await invoke('post_status', { wsId: ws, text, kind, timeoutMs: 5000 });
 }
 
+/** Immersive mode: mirror the flag into the store (the shell hides all
+ *  chrome but the focused panel) and drive the OS window fullscreen. */
+export async function setFullscreen(on: boolean): Promise<void> {
+  store.ui.fullscreen = on;
+  try {
+    await invoke('set_fullscreen', { on });
+  } catch (error) {
+    await status(String(error));
+  }
+}
+
 export async function runShell(commandLine: string): Promise<void> {
   const ws = focusedWs();
   if (!ws) return;
@@ -288,6 +299,9 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'panel:swap':
       await invoke('panel_swap');
+      return true;
+    case 'panel:fullscreen':
+      await setFullscreen(!store.ui.fullscreen);
       return true;
     case 'panel:reveal-other': {
       // Shows the given panel type for the SAME workspace in the other

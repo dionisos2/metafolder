@@ -45,31 +45,38 @@
   <div class="failure">Failed to initialize the GUI: {failure}</div>
 {:else if store.ready}
   <div class="app">
-    {#if !store.daemonConnected}
-      <div class="daemon-banner">
-        Daemon unreachable at {store.daemonUrl} — daemon-dependent commands are disabled.
+    {#if store.ui.fullscreen}
+      <!-- Immersive mode: only the focused panel, no chrome (escape exits). -->
+      <div class="slots" style:grid-template-columns="1fr">
+        <Slot id={store.layout.focused} chrome={false} />
       </div>
+    {:else}
+      {#if !store.daemonConnected}
+        <div class="daemon-banner">
+          Daemon unreachable at {store.daemonUrl} — daemon-dependent commands are disabled.
+        </div>
+      {/if}
+      <TabBar />
+      <div class="slots" bind:this={slotsElement} style:grid-template-columns={columns}>
+        {#if store.layout.left.visible}
+          <Slot id="left" />
+        {/if}
+        {#if store.layout.left.visible && store.layout.right.visible}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div
+            class="divider"
+            onpointerdown={onDividerDown}
+            onpointermove={onDividerMove}
+            onpointerup={() => (dragging = false)}
+          ></div>
+        {/if}
+        {#if store.layout.right.visible}
+          <Slot id="right" />
+        {/if}
+      </div>
+      <CommandInput />
+      <StatusBar />
     {/if}
-    <TabBar />
-    <div class="slots" bind:this={slotsElement} style:grid-template-columns={columns}>
-      {#if store.layout.left.visible}
-        <Slot id="left" />
-      {/if}
-      {#if store.layout.left.visible && store.layout.right.visible}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div
-          class="divider"
-          onpointerdown={onDividerDown}
-          onpointermove={onDividerMove}
-          onpointerup={() => (dragging = false)}
-        ></div>
-      {/if}
-      {#if store.layout.right.visible}
-        <Slot id="right" />
-      {/if}
-    </div>
-    <CommandInput />
-    <StatusBar />
   </div>
   <PanelHost />
   {#if store.ui.configOpen}

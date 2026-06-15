@@ -80,6 +80,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("panel:focus-next", "Focus the other panel slot", true),
         ("panel:set-type", "Switch the focused slot's panel type", true),
         ("panel:swap", "Exchange the two slots' panel types", true),
+        ("panel:fullscreen", "Show only the focused panel fullscreen (escape exits)", true),
         ("message:clear", "Clear the workspace message log", true),
         ("config:open", "Open the settings view", true),
         ("devtools:open", "Open the WebKit web inspector", true),
@@ -297,6 +298,7 @@ pub fn run(options: Options) {
             commands::clear_messages,
             commands::append_message,
             commands::open_devtools,
+            commands::set_fullscreen,
             commands::quit,
         ])
         .run(tauri::generate_context!())
@@ -320,5 +322,16 @@ mod tests {
         let registry = CommandRegistry::new();
         register_builtins(&registry);
         assert!(registry.get("panel:hide").is_some(), "panel:hide registered");
+    }
+
+    #[test]
+    fn test_workspace_and_fullscreen_commands_are_builtins() {
+        let registry = CommandRegistry::new();
+        register_builtins(&registry);
+        for name in ["workspace:next", "workspace:prev", "tab:goto", "panel:fullscreen"] {
+            assert!(registry.get(name).is_some(), "{name} registered");
+        }
+        // The parameter-in-name form is gone.
+        assert!(registry.get("tab:goto-N").is_none());
     }
 }

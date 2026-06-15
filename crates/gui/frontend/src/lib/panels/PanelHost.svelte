@@ -180,10 +180,11 @@
   }
 
   $effect(() => {
-    // Re-position whenever layout, geometry or the tab set change.
+    // Re-position whenever layout, geometry, the tab set or fullscreen change.
     void store.layout;
     void store.splitRatio;
     void store.workspaces;
+    void store.ui.fullscreen;
     requestAnimationFrame(sync);
   });
 
