@@ -25,7 +25,7 @@ export interface PendingKeys {
 
 export interface BridgeDeps {
   invoke: (command: string, args?: Metarecord<string, unknown>) => Promise<unknown>;
-  dispatch: (invocation: string) => Promise<void>;
+  dispatch: (invocation: string) => Promise<unknown>;
   onCommandsChanged: () => void;
   /** A panel's key matcher entered (object) or left (null) a pending
    *  sequence: the shell shows/clears the continuation hint. */
@@ -139,6 +139,14 @@ export function createBridgeCore(deps: BridgeDeps) {
           break;
         case 'key-pending':
           deps.onPendingKeys((message.pending as PendingKeys | null) ?? null);
+          break;
+        case 'bench-record':
+          // A panel reported a performance.measure: append it to the shell's
+          // bench buffer (read by GET /gui/bench). Fire-and-forget.
+          void deps.invoke('bench_record', {
+            name: String(message.name),
+            durationMs: Number(message.durationMs),
+          });
           break;
         case 'command-result': {
           const pending = pendingCommands.get(Number(message.invocationId));

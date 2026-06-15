@@ -309,6 +309,20 @@ pub async fn post_command(
     Json(payload).into_response()
 }
 
+// ── Bench harness ─────────────────────────────────────────────────────────
+
+/// Snapshots the recorded `performance.measure` (`mf:*`) entries reported by
+/// the panels (spec-gui "Bench harness").
+pub async fn get_bench(State(state): State<ServerState>) -> Response {
+    Json(json!({"records": state.bench.snapshot()})).into_response()
+}
+
+/// Empties the bench buffer — a driver script calls this before each scenario.
+pub async fn clear_bench(State(state): State<ServerState>) -> Response {
+    state.bench.clear();
+    Json(json!({})).into_response()
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]

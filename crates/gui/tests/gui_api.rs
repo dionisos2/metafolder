@@ -11,6 +11,7 @@ use metafolder_gui::daemon_proxy::DaemonProxy;
 use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
 use metafolder_gui::server::{self, ServerState};
+use metafolder_gui::server::bench::BenchBuffer;
 use metafolder_gui::server::command_wait::{CommandOutcome, CommandWait};
 use metafolder_gui::server::input_wait::InputWait;
 use metafolder_gui::state::GuiState;
@@ -26,6 +27,7 @@ struct Ctx {
     gui: Arc<GuiState>,
     input: Arc<InputWait>,
     commands: Arc<CommandWait>,
+    bench: Arc<BenchBuffer>,
     router: axum::Router,
 }
 
@@ -62,6 +64,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
     let keybindings = Arc::new(std::sync::Mutex::new(config.load_keybindings().unwrap()));
     let input = Arc::new(InputWait::new());
     let commands = Arc::new(CommandWait::new());
+    let bench = Arc::new(BenchBuffer::new());
 
     let state = ServerState {
         config,
@@ -70,6 +73,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         keybindings,
         input: input.clone(),
         commands: commands.clone(),
+        bench: bench.clone(),
     };
     Ctx {
         _guard: guard,
@@ -77,6 +81,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         gui,
         input: input.clone(),
         commands: commands.clone(),
+        bench: bench.clone(),
         router: server::build_router(state),
     }
 }
@@ -579,4 +584,35 @@ async fn test_concurrent_command_dispatch_allowed() {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body, json!({"event": "ok"}));
     }
+}
+
+// ── Bench buffer (GET /gui/bench, POST /gui/bench/clear) ───────────────────
+
+#[tokio::test]
+async fn test_bench_lists_recorded_measures() {
+    let ctx = setup().await;
+    ctx.bench.record("mf:list:fetch", 12.5);
+    ctx.bench.record("mf:detail:load", 4.0);
+
+    let (status, body) = request(&ctx.router, "GET", "/gui/bench", None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body,
+        json!({"records": [
+            {"name": "mf:list:fetch", "duration_ms": 12.5},
+            {"name": "mf:detail:load", "duration_ms": 4.0},
+        ]})
+    );
+}
+
+#[tokio::test]
+async fn test_bench_clear_empties_the_buffer() {
+    let ctx = setup().await;
+    ctx.bench.record("mf:list:render", 1.0);
+
+    let (status, _) = request(&ctx.router, "POST", "/gui/bench/clear", None).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, body) = request(&ctx.router, "GET", "/gui/bench", None).await;
+    assert_eq!(body, json!({"records": []}));
 }

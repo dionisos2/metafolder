@@ -137,6 +137,7 @@ pub fn run(options: Options) {
             let keybindings = Arc::new(Mutex::new(keybindings));
             let input = Arc::new(server::input_wait::InputWait::new());
             let command_wait = Arc::new(server::command_wait::CommandWait::new());
+            let bench = Arc::new(server::bench::BenchBuffer::new());
             let app = Arc::new(commands::App {
                 gui: gui.clone(),
                 registry,
@@ -147,6 +148,7 @@ pub fn run(options: Options) {
                 daemon: daemon.clone(),
                 input: input.clone(),
                 commands: command_wait.clone(),
+                bench: bench.clone(),
                 style_watcher: Mutex::new(style_watcher),
             });
             tauri::Manager::manage(tauri_app, app);
@@ -206,6 +208,7 @@ pub fn run(options: Options) {
                 keybindings,
                 input,
                 commands: command_wait,
+                bench,
             };
             tauri::async_runtime::spawn(async move {
                 let router = server::build_router(server_state);
@@ -282,6 +285,7 @@ pub fn run(options: Options) {
             undo::log_navigate,
             commands::answer_send,
             commands::command_done,
+            commands::bench_record,
             commands::prompt_resolve,
             commands::panel_ready,
             commands::post_status,

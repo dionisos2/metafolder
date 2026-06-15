@@ -36,11 +36,7 @@ const repoInfos = new Map();
 // Cached GET /repos lookup (root, internal_dir, ...).
 async function repoInfo(repo) {
   if (!repoInfos.has(repo)) {
-    const response = await request('daemon.request', {
-      method: 'GET',
-      path: '/repos',
-      body: null,
-    });
+    const response = await daemonRequest('GET', '/repos');
     for (const item of response.body ?? []) repoInfos.set(item.repo_uuid, item);
   }
   const info = repoInfos.get(repo);
@@ -53,11 +49,7 @@ function resolverFor(repo) {
     resolvers.set(
       repo,
       createPathResolver(async (uuids) => {
-        const response = await request('daemon.request', {
-          method: 'POST',
-          path: `/repos/${repo}/tree/resolve`,
-          body: { uuids },
-        });
+        const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, { uuids });
         if (response.status !== 200) {
           throw new Error(response.body?.error ?? `tree/resolve failed (HTTP ${response.status})`);
         }
@@ -78,6 +70,57 @@ function request(method, params) {
     pendingRequests.set(id, { resolve, reject });
     send({ type: 'request', id, method, params });
   });
+}
+
+// ── Bench harness instrumentation (spec-gui "Bench harness") ──────────────
+// Each measure is reported to the shell (→ the /gui/bench buffer a driver
+// script reads) and emitted as a performance.measure so it also shows up,
+// labelled, in the WebKit inspector Timeline.
+
+/**
+ * Times `fn`, recording the elapsed wall time under `name` (an `mf:*` label).
+ * Works for both synchronous phases (e.g. a render) and async ones (a load):
+ * a returned promise is measured on settle, a plain value synchronously, so
+ * the measure is not inflated by a microtask hop. Returns whatever `fn` does.
+ */
+function benchMeasure(name, fn) {
+  const start = performance.now();
+  const finish = () => {
+    const end = performance.now();
+    try {
+      performance.measure(name, { start, end });
+    } catch {
+      // User Timing L3 options unsupported here: the shell record below is
+      // what the harness actually reads, so this is non-fatal.
+    }
+    send({ type: 'bench-record', name, durationMs: end - start });
+  };
+  let result;
+  try {
+    result = fn();
+  } catch (error) {
+    finish();
+    throw error;
+  }
+  if (result && typeof result.then === 'function') {
+    return result.finally(finish);
+  }
+  finish();
+  return result;
+}
+
+// Daemon calls go through the shell (no in-iframe fetch, so no resource
+// timings): instrument them here. UUIDs/ids are collapsed so the label has
+// low cardinality across a scenario.
+function daemonLabel(method, path) {
+  const norm = path.split('?')[0].replace(/\/[0-9a-f]{32}\b/g, '/:id');
+  return `mf:daemon ${method} ${norm}`;
+}
+
+function daemonRequest(method, path, body = null) {
+  return benchMeasure(daemonLabel(method, path), () =>
+    request('daemon.request', { method, path, body }),
+  );
 }
 
 window.addEventListener('message', (event) => {
@@ -258,12 +301,22 @@ window.metafolder = {
     visibilityGate.whenVisible(fn);
   },
 
+  /**
+   * Profiling harness (spec-gui "Bench harness"). `measure(name, fn)` times an
+   * async phase; `record(name, ms)` logs a pre-computed duration. Names are
+   * `mf:*` labels (e.g. `mf:list:render`). Daemon calls are auto-instrumented.
+   */
+  bench: {
+    measure: (name, fn) => benchMeasure(name, fn),
+    record: (name, durationMs) => send({ type: 'bench-record', name, durationMs }),
+  },
+
   daemon: {
     /** Raw daemon call: request('GET', '/repos') etc. */
-    request: (method, path, body = null) => request('daemon.request', { method, path, body }),
+    request: (method, path, body = null) => daemonRequest(method, path, body),
     /** Like request, but throws on >= 400 and returns the body directly. */
     call: async (method, path, body = null) => {
-      const response = await request('daemon.request', { method, path, body });
+      const response = await daemonRequest(method, path, body);
       if (response.status >= 400) {
         throw new Error(response.body?.error ?? `${method} ${path}: HTTP ${response.status}`);
       }
@@ -292,10 +345,8 @@ window.metafolder = {
      */
     metarecordPaths: async (repo, metarecord) => {
       const root = await window.metafolder.daemon.repoRoot(repo);
-      const response = await request('daemon.request', {
-        method: 'POST',
-        path: `/repos/${repo}/tree/resolve`,
-        body: { uuids: [metarecord.uuid] },
+      const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, {
+        uuids: [metarecord.uuid],
       });
       const relatives = response.body?.[metarecord.uuid] ?? [];
       return relatives.map((rel) => (rel === '' ? root : `${root}/${rel}`));

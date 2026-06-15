@@ -5,7 +5,7 @@ import { el, fields } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
 
-const { daemon, workspace, commands, statusBar, query } = metafolder;
+const { daemon, workspace, commands, statusBar, query, bench } = metafolder;
 
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
@@ -96,7 +96,11 @@ async function updateRefCache(uuids) {
 // view layer stays synchronous: absolute mfr_path(s) per metarecord (selection,
 // orphan check, thumbnail) and the ~ columns' resolved text. `mfr_path` and the
 // ~ column fields are resolved in a single pass; rendering makes no daemon calls.
-async function enrich(subset) {
+function enrich(subset) {
+  return bench.measure('mf:list:enrich', () => enrichNow(subset));
+}
+
+async function enrichNow(subset) {
   if (subset.length === 0) return;
   if (!repoRoots[repo]) repoRoots[repo] = await daemon.repoRoot(repo);
   const root = repoRoots[repo];
@@ -250,6 +254,10 @@ function fillOrphan(node, metarecord) {
 }
 
 function render() {
+  bench.measure('mf:list:render', renderNow);
+}
+
+function renderNow() {
   renderHeader();
   rows.replaceChildren(
     ...metarecords.map((metarecord, index) => {
@@ -515,6 +523,10 @@ commands.register('metarecord-list:first', {
 commands.register('metarecord-list:last', {
   label: 'Metarecord list: move the selection to the last loaded row',
   handler: () => setCursor(metarecords.length - 1),
+});
+commands.register('metarecord-list:page-next', {
+  label: 'Metarecord list: load the next page (same as scrolling to the bottom)',
+  handler: () => (nextCursor ? fetchPage(false) : undefined),
 });
 commands.register('metarecord-list:select-toggle', {
   label: 'Metarecord list: toggle multi-selection',

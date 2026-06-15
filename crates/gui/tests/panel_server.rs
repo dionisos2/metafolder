@@ -26,6 +26,7 @@ fn setup() -> (tempfile::TempDir, Arc<ConfigDir>, axum::Router) {
         keybindings: Arc::new(std::sync::Mutex::new(config.load_keybindings().unwrap())),
         input: Arc::new(server::input_wait::InputWait::new()),
         commands: Arc::new(server::command_wait::CommandWait::new()),
+        bench: Arc::new(server::bench::BenchBuffer::new()),
     };
     let router = server::build_router(state);
     (dir, config, router)

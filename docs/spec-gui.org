@@ -715,6 +715,21 @@ metafolder.statusBar.message('Sync complete.', 5000)  // timeout_ms or null
 metafolder.statusBar.error(error)  // catch-block form: String(error.message), 8 s
 #+END_SRC
 
+**** =metafolder.bench=
+
+Profiling instrumentation (see [[*Bench harness]]). =measure(name, fn)= times an
+async or sync phase and =record(name, durationMs)= logs a pre-computed
+duration. Names are =mf:*= labels. Each measure is emitted as a
+=performance.measure= (so it also appears in the WebKit inspector Timeline) and
+reported to the shell's =GET /gui/bench= buffer. Daemon calls are instrumented
+automatically (=mf:daemon <method> <path>=, ids collapsed to =:id=), so panels
+only mark their own phases.
+
+#+BEGIN_SRC js
+await metafolder.bench.measure('mf:list:render', () => render())
+metafolder.bench.record('mf:custom', elapsedMs)
+#+END_SRC
+
 **** UI helpers: =/__ui.js=
 
 A small module served by the GUI server next to the shim, importable by
@@ -1197,6 +1212,24 @@ Note: the call resolves when =dispatch()= and its awaited work complete, which
 for commands that open or refresh a panel does *not* include the panel's own
 asynchronous render inside its iframe.
 
+*** =GET /gui/bench= / =POST /gui/bench/clear=
+
+The profiling harness (see [[*Bench harness]]). Panels time their phases with
+=metafolder.bench.measure= and the shim auto-instruments every daemon call;
+each measure is reported to the shell, which appends it to an in-memory buffer.
+=GET /gui/bench= snapshots that buffer; =POST /gui/bench/clear= empties it.
+
+#+BEGIN_SRC json
+{"records": [
+  {"name": "mf:daemon POST /repos/:id/query", "duration_ms": 8.4},
+  {"name": "mf:list:enrich", "duration_ms": 3.1},
+  {"name": "mf:list:render", "duration_ms": 2.0}
+]}
+#+END_SRC
+
+A driver script clears the buffer, runs a reproducible scenario through
+=POST /gui/command=, then reads the per-phase timings back.
+
 *** =POST /gui/message=
 
 Posts a message to a workspace's status bar (transient) and appends it to
@@ -1288,6 +1321,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui view <slot> [<type>] [--path] [--state]=     | Prints or sets the panel type of a slot                            |
 | =mf gui message <text> [--workspace] [--timeout-ms]= | Posts a status bar message                                         |
 | =mf gui command <invocation>... [--timeout-ms]=      | Runs a command invocation through the GUI (exit 1 on error/timeout) |
+| =mf gui bench [--clear]=                             | Prints the recorded bench measures (JSON), or clears the buffer    |
 | =mf gui input <key>... [--timeout-ms]=               | Waits for one of the keys, prints it (exit 1 on timeout/close)     |
 | =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
@@ -1404,6 +1438,32 @@ calls fail immediately with =409= (no queueing).
 Resolved by the git-backed config repository: =metafolder-sync-config= merges
 the shipped =default= branch into the user's =main= branch (see
 [[file:spec-config.org][spec-config]]).
+
+** Bench harness
+
+A JS profiling harness for finding GUI slowness, built on the existing single
+command path rather than a parallel control API.
+
+Mechanism:
+- Panels wrap their phases with =metafolder.bench.measure(name, fn)= and the
+  shim auto-instruments every daemon round-trip. Built-in labels:
+  =mf:list:enrich= / =mf:list:render=, =mf:detail:load= / =mf:detail:render=,
+  =mf:fm:load= / =mf:fm:render=, and =mf:daemon <method> <path>=.
+- Each measure is both a =performance.measure= (visible in the WebKit inspector
+  Timeline) and a report to the shell, appended to an in-memory buffer.
+- =GET /gui/bench= reads the buffer, =POST /gui/bench/clear= empties it.
+- A scenario is driven externally with =POST /gui/command= (the same
+  =dispatch()= the command input uses), so internal and external invocation
+  stay identical. =scripts/bench-gui.sh= runs the built-in scenarios (panel
+  opens, list+detail navigation, file-manager navigation, paging), clearing the
+  buffer before each and printing the per-phase timings after.
+
+Because a panel's render happens asynchronously inside its iframe, the
+=POST /gui/command= call alone cannot time it — the harness's per-phase reports,
+not the command's resolution, are the source of truth for render cost. The
+=metarecord-list:page-next= command loads the next page on demand (the
+scriptable equivalent of scrolling to the bottom) so paging can be driven
+reproducibly.
 
 * Open questions
 

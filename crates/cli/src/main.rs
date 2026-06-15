@@ -262,6 +262,12 @@ enum GuiCommand {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
+    /// Print the recorded bench measures (JSON), or clear the buffer
+    Bench {
+        /// Empty the bench buffer instead of printing it
+        #[arg(long)]
+        clear: bool,
+    },
     /// Run a command invocation through the GUI (same as the command input)
     Command {
         /// The command invocation, e.g. `panel:set-type file`
@@ -499,6 +505,7 @@ fn main() {
                 GuiCommand::Message { text, workspace, timeout_ms } => {
                     gui::message(&gui_ctx, &text, workspace.as_deref(), timeout_ms)
                 }
+                GuiCommand::Bench { clear } => gui::bench(&gui_ctx, clear),
                 GuiCommand::Command { invocation, timeout_ms } => {
                     gui::command(&gui_ctx, &invocation.join(" "), timeout_ms)
                 }

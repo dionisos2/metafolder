@@ -5,7 +5,7 @@
 import { el } from '/__ui.js';
 import { loadTrackedChildren, loadDirMetarecord, parentDir, isWithin } from './tracked.js';
 
-const { fs, daemon, workspace, commands, statusBar } = metafolder;
+const { fs, daemon, workspace, commands, statusBar, bench } = metafolder;
 
 let repo = null;
 let repoRoot = null;
@@ -49,7 +49,11 @@ async function refreshTracked(dir) {
   }
 }
 
-async function open(dir) {
+function open(dir) {
+  return bench.measure('mf:fm:load', () => openNow(dir));
+}
+
+async function openNow(dir) {
   if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
     statusBar.message('navigation is constrained to the repo root', 4000);
     return;
@@ -73,6 +77,10 @@ async function open(dir) {
 }
 
 function render() {
+  bench.measure('mf:fm:render', renderNow);
+}
+
+function renderNow() {
   pathElement.textContent = currentDir ?? '';
   placeholderElement.hidden = true;
   const selected = listing[cursorIndex];

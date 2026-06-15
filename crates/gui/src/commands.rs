@@ -29,6 +29,8 @@ pub struct App {
     pub input: Arc<crate::server::input_wait::InputWait>,
     /// Shared /gui/command dispatch wait registry.
     pub commands: Arc<crate::server::command_wait::CommandWait>,
+    /// Shared bench buffer fed by the panels' `performance.measure` reports.
+    pub bench: Arc<crate::server::bench::BenchBuffer>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
 }
@@ -377,6 +379,13 @@ pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
     } else {
         Err("no script is waiting for input".into())
     }
+}
+
+/// A panel reported a `performance.measure` (the bench harness): append it to
+/// the buffer that `GET /gui/bench` reads.
+#[tauri::command]
+pub fn bench_record(app: AppHandle, name: String, duration_ms: f64) {
+    app.bench.record(&name, duration_ms);
 }
 
 /// Reports the outcome of a `POST /gui/command` invocation back to the waiting

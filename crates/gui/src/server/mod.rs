@@ -4,6 +4,7 @@
 //! Built as a plain `axum::Router` so tests can drive it with
 //! `tower::ServiceExt::oneshot`.
 
+pub mod bench;
 pub mod command_wait;
 mod fsraw;
 mod gui_api;
@@ -16,6 +17,7 @@ use crate::keybindings::KeybindingSet;
 use crate::state::GuiState;
 use axum::routing::{delete, get, post, put};
 use axum::Router;
+use bench::BenchBuffer;
 use command_wait::CommandWait;
 use input_wait::InputWait;
 use std::sync::{Arc, Mutex};
@@ -36,6 +38,7 @@ pub struct ServerState {
     pub keybindings: Arc<Mutex<KeybindingSet>>,
     pub input: Arc<InputWait>,
     pub commands: Arc<CommandWait>,
+    pub bench: Arc<BenchBuffer>,
 }
 
 pub fn build_router(state: ServerState) -> Router {
@@ -75,6 +78,8 @@ pub fn build_router(state: ServerState) -> Router {
             put(gui_api::put_panel_view).get(gui_api::get_panel_view),
         )
         .route("/gui/command", post(gui_api::post_command))
+        .route("/gui/bench", get(gui_api::get_bench))
+        .route("/gui/bench/clear", post(gui_api::clear_bench))
         .route("/gui/message", post(gui_api::post_message))
         .route("/gui/input", post(gui_api::post_input))
         .route("/gui/prompt", post(gui_api::post_prompt))

@@ -172,6 +172,18 @@ pub fn message(
     Ok(0)
 }
 
+/// Prints the recorded bench measures as pretty JSON, or clears the buffer
+/// (the driver script clears before each scenario, then reads after it).
+pub fn bench(ctx: &GuiCtx, clear: bool) -> Result<i32, CliError> {
+    if clear {
+        ctx.client.post("/gui/bench/clear", &json!({}))?;
+        return Ok(0);
+    }
+    let resp = ctx.client.get("/gui/bench", &[])?;
+    println!("{}", serde_json::to_string_pretty(&resp).expect("JSON serialization"));
+    Ok(0)
+}
+
 /// Runs an arbitrary command invocation through the GUI's dispatcher (the
 /// same path as the command input). Blocks until the command resolves; exit 1
 /// on error/timeout/close.

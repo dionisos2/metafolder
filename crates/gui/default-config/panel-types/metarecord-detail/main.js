@@ -6,7 +6,7 @@ import { orphanState, orphanLabel } from '/__orphan.js';
 import { createTypePicker, parseRawValue } from './add-type.js';
 import { createAnnotator } from './annotations.js';
 
-const { daemon, workspace, commands, statusBar } = metafolder;
+const { daemon, workspace, commands, statusBar, bench } = metafolder;
 
 let current = null; // {uuid, repo} | null
 let metarecord = null; // full metarecord JSON
@@ -111,6 +111,10 @@ function widgetFor(type, initial) {
 // ── Rendering ───────────────────────────────────────────────────────────
 
 function render() {
+  bench.measure('mf:detail:render', renderNow);
+}
+
+function renderNow() {
   const hasContent = metarecord !== null || newMetarecordMode;
   if (metarecord === null || newMetarecordMode) orphanNote.hidden = true;
   placeholder.classList.toggle('hidden', hasContent);
@@ -227,7 +231,11 @@ function stagedRow(staged, index) {
 
 // ── Operations ──────────────────────────────────────────────────────────
 
-async function load() {
+function load() {
+  return bench.measure('mf:detail:load', loadNow);
+}
+
+async function loadNow() {
   showError('');
   if (!current) {
     metarecord = null;

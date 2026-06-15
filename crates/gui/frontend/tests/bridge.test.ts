@@ -77,6 +77,20 @@ describe('bridge core', () => {
     );
   });
 
+  test('bench-record forwards the measure to the bench_record command', async () => {
+    const { bridge, invoke, source } = setup();
+    await bridge.onMessage(source, {
+      mf: true,
+      type: 'bench-record',
+      name: 'mf:list:fetch',
+      durationMs: 12.5,
+    });
+    expect(invoke).toHaveBeenCalledWith('bench_record', {
+      name: 'mf:list:fetch',
+      durationMs: 12.5,
+    });
+  });
+
   test('subscriptions deliver var changes for the right workspace only', async () => {
     const { bridge, source, post } = setup();
     await bridge.onMessage(source, request(1, 'workspace.subscribe', { key: 'selected_metarecord' }));
