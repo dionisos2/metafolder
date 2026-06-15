@@ -45,6 +45,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tree/resolve", post(tree_resolve))
         .route("/repos/:repo/set", post(batch_set))
         .route("/repos/:repo/log", get(get_log))
+        .route("/repos/:repo/log/since", get(get_log_since))
         .route(
             "/repos/:repo/log/revisions/:rev_id",
             get(get_revision).patch(patch_revision),
@@ -517,6 +518,41 @@ async fn get_log(
             }
         }
         Ok(Json(json!({"head": head, "operations": op_values, "revisions": revisions})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct SinceParams {
+    #[serde(default)]
+    op: Option<i64>,
+}
+
+/// Change feed for client caches: the current log `head` plus every operation
+/// created after `?op=<id>` (across all branches; each names its `entity_uuid`).
+/// With no `op` it returns just the head (a baseline), and an empty `operations`
+/// when nothing changed — so one call both detects a change and describes it.
+async fn get_log_since(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<SinceParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let head = crate::log::get_head(&conn)?;
+        let operations = match params.op {
+            Some(since) => {
+                let ops = crate::log::ops_since(&conn, since)?;
+                let mut out = Vec::with_capacity(ops.len());
+                for op in &ops {
+                    out.push(op_json(&conn, op, false)?);
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+        Ok(Json(json!({"head": head, "operations": operations})))
     })
     .await
 }

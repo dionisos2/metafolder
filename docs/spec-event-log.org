@@ -420,11 +420,22 @@ If the daemon crashes during a coordinated navigation:
 
 #+BEGIN_SRC
 GET   /repos/:repo_uuid/log
+GET   /repos/:repo_uuid/log/since?op=<id>
 GET   /repos/:repo_uuid/log/revisions/:rev_id
 PATCH /repos/:repo_uuid/log/revisions/:rev_id
 POST  /repos/:repo_uuid/log/prune
 POST  /repos/:repo_uuid/rollback
 #+END_SRC
+
+=GET /log/since= is the change feed for client caches: it returns the current
+=head= plus every operation created after =op= (by id, across *all* branches —
+a new edit after a rollback has a larger id and is included), each naming its
+=entity_uuid=. With no =op= it returns just the head; the =operations= array is
+empty when nothing changed. So one poll both detects a change and describes
+which metarecords it touched. (A *pure* rollback/redo moves =head= to an
+existing op without creating a new one, so the forward delta is empty even
+though =head= changed — a client that caches entities falls back to a coarse
+refresh in that case.)
 
 Coordinated navigation:
 #+BEGIN_SRC

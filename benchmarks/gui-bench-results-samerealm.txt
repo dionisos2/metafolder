@@ -1,0 +1,47 @@
+metafolder GUI bench (SAME-REALM / Shadow DOM) — 2026-06-15 16:40:59Z
+repo: bench_data (1005 files), debug build, software rendering (libEGL)
+STEPS=10, per-scenario isolated workspaces
+vs benchmarks/gui-bench-results.txt (iframe + postMessage era)
+
+── open metarecord-list ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/query n=1   total=  105.00ms  mean= 105.00ms  max= 105.00ms
+  mf:list:enrich                     n=1   total=   24.00ms  mean=  24.00ms  max=  24.00ms
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=1   total=   20.00ms  mean=  20.00ms  max=  20.00ms
+  mf:list:render                     n=2   total=   15.00ms  mean=   7.50ms  max=  10.00ms
+  mf:daemon GET /repos               n=1   total=    2.00ms  mean=   2.00ms  max=   2.00ms
+
+── open metarecord-detail (selected row) ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=2   total=   23.00ms  mean=  11.50ms  max=  18.00ms
+  mf:daemon GET /repos               n=1   total=   16.00ms  mean=  16.00ms  max=  16.00ms
+  mf:detail:load                     n=1   total=   12.00ms  mean=  12.00ms  max=  12.00ms
+  mf:daemon GET /repos/5e73752a-87f2-411d-89af-e86e6727f431/metarecords/:id n=1   total=    6.00ms  mean=   6.00ms  max=   6.00ms
+  mf:detail:render                   n=1   total=    4.00ms  mean=   4.00ms  max=   4.00ms
+
+── open file-manager ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/query n=3   total=  146.00ms  mean=  48.67ms  max= 100.00ms
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=3   total=   47.00ms  mean=  15.67ms  max=  40.00ms
+  mf:list:enrich                     n=1   total=   44.00ms  mean=  44.00ms  max=  44.00ms
+  mf:fm:load                         n=1   total=   40.00ms  mean=  40.00ms  max=  40.00ms
+  mf:daemon GET /repos               n=3   total=   26.00ms  mean=   8.67ms  max=  20.00ms
+  mf:detail:load                     n=2   total=   20.00ms  mean=  10.00ms  max=  20.00ms
+  mf:daemon GET /repos/5e73752a-87f2-411d-89af-e86e6727f431/metarecords/:id n=1   total=   19.00ms  mean=  19.00ms  max=  19.00ms
+  mf:list:render                     n=2   total=   12.00ms  mean=   6.00ms  max=   7.00ms
+  mf:fm:render                       n=1   total=    1.00ms  mean=   1.00ms  max=   1.00ms
+  mf:detail:render                   n=2   total=    0.00ms  mean=   0.00ms  max=   0.00ms
+
+── list+detail: 10× selection down ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=20  total=  164.00ms  mean=   8.20ms  max=  21.00ms
+  mf:list:render                     n=10  total=  130.00ms  mean=  13.00ms  max=  25.00ms
+  mf:detail:load                     n=10  total=  108.00ms  mean=  10.80ms  max=  25.00ms
+  mf:daemon GET /repos/5e73752a-87f2-411d-89af-e86e6727f431/metarecords/:id n=10  total=   85.00ms  mean=   8.50ms  max=  21.00ms
+  mf:detail:render                   n=10  total=   12.00ms  mean=   1.20ms  max=   2.00ms
+
+── file-manager: 10× selection down ──
+  mf:fm:render                       n=10  total=   13.00ms  mean=   1.30ms  max=   2.00ms
+
+── paging: 10× load next page ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/query n=10  total=  938.00ms  mean=  93.80ms  max= 172.00ms
+  mf:list:render                     n=10  total=  427.00ms  mean=  42.70ms  max=  72.00ms
+  mf:list:enrich                     n=10  total=  322.00ms  mean=  32.20ms  max=  50.00ms
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=10  total=  316.00ms  mean=  31.60ms  max=  49.00ms
+

@@ -481,3 +481,36 @@ async fn test_prune_linearize_removes_branches() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── GET /log/since (cache change feed) ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_log_since_reports_head_and_delta() {
+    let (app, repo, _root) = setup("since").await;
+    create(&app, &repo, json!([{"name": "a", "value": {"type": "string", "value": "1"}}])).await;
+
+    // No `op` given: just the current head, empty delta (baseline fetch).
+    let (status, base) = request(&app, "GET", &format!("/repos/{repo}/log/since"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let h0 = base["head"].as_i64().unwrap();
+    assert!(base["operations"].as_array().unwrap().is_empty());
+
+    // Nothing changed since h0.
+    let (_, same) = request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}"), None).await;
+    assert_eq!(same["head"].as_i64().unwrap(), h0);
+    assert!(same["operations"].as_array().unwrap().is_empty());
+
+    // A second write touches a new metarecord.
+    let m2 = create(&app, &repo, json!([{"name": "b", "value": {"type": "string", "value": "2"}}])).await;
+    let uuid2 = m2["uuid"].as_str().unwrap();
+
+    let (_, delta) = request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}"), None).await;
+    let h1 = delta["head"].as_i64().unwrap();
+    assert!(h1 > h0, "head should advance: {h0} -> {h1}");
+    let ops = delta["operations"].as_array().unwrap();
+    assert!(!ops.is_empty(), "delta should contain the new ops");
+    // Every returned op is newer than the requested op, across all branches.
+    assert!(ops.iter().all(|o| o["id"].as_i64().unwrap() > h0));
+    // The delta names the changed metarecord (so the cache can invalidate it).
+    assert!(ops.iter().any(|o| o["entity_uuid"] == uuid2));
+}

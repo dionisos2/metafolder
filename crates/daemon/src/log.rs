@@ -130,6 +130,24 @@ pub fn all_ops(conn: &rusqlite::Connection) -> Result<Vec<OpRow>> {
     Ok(ops)
 }
 
+/// Operations created after `op_id` — by creation order, across *all* branches
+/// (a new edit after a rollback is parented elsewhere but still has a larger
+/// id). The change delta a client polls to learn which metarecords were touched
+/// since it last synced (each op names its `entity_uuid`).
+pub fn ops_since(conn: &rusqlite::Connection, op_id: i64) -> Result<Vec<OpRow>> {
+    let mut stmt =
+        conn.prepare(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id > ?1 ORDER BY id"))?;
+    let ops = stmt
+        .query_map([op_id], row_to_op)?
+        .map(|r| {
+            let (mut op, entity) = r?;
+            op.entity_uuid = db::bytes_to_uuid(entity)?;
+            Ok(op)
+        })
+        .collect::<Result<Vec<OpRow>>>()?;
+    Ok(ops)
+}
+
 /// The recursive CTE walking the parent chain from `?1` up to the root.
 /// `?2` caps the walk at (operation count + 1) rows so a corrupted log with a
 /// cycle terminates instead of looping; the duplicate id is detected in Rust.
