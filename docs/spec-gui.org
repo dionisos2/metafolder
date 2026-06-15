@@ -174,7 +174,7 @@ the workspace rename (=tab:rename=), the metarecord-detail add-field form
 controls *inside* a flow already opened by a command — a form's =Cancel=, a
 folder picker's navigation, a form's submit — and inherently positional
 controls — an individual tab or a specific slot's =×= (their action is
-covered by =tab:goto-N= / =tab:close= / =panel:hide=) — need not each carry
+covered by =tab:goto= / =tab:close= / =panel:hide=) — need not each carry
 their own command.
 
 Each command carries a =log= flag (default =true=): when set, every
@@ -355,15 +355,21 @@ workspace rather than the focused slot's.
 
 | Command           | Description                                               |
 |-------------------+-----------------------------------------------------------|
-| =tab:new=         | Create a workspace in the focused slot (inherits the focused repo unless one is given) |
+| =tab:new=         | Create a workspace in BOTH slots (inherits the focused repo unless one is given) |
 | =tab:close=       | Close the focused slot's workspace (removes its tab; its slots switch to the previous workspace — the next one for the first tab — or become unassigned when none remains) |
 | =tab:rename=      | Rename the focused slot's workspace                       |
 | =tab:next=        | Assign the next workspace to the focused slot (wraps)     |
 | =tab:prev=        | Assign the previous workspace to the focused slot         |
-| =tab:goto-N=      | Assign workspace N to the focused slot                    |
+| =tab:goto=        | Move BOTH panels to workspace N (1-based; N is a parameter) |
+| =workspace:next=  | Move BOTH panels to the next workspace (wraps)            |
+| =workspace:prev=  | Move BOTH panels to the previous workspace                |
 
 Default keybinding suggestions: =t= for =tab:new=, =w= for =tab:close=,
-=n= / =p= for =tab:next= / =tab:prev=, =1= … =9= for =tab:goto-N=.
+=n= / =p= for =workspace:next= / =workspace:prev=, =1= … =9= for =tab:goto=.
+The default navigation keys move both panels together: the two slots only
+end up on different workspaces through an explicit tab click or the
+focused-slot =tab:next= / =tab:prev= commands (no default binding). Command
+names never bake in a parameter — =tab:goto= takes N as an argument.
 
 Default bindings use plain keys: modifier combos (=ctrl+…=, =alt+…=) are
 reserved for bindings with =text-input = true=, which must fire while a
@@ -447,12 +453,14 @@ Behaviours:
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:init=         | Open init-repo form                            |
 | =repos:load=         | Open load-repo form                            |
-| =tab:new=            | Create a new workspace, assign to focused slot |
+| =tab:new=            | Create a new workspace, assign to both slots   |
 | =tab:close=          | Close the focused slot's workspace (slot falls back to the previous workspace) |
 | =tab:rename=         | Rename the focused slot's workspace            |
 | =tab:next=           | Assign the next workspace to the focused slot  |
 | =tab:prev=           | Assign the previous workspace to the focused slot |
-| =tab:goto-N=         | Assign workspace N to the focused slot         |
+| =tab:goto=           | Move both panels to workspace N (parameter)    |
+| =workspace:next=     | Move both panels to the next workspace         |
+| =workspace:prev=     | Move both panels to the previous workspace     |
 | =panel:split=        | Show the right slot (focused workspace if unassigned) |
 | =panel:unsplit=      | Hide the non-focused slot (workspace preserved) |
 | =panel:hide=         | Hide the focused slot (workspace preserved)    |

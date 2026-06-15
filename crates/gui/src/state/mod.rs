@@ -121,6 +121,21 @@ impl Inner {
         Ok(())
     }
 
+    /// Assigns a workspace to both slots at once, preserving each slot's
+    /// visibility (a hidden slot stays hidden, just remembers the new
+    /// workspace). Keyboard navigation uses this so the two panels never end
+    /// up on different workspaces without an explicit action (a tab click or
+    /// a dedicated command). The focused slot is assigned first, so it keeps
+    /// its preferred panel type and the other slot pairs with it.
+    fn assign_both(&mut self, ws_id: &str) -> Result<(), String> {
+        for slot_id in [self.focused, self.focused.other()] {
+            let was_visible = self.slot(slot_id).visible;
+            self.assign(ws_id, slot_id)?;
+            self.slot_mut(slot_id).visible = was_visible;
+        }
+        Ok(())
+    }
+
     fn layout_view(&self) -> LayoutView {
         let payload = |slot: &Slot| SlotPayload {
             visible: slot.visible,
@@ -311,8 +326,10 @@ impl GuiState {
                     .and_then(|w| w.active_repo.clone())
             });
             let id = inner.new_workspace(active_repo);
-            let focused = inner.focused;
-            inner.assign(&id, focused).expect("freshly created workspace");
+            // Both panels follow the new workspace (a hidden slot just
+            // remembers it), so creating a tab never leaves the two panels
+            // on different workspaces.
+            inner.assign_both(&id).expect("freshly created workspace");
             (id, Emit::BOTH)
         })
     }
@@ -390,7 +407,28 @@ impl GuiState {
         self.tab_step(-1)
     }
 
+    /// `workspace:next` — moves BOTH panels to the next workspace (wrapping).
+    pub fn workspace_next(&self) -> Result<(), String> {
+        self.workspace_step(1)
+    }
+
+    /// `workspace:prev` — moves BOTH panels to the previous workspace.
+    pub fn workspace_prev(&self) -> Result<(), String> {
+        self.workspace_step(-1)
+    }
+
     fn tab_step(&self, direction: isize) -> Result<(), String> {
+        self.step(direction, false)
+    }
+
+    fn workspace_step(&self, direction: isize) -> Result<(), String> {
+        self.step(direction, true)
+    }
+
+    /// Steps the focused-slot workspace by `direction` (wrapping); `both`
+    /// moves the two panels together (keyboard navigation), otherwise only
+    /// the focused slot (the explicit `tab:next`/`tab:prev` commands).
+    fn step(&self, direction: isize, both: bool) -> Result<(), String> {
         self.mutate(|inner| {
             if inner.workspaces.is_empty() {
                 return Err("no workspaces".into());
@@ -404,21 +442,24 @@ impl GuiState {
                 None => 0,
             };
             let ws_id = inner.workspaces[target].id.clone();
-            let focused = inner.focused;
-            inner.assign(&ws_id, focused)?;
+            if both {
+                inner.assign_both(&ws_id)?;
+            } else {
+                let focused = inner.focused;
+                inner.assign(&ws_id, focused)?;
+            }
             Ok(((), Emit::LAYOUT))
         })
     }
 
-    /// `tab:goto-N` — assigns workspace N (1-based tab position).
+    /// `tab:goto` — moves BOTH panels to workspace N (1-based tab position).
     pub fn tab_goto(&self, n: usize) -> Result<(), String> {
         self.mutate(|inner| {
             if n == 0 || n > inner.workspaces.len() {
                 return Err(format!("no workspace at position {n}"));
             }
             let ws_id = inner.workspaces[n - 1].id.clone();
-            let focused = inner.focused;
-            inner.assign(&ws_id, focused)?;
+            inner.assign_both(&ws_id)?;
             Ok(((), Emit::LAYOUT))
         })
     }
@@ -841,6 +882,48 @@ mod tests {
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-2"));
         assert!(state.tab_goto(0).is_err());
         assert!(state.tab_goto(3).is_err());
+    }
+
+    #[test]
+    fn test_tab_goto_moves_both_panels() {
+        // Keyboard navigation keeps the two panels on the same workspace so
+        // the user never ends up split across workspaces unknowingly.
+        let (_, state) = state();
+        state.tab_new(None); // ws-2, focused
+        state.panel_split().unwrap(); // both slots on ws-2
+        state.tab_goto(1).unwrap();
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
+    }
+
+    #[test]
+    fn test_tab_new_moves_both_panels() {
+        let (_, state) = state();
+        state.panel_split().unwrap(); // both slots on ws-1
+        let id = state.tab_new(Some("repo-1".into()));
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(id.as_str()));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(id.as_str()));
+        assert!(layout.left.visible);
+        assert!(layout.right.visible);
+    }
+
+    #[test]
+    fn test_workspace_next_and_prev_move_both_panels() {
+        let (_, state) = state();
+        state.tab_new(None); // ws-2
+        state.tab_new(None); // ws-3, focused
+        state.panel_split().unwrap(); // both on ws-3
+        state.tab_goto(1).unwrap(); // both on ws-1
+        state.workspace_next().unwrap();
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-2"));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-2"));
+        state.workspace_prev().unwrap(); // ws-1
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
     }
 
     // ── Slots ────────────────────────────────────────────────────────────

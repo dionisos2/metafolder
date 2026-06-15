@@ -13,20 +13,23 @@
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }
 
-# Tabs (spec default suggestions: t, w, 1..9).
+# Tabs (spec default suggestions: t, w, 1..9). n/p and the digits move
+# BOTH panels together so the two slots never drift onto different
+# workspaces unnoticed; splitting across workspaces needs an explicit tab
+# click or the focused-slot tab:next/tab:prev commands.
 "t" = { command = "tab:new" }
 "w" = { command = "tab:close" }
-"n" = { command = "tab:next" }
-"p" = { command = "tab:prev" }
-"1" = { command = "tab:goto-1" }
-"2" = { command = "tab:goto-2" }
-"3" = { command = "tab:goto-3" }
-"4" = { command = "tab:goto-4" }
-"5" = { command = "tab:goto-5" }
-"6" = { command = "tab:goto-6" }
-"7" = { command = "tab:goto-7" }
-"8" = { command = "tab:goto-8" }
-"9" = { command = "tab:goto-9" }
+"n" = { command = "workspace:next" }
+"p" = { command = "workspace:prev" }
+"1" = { command = "tab:goto 1" }
+"2" = { command = "tab:goto 2" }
+"3" = { command = "tab:goto 3" }
+"4" = { command = "tab:goto 4" }
+"5" = { command = "tab:goto 5" }
+"6" = { command = "tab:goto 6" }
+"7" = { command = "tab:goto 7" }
+"8" = { command = "tab:goto 8" }
+"9" = { command = "tab:goto 9" }
 
 # In the file panel the arrows drive the metarecord-list selection of the
 # same workspace (commands are dispatched to their owning panel type,

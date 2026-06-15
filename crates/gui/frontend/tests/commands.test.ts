@@ -6,7 +6,6 @@ import { describe, expect, test } from 'vitest';
 import {
   filterCommands,
   filterCompletions,
-  gotoIndex,
   parseInvocation,
   resolveSubmission,
   shortcutsFor,
@@ -48,19 +47,7 @@ describe('parseInvocation', () => {
   });
 
   test('extra whitespace is tolerated', () => {
-    expect(parseInvocation('  tab:goto-3  ')).toEqual({ name: 'tab:goto-3', args: [] });
-  });
-});
-
-describe('gotoIndex', () => {
-  test('extracts N from tab:goto-N', () => {
-    expect(gotoIndex('tab:goto-3')).toBe(3);
-    expect(gotoIndex('tab:goto-12')).toBe(12);
-  });
-
-  test('returns null for other commands', () => {
-    expect(gotoIndex('tab:goto-')).toBeNull();
-    expect(gotoIndex('tab:new')).toBeNull();
+    expect(parseInvocation('  tab:goto 3  ')).toEqual({ name: 'tab:goto', args: ['3'] });
   });
 });
 
@@ -105,7 +92,7 @@ describe('shouldLogCommand', () => {
   const commands = [
     { name: 'reconcile:run', log: true },
     { name: 'editing:confirm', log: false },
-    { name: 'tab:goto-N', log: true },
+    { name: 'tab:goto', log: true },
   ];
 
   test('logs a command whose definition opts in', () => {
@@ -116,8 +103,7 @@ describe('shouldLogCommand', () => {
     expect(shouldLogCommand(commands, 'editing:confirm')).toBe(false);
   });
 
-  test('unknown commands (e.g. parameterized tab:goto-3) default to logging', () => {
-    expect(shouldLogCommand(commands, 'tab:goto-3')).toBe(true);
+  test('unknown commands default to logging', () => {
     expect(shouldLogCommand(commands, 'p:never-registered')).toBe(true);
   });
 });

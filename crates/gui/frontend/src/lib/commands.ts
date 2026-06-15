@@ -23,12 +23,6 @@ export function parseInvocation(input: string): ParsedInvocation {
   return { name, args };
 }
 
-/// `tab:goto-N` carries its parameter in the command name.
-export function gotoIndex(name: string): number | null {
-  const match = /^tab:goto-(\d+)$/.exec(name);
-  return match ? Number(match[1]) : null;
-}
-
 /** Key combos bound to a command (exact or with parameters), for the
  *  autocomplete display. */
 export function shortcutsFor(
@@ -44,8 +38,7 @@ export function shortcutsFor(
 }
 
 /** Whether an invocation of `name` should be echoed to the message panel.
- *  Looks the command up in the registry; commands not found (e.g. the
- *  parameterized `tab:goto-3`, registered as `tab:goto-N`) default to
+ *  Looks the command up in the registry; commands not found default to
  *  logging. */
 export function shouldLogCommand(commands: { name: string; log: boolean }[], name: string): boolean {
   const command = commands.find((c) => c.name === name);
@@ -262,6 +255,19 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'tab:prev':
       await invoke('tab_prev');
       return true;
+    case 'tab:goto': {
+      // The 1-based workspace position is the parameter (no longer baked
+      // into the command name). Moves BOTH panels.
+      const n = Number(args[0]);
+      if (Number.isInteger(n)) await invoke('tab_goto', { n });
+      return true;
+    }
+    case 'workspace:next':
+      await invoke('workspace_next');
+      return true;
+    case 'workspace:prev':
+      await invoke('workspace_prev');
+      return true;
     case 'panel:split':
       await invoke('panel_split');
       return true;
@@ -327,12 +333,6 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'quit':
       await invoke('quit');
       return true;
-  }
-
-  const n = gotoIndex(name);
-  if (n !== null) {
-    await invoke('tab_goto', { n });
-    return true;
   }
 
   // Not a shell builtin: a command registered by a panel type.

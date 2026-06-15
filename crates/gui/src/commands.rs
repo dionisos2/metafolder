@@ -107,6 +107,16 @@ pub fn tab_goto(app: AppHandle, n: usize) -> Result<(), String> {
     app.gui.tab_goto(n)
 }
 
+#[tauri::command]
+pub fn workspace_next(app: AppHandle) -> Result<(), String> {
+    app.gui.workspace_next()
+}
+
+#[tauri::command]
+pub fn workspace_prev(app: AppHandle) -> Result<(), String> {
+    app.gui.workspace_prev()
+}
+
 // ── Slots ────────────────────────────────────────────────────────────────
 
 #[tauri::command]
