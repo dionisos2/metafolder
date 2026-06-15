@@ -37,9 +37,7 @@ REPO=$(mfg repo) || die "no GUI running, or no repository in the focused workspa
 # Save the current layout so the harness leaves the GUI as it found it.
 SAVED_LEFT=$(mfg layout left)
 SAVED_RIGHT=$(mfg layout right)
-WORKSPACES=()
 cleanup() {
-    for ws in "${WORKSPACES[@]}"; do mfg workspace rm "$ws" >/dev/null 2>&1 || true; done
     mfg layout left "$SAVED_LEFT" >/dev/null 2>&1 || true
     mfg layout right "$SAVED_RIGHT" >/dev/null 2>&1 || true
 }
@@ -47,17 +45,17 @@ trap cleanup EXIT
 
 # A fresh workspace gives every "open" scenario a first, uncached panel load
 # (PanelHost keeps one live iframe per workspace×panel-type, so re-showing a
-# type in the same workspace does not reload it).
-new_ws() {
-    local ws
-    ws=$(mfg workspace new --repo "$REPO")
-    WORKSPACES+=("$ws")
-    echo "$ws"
-}
+# type in the same workspace does not reload it). Each scenario drops its own
+# workspace when done (drop_ws) so only its panels are ever alive — otherwise a
+# panel command like metarecord-list:page-next is ambiguous across the leftover
+# list panels of earlier scenarios.
+new_ws() { mfg workspace new --repo "$REPO"; }
+drop_ws() { mfg workspace rm "$1" >/dev/null 2>&1 || true; }
 
 clear_bench() { mfg bench --clear; }
 
-# Pretty per-name aggregation when jq is available, raw JSON otherwise.
+# Per-name aggregation (count / total / mean / max), sorted by total time.
+# Uses jq when present, else python3 (a benchmarks dependency), else raw JSON.
 report() {
     echo "── $1 ──"
     if command -v jq >/dev/null 2>&1; then
@@ -74,6 +72,21 @@ report() {
           | sort_by(-.total)[]
           | "  \(.name)\tn=\(.n)\ttotal=\((.total*100|round)/100)ms\tmean=\((.mean*100|round)/100)ms\tmax=\((.max*100|round)/100)ms"
         ' | { column -t -s "$(printf '\t')" 2>/dev/null || cat; }
+    elif command -v python3 >/dev/null 2>&1; then
+        mfg bench | python3 -c '
+import json, sys
+from collections import defaultdict
+records = json.load(sys.stdin).get("records", [])
+agg = defaultdict(list)
+for r in records:
+    agg[r["name"]].append(r["duration_ms"])
+rows = [(n, len(v), sum(v), sum(v)/len(v), max(v)) for n, v in agg.items()]
+rows.sort(key=lambda r: -r[2])
+if not rows:
+    print("  (no measures recorded)")
+for n, c, total, mean, mx in rows:
+    print(f"  {n:<34} n={c:<3} total={total:8.2f}ms  mean={mean:7.2f}ms  max={mx:7.2f}ms")
+'
     else
         mfg bench
     fi
@@ -91,6 +104,7 @@ scenario_open_list() {
     mfg view left metarecord-list >/dev/null
     settle
     report "open metarecord-list"
+    drop_ws "$ws"
 }
 
 scenario_open_detail() {
@@ -100,13 +114,14 @@ scenario_open_detail() {
     mfg layout left "$ws" >/dev/null
     mfg view left metarecord-list >/dev/null
     settle
-    mfg command metarecord-list:first >/dev/null || true # sets selected_metarecord
+    mfg command metarecord-list:first >/dev/null 2>&1 || true # sets selected_metarecord
     settle
     clear_bench
     mfg layout right "$ws" >/dev/null
     mfg view right metarecord-detail >/dev/null
     settle
     report "open metarecord-detail (selected row)"
+    drop_ws "$ws"
 }
 
 scenario_open_fm() {
@@ -116,6 +131,7 @@ scenario_open_fm() {
     mfg view left file-manager >/dev/null
     settle
     report "open file-manager"
+    drop_ws "$ws"
 }
 
 scenario_list_detail_nav() {
@@ -125,15 +141,16 @@ scenario_list_detail_nav() {
     mfg view left metarecord-list >/dev/null
     mfg view right metarecord-detail >/dev/null
     settle
-    mfg command metarecord-list:first >/dev/null || true
+    mfg command metarecord-list:first >/dev/null 2>&1 || true
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command metarecord-list:next >/dev/null || true
+        mfg command metarecord-list:next >/dev/null 2>&1 || true
         sleep "$STEP" # let the detail panel's async load settle before the next move
     done
     settle
     report "list+detail: ${STEPS}× selection down"
+    drop_ws "$ws"
 }
 
 scenario_fm_nav() {
@@ -147,11 +164,12 @@ scenario_fm_nav() {
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command file-manager:next >/dev/null || true
+        mfg command file-manager:next >/dev/null 2>&1 || true
         sleep "$STEP"
     done
     settle
     report "file-manager: ${STEPS}× selection down"
+    drop_ws "$ws"
 }
 
 scenario_paging() {
@@ -161,11 +179,12 @@ scenario_paging() {
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do
-        mfg command metarecord-list:page-next >/dev/null || true
+        mfg command metarecord-list:page-next >/dev/null 2>&1 || true
         sleep "$STEP"
     done
     settle
     report "paging: ${STEPS}× load next page"
+    drop_ws "$ws"
 }
 
 ALL=(open-list open-detail open-fm list-detail-nav fm-nav paging)
