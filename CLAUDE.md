@@ -213,16 +213,19 @@ HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
 The `mf-gui` binary (package `metafolder-gui`): a Tauri v2 desktop app over
 the daemon HTTP API, specified in `docs/spec-gui.org`. **Rust owns all
 canonical state**; the Svelte 5 shell (`frontend/`) mirrors it via Tauri
-events; panel types are plain HTML/JS directories rendered in iframes.
+events; panel types are plain HTML/JS directories that run **in the shell's JS
+realm**, each mounted in a Shadow DOM root via `export function mount(root,
+metafolder)` (no iframes — panels are trusted code; this enables a future
+shared data cache). `index.html` is markup only; `main.js` is the entry.
 
 - `state/`: `GuiState` — workspaces (tabs), the two panel slots, focus,
   per-workspace variables and message logs. Every mutation emits an event
   through the `FrontendNotifier` trait (`notifier.rs`; tests use
   `RecordingNotifier`).
 - `keybindings.rs`: combo/sequence parsing, TOML model, single-file +
-  panel-suggestion merge, compiled table consumed by the shared JS matcher
-  (`panel-shim/keymatch.js`, used identically by the shell and inside each
-  iframe — key events do not cross iframe boundaries).
+  panel-suggestion merge, compiled table consumed by the single shell-side JS
+  matcher (`panel-shim/keymatch.js`; panel key events bubble through the Shadow
+  DOM to the shell, so text-input detection uses `composedPath()`).
 - `command_registry.rs`: builtin + panel-registered commands, autocomplete
   listing (global + focused panel's local commands).
 - `config.rs`: `~/.config/metafolder/gui/` — reads the keybindings, stylesheet
@@ -231,8 +234,9 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   **complete** set (single-file model: `set` upserts, `remove` unbinds, and
   reverting to a default is a git op on the config repo); `gui.port` discovery
   file. Shipped defaults live in `crates/gui/default-config/`.
-- `server/`: Axum router on 127.0.0.1:7524 — panel assets with shim+style
-  injection (`panel_assets.rs`), raw files with Range support (`fsraw.rs`),
+- `server/`: Axum router on 127.0.0.1:7524 (permissive CORS so the shell can
+  fetch/`import()` panel files cross-origin) — panel assets served verbatim
+  (`panel_assets.rs`), raw files with Range support (`fsraw.rs`),
   and the `/gui/*` scripting API (`gui_api.rs`, `input_wait.rs`: workspaces,
   layout, panel views, message, input/prompt waits with a single lock, 409
   on concurrency, status snapshot).
@@ -241,11 +245,13 @@ events; panel types are plain HTML/JS directories rendered in iframes.
 - `commands.rs`: thin `#[tauri::command]` wrappers; `shell_exec.rs` (`!`
   commands), `style_watcher.rs` (style.css auto-reload), `fs_commands.rs`
   (`metafolder.fs`), `reconcile.rs` (`reconcile:run` flow).
-- `panel-shim/shim.js`: injected into every panel document; provides
-  `window.metafolder` (daemon/workspace/commands/fs/statusBar/messages +
-  `addKeybinding`) over a postMessage protocol; `resolve.js`: memoized path
-  resolution over the daemon's `tree/resolve` endpoint (no client-side walk);
-  `ui.js` (served as `/__ui.js`, importable by panels): `el()` DOM builder,
+- `frontend/src/lib/panels/api.ts`: `createPanelApi(deps, ctx)` builds the
+  `metafolder` object passed to each panel's `mount` (daemon/workspace/commands/
+  fs/statusBar/messages + `addKeybinding`), calling Tauri commands directly;
+  per-instance var/message/visibility push registries and daemon caches.
+  `panel-shim/` holds the framework-free helpers it reuses: `resolve.js`
+  (memoized `tree/resolve` paths), `visibility.js`, `menu.js`, `keymatch.js`;
+  `ui.js` (served as `/__ui.js`, imported by panels): `el()` DOM builder,
   `formatValue()`, `byName()`/`field()`/`fields()` (memoized field index).
 - `default-config/panel-types/`: the built-in panels (repos, metarecord-list,
   metarecord-detail, file, file-manager, message, log, workspace-info, hello
@@ -253,14 +259,15 @@ events; panel types are plain HTML/JS directories rendered in iframes.
   `metafolder-sync-config`.
 - `frontend/`: Svelte shell — TabBar, two Slots + divider, CommandInput
   (per-workspace drafts, autocomplete, script prompts), StatusBar(s),
-  ConfigOverlay (paths + keybinding editor), PanelHost (iframe pool, one
-  live iframe per workspace×panel-type, never reparented) and the bridge
-  (`lib/panels/bridge.ts`, unit-tested core of the postMessage protocol).
+  ConfigOverlay (paths + keybinding editor) and PanelHost (`lib/panels/
+  PanelHost.svelte`: one Shadow-DOM host per workspace×panel-type, never
+  reparented — fetches `index.html` into the shadow, `import()`s `main.js` and
+  calls `mount(root, api)`; a shell-side registry routes panel commands).
 
 GUI tests: `cargo test -p metafolder-gui` (state/keybindings/registry unit
 tests + `tests/*.rs` driving the Axum router with oneshot and a stub daemon
 on an ephemeral port); `npm --prefix crates/gui/frontend test` (vitest:
-keymatch, commands parsing, bridge, resolve).
+keymatch, commands parsing, panel `api`, resolve).
 
 GUI dev gotchas (learned the hard way):
 - Panels are served from `~/.config/metafolder/gui/panel-types/` (the config
@@ -268,12 +275,17 @@ GUI dev gotchas (learned the hard way):
   source, re-run `metafolder-sync-config`: it merges the shipped `default`
   branch into `main` (a real git 3-way merge, conflicts restore `main`
   untouched). The GUI itself never installs or upgrades anything at startup.
-- Never post `$state` proxies through `postMessage` (DataCloneError, and
-  the rejection is silent in an async handler): `$state.snapshot()` first.
-- WebKitGTK swaps the iframe WindowProxy on cross-origin navigation:
-  never key anything on a captured `contentWindow`; match `event.source`
-  against the live `iframe.contentWindow` at message time (and the shim
-  re-sends `ready` until the shell answers).
+- Panels run in the shell's realm: a panel exports `mount(root, metafolder)`
+  where `root` is its Shadow DOM root — use `root.getElementById(...)`, not
+  `document` (which is the shell). `body`-level CSS must target
+  `.mf-panel-body`. Return a cleanup fn to remove any `document`-level
+  listeners. There is no iframe/process isolation: a throw in `mount` is
+  caught by the host's error boundary, but a panel can still corrupt shared
+  state — panels are trusted code.
+- Dynamic `import('/panel/X/main.js')` is cached per URL; PanelHost cache-busts
+  with `?v=<session>` so an edited panel reloads on GUI restart, but a sub-module
+  edit (`./columns.js`) is not hot-reloaded. Re-run `metafolder-sync-config`
+  after editing built-in panel sources (they are served from the config repo).
 
 ## Repository structure on disk
 

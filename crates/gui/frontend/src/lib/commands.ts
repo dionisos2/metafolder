@@ -124,6 +124,13 @@ export function hasEditingTarget(): boolean {
   return editingTarget !== null;
 }
 
+/** The innermost focused element, piercing panel Shadow DOM roots. */
+export function deepActiveElement(): Element | null {
+  let el: Element | null = document.activeElement;
+  while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+  return el;
+}
+
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
 export type PanelDispatch = (command: CommandDef, args: string[]) => Promise<void>;
@@ -203,8 +210,13 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // The input is always visible: activation means focusing it.
       store.ui.commandInputFocusTick += 1;
       return true;
+    // editing:* acts on the shell command input (editingTarget) when set,
+    // otherwise on the deep-focused panel input (replacing the old per-iframe
+    // shim handlers). confirm/discard stay command-input-only — panel inputs
+    // keep native Enter/Escape for their own keydown handlers (see keys.ts).
     case 'editing:unfocus':
-      editingTarget?.unfocus();
+      if (editingTarget) editingTarget.unfocus();
+      else (deepActiveElement() as HTMLElement | null)?.blur();
       return true;
     case 'editing:discard':
       editingTarget?.discard();
@@ -212,12 +224,21 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'editing:confirm':
       editingTarget?.confirm();
       return true;
-    case 'editing:goto-line-start':
-      editingTarget?.lineStart();
+    case 'editing:goto-line-start': {
+      if (editingTarget) editingTarget.lineStart();
+      else (deepActiveElement() as HTMLInputElement | null)?.setSelectionRange?.(0, 0);
       return true;
-    case 'editing:goto-line-end':
-      editingTarget?.lineEnd();
+    }
+    case 'editing:goto-line-end': {
+      if (editingTarget) {
+        editingTarget.lineEnd();
+      } else {
+        const input = deepActiveElement() as HTMLInputElement | null;
+        const end = input?.value?.length ?? 0;
+        input?.setSelectionRange?.(end, end);
+      }
       return true;
+    }
     case 'tab:new':
       // Optional parameter: the repo UUID of the new workspace
       // (used by the repos panel).

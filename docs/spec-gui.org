@@ -579,16 +579,17 @@ edits them freely on the config repository's =main= branch; upgrades are a git
 merge of the shipped =default= branch, not a copy-if-unmodified pass. There is
 no =panel-types-defaults/= mirror.
 
-Panel types are served to the WebView by the GUI's own HTTP server (the
-GUI API port, default 7524): =GET /panel/<name>/<file>=. HTML documents get
-the =metafolder= shim and a =<link>= to the user stylesheet injected at
-serve time. Raw local files for the =file= panel type are served by
+Panel types are served by the GUI's own HTTP server (the GUI API port,
+default 7524): =GET /panel/<name>/<file>=, **verbatim** (permissive CORS, so
+the shell can fetch/=import()= them from its own origin). The shell mounts a
+panel into a Shadow DOM root and applies the user stylesheet itself (no
+serve-time injection). Raw local files for the =file= panel type are served by
 =GET /fsraw?path=...= with HTTP Range support (media seeking).
 
 *** The =metafolder= API
 
-The GUI injects a =window.metafolder= object into every panel type's JS
-context. It provides three namespaces:
+The shell passes a =metafolder= object to each panel type's =mount(root,
+metafolder)=. It provides three namespaces:
 
 **** =metafolder.daemon=
 
@@ -1379,18 +1380,27 @@ curl -s -X DELETE "$GUI/gui/workspaces/$WS_RIGHT"
 Svelte 5 + Vite for the shell. Built-in panel types are plain HTML/JS (no
 build step) so users can read and copy them as examples.
 
-** =metafolder= API injection mechanism
+** =metafolder= API delivery mechanism
 
-Each panel type instance is an =<iframe>= (one per (workspace, panel type),
-kept alive while hidden for state retention, never reparented). A shim
-script injected at serve time provides =window.metafolder= and talks to the
-shell over =postMessage=; the shell forwards to the Rust backend. Key events
-never cross the iframe boundary, so the shim runs the same key matcher as
-the shell against the compiled binding table and forwards resolved
-invocations.
+Panel types run **in the shell's JS realm**, not in iframes. Each instance
+(one per (workspace, panel type), kept alive while hidden for state retention,
+never reparented) is a host element with its own **Shadow DOM** root for CSS
+isolation. The shell fetches the panel's =index.html= into the shadow root
+(scripts stripped), =import()=s its =main.js= and calls the contract
+=export function mount(root, metafolder)= (returning an optional cleanup
+function). =metafolder= is a plain object whose methods call the Rust backend
+directly — there is no =postMessage= bridge. Because everything shares one
+realm, panel key events bubble to the shell's single key matcher (text-input
+detection pierces shadow roots via =composedPath()=).
+
+This abandons iframe isolation deliberately: it lets a later shared data cache
+live in the realm and be read by every panel without per-access copies. Panels
+are **trusted code** (they already have filesystem and shell access through the
+API — see [[*Custom panel type trust model]]); a throw in =mount= is contained
+by an error boundary, but a panel can otherwise touch shared state.
 
 A corollary: the same panel type cannot be displayed in both slots for the
-same workspace (one iframe cannot render twice); =panel:set-type= rejects
+same workspace (one instance cannot render twice); =panel:set-type= rejects
 this with a status bar error.
 
 ** Daemon access
@@ -1401,9 +1411,9 @@ daemon directly (CORS), and the daemon stays GUI-agnostic.
 
 ** Commands targeting an absent panel type
 
-Commands registered by a panel type whose iframe is not instantiated yet in
+Commands registered by a panel type whose instance is not mounted yet in
 the focused workspace are dispatched after lazily creating the hidden
-iframe. Commands registered with =reveal: true= (e.g. =metarecord:create=,
+instance. Commands registered with =reveal: true= (e.g. =metarecord:create=,
 =log:rollback=) additionally switch a slot to the owning panel type first:
 the other slot when it shows the same workspace, otherwise the focused
 slot. Limitation: a panel type's commands only exist in the registry once
@@ -1467,16 +1477,19 @@ reproducibly.
 
 * Open questions
 
-** Custom panel type trust model
+** Custom panel type trust model (resolved: trusted)
 
-The =metafolder.fs= API gives panel types unrestricted read access to the
-filesystem (any directory, not just the repo root). Combined with
-=metafolder.daemon= (full DB access) and =metafolder.workspace= (shared
-variables), a malicious panel type installed from an untrusted source would
-have broad access. No sandboxing is currently planned; users are expected to
-only install panel types they trust. This is consistent with the trust
-requirement for the daemon access itself. To be revisited if a panel type
-distribution mechanism is ever added.
+The =metafolder.fs= API gives panel types unrestricted filesystem access and
+=commands.invoke('!…')= runs arbitrary shell commands, so the iframe was never
+a security boundary against panel code — the boundary is Tauri's capability
+layer (GUI ↔ OS). Panel types are therefore treated as **trusted code**, and
+the GUI runs them in the shell's own JS realm (Shadow DOM for CSS isolation,
+no realm/process isolation; see [[*=metafolder= API delivery mechanism]]),
+which is what makes a single shared in-realm data cache possible. A throw in a
+panel's =mount= is contained by an error boundary, but a buggy panel can still
+corrupt shared state. To be revisited only if a panel-type *distribution*
+mechanism (untrusted third-party panels) is ever added — that would need real
+sandboxing, not the iframe.
 
 ** Panel type selector UX
 

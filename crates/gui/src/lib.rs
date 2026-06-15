@@ -154,8 +154,8 @@ pub fn run(options: Options) {
             tauri::Manager::manage(tauri_app, app);
 
             // A WebKit web-process crash (e.g. a GStreamer failure in a
-            // media pipeline) would otherwise leave the window frozen on
-            // its last frame: the shell and every panel iframe share that
+            // media pipeline) would otherwise leave the window frozen on its
+            // last frame: the shell and every panel (same realm) share that
             // single process. Reload the shell instead — Rust owns all
             // canonical state, so nothing is lost. A second crash shortly
             // after a reload means reloading re-triggers it: stop there

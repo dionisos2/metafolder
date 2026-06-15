@@ -1,6 +1,6 @@
-// Window-level key capture for the shell document. Panels run the same
-// matcher inside their iframes (via the shim); both consume the compiled
-// table produced by the Rust keybinding engine.
+// Window-level key capture for the whole document. Panels run in the shell's
+// realm (Shadow DOM), so their key events bubble here too — one matcher serves
+// everything, consuming the compiled table from the Rust keybinding engine.
 
 // @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../../panel-shim/keymatch.js';
@@ -57,9 +57,12 @@ export function installKeys() {
         matcher.setBindings(store.keytable);
         lastTable = store.keytable;
       }
+      // composedPath()[0] is the real focused element even inside a panel's
+      // Shadow DOM (document.activeElement would be the shadow host).
+      const target = (event.composedPath()[0] as Element | undefined) ?? document.activeElement;
       const result = matcher.feed(combo, {
         panelType: focusedPanelType(),
-        textInput: isTextInput(document.activeElement),
+        textInput: isTextInput(target),
       });
       // Continuation hint: shown while a sequence is pending, cleared by
       // any other outcome (fired, cancelled with escape, aborted).
@@ -76,10 +79,16 @@ export function installKeys() {
         return;
       }
       if (!result) return;
-      // editing:* only fires where a handler is registered (the command
-      // input); otherwise the key keeps its native behaviour (e.g. Enter
-      // committing the tab-rename input).
-      if (result.invocation?.startsWith('editing:') && !hasEditingTarget()) return;
+      // editing:* acts on the shell command input (editingTarget) when set.
+      // Without it, dispatch falls back to the deep-focused panel input for
+      // unfocus/goto-line-*, but Enter/Escape stay native so panel forms keep
+      // their own keydown handlers (e.g. the metarecord-list query input).
+      if (result.invocation?.startsWith('editing:') && !hasEditingTarget()) {
+        if (!isTextInput(target)) return;
+        if (result.invocation === 'editing:confirm' || result.invocation === 'editing:discard') {
+          return;
+        }
+      }
       event.preventDefault();
       event.stopPropagation();
       if (result.invocation) void dispatch(result.invocation);
