@@ -68,15 +68,20 @@ pub fn ms_from_systemtime(t: SystemTime) -> i64 {
 }
 
 /// Minimal ISO-8601 → Unix ms (UTC). Accepts `T` or a space as the
-/// date/time separator, a trailing `Z`, and an omitted time (midnight) or
-/// omitted seconds/minutes. Returns `None` on a malformed string.
+/// date/time separator, a trailing `Z`, an omitted time (midnight) or
+/// omitted seconds/minutes, and an omitted month and/or day (both default
+/// to 1, so `2017` and `2027-01` mean `2017-01-01` and `2027-01-01`).
+/// Returns `None` on a malformed string.
 pub fn iso_to_ms(s: &str) -> Option<i64> {
     let s = s.trim().trim_end_matches('Z');
     let (date, time) = s.split_once(['T', ' ']).unwrap_or((s, "00:00:00"));
     let mut d = date.split('-');
     let year: i64 = d.next()?.parse().ok()?;
-    let month: i64 = d.next()?.parse().ok()?;
-    let day: i64 = d.next()?.parse().ok()?;
+    let month: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
+    let day: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
     let mut t = time.split(':');
     let hour: i64 = t.next()?.parse().ok()?;
     let min: i64 = t.next().unwrap_or("0").parse().ok()?;
@@ -150,9 +155,21 @@ mod tests {
     }
 
     #[test]
+    fn iso_to_ms_accepts_year_only_and_year_month() {
+        // A bare year means the first instant of that year.
+        assert_eq!(iso_to_ms("2017"), iso_to_ms("2017-01-01"));
+        // A year-month means the first day of that month.
+        assert_eq!(iso_to_ms("2027-01"), iso_to_ms("2027-01-01"));
+        assert_eq!(iso_to_ms("2027-03"), iso_to_ms("2027-03-01"));
+    }
+
+    #[test]
     fn iso_to_ms_rejects_garbage() {
         assert_eq!(iso_to_ms("not-a-date"), None);
         assert_eq!(iso_to_ms("2021-13"), None);
+        assert_eq!(iso_to_ms("2021-00"), None);
+        assert_eq!(iso_to_ms("2021-01-32"), None);
+        assert_eq!(iso_to_ms("2021-01-00"), None);
     }
 
     #[test]
