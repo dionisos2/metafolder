@@ -53,7 +53,19 @@ function queryKey(value: unknown): string {
     .join(',')}}`;
 }
 
-export function createCache() {
+export interface CacheOptions {
+  maxEntities?: number;
+  maxTreeRefs?: number;
+  maxQueries?: number;
+}
+
+export function createCache(opts: CacheOptions = {}) {
+  // Budgets bound memory. Entities/treeRefs must comfortably exceed a panel's
+  // working set (else a displayed metarecord gets evicted and reads REFRESH).
+  const maxEntities = opts.maxEntities ?? 20000;
+  const maxTreeRefs = opts.maxTreeRefs ?? 20000;
+  const maxQueries = opts.maxQueries ?? 256;
+
   const entities = new Map<string, Metarecord>(); // `${repo}|${uuid}` → metarecord
   const treeRefs = new Map<string, string[]>(); // `${repo}|${field}|${uuid}` → [paths]
   const queries = new Map<string, DaemonResponse>(); // `${repo}|${queryKey}` → response
@@ -62,11 +74,30 @@ export function createCache() {
   const eKey = (repo: string, uuid: string) => `${repo}|${uuid}`;
   const tKey = (repo: string, field: string, uuid: string) => `${repo}|${field}|${uuid}`;
 
+  // ── LRU helpers (Map keeps insertion order; move-to-end = most recent) ────
+  function touch<V>(map: Map<string, V>, key: string): V | undefined {
+    const value = map.get(key);
+    if (value !== undefined) {
+      map.delete(key);
+      map.set(key, value);
+    }
+    return value;
+  }
+  function put<V>(map: Map<string, V>, key: string, value: V, max: number) {
+    map.delete(key); // re-insert at the end (most recently used)
+    map.set(key, value);
+    while (map.size > max) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) break;
+      map.delete(oldest);
+    }
+  }
+
   /** Stores full metarecords (from a `select: '*'` query or a fetch). */
   function putEntities(repo: string, records: Metarecord[]) {
     for (const r of records) {
       if (r && typeof r.uuid === 'string' && Array.isArray(r.fields)) {
-        entities.set(eKey(repo, r.uuid), r);
+        put(entities, eKey(repo, r.uuid), r, maxEntities);
       }
     }
   }
@@ -106,13 +137,13 @@ export function createCache() {
     if (m) {
       const repo = m[1];
       const key = `${repo}|${queryKey(body as Record<string, unknown>)}`;
-      const hit = queries.get(key);
+      const hit = touch(queries, key);
       if (hit) return hit;
       const res = await raw(method, path, body);
       if (res.status === 200) {
         const results = (res.body as { results?: Metarecord[] })?.results ?? [];
         putEntities(repo, results);
-        queries.set(key, res);
+        put(queries, key, res, maxQueries);
       }
       return res;
     }
@@ -121,7 +152,7 @@ export function createCache() {
     m = method === 'GET' ? cleanPath.match(METARECORD) : null;
     if (m) {
       const [, repo, uuid] = m;
-      const cached = entities.get(eKey(repo, uuid));
+      const cached = touch(entities, eKey(repo, uuid));
       if (cached) return ok(cached);
       const res = await raw(method, path, body);
       if (res.status === 200) putEntities(repo, [res.body as Metarecord]);
@@ -136,7 +167,7 @@ export function createCache() {
       const out: Record<string, Metarecord> = {};
       const missing: string[] = [];
       for (const uuid of uuids) {
-        const cached = entities.get(eKey(repo, uuid));
+        const cached = touch(entities, eKey(repo, uuid));
         if (cached) out[uuid] = cached;
         else missing.push(uuid);
       }
@@ -157,7 +188,7 @@ export function createCache() {
       const out: Record<string, string[]> = {};
       const missing: string[] = [];
       for (const uuid of uuids) {
-        const cached = treeRefs.get(tKey(repo, field, uuid));
+        const cached = touch(treeRefs, tKey(repo, field, uuid));
         if (cached) out[uuid] = cached;
         else missing.push(uuid);
       }
@@ -168,7 +199,7 @@ export function createCache() {
       const fetched = (res.body as Record<string, string[]>) ?? {};
       for (const uuid of missing) {
         const paths = fetched[uuid] ?? [];
-        treeRefs.set(tKey(repo, field, uuid), paths);
+        put(treeRefs, tKey(repo, field, uuid), paths, maxTreeRefs);
         out[uuid] = paths;
       }
       return ok(out);
@@ -253,12 +284,12 @@ export function createCache() {
 
   /** Synchronous read; REFRESH when the metarecord is absent/invalidated. */
   function readMetarecord(repo: string, uuid: string): Metarecord | typeof REFRESH {
-    return entities.get(eKey(repo, uuid)) ?? REFRESH;
+    return touch(entities, eKey(repo, uuid)) ?? REFRESH;
   }
 
   /** Synchronous read of a (field, uuid)'s paths; REFRESH when absent. */
   function readTreeRef(repo: string, field: string, uuid: string): string[] | typeof REFRESH {
-    return treeRefs.get(tKey(repo, field, uuid)) ?? REFRESH;
+    return touch(treeRefs, tKey(repo, field, uuid)) ?? REFRESH;
   }
 
   /** Every repo the cache holds data for (drives the background sync). */

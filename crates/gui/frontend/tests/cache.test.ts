@@ -198,3 +198,28 @@ describe('cache — write invalidation (own edits show immediately)', () => {
     expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1')); // still cached
   });
 });
+
+describe('cache — LRU pruning bounds memory', () => {
+  const fetchOne = (cache: ReturnType<typeof createCache>, u: string) =>
+    cache.request('GET', `/repos/r/metarecords/${u}`, null, async () => ok(rec(u)));
+
+  test('entities are bounded; the least-recently-used is evicted, touched survives', async () => {
+    const cache = createCache({ maxEntities: 2 });
+    await fetchOne(cache, 'a1');
+    await fetchOne(cache, 'b2'); // [a1, b2]
+    cache.readMetarecord('r', 'a1'); // touch → [b2, a1]
+    await fetchOne(cache, 'c3'); // size 3 > 2 → evict oldest (b2) → [a1, c3]
+    expect(cache._stats().entities).toBe(2);
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1')); // survived (recently read)
+    expect(cache.readMetarecord('r', 'b2')).toBe(REFRESH); // evicted
+    expect(cache.readMetarecord('r', 'c3')).toEqual(rec('c3'));
+  });
+
+  test('the query cache is bounded too', async () => {
+    const cache = createCache({ maxQueries: 1 });
+    const raw = async () => ok({ results: [] });
+    await cache.query('r', { query: { a: 1 } }, raw);
+    await cache.query('r', { query: { a: 2 } }, raw);
+    expect(cache._stats().queries).toBe(1);
+  });
+});
