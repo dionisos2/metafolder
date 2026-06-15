@@ -84,6 +84,11 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/input", post(gui_api::post_input))
         .route("/gui/prompt", post(gui_api::post_prompt))
         .route("/gui/status", get(gui_api::get_status))
+        // Panels run in the Svelte shell's (Tauri) origin but fetch their
+        // HTML and `import()` their modules from this server's origin, so the
+        // panel assets and helper modules must be CORS-readable. The server is
+        // bound to 127.0.0.1, so a permissive policy is acceptable.
+        .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }
 

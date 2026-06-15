@@ -2,116 +2,144 @@
   import { onMount } from 'svelte';
   import { invoke, listen } from '../ipc';
   import { dispatch, setPanelDispatch } from '../commands';
+  import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
-  import { createBridgeCore } from './bridge';
+  import { createPanelApi, type PanelApiInstance } from './api';
   import type { CommandDef, SlotId } from '../types';
+  // @ts-expect-error plain-JS module shared with the (former) panel shim
+  import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
 
   let layer = $state<HTMLElement | null>(null);
 
-  // One iframe per (workspace, panel type), kept alive for the whole
-  // session (state retention) and NEVER reparented — moving an iframe in
-  // the DOM reloads it. Hidden instances are display:none.
-  //
-  // Instances are identified by the string key "ws|type". Incoming
-  // messages are matched against the CURRENT contentWindow of each
-  // iframe: WebKitGTK swaps the WindowProxy on cross-origin navigation,
-  // so a proxy captured at creation would never equal event.source.
-  const iframes = new Map<string, HTMLIFrameElement>();
-  const readiness = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  // One instance per (workspace, panel type), kept alive for the whole session
+  // (state retention) and NEVER reparented. Each panel runs in the shell's JS
+  // realm inside its own Shadow DOM root (CSS isolation); the metafolder API is
+  // called directly (no postMessage). Hidden instances are display:none.
+  interface PanelInstance {
+    wsId: string;
+    panelType: string;
+    host: HTMLDivElement;
+    shadow: ShadowRoot;
+    apiInst: PanelApiInstance;
+    cleanup: (() => void) | null;
+    mounted: Promise<void>;
+  }
+  const instances = new Map<string, PanelInstance>();
+  // Panel command handlers, keyed `${wsId}|${panelType}|${name}`.
+  const panelHandlers = new Map<string, (...args: string[]) => unknown>();
   let visibleSlots = new Map<string, SlotId>(); // instance key -> slot
 
-  const bridge = createBridgeCore({
-    invoke,
-    dispatch,
-    onCommandsChanged: () => void refreshCommands(),
-    onPendingKeys: (pending) => {
-      store.ui.pendingKeys = pending;
-    },
-  });
+  const base = `http://127.0.0.1:${store.guiPort}`;
+  // Cache-bust modules once per session so an edited panel reloads on GUI
+  // restart (a given URL's module is evaluated once per page).
+  const bust = `?v=${Date.now()}`;
+
+  // The user stylesheet, adopted (live) by every panel shadow root, plus a
+  // base sheet sizing the body stand-in.
+  const userSheet = new CSSStyleSheet();
+  const baseSheet = new CSSStyleSheet();
+  baseSheet.replaceSync(':host{display:block;height:100%}.mf-panel-body{width:100%;height:100%;box-sizing:border-box}');
 
   const instanceKey = (wsId: string, panelType: string) => `${wsId}|${panelType}`;
 
-  function keyForSource(source: MessageEventSource): string | null {
-    for (const [key, iframe] of iframes) {
-      if (iframe.contentWindow === source) return key;
-    }
-    return null;
-  }
-
-  function ensureIframe(wsId: string, panelType: string): HTMLIFrameElement {
+  function ensureInstance(wsId: string, panelType: string): PanelInstance {
     const key = instanceKey(wsId, panelType);
-    let iframe = iframes.get(key);
-    if (iframe || !layer) return iframe!;
+    const existing = instances.get(key);
+    if (existing || !layer) return existing!;
 
-    iframe = document.createElement('iframe');
-    iframe.className = 'panel-frame';
-    iframe.src = `http://127.0.0.1:${store.guiPort}/panel/${panelType}/index.html`;
-    iframe.style.display = 'none';
-    layer.appendChild(iframe);
-    iframes.set(key, iframe);
+    const host = document.createElement('div');
+    host.className = 'panel-host';
+    host.style.display = 'none';
+    layer.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.adoptedStyleSheets = [userSheet, baseSheet];
 
-    let resolveReady = () => {};
-    const promise = new Promise<void>((resolve) => (resolveReady = resolve));
-    readiness.set(key, { promise, resolve: resolveReady });
-
-    bridge.register(key, { wsId, panelType }, (message) =>
-      iframe!.contentWindow?.postMessage(message, '*'),
-    );
-    return iframe;
-  }
-
-  async function sendInit(key: string) {
-    const meta = bridge.instanceMeta(key);
-    const target = iframes.get(key)?.contentWindow;
-    if (!meta || !target) return;
-    let vars: [string, unknown][] = [];
-    try {
-      vars = (await invoke('ws_vars', { wsId: meta.wsId })) as [string, unknown][];
-    } catch {
-      /* workspace may be gone already */
-    }
-    target.postMessage(
+    const visibilityGate = createVisibilityGate();
+    const apiInst = createPanelApi(
       {
-        mf: true,
-        type: 'init',
-        workspaceId: meta.wsId,
-        panelType: meta.panelType,
-        slot: visibleSlots.get(key) ?? null,
-        vars: Object.fromEntries(vars),
-        // $state proxies cannot be structured-cloned: snapshot first.
-        keytable: $state.snapshot(store.keytable),
-        guiServer: `http://127.0.0.1:${store.guiPort}`,
+        invoke,
+        dispatch,
+        registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
+        onCommandsChanged: () => void refreshCommands(),
+        addDefaultMenuItems,
       },
-      '*',
+      { wsId, panelType, guiServer: base, root: shadow, visibilityGate },
     );
-    readiness.get(key)?.resolve();
-    // Visible in GET /gui/panels/:slot/view as "ready".
-    void invoke('panel_ready', { wsId: meta.wsId, panelType: meta.panelType });
+
+    // Clicking into a panel focuses its slot (focusin crosses the shadow).
+    host.addEventListener('focusin', () => {
+      const slot = visibleSlots.get(key);
+      if (slot && slot !== store.layout.focused) void invoke('panel_focus_next');
+    });
+
+    const instance: PanelInstance = { wsId, panelType, host, shadow, apiInst, cleanup: null, mounted: undefined! };
+    instances.set(key, instance);
+    instance.mounted = mountPanel(instance);
+    return instance;
   }
 
-  // The slot bodies shrink/grow when the command input, suggestions or a
-  // second status bar appear: follow their geometry, not just layout
-  // events.
+  async function mountPanel(instance: PanelInstance) {
+    const { panelType, shadow } = instance;
+    try {
+      const html = await fetch(`${base}/panel/${panelType}/index.html`).then((r) => r.text());
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      for (const style of doc.head.querySelectorAll('style')) shadow.append(style.cloneNode(true));
+      const body = document.createElement('div');
+      body.className = 'mf-panel-body';
+      for (const child of [...doc.body.childNodes]) {
+        if (child.nodeName === 'SCRIPT') continue; // logic lives in main.js::mount
+        body.append(child);
+      }
+      shadow.append(body);
+      const mod = await import(/* @vite-ignore */ `${base}/panel/${panelType}/main.js${bust}`);
+      const ret = await mod.mount(shadow, instance.apiInst.api);
+      instance.cleanup = typeof ret === 'function' ? ret : null;
+      void invoke('panel_ready', { wsId: instance.wsId, panelType });
+    } catch (error) {
+      // Error boundary: a panel that fails to load shows its error and does
+      // not break the shell (no iframe/process isolation any more).
+      const pre = document.createElement('pre');
+      pre.textContent = `panel "${panelType}" failed to load:\n${String(error)}`;
+      pre.style.cssText = 'color:#f88;padding:1em;white-space:pre-wrap;font:12px monospace';
+      shadow.append(pre);
+    }
+  }
+
+  function teardown(key: string, instance: PanelInstance) {
+    try {
+      instance.cleanup?.();
+    } catch {
+      /* a panel's cleanup must not block teardown */
+    }
+    for (const handlerKey of [...panelHandlers.keys()]) {
+      if (handlerKey.startsWith(`${key}|`)) panelHandlers.delete(handlerKey);
+    }
+    instance.host.remove();
+    instances.delete(key);
+  }
+
+  // Slot bodies shrink/grow when the command input or a second status bar
+  // appear: follow their geometry, not just layout events.
   const resizeObserver =
     typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => sync());
   const observedBodies = new Set<Element>();
 
-  /** Aligns the iframe pool with the current layout and slot geometry. */
+  /** Aligns the instance pool with the current layout and slot geometry. */
   function sync() {
     if (!layer) return;
     const wanted = new Map<string, SlotId>();
     for (const slot of ['left', 'right'] as SlotId[]) {
       const payload = slotPayload(slot);
       if (!payload.visible || !payload.workspace_id || !payload.panel_type) continue;
-      const iframe = ensureIframe(payload.workspace_id, payload.panel_type);
+      const instance = ensureInstance(payload.workspace_id, payload.panel_type);
       const body = document.querySelector(`[data-slot-body="${slot}"]`);
-      if (!iframe || !body) continue;
+      if (!instance || !body) continue;
       if (resizeObserver && !observedBodies.has(body)) {
         resizeObserver.observe(body);
         observedBodies.add(body);
       }
       const rect = body.getBoundingClientRect();
-      Object.assign(iframe.style, {
+      Object.assign(instance.host.style, {
         display: 'block',
         left: `${rect.left}px`,
         top: `${rect.top}px`,
@@ -122,25 +150,20 @@
     }
 
     const liveWorkspaces = new Set(store.workspaces.map((w) => w.id));
-    for (const [key, iframe] of iframes) {
-      const wsId = key.split('|')[0];
-      if (!liveWorkspaces.has(wsId)) {
-        // Workspace closed: drop the instance entirely.
-        bridge.unregister(key);
-        iframe.remove();
-        iframes.delete(key);
-        readiness.delete(key);
+    for (const [key, instance] of instances) {
+      if (!liveWorkspaces.has(instance.wsId)) {
+        teardown(key, instance); // workspace closed
         continue;
       }
-      if (!wanted.has(key)) iframe.style.display = 'none';
+      if (!wanted.has(key)) instance.host.style.display = 'none';
     }
 
     // Visibility pushes on change.
     for (const [key, slot] of wanted) {
-      if (visibleSlots.get(key) !== slot) bridge.pushVisibility(key, true, slot);
+      if (visibleSlots.get(key) !== slot) instances.get(key)?.apiInst.pushVisibility(true, slot);
     }
     for (const [key] of visibleSlots) {
-      if (!wanted.has(key)) bridge.pushVisibility(key, false, null);
+      if (!wanted.has(key)) instances.get(key)?.apiInst.pushVisibility(false, null);
     }
     visibleSlots = wanted;
   }
@@ -154,53 +177,41 @@
   });
 
   onMount(() => {
-    const onMessage = (event: MessageEvent) => {
-      const data = event.data as { mf?: boolean; type?: string } | null;
-      if (!data?.mf || !event.source) return;
-      const key = keyForSource(event.source);
-      if (!key) return;
-      if (data.type === 'ready') {
-        void sendInit(key);
-        return;
-      }
-      if (data.type === 'focused') {
-        const slot = visibleSlots.get(key);
-        if (slot && slot !== store.layout.focused) void invoke('panel_focus_next');
-        return;
-      }
-      void bridge.onMessage(key, data);
-    };
-    window.addEventListener('message', onMessage);
     window.addEventListener('resize', sync);
 
-    // Pre-instantiate every panel type once (hidden, for the startup
-    // workspace) so all panel commands are registered from the start:
-    // dispatch by name then works session-wide (the registry survives
-    // iframe removal). The shim's visibility gate keeps these instances
-    // free of daemon traffic until actually displayed. Delayed so the
-    // startup layout settles first.
+    // Initialize the shared user stylesheet, kept live on style changes.
+    void fetch(`${base}/__style.css`)
+      .then((r) => r.text())
+      .then((css) => userSheet.replaceSync(css))
+      .catch(() => {});
+
+    // Pre-instantiate every panel type once (hidden) so all panel commands are
+    // registered session-wide. Delayed so the startup layout settles first.
     const prewarmTimer = setTimeout(() => {
       const wsId = focusedWs() ?? store.workspaces[0]?.id;
       if (!wsId) return;
-      for (const panelType of store.panelTypes) ensureIframe(wsId, panelType);
+      for (const panelType of store.panelTypes) ensureInstance(wsId, panelType);
     }, 1000);
 
     const unlisteners: Promise<() => void>[] = [
+      listen<{ css: string }>('style-changed', (event) => userSheet.replaceSync(event.payload.css)),
       listen<{ workspace_id: string; key: string; value: unknown }>(
         'workspace-var-changed',
-        (event) =>
-          bridge.forwardVarChange(
-            event.payload.workspace_id,
-            event.payload.key,
-            event.payload.value,
-          ),
+        (event) => {
+          for (const instance of instances.values()) {
+            if (instance.wsId === event.payload.workspace_id) {
+              instance.apiInst.pushVarChanged(event.payload.key, event.payload.value);
+            }
+          }
+        },
       ),
-      listen<{ workspace_id: string; entry: unknown }>('message-appended', (event) =>
-        bridge.forwardMessageAppended(event.payload.workspace_id, event.payload.entry),
-      ),
-      listen<{ bindings: unknown }>('keybindings-changed', (event) =>
-        bridge.pushKeytable(event.payload.bindings),
-      ),
+      listen<{ workspace_id: string; entry: unknown }>('message-appended', (event) => {
+        for (const instance of instances.values()) {
+          if (instance.wsId === event.payload.workspace_id) {
+            instance.apiInst.pushMessageAppended(event.payload.entry);
+          }
+        }
+      }),
     ];
 
     // Commands owned by panel types (spec-gui: lazy hidden instantiation;
@@ -214,20 +225,19 @@
         const other: SlotId = store.layout.focused === 'left' ? 'right' : 'left';
         const otherPayload = slotPayload(other);
         const target =
-          otherPayload.visible && otherPayload.workspace_id === wsId
-            ? other
-            : store.layout.focused;
+          otherPayload.visible && otherPayload.workspace_id === wsId ? other : store.layout.focused;
         await invoke('panel_set_type', { slot: target, panelType: command.owner });
       }
 
-      ensureIframe(wsId, command.owner);
-      await readiness.get(key)?.promise;
-      await bridge.dispatchCommand(key, command.name, args);
+      const instance = ensureInstance(wsId, command.owner);
+      await instance.mounted;
+      const handler = panelHandlers.get(`${key}|${command.name}`);
+      if (!handler) throw `panel command ${command.name} has no handler`;
+      await handler(...args);
     });
 
     return () => {
       clearTimeout(prewarmTimer);
-      window.removeEventListener('message', onMessage);
       window.removeEventListener('resize', sync);
       resizeObserver?.disconnect();
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
@@ -245,10 +255,10 @@
     pointer-events: none;
     z-index: 10;
   }
-  .panel-layer :global(.panel-frame) {
+  .panel-layer :global(.panel-host) {
     position: absolute;
-    border: none;
     pointer-events: auto;
     background: transparent;
+    overflow: hidden;
   }
 </style>

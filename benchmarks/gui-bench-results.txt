@@ -1,0 +1,39 @@
+metafolder GUI bench — 2026-06-15 11:51:26Z
+repo: bench_data (1005 files), debug build, software rendering (libEGL)
+STEPS=10, per-scenario isolated workspaces
+NOTE: daemon round-trips go through the Tauri reqwest proxy; their
+      latency includes IPC overhead, not just daemon work.
+
+── open metarecord-list ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/query n=1   total=   80.00ms  mean=  80.00ms  max=  80.00ms
+  mf:list:enrich                     n=1   total=    4.00ms  mean=   4.00ms  max=   4.00ms
+  mf:daemon GET /repos               n=1   total=    3.00ms  mean=   3.00ms  max=   3.00ms
+
+── open metarecord-detail (selected row) ──
+  mf:detail:load                     n=1   total=   17.00ms  mean=  17.00ms  max=  17.00ms
+  mf:daemon GET /repos/5e73752a-87f2-411d-89af-e86e6727f431/metarecords/:id n=1   total=   13.00ms  mean=  13.00ms  max=  13.00ms
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=1   total=   13.00ms  mean=  13.00ms  max=  13.00ms
+  mf:daemon GET /repos               n=1   total=   11.00ms  mean=  11.00ms  max=  11.00ms
+  mf:detail:render                   n=1   total=    2.00ms  mean=   2.00ms  max=   2.00ms
+
+── open file-manager ──
+  mf:daemon GET /repos               n=1   total=   17.00ms  mean=  17.00ms  max=  17.00ms
+  mf:detail:render                   n=1   total=    0.00ms  mean=   0.00ms  max=   0.00ms
+  mf:detail:load                     n=1   total=    0.00ms  mean=   0.00ms  max=   0.00ms
+
+── list+detail: 10× selection down ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/tree/resolve n=10  total=  135.00ms  mean=  13.50ms  max=  19.00ms
+  mf:daemon GET /repos               n=10  total=  120.00ms  mean=  12.00ms  max=  22.00ms
+  mf:detail:load                     n=10  total=  105.00ms  mean=  10.50ms  max=  17.00ms
+  mf:daemon GET /repos/5e73752a-87f2-411d-89af-e86e6727f431/metarecords/:id n=10  total=   89.00ms  mean=   8.90ms  max=  14.00ms
+  mf:list:render                     n=10  total=   73.00ms  mean=   7.30ms  max=  19.00ms
+  mf:detail:render                   n=10  total=   10.00ms  mean=   1.00ms  max=   2.00ms
+
+── file-manager: 10× selection down ──
+  mf:fm:render                       n=10  total=    1.00ms  mean=   0.10ms  max=   1.00ms
+
+── paging: 10× load next page ──
+  mf:daemon POST /repos/5e73752a-87f2-411d-89af-e86e6727f431/query n=10  total=  618.00ms  mean=  61.80ms  max=  77.00ms
+  mf:list:enrich                     n=10  total=   25.00ms  mean=   2.50ms  max=   3.00ms
+  mf:daemon GET /repos               n=10  total=   23.00ms  mean=   2.30ms  max=   3.00ms
+

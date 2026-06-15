@@ -1,7 +1,7 @@
 <!doctype html>
-<!-- Example panel type. Copy this directory under
-     ~/.config/metafolder-gui/panel-types/<your-name>/ to start a custom
-     panel; the GUI injects `window.metafolder` into every panel. -->
+<!-- Example panel type. Markup only — logic lives in main.js (export mount).
+     Copy this directory under ~/.config/metafolder/gui/panel-types/<your-name>/
+     to start a custom panel. -->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -11,24 +11,5 @@
     <h1>Hello from a panel type</h1>
     <p id="workspace">workspace: ?</p>
     <p id="repo">active_repo: ?</p>
-    <script type="module">
-      const ws = document.getElementById('workspace');
-      const repo = document.getElementById('repo');
-
-      // window.metafolder is injected by the GUI shim.
-      metafolder.ready.then(async () => {
-        ws.textContent = `workspace: ${metafolder.workspaceId}`;
-        const active = await metafolder.workspace.get('active_repo');
-        repo.textContent = `active_repo: ${active ?? 'none'}`;
-        metafolder.workspace.onChange('active_repo', (value) => {
-          repo.textContent = `active_repo: ${value ?? 'none'}`;
-        });
-
-        metafolder.commands.register('hello:greet', {
-          label: 'Hello: greet in the status bar',
-          handler: () => metafolder.statusBar.message('Hello!', 3000),
-        });
-      });
-    </script>
   </body>
 </html>

@@ -13,6 +13,18 @@ import {
 import { dispatch, hasEditingTarget } from './commands';
 import { flashStatus, focusedPanelType, store } from './store.svelte';
 
+// The shell owns the single default context menu now (panels no longer run in
+// iframes with their own copy). Panels add provider items through this; calls
+// before installKeys() are queued.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let defaultMenu: { addItems: (provider: any) => void } | null = null;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const pendingProviders: any[] = [];
+export function addDefaultMenuItems(provider: (event: MouseEvent) => unknown[]) {
+  if (defaultMenu) defaultMenu.addItems(provider);
+  else pendingProviders.push(provider);
+}
+
 export function isTextInput(element: Element | null): boolean {
   if (!element) return false;
   const tag = element.tagName;
@@ -29,7 +41,9 @@ export function installKeys() {
   // menus"); the default menu (Copy + layout commands) replaces it in the
   // shell areas — panel iframes install their own copy via the shim.
   installContextMenuSuppression(window);
-  installDefaultContextMenu(window, dispatch);
+  defaultMenu = installDefaultContextMenu(window, dispatch);
+  for (const provider of pendingProviders) defaultMenu.addItems(provider);
+  pendingProviders.length = 0;
   const matcher = createMatcher(store.keytable);
   let lastTable = store.keytable;
   window.addEventListener(
