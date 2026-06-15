@@ -36,6 +36,9 @@ const QUERY = /^\/repos\/([^/]+)\/query$/;
 const BATCH = /^\/repos\/([^/]+)\/metarecords\/batch$/;
 const TREE_RESOLVE = /^\/repos\/([^/]+)\/tree\/resolve$/;
 const METARECORD = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)$/;
+const REPO_PREFIX = /^\/repos\/([^/]+)(?:\/|$)/;
+// A write targeting one metarecord (…/metarecords/:uuid and its sub-paths).
+const METARECORD_PREFIX = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)/;
 
 /** A stable, fully recursive serialization (keys sorted at every level) — so
  *  different query bodies get different keys. (A `JSON.stringify` array replacer
@@ -171,7 +174,21 @@ export function createCache() {
       return ok(out);
     }
 
-    // Everything else (writes, /repos, /log, …) passes straight through.
+    // A write (any non-GET that wasn't a cacheable read above): run it, then
+    // invalidate what it changed so the panel's own edit shows immediately,
+    // without waiting for the next change-feed poll.
+    if (method !== 'GET') {
+      const res = await raw(method, path, body);
+      if (res.status < 400) {
+        const wm = cleanPath.match(METARECORD_PREFIX);
+        if (wm) invalidateMetarecord(wm[1], wm[2]); // …/metarecords/:uuid…
+        const repoM = cleanPath.match(REPO_PREFIX);
+        if (repoM) clearQueries(repoM[1]); // membership may have changed
+      }
+      return res;
+    }
+
+    // Other reads (GET /repos, GET /log, …) pass straight through.
     return raw(method, path, body);
   }
 

@@ -174,3 +174,27 @@ describe('cache — explicit fetch/read API', () => {
     expect(cache.readMetarecord('r', 'a1')).toBe(REFRESH); // dropped by the delta
   });
 });
+
+describe('cache — write invalidation (own edits show immediately)', () => {
+  test('a write to a metarecord drops it from the cache and clears queries', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async (m: string) => (m === 'POST' ? ok({ results: [rec('a1')] }) : ok({ ok: true })));
+    await cache.query('r', { query: {} }, raw);
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1'));
+    expect(cache._stats().queries).toBe(1);
+
+    await cache.request('PUT', '/repos/r/metarecords/a1/fields/3', { value: 9 }, raw);
+    expect(cache.readMetarecord('r', 'a1')).toBe(REFRESH); // invalidated synchronously
+    expect(cache._stats().queries).toBe(0); // queries cleared
+  });
+
+  test('a failed write leaves the cache untouched', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async (m: string) =>
+      m === 'POST' ? ok({ results: [rec('a1')] }) : { status: 400, body: { error: 'no' } },
+    );
+    await cache.query('r', { query: {} }, raw);
+    await cache.request('PATCH', '/repos/r/metarecords/a1', { name: 'x' }, raw);
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1')); // still cached
+  });
+});
