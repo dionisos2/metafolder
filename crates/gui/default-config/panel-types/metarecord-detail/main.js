@@ -7,7 +7,7 @@ import { createTypePicker, parseRawValue } from './add-type.js';
 import { createAnnotator } from './annotations.js';
 
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, bench } = metafolder;
+  const { daemon, workspace, commands, statusBar, bench, cache } = metafolder;
 
   let current = null; // {uuid, repo} | null
   let metarecord = null; // full metarecord JSON
@@ -470,9 +470,12 @@ export async function mount(root, metafolder) {
   });
 
   // Another panel changed metarecords (log rollback, file-manager track, …):
-  // reload — unless an edit is in progress.
-  workspace.onChange('metarecords:dirty', () => {
+  // reload — unless an edit is in progress. Sync the cache first so the reload
+  // reads fresh data even when the change came from a non-metarecord write
+  // (e.g. a rollback, which the per-write invalidation can't pinpoint).
+  workspace.onChange('metarecords:dirty', async () => {
     if (editingField !== null || newMetarecordMode) return;
+    if (current?.repo) await cache.sync(current.repo);
     void load();
   });
 

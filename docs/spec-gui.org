@@ -1409,6 +1409,32 @@ Panels and the shell reach the daemon through the Rust backend (a reqwest
 proxy exposed as =metafolder.daemon.request=). The WebView cannot call the
 daemon directly (CORS), and the daemon stays GUI-agnostic.
 
+** Data cache
+
+Because panels share one JS realm, a single in-realm cache holds daemon data —
+read directly by every panel, no per-panel copy. It has three stores per repo:
+metarecords (=uuid → metarecord=), TreeRef paths (=(uuid, field) → [path]=) and
+query results (=query → [uuid]=).
+
+Panels use =metafolder.cache=: =query(repo, body)= (returns the page's uuids +
+=nextCursor=/=total=, populating the entity store from a =select '*'= result),
+=fetchMetarecords= / =fetchTreeRefs= (fetch only the uuids not already cached),
+and the synchronous =readMetarecord= / =readTreeRef= used during render —
+returning =cache.REFRESH= when the datum is absent/invalidated, on which the
+panel renders a placeholder and schedules a refresh. So a metarecord-list query
+populates the entities the metarecord-detail panel then reads for free (the
+list↔detail dedup). =daemon.call= stays for writes and non-cacheable endpoints;
+its query / single-metarecord / batch / tree-resolve reads are also served from
+the cache transparently. Cached data is read-only — panels never mutate it.
+
+Freshness comes from the daemon change feed (=GET /log/since=, see
+[[file:spec-event-log.org][spec-event-log]]): a background poll (~7 s) plus
+deliberate points (a query, a refresh, a panel becoming visible) compare the
+log =head=; on a change the touched metarecords are invalidated by delta (fine)
+and query results cleared (coarse). A panel's own write invalidates the edited
+metarecord immediately. Memory is bounded by LRU eviction (reads keep an entry
+recent; an evicted datum is simply re-fetched on the next read).
+
 ** Commands targeting an absent panel type
 
 Commands registered by a panel type whose instance is not mounted yet in

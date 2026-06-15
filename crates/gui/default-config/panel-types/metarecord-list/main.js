@@ -120,6 +120,9 @@ export async function mount(root, metafolder) {
     if (!repo || loading) return;
     loading = true;
     try {
+      // A reset fetch is a deliberate freshness point (query, refresh, display):
+      // poll the change feed so stale cached data is dropped before we read.
+      if (reset) await cache.sync(repo);
       let keepUuid = null;
       if (reset) {
         // A refresh must not steal the selection: remember the highlighted

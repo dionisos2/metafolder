@@ -6,7 +6,7 @@ import { el } from '/__ui.js';
 import { loadTrackedChildren, loadDirMetarecord, parentDir, isWithin } from './tracked.js';
 
 export async function mount(root, metafolder) {
-  const { fs, daemon, workspace, commands, statusBar, bench } = metafolder;
+  const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
 
   let repo = null;
   let repoRoot = null;
@@ -245,6 +245,7 @@ export async function mount(root, metafolder) {
     repo = await workspace.get('active_repo');
     constrainBox.disabled = repo === null;
     if (repo !== null) {
+      await cache.sync(repo); // fresh tracked status on display
       repoRoot = await daemon.repoRoot(repo);
       internalDir = await daemon.repoInternalDir(repo);
       await open(repoRoot);
@@ -262,6 +263,7 @@ export async function mount(root, metafolder) {
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
   workspace.onChange('metarecords:dirty', async () => {
     if (currentDir === null) return; // not started yet (still hidden)
+    if (repo) await cache.sync(repo); // pick up the change before re-querying
     await refreshTracked(currentDir);
     render();
   });

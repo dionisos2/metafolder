@@ -230,6 +230,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       readMetarecord: (repo: string, uuid: string) => sharedCache.readMetarecord(repo, uuid),
       readTreeRef: (repo: string, field: string, uuid: string) =>
         sharedCache.readTreeRef(repo, field, uuid),
+      // Poll the change feed now (a deliberate freshness point: a query, a
+      // refresh, a panel becoming visible) — on top of the background timer.
+      sync: (repo: string) => sharedCache.sync(repo, rawFetch),
       REFRESH: sharedCache.REFRESH,
     },
 
