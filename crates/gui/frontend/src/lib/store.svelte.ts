@@ -4,6 +4,7 @@
 
 import { dispatch } from './commands';
 import { invoke, listen } from './ipc';
+import { startCachePolling } from './panels/api';
 import type {
   Binding,
   CommandDef,
@@ -149,6 +150,10 @@ export async function initStore() {
       error: result.ok ? null : result.error,
     });
   });
+
+  // Keep the shared daemon-data cache fresh against background (watcher,
+  // reconcile, other clients) changes via the daemon's change feed.
+  startCachePolling();
 
   store.ready = true;
 }

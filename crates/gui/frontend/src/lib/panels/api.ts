@@ -9,11 +9,25 @@
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 // @ts-expect-error plain-JS module shared with the (former) panel shim
 import { showMenu } from '../../../../panel-shim/menu.js';
+import { invoke as ipcInvoke } from '../ipc';
+import { createCache, type DaemonResponse, type RawFetcher } from './cache';
 
-/** A daemon proxy response (the shape `daemon_request` returns). */
-interface DaemonResponse {
-  status: number;
-  body: unknown;
+/** The shared daemon-data cache — one per realm, read by every panel. */
+export const sharedCache = createCache();
+
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+/**
+ * Starts the background change-feed poll (GET /log/since) that keeps the cache
+ * fresh. Called once by the shell; not started on import so unit tests stay
+ * side-effect free.
+ */
+export function startCachePolling(intervalMs = 7000) {
+  if (pollTimer) return;
+  const raw: RawFetcher = (method, path, body) =>
+    ipcInvoke('daemon_request', { method, path, body }) as Promise<DaemonResponse>;
+  pollTimer = setInterval(() => {
+    for (const repo of sharedCache.trackedRepos()) void sharedCache.sync(repo, raw);
+  }, intervalMs);
 }
 
 /** The visibility gate created per panel (panel-shim/visibility.js). */
@@ -103,9 +117,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   }
 
   function daemonRequest(method: string, path: string, body: unknown = null): Promise<DaemonResponse> {
-    return benchMeasure(daemonLabel(method, path), () =>
-      invoke('daemon_request', { method, path, body }),
-    ) as Promise<DaemonResponse>;
+    // Through the shared cache: a hit returns without a daemon round-trip (so
+    // it is not bench-instrumented either); a miss runs the instrumented call.
+    return sharedCache.request(
+      method,
+      path,
+      body,
+      (m, p, b) =>
+        benchMeasure(daemonLabel(m, p), () =>
+          invoke('daemon_request', { method: m, path: p, body: b }),
+        ) as Promise<DaemonResponse>,
+    );
   }
 
   // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized
