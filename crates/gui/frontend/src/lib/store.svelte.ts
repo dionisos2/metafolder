@@ -81,23 +81,19 @@ export async function refreshCommands() {
   store.commands = await invoke<CommandDef[]>('list_commands');
 }
 
-const statusTimers: Metarecord<string, ReturnType<typeof setTimeout>> = {};
-
+// Status bar messages do not auto-dismiss: the last message stays visible
+// until another one replaces it (the `timeout_ms` carried by a message is
+// kept on the type for the scripting API but no longer schedules a hide).
 function showStatus(wsId: string, message: StatusMessage) {
   store.status[wsId] = message;
-  clearTimeout(statusTimers[wsId]);
-  if (message.timeout_ms !== null) {
-    statusTimers[wsId] = setTimeout(() => {
-      store.status[wsId] = null;
-    }, message.timeout_ms);
-  }
 }
 
-/// Shows a transient status message on the focused workspace's status bar
-/// (used for shell-side notices such as an undefined key sequence).
-export function flashStatus(text: string, timeoutMs = 3000) {
+/// Shows a status message on the focused workspace's status bar (used for
+/// shell-side notices such as an undefined key sequence). It stays until the
+/// next status message replaces it.
+export function flashStatus(text: string) {
   const ws = focusedWs();
-  if (ws) showStatus(ws, { text, kind: 'info', timeout_ms: timeoutMs });
+  if (ws) showStatus(ws, { text, kind: 'info', timeout_ms: null });
 }
 
 export async function initStore() {
