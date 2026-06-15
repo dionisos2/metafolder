@@ -32,7 +32,7 @@ cargo run -p metafolder-cli -- --repo <UUID> list
 npm --prefix crates/gui/frontend test
 npm --prefix crates/gui/frontend run build
 
-# Run the GUI (binary name: mf-gui; build the frontend first)
+# Run the GUI (binary name: metafolder-gui; build the frontend first)
 cargo run -p metafolder-gui
 cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
 
@@ -210,7 +210,7 @@ HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
 
 ### `crates/gui`
 
-The `mf-gui` binary (package `metafolder-gui`): a Tauri v2 desktop app over
+The `metafolder-gui` binary (package `metafolder-gui`): a Tauri v2 desktop app over
 the daemon HTTP API, specified in `docs/spec-gui.org`. **Rust owns all
 canonical state**; the Svelte 5 shell (`frontend/`) mirrors it via Tauri
 events; panel types are plain HTML/JS directories that run **in the shell's JS

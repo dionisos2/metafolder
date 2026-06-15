@@ -11,7 +11,7 @@ The project is a Cargo workspace:
 - **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`), its JSON serialization, and the query DSL parser.
 - **`daemon`** — single background process managing one or more repositories: SQLite storage with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, query engine, user schema validation, and an HTTP API.
 - **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, entry CRUD, query DSL, reconcile/track, schema commands).
-- **`gui`** — the `mf-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories rendered in iframes and can be customized or added by the user.
+- **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories rendered in iframes and can be customized or added by the user.
 - **`bench`** — benchmarking harness (targets the old POC API; to be updated with the CLI).
 
 The full specification lives under `docs/` (`spec-*.org`).
@@ -39,7 +39,7 @@ The daemon is local-only and unauthenticated; access control is left to the OS.
 
 Building the gui crate needs the Tauri system libraries (Arch:
 `webkit2gtk-4.1 gtk3 librsvg`) and `npm`. Build the frontend first, then run
-`mf-gui` with the daemon running:
+`metafolder-gui` with the daemon running:
 
 ```bash
 npm --prefix crates/gui/frontend install   # once

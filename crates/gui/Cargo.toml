@@ -7,7 +7,7 @@ edition = "2021"
 name = "metafolder_gui"
 
 [[bin]]
-name = "mf-gui"
+name = "metafolder-gui"
 path = "src/main.rs"
 
 [build-dependencies]

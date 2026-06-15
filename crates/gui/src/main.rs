@@ -3,7 +3,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "mf-gui", about = "Metafolder graphical interface")]
+#[command(name = "metafolder-gui", about = "Metafolder graphical interface")]
 struct Args {
     /// Port of the GUI HTTP server (panel assets + scripting API).
     #[arg(long, default_value_t = 7524)]
