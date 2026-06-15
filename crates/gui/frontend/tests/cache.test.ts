@@ -33,6 +33,14 @@ describe('cache — query + entity dedup', () => {
     await cache.request('POST', '/repos/r/query', { ...body }, raw); // same, key-order independent
     expect(raw).toHaveBeenCalledTimes(1);
   });
+
+  test('queries differing only in the nested IR are NOT collapsed', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async () => ok({ results: [rec('aaa')], next_cursor: null }));
+    await cache.request('POST', '/repos/r/query', { query: { type: 'eq', field: 'a', value: 1 }, select: '*' }, raw);
+    await cache.request('POST', '/repos/r/query', { query: { type: 'eq', field: 'b', value: 2 }, select: '*' }, raw);
+    expect(raw).toHaveBeenCalledTimes(2); // distinct keys → two daemon fetches
+  });
 });
 
 describe('cache — batch & tree-resolve fetch only the missing', () => {

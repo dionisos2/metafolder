@@ -33,9 +33,17 @@ const BATCH = /^\/repos\/([^/]+)\/metarecords\/batch$/;
 const TREE_RESOLVE = /^\/repos\/([^/]+)\/tree\/resolve$/;
 const METARECORD = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)$/;
 
-/** A stable key for a query body (object key order made deterministic). */
-function queryKey(body: Record<string, unknown>): string {
-  return JSON.stringify(body, Object.keys(body as object).sort());
+/** A stable, fully recursive serialization (keys sorted at every level) — so
+ *  different query bodies get different keys. (A `JSON.stringify` array replacer
+ *  would wrongly strip the nested query IR's keys and collapse every query.) */
+function queryKey(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
+  if (Array.isArray(value)) return `[${value.map(queryKey).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${queryKey(obj[k])}`)
+    .join(',')}}`;
 }
 
 export function createCache() {
