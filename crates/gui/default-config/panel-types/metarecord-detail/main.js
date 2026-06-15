@@ -236,10 +236,12 @@ async function load() {
   }
   try {
     metarecord = await daemon.call('GET', api(''));
-    // Fresh cache per load: referenced metarecords may have changed too.
-    annotator = createAnnotator((uuid) =>
-      daemon.call('GET', `/repos/${current.repo}/metarecords/${uuid}`),
-    );
+    annotator = createAnnotator({
+      resolvePaths: (field, uuids) =>
+        daemon.call('POST', `/repos/${current.repo}/tree/resolve`, { field, uuids }),
+      getMetarecords: (uuids) =>
+        daemon.call('POST', `/repos/${current.repo}/metarecords/batch`, { uuids }),
+    });
   } catch (error) {
     metarecord = null;
     showError(String(error.message ?? error));

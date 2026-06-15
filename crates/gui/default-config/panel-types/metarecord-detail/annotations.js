@@ -1,31 +1,24 @@
 // Secondary display line under reference values: the resolved path of a
 // tree_ref and the "name" field of a ref's target (a soft convention —
-// metarecords without one simply get no annotation). Unlike the shim's
-// resolvePath (mfr_path only), the tree_ref chain is walked through the
-// field's own name: each TreeRef field name is its own forest.
+// metarecords without one simply get no annotation). Path resolution goes
+// through the daemon's tree-resolve endpoint (general over the field name:
+// each TreeRef field name is its own forest), so there is no client-side
+// chain walk. `ctx` provides:
+//   resolvePaths(field, uuids) -> { uuid: [relPath] }
+//   getMetarecords(uuids)      -> { uuid: metarecord }
 
-export function createAnnotator(getMetarecord) {
-  const metarecords = new Map(); // uuid -> Promise<metarecord>
-  const get = (uuid) => {
-    if (!metarecords.has(uuid)) metarecords.set(uuid, getMetarecord(uuid));
-    return metarecords.get(uuid);
-  };
-
-  async function treeRefPath(fieldName, { parent, name }) {
-    if (!parent) return name;
-    const metarecord = await get(parent);
-    const field = (metarecord.fields ?? []).find(
-      (f) => f.name === fieldName && f.value?.type === 'tree_ref',
-    );
-    if (!field) return null; // broken chain: better nothing than a wrong path
-    const parentPath = await treeRefPath(fieldName, field.value.value);
-    if (parentPath === null) return null;
+export function createAnnotator({ resolvePaths, getMetarecords }) {
+  async function treeRefPath(field, { parent, name }) {
+    if (!parent) return name; // a rootless node's path is its own name
+    const byUuid = await resolvePaths(field, [parent]);
+    const parentPath = (byUuid[parent] ?? [])[0];
+    if (parentPath == null) return null; // broken/stale chain: better nothing than a wrong path
     return parentPath === '' ? name : `${parentPath}/${name}`;
   }
 
   async function refName(uuid) {
-    const metarecord = await get(uuid);
-    const field = (metarecord.fields ?? []).find(
+    const byUuid = await getMetarecords([uuid]);
+    const field = (byUuid[uuid]?.fields ?? []).find(
       (f) => f.name === 'name' && typeof f.value?.value === 'string',
     );
     return field ? field.value.value : null;

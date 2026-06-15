@@ -1,6 +1,6 @@
 // metarecord-detail value annotations: the dim secondary line under reference
-// values — the resolved path of a tree_ref (walked through the same field
-// name on the parent chain) and the "name" field of a ref's target.
+// values — the resolved path of a tree_ref (via the daemon's tree-resolve
+// endpoint, general over the field) and the "name" field of a ref's target.
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
@@ -16,22 +16,56 @@ const treeRef = (parent: string | null, name: string) => ({
 
 function annotatorFor(entries: Entry[]) {
   const byUuid = new Map(entries.map((e) => [e.uuid, e]));
-  const getMetarecord = vi.fn(async (uuid: string) => {
-    const entry = byUuid.get(uuid);
-    if (!entry) throw new Error(`no entry ${uuid}`);
-    return entry;
+
+  // Simulate the daemon tree-resolve endpoint: walk `field`'s parent chain to a
+  // root-relative path (no leading slash; the root's empty name drops out).
+  function pathOf(field: string, uuid: string): string | null {
+    const components: string[] = [];
+    let cur: string | null = uuid;
+    while (cur) {
+      const f = byUuid.get(cur)?.fields.find((x) => x.name === field && x.value.type === 'tree_ref');
+      if (!f) return null;
+      const { parent, name } = f.value.value as { parent: string | null; name: string };
+      components.push(name);
+      cur = parent;
+    }
+    return components.reverse().filter(Boolean).join('/');
+  }
+
+  const resolvePaths = vi.fn(async (field: string, uuids: string[]) => {
+    const out: Record<string, string[]> = {};
+    for (const u of uuids) {
+      const p = pathOf(field, u);
+      out[u] = p === null ? [] : [p];
+    }
+    return out;
   });
-  return { annotator: createAnnotator(getMetarecord), getMetarecord };
+  const getMetarecords = vi.fn(async (uuids: string[]) => {
+    const out: Record<string, Entry> = {};
+    for (const u of uuids) {
+      const e = byUuid.get(u);
+      if (e) out[u] = e;
+    }
+    return out;
+  });
+  return { annotator: createAnnotator({ resolvePaths, getMetarecords }), resolvePaths, getMetarecords };
 }
 
 describe('tree_ref annotations', () => {
   const root: Entry = { uuid: 'r000', fields: [{ name: 'mfr_path', value: treeRef(null, '') }] };
   const dir: Entry = { uuid: 'd000', fields: [{ name: 'mfr_path', value: treeRef('r000', 'music') }] };
 
-  test('resolves the parent chain through the same field name', async () => {
+  test('resolves the path through the daemon endpoint', async () => {
     const { annotator } = annotatorFor([root, dir]);
-    const text = await annotator.annotate('mfr_path', treeRef('d000', 'song.flac'));
-    expect(text).toBe('music/song.flac');
+    expect(await annotator.annotate('mfr_path', treeRef('d000', 'song.flac'))).toBe('music/song.flac');
+  });
+
+  test('resolves through the endpoint (no client-side chain walk)', async () => {
+    const { annotator, resolvePaths } = annotatorFor([root, dir]);
+    await annotator.annotate('mfr_path', treeRef('d000', 'song.flac'));
+    // One call for the parent — the daemon walks the chain, not the client.
+    expect(resolvePaths).toHaveBeenCalledTimes(1);
+    expect(resolvePaths).toHaveBeenCalledWith('mfr_path', ['d000']);
   });
 
   test('the root contributes an empty path segment', async () => {
@@ -40,9 +74,9 @@ describe('tree_ref annotations', () => {
   });
 
   test('a rootless tree_ref needs no annotation (the name is the path)', async () => {
-    const { annotator, getMetarecord } = annotatorFor([]);
+    const { annotator, resolvePaths } = annotatorFor([]);
     expect(await annotator.annotate('genre', treeRef(null, 'jazz'))).toBeNull();
-    expect(getMetarecord).not.toHaveBeenCalled();
+    expect(resolvePaths).not.toHaveBeenCalled();
   });
 
   test('a broken chain (parent without the field) yields no annotation', async () => {
@@ -54,13 +88,6 @@ describe('tree_ref annotations', () => {
   test('a missing parent entry yields no annotation instead of an error', async () => {
     const { annotator } = annotatorFor([]);
     expect(await annotator.annotate('mfr_path', treeRef('gone', 'x'))).toBeNull();
-  });
-
-  test('parent entries are fetched once across annotations', async () => {
-    const { annotator, getMetarecord } = annotatorFor([root, dir]);
-    await annotator.annotate('mfr_path', treeRef('d000', 'a.txt'));
-    await annotator.annotate('mfr_path', treeRef('d000', 'b.txt'));
-    expect(getMetarecord.mock.calls.filter(([uuid]) => uuid === 'd000')).toHaveLength(1);
   });
 });
 
