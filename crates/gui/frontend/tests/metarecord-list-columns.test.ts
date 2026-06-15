@@ -144,9 +144,14 @@ describe('treeRefFields / refTargetUuids (what to resolve)', () => {
 
 describe('fillColumns + cellText (resolved display)', () => {
   // Apply pre-resolved data (no daemon), then read the synchronous cell.
-  function applied(spec: string, e: Entry, data: { pathsByField?: unknown; targets?: unknown } = {}) {
+  function applied(
+    spec: string,
+    e: Entry,
+    data: { pathsByField?: unknown; targets?: Record<string, Entry> } = {},
+  ) {
     const cols = parseColumns(spec);
-    fillColumns(cols, [e], { pathsByField: data.pathsByField ?? {}, targets: data.targets ?? {} });
+    const targets = new Map(Object.entries(data.targets ?? {}));
+    fillColumns(cols, [e], { pathsByField: data.pathsByField ?? {}, targets });
     return cellText(cols[0], e);
   }
 

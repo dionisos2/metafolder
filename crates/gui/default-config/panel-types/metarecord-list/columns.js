@@ -113,8 +113,8 @@ export function refTargetUuids(columns, metarecords) {
 /**
  * Fills the display text of every `~` column from already-resolved data and
  * memoizes it (read later by `cellText`). Pure — no daemon access:
- *   pathsByField: { field: { uuid: [relPath] } }   (TreeRef → path columns)
- *   targets:      { uuid: metarecord }              (Ref-deref targets)
+ *   pathsByField: { field: { uuid: [relPath] } }      (TreeRef → path columns)
+ *   targets:      Map<uuid, metarecord | null>        (Ref-deref targets)
  */
 export function fillColumns(columns, metarecords, { pathsByField, targets }) {
   for (const column of columns) {
@@ -146,8 +146,9 @@ function applyRefs(column, metarecords, targets) {
     if (list.length === 0) continue;
     const texts = list.map((f) => {
       const v = f.value;
-      if ((v.type === 'ref' || v.type === 'refbase') && targets[v.value]) {
-        const rows = fields(targets[v.value], column.deref);
+      const target = v.type === 'ref' || v.type === 'refbase' ? targets.get(v.value) : null;
+      if (target) {
+        const rows = fields(target, column.deref);
         if (rows.length > 0) return rows.map((rf) => formatValue(rf.value)).join(', ');
       }
       return formatValue(v);

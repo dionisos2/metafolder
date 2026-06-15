@@ -38,7 +38,7 @@ let sort = []; // [{field, order}]
 let cursorIndex = -1;
 let checked = new Set(); // multi-selection (uuids)
 let mode = 'table';
-let refCache = new Map(); // uuid -> Promise<metarecord>, for ~target columns
+let refCache = new Map(); // uuid -> metarecord | null, for ~target columns
 let orphanCache = new Map(); // uuid -> Promise<null|'deleted'|'missing'>
 
 const rows = document.getElementById('rows');
@@ -82,29 +82,14 @@ async function resolveTreeFields(fieldNames, metarecords) {
   return byField;
 }
 
-/** Ref-deref targets for the ~target columns; one batch call, cached per result set. */
-async function getMetarecords(uuids) {
+/** Fetches the ~target Refs that aren't cached yet into `refCache`. */
+async function updateRefCache(uuids) {
   const missing = uuids.filter((uuid) => !refCache.has(uuid));
-  if (missing.length > 0) {
-    const batch = daemon
-      .call('POST', `/repos/${repo}/metarecords/batch`, { uuids: missing })
-      .catch(() => ({}));
-    for (const uuid of missing) refCache.set(uuid, batch.then((byUuid) => byUuid[uuid] ?? null));
-  }
-  const out = {};
-  await Promise.all(
-    uuids.map(async (uuid) => {
-      const target = await refCache.get(uuid);
-      if (target) out[uuid] = target;
-    }),
-  );
-  return out;
-}
-
-/** Fetches the ~target Refs of the columns and fills their display text. */
-async function formatColumns(subset, pathsByField) {
-  const targets = await getMetarecords(refTargetUuids(columns, subset));
-  fillColumns(columns, subset, { pathsByField, targets });
+  if (missing.length === 0) return;
+  const byUuid = await daemon
+    .call('POST', `/repos/${repo}/metarecords/batch`, { uuids: missing })
+    .catch(() => ({}));
+  for (const uuid of missing) refCache.set(uuid, byUuid[uuid] ?? null); // null = unknown target
 }
 
 // Pre-resolves all daemon-backed display data for a freshly fetched page so the
@@ -116,16 +101,18 @@ async function enrich(subset) {
   if (!repoRoots[repo]) repoRoots[repo] = await daemon.repoRoot(repo);
   const root = repoRoots[repo];
   const pathsByField = await resolveTreeFields(new Set(['mfr_path', ...treeRefFields(columns)]), subset);
+  await updateRefCache(refTargetUuids(columns, subset));
   for (const m of subset) {
     m.paths = (pathsByField.mfr_path[m.uuid] ?? []).map((rel) => (rel === '' ? root : `${root}/${rel}`));
   }
-  await formatColumns(subset, pathsByField);
+  fillColumns(columns, subset, { pathsByField, targets: refCache });
 }
 
 /** Re-derives the ~ columns over the loaded metarecords (after a column change). */
 async function reresolveColumns() {
   const pathsByField = await resolveTreeFields(new Set(treeRefFields(columns)), metarecords);
-  await formatColumns(metarecords, pathsByField);
+  await updateRefCache(refTargetUuids(columns, metarecords));
+  fillColumns(columns, metarecords, { pathsByField, targets: refCache });
 }
 
 async function fetchPage(reset) {
