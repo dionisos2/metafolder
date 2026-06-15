@@ -20,7 +20,8 @@ const MATCH_ALL = {
 };
 
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, query, bench } = metafolder;
+  const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
+  const REFRESH = cache.REFRESH;
 
   let repo = null;
   let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
@@ -39,7 +40,6 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let checked = new Set(); // multi-selection (uuids)
   let mode = 'table';
-  let refCache = new Map(); // uuid -> metarecord | null, for ~target columns
   let orphanCache = new Map(); // uuid -> Promise<null|'deleted'|'missing'>
 
   const bodyEl = root.querySelector('.mf-panel-body');
@@ -57,68 +57,63 @@ export async function mount(root, metafolder) {
   const normalError = root.getElementById('normal-error');
   const normalFreeze = root.getElementById('normal-freeze');
 
-  // ── Data access ─────────────────────────────────────────────────────────
+  // ── Data access (all daemon data comes from the shared cache) ─────────────
 
-  const repoRoots = {}; // repo uuid -> absolute root path (cached)
+  let repoRoot = null; // absolute root path of the active repo (cached once)
 
   function hasTreeRef(metarecord, field) {
     return fields(metarecord, field).some((f) => f.value.type === 'tree_ref');
   }
 
-  /** Resolves one TreeRef field of a page to root-relative paths (one daemon call). */
-  function resolvePaths(field, uuids) {
-    return uuids.length > 0
-      ? daemon.call('POST', `/repos/${repo}/tree/resolve`, { field, uuids })
-      : Promise.resolve({});
+  const treeFieldsOf = () => new Set(['mfr_path', ...treeRefFields(columns)]);
+
+  // Pre-fetches the display data for the ~ columns into the shared cache, then
+  // fills the columns from cache reads — rendering stays synchronous and never
+  // mutates the (shared, read-only) cached metarecords.
+  function prepare(subset) {
+    return bench.measure('mf:list:enrich', () => prepareNow(subset));
   }
 
-  /** Resolves each named TreeRef field over the metarecords that carry it. */
-  async function resolveTreeFields(fieldNames, metarecordSet) {
-    const byField = {};
-    await Promise.all(
-      [...fieldNames].map(async (field) => {
-        const uuids = metarecordSet.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid);
-        byField[field] = await resolvePaths(field, uuids);
-      }),
-    );
-    return byField;
-  }
-
-  /** Fetches the ~target Refs that aren't cached yet into `refCache`. */
-  async function updateRefCache(uuids) {
-    const missing = uuids.filter((uuid) => !refCache.has(uuid));
-    if (missing.length === 0) return;
-    const byUuid = await daemon
-      .call('POST', `/repos/${repo}/metarecords/batch`, { uuids: missing })
-      .catch(() => ({}));
-    for (const uuid of missing) refCache.set(uuid, byUuid[uuid] ?? null); // null = unknown target
-  }
-
-  // Pre-resolves all daemon-backed display data for a freshly fetched page so the
-  // view layer stays synchronous; rendering makes no daemon calls.
-  function enrich(subset) {
-    return bench.measure('mf:list:enrich', () => enrichNow(subset));
-  }
-
-  async function enrichNow(subset) {
+  async function prepareNow(subset) {
     if (subset.length === 0) return;
-    if (!repoRoots[repo]) repoRoots[repo] = await daemon.repoRoot(repo);
-    const repoRootPath = repoRoots[repo];
-    const pathsByField = await resolveTreeFields(new Set(['mfr_path', ...treeRefFields(columns)]), subset);
-    await updateRefCache(refTargetUuids(columns, subset));
-    for (const m of subset) {
-      m.paths = (pathsByField.mfr_path[m.uuid] ?? []).map((rel) =>
-        rel === '' ? repoRootPath : `${repoRootPath}/${rel}`,
-      );
+    if (repoRoot === null) repoRoot = await daemon.repoRoot(repo);
+    await Promise.all(
+      [...treeFieldsOf()].map((field) =>
+        cache.fetchTreeRefs(repo, field, subset.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid)),
+      ),
+    );
+    await cache.fetchMetarecords(repo, refTargetUuids(columns, subset));
+    fillFromCache(subset);
+  }
+
+  function fillFromCache(subset) {
+    const pathsByField = {};
+    for (const field of treeFieldsOf()) {
+      pathsByField[field] = {};
+      for (const m of subset) {
+        const paths = cache.readTreeRef(repo, field, m.uuid);
+        if (paths !== REFRESH) pathsByField[field][m.uuid] = paths;
+      }
     }
-    fillColumns(columns, subset, { pathsByField, targets: refCache });
+    const targets = new Map();
+    for (const uuid of refTargetUuids(columns, subset)) {
+      const target = cache.readMetarecord(repo, uuid);
+      targets.set(uuid, target === REFRESH ? null : target);
+    }
+    fillColumns(columns, subset, { pathsByField, targets });
+  }
+
+  // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
+  // from the cache + the repo root) — replaces the old per-metarecord `.paths`.
+  function pathsOf(metarecord) {
+    const rel = cache.readTreeRef(repo, 'mfr_path', metarecord.uuid);
+    if (rel === REFRESH || repoRoot === null) return [];
+    return rel.map((r) => (r === '' ? repoRoot : `${repoRoot}/${r}`));
   }
 
   /** Re-derives the ~ columns over the loaded metarecords (after a column change). */
   async function reresolveColumns() {
-    const pathsByField = await resolveTreeFields(new Set(treeRefFields(columns)), metarecords);
-    await updateRefCache(refTargetUuids(columns, metarecords));
-    fillColumns(columns, metarecords, { pathsByField, targets: refCache });
+    await prepareNow(metarecords);
   }
 
   async function fetchPage(reset) {
@@ -133,12 +128,11 @@ export async function mount(root, metafolder) {
           metarecords[cursorIndex]?.uuid ?? (await workspace.get('selected_metarecord'))?.uuid ?? null;
         metarecords = [];
         nextCursor = null;
-        refCache = new Map();
         orphanCache = new Map();
       }
-      let page;
+      let result;
       try {
-        page = await daemon.call('POST', `/repos/${repo}/query`, {
+        result = await cache.query(repo, {
           query: queryIR ?? MATCH_ALL,
           select: '*',
           limit: pageSize,
@@ -150,10 +144,12 @@ export async function mount(root, metafolder) {
         await statusBar.error(error);
         return;
       }
-      metarecords = metarecords.concat(page.results);
-      nextCursor = page.next_cursor;
-      await enrich(page.results); // pre-resolve display data; rendering stays sync
-      if (reset) total = page.total ?? null;
+      // The page's metarecords are read from the cache the query just populated.
+      const fetched = result.uuids.map((u) => cache.readMetarecord(repo, u)).filter((m) => m !== REFRESH);
+      metarecords = metarecords.concat(fetched);
+      nextCursor = result.nextCursor;
+      await prepare(fetched); // pre-resolve display data; rendering stays sync
+      if (reset) total = result.total;
       if (reset) {
         // Drop checked metarecords that no longer match.
         const alive = new Set(metarecords.map((e) => e.uuid));
@@ -232,7 +228,7 @@ export async function mount(root, metafolder) {
   // Orphan check environment: paths are pre-resolved (enrich), so this is just a
   // disk stat (no daemon traffic during rendering).
   const orphanCtx = {
-    metarecordPaths: (metarecord) => metarecord.paths ?? [],
+    metarecordPaths: (metarecord) => pathsOf(metarecord),
     exists: (path) =>
       metafolder.fs.stat(path).then(
         () => true,
@@ -304,7 +300,7 @@ export async function mount(root, metafolder) {
   }
 
   function fillThumbnail(img, metarecord) {
-    const path = metarecord.paths?.[0];
+    const path = pathsOf(metarecord)[0];
     if (path) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
   }
 
@@ -317,7 +313,7 @@ export async function mount(root, metafolder) {
     if (!metarecord) return;
     root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
     await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
-    await workspace.set('selected_paths', metarecord.paths ?? []);
+    await workspace.set('selected_paths', pathsOf(metarecord));
   }
 
   async function toggleChecked() {
@@ -332,7 +328,7 @@ export async function mount(root, metafolder) {
   async function openSelected() {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
-    const paths = metarecord.paths ?? [];
+    const paths = pathsOf(metarecord);
     await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
