@@ -6,11 +6,11 @@
     <meta charset="UTF-8" />
     <title>metarecord-list</title>
     <style>
-      body {
+      .mf-panel-body {
         margin: 0;
         display: flex;
         flex-direction: column;
-        height: 100vh;
+        height: 100%;
         font-size: 13px;
       }
       #query-editor {
@@ -116,10 +116,10 @@
         gap: 8px;
         padding: 8px;
       }
-      body.grid #grid {
+      .mf-panel-body.grid #grid {
         display: grid;
       }
-      body.grid table {
+      .mf-panel-body.grid table {
         display: none;
       }
       .card {
@@ -202,6 +202,5 @@
       <div id="grid"></div>
     </div>
     <div id="status-line"></div>
-    <script type="module" src="main.js"></script>
   </body>
 </html>

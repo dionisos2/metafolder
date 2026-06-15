@@ -4,41 +4,42 @@
 
 import { el } from '/__ui.js';
 
-const { workspace } = metafolder;
-
 const STANDARD = ['active_repo', 'selected_paths', 'selected_metarecord', 'selected_entries'];
-const values = new Map();
 
-function render() {
-  // Standard variables first (in their canonical order), then customs.
-  const rank = (key) => {
-    const index = STANDARD.indexOf(key);
-    return index === -1 ? STANDARD.length : index;
-  };
-  const keys = [...new Set([...STANDARD, ...values.keys()])].sort(
-    (a, b) => rank(a) - rank(b) || a.localeCompare(b),
-  );
-  document.getElementById('vars').replaceChildren(
-    ...keys.map((key) =>
-      el(
-        'tr',
-        {},
-        el('td', { class: 'key' }, key),
-        el('td', { class: 'value' }, JSON.stringify(values.get(key) ?? null, null, 1)),
+export async function mount(root, metafolder) {
+  const { workspace } = metafolder;
+  const values = new Map();
+  const varsEl = root.getElementById('vars');
+
+  function render() {
+    // Standard variables first (in their canonical order), then customs.
+    const rank = (key) => {
+      const index = STANDARD.indexOf(key);
+      return index === -1 ? STANDARD.length : index;
+    };
+    const keys = [...new Set([...STANDARD, ...values.keys()])].sort(
+      (a, b) => rank(a) - rank(b) || a.localeCompare(b),
+    );
+    varsEl.replaceChildren(
+      ...keys.map((key) =>
+        el(
+          'tr',
+          {},
+          el('td', { class: 'key' }, key),
+          el('td', { class: 'value' }, JSON.stringify(values.get(key) ?? null, null, 1)),
+        ),
       ),
-    ),
-  );
-}
+    );
+  }
 
-await metafolder.ready;
+  // '*' receives (value, key) for every variable of the workspace.
+  workspace.onChange('*', (value, key) => {
+    values.set(key, value);
+    render();
+  });
 
-// '*' receives (value, key) for every variable of the workspace.
-workspace.onChange('*', (value, key) => {
-  values.set(key, value);
+  for (const key of STANDARD) {
+    values.set(key, await workspace.get(key));
+  }
   render();
-});
-
-for (const key of STANDARD) {
-  values.set(key, await workspace.get(key));
 }
-render();

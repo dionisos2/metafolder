@@ -108,15 +108,18 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     ) as Promise<DaemonResponse>;
   }
 
-  // Cached GET /repos lookup (root, internal_dir, ...).
+  // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized
+  // (dashes stripped) so a dashed active_repo matches GET /repos' hex form.
+  const normUuid = (uuid: string) => uuid.replace(/-/g, '');
   async function repoInfo(repo: string): Promise<Record<string, unknown>> {
-    if (!repoInfos.has(repo)) {
+    const key = normUuid(repo);
+    if (!repoInfos.has(key)) {
       const response = await daemonRequest('GET', '/repos');
       for (const item of (response.body as Record<string, unknown>[]) ?? []) {
-        repoInfos.set(item.repo_uuid as string, item);
+        repoInfos.set(normUuid(item.repo_uuid as string), item);
       }
     }
-    const info = repoInfos.get(repo);
+    const info = repoInfos.get(key);
     if (info === undefined) throw new Error(`repository ${repo} is not loaded`);
     return info;
   }
