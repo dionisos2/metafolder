@@ -52,7 +52,8 @@
     host.style.display = 'none';
     layer.appendChild(host);
     const shadow = host.attachShadow({ mode: 'open' });
-    shadow.adoptedStyleSheets = [userSheet, baseSheet];
+    // The panel's own sheet is adopted last (in mountPanel) so it overrides the
+    // theme, matching the old linked-theme-then-panel cascade order.
 
     const visibilityGate = createVisibilityGate();
     const apiInst = createPanelApi(
@@ -83,12 +84,22 @@
     try {
       const html = await fetch(`${base}/panel/${panelType}/index.html`).then((r) => r.text());
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      for (const style of doc.head.querySelectorAll('style')) shadow.append(style.cloneNode(true));
+      // The panel's CSS as a constructed sheet, adopted AFTER the theme so the
+      // panel's rules win (e.g. button colour over the theme's native-button
+      // black) — the same precedence the old iframe linked-theme-then-panel
+      // order gave. Built-in panels use no @import / relative url().
+      const panelSheet = new CSSStyleSheet();
+      try {
+        panelSheet.replaceSync([...doc.querySelectorAll('style')].map((s) => s.textContent).join('\n'));
+      } catch {
+        /* malformed panel CSS: skip it rather than break the mount */
+      }
+      shadow.adoptedStyleSheets = [baseSheet, userSheet, panelSheet];
       const body = document.createElement('div');
       body.className = 'mf-panel-body';
       for (const child of [...doc.body.childNodes]) {
-        if (child.nodeName === 'SCRIPT') continue; // logic lives in main.js::mount
-        body.append(child);
+        if (child.nodeName === 'SCRIPT' || child.nodeName === 'STYLE') continue;
+        body.append(child); // logic lives in main.js::mount; CSS in panelSheet
       }
       shadow.append(body);
       const mod = await import(/* @vite-ignore */ `${base}/panel/${panelType}/main.js${bust}`);
