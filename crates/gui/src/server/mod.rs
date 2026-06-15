@@ -22,13 +22,11 @@ use command_wait::CommandWait;
 use input_wait::InputWait;
 use std::sync::{Arc, Mutex};
 
-const SHIM_JS: &str = include_str!("../../panel-shim/shim.js");
-const KEYMATCH_JS: &str = include_str!("../../panel-shim/keymatch.js");
-const RESOLVE_JS: &str = include_str!("../../panel-shim/resolve.js");
+// Helper modules imported by panels (the shell bundles its own copies of
+// keymatch/menu/resolve/visibility from panel-shim/).
 const UI_JS: &str = include_str!("../../panel-shim/ui.js");
 const MENU_JS: &str = include_str!("../../panel-shim/menu.js");
 const ORPHAN_JS: &str = include_str!("../../panel-shim/orphan.js");
-const VISIBILITY_JS: &str = include_str!("../../panel-shim/visibility.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -43,13 +41,9 @@ pub struct ServerState {
 
 pub fn build_router(state: ServerState) -> Router {
     Router::new()
-        .route("/__shim.js", get(|| async { javascript(SHIM_JS) }))
-        .route("/__keymatch.js", get(|| async { javascript(KEYMATCH_JS) }))
-        .route("/__resolve.js", get(|| async { javascript(RESOLVE_JS) }))
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))
-        .route("/__visibility.js", get(|| async { javascript(VISIBILITY_JS) }))
         .route(
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {

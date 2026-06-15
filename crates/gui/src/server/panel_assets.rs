@@ -1,16 +1,13 @@
-//! `GET /panel/:name/*path` — files of a panel type directory, with the
-//! metafolder shim `<script>` injected into HTML documents.
+//! `GET /panel/:name/*path` — files of a panel type directory, served
+//! verbatim. The shell fetches `index.html` and `import()`s `main.js` into a
+//! Shadow DOM root (it injects the API and stylesheet itself), so no markup
+//! is rewritten here.
 
 use super::ServerState;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use std::path::Component;
-
-const SHIM_TAG: &str = concat!(
-    r#"<link rel="stylesheet" href="/__style.css">"#,
-    r#"<script type="module" src="/__shim.js"></script>"#
-);
 
 pub async fn serve(
     State(state): State<ServerState>,
@@ -32,23 +29,7 @@ pub async fn serve(
     };
 
     let mime = mime_for(&file);
-    if mime == "text/html" {
-        let html = String::from_utf8_lossy(&content);
-        return ([("content-type", mime)], inject_shim(&html)).into_response();
-    }
     ([("content-type", mime)], content).into_response()
-}
-
-/// Injects the shim script tag right after `<head>`, or prepends it when
-/// the document has no head element.
-fn inject_shim(html: &str) -> String {
-    match html.find("<head>") {
-        Some(index) => {
-            let insert_at = index + "<head>".len();
-            format!("{}{}{}", &html[..insert_at], SHIM_TAG, &html[insert_at..])
-        }
-        None => format!("{SHIM_TAG}{html}"),
-    }
 }
 
 fn mime_for(path: &std::path::Path) -> &'static str {
@@ -68,25 +49,5 @@ fn mime_for(path: &std::path::Path) -> &'static str {
         "txt" | "md" => "text/plain",
         "wasm" => "application/wasm",
         _ => "application/octet-stream",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_inject_shim_after_head() {
-        let html = "<html><head><title>t</title></head><body></body></html>";
-        let injected = inject_shim(html);
-        let expected = format!("<html><head>{SHIM_TAG}<title>");
-        assert!(injected.starts_with(&expected));
-    }
-
-    #[test]
-    fn test_inject_shim_without_head_prepends() {
-        let injected = inject_shim("<p>bare</p>");
-        assert!(injected.starts_with(SHIM_TAG));
-        assert!(injected.ends_with("<p>bare</p>"));
     }
 }

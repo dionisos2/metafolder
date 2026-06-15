@@ -1,5 +1,5 @@
 //! GUI HTTP server, panel-asset side: serves panel-type directories from
-//! the config dir (with the metafolder shim injected into HTML) and raw
+//! the config dir (verbatim — the shell mounts them into Shadow DOM) and raw
 //! local files for the `file` panel type (`/fsraw`, with Range support).
 
 use axum::body::Body;
@@ -49,18 +49,17 @@ async fn get(router: &axum::Router, uri: &str) -> (StatusCode, String, Vec<u8>) 
 }
 
 #[tokio::test]
-async fn test_panel_html_served_with_shim_injected() {
+async fn test_panel_html_served_verbatim() {
     let (_guard, _config, router) = setup();
     let (status, content_type, body) = get(&router, "/panel/hello/index.html").await;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/html"));
 
     let html = String::from_utf8(body).unwrap();
-    // A module script so the shim can import /__keymatch.js.
-    assert!(html.contains(r#"<script type="module" src="/__shim.js"></script>"#));
-    // The user stylesheet applies to panels too (iframes do not inherit
-    // the shell's CSS).
-    assert!(html.contains(r#"<link rel="stylesheet" href="/__style.css">"#));
+    // The shell mounts panels into Shadow DOM and injects the API/stylesheet
+    // itself: the served HTML is verbatim, no shim/style tags injected.
+    assert!(!html.contains("/__shim.js"));
+    assert!(!html.contains(r#"<link rel="stylesheet" href="/__style.css">"#));
     assert!(html.contains("Hello from a panel type"));
 }
 
@@ -106,23 +105,19 @@ async fn test_path_traversal_is_rejected() {
 }
 
 #[tokio::test]
-async fn test_shim_and_keymatch_are_served() {
+async fn test_panel_helper_modules_are_served() {
     let (_guard, _config, router) = setup();
-    let (status, content_type, _) = get(&router, "/__shim.js").await;
+    // Helpers panels import; the shim's own modules are no longer served.
+    let (status, content_type, _) = get(&router, "/__ui.js").await;
     assert_eq!(status, StatusCode::OK);
     assert!(content_type.starts_with("text/javascript"));
-    let (status, _, _) = get(&router, "/__keymatch.js").await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = get(&router, "/__resolve.js").await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = get(&router, "/__ui.js").await;
-    assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__menu.js").await;
     assert_eq!(status, StatusCode::OK);
     let (status, _, _) = get(&router, "/__orphan.js").await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _, _) = get(&router, "/__visibility.js").await;
-    assert_eq!(status, StatusCode::OK);
+    // Removed with the iframe shim.
+    assert_eq!(get(&router, "/__shim.js").await.0, StatusCode::NOT_FOUND);
+    assert_eq!(get(&router, "/__keymatch.js").await.0, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
