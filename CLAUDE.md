@@ -65,9 +65,11 @@ spec.
 
 Cargo workspace: `core`, `daemon`, `cli`, `gui` (Tauri v2 + Svelte 5), `bench`
 (benchmark harness: a `daemon` suite that spawns its own daemon to time the
-CLI/HTTP and watcher, and a `gui` suite that drives an already-running GUI
-through its `/gui/*` API — a Rust port of `scripts/bench-gui.sh`; select with
-`cargo run -p metafolder-bench -- daemon|gui|all`).
+CLI/HTTP and watcher; a `gui` suite that drives an already-running GUI through
+its `/gui/*` API; and `gui-launch [count]` which spawns its own daemon + repo +
+GUI window and runs the scenarios against it — a Rust port of
+`scripts/bench-gui.sh`. Select with
+`cargo run -p metafolder-bench -- daemon|gui|gui-launch|all`).
 
 ### `crates/core`
 

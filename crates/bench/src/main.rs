@@ -4,7 +4,8 @@
 //!   cargo build                        # build debug binaries first
 //!   cargo run -p metafolder-bench              # daemon suite (CLI + watcher)
 //!   cargo run -p metafolder-bench -- gui       # GUI suite (needs a running GUI)
-//!   cargo run -p metafolder-bench -- all       # both
+//!   cargo run -p metafolder-bench -- gui-launch 11000   # spawn daemon+GUI+repo
+//!   cargo run -p metafolder-bench -- all       # daemon + attach-GUI
 //!
 //!   cargo build --release              # or release for more realistic numbers
 //!   cargo run -p metafolder-bench --release
@@ -46,7 +47,7 @@ pub(crate) fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
-fn find_binary(name: &str) -> Result<PathBuf> {
+pub(crate) fn find_binary(name: &str) -> Result<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .unwrap()
@@ -93,29 +94,34 @@ impl Drop for Daemon {
     }
 }
 
-fn daemon_start() -> Result<Daemon> {
+/// Spawns a daemon on `port` with an empty configuration. Pointing `--config`
+/// at a path that does not exist makes the daemon read an empty config (no repo
+/// auto-load) instead of the user's, keeping the benchmark isolated from any
+/// repos held under the user's daemon lock.
+pub(crate) fn spawn_isolated_daemon(port: u16) -> Result<Child> {
     let bin = find_binary("metafolder-daemon")?;
-    // Point --config at a path that does not exist: the daemon then reads an
-    // empty configuration (no repo auto-load) instead of the user's, keeping
-    // the benchmark isolated from any repos held under the user's daemon lock.
-    let empty_config =
-        std::env::temp_dir().join(format!("metafolder-bench-no-config-{}.json", std::process::id()));
+    let empty_config = std::env::temp_dir()
+        .join(format!("metafolder-bench-no-config-{}-{port}.json", std::process::id()));
     let _ = std::fs::remove_file(&empty_config);
-    let child = Command::new(&bin)
-        .args(["--port", &PORT.to_string()])
+    Command::new(&bin)
+        .args(["--port", &port.to_string()])
         .arg("--config")
         .arg(&empty_config)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .with_context(|| format!("Failed to spawn {:?}", bin))?;
+        .with_context(|| format!("Failed to spawn {:?}", bin))
+}
+
+fn daemon_start() -> Result<Daemon> {
+    let child = spawn_isolated_daemon(PORT)?;
     Ok(Daemon {
         _proc: child,
         url: format!("http://127.0.0.1:{PORT}"),
     })
 }
 
-async fn daemon_wait_ready(url: &str) -> Result<()> {
+pub(crate) async fn daemon_wait_ready(url: &str) -> Result<()> {
     for _ in 0..50 {
         if Client::new()
             .get(format!("{url}/health"))
@@ -132,7 +138,7 @@ async fn daemon_wait_ready(url: &str) -> Result<()> {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
+pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
     let v: serde_json::Value = Client::new()
         .post(format!("{url}/repos/init"))
         .json(&json!({ "root": root }))
@@ -164,7 +170,7 @@ async fn api_create_metarecord(url: &str, repo: Uuid, rating: i64) -> Result<Uui
 }
 
 /// Create `n` metarecords concurrently via HTTP. Returns their UUIDs.
-async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
+pub(crate) async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
     let sem = Arc::new(Semaphore::new(HTTP_CONCURRENCY));
     let mut handles = Vec::with_capacity(n);
     for i in 0..n {
@@ -549,13 +555,28 @@ async fn main() -> Result<()> {
     match suite {
         "daemon" => run_daemon_suite().await,
         "gui" => gui::run(&args[1..]).await,
+        "gui-launch" => {
+            // `gui-launch [count] [scenario...]`: a numeric arg sets the record
+            // count (default 2000); the rest are scenario names.
+            let mut count = 2000usize;
+            let mut scenarios = Vec::new();
+            for a in &args[1..] {
+                match a.parse::<usize>() {
+                    Ok(n) => count = n,
+                    Err(_) => scenarios.push(a.clone()),
+                }
+            }
+            gui::run_launched(count, &scenarios).await
+        }
         "all" => {
             run_daemon_suite().await?;
             println!();
             gui::run(&[]).await
         }
         other => {
-            anyhow::bail!("unknown suite '{other}' (expected: daemon | gui | all)")
+            anyhow::bail!(
+                "unknown suite '{other}' (expected: daemon | gui | gui-launch | all)"
+            )
         }
     }
 }

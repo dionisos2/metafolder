@@ -15,7 +15,8 @@
 //! shipped panel sources).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -40,16 +41,18 @@ struct BenchRecord {
     duration_ms: f64,
 }
 
-/// Entry point for the GUI suite. `scenarios` selects which to run (empty = all).
+/// Attach mode: drive an already-running GUI, using the focused workspace's
+/// repository. `scenarios` selects which to run (empty = all).
 pub async fn run(scenarios: &[String]) -> Result<()> {
-    println!("=== metafolder-bench (GUI suite) ===\n");
+    println!("=== metafolder-bench (GUI suite, attach) ===\n");
 
     let (gui_url, daemon_url) = discover_urls();
     let gui = match Gui::connect(gui_url.clone(), daemon_url.clone()).await? {
         Some(gui) => gui,
         None => {
-            println!("GUI not reachable at {gui_url} — start the GUI first, then re-run.");
-            println!("(override with METAFOLDER_GUI_URL / METAFOLDER_DAEMON_URL)");
+            println!("GUI not reachable at {gui_url} — start the GUI first, or use");
+            println!("`gui-launch` to have the benchmark spawn its own GUI.");
+            println!("(override URLs with METAFOLDER_GUI_URL / METAFOLDER_DAEMON_URL)");
             return Ok(());
         }
     };
@@ -62,6 +65,66 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
     println!("daemon : {daemon_url}");
     println!("repo   : {repo}\n");
 
+    run_scenarios(&gui, &repo, scenarios).await
+}
+
+/// Launch mode: spawn an isolated daemon, populate a repository with `count`
+/// metarecords, spawn the GUI against it, run the scenarios, then tear it all
+/// down. A GUI window opens for the duration of the run.
+pub async fn run_launched(count: usize, scenarios: &[String]) -> Result<()> {
+    const DAEMON_PORT: u16 = 7610;
+    const GUI_PORT: u16 = 7611;
+
+    println!("=== metafolder-bench (GUI suite, launched) ===\n");
+    ensure_frontend_built()?;
+
+    // Held first so it is dropped *last* — after the daemon that locks it.
+    let repo_dir = tempfile::TempDir::new()?;
+
+    println!("Starting isolated daemon on {DAEMON_PORT}...");
+    let _daemon = Proc(crate::spawn_isolated_daemon(DAEMON_PORT)?);
+    let daemon_url = format!("http://127.0.0.1:{DAEMON_PORT}");
+    crate::daemon_wait_ready(&daemon_url).await?;
+
+    let repo = crate::api_init_repo(&daemon_url, repo_dir.path()).await?;
+    print!("Populating {count} metarecords (the slow daemon write path)... ");
+    use std::io::Write as _;
+    std::io::stdout().flush().ok();
+    let t = Instant::now();
+    crate::api_create_n(&daemon_url, repo, count).await?;
+    println!("done in {:.0} ms", ms(t.elapsed()));
+
+    let gui_url = format!("http://127.0.0.1:{GUI_PORT}");
+    let log_path =
+        std::env::temp_dir().join(format!("metafolder-bench-gui-{}.log", std::process::id()));
+    println!("Launching GUI on {GUI_PORT} (a window will open)...");
+    let _gui_proc = Proc(spawn_gui(GUI_PORT, &daemon_url, &log_path)?);
+    if let Err(e) = wait_gui_ready(&gui_url).await {
+        if let Ok(log) = std::fs::read_to_string(&log_path) {
+            let tail: Vec<&str> = log.lines().rev().take(25).collect();
+            eprintln!("--- GUI log (tail) ---");
+            for line in tail.into_iter().rev() {
+                eprintln!("{line}");
+            }
+        }
+        return Err(e);
+    }
+    println!("GUI ready.\n");
+    println!("daemon : {daemon_url}");
+    println!("repo   : {repo} ({count} metarecords)\n");
+
+    let gui = Gui { http: Client::new(), gui_url, daemon_url };
+    let repo_hex = repo.simple().to_string();
+    let result = run_scenarios(&gui, &repo_hex, scenarios).await;
+
+    // _gui_proc and _daemon are killed on drop here (GUI first, then daemon),
+    // then repo_dir is removed.
+    result
+}
+
+/// Validates the scenario selection, saves/restores the layout, and runs each
+/// selected scenario against `repo` (a hex uuid). Shared by both modes.
+async fn run_scenarios(gui: &Gui, repo: &str, scenarios: &[String]) -> Result<()> {
     let selected: Vec<&str> = if scenarios.is_empty() {
         ALL_SCENARIOS.to_vec()
     } else {
@@ -78,12 +141,12 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
 
     for name in selected {
         let result = match name {
-            "open-list" => gui.scenario_open_list(&repo).await,
-            "open-detail" => gui.scenario_open_detail(&repo).await,
-            "open-fm" => gui.scenario_open_fm(&repo).await,
-            "list-detail-nav" => gui.scenario_list_detail_nav(&repo).await,
-            "fm-nav" => gui.scenario_fm_nav(&repo).await,
-            "paging" => gui.scenario_paging(&repo).await,
+            "open-list" => gui.scenario_open_list(repo).await,
+            "open-detail" => gui.scenario_open_detail(repo).await,
+            "open-fm" => gui.scenario_open_fm(repo).await,
+            "list-detail-nav" => gui.scenario_list_detail_nav(repo).await,
+            "fm-nav" => gui.scenario_fm_nav(repo).await,
+            "paging" => gui.scenario_paging(repo).await,
             _ => unreachable!("validated above"),
         };
         if let Err(e) = result {
@@ -96,6 +159,74 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
     }
     println!("=== done ===");
     Ok(())
+}
+
+// ─── Process management (launch mode) ──────────────────────────────────────────
+
+/// Kills a spawned child process when dropped, so the daemon and GUI never
+/// outlive the benchmark (even on error or panic).
+struct Proc(Child);
+
+impl Drop for Proc {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Refuses to launch against the placeholder frontend `build.rs` writes when
+/// the real bundle is missing — the panels would never mount and no measure
+/// would be recorded.
+fn ensure_frontend_built() -> Result<()> {
+    let dist = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("gui")
+        .join("frontend")
+        .join("dist")
+        .join("index.html");
+    let content = std::fs::read_to_string(&dist).unwrap_or_default();
+    if content.is_empty() || content.contains("placeholder") {
+        anyhow::bail!(
+            "GUI frontend is not built (dist is a placeholder) — run \
+             `npm --prefix crates/gui/frontend run build` first"
+        );
+    }
+    Ok(())
+}
+
+fn spawn_gui(port: u16, daemon_url: &str, log_path: &Path) -> Result<Child> {
+    let bin = crate::find_binary("metafolder-gui")?;
+    let log = std::fs::File::create(log_path)
+        .with_context(|| format!("creating GUI log {log_path:?}"))?;
+    let err = log.try_clone()?;
+    Command::new(&bin)
+        .arg("--gui-port")
+        .arg(port.to_string())
+        .arg("--daemon-url")
+        .arg(daemon_url)
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(err))
+        .spawn()
+        .with_context(|| format!("Failed to spawn {bin:?}"))
+}
+
+/// Polls `GET /gui/status` until the GUI answers (WebKit startup can take a few
+/// seconds), giving up after 30 s.
+async fn wait_gui_ready(url: &str) -> Result<()> {
+    for _ in 0..150 {
+        let ok = Client::new()
+            .get(format!("{url}/gui/status"))
+            .send()
+            .await
+            .map(|r| r.status().is_success())
+            .unwrap_or(false);
+        if ok {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    anyhow::bail!("GUI not ready after 30 s on {url}")
 }
 
 // ─── URL discovery ─────────────────────────────────────────────────────────────
@@ -276,6 +407,23 @@ impl Gui {
         Ok(resp.records)
     }
 
+    /// Reads the bench buffer once it has settled — panel fetch/render happen
+    /// asynchronously after a command returns, and a cold first load in a fresh
+    /// workspace can take longer than a fixed sleep. Polls until the record
+    /// count stops growing (or ~4 s), so we don't miss late-arriving measures.
+    async fn bench_read_settled(&self) -> Result<Vec<BenchRecord>> {
+        let mut last = usize::MAX;
+        for _ in 0..16 {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let records = self.bench_read().await?;
+            if records.len() == last {
+                return Ok(records);
+            }
+            last = records.len();
+        }
+        self.bench_read().await
+    }
+
     /// Times the raw daemon calls a list panel ultimately makes: the full
     /// metarecord listing (every uuid) and a single page. Printed next to the
     /// panel timings so GUI overhead is the difference.
@@ -319,7 +467,7 @@ impl Gui {
         self.layout_set("left", &ws).await?;
         self.view_set("left", "metarecord-list").await?;
         settle().await;
-        report("open metarecord-list", &self.bench_read().await?);
+        report("open metarecord-list", &self.bench_read_settled().await?);
         self.http_baseline(repo).await?;
         println!();
         self.workspace_rm(&ws).await;
@@ -339,7 +487,7 @@ impl Gui {
         self.layout_set("right", &ws).await?;
         self.view_set("right", "metarecord-detail").await?;
         settle().await;
-        report("open metarecord-detail (selected row)", &self.bench_read().await?);
+        report("open metarecord-detail (selected row)", &self.bench_read_settled().await?);
         println!();
         self.workspace_rm(&ws).await;
         Ok(())
@@ -351,7 +499,7 @@ impl Gui {
         self.layout_set("left", &ws).await?;
         self.view_set("left", "file-manager").await?;
         settle().await;
-        report("open file-manager", &self.bench_read().await?);
+        report("open file-manager", &self.bench_read_settled().await?);
         println!();
         self.workspace_rm(&ws).await;
         Ok(())
@@ -372,7 +520,7 @@ impl Gui {
             tokio::time::sleep(STEP).await; // let the detail panel settle
         }
         settle().await;
-        report(&format!("list+detail: {STEPS}× selection down"), &self.bench_read().await?);
+        report(&format!("list+detail: {STEPS}× selection down"), &self.bench_read_settled().await?);
         println!();
         self.workspace_rm(&ws).await;
         Ok(())
@@ -393,7 +541,7 @@ impl Gui {
             tokio::time::sleep(STEP).await;
         }
         settle().await;
-        report(&format!("file-manager: {STEPS}× selection down"), &self.bench_read().await?);
+        report(&format!("file-manager: {STEPS}× selection down"), &self.bench_read_settled().await?);
         println!();
         self.workspace_rm(&ws).await;
         Ok(())
@@ -410,7 +558,7 @@ impl Gui {
             tokio::time::sleep(STEP).await;
         }
         settle().await;
-        report(&format!("paging: {STEPS}× load next page"), &self.bench_read().await?);
+        report(&format!("paging: {STEPS}× load next page"), &self.bench_read_settled().await?);
         self.http_baseline(repo).await?;
         println!();
         self.workspace_rm(&ws).await;
