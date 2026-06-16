@@ -1,0 +1,19 @@
+[Unit]
+Description=Metafolder daemon
+Documentation=https://github.com/dionisos/metafolder
+# Ordering only: the daemon binds 127.0.0.1, so a network being up is not
+# strictly required, but this avoids racing the network at boot.
+After=network.target
+
+[Service]
+Type=simple
+# Installed with `cargo install --path crates/daemon` (lands in ~/.cargo/bin).
+# %h expands to the user's home directory.
+ExecStart=%h/.cargo/bin/metafolder-daemon
+# Restart automatically if the daemon crashes; the exclusive SQLite lock is
+# released on exit, so a fresh process can reload the same repositories.
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
