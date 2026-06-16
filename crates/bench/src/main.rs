@@ -6,6 +6,10 @@
 //!
 //!   cargo build --release              # or release for more realistic numbers
 //!   cargo run -p metafolder-bench --release
+//!
+//! The suite spawns its own daemon on [`PORT`] with an empty configuration (no
+//! repository auto-load), so it never touches the user's running daemon or the
+//! repositories it holds under an exclusive lock.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -14,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use reqwest::Client;
+use serde_json::json;
 use tokio::sync::Semaphore;
 use uuid::Uuid;
 
@@ -50,6 +55,22 @@ fn find_binary(name: &str) -> Result<PathBuf> {
     }
 }
 
+// ─── Query IR helpers ──────────────────────────────────────────────────────────
+//
+// The query IR is internally tagged with "type" (snake_case) — see
+// `crates/core/src/query.rs`. These build the JSON bodies the daemon expects.
+
+/// `field IS PRESENT`.
+fn is_present(field: &str) -> serde_json::Value {
+    json!({ "type": "is_present", "field": field })
+}
+
+/// `mfr_path -> "<parent>"`: metarecords whose direct parent is the metarecord
+/// at the given repo-root-relative path (TreeRef `Follows` semantics).
+fn children_of(parent_path: &str) -> serde_json::Value {
+    json!({ "type": "follows", "field": "mfr_path", "target": parent_path })
+}
+
 // ─── Daemon management ────────────────────────────────────────────────────────
 
 struct Daemon {
@@ -66,8 +87,16 @@ impl Drop for Daemon {
 
 fn daemon_start() -> Result<Daemon> {
     let bin = find_binary("metafolder-daemon")?;
+    // Point --config at a path that does not exist: the daemon then reads an
+    // empty configuration (no repo auto-load) instead of the user's, keeping
+    // the benchmark isolated from any repos held under the user's daemon lock.
+    let empty_config =
+        std::env::temp_dir().join(format!("metafolder-bench-no-config-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&empty_config);
     let child = Command::new(&bin)
         .args(["--port", &PORT.to_string()])
+        .arg("--config")
+        .arg(&empty_config)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -96,21 +125,27 @@ async fn daemon_wait_ready(url: &str) -> Result<()> {
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
 async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
-    Ok(Client::new()
+    let v: serde_json::Value = Client::new()
         .post(format!("{url}/repos/init"))
-        .json(&serde_json::json!({ "root": root }))
+        .json(&json!({ "root": root }))
         .send()
         .await?
         .error_for_status()?
         .json()
-        .await?)
+        .await?;
+    // Response shape: {"repo_uuid": "<32-char hex>"}.
+    Ok(v["repo_uuid"]
+        .as_str()
+        .context("missing repo_uuid field")?
+        .parse()?)
 }
 
-async fn api_create_entry(url: &str, repo: Uuid, rating: i64) -> Result<Uuid> {
+async fn api_create_metarecord(url: &str, repo: Uuid, rating: i64) -> Result<Uuid> {
+    // Response is the full MetaRecord object; we only need its uuid.
     let v: serde_json::Value = Client::new()
-        .post(format!("{url}/repos/{repo}/entries"))
-        .json(&serde_json::json!({
-            "fields": [{"name":"rating","value":{"type":"int","value":rating}}]
+        .post(format!("{url}/repos/{repo}/metarecords"))
+        .json(&json!({
+            "fields": [{ "name": "rating", "value": { "type": "int", "value": rating } }]
         }))
         .send()
         .await?
@@ -120,7 +155,7 @@ async fn api_create_entry(url: &str, repo: Uuid, rating: i64) -> Result<Uuid> {
     Ok(v["uuid"].as_str().context("missing uuid field")?.parse()?)
 }
 
-/// Create `n` entries concurrently via HTTP. Returns their UUIDs.
+/// Create `n` metarecords concurrently via HTTP. Returns their UUIDs.
 async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
     let sem = Arc::new(Semaphore::new(HTTP_CONCURRENCY));
     let mut handles = Vec::with_capacity(n);
@@ -128,7 +163,7 @@ async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
         let (url, sem) = (url.to_string(), sem.clone());
         handles.push(tokio::spawn(async move {
             let _permit = sem.acquire().await.unwrap();
-            api_create_entry(&url, repo, i as i64).await
+            api_create_metarecord(&url, repo, i as i64).await
         }));
     }
     let mut uuids = Vec::with_capacity(n);
@@ -138,53 +173,60 @@ async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
     Ok(uuids)
 }
 
-/// Returns the total number of entries in the repo.
-async fn api_entry_count(url: &str, repo: Uuid) -> Result<usize> {
-    let v: Vec<Uuid> = Client::new()
-        .get(format!("{url}/repos/{repo}/entries"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(v.len())
-}
-
-/// Returns true if any entry has path equal to `path`.
-async fn api_path_exists(url: &str, repo: Uuid, path: &str) -> Result<bool> {
-    let v: Vec<Uuid> = Client::new()
+/// Runs a query and returns the matching metarecord UUIDs (as hex strings).
+/// Without a `limit` the daemon answers with a bare array.
+async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Vec<String>> {
+    Ok(Client::new()
         .post(format!("{url}/repos/{repo}/query"))
-        .json(&serde_json::json!({
-            "op": "Eq",
-            "field": "path",
-            "value": { "type": "string", "value": path }
-        }))
+        .json(&json!({ "query": query }))
         .send()
         .await?
         .error_for_status()?
         .json()
-        .await?;
-    Ok(!v.is_empty())
+        .await?)
 }
 
-/// Poll until the repo has at least `expected` entries (or TIMEOUT).
-async fn wait_for_entries(url: &str, repo: Uuid, expected: usize) -> Result<()> {
-    let start = Instant::now();
-    loop {
-        if api_entry_count(url, repo).await? >= expected {
-            return Ok(());
-        }
-        if start.elapsed() > TIMEOUT {
-            anyhow::bail!("Timeout waiting for {expected} entries in repo");
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
+/// Number of metarecords whose direct parent is the metarecord at `parent_path`.
+async fn api_children_count(url: &str, repo: Uuid, parent_path: &str) -> Result<usize> {
+    Ok(api_query(url, repo, children_of(parent_path)).await?.len())
 }
 
-/// Poll until the given path appears in the DB. Returns elapsed time, or None on timeout.
-async fn wait_for_path(url: &str, repo: Uuid, path: &str, since: Instant) -> Option<Duration> {
+/// The root metarecord's UUID. At init it is the only metarecord carrying an
+/// `mf_watch` field, which makes it cheap to locate.
+async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
+    api_query(url, repo, is_present("mf_watch"))
+        .await?
+        .into_iter()
+        .next()
+        .context("no root metarecord found")
+}
+
+/// Enables tracking on the repository by setting `mf_watch = true` on the root.
+/// Tracking is opt-in: until this is set, the watcher drops every event as
+/// ineligible. Eligibility is read fresh from the DB per event, so this takes
+/// effect immediately for subsequently-created files (no repo reload needed).
+async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
+    let root = api_root_uuid(url, repo).await?;
+    Client::new()
+        .patch(format!("{url}/repos/{repo}/metarecords/{root}"))
+        .json(&json!({ "name": "mf_watch", "value": { "type": "bool", "value": true } }))
+        .send()
+        .await?
+        .error_for_status()?;
+    Ok(())
+}
+
+/// Poll until at least `expected` metarecords are direct children of
+/// `parent_path`. Returns elapsed time since `since`, or None on timeout.
+async fn wait_for_children(
+    url: &str,
+    repo: Uuid,
+    parent_path: &str,
+    expected: usize,
+    since: Instant,
+) -> Option<Duration> {
     loop {
-        if api_path_exists(url, repo, path).await.unwrap_or(false) {
+        if api_children_count(url, repo, parent_path).await.unwrap_or(0) >= expected {
             return Some(since.elapsed());
         }
         if since.elapsed() > TIMEOUT {
@@ -251,13 +293,13 @@ fn print_section(title: &str, rows: &[(String, usize, Duration)]) {
     println!("└{}", "─".repeat(w + 42));
 }
 
-// ─── Bench 1: CLI latency (single-entry loop) ─────────────────────────────────
+// ─── Bench 1: CLI latency (single-metarecord loop) ────────────────────────────
 
 async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     let n = LOOP_N;
 
-    // Pre-create one persistent entry (for get/set) and n entries (for delete)
-    let entry = api_create_entry(url, repo, 99).await?;
+    // Pre-create one persistent metarecord (for get/set) and n metarecords (for delete)
+    let entry = api_create_metarecord(url, repo, 99).await?;
     let to_delete = api_create_n(url, repo, n).await?;
     let entry_s = entry.to_string();
 
@@ -303,26 +345,26 @@ async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     })?);
 
     print_section(
-        &format!("CLI — latency per command  (×{n}, DB ~{n} entries)"),
+        &format!("CLI — latency per command  (×{n}, DB ~{n} metarecords)"),
         &rows,
     );
     Ok(())
 }
 
-// ─── Bench 2: CLI bulk (large number of entries) ──────────────────────────────
+// ─── Bench 2: CLI bulk (large number of metarecords) ──────────────────────────
 
 async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
     let mut rows: Vec<(String, usize, Duration)> = Vec::new();
-    let mut total_entries = 0usize;
+    let mut total = 0usize;
 
     for &n in BULK_SIZES {
-        print!("  pre-populating +{n} entries... ");
+        print!("  pre-populating +{n} metarecords... ");
         let t = Instant::now();
         api_create_n(url, repo, n).await?;
-        total_entries += n;
-        println!("done in {:.0} ms  (DB = {} entries)", ms(t.elapsed()), total_entries);
+        total += n;
+        println!("done in {:.0} ms  (DB = {} metarecords)", ms(t.elapsed()), total);
 
-        let db = total_entries;
+        let db = total;
 
         let t = Instant::now();
         cli_run(bin, url, Some(repo), &["list"])?;
@@ -341,7 +383,7 @@ async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
         rows.push((format!("reconcile      (DB={db})"), 1, t.elapsed()));
     }
 
-    print_section("CLI — bulk (commands on large number of entries)", &rows);
+    print_section("CLI — bulk (commands on large number of metarecords)", &rows);
     Ok(())
 }
 
@@ -353,26 +395,32 @@ async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
     let src = root.join("src");
     let dst = root.join("dst");
 
-    // Create subdirectories BEFORE init so the watcher starts already watching them.
-    // If we created them after init, inotify might not have registered the new dirs
-    // before we start creating files inside them, causing events to be missed.
+    // Create subdirectories BEFORE init so the recursive notify watch already
+    // covers them when files appear: creating a dir then immediately writing
+    // files inside it can race the inotify registration of the new dir.
     std::fs::create_dir_all(&src)?;
     std::fs::create_dir_all(&dst)?;
 
     let repo = api_init_repo(url, root).await?;
     println!("  repo: {repo}");
 
-    // Create N files; the last one serves as the sentinel
+    // Tracking is opt-in — enable it before creating the files, otherwise the
+    // watcher drops their create events as ineligible.
+    api_enable_watch(url, repo).await?;
+
+    // Create N files; they become eligible because mf_watch is now set on root.
     for i in 0..n {
         std::fs::write(src.join(format!("file_{i:05}.txt")), b"")?;
     }
-    let sentinel_old = src.join(format!("file_{:05}.txt", n - 1));
-    let sentinel_new = dst.join(format!("file_{:05}.txt", n - 1));
-    let sentinel_str = sentinel_new.to_string_lossy().into_owned();
 
-    // Wait for the watcher to register all files before timing the moves
+    // Wait for the watcher to register all files under /src before timing moves.
     print!("  waiting for watcher to register {n} files... ");
-    wait_for_entries(url, repo, n).await?;
+    if wait_for_children(url, repo, "/src", n, Instant::now())
+        .await
+        .is_none()
+    {
+        anyhow::bail!("Timeout waiting for {n} files to be registered under /src");
+    }
     println!("ok");
 
     // ── Timer start ──
@@ -384,10 +432,11 @@ async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
         std::fs::rename(&old, &new)?;
     }
 
-    let elapsed = match wait_for_path(url, repo, &sentinel_str, t).await {
+    // All moves are processed once every file is a child of /dst.
+    let elapsed = match wait_for_children(url, repo, "/dst", n, t).await {
         Some(d) => d,
         None => {
-            println!("  ⚠  Timeout ({TIMEOUT:?}) — sentinel not detected after {n} renames");
+            println!("  ⚠  Timeout ({TIMEOUT:?}) — not all {n} moves detected");
             TIMEOUT
         }
     };
@@ -403,12 +452,10 @@ async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
         &rows,
     );
 
-    // Verify: check that the sentinel entry was actually updated
-    let updated = api_path_exists(url, repo, &sentinel_str).await?;
-    let still_old = api_path_exists(url, repo, &sentinel_old.to_string_lossy()).await?;
-    println!(
-        "  Sentinel check: new path found={updated}  old path still present={still_old}"
-    );
+    // Verify: /src should be empty and /dst should hold all N.
+    let in_src = api_children_count(url, repo, "/src").await?;
+    let in_dst = api_children_count(url, repo, "/dst").await?;
+    println!("  Move check: /src has {in_src} files, /dst has {in_dst} (expected 0 / {n})");
 
     Ok(())
 }
@@ -421,35 +468,38 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
     let subdir = root.join("subdir");
     let subdir_moved = root.join("subdir_moved");
 
-    // Create subdirectory BEFORE init so the watcher starts already watching it.
+    // Create subdirectory BEFORE init so the recursive watch already covers it.
     std::fs::create_dir_all(&subdir)?;
 
     let repo = api_init_repo(url, root).await?;
     println!("  repo: {repo}");
 
+    // Opt in to tracking before creating the files (see bench_watcher_moves).
+    api_enable_watch(url, repo).await?;
+
     for i in 0..n {
         std::fs::write(subdir.join(format!("file_{i:05}.txt")), b"")?;
     }
 
-    // Wait for the watcher to register all N files
+    // Wait for the watcher to register all N files under /subdir.
     print!("  waiting for watcher to register {n} files... ");
-    wait_for_entries(url, repo, n).await?;
+    if wait_for_children(url, repo, "/subdir", n, Instant::now())
+        .await
+        .is_none()
+    {
+        anyhow::bail!("Timeout waiting for {n} files to be registered under /subdir");
+    }
     println!("ok");
 
     // ── Timer start ──
     let t = Instant::now();
 
-    // Rename the whole folder
+    // Rename the whole folder. The watcher should re-home every descendant.
     std::fs::rename(&subdir, &subdir_moved)?;
 
-    // Create a sentinel FILE in the root (after the folder rename).
-    // When the watcher processes this Create event, we know all prior events
-    // (including the folder rename) have been handled.
-    let sentinel = root.join("sentinel_folder.txt");
-    std::fs::write(&sentinel, b"")?;
-    let sentinel_str = sentinel.to_string_lossy().into_owned();
-
-    let elapsed = match wait_for_path(url, repo, &sentinel_str, t).await {
+    // The rename is fully processed once all N files are children of the moved
+    // folder.
+    let elapsed = match wait_for_children(url, repo, "/subdir_moved", n, t).await {
         Some(d) => d,
         None => {
             println!("  ⚠  Timeout ({TIMEOUT:?})");
@@ -459,21 +509,15 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
     // ── Timer end ──
 
     // Check whether the folder rename was actually handled by the watcher.
-    // If handled: entries should have new paths (subdir_moved/...).
-    // If not:     entries still have old paths (subdir/...) or Nothing.
-    let first_old = subdir.join("file_00000.txt").to_string_lossy().into_owned();
-    let first_new = subdir_moved
-        .join("file_00000.txt")
-        .to_string_lossy()
-        .into_owned();
-    let old_exists = api_path_exists(url, repo, &first_old).await?;
-    let new_exists = api_path_exists(url, repo, &first_new).await?;
+    let old_count = api_children_count(url, repo, "/subdir").await?;
+    let new_count = api_children_count(url, repo, "/subdir_moved").await?;
 
-    let update_status = match (old_exists, new_exists) {
-        (false, true) => "✓ path updated",
-        (true, false) => "✗ old path retained (folder rename not handled)",
-        (false, false) => "✗ path cleared (Nothing)",
-        (true, true) => "? inconsistent state",
+    let update_status = if new_count == n && old_count == 0 {
+        "✓ all paths updated".to_string()
+    } else if old_count == n && new_count == 0 {
+        "✗ old paths retained (folder rename not handled)".to_string()
+    } else {
+        format!("? partial state ({old_count} under /subdir, {new_count} under /subdir_moved)")
     };
 
     let rows = vec![(format!("{n} files inside a renamed folder"), 1, elapsed)];
@@ -481,7 +525,7 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
         &format!("Watcher — folder rename ({n} files)"),
         &rows,
     );
-    println!("  Entry state after rename: {update_status}");
+    println!("  Path state after rename: {update_status}");
 
     Ok(())
 }
@@ -492,7 +536,7 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
 async fn main() -> Result<()> {
     println!("=== metafolder-bench ===\n");
 
-    let cli_bin = find_binary("metafolder")?;
+    let cli_bin = find_binary("mf")?;
     println!("daemon : {}", find_binary("metafolder-daemon")?.display());
     println!("cli    : {}\n", cli_bin.display());
 
