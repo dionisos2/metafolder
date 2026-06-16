@@ -1,15 +1,23 @@
-//! Benchmark suite for metafolder — CLI and watcher performance.
+//! Benchmark suite for metafolder — CLI, watcher and GUI performance.
 //!
 //! Usage:
 //!   cargo build                        # build debug binaries first
-//!   cargo run -p metafolder-bench
+//!   cargo run -p metafolder-bench              # daemon suite (CLI + watcher)
+//!   cargo run -p metafolder-bench -- gui       # GUI suite (needs a running GUI)
+//!   cargo run -p metafolder-bench -- all       # both
 //!
 //!   cargo build --release              # or release for more realistic numbers
 //!   cargo run -p metafolder-bench --release
 //!
-//! The suite spawns its own daemon on [`PORT`] with an empty configuration (no
-//! repository auto-load), so it never touches the user's running daemon or the
-//! repositories it holds under an exclusive lock.
+//! The daemon suite spawns its own daemon on [`PORT`] with an empty
+//! configuration (no repository auto-load), so it never touches the user's
+//! running daemon or the repositories it holds under an exclusive lock.
+//!
+//! The GUI suite instead drives an already-running GUI through its `/gui/*`
+//! scripting API (a Rust port of `scripts/bench-gui.sh`) and reads back the
+//! panel phase timings, alongside a raw-HTTP baseline against the same repo.
+
+mod gui;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -34,7 +42,7 @@ const TIMEOUT: Duration = Duration::from_secs(30);
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
-fn ms(d: Duration) -> f64 {
+pub(crate) fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
@@ -534,7 +542,26 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("=== metafolder-bench ===\n");
+    // First positional arg selects the suite: "daemon" (default), "gui", "all".
+    // Any further args are GUI scenario names (see `gui::run`).
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let suite = args.first().map(String::as_str).unwrap_or("daemon");
+    match suite {
+        "daemon" => run_daemon_suite().await,
+        "gui" => gui::run(&args[1..]).await,
+        "all" => {
+            run_daemon_suite().await?;
+            println!();
+            gui::run(&[]).await
+        }
+        other => {
+            anyhow::bail!("unknown suite '{other}' (expected: daemon | gui | all)")
+        }
+    }
+}
+
+async fn run_daemon_suite() -> Result<()> {
+    println!("=== metafolder-bench (daemon suite) ===\n");
 
     let cli_bin = find_binary("mf")?;
     println!("daemon : {}", find_binary("metafolder-daemon")?.display());

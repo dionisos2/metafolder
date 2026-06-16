@@ -64,7 +64,10 @@ spec.
 ## Architecture
 
 Cargo workspace: `core`, `daemon`, `cli`, `gui` (Tauri v2 + Svelte 5), `bench`
-(old POC harness, to be revived with the CLI).
+(benchmark harness: a `daemon` suite that spawns its own daemon to time the
+CLI/HTTP and watcher, and a `gui` suite that drives an already-running GUI
+through its `/gui/*` API — a Rust port of `scripts/bench-gui.sh`; select with
+`cargo run -p metafolder-bench -- daemon|gui|all`).
 
 ### `crates/core`
 
