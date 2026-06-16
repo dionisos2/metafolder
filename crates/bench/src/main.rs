@@ -1,45 +1,46 @@
-//! Benchmark suite for metafolder — CLI, watcher and GUI performance.
+//! Benchmark suite for metafolder — runs against two persistent data folders
+//! so the effect of file count / DB size is directly comparable.
 //!
 //! Usage:
 //!   cargo build                        # build debug binaries first
-//!   cargo run -p metafolder-bench              # daemon suite (CLI + watcher)
-//!   cargo run -p metafolder-bench -- gui       # GUI suite (needs a running GUI)
-//!   cargo run -p metafolder-bench -- gui-launch 11000   # spawn daemon+GUI+repo
-//!   cargo run -p metafolder-bench -- all       # daemon + attach-GUI
+//!   cargo run -p metafolder-bench               # daemon-side suite on both folders
+//!   cargo run -p metafolder-bench -- gui        # + GUI scenarios (a window opens)
+//!   cargo run -p metafolder-bench -- attach     # drive an already-running GUI
+//!   cargo run -p metafolder-bench -- --small DIR --big DIR
 //!
 //!   cargo build --release              # or release for more realistic numbers
-//!   cargo run -p metafolder-bench --release
 //!
-//! The daemon suite spawns its own daemon on [`PORT`] with an empty
-//! configuration (no repository auto-load), so it never touches the user's
-//! running daemon or the repositories it holds under an exclusive lock.
-//!
-//! The GUI suite instead drives an already-running GUI through its `/gui/*`
-//! scripting API (a Rust port of `scripts/bench-gui.sh`) and reads back the
-//! panel phase timings, alongside a raw-HTTP baseline against the same repo.
+//! The two data folders (default `benchmarks/bench_data` and
+//! `benchmarks/bench_data_big`) are **consumed, never generated**: each must
+//! exist and hold files, and must NOT already contain a `.metafolder` (the run
+//! aborts otherwise). For each folder the bench spawns one isolated daemon,
+//! inits a repository in place, reconciles it to populate the DB from the real
+//! files, runs the benchmarks, and removes the `.metafolder` again on teardown.
+//! The watcher benchmark mutates the files (renames) and undoes it afterwards,
+//! so the folders are left exactly as found.
 
 mod gui;
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use reqwest::Client;
 use serde_json::json;
-use tokio::sync::Semaphore;
 use uuid::Uuid;
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
-const PORT: u16 = 7600;
-const LOOP_N: usize = 50;
-const BULK_SIZES: &[usize] = &[1_000, 10_000];
-const WATCHER_SIZES: &[usize] = &[100, 1_000];
-const HTTP_CONCURRENCY: usize = 32;
+const DAEMON_PORT: u16 = 7610;
+const LOOP_N: usize = 20;
+/// Cap on the number of files the watcher benchmark renames (and restores).
+const WATCHER_CAP: usize = 500;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
-const TIMEOUT: Duration = Duration::from_secs(30);
+const TIMEOUT: Duration = Duration::from_secs(120);
+
+const DEFAULT_SMALL_DIR: &str = "benchmarks/bench_data";
+const DEFAULT_BIG_DIR: &str = "benchmarks/bench_data_big";
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
 
@@ -64,35 +65,7 @@ pub(crate) fn find_binary(name: &str) -> Result<PathBuf> {
     }
 }
 
-// ─── Query IR helpers ──────────────────────────────────────────────────────────
-//
-// The query IR is internally tagged with "type" (snake_case) — see
-// `crates/core/src/query.rs`. These build the JSON bodies the daemon expects.
-
-/// `field IS PRESENT`.
-fn is_present(field: &str) -> serde_json::Value {
-    json!({ "type": "is_present", "field": field })
-}
-
-/// `mfr_path -> "<parent>"`: metarecords whose direct parent is the metarecord
-/// at the given repo-root-relative path (TreeRef `Follows` semantics).
-fn children_of(parent_path: &str) -> serde_json::Value {
-    json!({ "type": "follows", "field": "mfr_path", "target": parent_path })
-}
-
 // ─── Daemon management ────────────────────────────────────────────────────────
-
-struct Daemon {
-    _proc: Child,
-    pub url: String,
-}
-
-impl Drop for Daemon {
-    fn drop(&mut self) {
-        let _ = self._proc.kill();
-        let _ = self._proc.wait();
-    }
-}
 
 /// Spawns a daemon on `port` with an empty configuration. Pointing `--config`
 /// at a path that does not exist makes the daemon read an empty config (no repo
@@ -113,27 +86,45 @@ pub(crate) fn spawn_isolated_daemon(port: u16) -> Result<Child> {
         .with_context(|| format!("Failed to spawn {:?}", bin))
 }
 
-fn daemon_start() -> Result<Daemon> {
-    let child = spawn_isolated_daemon(PORT)?;
-    Ok(Daemon {
-        _proc: child,
-        url: format!("http://127.0.0.1:{PORT}"),
-    })
+/// A spawned daemon, killed when dropped.
+struct Daemon {
+    _proc: Child,
+    url: String,
+}
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self._proc.kill();
+        let _ = self._proc.wait();
+    }
+}
+
+fn daemon_start(port: u16) -> Result<Daemon> {
+    Ok(Daemon { _proc: spawn_isolated_daemon(port)?, url: format!("http://127.0.0.1:{port}") })
 }
 
 pub(crate) async fn daemon_wait_ready(url: &str) -> Result<()> {
     for _ in 0..50 {
-        if Client::new()
-            .get(format!("{url}/health"))
-            .send()
-            .await
-            .is_ok()
-        {
+        if Client::new().get(format!("{url}/health")).send().await.is_ok() {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     anyhow::bail!("Daemon not ready after 5 s")
+}
+
+// ─── Query IR helpers ──────────────────────────────────────────────────────────
+//
+// The query IR is internally tagged with "type" (snake_case) — see
+// `crates/core/src/query.rs`.
+
+fn is_present(field: &str) -> serde_json::Value {
+    json!({ "type": "is_present", "field": field })
+}
+
+/// `mfr_path MATCHES "<pattern>"`: the regex applies to the TreeRef name.
+fn name_matches(pattern: &str) -> serde_json::Value {
+    json!({ "type": "matches", "field": "mfr_path", "pattern": pattern })
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -148,47 +139,10 @@ pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
         .json()
         .await?;
     // Response shape: {"repo_uuid": "<32-char hex>"}.
-    Ok(v["repo_uuid"]
-        .as_str()
-        .context("missing repo_uuid field")?
-        .parse()?)
+    Ok(v["repo_uuid"].as_str().context("missing repo_uuid field")?.parse()?)
 }
 
-async fn api_create_metarecord(url: &str, repo: Uuid, rating: i64) -> Result<Uuid> {
-    // Response is the full MetaRecord object; we only need its uuid.
-    let v: serde_json::Value = Client::new()
-        .post(format!("{url}/repos/{repo}/metarecords"))
-        .json(&json!({
-            "fields": [{ "name": "rating", "value": { "type": "int", "value": rating } }]
-        }))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    Ok(v["uuid"].as_str().context("missing uuid field")?.parse()?)
-}
-
-/// Create `n` metarecords concurrently via HTTP. Returns their UUIDs.
-pub(crate) async fn api_create_n(url: &str, repo: Uuid, n: usize) -> Result<Vec<Uuid>> {
-    let sem = Arc::new(Semaphore::new(HTTP_CONCURRENCY));
-    let mut handles = Vec::with_capacity(n);
-    for i in 0..n {
-        let (url, sem) = (url.to_string(), sem.clone());
-        handles.push(tokio::spawn(async move {
-            let _permit = sem.acquire().await.unwrap();
-            api_create_metarecord(&url, repo, i as i64).await
-        }));
-    }
-    let mut uuids = Vec::with_capacity(n);
-    for h in handles {
-        uuids.push(h.await??);
-    }
-    Ok(uuids)
-}
-
-/// Runs a query and returns the matching metarecord UUIDs (as hex strings).
-/// Without a `limit` the daemon answers with a bare array.
+/// Runs a query and returns the matching metarecord UUIDs (hex strings).
 async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Vec<String>> {
     Ok(Client::new()
         .post(format!("{url}/repos/{repo}/query"))
@@ -198,11 +152,6 @@ async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Ve
         .error_for_status()?
         .json()
         .await?)
-}
-
-/// Number of metarecords whose direct parent is the metarecord at `parent_path`.
-async fn api_children_count(url: &str, repo: Uuid, parent_path: &str) -> Result<usize> {
-    Ok(api_query(url, repo, children_of(parent_path)).await?.len())
 }
 
 /// The root metarecord's UUID. At init it is the only metarecord carrying an
@@ -216,9 +165,8 @@ async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
 }
 
 /// Enables tracking on the repository by setting `mf_watch = true` on the root.
-/// Tracking is opt-in: until this is set, the watcher drops every event as
-/// ineligible. Eligibility is read fresh from the DB per event, so this takes
-/// effect immediately for subsequently-created files (no repo reload needed).
+/// Tracking is opt-in: until this is set, both the watcher and reconcile treat
+/// every path as ineligible and create nothing.
 async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
     let root = api_root_uuid(url, repo).await?;
     Client::new()
@@ -230,17 +178,34 @@ async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
     Ok(())
 }
 
-/// Poll until at least `expected` metarecords are direct children of
-/// `parent_path`. Returns elapsed time since `since`, or None on timeout.
-async fn wait_for_children(
+/// Full reconcile: walks the repo root (eligibility-pruned) and creates the
+/// metarecords for the files on disk. Returns (created, moved). `mime` opens
+/// each file to sniff its type — disabled here to keep reconcile about indexing.
+async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
+    let v: serde_json::Value = Client::new()
+        .post(format!("{url}/repos/{repo}/reconcile"))
+        .json(&json!({ "mime": mime }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok((
+        v["created"].as_u64().unwrap_or(0) as usize,
+        v["moved"].as_u64().unwrap_or(0) as usize,
+    ))
+}
+
+/// Poll until `query` matches at least `expected` metarecords.
+async fn wait_for_count(
     url: &str,
     repo: Uuid,
-    parent_path: &str,
+    query: serde_json::Value,
     expected: usize,
     since: Instant,
 ) -> Option<Duration> {
     loop {
-        if api_children_count(url, repo, parent_path).await.unwrap_or(0) >= expected {
+        if api_query(url, repo, query.clone()).await.map(|v| v.len()).unwrap_or(0) >= expected {
             return Some(since.elapsed());
         }
         if since.elapsed() > TIMEOUT {
@@ -264,11 +229,7 @@ fn cli_run(bin: &Path, url: &str, repo: Option<Uuid>, args: &[&str]) -> Result<D
     let elapsed = t.elapsed();
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!(
-            "CLI command failed: {:?}\nstderr: {}",
-            args,
-            stderr.trim()
-        );
+        anyhow::bail!("CLI command failed: {:?}\nstderr: {}", args, stderr.trim());
     }
     Ok(elapsed)
 }
@@ -307,240 +268,208 @@ fn print_section(title: &str, rows: &[(String, usize, Duration)]) {
     println!("└{}", "─".repeat(w + 42));
 }
 
-// ─── Bench 1: CLI latency (single-metarecord loop) ────────────────────────────
+// ─── Data folders → repositories ───────────────────────────────────────────────
 
-async fn bench_cli_loop(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
+/// A repository built in place on one of the persistent data folders.
+struct DataRepo {
+    label: String,
+    dir: PathBuf,
+    repo: Uuid,
+    total: usize,
+    db_bytes: u64,
+}
+
+/// Removes the `.metafolder` directories the run created, after the daemon that
+/// locked them is gone. The data files themselves are never touched here.
+struct MetafolderCleanup(Vec<PathBuf>);
+
+impl Drop for MetafolderCleanup {
+    fn drop(&mut self) {
+        for path in &self.0 {
+            let _ = std::fs::remove_dir_all(path);
+        }
+    }
+}
+
+/// Consume-only preflight: the folder must exist, hold at least one file, and
+/// not already carry a `.metafolder`.
+fn check_data_dir(dir: &Path) -> Result<()> {
+    if !dir.exists() {
+        bail!("data folder {dir:?} does not exist — create it and put files in it");
+    }
+    if !dir.is_dir() {
+        bail!("{dir:?} is not a directory");
+    }
+    if dir.join(".metafolder").exists() {
+        bail!(
+            "{dir:?} already contains a .metafolder — remove it first \
+             (a previous run may have aborted before cleanup)"
+        );
+    }
+    if collect_files(dir, 1).is_empty() {
+        bail!("{dir:?} contains no files — nothing to benchmark");
+    }
+    Ok(())
+}
+
+/// Collects up to `cap` regular file paths under `dir` (recursive), skipping
+/// the `.metafolder` directory and any leftover `.benchmoved` rename.
+fn collect_files(dir: &Path, cap: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for entry in entries.flatten() {
+            if entry.file_name() == ".metafolder" {
+                continue;
+            }
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(ft) if ft.is_dir() => stack.push(path),
+                Ok(ft) if ft.is_file() => {
+                    if !path.to_string_lossy().ends_with(BENCH_SUFFIX) {
+                        out.push(path);
+                        if out.len() >= cap {
+                            return out;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    out
+}
+
+/// Inits a repository in place on `dir`, enables tracking, and reconciles to
+/// populate the DB from the real files.
+async fn build_repo(url: &str, dir: &Path, label: &str) -> Result<DataRepo> {
+    use std::io::Write as _;
+    print!("  [{label}] init + reconcile {} ... ", dir.display());
+    std::io::stdout().flush().ok();
+
+    let repo = api_init_repo(url, dir).await?;
+    api_enable_watch(url, repo).await?;
+    let t = Instant::now();
+    let (created, _moved) = api_reconcile(url, repo, false).await?;
+    let recon = t.elapsed();
+
+    let total = api_query(url, repo, is_present("mfr_path")).await?.len();
+    let db_bytes = std::fs::metadata(dir.join(".metafolder").join("internal").join("db.sqlite"))
+        .map(|m| m.len())
+        .unwrap_or(0);
+    println!(
+        "created {created}, {total} metarecords, db {:.1} MiB, reconcile {:.0} ms",
+        db_bytes as f64 / 1_048_576.0,
+        ms(recon),
+    );
+    Ok(DataRepo { label: label.to_string(), dir: dir.to_path_buf(), repo, total, db_bytes })
+}
+
+// ─── Bench: CLI / query latency, by DB size ────────────────────────────────────
+
+async fn bench_repo_cli(url: &str, bin: &Path, repo: &DataRepo) -> Result<()> {
+    let r = repo.repo;
     let n = LOOP_N;
 
-    // Pre-create one persistent metarecord (for get/set) and n metarecords (for delete)
-    let entry = api_create_metarecord(url, repo, 99).await?;
-    let to_delete = api_create_n(url, repo, n).await?;
-    let entry_s = entry.to_string();
+    // A non-root file metarecord for the point lookups.
+    let files = api_query(
+        url,
+        r,
+        json!({ "type": "eq", "field": "mfr_type", "value": { "type": "string", "value": "file" } }),
+    )
+    .await?;
+    let sample = files.first().cloned();
 
     let mut rows: Vec<(String, usize, Duration)> = Vec::new();
 
-    rows.push(bench_loop("repos", n, || {
-        cli_run(bin, url, None, &["repos"])
-    })?);
-
-    rows.push(bench_loop("list", n, || {
-        cli_run(bin, url, Some(repo), &["list"])
-    })?);
-
-    rows.push(bench_loop("get", n, || {
-        cli_run(bin, url, Some(repo), &["get", &entry_s])
-    })?);
-
-    rows.push(bench_loop("create", n, || {
-        cli_run(bin, url, Some(repo), &["create", "--field", "rating:int=5"])
-    })?);
-
-    rows.push(bench_loop("set", n, || {
-        cli_run(bin, url, Some(repo), &["set", &entry_s, "rating:int=9"])
-    })?);
-
-    // Delete: consume the pre-created UUIDs one by one
+    // Full-scan commands (×1): cost scales with the DB size.
     let t = Instant::now();
-    for u in &to_delete {
-        cli_run(bin, url, Some(repo), &["delete", &u.to_string()])?;
+    cli_run(bin, url, Some(r), &["list"])?;
+    rows.push(("list (all metarecords)".into(), 1, t.elapsed()));
+
+    let t = Instant::now();
+    cli_run(bin, url, Some(r), &["query", "mfr_path IS PRESENT"])?;
+    rows.push(("query mfr_path IS PRESENT".into(), 1, t.elapsed()));
+
+    let t = Instant::now();
+    cli_run(bin, url, Some(r), &["query", "mfr_type = \"file\""])?;
+    rows.push(("query mfr_type = file".into(), 1, t.elapsed()));
+
+    let t = Instant::now();
+    cli_run(bin, url, Some(r), &["reconcile", "--no-mime"])?;
+    rows.push(("reconcile (re-walk)".into(), 1, t.elapsed()));
+
+    // Point commands (×n): roughly constant, isolate per-call latency.
+    if let Some(s) = sample {
+        rows.push(bench_loop("get <file>", n, || cli_run(bin, url, Some(r), &["get", &s]))?);
+        rows.push(bench_loop("path <file>", n, || cli_run(bin, url, Some(r), &["path", &s]))?);
     }
-    rows.push(("delete".to_string(), n, t.elapsed()));
-
-    rows.push(bench_loop("query IS PRESENT", n, || {
-        cli_run(bin, url, Some(repo), &["query", "rating IS PRESENT"])
-    })?);
-
-    rows.push(bench_loop("query > 50", n, || {
-        cli_run(bin, url, Some(repo), &["query", "rating > 50"])
-    })?);
-
-    rows.push(bench_loop("reconcile", n, || {
-        cli_run(bin, url, Some(repo), &["reconcile"])
+    rows.push(bench_loop("create (write)", n, || {
+        cli_run(bin, url, Some(r), &["create", "--field", "bench:int=1"])
     })?);
 
     print_section(
-        &format!("CLI — latency per command  (×{n}, DB ~{n} metarecords)"),
+        &format!(
+            "[{}] CLI — DB {} metarecords, {:.1} MiB",
+            repo.label,
+            repo.total,
+            repo.db_bytes as f64 / 1_048_576.0
+        ),
         &rows,
     );
     Ok(())
 }
 
-// ─── Bench 2: CLI bulk (large number of metarecords) ──────────────────────────
+// ─── Bench: watcher throughput on real files (with inverse restore) ────────────
 
-async fn bench_cli_bulk(url: &str, bin: &Path, repo: Uuid) -> Result<()> {
-    let mut rows: Vec<(String, usize, Duration)> = Vec::new();
-    let mut total = 0usize;
+/// Suffix appended in place to rename files for the watcher benchmark.
+const BENCH_SUFFIX: &str = ".benchmoved";
 
-    for &n in BULK_SIZES {
-        print!("  pre-populating +{n} metarecords... ");
-        let t = Instant::now();
-        api_create_n(url, repo, n).await?;
-        total += n;
-        println!("done in {:.0} ms  (DB = {} metarecords)", ms(t.elapsed()), total);
-
-        let db = total;
-
-        let t = Instant::now();
-        cli_run(bin, url, Some(repo), &["list"])?;
-        rows.push((format!("list           (DB={db})"), 1, t.elapsed()));
-
-        let t = Instant::now();
-        cli_run(bin, url, Some(repo), &["query", "rating IS PRESENT"])?;
-        rows.push((format!("query IS PRES. (DB={db})"), 1, t.elapsed()));
-
-        let t = Instant::now();
-        cli_run(bin, url, Some(repo), &["query", "rating > 500"])?;
-        rows.push((format!("query >500     (DB={db})"), 1, t.elapsed()));
-
-        let t = Instant::now();
-        cli_run(bin, url, Some(repo), &["reconcile"])?;
-        rows.push((format!("reconcile      (DB={db})"), 1, t.elapsed()));
+/// Renames up to [`WATCHER_CAP`] real files in place (appending [`BENCH_SUFFIX`]),
+/// times how long the watcher takes to re-home them, then renames them back so
+/// the folder is left exactly as found. Renaming in place (vs moving into a
+/// subdir) is fully reversible even for deeply-nested files.
+async fn bench_repo_watcher(url: &str, repo: &DataRepo) -> Result<()> {
+    let files = collect_files(&repo.dir, WATCHER_CAP);
+    if files.len() < 2 {
+        println!("  [{}] watcher: too few files, skipped", repo.label);
+        return Ok(());
     }
 
-    print_section("CLI — bulk (commands on large number of metarecords)", &rows);
-    Ok(())
-}
-
-// ─── Bench 3: Watcher — individual file moves ─────────────────────────────────
-
-async fn bench_watcher_moves(url: &str, n: usize) -> Result<()> {
-    let tmp = tempfile::TempDir::new()?;
-    let root = tmp.path();
-    let src = root.join("src");
-    let dst = root.join("dst");
-
-    // Create subdirectories BEFORE init so the recursive notify watch already
-    // covers them when files appear: creating a dir then immediately writing
-    // files inside it can race the inotify registration of the new dir.
-    std::fs::create_dir_all(&src)?;
-    std::fs::create_dir_all(&dst)?;
-
-    let repo = api_init_repo(url, root).await?;
-    println!("  repo: {repo}");
-
-    // Tracking is opt-in — enable it before creating the files, otherwise the
-    // watcher drops their create events as ineligible.
-    api_enable_watch(url, repo).await?;
-
-    // Create N files; they become eligible because mf_watch is now set on root.
-    for i in 0..n {
-        std::fs::write(src.join(format!("file_{i:05}.txt")), b"")?;
-    }
-
-    // Wait for the watcher to register all files under /src before timing moves.
-    print!("  waiting for watcher to register {n} files... ");
-    if wait_for_children(url, repo, "/src", n, Instant::now())
-        .await
-        .is_none()
-    {
-        anyhow::bail!("Timeout waiting for {n} files to be registered under /src");
-    }
-    println!("ok");
-
-    // ── Timer start ──
+    // Rename out (best-effort); remember what actually moved so we can restore.
     let t = Instant::now();
-
-    for i in 0..n {
-        let old = src.join(format!("file_{i:05}.txt"));
-        let new = dst.join(format!("file_{i:05}.txt"));
-        std::fs::rename(&old, &new)?;
-    }
-
-    // All moves are processed once every file is a child of /dst.
-    let elapsed = match wait_for_children(url, repo, "/dst", n, t).await {
-        Some(d) => d,
-        None => {
-            println!("  ⚠  Timeout ({TIMEOUT:?}) — not all {n} moves detected");
-            TIMEOUT
+    let mut renamed: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(files.len());
+    for from in &files {
+        let mut to = from.clone();
+        let name = format!("{}{BENCH_SUFFIX}", from.file_name().unwrap().to_string_lossy());
+        to.set_file_name(name);
+        if std::fs::rename(from, &to).is_ok() {
+            renamed.push((from.clone(), to));
         }
-    };
-    // ── Timer end ──
+    }
+    let k = renamed.len();
 
-    let per_file = elapsed / n as u32;
-    let rows = vec![
-        (format!("{n} files moved individually"), 1, elapsed),
-        ("  → per file".to_string(), 1, per_file),
-    ];
-    print_section(
-        &format!("Watcher — individual moves ({n} files)"),
-        &rows,
-    );
+    // Detected once that many metarecords carry the suffix in their TreeRef name.
+    let detected = wait_for_count(url, repo.repo, name_matches(r"\.benchmoved$"), k, t).await;
 
-    // Verify: /src should be empty and /dst should hold all N.
-    let in_src = api_children_count(url, repo, "/src").await?;
-    let in_dst = api_children_count(url, repo, "/dst").await?;
-    println!("  Move check: /src has {in_src} files, /dst has {in_dst} (expected 0 / {n})");
-
-    Ok(())
-}
-
-// ─── Bench 4: Watcher — folder rename ─────────────────────────────────────────
-
-async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
-    let tmp = tempfile::TempDir::new()?;
-    let root = tmp.path();
-    let subdir = root.join("subdir");
-    let subdir_moved = root.join("subdir_moved");
-
-    // Create subdirectory BEFORE init so the recursive watch already covers it.
-    std::fs::create_dir_all(&subdir)?;
-
-    let repo = api_init_repo(url, root).await?;
-    println!("  repo: {repo}");
-
-    // Opt in to tracking before creating the files (see bench_watcher_moves).
-    api_enable_watch(url, repo).await?;
-
-    for i in 0..n {
-        std::fs::write(subdir.join(format!("file_{i:05}.txt")), b"")?;
+    // Restore (inverse) before reporting, so an error in reporting never leaves
+    // the folder mutated.
+    for (from, to) in &renamed {
+        let _ = std::fs::rename(to, from);
     }
 
-    // Wait for the watcher to register all N files under /subdir.
-    print!("  waiting for watcher to register {n} files... ");
-    if wait_for_children(url, repo, "/subdir", n, Instant::now())
-        .await
-        .is_none()
-    {
-        anyhow::bail!("Timeout waiting for {n} files to be registered under /subdir");
+    match detected {
+        Some(elapsed) => print_section(
+            &format!("[{}] watcher — {k} in-place renames", repo.label),
+            &[
+                (format!("{k} renames detected"), 1, elapsed),
+                ("  → per file".into(), 1, elapsed / k.max(1) as u32),
+            ],
+        ),
+        None => println!("  [{}] watcher: timeout — not all {k} renames detected", repo.label),
     }
-    println!("ok");
-
-    // ── Timer start ──
-    let t = Instant::now();
-
-    // Rename the whole folder. The watcher should re-home every descendant.
-    std::fs::rename(&subdir, &subdir_moved)?;
-
-    // The rename is fully processed once all N files are children of the moved
-    // folder.
-    let elapsed = match wait_for_children(url, repo, "/subdir_moved", n, t).await {
-        Some(d) => d,
-        None => {
-            println!("  ⚠  Timeout ({TIMEOUT:?})");
-            TIMEOUT
-        }
-    };
-    // ── Timer end ──
-
-    // Check whether the folder rename was actually handled by the watcher.
-    let old_count = api_children_count(url, repo, "/subdir").await?;
-    let new_count = api_children_count(url, repo, "/subdir_moved").await?;
-
-    let update_status = if new_count == n && old_count == 0 {
-        "✓ all paths updated".to_string()
-    } else if old_count == n && new_count == 0 {
-        "✗ old paths retained (folder rename not handled)".to_string()
-    } else {
-        format!("? partial state ({old_count} under /subdir, {new_count} under /subdir_moved)")
-    };
-
-    let rows = vec![(format!("{n} files inside a renamed folder"), 1, elapsed)];
-    print_section(
-        &format!("Watcher — folder rename ({n} files)"),
-        &rows,
-    );
-    println!("  Path state after rename: {update_status}");
-
+    println!("  [{}] watcher: filenames restored", repo.label);
     Ok(())
 }
 
@@ -548,79 +477,73 @@ async fn bench_watcher_folder(url: &str, n: usize) -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // First positional arg selects the suite: "daemon" (default), "gui", "all".
-    // Any further args are GUI scenario names (see `gui::run`).
+    // `[mode] [--small DIR] [--big DIR] [scenario...]`. mode: data (default),
+    // gui, attach. Trailing names are GUI scenarios (attach mode only).
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let suite = args.first().map(String::as_str).unwrap_or("daemon");
-    match suite {
-        "daemon" => run_daemon_suite().await,
-        "gui" => gui::run(&args[1..]).await,
-        "gui-launch" => {
-            // `gui-launch [count] [scenario...]`: a numeric arg sets the record
-            // count (default 2000); the rest are scenario names.
-            let mut count = 2000usize;
-            let mut scenarios = Vec::new();
-            for a in &args[1..] {
-                match a.parse::<usize>() {
-                    Ok(n) => count = n,
-                    Err(_) => scenarios.push(a.clone()),
-                }
-            }
-            gui::run_launched(count, &scenarios).await
+    let mut mode: Option<String> = None;
+    let mut small = PathBuf::from(DEFAULT_SMALL_DIR);
+    let mut big = PathBuf::from(DEFAULT_BIG_DIR);
+    let mut rest: Vec<String> = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--small" => small = it.next().context("--small needs a path")?.into(),
+            "--big" => big = it.next().context("--big needs a path")?.into(),
+            s if mode.is_none() && !s.starts_with('-') => mode = Some(s.to_string()),
+            _ => rest.push(a),
         }
-        "all" => {
-            run_daemon_suite().await?;
-            println!();
-            gui::run(&[]).await
-        }
-        other => {
-            anyhow::bail!(
-                "unknown suite '{other}' (expected: daemon | gui | gui-launch | all)"
-            )
-        }
+    }
+
+    match mode.as_deref().unwrap_or("data") {
+        "data" => run_data_suite(&small, &big, false).await,
+        "gui" => run_data_suite(&small, &big, true).await,
+        "attach" => gui::run(&rest).await,
+        other => bail!("unknown mode '{other}' (expected: data | gui | attach)"),
     }
 }
 
-async fn run_daemon_suite() -> Result<()> {
-    println!("=== metafolder-bench (daemon suite) ===\n");
+/// Spawns one isolated daemon, builds a repository on each data folder, runs the
+/// daemon-side benchmarks on both (and the GUI scenarios when `with_gui`), then
+/// tears everything down and removes the `.metafolder` directories.
+async fn run_data_suite(small: &Path, big: &Path, with_gui: bool) -> Result<()> {
+    println!("=== metafolder-bench ===\n");
+
+    // Preflight both folders before touching anything.
+    check_data_dir(small)?;
+    check_data_dir(big)?;
 
     let cli_bin = find_binary("mf")?;
     println!("daemon : {}", find_binary("metafolder-daemon")?.display());
-    println!("cli    : {}\n", cli_bin.display());
+    println!("cli    : {}", cli_bin.display());
+    println!("small  : {}", small.display());
+    println!("big    : {}\n", big.display());
 
-    // Start daemon
-    println!("Starting daemon on port {PORT}...");
-    let daemon = daemon_start()?;
+    // Declared first so it is dropped *last* — after the daemon releases the DB.
+    let _cleanup = MetafolderCleanup(vec![small.join(".metafolder"), big.join(".metafolder")]);
+
+    println!("Starting isolated daemon on {DAEMON_PORT}...");
+    let daemon = daemon_start(DAEMON_PORT)?;
     daemon_wait_ready(&daemon.url).await?;
     println!("Daemon ready.\n");
 
-    // ── CLI benchmarks ────────────────────────────────────────────────────────
-    let tmp_cli = tempfile::TempDir::new()?;
-    let repo_cli = api_init_repo(&daemon.url, tmp_cli.path()).await?;
-    println!("CLI repo: {repo_cli}");
+    println!("Building repositories from the data folders:");
+    let repos = vec![
+        build_repo(&daemon.url, small, "bench_data").await?,
+        build_repo(&daemon.url, big, "bench_data_big").await?,
+    ];
 
-    bench_cli_loop(&daemon.url, &cli_bin, repo_cli).await?;
-
-    let tmp_bulk = tempfile::TempDir::new()?;
-    let repo_bulk = api_init_repo(&daemon.url, tmp_bulk.path()).await?;
-    println!("\nBulk repo: {repo_bulk}");
-
-    bench_cli_bulk(&daemon.url, &cli_bin, repo_bulk).await?;
-
-    // ── Watcher benchmarks ────────────────────────────────────────────────────
-    println!("\n--- Watcher benchmarks ---");
-    println!("(files are created then moved inside a watched directory)\n");
-
-    for &n in WATCHER_SIZES {
-        println!("Watcher moves ({n} files):");
-        bench_watcher_moves(&daemon.url, n).await?;
+    for repo in &repos {
+        bench_repo_cli(&daemon.url, &cli_bin, repo).await?;
+        bench_repo_watcher(&daemon.url, repo).await?;
     }
 
-    for &n in WATCHER_SIZES {
-        println!("\nWatcher folder rename ({n} files):");
-        bench_watcher_folder(&daemon.url, n).await?;
+    if with_gui {
+        let pairs: Vec<(String, String)> =
+            repos.iter().map(|r| (r.label.clone(), r.repo.simple().to_string())).collect();
+        gui::run_on_repos(&daemon.url, &pairs, &[]).await?;
     }
 
     println!("\n=== done ===");
     Ok(())
+    // daemon dropped here (killed), then `_cleanup` removes the .metafolder dirs.
 }

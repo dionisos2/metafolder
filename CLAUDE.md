@@ -64,12 +64,17 @@ spec.
 ## Architecture
 
 Cargo workspace: `core`, `daemon`, `cli`, `gui` (Tauri v2 + Svelte 5), `bench`
-(benchmark harness: a `daemon` suite that spawns its own daemon to time the
-CLI/HTTP and watcher; a `gui` suite that drives an already-running GUI through
-its `/gui/*` API; and `gui-launch [count]` which spawns its own daemon + repo +
-GUI window and runs the scenarios against it — a Rust port of
-`scripts/bench-gui.sh`. Select with
-`cargo run -p metafolder-bench -- daemon|gui|gui-launch|all`).
+(benchmark harness). The bench runs against two **persistent data folders**
+(default `benchmarks/bench_data` and `benchmarks/bench_data_big`) so file-count
+/ DB-size effects are comparable. The folders are consume-only: each must exist,
+hold files, and not already contain a `.metafolder` (the run aborts otherwise);
+the bench inits a repo in place, reconciles it to populate the DB from the real
+files, benchmarks, and removes the `.metafolder` on teardown. Modes:
+`data` (default — daemon-side CLI/query + watcher, the watcher renames files in
+place and undoes it), `gui` (also launches a GUI window and runs the
+`scripts/bench-gui.sh` scenarios on both repos, with a raw-HTTP baseline),
+`attach` (drive an already-running GUI). `--small DIR`/`--big DIR` override the
+folders. Select with `cargo run -p metafolder-bench -- data|gui|attach`.
 
 ### `crates/core`
 

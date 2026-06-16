@@ -65,61 +65,49 @@ pub async fn run(scenarios: &[String]) -> Result<()> {
     println!("daemon : {daemon_url}");
     println!("repo   : {repo}\n");
 
-    run_scenarios(&gui, &repo, scenarios).await
+    run_scenarios(&gui, &repo, scenarios).await?;
+    println!("=== done ===");
+    Ok(())
 }
 
-/// Launch mode: spawn an isolated daemon, populate a repository with `count`
-/// metarecords, spawn the GUI against it, run the scenarios, then tear it all
-/// down. A GUI window opens for the duration of the run.
-pub async fn run_launched(count: usize, scenarios: &[String]) -> Result<()> {
-    const DAEMON_PORT: u16 = 7610;
+/// Launch mode (used by the data suite): spawn the GUI against an
+/// already-running daemon and run the scenarios against each of `repos`
+/// (label, hex uuid). A GUI window opens for the duration of the run.
+pub async fn run_on_repos(
+    daemon_url: &str,
+    repos: &[(String, String)],
+    scenarios: &[String],
+) -> Result<()> {
     const GUI_PORT: u16 = 7611;
-
-    println!("=== metafolder-bench (GUI suite, launched) ===\n");
+    println!("\n--- GUI scenarios (launched GUI) ---");
     ensure_frontend_built()?;
-
-    // Held first so it is dropped *last* — after the daemon that locks it.
-    let repo_dir = tempfile::TempDir::new()?;
-
-    println!("Starting isolated daemon on {DAEMON_PORT}...");
-    let _daemon = Proc(crate::spawn_isolated_daemon(DAEMON_PORT)?);
-    let daemon_url = format!("http://127.0.0.1:{DAEMON_PORT}");
-    crate::daemon_wait_ready(&daemon_url).await?;
-
-    let repo = crate::api_init_repo(&daemon_url, repo_dir.path()).await?;
-    print!("Populating {count} metarecords (the slow daemon write path)... ");
-    use std::io::Write as _;
-    std::io::stdout().flush().ok();
-    let t = Instant::now();
-    crate::api_create_n(&daemon_url, repo, count).await?;
-    println!("done in {:.0} ms", ms(t.elapsed()));
 
     let gui_url = format!("http://127.0.0.1:{GUI_PORT}");
     let log_path =
         std::env::temp_dir().join(format!("metafolder-bench-gui-{}.log", std::process::id()));
     println!("Launching GUI on {GUI_PORT} (a window will open)...");
-    let _gui_proc = Proc(spawn_gui(GUI_PORT, &daemon_url, &log_path)?);
+    let _gui_proc = Proc(spawn_gui(GUI_PORT, daemon_url, &log_path)?);
     if let Err(e) = wait_gui_ready(&gui_url).await {
         if let Ok(log) = std::fs::read_to_string(&log_path) {
-            let tail: Vec<&str> = log.lines().rev().take(25).collect();
             eprintln!("--- GUI log (tail) ---");
-            for line in tail.into_iter().rev() {
+            for line in log.lines().rev().take(25).collect::<Vec<_>>().into_iter().rev() {
                 eprintln!("{line}");
             }
         }
         return Err(e);
     }
     println!("GUI ready.\n");
-    println!("daemon : {daemon_url}");
-    println!("repo   : {repo} ({count} metarecords)\n");
 
-    let gui = Gui { http: Client::new(), gui_url, daemon_url };
-    let repo_hex = repo.simple().to_string();
-    let result = run_scenarios(&gui, &repo_hex, scenarios).await;
-
-    // _gui_proc and _daemon are killed on drop here (GUI first, then daemon),
-    // then repo_dir is removed.
-    result
+    let gui = Gui { http: Client::new(), gui_url, daemon_url: daemon_url.to_string() };
+    for (label, repo) in repos {
+        println!("### GUI — {label} ({repo}) ###");
+        if let Err(e) = run_scenarios(&gui, repo, scenarios).await {
+            println!("  GUI scenarios failed for {label}: {e:#}");
+        }
+        println!();
+    }
+    Ok(())
+    // _gui_proc is killed on drop here.
 }
 
 /// Validates the scenario selection, saves/restores the layout, and runs each
@@ -157,7 +145,6 @@ async fn run_scenarios(gui: &Gui, repo: &str, scenarios: &[String]) -> Result<()
     if let Some(layout) = saved_layout {
         let _ = gui.layout_put(&layout).await;
     }
-    println!("=== done ===");
     Ok(())
 }
 
