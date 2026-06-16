@@ -89,7 +89,32 @@ pub fn open_database(path: &Path) -> Result<Connection> {
         .with_context(|| format!("Failed to open SQLite database at {path:?}"))?;
     configure_connection(&conn)?;
     migrate_legacy_table_names(&conn)?;
+    ensure_perf_indexes(&conn)?;
     Ok(conn)
+}
+
+/// Creates the performance indexes if missing, so repositories created before
+/// they were added pick them up on the next load (a no-op on fresh databases,
+/// where `init_schema` already created them). Cheap and idempotent.
+fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
+    // A freshly created file has no tables yet; `init_schema` will run next and
+    // create them already carrying the indexes. Only existing databases need
+    // this back-fill.
+    let tables: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'table' AND name IN ('metarecord_db', 'field')",
+        [],
+        |r| r.get(0),
+    )?;
+    if tables < 2 {
+        return Ok(());
+    }
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_metarecord_db_uuid ON metarecord_db(db_id, metarecord_uuid);
+         CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
+    )
+    .context("Failed to ensure performance indexes")?;
+    Ok(())
 }
 
 /// Migrates a database created under an earlier name of the metarecord
@@ -158,6 +183,9 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             PRIMARY KEY (metarecord_uuid, db_id)
         );
         CREATE INDEX idx_metarecord_db ON metarecord_db(db_id);
+        -- Keyset pagination of the listing: seek by (db_id, metarecord_uuid) and
+        -- read rows already ordered, instead of sorting the whole repo per page.
+        CREATE INDEX idx_metarecord_db_uuid ON metarecord_db(db_id, metarecord_uuid);
 
         CREATE TABLE field (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -173,6 +201,10 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             value_name      TEXT     -- tree_ref: name component
         );
         CREATE INDEX idx_field_metarecord ON field(metarecord_uuid, field_name);
+        -- Predicates filter by field_name (IsPresent/Eq/…); seek the field_name
+        -- range instead of scanning the whole EAV table. metarecord_uuid second
+        -- makes it cover the `DISTINCT metarecord_uuid` projection.
+        CREATE INDEX idx_field_name ON field(field_name, metarecord_uuid);
         CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
             WHERE value_type IN ('ref', 'externalref');
         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
@@ -376,19 +408,26 @@ pub fn list_entries_page(
     after: Option<Uuid>,
     limit: usize,
 ) -> Result<Vec<Uuid>> {
-    let mut stmt = conn.prepare(
+    // Conditional keyset: the cursor predicate is omitted on the first page so
+    // the (db_id, metarecord_uuid) index can seek directly. Folding it into a
+    // single `(?2 IS NULL OR uuid > ?2)` would defeat the seek (the OR forces a
+    // scan from the start of the db_id partition on every page).
+    let after_clause = if after.is_some() { "AND m1.metarecord_uuid > ?3" } else { "" };
+    let sql = format!(
         "SELECT m1.metarecord_uuid FROM metarecord_db m1
-         WHERE m1.db_id = ?1
-           AND (?2 IS NULL OR m1.metarecord_uuid > ?2)
+         WHERE m1.db_id = ?1 {after_clause}
            AND (SELECT COUNT(*) FROM metarecord_db m2
                 WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1
-         ORDER BY m1.metarecord_uuid LIMIT ?3",
-    )?;
+         ORDER BY m1.metarecord_uuid LIMIT ?2"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut sql_params: Vec<rusqlite::types::Value> =
+        vec![uuid_to_bytes(db_id).into(), (limit as i64).into()];
+    if let Some(after) = after {
+        sql_params.push(uuid_to_bytes(after).into());
+    }
     let uuids = stmt
-        .query_map(
-            params![uuid_to_bytes(db_id), after.map(uuid_to_bytes), limit as i64],
-            |r| r.get::<_, Vec<u8>>(0),
-        )?
+        .query_map(rusqlite::params_from_iter(sql_params.iter()), |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
         .collect::<Result<Vec<Uuid>>>()?;
     Ok(uuids)

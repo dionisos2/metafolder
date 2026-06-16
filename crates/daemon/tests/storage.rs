@@ -28,6 +28,63 @@ fn create(conn: &mut Connection, db_id: Uuid, fields: Vec<Field>) -> metafolder_
 
 // ── Schema ────────────────────────────────────────────────────────────────────
 
+/// EXPLAIN QUERY PLAN `detail` lines for `sql`, joined into one string.
+fn query_plan(conn: &Connection, sql: &str) -> String {
+    let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+    let rows: Vec<String> = stmt
+        .query_map([], |r| r.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    rows.join(" | ")
+}
+
+#[test]
+fn test_field_name_predicate_seeks_not_scans() {
+    // IsPresent/Eq-style predicates filter the EAV `field` table by field_name.
+    // Without an index leftmost on field_name this is a full table scan (the
+    // table holds ~one row per field per metarecord); it must seek instead.
+    let conn = test_conn();
+    let plan = query_plan(
+        &conn,
+        "SELECT DISTINCT metarecord_uuid FROM field \
+         WHERE field_name = 'mfr_path' AND value_type != 'nothing'",
+    );
+    assert!(
+        plan.contains("idx_field_name"),
+        "field_name predicate should seek via idx_field_name, plan was: {plan}"
+    );
+    assert!(
+        !plan.contains("SCAN field"),
+        "field_name predicate should not full-scan the field table, plan was: {plan}"
+    );
+}
+
+#[test]
+fn test_metarecord_listing_keyset_avoids_temp_sort() {
+    // The paginated listing seeks by (db_id, metarecord_uuid) and reads rows
+    // already ordered; without that composite index every page materialises the
+    // whole repo and sorts it in a temp b-tree.
+    let conn = test_conn();
+    // The shape `list_entries_page` emits for a subsequent page (cursor present).
+    let plan = query_plan(
+        &conn,
+        "SELECT m1.metarecord_uuid FROM metarecord_db m1 \
+         WHERE m1.db_id = x'00' AND m1.metarecord_uuid > x'01' \
+           AND (SELECT COUNT(*) FROM metarecord_db m2 \
+                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1 \
+         ORDER BY m1.metarecord_uuid LIMIT 500",
+    );
+    assert!(
+        plan.contains("idx_metarecord_db_uuid"),
+        "listing should use idx_metarecord_db_uuid, plan was: {plan}"
+    );
+    assert!(
+        !plan.contains("TEMP B-TREE"),
+        "listing should not sort via a temp b-tree, plan was: {plan}"
+    );
+}
+
 #[test]
 fn test_init_schema_creates_all_tables() {
     let conn = test_conn();
