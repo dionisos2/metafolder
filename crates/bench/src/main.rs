@@ -34,8 +34,12 @@ use uuid::Uuid;
 
 const DAEMON_PORT: u16 = 7610;
 const LOOP_N: usize = 20;
+/// Number of iterations averaged for the limited-query benchmark.
+const LIMITED_ITERS: usize = 10;
+/// The result cap for the limited-query benchmark.
+const LIMITED_N: usize = 100;
 /// Cap on the number of files the watcher benchmark renames (and restores).
-const WATCHER_CAP: usize = 500;
+const WATCHER_CAP: usize = 200;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
 const TIMEOUT: Duration = Duration::from_secs(120);
 
@@ -421,6 +425,77 @@ async fn bench_repo_cli(url: &str, bin: &Path, repo: &DataRepo) -> Result<()> {
     Ok(())
 }
 
+// ─── Bench: limited (first-N) retrieval, by DB size ────────────────────────────
+//
+// Times the queries directly over HTTP (no `mf` process overhead) so the
+// numbers are comparable both across the two repos and against the same query
+// run inside the GUI (the panel's `mf:daemon POST /query` measure).
+
+/// `POST /query` with a `limit`; returns the page size actually returned.
+async fn timed_query_limited(
+    url: &str,
+    repo: Uuid,
+    query: serde_json::Value,
+    limit: usize,
+) -> Result<usize> {
+    let v: serde_json::Value = Client::new()
+        .post(format!("{url}/repos/{repo}/query"))
+        .json(&json!({ "query": query, "limit": limit }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(v["results"].as_array().map(|a| a.len()).unwrap_or(0))
+}
+
+/// `GET /metarecords?limit=` (the unfiltered first page).
+async fn timed_list_limited(url: &str, repo: Uuid, limit: usize) -> Result<usize> {
+    let v: serde_json::Value = Client::new()
+        .get(format!("{url}/repos/{repo}/metarecords?limit={limit}"))
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    Ok(v["results"].as_array().map(|a| a.len()).unwrap_or(0))
+}
+
+async fn bench_repo_limited(url: &str, repo: &DataRepo) -> Result<()> {
+    let r = repo.repo;
+    let n = LIMITED_ITERS;
+    let queries: [(&str, serde_json::Value); 2] = [
+        ("query mfr_path IS PRESENT", is_present("mfr_path")),
+        (
+            "query mfr_type = file",
+            json!({ "type": "eq", "field": "mfr_type", "value": { "type": "string", "value": "file" } }),
+        ),
+    ];
+
+    let mut rows: Vec<(String, usize, Duration)> = Vec::new();
+    for (label, q) in queries {
+        let t = Instant::now();
+        for _ in 0..n {
+            timed_query_limited(url, r, q.clone(), LIMITED_N).await?;
+        }
+        rows.push((label.to_string(), n, t.elapsed()));
+    }
+    let t = Instant::now();
+    for _ in 0..n {
+        timed_list_limited(url, r, LIMITED_N).await?;
+    }
+    rows.push(("list".to_string(), n, t.elapsed()));
+
+    print_section(
+        &format!(
+            "[{}] limited to {LIMITED_N} (direct HTTP) — DB {} metarecords",
+            repo.label, repo.total
+        ),
+        &rows,
+    );
+    Ok(())
+}
+
 // ─── Bench: watcher throughput on real files (with inverse restore) ────────────
 
 /// Suffix appended in place to rename files for the watcher benchmark.
@@ -534,6 +609,7 @@ async fn run_data_suite(small: &Path, big: &Path, with_gui: bool) -> Result<()> 
 
     for repo in &repos {
         bench_repo_cli(&daemon.url, &cli_bin, repo).await?;
+        bench_repo_limited(&daemon.url, repo).await?;
         bench_repo_watcher(&daemon.url, repo).await?;
     }
 

@@ -411,9 +411,10 @@ impl Gui {
         self.bench_read().await
     }
 
-    /// Times the raw daemon calls a list panel ultimately makes: the full
-    /// metarecord listing (every uuid) and a single page. Printed next to the
-    /// panel timings so GUI overhead is the difference.
+    /// Times the raw daemon calls the list panel ultimately makes, so the GUI
+    /// overhead reads off as the difference from the panel timings: the full
+    /// metarecord listing (every uuid) and a `mfr_path IS PRESENT` query limited
+    /// to 100 — the direct counterpart to the panel's `mf:daemon POST /query`.
     async fn http_baseline(&self, repo: &str) -> Result<()> {
         let base = format!("{}/repos/{repo}/metarecords", self.daemon_url);
 
@@ -425,19 +426,23 @@ impl Gui {
         let t = Instant::now();
         let _page: Value = self
             .http
-            .get(format!("{base}?limit=500"))
+            .post(format!("{}/repos/{repo}/query", self.daemon_url))
+            .json(&json!({
+                "query": { "type": "is_present", "field": "mfr_path" },
+                "limit": 100,
+            }))
             .send()
             .await?
             .error_for_status()?
             .json()
             .await?;
-        let page = t.elapsed();
+        let limited = t.elapsed();
 
         println!(
-            "  HTTP baseline (same repo, {} metarecords): full list {:.1} ms · first page(500) {:.1} ms",
+            "  HTTP baseline (same repo, {} metarecords): full list {:.1} ms · query limit-100 {:.1} ms",
             all.len(),
             ms(full),
-            ms(page),
+            ms(limited),
         );
         Ok(())
     }
