@@ -24,8 +24,13 @@ const TEXT = new Set([
 ]);
 const TEXT_PREVIEW_LIMIT = 256 * 1024;
 
+// Zoom: a step multiplies the current scale; bounds keep the manual size sane.
+const ZOOM_STEP = 1.25;
+const ZOOM_MIN = 0.05;
+const ZOOM_MAX = 40;
+
 export async function mount(root, metafolder) {
-  const { workspace, fs } = metafolder;
+  const { workspace, fs, commands } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
 
   let paths = [];
@@ -41,6 +46,16 @@ export async function mount(root, metafolder) {
   const pathBar = root.getElementById('path-bar');
   const viewer = root.getElementById('viewer');
   const dirFooter = root.getElementById('dir-footer');
+  const mediaToolbar = root.getElementById('media-toolbar');
+  const zoomLabel = root.getElementById('zoom-label');
+
+  // Zoom state, kept across files so a chosen level persists while browsing.
+  // 'fit' fills the available box (aspect preserved); 'manual' shows the media
+  // at `zoomFactor` × its natural pixel size. zoomTarget is the currently
+  // zoomable <img>/<video>, or null when the view is text/audio/a directory.
+  let zoomMode = 'fit';
+  let zoomFactor = 1;
+  let zoomTarget = null;
   // Detaches the current directory grid's scroll listener; called before the
   // next render so an old folder's pager cannot keep firing.
   let detachDirScroll = null;
@@ -50,7 +65,90 @@ export async function mount(root, metafolder) {
   }
 
   function placeholder(text) {
+    clearZoomTarget();
     viewer.replaceChildren(el('p', { class: 'placeholder' }, text));
+  }
+
+  // --- Zoom -----------------------------------------------------------------
+
+  function naturalSize(elem) {
+    if (elem.tagName === 'VIDEO') return { w: elem.videoWidth, h: elem.videoHeight };
+    return { w: elem.naturalWidth, h: elem.naturalHeight };
+  }
+
+  // Run fn once the media reports its intrinsic dimensions (needed before a
+  // manual pixel size can be computed).
+  function onceReady(elem, fn) {
+    elem.addEventListener(elem.tagName === 'VIDEO' ? 'loadedmetadata' : 'load', fn, {
+      once: true,
+    });
+  }
+
+  function updateToolbar() {
+    mediaToolbar.hidden = zoomTarget === null;
+    if (zoomTarget === null) return;
+    zoomLabel.textContent = zoomMode === 'fit' ? 'Fit' : `${Math.round(zoomFactor * 100)}%`;
+  }
+
+  function applyZoom() {
+    const elem = zoomTarget;
+    if (!elem) return;
+    elem.classList.toggle('zoom-fit', zoomMode === 'fit');
+    elem.classList.toggle('zoom-manual', zoomMode === 'manual');
+    if (zoomMode === 'fit') {
+      elem.style.width = '';
+      elem.style.height = '';
+    } else {
+      const nat = naturalSize(elem);
+      if (!nat.w || !nat.h) {
+        // Dimensions not loaded yet: re-apply when they arrive.
+        onceReady(elem, applyZoom);
+        return;
+      }
+      elem.style.width = `${Math.round(nat.w * zoomFactor)}px`;
+      elem.style.height = `${Math.round(nat.h * zoomFactor)}px`;
+    }
+    updateToolbar();
+  }
+
+  // Make `elem` the zoom target and render it at the current zoom state.
+  function setZoomTarget(elem) {
+    zoomTarget = elem;
+    applyZoom();
+  }
+
+  function clearZoomTarget() {
+    zoomTarget = null;
+    if (mediaToolbar) mediaToolbar.hidden = true;
+  }
+
+  // The on-screen scale of the target right now (used to start a manual zoom
+  // continuously from whatever "fit" is currently showing).
+  function shownScale(elem) {
+    const nat = naturalSize(elem);
+    if (!nat.w) return zoomFactor;
+    return elem.getBoundingClientRect().width / nat.w;
+  }
+
+  function zoomBy(mult) {
+    if (!zoomTarget) return;
+    if (zoomMode === 'fit') zoomFactor = shownScale(zoomTarget) || 1;
+    zoomMode = 'manual';
+    zoomFactor = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomFactor * mult));
+    applyZoom();
+  }
+
+  function zoomFit() {
+    if (!zoomTarget) return;
+    zoomMode = 'fit';
+    applyZoom();
+  }
+
+  function zoomReset() {
+    if (!zoomTarget) return;
+    zoomMode = 'manual';
+    zoomFactor = 1;
+    applyZoom();
   }
 
   // The currently mounted <audio>/<video>, kept so it can be torn down when
@@ -196,6 +294,8 @@ export async function mount(root, metafolder) {
       if (current()) placeholder('cannot play this file (unsupported or corrupt media)');
     });
     viewer.replaceChildren(media);
+    // Only video is zoomable; audio has no visual frame.
+    if (kind === 'video') setZoomTarget(media);
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
@@ -260,6 +360,9 @@ export async function mount(root, metafolder) {
       detachDirScroll = null;
     }
     dirFooter.hidden = true;
+    // Any zoomable media from the previous view is gone; the image/video
+    // branches below re-arm it.
+    clearZoomTarget();
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
@@ -280,9 +383,9 @@ export async function mount(root, metafolder) {
     const url = rawUrl(path);
 
     if (IMAGE.has(extension)) {
-      viewer.replaceChildren(
-        el('img', { src: url, onerror: () => placeholder('cannot load the file') }),
-      );
+      const img = el('img', { src: url, onerror: () => placeholder('cannot load the file') });
+      viewer.replaceChildren(img);
+      setZoomTarget(img);
     } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
       await renderMedia(VIDEO.has(extension) ? 'video' : 'audio', path, url, generation);
     } else if (TEXT.has(extension)) {
@@ -318,6 +421,35 @@ export async function mount(root, metafolder) {
     localPath = null;
     metafolder.whenVisible(rerender);
   }
+
+  // Zoom commands (also reachable from the command input / a keybinding) and
+  // their toolbar buttons. The handlers no-op unless an image/video is shown.
+  commands.register('file:zoom-in', {
+    label: 'File: zoom in',
+    handler: () => zoomBy(ZOOM_STEP),
+  });
+  commands.register('file:zoom-out', {
+    label: 'File: zoom out',
+    handler: () => zoomBy(1 / ZOOM_STEP),
+  });
+  commands.register('file:zoom-fit', {
+    label: 'File: fit to the available space',
+    handler: zoomFit,
+  });
+  commands.register('file:zoom-reset', {
+    label: 'File: original size',
+    handler: zoomReset,
+  });
+
+  metafolder.addKeybinding('file:zoom-in', 'plus');
+  metafolder.addKeybinding('file:zoom-out', '-');
+  metafolder.addKeybinding('file:zoom-fit', '=');
+  metafolder.addKeybinding('file:zoom-reset', '0');
+
+  root.getElementById('zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
+  root.getElementById('zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
+  root.getElementById('zoom-fit').addEventListener('click', zoomFit);
+  root.getElementById('zoom-reset').addEventListener('click', zoomReset);
 
   workspace.onChange('selected_paths', update);
   update(await workspace.get('selected_paths'));

@@ -181,6 +181,9 @@ mod tests {
         assert_eq!(parse_combo("shift+ctrl+a").unwrap(), vec!["ctrl+shift+a"]);
         assert_eq!(parse_combo("Escape").unwrap(), vec!["escape"]);
         assert_eq!(parse_combo(":").unwrap(), vec![":"]);
+        // The literal "+" is the chord separator, so the "+" key is spelled
+        // "plus" (the JS matcher maps the event the same way).
+        assert_eq!(parse_combo("plus").unwrap(), vec!["plus"]);
     }
 
     #[test]

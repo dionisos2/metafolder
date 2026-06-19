@@ -44,19 +44,59 @@
         padding: 0 8px;
         cursor: pointer;
       }
+      /* Media toolbar: zoom controls, shown only while an image/video is
+         previewed (the file panel toggles its [hidden]). */
+      #media-toolbar {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        font-size: 0.85em;
+      }
+      #media-toolbar button {
+        font: inherit;
+        min-width: 28px;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #media-toolbar button:hover {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      #media-toolbar #zoom-label {
+        min-width: 48px;
+        text-align: center;
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       #viewer {
         flex: 1;
         display: flex;
-        align-items: center;
-        justify-content: center;
         overflow: auto;
         min-height: 0;
       }
+      /* margin:auto (rather than flex align/justify-center) keeps a zoomed-in
+         image scrollable to its top-left edge instead of clipping it. */
       #viewer img,
       #viewer video {
-        max-width: 100%;
-        max-height: 100%;
+        margin: auto;
+      }
+      /* Fit: fill the available box, aspect preserved (letterboxed). Default. */
+      #viewer img.zoom-fit,
+      #viewer video.zoom-fit {
+        width: 100%;
+        height: 100%;
         object-fit: contain;
+      }
+      /* Manual zoom: explicit pixel size set inline, never clamped to the box. */
+      #viewer img.zoom-manual,
+      #viewer video.zoom-manual {
+        max-width: none;
+        max-height: none;
       }
       #viewer pre {
         align-self: stretch;
@@ -139,6 +179,13 @@
   </head>
   <body>
     <div id="path-bar" hidden></div>
+    <div id="media-toolbar" hidden>
+      <button id="zoom-out" title="Zoom out (-)">−</button>
+      <button id="zoom-in" title="Zoom in (+)">+</button>
+      <span id="zoom-label"></span>
+      <button id="zoom-fit" title="Fit to available space (=)">⤢ Fit</button>
+      <button id="zoom-reset" title="Original size (0)">1:1</button>
+    </div>
     <div id="viewer"><p class="placeholder">No file selected</p></div>
     <div id="dir-footer" hidden></div>
   </body>

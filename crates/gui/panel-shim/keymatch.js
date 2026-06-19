@@ -14,6 +14,9 @@ const SPECIAL_KEYS = {
   arrowright: 'right',
   arrowup: 'up',
   arrowdown: 'down',
+  // "+" is the chord separator in a combo string ("ctrl+k"), so it can never
+  // be a key on its own — the engine needs the word "plus" instead.
+  '+': 'plus',
 };
 const MODIFIER_KEYS = new Set(['control', 'shift', 'alt', 'meta', 'altgraph']);
 

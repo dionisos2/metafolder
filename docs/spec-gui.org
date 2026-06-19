@@ -509,6 +509,10 @@ Behaviours:
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
+| =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
+| =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
+| =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
+| =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
 
 ** Keyboard navigation
 
@@ -966,6 +970,25 @@ Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer
 elements are missing, shows an explanatory message instead of attempting
 playback (see [[*Media codec support]]).
+
+When an image or video is previewed, a toolbar offers zoom controls, mirrored
+by commands and default keybindings (active only while the =file= panel is
+focused):
+
+| Command           | Default key | Effect                                              |
+|-------------------+-------------+-----------------------------------------------------|
+| =file:zoom-in=    | =+=         | Enlarge by one step                                 |
+| =file:zoom-out=   | =-=         | Shrink by one step                                  |
+| =file:zoom-fit=   | ~=~         | Fit the available space (aspect preserved) — default |
+| =file:zoom-reset= | =0=         | Original (1:1) size                                 |
+
+"Fit" fills the viewer, scaling to whichever of full width or full height comes
+first without distortion. A manual zoom (=+= / =-= / =0=) sizes the media in
+pixels relative to its natural dimensions, with the viewer scrolling when the
+result overflows; the first =+= / =-= continues smoothly from whatever "fit" is
+currently showing. The chosen zoom state persists while browsing other files.
+The "+" key is spelled =plus= in keybindings TOML (a literal =+= is the chord
+separator).
 
 Default keybindings map the arrow keys, when the =file= panel is focused,
 to =metarecord-list:next= / =metarecord-list:prev=: they move the metarecord-list

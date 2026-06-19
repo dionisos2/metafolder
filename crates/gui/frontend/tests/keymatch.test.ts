@@ -52,6 +52,14 @@ describe('comboFromEvent', () => {
     expect(comboFromEvent({ key: 'Enter' })).toBe('enter');
   });
 
+  test('maps "+" to "plus" (the literal "+" is the combo separator)', () => {
+    // "+" cannot be a combo string ("a+b" means a chord); the engine needs a
+    // word. Typed with or without shift (shift+= on most layouts) it stays
+    // "plus", never "shift+plus".
+    expect(comboFromEvent({ key: '+' })).toBe('plus');
+    expect(comboFromEvent({ key: '+', shiftKey: true })).toBe('plus');
+  });
+
   test('returns null for modifier-only events', () => {
     expect(comboFromEvent({ key: 'Control', ctrlKey: true })).toBeNull();
     expect(comboFromEvent({ key: 'Shift', shiftKey: true })).toBeNull();
