@@ -107,13 +107,9 @@ export async function mount(root, metafolder) {
     return mediaSupportCache;
   }
 
-  // Some decode failures fire 'error' on the media element; others just
-  // stall in "loading" without it. Probe after this delay as a backstop.
-  const MEDIA_STALL_MS = 6000;
-
-  // Ask the GUI server which decoders this specific file needs and lack.
-  // Returns null when the probe is unreachable (caller shows a generic
-  // message rather than guessing).
+  // Ask the GUI server which decoders/demuxers this specific file needs and
+  // lacks (runs gst-discoverer, which parses the file safely without building
+  // the full decode pipeline). Returns null when the probe is unreachable.
   async function probeFile(path) {
     try {
       const response = await fetch(
@@ -121,14 +117,18 @@ export async function mount(root, metafolder) {
       );
       if (response.ok) return await response.json();
     } catch {
-      // Unreachable: fall through to the generic message.
+      // Unreachable: caller decides how to proceed.
     }
     return null;
   }
 
-  // Render an <audio>/<video>, and only if it fails to play probe the file
-  // to explain why (a missing codec — distinct from the missing-sink case,
-  // which is gated up front because it would crash the WebKit web process).
+  // Render an <audio>/<video>. The probe runs *before* the element is created:
+  // in a GPU-less / minimal environment, building a GStreamer pipeline for a
+  // file whose codec or demuxer is missing crashes the whole WebKit web
+  // process (freezing the app for several seconds), so a reactive "create then
+  // diagnose on error" would be too late — we must not create the element at
+  // all in that case. gst-discoverer is safe; it reports the missing plugins
+  // without ever building the decode pipeline that crashes WebKit.
   async function renderMedia(kind, path, url, generation) {
     const current = () => generation === renderGeneration;
     const support = await mediaSupport();
@@ -140,34 +140,22 @@ export async function mount(root, metafolder) {
       );
       return;
     }
+    placeholder('checking media support…');
+    const probe = await probeFile(path);
+    if (!current()) return;
+    if (probe && probe.missing.length > 0) {
+      placeholder(
+        `cannot play this file: missing GStreamer plugin(s): ${probe.missing.join(', ')} ` +
+          `(try gst-libav / gst-plugins-bad / gst-plugins-ugly)`,
+      );
+      return;
+    }
     const media = el(kind, { controls: true, src: url });
-    let settled = false;
-    // `fromStall`: a timeout with no 'error' yet. A slow-but-fine file would
-    // hit it too, so only act on it when the probe finds a missing codec;
-    // an actual 'error' always resolves to a message.
-    const diagnose = async (fromStall) => {
-      if (settled || !current()) return;
-      const probe = await probeFile(path);
-      if (settled || !current()) return;
-      if (probe && probe.missing.length > 0) {
-        settled = true;
-        clearTimeout(timer);
-        placeholder(
-          `cannot play this file: missing codec(s): ${probe.missing.join(', ')} ` +
-            `(install gst-libav / gst-plugins-bad)`,
-        );
-      } else if (!fromStall) {
-        settled = true;
-        clearTimeout(timer);
-        placeholder('cannot play this file (unsupported format or codec)');
-      }
-    };
-    media.addEventListener('error', () => void diagnose(false));
-    media.addEventListener('loadedmetadata', () => {
-      settled = true;
-      clearTimeout(timer);
+    // The probe found nothing missing, but keep a light fallback for other
+    // runtime failures (a corrupt stream, an unreadable file).
+    media.addEventListener('error', () => {
+      if (current()) placeholder('cannot play this file (unsupported or corrupt media)');
     });
-    const timer = setTimeout(() => void diagnose(true), MEDIA_STALL_MS);
     viewer.replaceChildren(media);
   }
 
