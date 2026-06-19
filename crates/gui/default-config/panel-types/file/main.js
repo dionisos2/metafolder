@@ -41,6 +41,30 @@ export async function mount(root, metafolder) {
     viewer.replaceChildren(el('p', { class: 'placeholder' }, text));
   }
 
+  // The currently mounted <audio>/<video>, kept so it can be torn down when
+  // the view changes. A detached media element keeps its decode/network
+  // pipeline alive until GC; without an explicit teardown the old stream goes
+  // on buffering (in a device-less environment the decoder queue grows
+  // unbounded — gigabytes of RAM, then a crash). pause + drop src + load()
+  // releases it immediately.
+  let activeMedia = null;
+
+  function teardownMedia() {
+    if (!activeMedia) return;
+    try {
+      activeMedia.pause();
+    } catch {
+      // Not all states allow pause(); ignore.
+    }
+    activeMedia.removeAttribute('src');
+    try {
+      activeMedia.load();
+    } catch {
+      // load() may throw on a removed element; the src is already gone.
+    }
+    activeMedia = null;
+  }
+
   function parentDir(path) {
     const index = path.lastIndexOf('/');
     return index <= 0 ? '/' : path.slice(0, index);
@@ -150,7 +174,10 @@ export async function mount(root, metafolder) {
       );
       return;
     }
-    const media = el(kind, { controls: true, src: url });
+    // `preload="metadata"`: a preview does not autoplay, so fetch only enough
+    // for the first frame and duration — never buffer/decode the whole stream.
+    const media = el(kind, { controls: true, preload: 'metadata', src: url });
+    activeMedia = media;
     // The probe found nothing missing, but keep a light fallback for other
     // runtime failures (a corrupt stream, an unreadable file).
     media.addEventListener('error', () => {
@@ -200,6 +227,8 @@ export async function mount(root, metafolder) {
 
   async function renderViewer() {
     const generation = ++renderGeneration;
+    // Release any media from the previous view before showing the next one.
+    teardownMedia();
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
@@ -261,4 +290,8 @@ export async function mount(root, metafolder) {
 
   workspace.onChange('selected_paths', update);
   update(await workspace.get('selected_paths'));
+
+  // Release the media pipeline if the panel is unmounted (workspace closed or
+  // panel type switched) so it cannot keep decoding in the background.
+  return () => teardownMedia();
 }
