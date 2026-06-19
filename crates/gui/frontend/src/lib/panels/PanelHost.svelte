@@ -64,7 +64,14 @@
         onCommandsChanged: () => void refreshCommands(),
         addDefaultMenuItems,
       },
-      { wsId, panelType, guiServer: base, root: shadow, visibilityGate },
+      {
+        wsId,
+        panelType,
+        guiServer: base,
+        pageSize: store.pageSizes[panelType],
+        root: shadow,
+        visibilityGate,
+      },
     );
 
     // Clicking into a panel focuses its slot (focusin crosses the shadow).

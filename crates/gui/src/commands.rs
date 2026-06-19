@@ -24,6 +24,8 @@ pub struct App {
     /// The simplified-query grammar (read-only), for local query expansion.
     pub grammar: metafolder_core::simplified::grammar::Grammar,
     pub gui_port: u16,
+    /// Per-panel progressive-loading page sizes (config.toml `[page-size]`).
+    pub page_sizes: crate::config::PageSizes,
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
     pub input: Arc<crate::server::input_wait::InputWait>,
@@ -47,6 +49,8 @@ pub struct InitialState {
     pub style_css: String,
     pub gui_port: u16,
     pub daemon_url: String,
+    /// Per-panel page sizes, keyed by panel-type name (kebab-case).
+    pub page_sizes: crate::config::PageSizes,
 }
 
 #[tauri::command]
@@ -60,6 +64,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         style_css: app.config.load_style()?,
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
+        page_sizes: app.page_sizes.clone(),
     })
 }
 

@@ -9,8 +9,28 @@
 //! shipped default (spec-config "No runtime fallback").
 
 use crate::keybindings::KeybindingSet;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+
+/// Per-panel list page sizes (spec-gui "metarecord-list / file / file-manager
+/// panel types"), read from the `[page-size]` table of `config.toml`. They tune
+/// progressive list loading: how many rows/tiles each list panel renders per
+/// window before more are fetched on scroll. Smallest for `metarecord-list`
+/// (each row needs several daemon round-trips), largest for `file-manager`
+/// (a plain text row is the cheapest to build).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct PageSizes {
+    pub metarecord_list: u32,
+    pub file: u32,
+    pub file_manager: u32,
+}
+
+impl Default for PageSizes {
+    fn default() -> Self {
+        PageSizes { metarecord_list: 100, file: 150, file_manager: 200 }
+    }
+}
 
 /// GUI settings read from `~/.config/metafolder/gui/config.toml` (spec-config;
 /// spec-gui "Connection to the daemon"). Missing fields fall back to the
@@ -23,11 +43,17 @@ pub struct GuiConfig {
     pub daemon_url: String,
     /// Port the GUI's own HTTP server (panel assets + scripting API) binds.
     pub gui_port: u16,
+    /// Per-panel progressive-loading page sizes.
+    pub page_size: PageSizes,
 }
 
 impl Default for GuiConfig {
     fn default() -> Self {
-        GuiConfig { daemon_url: "http://127.0.0.1:7523".to_string(), gui_port: 7524 }
+        GuiConfig {
+            daemon_url: "http://127.0.0.1:7523".to_string(),
+            gui_port: 7524,
+            page_size: PageSizes::default(),
+        }
     }
 }
 
@@ -213,6 +239,34 @@ mod tests {
             toml::from_str("daemon-url = \"http://127.0.0.1:9000\"\ngui-port = 8800\n").unwrap();
         assert_eq!(parsed.daemon_url, "http://127.0.0.1:9000");
         assert_eq!(parsed.gui_port, 8800);
+    }
+
+    #[test]
+    fn test_page_sizes_default_per_panel() {
+        // An empty config yields the documented per-panel defaults.
+        let parsed: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(parsed.page_size.metarecord_list, 100);
+        assert_eq!(parsed.page_size.file, 150);
+        assert_eq!(parsed.page_size.file_manager, 200);
+    }
+
+    #[test]
+    fn test_page_sizes_override_one_panel_keeps_other_defaults() {
+        let parsed: GuiConfig = toml::from_str("[page-size]\nfile = 42\n").unwrap();
+        assert_eq!(parsed.page_size.file, 42);
+        // Unspecified panels keep their defaults.
+        assert_eq!(parsed.page_size.metarecord_list, 100);
+        assert_eq!(parsed.page_size.file_manager, 200);
+    }
+
+    #[test]
+    fn test_page_sizes_serialize_with_kebab_panel_keys() {
+        // The frontend keys the map by panel-type name, so the JSON must use
+        // kebab-case keys matching the panel directory names.
+        let json = serde_json::to_value(PageSizes::default()).unwrap();
+        assert_eq!(json["metarecord-list"], 100);
+        assert_eq!(json["file"], 150);
+        assert_eq!(json["file-manager"], 200);
     }
 
     #[test]

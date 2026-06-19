@@ -9,3 +9,13 @@ daemon-url = "http://127.0.0.1:7523"
 # Port the GUI's own HTTP server (panel assets + scripting API) binds. The
 # `mf gui` CLI reads this same value to reach the GUI (no gui.port file).
 gui-port = 7524
+
+# Progressive list loading: how many rows/tiles each list panel renders per
+# window before more are fetched/revealed on scroll (a footer shows
+# "loaded/total"). Smallest for metarecord-list (each row needs several daemon
+# round-trips and parsing), largest for file-manager (a plain text row is the
+# cheapest to build); file sits in between (each tile is a lazy <img>).
+[page-size]
+metarecord-list = 100
+file = 150
+file-manager = 200

@@ -8,8 +8,11 @@ import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRef
 
 // Smallest page of the three list panels: each row needs several daemon
 // round-trips (TreeRef path resolution, ref-target metarecords) and parsing,
-// so a modest page keeps a large result responsive on first display.
-const DEFAULT_PAGE_SIZE = 50;
+// so a modest page keeps a large result responsive on first display. The
+// effective default comes from the GUI config (`[page-size].metarecord-list`);
+// this is only the fallback, and the per-workspace page-size variable still
+// overrides it.
+const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
 
@@ -26,6 +29,7 @@ const MATCH_ALL = {
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
   const REFRESH = cache.REFRESH;
+  const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
 
   let repo = null;
   let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
@@ -33,7 +37,7 @@ export async function mount(root, metafolder) {
   let metarecords = [];
   let nextCursor = null;
   let total = null; // full result count (daemon-side COUNT, first page only)
-  let pageSize = DEFAULT_PAGE_SIZE; // persisted per workspace
+  let pageSize = defaultPageSize; // persisted per workspace
   let loading = false;
   let queryIR = null; // null = match all
   let normalShown = false; // zone B (normal DSL) revealed?
@@ -450,7 +454,7 @@ export async function mount(root, metafolder) {
   /** A stored/typed page size; anything invalid falls back to the default. */
   function sanitizePageSize(value) {
     const n = Math.floor(Number(value));
-    return Number.isFinite(n) && n >= 1 ? n : DEFAULT_PAGE_SIZE;
+    return Number.isFinite(n) && n >= 1 ? n : defaultPageSize;
   }
 
   function toggleSort(column) {

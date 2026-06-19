@@ -60,4 +60,6 @@ export interface InitialState {
   style_css: string;
   gui_port: number;
   daemon_url: string;
+  /** Per-panel progressive-loading page sizes, keyed by panel-type name. */
+  page_sizes: Record<string, number>;
 }

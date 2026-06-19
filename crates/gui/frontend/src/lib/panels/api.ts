@@ -53,6 +53,8 @@ export interface PanelApiCtx {
   wsId: string;
   panelType: string;
   guiServer: string;
+  /** Progressive-loading page size configured for this panel type, if any. */
+  pageSize?: number;
   root: ShadowRoot;
   visibilityGate: VisibilityGate;
 }
@@ -172,6 +174,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
     get guiServer() {
       return ctx.guiServer;
+    },
+    // Configured progressive-loading page size for this panel type (config.toml
+    // `[page-size]`); undefined for panels without an entry.
+    get pageSize() {
+      return ctx.pageSize;
     },
 
     onVisibility(listener: (visible: boolean, slot: string | null) => void) {

@@ -40,7 +40,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   daemon/
     config.json                  ← repos to auto-load
   gui/
-    config.toml                  ← daemon-url + gui-port
+    config.toml                  ← daemon-url + gui-port + [page-size]
     keybindings.toml
     style.css
     panel-types/
@@ -51,7 +51,10 @@ A single git repository at =~/.config/metafolder/= (respecting
 The GUI reads =gui/config.toml= for the daemon URL it connects to
 (=daemon-url=, default the daemon's own default port) and the port its own
 HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI reads the same
-=gui-port=, so there is no runtime port discovery file. =.gitignore= is part
+=gui-port=, so there is no runtime port discovery file. The optional
+=[page-size]= table tunes progressive list loading per panel
+(=metarecord-list= 100, =file= 150, =file-manager= 200 by default); each key is
+a panel-type name. =.gitignore= is part
 of the shipped defaults (committed on =default=).
 
 The obsolete =panel-types-defaults/= mirror does not exist in this model: the

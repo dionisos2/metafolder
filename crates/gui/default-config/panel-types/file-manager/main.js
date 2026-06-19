@@ -12,14 +12,16 @@ import {
   entriesFooter,
 } from './tracked.js';
 
-// Render the directory in windows of this many rows (plus more on scroll),
-// so a directory with thousands of entries does not build a huge DOM — and,
-// just as importantly, only the rendered window's tracked status is queried.
-// Largest of the three list panels: a plain text row is the cheapest to build.
-const PAGE = 200;
+// Render the directory in windows of this many rows (plus more on scroll), so
+// a directory with thousands of entries does not build a huge DOM — and, just
+// as importantly, only the rendered window's tracked status is queried. The
+// size comes from the GUI config (`[page-size].file-manager`); this is only
+// the fallback when no config value is provided.
+const PAGE_DEFAULT = 200;
 
 export async function mount(root, metafolder) {
   const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
+  const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
   let repo = null;
   let repoRoot = null;

@@ -9,10 +9,9 @@ import { createPagedList } from '/__paged-list.js';
 
 // Directory grid: render this many thumbnails per window (more on scroll), so
 // opening a folder with thousands of files does not build/load them all at
-// once. Bigger than metarecord-list's page (each tile is a lazy <img>, cheaper
-// than a fully resolved metarecord row), smaller than file-manager's plain
-// text list.
-const DIR_PAGE = 100;
+// once. The size comes from the GUI config (`[page-size].file`); this is only
+// the fallback when no config value is provided.
+const DIR_PAGE_DEFAULT = 150;
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
 const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac']);
@@ -27,6 +26,7 @@ const TEXT_PREVIEW_LIMIT = 256 * 1024;
 
 export async function mount(root, metafolder) {
   const { workspace, fs } = metafolder;
+  const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
 
   let paths = [];
   let activeIndex = 0;
@@ -199,7 +199,7 @@ export async function mount(root, metafolder) {
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
-  // windows of DIR_PAGE (more appended as the grid is scrolled) so a huge
+  // windows of `dirPage` (more appended as the grid is scrolled) so a huge
   // folder neither freezes on open nor holds thousands of <img> at once.
   async function renderDirectory(dir, generation) {
     let entries;
@@ -233,7 +233,7 @@ export async function mount(root, metafolder) {
     let rendered = 0;
     const grid = el('div', { class: 'dir-grid' });
     const appendWindow = async () => {
-      const next = Math.min(entries.length, rendered + DIR_PAGE);
+      const next = Math.min(entries.length, rendered + dirPage);
       grid.append(...entries.slice(rendered, next).map(tile));
       rendered = next;
       dirFooter.textContent = pager.footerText();

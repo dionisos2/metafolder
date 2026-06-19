@@ -134,6 +134,7 @@ pub fn run(options: Options) {
         }
     };
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
+    let page_sizes = gui_config.page_size.clone();
     let daemon_url = options.daemon_url.unwrap_or(gui_config.daemon_url);
     let daemon = Arc::new(daemon_proxy::DaemonProxy::new(daemon_url));
 
@@ -159,6 +160,7 @@ pub fn run(options: Options) {
                 keybindings: keybindings.clone(),
                 grammar,
                 gui_port,
+                page_sizes: page_sizes.clone(),
                 daemon: daemon.clone(),
                 input: input.clone(),
                 commands: command_wait.clone(),
