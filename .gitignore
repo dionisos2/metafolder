@@ -10,3 +10,5 @@ crates/gui/gen/
 prompts.txt
 .#prompts.txt
 node_modules/
+benchmarks/benchmark*
+benchmarks/real

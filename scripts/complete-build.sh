@@ -15,7 +15,7 @@ set -euo pipefail
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$repo"
 
-cargo run -p metafolder-core --features sync-config --bin metafolder-sync-config
+cargo build --features sync-config
 
 # First run on a fresh checkout: install the frontend deps once.
 if [ ! -d crates/gui/frontend/node_modules ]; then
