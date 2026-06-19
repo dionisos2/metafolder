@@ -65,6 +65,17 @@ describe('createMatcher', () => {
     expect(matcher.feed('ctrl+x', noInput)).toBeNull();
   });
 
+  test('Ctrl+Shift+Z fires redo, not undo (full event path)', () => {
+    const matcher = createMatcher([
+      b(['ctrl+z'], 'log:undo'),
+      b(['ctrl+shift+z'], 'log:redo'),
+    ]);
+    const undo = comboFromEvent({ key: 'z', ctrlKey: true });
+    const redo = comboFromEvent({ key: 'Z', ctrlKey: true, shiftKey: true });
+    expect(matcher.feed(undo, noInput)).toEqual({ invocation: 'log:undo' });
+    expect(matcher.feed(redo, noInput)).toEqual({ invocation: 'log:redo' });
+  });
+
   test('local binding wins over global for the focused panel type', () => {
     const matcher = createMatcher([
       b(['j'], 'global:j'),
