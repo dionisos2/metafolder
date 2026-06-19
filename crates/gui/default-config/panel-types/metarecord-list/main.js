@@ -9,6 +9,12 @@ const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
 
+// Extensions a thumbnail <img> may load. Anything else (video, audio, pdf…)
+// must NOT be pointed at by an <img>: WebKit would fetch the file and try to
+// decode it as an image — a video balloons the web process to gigabytes and
+// crashes it.
+const THUMBNAILABLE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'ico']);
+
 // "Empty query matches all": three-valued tautology on any field.
 const MATCH_ALL = {
   type: 'or',
@@ -304,7 +310,15 @@ export async function mount(root, metafolder) {
 
   function fillThumbnail(img, metarecord) {
     const path = pathsOf(metarecord)[0];
-    if (path) img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
+    if (!path) return;
+    const extension = (path.split('.').pop() ?? '').toLowerCase();
+    if (!THUMBNAILABLE.has(extension)) {
+      // Non-image file: never set img.src to it (a video decoded as an image
+      // blows up the web process). Leave the slot empty / styled as a glyph.
+      img.classList.add('no-thumbnail');
+      return;
+    }
+    img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
   }
 
   // ── Selection (workspace variables) ─────────────────────────────────────
