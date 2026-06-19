@@ -48,6 +48,91 @@ pub fn system() -> &'static MediaSupport {
     CACHE.get_or_init(|| detect_with(element_present))
 }
 
+/// Per-file codec probe result. Unlike [`MediaSupport`] (a once-per-process
+/// sink check that prevents the WebKit crash), this depends on the actual
+/// file's streams: the `file` panel requests it only when an `<audio>`/
+/// `<video>` element has already failed to play, to explain *why* — a
+/// missing decoder does not crash WebKit, it just fails the element.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MediaProbe {
+    /// Human-readable descriptions of the missing decoders (empty when no
+    /// missing plugin was reported — the failure was something else, e.g.
+    /// a corrupt file).
+    pub missing: Vec<String>,
+}
+
+/// Parses `gst-discoverer-1.0` output into the missing-decoder list. Pure:
+/// no I/O. The tool exits 0 even when plugins are missing, so the verdict
+/// comes from the text, not the exit status. Each entry under the
+/// "Missing plugins" header looks like:
+///   ` (gstreamer|1.0|gst-discoverer-1.0|H.264 (High Profile) decoder|decoder-video/x-h264, …)`
+/// and the 4th `|`-separated field is the human description.
+pub fn parse_discoverer(output: &str) -> MediaProbe {
+    let mut missing = Vec::new();
+    let mut in_missing_block = false;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if trimmed == "Missing plugins" {
+            in_missing_block = true;
+            continue;
+        }
+        if !in_missing_block {
+            continue;
+        }
+        match trimmed.strip_prefix('(').and_then(|inner| inner.strip_suffix(')')) {
+            Some(inner) => {
+                if let Some(description) = inner.split('|').nth(3) {
+                    missing.push(description.trim().to_string());
+                }
+            }
+            // A non-entry line ends the block.
+            None => in_missing_block = false,
+        }
+    }
+    MediaProbe { missing }
+}
+
+/// Probes a single file for decodable streams, cached by `(path, mtime)`
+/// (the same file is previewed repeatedly; its codecs do not change unless
+/// the file does). Runs `gst-discoverer-1.0` out of process.
+pub fn probe_file(path: &std::path::Path) -> MediaProbe {
+    let mtime = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
+    if let Some(mtime) = mtime {
+        if let Some((cached_mtime, probe)) = probe_cache().lock().unwrap().get(path) {
+            if *cached_mtime == mtime {
+                return probe.clone();
+            }
+        }
+    }
+    let probe = run_discoverer(path);
+    if let Some(mtime) = mtime {
+        probe_cache()
+            .lock()
+            .unwrap()
+            .insert(path.to_path_buf(), (mtime, probe.clone()));
+    }
+    probe
+}
+
+type ProbeCache = std::collections::HashMap<std::path::PathBuf, (std::time::SystemTime, MediaProbe)>;
+
+fn probe_cache() -> &'static std::sync::Mutex<ProbeCache> {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<ProbeCache>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(ProbeCache::new()))
+}
+
+fn run_discoverer(path: &std::path::Path) -> MediaProbe {
+    match std::process::Command::new("gst-discoverer-1.0").arg(path).output() {
+        Ok(output) => {
+            let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            parse_discoverer(&text)
+        }
+        // discoverer unavailable: no codec info, panel shows a generic message.
+        Err(_) => MediaProbe { missing: Vec::new() },
+    }
+}
+
 /// `gst-inspect-1.0 --exists`, falling back to a plugin-file scan when
 /// the tool itself is unavailable. Undeterminable counts as missing: a
 /// false "present" is a GUI-freezing crash, a false "missing" is only a
@@ -122,5 +207,55 @@ mod tests {
             support.missing,
             vec!["autoaudiosink".to_string(), "autovideosink".to_string()]
         );
+    }
+
+    #[test]
+    fn test_parse_discoverer_reports_missing_decoders() {
+        // The human description is the 4th '|'-separated field of each
+        // entry under the "Missing plugins" header.
+        let output = "\
+Analyzing file:///x.mkv
+Done discovering file:///x.mkv
+Missing plugins
+ (gstreamer|1.0|gst-discoverer-1.0|Opus decoder|decoder-audio/x-opus, channel-mapping-family=(int)0)
+ (gstreamer|1.0|gst-discoverer-1.0|H.264 (High Profile) decoder|decoder-video/x-h264, level=(string)3.1)
+";
+        let probe = parse_discoverer(output);
+        assert_eq!(
+            probe.missing,
+            vec![
+                "Opus decoder".to_string(),
+                "H.264 (High Profile) decoder".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_discoverer_all_present() {
+        let output = "\
+Analyzing file:///x.webm
+Done discovering file:///x.webm
+
+Properties:
+  Duration: 0:00:10.000000000
+  container #0: Matroska
+    video #1: VP9
+    audio #2: Opus
+";
+        assert!(parse_discoverer(output).missing.is_empty());
+    }
+
+    #[test]
+    fn test_parse_discoverer_stops_at_end_of_missing_block() {
+        // Entries are the parenthesised lines only; later sections are not
+        // mistaken for missing plugins.
+        let output = "\
+Missing plugins
+ (gstreamer|1.0|gst-discoverer-1.0|H.264 decoder|decoder-video/x-h264, profile=high)
+
+Properties:
+  container: Matroska
+";
+        assert_eq!(parse_discoverer(output).missing, vec!["H.264 decoder".to_string()]);
     }
 }

@@ -23,6 +23,10 @@ export async function mount(root, metafolder) {
   // Local drill-in path: set when the user clicks into a directory's listing,
   // overriding the selection until it changes. null = follow the selection.
   let localPath = null;
+  // Bumped on every renderViewer() call so a previous render's pending async
+  // work (notably the media stall timer / probe) cannot write into the viewer
+  // after the shown path has changed.
+  let renderGeneration = 0;
 
   const pathBar = root.getElementById('path-bar');
   const viewer = root.getElementById('viewer');
@@ -101,6 +105,70 @@ export async function mount(root, metafolder) {
     return mediaSupportCache;
   }
 
+  // Some decode failures fire 'error' on the media element; others just
+  // stall in "loading" without it. Probe after this delay as a backstop.
+  const MEDIA_STALL_MS = 6000;
+
+  // Ask the GUI server which decoders this specific file needs and lack.
+  // Returns null when the probe is unreachable (caller shows a generic
+  // message rather than guessing).
+  async function probeFile(path) {
+    try {
+      const response = await fetch(
+        `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}`,
+      );
+      if (response.ok) return await response.json();
+    } catch {
+      // Unreachable: fall through to the generic message.
+    }
+    return null;
+  }
+
+  // Render an <audio>/<video>, and only if it fails to play probe the file
+  // to explain why (a missing codec — distinct from the missing-sink case,
+  // which is gated up front because it would crash the WebKit web process).
+  async function renderMedia(kind, path, url, generation) {
+    const current = () => generation === renderGeneration;
+    const support = await mediaSupport();
+    if (!current()) return;
+    if (!support[kind]) {
+      placeholder(
+        `media preview disabled: missing GStreamer elements: ` +
+          `${support.missing.join(', ')} (install gst-plugins-good)`,
+      );
+      return;
+    }
+    const media = el(kind, { controls: true, src: url });
+    let settled = false;
+    // `fromStall`: a timeout with no 'error' yet. A slow-but-fine file would
+    // hit it too, so only act on it when the probe finds a missing codec;
+    // an actual 'error' always resolves to a message.
+    const diagnose = async (fromStall) => {
+      if (settled || !current()) return;
+      const probe = await probeFile(path);
+      if (settled || !current()) return;
+      if (probe && probe.missing.length > 0) {
+        settled = true;
+        clearTimeout(timer);
+        placeholder(
+          `cannot play this file: missing codec(s): ${probe.missing.join(', ')} ` +
+            `(install gst-libav / gst-plugins-bad)`,
+        );
+      } else if (!fromStall) {
+        settled = true;
+        clearTimeout(timer);
+        placeholder('cannot play this file (unsupported format or codec)');
+      }
+    };
+    media.addEventListener('error', () => void diagnose(false));
+    media.addEventListener('loadedmetadata', () => {
+      settled = true;
+      clearTimeout(timer);
+    });
+    const timer = setTimeout(() => void diagnose(true), MEDIA_STALL_MS);
+    viewer.replaceChildren(media);
+  }
+
   // Directory view: a thumbnail grid of the folder's entries.
   async function renderDirectory(dir) {
     let entries;
@@ -141,6 +209,7 @@ export async function mount(root, metafolder) {
   }
 
   async function renderViewer() {
+    const generation = ++renderGeneration;
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
@@ -165,18 +234,7 @@ export async function mount(root, metafolder) {
         el('img', { src: url, onerror: () => placeholder('cannot load the file') }),
       );
     } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
-      // A media element with no usable GStreamer pipeline crashes the WebKit
-      // web process and freezes the GUI. Ask the GUI server first.
-      const kind = VIDEO.has(extension) ? 'video' : 'audio';
-      const support = await mediaSupport();
-      if (!support[kind]) {
-        placeholder(
-          `media preview disabled: missing GStreamer elements: ` +
-            `${support.missing.join(', ')} (install gst-plugins-good)`,
-        );
-        return;
-      }
-      viewer.replaceChildren(el(kind, { controls: true, src: url }));
+      await renderMedia(VIDEO.has(extension) ? 'video' : 'audio', path, url, generation);
     } else if (TEXT.has(extension)) {
       try {
         const response = await fetch(url, {

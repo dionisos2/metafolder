@@ -59,6 +59,7 @@ pub fn build_router(state: ServerState) -> Router {
                 axum::Json(crate::media_support::system().clone()).into_response()
             }),
         )
+        .route("/__media-probe", get(media_probe))
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
         .route(
@@ -89,4 +90,27 @@ pub fn build_router(state: ServerState) -> Router {
 fn javascript(source: &'static str) -> axum::response::Response {
     use axum::response::IntoResponse;
     ([("content-type", "text/javascript")], source).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct MediaProbeParams {
+    path: String,
+}
+
+/// `GET /__media-probe?path=…` — per-file codec probe for the `file`
+/// panel, requested only after a media element has failed to play, to
+/// report the missing decoders. `gst-discoverer-1.0` runs out of process,
+/// so off the async runtime via `spawn_blocking`.
+async fn media_probe(
+    axum::extract::Query(params): axum::extract::Query<MediaProbeParams>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let probe = tokio::task::spawn_blocking(move || {
+        crate::media_support::probe_file(std::path::Path::new(&params.path))
+    })
+    .await;
+    match probe {
+        Ok(probe) => axum::Json(probe).into_response(),
+        Err(_) => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
