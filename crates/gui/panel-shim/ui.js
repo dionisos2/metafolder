@@ -32,6 +32,44 @@ export function el(tag, props = {}, ...children) {
   return element;
 }
 
+/**
+ * File extensions safe to display as an <img> thumbnail. Anything else must
+ * NOT be handed to an <img>: pointing one at a video/pdf makes WebKit fetch
+ * the whole file and try to decode it as an image, which balloons the web
+ * process to gigabytes and crashes it.
+ */
+export const THUMBNAILABLE = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'ico',
+]);
+
+/** Whether a path/filename has an image extension safe for an <img> thumbnail. */
+export function isThumbnailable(pathOrName) {
+  return THUMBNAILABLE.has((pathOrName.split('.').pop() ?? '').toLowerCase());
+}
+
+/**
+ * Builds a thumbnail node for a filesystem entry, shared by every panel that
+ * shows files (file, file-manager, metarecord-list) so the "never put a
+ * non-image in an <img>" rule lives in one place. Image files become a lazy
+ * <img> (a bare <img>, so each panel's own `.thumb img` / `.card img` CSS
+ * styles it); directories and all other types — and a failed image load —
+ * fall back to a glyph <span>.
+ *
+ * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (default 📄),
+ * `glyphClass` (CSS class for the fallback span, default none).
+ */
+export function thumbnail(guiServer, path, options = {}) {
+  const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '' } = options;
+  const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
+  if (isDir) return glyph(dirGlyph);
+  if (!path || !isThumbnailable(path)) return glyph(fileGlyph);
+  return el('img', {
+    loading: 'lazy',
+    src: `${guiServer}/fsraw?path=${encodeURIComponent(path)}`,
+    onerror: (event) => event.target.replaceWith(glyph(fileGlyph)),
+  });
+}
+
 /** Display form of a Value ({type, value} JSON, spec-data-model). */
 export function formatValue({ type, value }) {
   switch (type) {

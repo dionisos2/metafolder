@@ -4,7 +4,7 @@
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
 
-import { el } from '/__ui.js';
+import { el, thumbnail } from '/__ui.js';
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
 const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac']);
@@ -201,27 +201,17 @@ export async function mount(root, metafolder) {
     }
     // Folders first, then files, each group alphabetical.
     entries.sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
-    const tile = (entry) => {
-      const extension = (entry.name.split('.').pop() ?? '').toLowerCase();
-      let thumb;
-      if (entry.is_dir) {
-        thumb = el('span', { class: 'glyph' }, '📁');
-      } else if (IMAGE.has(extension)) {
-        thumb = el('img', {
-          src: rawUrl(entry.path),
-          loading: 'lazy',
-          onerror: (event) => event.target.replaceWith(el('span', { class: 'glyph' }, '📄')),
-        });
-      } else {
-        thumb = el('span', { class: 'glyph' }, '📄');
-      }
-      return el(
+    const tile = (entry) =>
+      el(
         'button',
         { class: 'tile', title: entry.name, onclick: () => navigateInto(entry.path) },
-        el('span', { class: 'thumb' }, thumb),
+        el(
+          'span',
+          { class: 'thumb' },
+          thumbnail(metafolder.guiServer, entry.path, { isDir: entry.is_dir, glyphClass: 'glyph' }),
+        ),
         el('span', { class: 'name' }, entry.name),
       );
-    };
     viewer.replaceChildren(el('div', { class: 'dir-grid' }, entries.map(tile)));
   }
 

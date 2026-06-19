@@ -1,19 +1,13 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
-import { el, fields } from '/__ui.js';
+import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
 
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
-
-// Extensions a thumbnail <img> may load. Anything else (video, audio, pdf…)
-// must NOT be pointed at by an <img>: WebKit would fetch the file and try to
-// decode it as an image — a video balloons the web process to gigabytes and
-// crashes it.
-const THUMBNAILABLE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'ico']);
 
 // "Empty query matches all": three-valued tautology on any field.
 const MATCH_ALL = {
@@ -280,8 +274,6 @@ export async function mount(root, metafolder) {
     );
     grid.replaceChildren(
       ...metarecords.map((metarecord, index) => {
-        const img = el('img', { loading: 'lazy' });
-        fillThumbnail(img, metarecord);
         const card = el(
           'div',
           {
@@ -289,7 +281,7 @@ export async function mount(root, metafolder) {
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
           },
-          img,
+          thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], { glyphClass: 'glyph' }),
           el(
             'div',
             { class: 'name' },
@@ -306,19 +298,6 @@ export async function mount(root, metafolder) {
       }` +
       (nextCursor ? ' (more available — scroll down)' : '') +
       (checked.size > 0 ? ` — ${checked.size} selected` : '');
-  }
-
-  function fillThumbnail(img, metarecord) {
-    const path = pathsOf(metarecord)[0];
-    if (!path) return;
-    const extension = (path.split('.').pop() ?? '').toLowerCase();
-    if (!THUMBNAILABLE.has(extension)) {
-      // Non-image file: never set img.src to it (a video decoded as an image
-      // blows up the web process). Leave the slot empty / styled as a glyph.
-      img.classList.add('no-thumbnail');
-      return;
-    }
-    img.src = `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
   }
 
   // ── Selection (workspace variables) ─────────────────────────────────────

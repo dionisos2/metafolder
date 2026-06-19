@@ -3,7 +3,42 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel types
-import { el, field, fields, formatValue, valueEl } from '../../panel-shim/ui.js';
+import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable } from '../../panel-shim/ui.js';
+
+describe('thumbnail', () => {
+  test('isThumbnailable: only image extensions, case-insensitive', () => {
+    expect(isThumbnailable('/a/photo.PNG')).toBe(true);
+    expect(isThumbnailable('cat.jpeg')).toBe(true);
+    expect(isThumbnailable('/a/movie.mkv')).toBe(false);
+    expect(isThumbnailable('/a/song.mp3')).toBe(false);
+    expect(isThumbnailable('/a/doc.pdf')).toBe(false);
+    expect(isThumbnailable('noextension')).toBe(false);
+  });
+
+  test('builds a lazy <img> for an image file', () => {
+    const node = thumbnail('http://gui', '/a/b c.png');
+    expect(node.tagName).toBe('IMG');
+    expect(node.getAttribute('loading')).toBe('lazy');
+    expect(node.getAttribute('src')).toBe(`http://gui/fsraw?path=${encodeURIComponent('/a/b c.png')}`);
+  });
+
+  test('NEVER builds an <img> for a non-image — glyph span instead (crash guard)', () => {
+    const video = thumbnail('http://gui', '/a/movie.mkv');
+    expect(video.tagName).toBe('SPAN');
+    expect(video.textContent).toBe('📄');
+
+    const dir = thumbnail('http://gui', '/a/folder', { isDir: true });
+    expect(dir.tagName).toBe('SPAN');
+    expect(dir.textContent).toBe('📁');
+  });
+
+  test('custom glyphs and glyph class', () => {
+    const node = thumbnail('http://gui', '/a/x.bin', { fileGlyph: '·', glyphClass: 'icon' });
+    expect(node.tagName).toBe('SPAN');
+    expect(node.textContent).toBe('·');
+    expect(node.className).toBe('icon');
+  });
+});
 
 describe('el', () => {
   test('creates an element with properties and text children', () => {
