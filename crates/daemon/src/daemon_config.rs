@@ -1,6 +1,7 @@
 //! Daemon configuration file (spec-main "Daemon configuration"):
-//! `$XDG_CONFIG_HOME/metafolder/daemon/config.json`, read once at startup.
-//! Distinct from the per-repository `.metafolder/config.json`.
+//! `$XDG_CONFIG_HOME/metafolder/daemon/config.toml`, read once at startup.
+//! Distinct from the per-repository `.metafolder/config.json` (machine-managed
+//! repo data, kept as JSON).
 
 use std::path::{Path, PathBuf};
 
@@ -35,9 +36,9 @@ struct RawLoadEntry {
 }
 
 /// Default configuration file path:
-/// `$XDG_CONFIG_HOME/metafolder/daemon/config.json`.
+/// `$XDG_CONFIG_HOME/metafolder/daemon/config.toml`.
 pub fn default_config_path() -> Option<PathBuf> {
-    metafolder_core::config::crate_config_dir("daemon").map(|dir| dir.join("config.json"))
+    metafolder_core::config::crate_config_dir("daemon").map(|dir| dir.join("config.toml"))
 }
 
 /// Reads and validates the configuration file. A missing file is
@@ -50,7 +51,7 @@ pub fn read_config(path: &Path) -> Result<DaemonConfig> {
         }
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let raw: RawConfig = serde_json::from_str(&contents)
+    let raw: RawConfig = toml::from_str(&contents)
         .with_context(|| format!("parsing {}", path.display()))?;
     let mut load = Vec::with_capacity(raw.load.len());
     for entry in raw.load {

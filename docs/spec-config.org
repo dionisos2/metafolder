@@ -38,7 +38,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   core/                          ← shared configuration
     query-grammar                ← simplified-query grammar (client-side expansion)
   daemon/
-    config.json                  ← repos to auto-load
+    config.toml                  ← repos to auto-load
   gui/
     config.toml                  ← daemon-url + gui-port + [page-size]
     keybindings.toml
@@ -69,7 +69,7 @@ on-disk subdirectory it targets:
 
 #+BEGIN_SRC
 crates/core/default-config/query-grammar
-crates/daemon/default-config/config.json
+crates/daemon/default-config/config.toml
 crates/gui/default-config/keybindings.toml, style.css, panel-types/...
 crates/cli/default-config/...            ← may be empty
 #+END_SRC
@@ -150,7 +150,7 @@ file kind:
 - =gui/style.css=: missing ⇒ error (previously: fall back to the embedded
   default).
 - =gui/keybindings.toml=: see below.
-- =daemon/config.json=: unchanged — already an error when malformed; absence
+- =daemon/config.toml=: an error when malformed; absence
   means "no repos to auto-load", which stays valid.
 
 * Keybindings: single-file model

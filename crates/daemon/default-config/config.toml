@@ -1,0 +1,16 @@
+# Metafolder daemon settings (spec-config; spec-main "Daemon configuration").
+# Installed into ~/.config/metafolder/daemon/ by metafolder-sync-config.
+# The --config CLI flag overrides this path; a malformed file aborts startup.
+
+# Repositories to auto-load when the daemon starts. Each entry has exactly one
+# of `root` (the watched directory) or `metafolder` (an external .metafolder
+# location) — same shape as a POST /repos/load body. A repo that fails to load
+# is a warning, not a fatal error.
+#
+# Example:
+#   [[load]]
+#   root = "/home/user/music"
+#
+#   [[load]]
+#   metafolder = "/ssd/meta/photos"
+load = []

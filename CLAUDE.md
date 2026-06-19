@@ -123,7 +123,7 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `config.rs`: `RepoConfig` persisted as `.metafolder/config.json`
   (repo_uuid, name, version, root, optional schema path, created_at).
 - `daemon_config.rs`: optional daemon config
-  `~/.config/metafolder/daemon/config.json` (`--config` overrides; path from
+  `~/.config/metafolder/daemon/config.toml` (`--config` overrides; path from
   `core::config`), read at startup: `load` list of repos to auto-load
   (`POST /repos/load` shape); malformed file aborts startup, a repo that fails
   to load is a warning. The daemon does **not** handle the simplified-query

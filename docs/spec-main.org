@@ -77,25 +77,24 @@ All request and response bodies are JSON. Errors return a JSON object
 ** Daemon configuration
 
 The daemon reads an optional configuration file at startup:
-=$XDG_CONFIG_HOME/metafolder/config.json= (i.e.
-=~/.config/metafolder/config.json= on Linux). The =--config= flag overrides
-this path. This file is distinct from the per-repository
-=.metafolder/config.json=.
+=$XDG_CONFIG_HOME/metafolder/daemon/config.toml= (i.e.
+=~/.config/metafolder/daemon/config.toml= on Linux). The =--config= flag
+overrides this path. This file is distinct from the per-repository
+=.metafolder/config.json= (machine-managed repo data, kept as JSON).
 
-#+BEGIN_SRC json
-{
-  "load": [
-    {"root": "/data/music"},
-    {"metafolder": "/ssd/meta/music"}
-  ]
-}
+#+BEGIN_SRC toml
+[[load]]
+root = "/data/music"
+
+[[load]]
+metafolder = "/ssd/meta/music"
 #+END_SRC
 
 - =load= (optional): repositories to load at startup. Each entry has the
   same shape as a =POST /repos/load= body: exactly one of =root= or
   =metafolder=.
 - A missing configuration file is equivalent to an empty one.
-- A malformed configuration file (invalid JSON, unknown keys, a metarecord with
+- A malformed configuration file (invalid TOML, unknown keys, a metarecord with
   both or neither of =root=/=metafolder=) aborts daemon startup with an
   error message.
 - A repository that fails to load (missing path, locked database, ...) is

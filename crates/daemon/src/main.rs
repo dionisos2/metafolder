@@ -15,7 +15,7 @@ struct Args {
     #[arg(short, long, default_value = "7523")]
     port: u16,
 
-    /// Configuration file (default: $XDG_CONFIG_HOME/metafolder/config.json)
+    /// Configuration file (default: $XDG_CONFIG_HOME/metafolder/daemon/config.toml)
     #[arg(short, long)]
     config: Option<PathBuf>,
 }
