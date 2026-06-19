@@ -70,7 +70,7 @@ show() {
 sample() {
   ps -C WebKitWebProcess -o pid=,rss=,pcpu= 2>/dev/null | awk '
     { pids = pids $1 ","; rss += $2; cpu += $3 }
-    END { printf "%d %.0f %s", rss/1024, cpu, (pids == "" ? "-" : pids) }'
+    END { printf "%d %.0f %s\n", rss/1024, cpu, (pids == "" ? "-" : pids) }'
 }
 
 prev_pids=""
