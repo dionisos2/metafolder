@@ -2,15 +2,15 @@
 # Installed into ~/.config/metafolder/daemon/ by metafolder-sync-config.
 # The --config CLI flag overrides this path; a malformed file aborts startup.
 
-# Repositories to auto-load when the daemon starts. Each entry has exactly one
-# of `root` (the watched directory) or `metafolder` (an external .metafolder
-# location) — same shape as a POST /repos/load body. A repo that fails to load
-# is a warning, not a fatal error.
+# Repositories to auto-load when the daemon starts, as an array of tables
+# (one [[load]] block per repo). Each entry has exactly one of `root` (the
+# watched directory) or `metafolder` (an external .metafolder location) — same
+# shape as a POST /repos/load body. A repo that fails to load is a warning, not
+# a fatal error. With no [[load]] block (the default) the daemon auto-loads
+# nothing; uncomment and adapt the example below to opt in.
 #
-# Example:
-#   [[load]]
-#   root = "/home/user/music"
+# [[load]]
+# root = "/home/user/music"
 #
-#   [[load]]
-#   metafolder = "/ssd/meta/photos"
-load = []
+# [[load]]
+# metafolder = "/ssd/meta/photos"
