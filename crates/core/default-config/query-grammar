@@ -34,9 +34,9 @@ predicate =
   # and absolute (since/before/between) forms. Dates are quoted ISO-8601.
   | df:datefield "younger" d:duration            => $df > @{now() - num($d)}
   | df:datefield "older"   d:duration            => $df < @{now() - num($d)}
-  | df:datefield "since"   v:value               => $df >= @{str($v)}
-  | df:datefield "before"  v:value               => $df < @{str($v)}
-  | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
+  | df:datefield "since"   v:STRING               => $df >= @{str($v)}
+  | df:datefield "before"  v:STRING               => $df < @{str($v)}
+  | df:datefield "between" a:STRING "and" b:STRING => $df >= @{str($a)} AND $df <= @{str($b)}
   | "tag"                   => tag = "test"
   | "fav"                   => rating >= 4
 
