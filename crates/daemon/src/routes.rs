@@ -1157,6 +1157,7 @@ async fn track(
             &repo_state.config.root,
             &rel,
             &untracked,
+            false,
         )?;
         writer.commit()?;
         Ok(Json(json!({"uuid": hex(uuid)})))

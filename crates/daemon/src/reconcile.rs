@@ -248,7 +248,7 @@ pub fn reconcile_full(
         if cache.resolve_path(writer.connection(), "mfr_path", rel)?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
-        create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
+        create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
         result.created += 1;
     }
 
@@ -326,7 +326,7 @@ pub fn reconcile_metarecord(
                 }
             }
             None => {
-                create_record_for(&mut writer, &mut cache, &root, rel, &[])?;
+                create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
                 result.created += 1;
             }
         }
@@ -390,20 +390,30 @@ fn walk(
 }
 
 /// Creates the metarecord for a new filesystem path (parents included).
+/// When `compute_mime` is set, a detectable file gets its `mfr_mime` as part of
+/// the create operation (folded in, so no separate field write / version bump);
+/// directories and undetectable files get none (spec-platform "MIME detection").
 pub(crate) fn create_record_for(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
     rel: &str,
     extra_fields: &[Field],
+    compute_mime: bool,
 ) -> Result<Uuid> {
     let parent = ensure_parent_metarecords(writer, cache, root, rel, extra_fields)?;
     let name = rel.rsplit('/').next().unwrap_or(rel);
+    let abs = root.join(rel.trim_start_matches('/'));
     let mut fields = vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(parent), name: name.to_string() },
     )];
-    fields.extend(fs_meta::stat_fields(&root.join(rel.trim_start_matches('/')))?);
+    fields.extend(fs_meta::stat_fields(&abs)?);
+    if compute_mime {
+        if let Some(mime) = detect_mime(&abs) {
+            fields.push(Field::new("mfr_mime", Value::String(mime)));
+        }
+    }
     fields.extend(extra_fields.iter().cloned());
     let created = writer.create_metarecord(fields)?;
     cache.apply_insert("mfr_path", Some(parent), name, created.uuid);

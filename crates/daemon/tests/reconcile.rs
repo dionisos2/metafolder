@@ -309,6 +309,25 @@ fn test_reconcile_mime_is_idempotent() {
 }
 
 #[test]
+fn test_reconcile_folds_mime_into_creation() {
+    let (repo, root) = setup("mime_create");
+    write_file(&root, "pic.png", PNG_MAGIC);
+    reconcile::reconcile_full(&repo, None, true, false).unwrap();
+
+    let pic = resolve(&repo, "/pic.png").unwrap();
+    assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
+    // mfr_mime is written as part of the create operation, not as a separate
+    // field write: the record is born at version 0 with no follow-up op.
+    let version = {
+        let conn = repo.conn.lock().unwrap();
+        db::get_version(&conn, pic).unwrap().unwrap()
+    };
+    assert_eq!(version, 0, "mfr_mime must be set at creation, not as a separate write");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_similarity_phase_proposes_renamed_modified_file() {
     let (repo, root) = setup("similarity");
     write_file(&root, "music/old_song.mp3", &vec![b'a'; 1000]);
