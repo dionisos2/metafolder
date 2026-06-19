@@ -3,8 +3,9 @@
 // (spec-gui "file-manager panel type").
 
 import { el } from '/__ui.js';
+import { createPagedList } from '/__paged-list.js';
 import {
-  loadTrackedChildren,
+  loadTrackedFor,
   loadDirMetarecord,
   parentDir,
   isWithin,
@@ -12,7 +13,9 @@ import {
 } from './tracked.js';
 
 // Render the directory in windows of this many rows (plus more on scroll),
-// so a directory with thousands of entries does not build a huge DOM.
+// so a directory with thousands of entries does not build a huge DOM — and,
+// just as importantly, only the rendered window's tracked status is queried.
+// Largest of the three list panels: a plain text row is the cheapest to build.
 const PAGE = 200;
 
 export async function mount(root, metafolder) {
@@ -44,22 +47,44 @@ export async function mount(root, metafolder) {
     return insideRoot(path) && !isWithin(path, internalDir);
   }
 
-  // Tracked status of the displayed directory's children plus "." and "..".
-  async function refreshTracked(dir) {
+  // Tracked status of "." (the directory itself) and ".." (its parent) — the
+  // two synthetic rows always present in the first window.
+  async function enrichSelfParent() {
     try {
-      const parent = parentDir(dir);
-      const [tracked, selfUuid, parentUuid] = await Promise.all([
-        loadTrackedChildren(daemon, repo, repoRoot, dir),
-        loadDirMetarecord(daemon, repo, repoRoot, dir),
+      const parent = parentDir(currentDir);
+      const [selfUuid, parentUuid] = await Promise.all([
+        loadDirMetarecord(daemon, repo, repoRoot, currentDir),
         loadDirMetarecord(daemon, repo, repoRoot, parent),
       ]);
-      if (selfUuid) tracked.set(dir, selfUuid);
-      if (parentUuid) tracked.set(parent, parentUuid);
-      trackedPaths = tracked;
+      if (selfUuid) trackedPaths.set(currentDir, selfUuid);
+      if (parentUuid) trackedPaths.set(parent, parentUuid);
     } catch (error) {
-      trackedPaths = new Map();
       await statusBar.error(error);
     }
+  }
+
+  // Tracked status of the real entries in listing[start, end) — queried for
+  // just that window's names, so a huge directory never resolves every child.
+  async function enrichRange(start, end) {
+    const names = [];
+    for (let i = start; i < end; i++) {
+      const item = listing[i];
+      if (item && item.name !== '.' && item.name !== '..') names.push(item.name);
+    }
+    try {
+      const found = await loadTrackedFor(daemon, repo, repoRoot, currentDir, names);
+      for (const [path, uuid] of found) trackedPaths.set(path, uuid);
+    } catch (error) {
+      await statusBar.error(error);
+    }
+  }
+
+  // Re-query the tracked status of everything currently rendered (after a
+  // write, or an external change): drop the stale map and refill the window.
+  async function reenrichVisible() {
+    trackedPaths = new Map();
+    await enrichSelfParent();
+    await enrichRange(0, rendered);
   }
 
   function open(dir) {
@@ -78,15 +103,18 @@ export async function mount(root, metafolder) {
       await statusBar.error(error, 5000);
       return;
     }
-    await refreshTracked(dir);
     listing = [
       { name: '.', path: dir, is_dir: true },
       { name: '..', path: parentDir(dir), is_dir: true },
       ...items,
     ];
     currentDir = dir;
+    trackedPaths = new Map();
     cursorIndex = -1;
     rendered = Math.min(PAGE, listing.length);
+    render(); // rows appear at once; tracked badges fill in just below
+    await enrichSelfParent();
+    await enrichRange(0, rendered);
     render();
   }
 
@@ -138,8 +166,14 @@ export async function mount(root, metafolder) {
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
     // Keep the cursor inside the rendered window (jumping to the last entry
-    // expands it so the row exists in the DOM to scroll to).
-    if (cursorIndex >= rendered) rendered = cursorIndex + 1;
+    // expands it so the row exists in the DOM to scroll to), enriching the
+    // newly revealed rows.
+    if (cursorIndex >= rendered) {
+      const prev = rendered;
+      rendered = cursorIndex + 1;
+      render();
+      await enrichRange(prev, rendered);
+    }
     render();
     const item = listing[cursorIndex];
     if (!item) return;
@@ -194,7 +228,7 @@ export async function mount(root, metafolder) {
       return;
     }
     statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, 5000);
-    await refreshTracked(currentDir);
+    await reenrichVisible();
     render();
     await select(cursorIndex);
     await workspace.set('metarecords:dirty', Date.now());
@@ -218,19 +252,25 @@ export async function mount(root, metafolder) {
     if (keep >= 0) await select(keep);
   }
 
-  // Reveal the next window of rows as the listing is scrolled to its end.
-  function maybeLoadMore() {
-    if (rendered >= listing.length) return;
-    if (listingElement.scrollTop + listingElement.clientHeight > listingElement.scrollHeight - 200) {
+  // Reveal (and enrich) the next window of rows as the listing is scrolled to
+  // its end — the shared progressive-loading controller owns the threshold and
+  // the one-load-at-a-time guard.
+  const pager = createPagedList({
+    loaded: () => rendered,
+    total: () => listing.length,
+    loadMore: async () => {
+      const prev = rendered;
       rendered = Math.min(listing.length, rendered + PAGE);
       render();
-    }
-  }
+      await enrichRange(prev, rendered);
+      render();
+    },
+  });
 
   constrainBox.addEventListener('change', () => {
     constrainToRoot = constrainBox.checked;
   });
-  listingElement.addEventListener('scroll', maybeLoadMore);
+  const detachScroll = pager.attach(listingElement);
   root.getElementById('up').addEventListener('click', goUp);
   root.getElementById('goto-root').addEventListener('click', gotoRoot);
   root.getElementById('refresh').addEventListener('click', refresh);
@@ -313,9 +353,11 @@ export async function mount(root, metafolder) {
   workspace.onChange('metarecords:dirty', async () => {
     if (currentDir === null) return; // not started yet (still hidden)
     if (repo) await cache.sync(repo); // pick up the change before re-querying
-    await refreshTracked(currentDir);
+    await reenrichVisible();
     render();
   });
 
   metafolder.whenVisible(deferredStart);
+
+  return () => detachScroll();
 }

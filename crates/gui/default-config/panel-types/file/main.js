@@ -5,6 +5,14 @@
 // thumbnail grid the user can click into (drill-in, with a back button).
 
 import { el, thumbnail } from '/__ui.js';
+import { createPagedList } from '/__paged-list.js';
+
+// Directory grid: render this many thumbnails per window (more on scroll), so
+// opening a folder with thousands of files does not build/load them all at
+// once. Bigger than metarecord-list's page (each tile is a lazy <img>, cheaper
+// than a fully resolved metarecord row), smaller than file-manager's plain
+// text list.
+const DIR_PAGE = 100;
 
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
 const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac']);
@@ -32,6 +40,10 @@ export async function mount(root, metafolder) {
 
   const pathBar = root.getElementById('path-bar');
   const viewer = root.getElementById('viewer');
+  const dirFooter = root.getElementById('dir-footer');
+  // Detaches the current directory grid's scroll listener; called before the
+  // next render so an old folder's pager cannot keep firing.
+  let detachDirScroll = null;
 
   function rawUrl(path) {
     return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
@@ -186,8 +198,10 @@ export async function mount(root, metafolder) {
     viewer.replaceChildren(media);
   }
 
-  // Directory view: a thumbnail grid of the folder's entries.
-  async function renderDirectory(dir) {
+  // Directory view: a thumbnail grid of the folder's entries, rendered in
+  // windows of DIR_PAGE (more appended as the grid is scrolled) so a huge
+  // folder neither freezes on open nor holds thousands of <img> at once.
+  async function renderDirectory(dir, generation) {
     let entries;
     try {
       entries = await fs.readDir(dir);
@@ -195,6 +209,9 @@ export async function mount(root, metafolder) {
       placeholder(`cannot read the folder: ${error.message ?? error}`);
       return;
     }
+    // The view may have changed while readDir was in flight; bail before
+    // touching the viewer so a stale folder cannot overwrite the current one.
+    if (generation !== renderGeneration) return;
     if (entries.length === 0) {
       placeholder('empty folder');
       return;
@@ -212,13 +229,37 @@ export async function mount(root, metafolder) {
         ),
         el('span', { class: 'name' }, entry.name),
       );
-    viewer.replaceChildren(el('div', { class: 'dir-grid' }, entries.map(tile)));
+
+    let rendered = 0;
+    const grid = el('div', { class: 'dir-grid' });
+    const appendWindow = async () => {
+      const next = Math.min(entries.length, rendered + DIR_PAGE);
+      grid.append(...entries.slice(rendered, next).map(tile));
+      rendered = next;
+      dirFooter.textContent = pager.footerText();
+    };
+    const pager = createPagedList({
+      loaded: () => rendered,
+      total: () => entries.length,
+      loadMore: appendWindow,
+    });
+    viewer.replaceChildren(grid);
+    await appendWindow(); // first window
+    dirFooter.hidden = false;
+    detachDirScroll = pager.attach(grid);
   }
 
   async function renderViewer() {
     const generation = ++renderGeneration;
     // Release any media from the previous view before showing the next one.
     teardownMedia();
+    // Tear down any previous directory grid (scroll listener + footer); only
+    // the directory branch re-enables them.
+    if (detachDirScroll) {
+      detachDirScroll();
+      detachDirScroll = null;
+    }
+    dirFooter.hidden = true;
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
@@ -232,7 +273,7 @@ export async function mount(root, metafolder) {
       // Unreachable/removed: fall through to the file preview.
     }
     if (info?.is_dir) {
-      await renderDirectory(path);
+      await renderDirectory(path, generation);
       return;
     }
     const extension = (path.split('.').pop() ?? '').toLowerCase();
@@ -283,5 +324,8 @@ export async function mount(root, metafolder) {
 
   // Release the media pipeline if the panel is unmounted (workspace closed or
   // panel type switched) so it cannot keep decoding in the background.
-  return () => teardownMedia();
+  return () => {
+    teardownMedia();
+    if (detachDirScroll) detachDirScroll();
+  };
 }

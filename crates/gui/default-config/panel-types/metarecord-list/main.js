@@ -3,9 +3,13 @@
 
 import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
+import { createPagedList } from '/__paged-list.js';
 import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
 
-const DEFAULT_PAGE_SIZE = 100;
+// Smallest page of the three list panels: each row needs several daemon
+// round-trips (TreeRef path resolution, ref-target metarecords) and parsing,
+// so a modest page keeps a large result responsive on first display.
+const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
 
@@ -460,11 +464,16 @@ export async function mount(root, metafolder) {
     void fetchPage(true);
   }
 
-  scroll.addEventListener('scroll', () => {
-    if (nextCursor && scroll.scrollTop + scroll.clientHeight > scroll.scrollHeight - 200) {
-      void fetchPage(false);
-    }
+  // Progressive loading: the shared controller owns the scroll threshold and
+  // the one-fetch-at-a-time guard; the footer below stays custom (it carries
+  // the selection count too). hasMore tracks the daemon cursor.
+  const pager = createPagedList({
+    loaded: () => metarecords.length,
+    total: () => total,
+    hasMore: () => nextCursor !== null,
+    loadMore: () => fetchPage(false),
   });
+  const detachScroll = pager.attach(scroll);
 
   root
     .getElementById('query-apply')
@@ -611,5 +620,6 @@ export async function mount(root, metafolder) {
   return () => {
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
+    detachScroll();
   };
 }

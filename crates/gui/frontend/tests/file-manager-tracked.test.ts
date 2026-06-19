@@ -1,11 +1,11 @@
 // file-manager tracked-children lookup (spec-gui "file-manager panel
-// type"): only the entries whose mfr_path parent is the displayed
-// directory are fetched (Follows query), instead of paginating the whole
-// repository and resolving every entry path.
+// type"): only the entries of the currently rendered window are fetched
+// (Follows + Matches over the window's names), so a directory with
+// thousands of tracked files only queries the slice the user can see.
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -139,41 +139,58 @@ describe('loadDirMetarecord', () => {
   });
 });
 
-describe('loadTrackedChildren', () => {
+describe('loadTrackedFor', () => {
   test('no repo: empty map, no daemon round-trip', async () => {
     const daemon = fakeDaemon([]);
-    const map = await loadTrackedChildren(daemon, null, '/data/repo', '/data/repo');
+    const map = await loadTrackedFor(daemon, null, '/data/repo', '/data/repo', ['a']);
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
   test('outside the root: empty map, no daemon round-trip', async () => {
     const daemon = fakeDaemon([]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/tmp');
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/tmp', ['a']);
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
-  test('queries the direct children of the displayed directory', async () => {
+  test('no names (empty window): empty map, no daemon round-trip', async () => {
+    const daemon = fakeDaemon([]);
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', []);
+    expect(map.size).toBe(0);
+    expect(daemon.call).not.toHaveBeenCalled();
+  });
+
+  test('queries only the window names: follows(parent) AND matches(^(names)$)', async () => {
     const daemon = fakeDaemon([
       { results: [entry('aaaa', 'a.mp3'), entry('bbbb', 'jazz')], next_cursor: null },
     ]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo/music');
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo/music', [
+      'a.mp3',
+      'jazz',
+      'untracked',
+    ]);
     expect(daemon.call).toHaveBeenCalledTimes(1);
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/query', {
-      query: { type: 'follows', field: 'mfr_path', target: '/music' },
+      query: {
+        type: 'and',
+        operands: [
+          { type: 'follows', field: 'mfr_path', target: '/music' },
+          { type: 'matches', field: 'mfr_path', pattern: '^(a\\.mp3|jazz|untracked)$' },
+        ],
+      },
       select: '*',
-      limit: 500,
+      limit: 3,
     });
     expect(map.get('/data/repo/music/a.mp3')).toBe('aaaa');
     expect(map.get('/data/repo/music/jazz')).toBe('bbbb');
     expect(map.size).toBe(2);
   });
 
-  test('the repo root queries the empty path', async () => {
+  test('the repo root queries the empty path target', async () => {
     const daemon = fakeDaemon([{ results: [entry('aaaa', 'music')], next_cursor: null }]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo');
-    expect(daemon.call.mock.calls[0][2].query).toEqual({
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['music']);
+    expect(daemon.call.mock.calls[0][2].query.operands[0]).toEqual({
       type: 'follows',
       field: 'mfr_path',
       target: '',
@@ -186,13 +203,13 @@ describe('loadTrackedChildren', () => {
       { results: [entry('aaaa', 'a')], next_cursor: 'c1' },
       { results: [entry('bbbb', 'b')], next_cursor: null },
     ]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo');
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['a', 'b']);
     expect(daemon.call).toHaveBeenCalledTimes(2);
     expect(daemon.call.mock.calls[1][2].cursor).toBe('c1');
     expect(map.size).toBe(2);
   });
 
-  test('ignores fields other than tree_ref mfr_path', async () => {
+  test('ignores fields other than tree_ref mfr_path, and names outside the window', async () => {
     const noisy: Entry = {
       uuid: 'cccc',
       fields: [
@@ -200,8 +217,18 @@ describe('loadTrackedChildren', () => {
         { name: 'mfr_path', value: { type: 'nothing', value: null } },
       ],
     };
-    const daemon = fakeDaemon([{ results: [noisy], next_cursor: null }]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo');
-    expect(map.size).toBe(0);
+    // A multi-position metarecord whose other position is not in this window
+    // must not leak that name into the map.
+    const multi: Entry = {
+      uuid: 'dddd',
+      fields: [
+        { name: 'mfr_path', value: treeRef('dddd', 'wanted') },
+        { name: 'mfr_path', value: treeRef('dddd', 'elsewhere') },
+      ],
+    };
+    const daemon = fakeDaemon([{ results: [noisy, multi], next_cursor: null }]);
+    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['wanted']);
+    expect(map.get('/data/repo/wanted')).toBe('dddd');
+    expect(map.size).toBe(1);
   });
 });

@@ -110,8 +110,11 @@ The =metarecord-list= panel type supports at minimum:
 For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
 [[file:spec-data-model.org][spec-data-model.org]]), fetching further pages as
-the user scrolls. The page size defaults to 100 and is configurable per
-workspace: =metarecord-list:set-page-size <n>= persists it in the
+the user scrolls; a footer shows =loaded/total= rows (the total from the
+daemon's =count=). The page size defaults to 50 — the smallest of the list
+panels, as each row needs several daemon round-trips (TreeRef path resolution,
+ref-target metarecords) and parsing — and is configurable per workspace:
+=metarecord-list:set-page-size <n>= persists it in the
 =metarecord-list:page-size= workspace variable (also settable by scripts);
 invalid stored values fall back to the default.
 
@@ -949,10 +952,14 @@ shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
 When the active path is a directory, the panel instead lists its contents as
-a thumbnail grid (images as thumbnails, other entries as a glyph). Clicking an
-entry drills in — into a subdirectory's listing, or a file's inline preview —
-and a back button in the header steps back out, returning to the selection
-once the originally selected path is reached.
+a thumbnail grid (images as thumbnails, other entries as a glyph). The grid is
+rendered in windows (a fixed page size, larger than =metarecord-list='s since
+each tile is only a lazy =<img>=, with more appended on scroll) so a folder
+with many thousands of files neither freezes on open nor holds every thumbnail
+at once; a footer shows =shown/total=. Clicking an entry drills in — into a
+subdirectory's listing, or a file's inline preview — and a back button in the
+header steps back out, returning to the selection once the originally selected
+path is reached.
 
 Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer
@@ -1005,10 +1012,14 @@ updated; otherwise it is set to =null=.
 selection for a file; =Backspace= goes up one level; =r= refreshes.
 
 *Listing*: the directory's entries are rendered in windows (a fixed page
-size, with more revealed on scroll), so a directory with many thousands of
-files stays responsive; a footer shows =shown/total entries= (mirroring the
-=metarecord-list= count). =file-manager:refresh= re-reads the current
-directory and its tracked status, preserving the cursor.
+size — the largest of the list panels, since a plain text row is the cheapest
+to build — with more revealed on scroll), so a directory with many thousands
+of files stays responsive; a footer shows =shown/total entries= (mirroring the
+=metarecord-list= count). The tracked status of the rows is queried *per
+rendered window* (a =Follows(parent) AND Matches(^(name…)$)= query over just
+that window's names), not for every child up front, so the per-entry daemon
+lookups are bounded to what is on screen. =file-manager:refresh= re-reads the
+current directory and its tracked status, preserving the cursor.
 
 *Context menu*: right-clicking a row moves the cursor there and opens an
 HTML menu ([[*Context menus]]): =Open= (directories) and =Track= (disabled

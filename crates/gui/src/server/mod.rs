@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 const UI_JS: &str = include_str!("../../panel-shim/ui.js");
 const MENU_JS: &str = include_str!("../../panel-shim/menu.js");
 const ORPHAN_JS: &str = include_str!("../../panel-shim/orphan.js");
+const PAGED_LIST_JS: &str = include_str!("../../panel-shim/paged-list.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -44,6 +45,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))
+        .route("/__paged-list.js", get(|| async { javascript(PAGED_LIST_JS) }))
         .route(
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {

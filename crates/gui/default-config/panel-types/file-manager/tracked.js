@@ -70,24 +70,40 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
   return page.results[0]?.uuid ?? null;
 }
 
-// Map of absolute child path -> metarecord uuid for the tracked direct
-// children of `dir`. Outside the repo root nothing is tracked.
-export async function loadTrackedChildren(daemon, repo, repoRoot, dir) {
+// Map of absolute child path -> metarecord uuid for the tracked entries
+// among `names` (the direct children currently rendered in the window).
+// The query is narrowed to those names — Follows(parent) AND
+// Matches(^(name1|name2|…)$) — so a directory with thousands of tracked
+// files only costs one bounded query per rendered window, not a full walk
+// of every tracked child up front. Outside the repo root, or with an empty
+// window, nothing is tracked and no round-trip happens.
+export async function loadTrackedFor(daemon, repo, repoRoot, dir, names) {
   const tracked = new Map();
   const rel = relPath(dir, repoRoot);
-  if (!repo || rel === null) return tracked;
+  if (!repo || rel === null || names.length === 0) return tracked;
   const prefix = dir.endsWith('/') ? dir : `${dir}/`;
+  const wanted = new Set(names);
+  const query = {
+    type: 'and',
+    operands: [
+      { type: 'follows', field: 'mfr_path', target: rel },
+      { type: 'matches', field: 'mfr_path', pattern: `^(${names.map(escapeRegex).join('|')})$` },
+    ],
+  };
   let cursor = null;
   do {
     const page = await daemon.call('POST', `/repos/${repo}/query`, {
-      query: { type: 'follows', field: 'mfr_path', target: rel },
+      query,
       select: '*',
-      limit: 500,
+      limit: names.length,
       ...(cursor && { cursor }),
     });
     for (const metarecord of page.results) {
       for (const field of metarecord.fields) {
         if (field.name !== 'mfr_path' || field.value.type !== 'tree_ref') continue;
+        // A matched metarecord may hold other positions outside the window
+        // (multi-map): keep only the names we actually asked for.
+        if (!wanted.has(field.value.value.name)) continue;
         tracked.set(prefix + field.value.value.name, metarecord.uuid);
       }
     }

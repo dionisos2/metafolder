@@ -125,10 +125,21 @@
       .placeholder {
         color: var(--mf-fg-dim, #8a8a96);
       }
+      /* Directory grid footer: "200/5000" progressive-loading indicator. */
+      #dir-footer {
+        flex: 0 0 auto;
+        padding: 2px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.8em;
+        text-align: right;
+      }
     </style>
   </head>
   <body>
     <div id="path-bar" hidden></div>
     <div id="viewer"><p class="placeholder">No file selected</p></div>
+    <div id="dir-footer" hidden></div>
   </body>
 </html>
