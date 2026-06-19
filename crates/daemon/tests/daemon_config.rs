@@ -38,7 +38,7 @@ fn test_parses_root_and_metafolder_entries() {
 root = "/data/music"
 
 [[load]]
-metafolder = "/ssd/meta/music"
+metafolder = "/ssd/meta/music/.metafolder"
 "#,
     );
     let config = daemon_config::read_config(&path).unwrap();
@@ -46,7 +46,7 @@ metafolder = "/ssd/meta/music"
         config.load,
         vec![
             RepoLocator::Root(PathBuf::from("/data/music")),
-            RepoLocator::Metafolder(PathBuf::from("/ssd/meta/music")),
+            RepoLocator::Metafolder(PathBuf::from("/ssd/meta/music/.metafolder")),
         ]
     );
     std::fs::remove_dir_all(dir).unwrap();

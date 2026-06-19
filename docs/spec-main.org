@@ -87,7 +87,7 @@ overrides this path. This file is distinct from the per-repository
 root = "/data/music"
 
 [[load]]
-metafolder = "/ssd/meta/music"
+metafolder = "/ssd/meta/music/.metafolder"
 #+END_SRC
 
 - =load= (optional): repositories to load at startup. Each entry has the
@@ -148,7 +148,7 @@ Request body:
 Optional: =metafolder= overrides where =.metafolder/= is created (external
 database). Defaults to =<root>/.metafolder/=.
 #+BEGIN_SRC json
-{"root": "/data/music", "metafolder": "/ssd/meta/music"}
+{"root": "/data/music", "metafolder": "/ssd/meta/music/.metafolder"}
 #+END_SRC
 
 Optional: =name= sets the repository name. When absent (or empty), the name is
@@ -172,7 +172,7 @@ Standard form (=.metafolder/= is inside =root=):
 External database form (specify the =.metafolder/= path directly; =root= is
 read from =config.json= inside it):
 #+BEGIN_SRC json
-{"metafolder": "/ssd/meta/music"}
+{"metafolder": "/ssd/meta/music/.metafolder"}
 #+END_SRC
 
 Response body: ={"repo_uuid": "..."}=

@@ -13,4 +13,4 @@
 # root = "/home/user/music"
 #
 # [[load]]
-# metafolder = "/ssd/meta/photos"
+# metafolder = "/ssd/meta/photos/.metafolder"
