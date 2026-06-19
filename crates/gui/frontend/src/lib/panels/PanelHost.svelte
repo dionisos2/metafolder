@@ -74,11 +74,18 @@
       },
     );
 
-    // Clicking into a panel focuses its slot (focusin crosses the shadow).
-    host.addEventListener('focusin', () => {
+    // Clicking into a panel focuses its slot. focusin only fires when a
+    // focusable element (button, input, [tabindex]) receives focus, so a click
+    // on plain content (text, an image, a bare div) would never focus the slot;
+    // pointerdown covers every click whatever it lands on. Hosts are overlaid
+    // in a separate layer, not children of the <section class="slot">, so the
+    // slot's own onclick never sees these clicks.
+    const focusSlot = () => {
       const slot = visibleSlots.get(key);
       if (slot && slot !== store.layout.focused) void invoke('panel_focus_next');
-    });
+    };
+    host.addEventListener('focusin', focusSlot);
+    host.addEventListener('pointerdown', focusSlot);
 
     const instance: PanelInstance = { wsId, panelType, host, shadow, apiInst, cleanup: null, mounted: undefined! };
     instances.set(key, instance);
