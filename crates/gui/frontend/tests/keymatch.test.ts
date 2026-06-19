@@ -35,6 +35,16 @@ describe('comboFromEvent', () => {
     ).toBe('ctrl+alt+shift+f1');
   });
 
+  test('keeps shift on a letter when another modifier is held', () => {
+    // Ctrl+Shift+Z yields key "Z" (length 1); shift must survive so the
+    // combo is ctrl+shift+z (redo), not ctrl+z (undo).
+    expect(comboFromEvent({ key: 'Z', ctrlKey: true, shiftKey: true })).toBe(
+      'ctrl+shift+z',
+    );
+    // Plain Shift+; keeps shift baked into the resulting ":" character.
+    expect(comboFromEvent({ key: ':', shiftKey: true })).toBe(':');
+  });
+
   test('maps special keys to the Rust-side names', () => {
     expect(comboFromEvent({ key: 'Escape' })).toBe('escape');
     expect(comboFromEvent({ key: 'ArrowLeft' })).toBe('left');

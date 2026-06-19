@@ -29,9 +29,16 @@ export function comboFromEvent(event) {
   const parts = [];
   if (event.ctrlKey) parts.push('ctrl');
   if (event.altKey) parts.push('alt');
-  // For printable characters shift is already baked into the key
-  // (":" not "shift+;"), so only special keys carry the modifier.
-  if (event.shiftKey && raw.length > 1) parts.push('shift');
+  // For a bare printable character shift is already baked into the key
+  // (":" not "shift+;"), so it carries no explicit modifier. But a special
+  // key (raw.length > 1) or a letter pressed with another modifier (e.g.
+  // Ctrl+Shift+Z, whose key is the unhelpful "Z") keeps shift, otherwise
+  // the combo would collapse onto its non-shift sibling (ctrl+z).
+  if (
+    event.shiftKey &&
+    (raw.length > 1 || event.ctrlKey || event.altKey || event.metaKey)
+  )
+    parts.push('shift');
   if (event.metaKey) parts.push('meta');
   parts.push(key);
   return parts.join('+');
