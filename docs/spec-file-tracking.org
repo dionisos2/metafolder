@@ -400,15 +400,13 @@ afterwards (see [[*Watch and Ignore]]).
 
 Response body: ={"uuid": "<new_entry_uuid>"}=
 
-** Single-metarecord reconcile
+** Scoped (single-metarecord) reconcile
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/metarecords/:metarecord_uuid/reconcile
-#+END_SRC
-
-Runs reconcile semantics scoped to the subtree rooted at the given metarecord.
-Intended to be called after =mf_watch= is set to =true= on a metarecord that was
-added via [[*Single-metarecord track]] or created manually.
+There is a *single* reconcile endpoint (see [[*Reconcile]]); a scoped reconcile
+is the same =POST /repos/:repo_uuid/reconcile= with a =metarecord= field in the
+body (32-char hex). It runs reconcile semantics scoped to the subtree rooted at
+that metarecord. Intended to be called after =mf_watch= is set to =true= on a
+metarecord added via [[*Single-metarecord track]] or created manually.
 
 Behaviour:
 - Walks the directory on disk (or refreshes a single file).
@@ -417,14 +415,14 @@ Behaviour:
   fields; refreshes the =mfr_*= stat fields of metarecords that already exist
   (the same refresh phase as full reconcile, disabled with ={"refresh": false}=).
 - Does not perform fingerprint or similarity matching (no orphan detection).
-  For orphan detection, use the full [[*Reconcile]].
+  For orphan detection, omit =metarecord= (whole-repository reconcile).
 - Creates missing parent directory metarecords along the path if needed.
 
-Returns =404= if the metarecord does not exist. Returns =400= if the metarecord has no
-valid =mfr_path= (path is =Nothing= or unknown).
-
-Response body: same format as full reconcile (=created=, =moved=, =candidates=),
-with =moved= always =0= and =candidates= always empty.
+Like every reconcile it is asynchronous (202 + task id, see
+[[file:spec-tasks.org][spec-tasks.org]]). Scope errors surface as the task
+becoming =failed=: an unknown metarecord, or one with no valid =mfr_path= (path
+is =Nothing= or unknown). The result has =moved= always =0= and =candidates=
+always empty.
 
 ** Reconcile
 
@@ -438,9 +436,10 @@ This endpoint is *asynchronous*: it returns =202= with a =task_id= immediately
 and runs the work (the steps below, unchanged) as a background /task/, rejecting
 a concurrent reconcile with =409=. Progress and the final =ReconcileResult= are
 observed via the task; see [[file:spec-tasks.org][spec-tasks.org]] "Reconcile as
-a task". (Single-metarecord reconcile, below, stays synchronous.) The steps,
-the single transaction, the candidate semantics and the response body below
-describe the work the task performs.
+a task". An optional ={"metarecord": "<hex>"}= scopes it to a subtree (see
+[[*Scoped (single-metarecord) reconcile]]); absent, it covers the whole
+repository. The steps, the single transaction, the candidate semantics and the
+response body below describe the work the task performs.
 
 An optional ={"threshold": <0..1>}= body enables the similarity phase and
 sets the minimum similarity score (absent disables it; v1 behaviour). The
@@ -564,7 +563,7 @@ write, since =mfr_path= is an =mfr_*= field).
 
 | Flag                  | Description                                                          |
 |-----------------------+----------------------------------------------------------------------|
-| =--metarecord <uuid>= | Single-metarecord reconcile: calls =POST /metarecords/:uuid/reconcile= instead, scoped to that metarecord's subtree |
+| =--metarecord <uuid>= | Scope the reconcile to that metarecord's subtree (sends =metarecord= in the body); otherwise the whole repository |
 | =--threshold <0..1>=  | Enable the similarity phase with this minimum score (full reconcile only) |
 | =--no-mime=           | Do not compute =mfr_mime= for files that lack it (sends =mime: false=) |
 | =--no-refresh=        | Do not refresh =mfr_*= stat fields of in-place (unmoved) files (sends =refresh: false=) |

@@ -200,11 +200,13 @@ Response: =200 OK=, a JSON array of task objects.
 
 ** Reconcile as a task
 
-=POST /repos/:repo_uuid/reconcile= becomes *asynchronous*. The request body is
-unchanged (=threshold=, =mime=, =refresh=; see
-[[file:spec-file-tracking.org][spec-file-tracking.org]] "Reconcile"). Instead
-of blocking until the walk finishes and returning the =ReconcileResult=, the
-daemon:
+=POST /repos/:repo_uuid/reconcile= is the *single* reconcile endpoint and is
+*asynchronous*. The request body carries =threshold=, =mime=, =refresh= (see
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "Reconcile") plus an
+optional =metarecord= (32-char hex): when present the reconcile is *scoped* to
+that metarecord's subtree; absent, it covers the whole repository. (=threshold=
+applies to the whole-repository reconcile only.) Instead of blocking until the
+work finishes and returning the =ReconcileResult=, the daemon:
 
 1. rejects the request with =409 Conflict= if a =reconcile= task for this
    repository is already =pending= or =running= (the in-flight task is
@@ -227,11 +229,13 @@ The client retrieves the outcome by polling =GET /repos/:repo_uuid/tasks/:id=
 until the task is terminal, then reads =result= (or =error=). The result is
 available for the retention window after completion.
 
-=POST /repos/:repo_uuid/metarecords/:metarecord_uuid/reconcile=
-(single-metarecord reconcile) is short and scoped; it remains *synchronous* and
-returns its =ReconcileResult= directly. It is not registered as a task. (It
-still takes the connection lock, so it serializes against a running full
-reconcile like any other operation.)
+A scoped reconcile (with =metarecord=) behaves the same way: same task, same
+=202= / poll / =result= flow, same =409= dedup (at most one reconcile of any
+scope at a time per repository). Scope errors — an unknown metarecord, or one
+with no valid =mfr_path= — surface as the task becoming =failed= with the
+message in =error= (there is no separate synchronous endpoint to return a 404
+on). The former =POST /repos/:repo_uuid/metarecords/:metarecord_uuid/reconcile=
+endpoint is *removed*.
 
 ** Query as a task
 

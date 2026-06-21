@@ -66,7 +66,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
-        .route("/repos/:repo/metarecords/:uuid/reconcile", post(metarecord_reconcile))
         .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
         .route(
             "/repos/:repo/metarecords/:uuid/fields/:field_id",
@@ -1078,6 +1077,12 @@ fn default_true() -> bool {
 
 #[derive(Deserialize)]
 struct ReconcileBody {
+    /// Optional scope: when present, reconcile only the subtree rooted at this
+    /// metarecord (32-char hex); absent reconciles the whole repository
+    /// (spec-tasks "Reconcile as a task"). The similarity `threshold` applies
+    /// to the whole-repository reconcile only.
+    #[serde(default)]
+    metarecord: Option<String>,
     /// Minimum similarity score for the v2 similarity phase, range [0, 1].
     /// Absent disables similarity (v1 behaviour).
     #[serde(default)]
@@ -1093,14 +1098,16 @@ struct ReconcileBody {
 
 impl Default for ReconcileBody {
     fn default() -> Self {
-        Self { threshold: None, mime: true, refresh: true }
+        Self { metarecord: None, threshold: None, mime: true, refresh: true }
     }
 }
 
-/// `POST /repos/:repo/reconcile`: starts a full reconcile as a background task
+/// `POST /repos/:repo/reconcile`: starts a reconcile as a background task
 /// (spec-tasks). Returns `202 Accepted` with the task id immediately; progress
 /// and the final `ReconcileResult` are observed via `GET …/tasks/:id`. A
-/// concurrent reconcile is rejected with `409`.
+/// concurrent reconcile is rejected with `409`. With `metarecord` in the body
+/// the reconcile is scoped to that metarecord's subtree; absent, it covers the
+/// whole repository.
 async fn full_reconcile(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -1113,6 +1120,7 @@ async fn full_reconcile(
             return Err(ApiError::bad_request("threshold must be in the range [0, 1]"));
         }
     }
+    let scope = body.metarecord.as_deref().map(parse_uuid).transpose()?;
     let repo_state = state.repo(repo_uuid)?;
     repo_state.ensure_writable()?;
     let task_id = repo_state
@@ -1128,13 +1136,23 @@ async fn full_reconcile(
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
-        match crate::reconcile::reconcile_full_reported(
-            &repo_state,
-            body.threshold,
-            body.mime,
-            body.refresh,
-            &progress,
-        ) {
+        let outcome = match scope {
+            Some(uuid) => crate::reconcile::reconcile_metarecord_reported(
+                &repo_state,
+                uuid,
+                body.mime,
+                body.refresh,
+                &progress,
+            ),
+            None => crate::reconcile::reconcile_full_reported(
+                &repo_state,
+                body.threshold,
+                body.mime,
+                body.refresh,
+                &progress,
+            ),
+        };
+        match outcome {
             Ok(result) => {
                 let value = serde_json::to_value(result).expect("reconcile result serialization");
                 repo_state.tasks.finish(task_id, Some(value));
@@ -1144,21 +1162,6 @@ async fn full_reconcile(
     });
 
     Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
-}
-
-async fn metarecord_reconcile(
-    State(state): State<Arc<AppState>>,
-    Path((repo, uuid)): Path<(String, String)>,
-    payload: Option<Json<ReconcileBody>>,
-) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
-    let repo_uuid = parse_uuid(&repo)?;
-    let uuid = parse_uuid(&uuid)?;
-    let body = payload.map(|Json(b)| b).unwrap_or_default();
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_metarecord(repo_state, uuid, body.mime, body.refresh)?))
-    })
-    .await
 }
 
 #[derive(Deserialize)]

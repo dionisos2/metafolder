@@ -374,11 +374,22 @@ export async function mount(root, metafolder) {
 
   async function watchAndReconcile() {
     if (!current) return;
+    const { repo, uuid } = current;
     try {
       statusBar.message('Reconciling…', null);
       await daemon.call('PATCH', api(''), { name: 'mf_watch', value: { type: 'bool', value: true } });
-      const result = await daemon.call('POST', api('/reconcile'), {});
-      statusBar.message(`Reconcile done: ${JSON.stringify(result)}`, 8000);
+      // One reconcile endpoint, scoped via `metarecord` (spec-tasks). It is
+      // asynchronous: poll the task to completion (the task bar shows live
+      // progress) before refreshing the view.
+      const started = await daemon.call('POST', `/repos/${repo}/reconcile`, { metarecord: uuid });
+      let task;
+      for (;;) {
+        task = await daemon.call('GET', `/repos/${repo}/tasks/${started.task_id}`);
+        if (task.status === 'done' || task.status === 'failed') break;
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
+      statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, 8000);
       await load();
       await dirty();
     } catch (error) {

@@ -176,28 +176,26 @@ async fn test_single_metarecord_reconcile_endpoint() {
     )
     .await;
 
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/metarecords/{dir_uuid}/reconcile"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "entry reconcile failed: {body}");
-    assert_eq!(body["created"], 1, "a.mp3 gets an entry");
-    assert_eq!(body["moved"], 0);
+    // Scoped reconcile via the unified endpoint (metarecord in the body):
+    // 202 + task id, the result via the task.
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": dir_uuid}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "scoped reconcile start failed: {body}");
+    let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
+    assert_eq!(task["status"], "done", "task: {task}");
+    assert_eq!(task["result"]["created"], 1, "a.mp3 gets an entry");
+    assert_eq!(task["result"]["moved"], 0);
 
-    // 404 for an unknown entry; 400 for an entry without a path.
+    // An unknown metarecord scope fails the task (was a synchronous 404).
     let bogus = Uuid::new_v4().as_simple().to_string();
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/metarecords/{bogus}/reconcile"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": bogus}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
+    assert_eq!(task["status"], "failed");
+    assert!(task["error"].as_str().unwrap().contains("not found"), "error: {}", task["error"]);
 
+    // A metarecord scope without a valid path fails the task (was a 400).
     let (_, no_path) = request(
         &app,
         "POST",
@@ -206,14 +204,12 @@ async fn test_single_metarecord_reconcile_endpoint() {
     )
     .await;
     let no_path_uuid = no_path["uuid"].as_str().unwrap();
-    let (status, _) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/metarecords/{no_path_uuid}/reconcile"),
-        None,
-    )
-    .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": no_path_uuid}))).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
+    assert_eq!(task["status"], "failed");
+    assert!(task["error"].as_str().unwrap().contains("mfr_path"), "error: {}", task["error"]);
 
     std::fs::remove_dir_all(root).unwrap();
 }

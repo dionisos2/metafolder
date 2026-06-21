@@ -330,6 +330,20 @@ pub fn reconcile_metarecord(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
+    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &|_, _, _| {})
+}
+
+/// Like [`reconcile_metarecord`], reporting phase progress for a task
+/// (spec-tasks). Phases: `walk` (subtree), `create` (create/refresh over the
+/// subtree), `mime`.
+pub fn reconcile_metarecord_reported(
+    repo: &RepoState,
+    uuid: Uuid,
+    compute_mime: bool,
+    refresh: bool,
+    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+) -> Result<ReconcileResult, ApiError> {
+    progress("walk", None, None);
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
@@ -356,7 +370,12 @@ pub fn reconcile_metarecord(
     }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
-    for (rel, _) in &fs_paths {
+    let create_total = fs_paths.len() as u64;
+    progress("create", Some(0), Some(create_total));
+    for (i, (rel, _)) in fs_paths.iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("create", Some(i as u64), Some(create_total));
+        }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
         match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
@@ -373,7 +392,12 @@ pub fn reconcile_metarecord(
     }
 
     if compute_mime {
-        for (rel, meta) in &fs_paths {
+        let mime_total = fs_paths.len() as u64;
+        progress("mime", Some(0), Some(mime_total));
+        for (i, (rel, meta)) in fs_paths.iter().enumerate() {
+            if i % PROGRESS_STEP == 0 {
+                progress("mime", Some(i as u64), Some(mime_total));
+            }
             if !meta.is_file() {
                 continue;
             }

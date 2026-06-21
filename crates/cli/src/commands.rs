@@ -486,35 +486,34 @@ pub fn reconcile(
     poll_interval_ms: u64,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let resp = match entry {
+    // One reconcile endpoint (spec-tasks): an optional `metarecord` scopes it to
+    // a subtree; absent reconciles the whole repository. Always asynchronous —
+    // start it (202 + task id), then poll the task, rendering progress to stderr.
+    let mut body = json!({"mime": mime, "refresh": refresh});
+    match entry {
         Some(uuid) => {
             let uuid = Uuid::parse_str(uuid)
                 .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
-            // Single-metarecord reconcile is synchronous (spec-tasks): the
-            // similarity threshold applies to full reconcile only.
-            let path = format!("{base}/metarecords/{}/reconcile", uuid.as_simple());
-            ctx.client.request("POST", &path, &[], Some(&json!({"mime": mime, "refresh": refresh})))?
+            body["metarecord"] = json!(uuid.as_simple().to_string());
         }
+        // The similarity threshold applies to the whole-repository reconcile only.
         None => {
-            // Full reconcile is asynchronous: start it (202 + task id), then
-            // poll the task to completion, rendering progress to stderr.
-            let mut body = json!({"mime": mime, "refresh": refresh});
             if let Some(t) = threshold {
                 body["threshold"] = json!(t);
             }
-            let started = ctx.client.request("POST", &format!("{base}/reconcile"), &[], Some(&body))?;
-            let task_id = started["task_id"]
-                .as_str()
-                .ok_or_else(|| CliError::Op("reconcile: daemon did not return a task id".into()))?
-                .to_string();
-            if no_wait {
-                // Just hand back the task id; the caller can poll with `mf task`.
-                println!("{task_id}");
-                return Ok(0);
-            }
-            poll_reconcile_task(ctx, &base, &task_id, poll_interval_ms)?
         }
-    };
+    }
+    let started = ctx.client.request("POST", &format!("{base}/reconcile"), &[], Some(&body))?;
+    let task_id = started["task_id"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("reconcile: daemon did not return a task id".into()))?
+        .to_string();
+    if no_wait {
+        // Just hand back the task id; the caller can poll with `mf task`.
+        println!("{task_id}");
+        return Ok(0);
+    }
+    let resp = poll_reconcile_task(ctx, &base, &task_id, poll_interval_ms)?;
     if raw_json {
         println!("{resp}");
     } else {
