@@ -32,6 +32,7 @@ use crate::state::{AppState, RepoState, RollbackLock};
 pub fn build(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/tasks", get(list_all_tasks))
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
@@ -60,6 +61,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/schema", get(get_schema))
         .route("/repos/:repo/schema/reload", post(reload_schema))
         .route("/repos/:repo/schema/check", post(check_schema))
+        .route("/repos/:repo/tasks", get(list_repo_tasks))
+        .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
         .route("/repos/:repo/metarecords/:uuid/reconcile", post(metarecord_reconcile))
@@ -248,6 +251,33 @@ async fn health() -> Json<serde_json::Value> {
 
 async fn list_repos(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::to_value(state.list_repos()).expect("repo list serialization"))
+}
+
+/// `GET /tasks`: every task across all loaded repositories (spec-tasks).
+async fn list_all_tasks(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(serde_json::to_value(state.all_tasks()).expect("tasks serialization"))
+}
+
+/// `GET /repos/:repo/tasks`: the repository's currently retained tasks.
+async fn list_repo_tasks(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo = state.repo(parse_uuid(&repo)?)?;
+    Ok(Json(serde_json::to_value(repo.tasks.list()).expect("tasks serialization")))
+}
+
+/// `GET /repos/:repo/tasks/:task`: one task by id (404 if unknown or evicted).
+async fn get_task(
+    State(state): State<Arc<AppState>>,
+    Path((repo, task)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let task_uuid = parse_uuid(&task)?;
+    let repo = state.repo(parse_uuid(&repo)?)?;
+    repo.tasks
+        .get(task_uuid)
+        .map(|t| Json(serde_json::to_value(t).expect("task serialization")))
+        .ok_or_else(|| ApiError::not_found(format!("Task not found: {task_uuid}")))
 }
 
 #[derive(Deserialize)]

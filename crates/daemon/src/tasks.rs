@@ -190,6 +190,7 @@ impl TaskRegistry {
     /// Removes terminal tasks older than [`RETENTION`] relative to `now`.
     /// Exposed for deterministic testing; the public methods call it with
     /// `Instant::now()`.
+    #[cfg(test)]
     pub(crate) fn evict_expired(&self, now: Instant) {
         Self::evict_locked(&mut self.tasks.lock_recover(), now);
     }

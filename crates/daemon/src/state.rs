@@ -30,6 +30,10 @@ pub struct RepoState {
     /// navigation is in progress, carrying its resolved target. Never
     /// persisted — a crash restarts unlocked.
     pub rollback_lock: Mutex<Option<RollbackLock>>,
+    /// Observable background tasks for this repository (spec-tasks). In memory,
+    /// separate from `conn` so progress reads never block behind a running
+    /// reconcile.
+    pub tasks: crate::tasks::TaskRegistry,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -46,6 +50,7 @@ impl RepoState {
     }
 
     pub fn from_opened(opened: OpenedRepo) -> Self {
+        let repo_uuid = opened.config.repo_uuid;
         Self {
             conn: Mutex::new(opened.conn),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
@@ -55,6 +60,7 @@ impl RepoState {
             handles: Mutex::new(None),
             schema: Mutex::new(None),
             rollback_lock: Mutex::new(None),
+            tasks: crate::tasks::TaskRegistry::new(repo_uuid),
         }
     }
 
@@ -207,5 +213,14 @@ impl AppState {
             .collect();
         infos.sort_by_key(|i| i.repo_uuid);
         infos
+    }
+
+    /// All tasks across every loaded repository (global `GET /tasks`).
+    pub fn all_tasks(&self) -> Vec<crate::tasks::TaskView> {
+        let repos = self.repos.lock_recover();
+        let mut tasks: Vec<crate::tasks::TaskView> =
+            repos.values().flat_map(|r| r.tasks.list()).collect();
+        tasks.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.id.cmp(&b.id)));
+        tasks
     }
 }
