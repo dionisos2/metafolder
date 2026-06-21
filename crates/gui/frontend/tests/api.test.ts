@@ -11,7 +11,6 @@ function setup() {
   const registerHandler = vi.fn();
   const onCommandsChanged = vi.fn();
   const addDefaultMenuItems = vi.fn();
-  const setQueryBusy = vi.fn();
 
   let visible = false;
   const visibilityGate = {
@@ -25,7 +24,7 @@ function setup() {
   };
 
   const instance = createPanelApi(
-    { invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems, setQueryBusy },
+    { invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems },
     {
       wsId: 'ws-1',
       panelType: 'metarecord-list',
@@ -36,17 +35,7 @@ function setup() {
   );
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const api = instance.api as any;
-  return {
-    instance,
-    api,
-    invoke,
-    dispatch,
-    registerHandler,
-    onCommandsChanged,
-    addDefaultMenuItems,
-    setQueryBusy,
-    visibilityGate,
-  };
+  return { instance, api, invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems, visibilityGate };
 }
 
 describe('panel api — identity', () => {
@@ -82,43 +71,6 @@ describe('panel api — daemon', () => {
     const { api, invoke } = setup();
     invoke.mockResolvedValueOnce({ status: 404, body: { error: 'not found' } });
     await expect(api.daemon.call('GET', '/repos/r/metarecords/x')).rejects.toThrow('not found');
-  });
-
-  test('a slow query raises then clears the query-busy spinner', async () => {
-    vi.useFakeTimers();
-    try {
-      const { api, invoke, setQueryBusy } = setup();
-      let resolveCall!: (v: unknown) => void;
-      invoke.mockReturnValueOnce(new Promise((r) => { resolveCall = r; }));
-      // Unique body → cache miss → real (mocked) round-trip.
-      const pending = api.daemon.request('POST', '/repos/r/query', { tag: 'slow', n: 1 });
-      // Within the grace period: no spinner yet.
-      await vi.advanceTimersByTimeAsync(80);
-      expect(setQueryBusy).not.toHaveBeenCalled();
-      // Past the grace period: spinner raised.
-      await vi.advanceTimersByTimeAsync(60);
-      expect(setQueryBusy).toHaveBeenCalledWith('ws-1', 1);
-      resolveCall({ status: 200, body: [] });
-      await pending;
-      expect(setQueryBusy).toHaveBeenLastCalledWith('ws-1', -1);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  test('a fast query never flashes the spinner', async () => {
-    vi.useFakeTimers();
-    try {
-      const { api, invoke, setQueryBusy } = setup();
-      invoke.mockResolvedValueOnce({ status: 200, body: [] });
-      const pending = api.daemon.request('POST', '/repos/r/query', { tag: 'fast', n: 2 });
-      await vi.advanceTimersByTimeAsync(40);
-      await pending;
-      await vi.advanceTimersByTimeAsync(200);
-      expect(setQueryBusy).not.toHaveBeenCalled();
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   test('repoRoot caches GET /repos across calls', async () => {

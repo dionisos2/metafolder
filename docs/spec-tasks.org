@@ -310,20 +310,24 @@ prints the final summary from =result= to stdout (unchanged format). A =409=
 
 * GUI
 
-See [[file:spec-gui.org][spec-gui.org]] for the GUI architecture. The progress
-behaviour:
+See [[file:spec-gui.org][spec-gui.org]] for the GUI architecture. In-flight
+tasks are shown in a *dedicated task bar*, separate from the status bar so
+progress never saturates it:
 
-- A long operation surfaces in the status bar: a *progress bar* when the task
-  reports =done= / =total=, otherwise a *loading animation* (gif/spinner)
-  labelled with the =phase=.
-- *Reconcile flow* (=reconcile:run=): the GUI posts the async reconcile, then
-  polls =GET …/tasks/:id= at its own cadence, updating the status bar from the
-  task's progress, and on completion shows the summary from =result= (or the
-  error). Because the work is daemon-owned, closing and reopening the GUI mid
-  reconcile lets it resume observing via =GET …/tasks= (find the running
-  =reconcile= task for the active repo).
-- *Query flow*: while a query request is in flight the GUI shows an
-  indeterminate loading animation (query tasks report unknown counts).
+- The task bar polls =GET /tasks= (all loaded repositories) at its own cadence
+  and lists every =running= / =pending= task with a *progress bar* when the
+  task reports =done= / =total=, otherwise a *spinner* labelled with the
+  =kind= / =phase=. It is hidden when there are no tasks. Because it polls the
+  daemon (not only GUI-launched work), it surfaces *any* in-flight task on the
+  loaded repos — reconcile, query, flush — which matters since these tasks are
+  blocking. Closing and reopening the GUI mid-reconcile resumes observing it.
+- *Reconcile flow* (=reconcile:run=): the GUI posts the async reconcile and
+  polls =GET …/tasks/:id= only to know when to show the final summary from
+  =result= (or the error) in the status bar; live progress is shown by the task
+  bar, not the status bar.
+- *Query / flush*: shown by the task bar like any other task (a query that
+  outlives a poll interval appears with a spinner; very short ones may complete
+  between polls).
 - The poll cadence is chosen entirely client-side, independently of the CLI.
 
 * Future extensions

@@ -22,19 +22,6 @@ pub fn format_summary(result: &Value) -> String {
     )
 }
 
-/// Busy status text for a running reconcile task: `"Reconciling… <phase> i/n"`
-/// when counts are known, `"Reconciling… <phase>"` otherwise.
-pub fn format_progress(task: &Value) -> String {
-    let phase = task["phase"].as_str().unwrap_or("");
-    let done = task["done"].as_u64();
-    let total = task["total"].as_u64();
-    match (phase, done, total) {
-        ("", _, _) => "Reconciling…".to_string(),
-        (phase, Some(done), Some(total)) => format!("Reconciling… {phase} {done}/{total}"),
-        (phase, _, _) => format!("Reconciling… {phase}"),
-    }
-}
-
 /// Interval between task polls while a reconcile runs.
 const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 
@@ -95,12 +82,9 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
                 return Err(message);
             }
             _ => {
-                // Transient progress: status bar only, no message-log spam.
-                let progress = match (task["done"].as_u64(), task["total"].as_u64()) {
-                    (Some(done), Some(total)) => Some((done, total)),
-                    _ => None,
-                };
-                gui.post_progress(&ws_id, &format_progress(task), "busy", progress)?;
+                // Live progress is shown by the dedicated task bar (it polls
+                // GET /tasks), so the reconcile flow itself posts nothing per
+                // poll — only the initial "Reconciling…" and the final summary.
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
         }
@@ -130,19 +114,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_format_progress() {
-        // Determinate counts → "phase i/n".
-        assert_eq!(
-            format_progress(&json!({"phase": "create", "done": 12, "total": 40})),
-            "Reconciling… create 12/40"
-        );
-        // Unknown counts → phase only.
-        assert_eq!(
-            format_progress(&json!({"phase": "walk", "done": null, "total": null})),
-            "Reconciling… walk"
-        );
-        // No phase yet → bare label.
-        assert_eq!(format_progress(&json!({})), "Reconciling…");
-    }
 }

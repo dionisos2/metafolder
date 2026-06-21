@@ -6,6 +6,7 @@
   import Slot from './components/Slot.svelte';
   import CommandInput from './components/CommandInput.svelte';
   import StatusBar from './components/StatusBar.svelte';
+  import TaskBar from './components/TaskBar.svelte';
   import ConfigOverlay from './components/ConfigOverlay.svelte';
   import PanelHost from './lib/panels/PanelHost.svelte';
 
@@ -75,6 +76,7 @@
         {/if}
       </div>
       <CommandInput />
+      <TaskBar />
       <StatusBar />
     {/if}
   </div>

@@ -47,12 +47,6 @@ export interface PanelApiDeps {
   onCommandsChanged: () => void;
   /** Adds a provider to the shell's single default context menu. */
   addDefaultMenuItems: (provider: (event: MouseEvent) => unknown[]) => void;
-  /**
-   * Adjusts the in-flight query counter for a workspace (delta +1/-1), driving
-   * the status-bar loading spinner (spec-tasks "Query flow"). Optional: panel
-   * unit tests omit it.
-   */
-  setQueryBusy?: (wsId: string, delta: number) => void;
 }
 
 export interface PanelApiCtx {
@@ -131,23 +125,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       invoke('daemon_request', { method: m, path: p, body: b }),
     ) as Promise<DaemonResponse>;
 
-  // A query is opaque and can be slow (spec-tasks): show a loading spinner if
-  // it outlasts a short grace period (cache hits and fast queries never flash).
-  const QUERY_PATH = /^\/repos\/[^/]+\/query$/;
-  const QUERY_SPINNER_DELAY = 120;
-
   function daemonRequest(method: string, path: string, body: unknown = null): Promise<DaemonResponse> {
-    const call = sharedCache.request(method, path, body, rawFetch);
-    if (method !== 'POST' || !QUERY_PATH.test(path.split('?')[0])) return call;
-    let shown = false;
-    const timer = setTimeout(() => {
-      shown = true;
-      deps.setQueryBusy?.(ctx.wsId, 1);
-    }, QUERY_SPINNER_DELAY);
-    return call.finally(() => {
-      clearTimeout(timer);
-      if (shown) deps.setQueryBusy?.(ctx.wsId, -1);
-    });
+    return sharedCache.request(method, path, body, rawFetch);
   }
 
   // Cached GET /repos lookup (root, internal_dir, ...). UUIDs are normalized

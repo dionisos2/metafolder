@@ -44,11 +44,7 @@
       <span class="text">
         {#if status}{status.text}{/if}
       </span>
-      {#if status?.progress}
-        <progress class="bar" value={status.progress.done} max={status.progress.total}></progress>
-      {:else if status?.kind === 'busy' || (store.queryBusy[wsId] ?? 0) > 0}
-        <span class="spinner"></span>
-      {/if}
+      {#if status?.kind === 'busy'}<span class="spinner"></span>{/if}
       <span class="last-command">{store.lastCommand[wsId] ?? ''}</span>
     </div>
   {:else}
@@ -135,20 +131,6 @@
     border-top-color: transparent;
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
-  }
-  /* Determinate progress bar for long operations (spec-tasks). */
-  .bar {
-    width: 8em;
-    height: 0.7em;
-    accent-color: var(--mf-accent, #4c56c4);
-  }
-  .bar::-webkit-progress-bar {
-    background: var(--mf-bg, #1e1e24);
-    border-radius: 3px;
-  }
-  .bar::-webkit-progress-value {
-    background: var(--mf-accent, #4c56c4);
-    border-radius: 3px;
   }
   @keyframes spin {
     to {

@@ -434,14 +434,25 @@ Always-visible read-only area at the bottom. Shows:
 - Status messages after commands (e.g. ="Metarecord deleted."=).
 - Error messages from failed operations.
 - The last executed command name (dim text).
-- A spinner during long-running operations (reconcile, shell commands), or a
-  determinate progress bar when the operation reports =done=/=total= counts
-  (see [[file:spec-tasks.org][spec-tasks.org]]; reconcile polls its task and
-  surfaces phase progress here without spamming the message log).
+- A spinner during long-running shell commands.
+
+Live progress of daemon /tasks/ (reconcile, query, flush) is *not* shown here
+but in a dedicated *task bar* just above the status bar, to avoid saturating it
+(see [[*Task bar]] and [[file:spec-tasks.org][spec-tasks.org]] "GUI").
 
 Content is per-workspace. When both slots display the same workspace, one
 status bar is shown. When the two slots display different workspaces, two
 status bars are shown (one per slot, each reflecting its own workspace).
+
+** Task bar
+
+A dedicated bar directly above the status bar, showing in-flight daemon tasks
+(spec-tasks). It polls =GET /tasks= (all loaded repositories) and lists each
+=running= / =pending= task with a determinate progress bar when the task
+reports =done=/=total=, a spinner otherwise, labelled by =kind=/=phase=. It is
+hidden when there are no tasks. Unlike the status bar it is not tied to a
+workspace: it surfaces every blocking task on the loaded repositories,
+including reconciles started from the CLI or another client.
 
 ** Command input
 
@@ -1117,9 +1128,9 @@ sessions.
 ** Reconcile
 
 =reconcile:run= calls =POST .../reconcile= (asynchronous — 202 + task id, see
-[[file:spec-tasks.org][spec-tasks.org]]) and polls the task, showing phase
-progress in the status bar (a determinate bar once =done=/=total= are known,
-a spinner otherwise). On completion:
+[[file:spec-tasks.org][spec-tasks.org]]) and polls the task only to know when it
+finishes; live progress is shown by the [[*Task bar]], not the status bar. On
+completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.

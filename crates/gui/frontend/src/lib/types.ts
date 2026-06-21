@@ -42,9 +42,6 @@ export interface StatusMessage {
   text: string;
   kind: string;
   timeout_ms: number | null;
-  /// Determinate progress for a long operation (spec-tasks); absent/null →
-  /// indeterminate (spinner).
-  progress?: { done: number; total: number } | null;
 }
 
 export interface ConfigInfo {
