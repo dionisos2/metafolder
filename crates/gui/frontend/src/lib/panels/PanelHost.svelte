@@ -3,7 +3,7 @@
   import { invoke, listen } from '../ipc';
   import { dispatch, setPanelDispatch } from '../commands';
   import { addDefaultMenuItems } from '../keys';
-  import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
+  import { adjustQueryBusy, focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
   import type { CommandDef, SlotId } from '../types';
   // @ts-expect-error plain-JS module shared with the (former) panel shim
@@ -63,6 +63,7 @@
         registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
         onCommandsChanged: () => void refreshCommands(),
         addDefaultMenuItems,
+        setQueryBusy: adjustQueryBusy,
       },
       {
         wsId,

@@ -31,6 +31,9 @@ export const store = $state({
   daemonConnected: true,
   splitRatio: 0.5,
   status: {} as Metarecord<string, StatusMessage | null>,
+  /// Per-workspace count of in-flight (slow) queries; >0 shows a loading
+  /// spinner in the status bar (spec-tasks "Query flow").
+  queryBusy: {} as Metarecord<string, number>,
   lastCommand: {} as Metarecord<string, string>,
   inputDrafts: {} as Metarecord<string, string>,
   ui: {
@@ -90,6 +93,12 @@ export async function refreshCommands() {
 // kept on the type for the scripting API but no longer schedules a hide).
 function showStatus(wsId: string, message: StatusMessage) {
   store.status[wsId] = message;
+}
+
+/// Adjusts the in-flight query counter for a workspace (delta +1/-1). Used to
+/// drive the status-bar loading spinner while a query runs (spec-tasks).
+export function adjustQueryBusy(wsId: string, delta: number) {
+  store.queryBusy[wsId] = Math.max(0, (store.queryBusy[wsId] ?? 0) + delta);
 }
 
 /// Shows a status message on the focused workspace's status bar (used for

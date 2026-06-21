@@ -46,7 +46,7 @@
       </span>
       {#if status?.progress}
         <progress class="bar" value={status.progress.done} max={status.progress.total}></progress>
-      {:else if status?.kind === 'busy'}
+      {:else if status?.kind === 'busy' || (store.queryBusy[wsId] ?? 0) > 0}
         <span class="spinner"></span>
       {/if}
       <span class="last-command">{store.lastCommand[wsId] ?? ''}</span>
