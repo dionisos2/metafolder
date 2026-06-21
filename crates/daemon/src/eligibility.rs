@@ -2,7 +2,10 @@
 //! whether a repo-root-relative path should be tracked, from the `mf_watch`
 //! and `mf_ignore` fields inherited along the `mfr_path` ancestor chain.
 
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
+use regex::Regex;
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -11,9 +14,34 @@ use metafolder_core::metarecord::Value;
 use crate::db;
 use crate::tree_cache::TreeCache;
 
+/// Per-run memoisation for [`is_eligible_cached`]. Ancestor `mf_watch` /
+/// `mf_ignore` values and compiled `mf_ignore` regexes are stable for the
+/// duration of a reconcile walk, so caching them turns the walk's per-entry
+/// cost from O(depth) SQLite queries + a regex recompile each into a handful of
+/// lookups. Reused across the whole walk; never persisted.
+#[derive(Default)]
+pub struct EligibilityCache {
+    regex: HashMap<String, Regex>,
+    watch: HashMap<Uuid, Option<bool>>,
+    ignore: HashMap<Uuid, Vec<String>>,
+}
+
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
-/// leading slash; `""` is the root itself).
+/// leading slash; `""` is the root itself). Single-shot: compiles regexes and
+/// reads ancestor fields fresh. Hot loops (the reconcile walk) should use
+/// [`is_eligible_cached`] with a shared [`EligibilityCache`].
 pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<bool> {
+    is_eligible_cached(conn, cache, rel_path, &mut EligibilityCache::default())
+}
+
+/// Like [`is_eligible`] but memoising ancestor field reads and compiled regexes
+/// in `ec` across calls (spec-tasks "walk perf").
+pub fn is_eligible_cached(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    rel_path: &str,
+    ec: &mut EligibilityCache,
+) -> Result<bool> {
     let comps: Vec<&str> = rel_path.split('/').collect();
     // Prefixes from the root down: "" for the root, then "/a", "/a/b", …
     let prefixes: Vec<String> = (0..comps.len()).map(|i| comps[..=i].join("/")).collect();
@@ -36,7 +64,7 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
     // Steps 1–2: nearest metarecord (including the path itself) defining mf_watch.
     let mut watch: Option<(Uuid, bool)> = None;
     for (_, uuid) in chain.iter().rev() {
-        if let Some(value) = bool_field(conn, *uuid, "mf_watch")? {
+        if let Some(value) = cached_watch(conn, ec, *uuid)? {
             watch = Some((*uuid, value));
             break;
         }
@@ -58,20 +86,50 @@ pub fn is_eligible(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> 
         if *i == full_idx && own_entry == Some(*uuid) {
             continue; // The entry itself is excluded from the ignore search.
         }
-        let patterns = string_fields(conn, *uuid, "mf_ignore")?;
+        let patterns = cached_ignore(conn, ec, *uuid)?;
         if patterns.is_empty() {
             continue;
         }
         for pattern in &patterns {
-            let re = regex::Regex::new(pattern)
-                .with_context(|| format!("invalid mf_ignore pattern '{pattern}'"))?;
-            if re.is_match(rel_path) {
+            if cached_regex(ec, pattern)?.is_match(rel_path) {
                 return Ok(false);
             }
         }
         return Ok(true);
     }
     Ok(true)
+}
+
+/// Cached `mf_watch` of a metarecord.
+fn cached_watch(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Option<bool>> {
+    if let Some(v) = ec.watch.get(&uuid) {
+        return Ok(*v);
+    }
+    let v = bool_field(conn, uuid, "mf_watch")?;
+    ec.watch.insert(uuid, v);
+    Ok(v)
+}
+
+/// Cached `mf_ignore` patterns of a metarecord.
+fn cached_ignore(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Result<Vec<String>> {
+    if let Some(v) = ec.ignore.get(&uuid) {
+        return Ok(v.clone());
+    }
+    let v = string_fields(conn, uuid, "mf_ignore")?;
+    ec.ignore.insert(uuid, v.clone());
+    Ok(v)
+}
+
+/// Cached compiled `mf_ignore` regex (compiled once per distinct pattern).
+/// `Regex` clones share the underlying automaton, so this is cheap.
+fn cached_regex(ec: &mut EligibilityCache, pattern: &str) -> Result<Regex> {
+    if let Some(re) = ec.regex.get(pattern) {
+        return Ok(re.clone());
+    }
+    let re = Regex::new(pattern)
+        .with_context(|| format!("invalid mf_ignore pattern '{pattern}'"))?;
+    ec.regex.insert(pattern.to_string(), re.clone());
+    Ok(re)
 }
 
 /// First Bool value of a field on a metarecord (Nothing rows do not count).

@@ -89,7 +89,6 @@ pub fn reconcile_full_reported(
     refresh: bool,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
 ) -> Result<ReconcileResult, ApiError> {
-    progress("walk", None, None);
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
@@ -97,12 +96,18 @@ pub fn reconcile_full_reported(
     let mut writer = Writer::begin(&mut conn, db_id, None)?;
     let mut result = ReconcileResult::default();
 
+    // The prior tracked count is the walk's estimated total (≈ files on disk
+    // for a re-reconcile); also reused below for the orphan scan.
+    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
+    let walk_estimate = (!tracked.is_empty()).then_some(tracked.len() as u64);
+
     // Step 2 — walk the filesystem (eligibility-pruned). `walk` reports a live
-    // discovered-count under the "walk" phase; the total is unknown until it
-    // finishes (spec-tasks "Decompose walk").
+    // discovered-count against the estimate (spec-tasks "Decompose walk").
     let internal_dir = repo.internal_dir();
+    let mut elig = eligibility::EligibilityCache::default();
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
-    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths, progress)?;
+    progress("walk", Some(0), walk_estimate);
+    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths, &mut elig, walk_estimate, progress)?;
 
     // New files: paths with no metarecord at that tree position. The regular
     // files (existing or new) are kept for the optional MIME pass below;
@@ -126,8 +131,8 @@ pub fn reconcile_full_reported(
 
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
-    // ineligible are not mistaken for orphans.) Determinate "scan" phase.
-    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
+    // ineligible are not mistaken for orphans.) Determinate "scan" phase;
+    // `tracked` was fetched above for the walk estimate.
     let scan_total = tracked.len() as u64;
     progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
@@ -376,11 +381,13 @@ pub fn reconcile_metarecord_reported(
     let mut result = ReconcileResult::default();
 
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
+    let mut elig = eligibility::EligibilityCache::default();
     let abs_base = root.join(base.trim_start_matches('/'));
     if abs_base.exists() {
         let meta = std::fs::metadata(&abs_base).map_err(anyhow::Error::from)?;
         fs_paths.push((base.clone(), meta));
-        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths, progress)?;
+        // No prior subtree count to estimate from → indeterminate walk.
+        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths, &mut elig, None, progress)?;
     }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
@@ -431,6 +438,7 @@ pub fn reconcile_metarecord_reported(
 /// paths. Ineligible directories are pruned (cascading skip); the
 /// repository's `.metafolder/internal/` directory is always skipped,
 /// matched by absolute path (the metafolder may live anywhere).
+#[allow(clippy::too_many_arguments)]
 fn walk(
     writer: &mut Writer,
     cache: &mut TreeCache,
@@ -438,6 +446,8 @@ fn walk(
     internal_dir: &Path,
     prefix: &str,
     out: &mut Vec<(String, Metadata)>,
+    elig: &mut eligibility::EligibilityCache,
+    est_total: Option<u64>,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
 ) -> Result<()> {
     let abs = root.join(prefix.trim_start_matches('/'));
@@ -455,19 +465,21 @@ fn walk(
             continue;
         }
         let rel = format!("{prefix}/{name}");
-        if !eligibility::is_eligible(writer.connection(), cache, &rel)? {
+        if !eligibility::is_eligible_cached(writer.connection(), cache, &rel, elig)? {
             continue;
         }
         let meta = entry.metadata()?;
         let is_dir = meta.is_dir();
         out.push((rel.clone(), meta));
-        // Live count: the total is unknown until the traversal completes
-        // (spec-tasks), so report only the running discovered-count.
+        // Live count against an estimated total (the prior tracked count;
+        // spec-tasks "Decompose walk"): the real total is unknown until the
+        // traversal completes, so this is approximate but determinate for a
+        // re-reconcile. `est_total` is `None` (spinner) when there is no prior.
         if out.len() % PROGRESS_STEP == 0 {
-            progress("walk", Some(out.len() as u64), None);
+            progress("walk", Some(out.len() as u64), est_total);
         }
         if is_dir {
-            walk(writer, cache, root, internal_dir, &rel, out, progress)?;
+            walk(writer, cache, root, internal_dir, &rel, out, elig, est_total, progress)?;
         }
     }
     Ok(())

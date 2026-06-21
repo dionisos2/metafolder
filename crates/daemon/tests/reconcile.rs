@@ -96,6 +96,27 @@ fn reconcile_reports_phase_progress() {
     assert!(create_total.is_some() && create_total.unwrap() >= 1);
 }
 
+#[test]
+fn walk_progress_uses_prior_tracked_count_as_estimate() {
+    let (repo, root) = setup("walkest");
+    write_file(&root, "a.txt", b"a");
+    write_file(&root, "b.txt", b"b");
+    run(&repo); // First reconcile populates the tracked set (root + 2 files).
+
+    // The second reconcile's walk reports a determinate (estimated) total —
+    // the prior tracked count — rather than an indeterminate spinner.
+    let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
+    reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
+        phases.lock().unwrap().push((phase.to_string(), done, total));
+    })
+    .unwrap();
+
+    let phases = phases.into_inner().unwrap();
+    let walk = phases.iter().find(|(p, _, _)| p == "walk").expect("walk reported");
+    assert!(walk.2.is_some(), "walk has an estimated total after a prior reconcile");
+    assert!(walk.2.unwrap() >= 3, "root + a.txt + b.txt tracked, got {:?}", walk.2);
+}
+
 // ── Creation ──────────────────────────────────────────────────────────────────
 
 #[test]

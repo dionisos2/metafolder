@@ -237,6 +237,31 @@ message in =error= (there is no separate synchronous endpoint to return a 404
 on). The former =POST /repos/:repo_uuid/metarecords/:metarecord_uuid/reconcile=
 endpoint is *removed*.
 
+*** Reconcile progress phases
+
+The whole-repository reconcile reports these phases (in order) on its task:
+
+| Phase         | Counts                                                          |
+|---------------+----------------------------------------------------------------|
+| =walk=        | =done= = entries discovered; =total= = /estimate/ (see below)   |
+| =index=       | =done=/=total= over the discovered paths (resolving each)       |
+| =scan=        | =done=/=total= over the tracked metarecords (orphan detection)  |
+| =fingerprint= | =done=/=total= over orphaned metarecords                        |
+| =similarity=  | indeterminate (only when =threshold= is set)                   |
+| =create=      | =done=/=total= over new files                                  |
+| =refresh=     | =done=/=total= over discovered paths (when enabled)            |
+| =mime=        | =done=/=total= over disk files (when enabled)                  |
+
+The filesystem traversal (=walk=) cannot know its true total until it finishes,
+so it reports an *estimate*: the count of metarecords currently tracked in the
+repository (≈ the number of files on disk for a re-reconcile). The estimate is
+=null= (indeterminate) when nothing is tracked yet, and a real count may exceed
+it (the bar clamps). The phases after =walk= have exact totals.
+
+To keep the walk cheap on large repositories, eligibility evaluation memoises
+ancestor =mf_watch= / =mf_ignore= reads and compiles each distinct =mf_ignore=
+pattern once per reconcile (rather than per entry).
+
 ** Query as a task
 
 =POST /repos/:repo_uuid/query= remains *synchronous*: it still returns its
