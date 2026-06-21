@@ -52,6 +52,27 @@ Building the gui crate needs the Tauri system libraries (Arch:
 a built frontend (`build.rs` writes a placeholder `frontend/dist`), but the
 window will be empty until `npm run build` has produced the real bundle.
 
+### Runtime dependencies (GUI)
+
+External tools/assets the GUI shells out to or relies on at runtime. None are
+needed to build or test; each degrades gracefully when absent (a missing one
+disables its feature, it never crashes), but the feature silently looks broken
+without it. Arch package names in parentheses.
+
+- **An emoji-color font** (`noto-fonts-emoji`) — the `file-manager` row icons
+  and the `thumbnail()` type glyphs (📁 🎬 🎵 📕 🖼️ 🗜️…) are emoji. Without an
+  emoji font WebKit renders them as blank "tofu" boxes, so the icons appear
+  missing even though the code is correct.
+- **`ffmpeg`** — video poster thumbnails (`GET /thumbnail`). Absent ⇒ video
+  tiles fall back to the 🎬 glyph.
+- **GStreamer playback plugins** (`gst-plugins-good` for the
+  `autoaudiosink`/`autovideosink` WebKit needs; `gst-libav` /
+  `gst-plugins-bad` / `gst-plugins-ugly` for the actual decoders, e.g. H.264).
+  The `file` panel probes `GET /__media-support` (sinks, to avoid a WebKit
+  crash) and `gst-discoverer-1.0` (`gst-plugins-base`) per file to report
+  missing decoders. Absent ⇒ the inline media preview is disabled with a
+  message.
+
 ## Specs and roadmap
 
 The implementation follows the specs under `docs/` (`spec-main.org`,
