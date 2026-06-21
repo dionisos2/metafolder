@@ -199,6 +199,8 @@ describe('panel api — misc surface', () => {
     const { api, invoke } = setup();
     await api.fs.readDir('/tmp');
     expect(invoke).toHaveBeenCalledWith('fs_read_dir', { path: '/tmp' });
+    await api.fs.homeDir();
+    expect(invoke).toHaveBeenCalledWith('fs_home_dir');
     await api.statusBar.message('hi', 3000);
     expect(invoke).toHaveBeenCalledWith('post_status', { wsId: 'ws-1', text: 'hi', kind: 'info', timeoutMs: 3000 });
   });

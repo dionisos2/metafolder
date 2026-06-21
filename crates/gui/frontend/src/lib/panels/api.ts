@@ -321,6 +321,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     fs: {
       readDir: (path: string) => invoke('fs_read_dir', { path }),
       stat: (path: string) => invoke('fs_stat', { path }),
+      homeDir: () => invoke('fs_home_dir'),
     },
 
     statusBar: {

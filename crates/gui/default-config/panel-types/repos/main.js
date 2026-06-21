@@ -18,6 +18,7 @@ export async function mount(root, metafolder) {
   const browserPath = root.getElementById('browser-path');
   let browserDir = '/';
   let browserTarget = null; // the <input> to fill on "Use this folder"
+  let homeDir = null; // the user's home directory, the picker's default start
 
   function parentDir(path) {
     const index = path.lastIndexOf('/');
@@ -66,11 +67,23 @@ export async function mount(root, metafolder) {
     );
   }
 
-  function openBrowser(targetInput) {
+  async function openBrowser(targetInput) {
     browserTarget = targetInput;
     browser.classList.remove('hidden');
     const start = targetInput.value.trim();
-    void browseTo(start || '/');
+    if (start) {
+      await browseTo(start);
+      return;
+    }
+    // Default to the user's home directory rather than the filesystem root.
+    if (homeDir === null) {
+      try {
+        homeDir = await fs.homeDir();
+      } catch {
+        homeDir = '/';
+      }
+    }
+    await browseTo(homeDir);
   }
 
   function closeBrowser() {
@@ -170,7 +183,7 @@ export async function mount(root, metafolder) {
     button.addEventListener('click', () => toggleForm(button.closest('form'), false));
   }
   for (const button of root.querySelectorAll('.browse')) {
-    button.addEventListener('click', () => openBrowser(root.getElementById(button.dataset.target)));
+    button.addEventListener('click', () => void openBrowser(root.getElementById(button.dataset.target)));
   }
   root.getElementById('browser-up').addEventListener('click', () => void browseTo(parentDir(browserDir)));
   root.getElementById('browser-pick').addEventListener('click', pickFolder);

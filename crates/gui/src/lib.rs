@@ -289,6 +289,7 @@ pub fn run(options: Options) {
             commands::config_info,
             fs_commands::fs_read_dir,
             fs_commands::fs_stat,
+            fs_commands::fs_home_dir,
             shell_exec::run_shell,
             commands::daemon_request,
             commands::daemon_set_url,
