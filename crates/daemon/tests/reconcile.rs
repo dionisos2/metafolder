@@ -65,6 +65,31 @@ fn run(repo: &RepoState) -> ReconcileResult {
     reconcile::reconcile(repo).unwrap()
 }
 
+#[test]
+fn reconcile_reports_phase_progress() {
+    let (repo, root) = setup("progress");
+    write_file(&root, "a.txt", b"alpha");
+    write_file(&root, "dir/b.txt", b"beta");
+
+    let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
+    reconcile::reconcile_full_reported(&repo, None, true, true, &|phase, done, total| {
+        phases.lock().unwrap().push((phase.to_string(), done, total));
+    })
+    .unwrap();
+
+    let phases = phases.into_inner().unwrap();
+    let names: Vec<&str> = phases.iter().map(|(p, _, _)| p.as_str()).collect();
+    // The walk, create, refresh and mime phases are always reported; they
+    // appear in execution order.
+    assert!(names.contains(&"walk"), "phases: {names:?}");
+    assert!(names.contains(&"create"), "phases: {names:?}");
+    assert!(names.contains(&"refresh"), "phases: {names:?}");
+    assert!(names.contains(&"mime"), "phases: {names:?}");
+    // The create phase carries a determinate total (new files on disk).
+    let create_total = phases.iter().find(|(p, _, _)| p == "create").unwrap().2;
+    assert!(create_total.is_some() && create_total.unwrap() >= 1);
+}
+
 // ── Creation ──────────────────────────────────────────────────────────────────
 
 #[test]

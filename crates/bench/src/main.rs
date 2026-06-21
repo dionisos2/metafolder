@@ -186,7 +186,8 @@ async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
 /// metarecords for the files on disk. Returns (created, moved). `mime` opens
 /// each file to sniff its type — disabled here to keep reconcile about indexing.
 async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
-    let v: serde_json::Value = Client::new()
+    // Reconcile is asynchronous (spec-tasks): start it, then poll the task.
+    let started: serde_json::Value = Client::new()
         .post(format!("{url}/repos/{repo}/reconcile"))
         .json(&json!({ "mime": mime }))
         .send()
@@ -194,10 +195,29 @@ async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usiz
         .error_for_status()?
         .json()
         .await?;
-    Ok((
-        v["created"].as_u64().unwrap_or(0) as usize,
-        v["moved"].as_u64().unwrap_or(0) as usize,
-    ))
+    let task_id = started["task_id"].as_str().context("missing task_id")?.to_string();
+    loop {
+        let task: serde_json::Value = Client::new()
+            .get(format!("{url}/repos/{repo}/tasks/{task_id}"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        match task["status"].as_str() {
+            Some("done") => {
+                let r = &task["result"];
+                return Ok((
+                    r["created"].as_u64().unwrap_or(0) as usize,
+                    r["moved"].as_u64().unwrap_or(0) as usize,
+                ));
+            }
+            Some("failed") => {
+                anyhow::bail!("reconcile failed: {}", task["error"]);
+            }
+            _ => tokio::time::sleep(std::time::Duration::from_millis(20)).await,
+        }
+    }
 }
 
 /// Poll until `query` matches at least `expected` metarecords.

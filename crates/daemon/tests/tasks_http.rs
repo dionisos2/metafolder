@@ -102,6 +102,17 @@ async fn tasks_on_unknown_repo_is_404() {
 }
 
 #[tokio::test]
+async fn concurrent_reconcile_is_rejected_with_409() {
+    let (app, state, repo) = app_with_repo("dedup");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    // Occupy the reconcile slot with an active task.
+    state.repo(repo_uuid).unwrap().tasks.start_unique(TaskKind::Reconcile).unwrap();
+
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/reconcile")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
 async fn global_tasks_lists_across_repos() {
     let (app, state, repo) = app_with_repo("global");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();

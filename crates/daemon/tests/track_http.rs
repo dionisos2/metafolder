@@ -122,14 +122,34 @@ async fn test_full_reconcile_endpoint() {
 
     std::fs::write(root.join("one.txt"), b"1").unwrap();
     std::fs::write(root.join("two.txt"), b"2").unwrap();
+    // Reconcile is now asynchronous: 202 + task id, the result via the task.
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
-    assert_eq!(status, StatusCode::OK, "reconcile failed: {body}");
-    assert_eq!(body["created"], 2, "one.txt + two.txt (.metafolder ignored by default)");
-    assert_eq!(body["moved"], 0);
-    assert_eq!(body["candidates"], json!([]));
+    assert_eq!(status, StatusCode::ACCEPTED, "reconcile start failed: {body}");
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+
+    let task = poll_task(&app, &repo, &task_id).await;
+    assert_eq!(task["status"], "done", "task: {task}");
+    let result = &task["result"];
+    assert_eq!(result["created"], 2, "one.txt + two.txt (.metafolder ignored by default)");
+    assert_eq!(result["moved"], 0);
+    assert_eq!(result["candidates"], json!([]));
 
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Polls a task until it is terminal, or panics after a generous timeout.
+async fn poll_task(app: &axum::Router, repo: &str, task_id: &str) -> Value {
+    for _ in 0..200 {
+        let (status, body) =
+            request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await;
+        assert_eq!(status, StatusCode::OK, "task fetch failed: {body}");
+        if body["status"] == "done" || body["status"] == "failed" {
+            return body;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("task {task_id} did not finish in time");
 }
 
 #[tokio::test]

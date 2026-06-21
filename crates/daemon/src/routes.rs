@@ -28,6 +28,7 @@ use crate::query_exec::{self, SortKey};
 use crate::repo::RepoLocator;
 use crate::reserved;
 use crate::state::{AppState, RepoState, RollbackLock};
+use crate::tasks::TaskKind;
 
 pub fn build(state: Arc<AppState>) -> Router {
     Router::new()
@@ -1096,11 +1097,15 @@ impl Default for ReconcileBody {
     }
 }
 
+/// `POST /repos/:repo/reconcile`: starts a full reconcile as a background task
+/// (spec-tasks). Returns `202 Accepted` with the task id immediately; progress
+/// and the final `ReconcileResult` are observed via `GET …/tasks/:id`. A
+/// concurrent reconcile is rejected with `409`.
 async fn full_reconcile(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
     payload: Option<Json<ReconcileBody>>,
-) -> Result<Json<crate::reconcile::ReconcileResult>, ApiError> {
+) -> Result<Response, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     if let Some(t) = body.threshold {
@@ -1108,11 +1113,37 @@ async fn full_reconcile(
             return Err(ApiError::bad_request("threshold must be in the range [0, 1]"));
         }
     }
-    with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        Ok(Json(crate::reconcile::reconcile_full(repo_state, body.threshold, body.mime, body.refresh)?))
-    })
-    .await
+    let repo_state = state.repo(repo_uuid)?;
+    repo_state.ensure_writable()?;
+    let task_id = repo_state
+        .tasks
+        .start_unique(TaskKind::Reconcile)
+        .ok_or_else(|| ApiError::conflict("a reconcile is already in progress for this repository"))?;
+
+    // The work runs detached from this request: closing the client does not
+    // interrupt it. It holds an Arc for its (bounded) duration; that is fine —
+    // unlike the watcher/executor it is not a repo-lifetime task.
+    tokio::task::spawn_blocking(move || {
+        repo_state.tasks.mark_running(task_id);
+        let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        };
+        match crate::reconcile::reconcile_full_reported(
+            &repo_state,
+            body.threshold,
+            body.mime,
+            body.refresh,
+            &progress,
+        ) {
+            Ok(result) => {
+                let value = serde_json::to_value(result).expect("reconcile result serialization");
+                repo_state.tasks.finish(task_id, Some(value));
+            }
+            Err(e) => repo_state.tasks.fail(task_id, &e.message),
+        }
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
 }
 
 async fn metarecord_reconcile(

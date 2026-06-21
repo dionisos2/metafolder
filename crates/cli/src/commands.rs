@@ -487,16 +487,24 @@ pub fn reconcile(
         Some(uuid) => {
             let uuid = Uuid::parse_str(uuid)
                 .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
-            // The similarity threshold applies to full reconcile only.
+            // Single-metarecord reconcile is synchronous (spec-tasks): the
+            // similarity threshold applies to full reconcile only.
             let path = format!("{base}/metarecords/{}/reconcile", uuid.as_simple());
             ctx.client.request("POST", &path, &[], Some(&json!({"mime": mime, "refresh": refresh})))?
         }
         None => {
+            // Full reconcile is asynchronous: start it (202 + task id), then
+            // poll the task to completion, rendering progress to stderr.
             let mut body = json!({"mime": mime, "refresh": refresh});
             if let Some(t) = threshold {
                 body["threshold"] = json!(t);
             }
-            ctx.client.request("POST", &format!("{base}/reconcile"), &[], Some(&body))?
+            let started = ctx.client.request("POST", &format!("{base}/reconcile"), &[], Some(&body))?;
+            let task_id = started["task_id"]
+                .as_str()
+                .ok_or_else(|| CliError::Op("reconcile: daemon did not return a task id".into()))?
+                .to_string();
+            poll_reconcile_task(ctx, &base, &task_id)?
         }
     };
     if raw_json {
@@ -505,6 +513,37 @@ pub fn reconcile(
         println!("{}", format_reconcile(&resp));
     }
     Ok(0)
+}
+
+/// Interval between task polls while a full reconcile runs.
+const RECONCILE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// Polls a reconcile task until terminal, rendering progress to stderr.
+/// Returns the task's `result` object on success.
+fn poll_reconcile_task(ctx: &Ctx, base: &str, task_id: &str) -> Result<Json, CliError> {
+    loop {
+        let task = ctx.client.request("GET", &format!("{base}/tasks/{task_id}"), &[], None)?;
+        match task["status"].as_str() {
+            Some("done") => {
+                eprint!("\r\x1b[K"); // clear the progress line
+                return Ok(task["result"].clone());
+            }
+            Some("failed") => {
+                eprint!("\r\x1b[K");
+                let message = task["error"].as_str().unwrap_or("reconcile failed");
+                return Err(CliError::Op(message.to_string()));
+            }
+            _ => {
+                let phase = task["phase"].as_str().unwrap_or("");
+                match (task["done"].as_u64(), task["total"].as_u64()) {
+                    (Some(done), Some(total)) => eprint!("\rreconcile: {phase} {done}/{total}\x1b[K"),
+                    _ if !phase.is_empty() => eprint!("\rreconcile: {phase}\x1b[K"),
+                    _ => {}
+                }
+                std::thread::sleep(RECONCILE_POLL);
+            }
+        }
+    }
 }
 
 /// Renders the reconcile summary and candidate list (spec-file-tracking

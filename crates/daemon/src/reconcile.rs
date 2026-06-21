@@ -55,6 +55,10 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
     reconcile_full(repo, None, false, false)
 }
 
+/// Progress is reported every this many items inside the heavy reconcile loops,
+/// to bound the cost of progress updates on large repositories.
+const PROGRESS_STEP: usize = 128;
+
 /// Full reconcile: walk the repository root and synchronise the database.
 /// Everything runs in a single transaction (one revision). When `threshold`
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
@@ -71,6 +75,21 @@ pub fn reconcile_full(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
+    reconcile_full_reported(repo, threshold, compute_mime, refresh, &|_, _, _| {})
+}
+
+/// Like [`reconcile_full`], reporting phase progress through `progress`
+/// (`phase`, `done`, `total`) so the caller can surface it on a task
+/// (spec-tasks). Counts are reported at phase boundaries and, for the heavy
+/// loops, throttled to every [`PROGRESS_STEP`] items.
+pub fn reconcile_full_reported(
+    repo: &RepoState,
+    threshold: Option<f64>,
+    compute_mime: bool,
+    refresh: bool,
+    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+) -> Result<ReconcileResult, ApiError> {
+    progress("walk", None, None);
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
@@ -129,8 +148,13 @@ pub fn reconcile_full(
         moved: bool,
     }
     let mut states: Vec<OrphanState> = Vec::with_capacity(orphans.len());
+    let orphan_total = orphans.len() as u64;
+    progress("fingerprint", Some(0), Some(orphan_total));
 
-    for (orphan, stale_path) in orphans {
+    for (i, (orphan, stale_path)) in orphans.into_iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("fingerprint", Some(i as u64), Some(orphan_total));
+        }
         let is_dir = string_field(&writer, orphan, "mfr_type")?.as_deref() == Some("dir");
         let size = int_field(&writer, orphan, "mfr_size")?;
         let mut state =
@@ -211,6 +235,7 @@ pub fn reconcile_full(
     // Step 4 — similarity phase (v2): for each still-unmatched orphan and each
     // still-unmatched new path of the same kind, append score-based candidates.
     if let Some(threshold) = threshold {
+        progress("similarity", None, None);
         for state in states.iter_mut().filter(|s| !s.moved) {
             let orphan_sig = FileSig::from_path(&state.stale_path, state.size);
             for (rel, meta) in &new_files {
@@ -241,7 +266,12 @@ pub fn reconcile_full(
 
     // Step 5 — create metarecords for the remaining new files, parents first.
     new_files.sort_by_key(|(rel, _)| rel.matches('/').count());
-    for (rel, _) in &new_files {
+    let create_total = new_files.len() as u64;
+    progress("create", Some(0), Some(create_total));
+    for (i, (rel, _)) in new_files.iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("create", Some(i as u64), Some(create_total));
+        }
         if claimed.contains(rel) {
             continue;
         }
@@ -259,7 +289,12 @@ pub fn reconcile_full(
     // `refresh_stat_fields` (which writes only changed fields) is a no-op for
     // them. Same behaviour as single-metarecord reconcile.
     if refresh {
-        for (rel, _) in &fs_paths {
+        let refresh_total = fs_paths.len() as u64;
+        progress("refresh", Some(0), Some(refresh_total));
+        for (i, (rel, _)) in fs_paths.iter().enumerate() {
+            if i % PROGRESS_STEP == 0 {
+                progress("refresh", Some(i as u64), Some(refresh_total));
+            }
             if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
             }
@@ -269,7 +304,12 @@ pub fn reconcile_full(
     // Step 6 — MIME phase (spec-platform): every eligible file on disk now has
     // a record; fill in mfr_mime where it is still absent.
     if compute_mime {
-        for rel in &disk_files {
+        let mime_total = disk_files.len() as u64;
+        progress("mime", Some(0), Some(mime_total));
+        for (i, rel) in disk_files.iter().enumerate() {
+            if i % PROGRESS_STEP == 0 {
+                progress("mime", Some(i as u64), Some(mime_total));
+            }
             if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
