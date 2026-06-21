@@ -10,6 +10,7 @@ use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
+use metafolder_daemon::tasks::{TaskKind, TaskStatus};
 use uuid::Uuid;
 
 fn temp_dir(prefix: &str) -> PathBuf {
@@ -68,6 +69,30 @@ fn count(repo: &RepoState, sql: &str) -> i64 {
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
+
+#[test]
+fn test_flush_with_events_records_a_flush_task() {
+    let (repo, root, _) = setup("flushtask");
+    write_file(&root, "a.txt", b"hello");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+
+    executor::flush_pending(&repo).unwrap();
+
+    let tasks = repo.tasks.list();
+    let flush = tasks.iter().find(|t| t.kind == TaskKind::Flush).expect("a flush task is recorded");
+    assert_eq!(flush.status, TaskStatus::Done);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_empty_flush_records_no_task() {
+    let (repo, root, _) = setup("flushempty");
+    // No pending events: the flush is a no-op and must not churn the registry.
+    executor::flush_pending(&repo).unwrap();
+    assert!(repo.tasks.list().is_empty(), "no task for a no-op flush");
+    std::fs::remove_dir_all(root).unwrap();
+}
 
 #[test]
 fn test_create_event_creates_record_with_stat_fields() {

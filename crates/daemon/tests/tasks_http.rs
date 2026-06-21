@@ -31,6 +31,20 @@ async fn request(app: &Router, method: &str, uri: &str) -> (StatusCode, Value) {
     (status, value)
 }
 
+async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
+    (status, value)
+}
+
 /// Returns (router, state, repo_uuid hex).
 fn app_with_repo(prefix: &str) -> (Router, Arc<AppState>, String) {
     let state = Arc::new(AppState::new());
@@ -99,6 +113,33 @@ async fn tasks_on_unknown_repo_is_404() {
     let other = Uuid::new_v4().as_simple().to_string();
     let (status, _) = request(&app, "GET", &format!("/repos/{other}/tasks")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn query_registers_an_observable_task() {
+    let (app, _state, repo) = app_with_repo("queryobs");
+    // A query is synchronous; its observation task is retained after completion.
+    let (status, _) = post(
+        &app,
+        &format!("/repos/{repo}/query"),
+        serde_json::json!({"query": {"type": "is_present", "field": "mfr_path"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+    assert_eq!(status, StatusCode::OK);
+    let query_task = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "query")
+        .expect("a query task is recorded");
+    assert_eq!(query_task["status"], "done");
+    // Observation-only: no result payload, counts unknown.
+    assert!(query_task["result"].is_null());
+    assert!(query_task["done"].is_null());
+    assert!(query_task["total"].is_null());
 }
 
 #[tokio::test]

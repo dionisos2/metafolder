@@ -235,30 +235,50 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
         }
     }
 
-    let mut revisions = 0;
-    for (_, group) in groups {
-        let writer = Writer::begin(&mut conn, repo.config.repo_uuid, None)?;
-        let mut apply = Apply {
-            writer,
-            cache: &mut cache,
-            root: &repo.config.root,
-            db_id: repo.config.repo_uuid,
-        };
-        for ev in group {
-            apply.apply(ev)?;
+    // Observable while the events are applied (spec-tasks). Registered only
+    // now that there is real work (non-empty events), to avoid churning the
+    // registry with no-op flushes.
+    let task = repo.tasks.start(crate::tasks::TaskKind::Flush);
+    repo.tasks.mark_running(task);
+    repo.tasks.set_progress(task, "flush", None, None);
+
+    let work = (|| -> Result<usize> {
+        let mut revisions = 0;
+        for (_, group) in groups {
+            let writer = Writer::begin(&mut conn, repo.config.repo_uuid, None)?;
+            let mut apply = Apply {
+                writer,
+                cache: &mut cache,
+                root: &repo.config.root,
+                db_id: repo.config.repo_uuid,
+            };
+            for ev in group {
+                apply.apply(ev)?;
+            }
+            let wrote = apply.writer.op_count() > 0;
+            apply.writer.commit()?;
+            if wrote {
+                revisions += 1;
+            }
         }
-        let wrote = apply.writer.op_count() > 0;
-        apply.writer.commit()?;
-        if wrote {
-            revisions += 1;
+
+        conn.execute(
+            "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
+            params![max_id],
+        )?;
+        Ok(revisions)
+    })();
+
+    match work {
+        Ok(revisions) => {
+            repo.tasks.finish(task, None);
+            Ok(FlushStats { events: n_events, revisions: revisions + revisions_from_restore })
+        }
+        Err(e) => {
+            repo.tasks.fail(task, &e.to_string());
+            Err(e)
         }
     }
-
-    conn.execute(
-        "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
-        params![max_id],
-    )?;
-    Ok(FlushStats { events: n_events, revisions: revisions + revisions_from_restore })
 }
 
 /// Replays restoration ops left by skipped coordinated-rollback steps as a

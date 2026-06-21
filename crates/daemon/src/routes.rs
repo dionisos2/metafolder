@@ -1261,6 +1261,28 @@ async fn run_query(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        // Register an observation-only task (spec-tasks): the result travels
+        // with this response, so the task carries no result payload and its
+        // counts stay unknown (the heavy part is opaque SQL).
+        let task = repo_state.tasks.start(TaskKind::Query);
+        repo_state.tasks.mark_running(task);
+        repo_state.tasks.set_progress(task, "querying", None, None);
+        let outcome = run_query_inner(repo_state, repo_uuid, &body);
+        match &outcome {
+            Ok(_) => repo_state.tasks.finish(task, None),
+            Err(e) => repo_state.tasks.fail(task, &e.message),
+        }
+        outcome
+    })
+    .await
+}
+
+fn run_query_inner(
+    repo_state: &RepoState,
+    repo_uuid: Uuid,
+    body: &QueryBody,
+) -> Result<Response, ApiError> {
+    {
         if body.count && body.limit.is_none() {
             // The unwrapped (bare array) response has nowhere to carry it.
             return Err(ApiError::bad_request("'count' requires 'limit'"));
@@ -1312,8 +1334,7 @@ async fn run_query(
         } else {
             Ok(Json(results).into_response())
         }
-    })
-    .await
+    }
 }
 
 #[derive(Deserialize)]
