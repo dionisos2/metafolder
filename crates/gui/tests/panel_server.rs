@@ -123,6 +123,31 @@ async fn test_panel_helper_modules_are_served() {
 }
 
 #[tokio::test]
+async fn test_panel_helper_modules_are_not_cached() {
+    // Panel `main.js` is cache-busted (?v=…) but its static `import '/__ui.js'`
+    // is not, so a stale shim in the WebView's HTTP cache would silently mask a
+    // rebuilt helper (e.g. a panel importing a newly added export). The shim
+    // routes must therefore forbid caching.
+    let (_guard, _config, router) = setup();
+    for uri in ["/__ui.js", "/__menu.js", "/__orphan.js", "/__paged-list.js"] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let cache_control = response
+            .headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap().to_string())
+            .unwrap_or_default();
+        assert!(
+            cache_control.contains("no-cache"),
+            "{uri} must send a no-cache header, got {cache_control:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_fsraw_serves_local_files() {
     let (_guard, _config, router) = setup();
     let dir = tempfile::tempdir().unwrap();

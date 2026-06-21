@@ -93,7 +93,18 @@ pub fn build_router(state: ServerState) -> Router {
 
 fn javascript(source: &'static str) -> axum::response::Response {
     use axum::response::IntoResponse;
-    ([("content-type", "text/javascript")], source).into_response()
+    // Panel `main.js` is cache-busted per session, but its static
+    // `import '/__ui.js'` (and the other shim modules) is not, so the WebView
+    // must always revalidate these or a rebuilt helper would be masked by a
+    // stale cached copy.
+    (
+        [
+            ("content-type", "text/javascript"),
+            ("cache-control", "no-cache"),
+        ],
+        source,
+    )
+        .into_response()
 }
 
 #[derive(serde::Deserialize)]
