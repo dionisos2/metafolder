@@ -10,6 +10,7 @@ mod fsraw;
 mod gui_api;
 pub mod input_wait;
 mod panel_assets;
+mod thumbnail;
 
 use crate::config::ConfigDir;
 use crate::daemon_proxy::DaemonProxy;
@@ -64,6 +65,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__media-probe", get(media_probe))
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
+        .route("/thumbnail", get(thumbnail::serve))
         .route(
             "/gui/workspaces",
             get(gui_api::list_workspaces).post(gui_api::create_workspace),

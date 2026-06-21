@@ -2,7 +2,7 @@
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (spec-gui "file-manager panel type").
 
-import { el } from '/__ui.js';
+import { el, fileTypeGlyph } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import {
   loadTrackedFor,
@@ -147,7 +147,7 @@ export async function mount(root, metafolder) {
             oncontextmenu: (event) => rowMenu(event, index),
             ...(internal && { title: 'always excluded from tracking (live database)' }),
           },
-          el('span', { class: 'icon' }, item.is_dir ? '▸' : '·'),
+          el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
           el('span', { class: 'name' }, item.name),
           el(
             'span',

@@ -19,6 +19,7 @@ pub mod server;
 pub mod shell_exec;
 pub mod state;
 pub mod style_watcher;
+pub mod thumbnails;
 pub mod undo;
 
 use command_registry::CommandRegistry;

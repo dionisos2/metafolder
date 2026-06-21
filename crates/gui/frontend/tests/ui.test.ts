@@ -3,7 +3,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel types
-import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable } from '../../panel-shim/ui.js';
+import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {
@@ -15,28 +15,65 @@ describe('thumbnail', () => {
     expect(isThumbnailable('noextension')).toBe(false);
   });
 
-  test('builds a lazy <img> for an image file', () => {
+  test('isVideoThumbnailable: only video extensions, case-insensitive', () => {
+    expect(isVideoThumbnailable('/a/movie.MKV')).toBe(true);
+    expect(isVideoThumbnailable('clip.mp4')).toBe(true);
+    expect(isVideoThumbnailable('/a/photo.png')).toBe(false);
+    expect(isVideoThumbnailable('/a/song.mp3')).toBe(false);
+  });
+
+  test('builds a lazy <img> at /fsraw for an image file', () => {
     const node = thumbnail('http://gui', '/a/b c.png');
     expect(node.tagName).toBe('IMG');
     expect(node.getAttribute('loading')).toBe('lazy');
     expect(node.getAttribute('src')).toBe(`http://gui/fsraw?path=${encodeURIComponent('/a/b c.png')}`);
   });
 
-  test('NEVER builds an <img> for a non-image — glyph span instead (crash guard)', () => {
-    const video = thumbnail('http://gui', '/a/movie.mkv');
-    expect(video.tagName).toBe('SPAN');
-    expect(video.textContent).toBe('📄');
+  test('builds a lazy <img> at /thumbnail for a video (poster frame, never /fsraw)', () => {
+    const node = thumbnail('http://gui', '/a/clip.mkv');
+    expect(node.tagName).toBe('IMG');
+    expect(node.getAttribute('loading')).toBe('lazy');
+    expect(node.getAttribute('src')).toBe(
+      `http://gui/thumbnail?path=${encodeURIComponent('/a/clip.mkv')}`,
+    );
+  });
+
+  test('NEVER builds an <img> for a non-image, non-video — type glyph span instead', () => {
+    const audio = thumbnail('http://gui', '/a/song.mp3');
+    expect(audio.tagName).toBe('SPAN');
+    expect(audio.textContent).toBe('🎵');
+
+    const pdf = thumbnail('http://gui', '/a/doc.pdf');
+    expect(pdf.tagName).toBe('SPAN');
+    expect(pdf.textContent).toBe('📕');
 
     const dir = thumbnail('http://gui', '/a/folder', { isDir: true });
     expect(dir.tagName).toBe('SPAN');
     expect(dir.textContent).toBe('📁');
   });
 
-  test('custom glyphs and glyph class', () => {
+  test('unknown type falls back to the fileGlyph default; glyph class applied', () => {
     const node = thumbnail('http://gui', '/a/x.bin', { fileGlyph: '·', glyphClass: 'icon' });
     expect(node.tagName).toBe('SPAN');
     expect(node.textContent).toBe('·');
     expect(node.className).toBe('icon');
+  });
+});
+
+describe('fileTypeGlyph', () => {
+  test('maps common file types to dedicated emoji', () => {
+    expect(fileTypeGlyph('/a/clip.mkv')).toBe('🎬');
+    expect(fileTypeGlyph('song.MP3')).toBe('🎵');
+    expect(fileTypeGlyph('photo.png')).toBe('🖼️');
+    expect(fileTypeGlyph('doc.pdf')).toBe('📕');
+    expect(fileTypeGlyph('archive.zip')).toBe('🗜️');
+    expect(fileTypeGlyph('sheet.xlsx')).toBe('📊');
+  });
+
+  test('unknown extensions return the fallback (default 📄)', () => {
+    expect(fileTypeGlyph('mystery.bin')).toBe('📄');
+    expect(fileTypeGlyph('noextension')).toBe('📄');
+    expect(fileTypeGlyph('thing.bin', '·')).toBe('·');
   });
 });
 

@@ -626,7 +626,13 @@ default 7524): =GET /panel/<name>/<file>=, **verbatim** (permissive CORS, so
 the shell can fetch/=import()= them from its own origin). The shell mounts a
 panel into a Shadow DOM root and applies the user stylesheet itself (no
 serve-time injection). Raw local files for the =file= panel type are served by
-=GET /fsraw?path=...= with HTTP Range support (media seeking).
+=GET /fsraw?path=...= with HTTP Range support (media seeking). Video poster
+thumbnails are served by =GET /thumbnail?path=...=: a small PNG of one frame
+extracted with =ffmpeg= and cached on disk (=$XDG_CACHE_HOME/metafolder/
+thumbnails=, keyed by the source's path/mtime/size). A video must never be
+handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
+the web process — so the panels point video tiles at =/thumbnail= instead; a
+non-2xx (not a video, missing decoder…) falls back to a type glyph.
 
 *** The =metafolder= API
 
@@ -794,6 +800,15 @@ any panel type (=import { el, formatValue, field } from '/__ui.js'=):
   =onOpen(uuid, repo)= with =repo= null except for =externalref=.
 - =field(metarecord, name)= — first field with that name (fields are a
   multi-map), or =undefined=.
+- =thumbnail(guiServer, path, options)= — a thumbnail node for a filesystem
+  entry, so the "never put a non-image in an =<img>=" rule lives in one place:
+  an image becomes a lazy =<img>= at =/fsraw=, a video a lazy =<img>= at
+  =/thumbnail= (a server-extracted poster frame), and directories, every other
+  type and a failed load fall back to a type glyph =<span>= (=fileTypeGlyph=).
+- =fileTypeGlyph(path, fallback)= — an emoji icon for a file's type (🎬 video,
+  🎵 music, 📕 PDF, 🖼️ image, 🗜️ archive…), or =fallback= (default 📄) for an
+  unrecognised extension. Used for the =file-manager= list icons and as the
+  =thumbnail= fallback.
 
 ** Repository management
 
@@ -971,7 +986,8 @@ shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
 When the active path is a directory, the panel instead lists its contents as
-a thumbnail grid (images as thumbnails, other entries as a glyph). The grid is
+a thumbnail grid (images as thumbnails via =/fsraw=, videos as poster-frame
+thumbnails via =/thumbnail=, other entries as a type glyph). The grid is
 rendered in windows (page size from =[page-size].file= in =config.toml=, default
 150 — larger than =metarecord-list='s since each tile is only a lazy =<img>=,
 with more appended on scroll) so a folder with many thousands of files neither
@@ -1016,7 +1032,9 @@ either panel; rebindable like everything else.
 A filesystem tree navigator. The GUI backend (Tauri/Rust) reads the disk
 directly; the daemon is not involved in directory listing.
 
-*Display*: a tree/list of files and directories with a visual distinction
+*Display*: a tree/list of files and directories, each row prefixed with a
+type icon (📁 for a directory, otherwise =fileTypeGlyph= — 🎬 video, 🎵 music,
+📕 PDF…), with a visual distinction
 between tracked metarecords (have =mfr_path= metadata in the active repo) and
 untracked ones. When =active_repo= is =null=, all metarecords are shown as
 untracked (no distinction is possible). The listing starts with two

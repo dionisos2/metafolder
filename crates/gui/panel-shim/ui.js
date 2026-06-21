@@ -44,30 +44,85 @@ export const THUMBNAILABLE = new Set([
 
 /** Whether a path/filename has an image extension safe for an <img> thumbnail. */
 export function isThumbnailable(pathOrName) {
-  return THUMBNAILABLE.has((pathOrName.split('.').pop() ?? '').toLowerCase());
+  return THUMBNAILABLE.has(extensionOf(pathOrName));
+}
+
+/**
+ * Video extensions for which the GUI server can extract a poster frame
+ * (`GET /thumbnail`). Mirrors `VIDEO_EXTENSIONS` in `src/thumbnails.rs`.
+ * A video must NEVER be handed to `<img src=/fsraw>` (WebKit would decode the
+ * whole file and crash); the poster PNG from /thumbnail is safe.
+ */
+export const VIDEO_THUMBNAILABLE = new Set([
+  'mp4', 'webm', 'mkv', 'mov', 'avi', 'wmv', 'm4v', 'mpg', 'mpeg', 'flv', '3gp', 'ts', 'm2ts',
+]);
+
+/** Whether a path/filename is a video the server can make a poster for. */
+export function isVideoThumbnailable(pathOrName) {
+  return VIDEO_THUMBNAILABLE.has(extensionOf(pathOrName));
+}
+
+function extensionOf(pathOrName) {
+  return (pathOrName.split('.').pop() ?? '').toLowerCase();
+}
+
+// Common file types → an emoji icon, so a panel can tell music from a PDF from
+// a video at a glance even where no real thumbnail is shown (the file-manager
+// list, and the fallback for grid tiles that are not image/video). Built from
+// extension groups into a flat `ext -> glyph` map.
+const FILE_TYPE_GLYPHS = (() => {
+  const groups = [
+    [[...VIDEO_THUMBNAILABLE], '🎬'],
+    [[...THUMBNAILABLE, 'tiff', 'tif', 'heic', 'heif'], '🖼️'],
+    [['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac', 'mid', 'midi'], '🎵'],
+    [['pdf'], '📕'],
+    [['doc', 'docx', 'odt', 'rtf'], '📝'],
+    [['xls', 'xlsx', 'ods', 'csv'], '📊'],
+    [['ppt', 'pptx', 'odp'], '📽️'],
+    [['zip', 'tar', 'gz', 'tgz', 'bz2', 'xz', '7z', 'rar', 'zst', 'lz4'], '🗜️'],
+  ];
+  const map = new Map();
+  for (const [extensions, glyph] of groups) {
+    for (const extension of extensions) if (!map.has(extension)) map.set(extension, glyph);
+  }
+  return map;
+})();
+
+/**
+ * Emoji icon for a file's type (🎬 video, 🎵 music, 📕 PDF, 🖼️ image,
+ * 🗜️ archive…), or `fallback` (default 📄) for an unrecognised extension.
+ */
+export function fileTypeGlyph(pathOrName, fallback = '📄') {
+  return FILE_TYPE_GLYPHS.get(extensionOf(pathOrName)) ?? fallback;
 }
 
 /**
  * Builds a thumbnail node for a filesystem entry, shared by every panel that
- * shows files (file, file-manager, metarecord-list) so the "never put a
- * non-image in an <img>" rule lives in one place. Image files become a lazy
- * <img> (a bare <img>, so each panel's own `.thumb img` / `.card img` CSS
- * styles it); directories and all other types — and a failed image load —
- * fall back to a glyph <span>.
+ * shows files (file, metarecord-list) so the "never put a non-image in an
+ * <img>" rule lives in one place. Image files become a lazy <img> at /fsraw;
+ * videos a lazy <img> at /thumbnail (a server-extracted poster frame — never
+ * the raw file). Both are bare <img>s, so each panel's own `.thumb img` /
+ * `.card img` CSS styles them. Directories, every other type, and a failed
+ * image/poster load fall back to a type glyph <span> (see `fileTypeGlyph`).
  *
- * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (default 📄),
- * `glyphClass` (CSS class for the fallback span, default none).
+ * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (fallback for an
+ * unknown type, default 📄), `glyphClass` (CSS class for the glyph span).
  */
 export function thumbnail(guiServer, path, options = {}) {
   const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '' } = options;
   const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
   if (isDir) return glyph(dirGlyph);
-  if (!path || !isThumbnailable(path)) return glyph(fileGlyph);
-  return el('img', {
-    loading: 'lazy',
-    src: `${guiServer}/fsraw?path=${encodeURIComponent(path)}`,
-    onerror: (event) => event.target.replaceWith(glyph(fileGlyph)),
-  });
+  if (!path) return glyph(fileGlyph);
+  const image = isThumbnailable(path);
+  if (image || isVideoThumbnailable(path)) {
+    const endpoint = image ? 'fsraw' : 'thumbnail';
+    return el('img', {
+      loading: 'lazy',
+      src: `${guiServer}/${endpoint}?path=${encodeURIComponent(path)}`,
+      onerror: (event) => event.target.replaceWith(glyph(fileTypeGlyph(path, fileGlyph))),
+    });
+  }
+  return glyph(fileTypeGlyph(path, fileGlyph));
 }
 
 /** Display form of a Value ({type, value} JSON, spec-data-model). */
