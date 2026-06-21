@@ -134,9 +134,38 @@ async fn test_health_transitions_emit_events() {
     );
 }
 
+/// Stub for the asynchronous reconcile contract (spec-tasks): POST reconcile
+/// answers 202 + task id; GET the task answers a finished task with a result.
+async fn spawn_reconcile_stub() -> String {
+    let router = axum::Router::new()
+        .route(
+            "/repos/abc123/reconcile",
+            axum::routing::post(|| async {
+                (axum::http::StatusCode::ACCEPTED, Json(json!({"task_id": "t1"})))
+            }),
+        )
+        .route(
+            "/repos/abc123/tasks/t1",
+            get(|| async {
+                Json(json!({
+                    "id": "t1", "repo_uuid": "abc123", "kind": "reconcile",
+                    "status": "done", "phase": "mime", "done": 2, "total": 2,
+                    "result": {"created": 2, "moved": 0, "candidates": []},
+                    "error": null,
+                }))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
 #[tokio::test]
 async fn test_reconcile_run_posts_status_and_logs() {
-    let (url, _) = spawn_stub().await;
+    let url = spawn_reconcile_stub().await;
     let (notifier, gui) = gui_with_notifier();
     let proxy = Arc::new(DaemonProxy::new(url));
 
@@ -153,6 +182,7 @@ async fn test_reconcile_run_posts_status_and_logs() {
         .await
         .unwrap();
 
+    // The task is done on the first poll: initial busy status, then the summary.
     let statuses = notifier.payloads(events::STATUS_MESSAGE);
     assert_eq!(statuses.len(), 2);
     assert_eq!(statuses[0]["kind"], "busy");
@@ -160,7 +190,8 @@ async fn test_reconcile_run_posts_status_and_logs() {
         .as_str()
         .unwrap()
         .starts_with("Reconcile:"));
-    // Full result in the message log (busy + summary + detail).
+    // Message log: initial "Reconciling…" + summary + detail (progress polls
+    // do not append to the log).
     assert_eq!(gui.messages(&ws).unwrap().len(), 3);
 }
 

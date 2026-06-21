@@ -434,7 +434,10 @@ Always-visible read-only area at the bottom. Shows:
 - Status messages after commands (e.g. ="Metarecord deleted."=).
 - Error messages from failed operations.
 - The last executed command name (dim text).
-- A spinner during long-running operations (reconcile, shell commands).
+- A spinner during long-running operations (reconcile, shell commands), or a
+  determinate progress bar when the operation reports =done=/=total= counts
+  (see [[file:spec-tasks.org][spec-tasks.org]]; reconcile polls its task and
+  surfaces phase progress here without spamming the message log).
 
 Content is per-workspace. When both slots display the same workspace, one
 status bar is shown. When the two slots display different workspaces, two
@@ -1113,8 +1116,10 @@ sessions.
 
 ** Reconcile
 
-=reconcile:run= calls =POST .../reconcile=. A spinner appears in the status
-bar. On completion:
+=reconcile:run= calls =POST .../reconcile= (asynchronous — 202 + task id, see
+[[file:spec-tasks.org][spec-tasks.org]]) and polls the task, showing phase
+progress in the status bar (a determinate bar once =done=/=total= are known,
+a spinner otherwise). On completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.

@@ -95,7 +95,12 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
                 return Err(message);
             }
             _ => {
-                gui.post_status(&ws_id, &format_progress(task), "busy", None)?;
+                // Transient progress: status bar only, no message-log spam.
+                let progress = match (task["done"].as_u64(), task["total"].as_u64()) {
+                    (Some(done), Some(total)) => Some((done, total)),
+                    _ => None,
+                };
+                gui.post_progress(&ws_id, &format_progress(task), "busy", progress)?;
                 tokio::time::sleep(POLL_INTERVAL).await;
             }
         }

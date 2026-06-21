@@ -664,6 +664,33 @@ impl GuiState {
         timeout_ms: Option<u64>,
     ) -> Result<(), String> {
         self.push_message(ws_id, text)?;
+        self.emit_status(ws_id, text, kind, timeout_ms, None);
+        Ok(())
+    }
+
+    /// Status-bar update only, without a message-log entry: for high-frequency
+    /// progress updates (spec-tasks). `progress` is `(done, total)` for a
+    /// determinate bar; `None` leaves the bar indeterminate (spinner).
+    pub fn post_progress(
+        &self,
+        ws_id: &str,
+        text: &str,
+        kind: &str,
+        progress: Option<(u64, u64)>,
+    ) -> Result<(), String> {
+        self.emit_status(ws_id, text, kind, None, progress);
+        Ok(())
+    }
+
+    fn emit_status(
+        &self,
+        ws_id: &str,
+        text: &str,
+        kind: &str,
+        timeout_ms: Option<u64>,
+        progress: Option<(u64, u64)>,
+    ) {
+        let progress = progress.map(|(done, total)| json!({"done": done, "total": total}));
         self.notifier.emit(
             events::STATUS_MESSAGE,
             json!({
@@ -671,9 +698,9 @@ impl GuiState {
                 "text": text,
                 "kind": kind,
                 "timeout_ms": timeout_ms,
+                "progress": progress,
             }),
         );
-        Ok(())
     }
 
     /// Appends to the message log only (shell output, reconcile results).
@@ -1200,6 +1227,34 @@ mod tests {
         assert_eq!(log.len(), 1);
         assert_eq!(log[0].text, "Entry deleted.");
         assert_eq!(notifier.payloads(events::MESSAGE_APPENDED).len(), 1);
+    }
+
+    #[test]
+    fn test_post_progress_emits_status_with_progress_and_no_log_entry() {
+        let (notifier, state) = state();
+        notifier.clear();
+        state
+            .post_progress("ws-1", "Reconciling… create 3/10", "busy", Some((3, 10)))
+            .unwrap();
+
+        let statuses = notifier.payloads(events::STATUS_MESSAGE);
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0]["text"], "Reconciling… create 3/10");
+        assert_eq!(statuses[0]["kind"], "busy");
+        assert_eq!(statuses[0]["progress"]["done"], 3);
+        assert_eq!(statuses[0]["progress"]["total"], 10);
+        // High-frequency progress must not append to the message log.
+        assert!(state.messages("ws-1").unwrap().is_empty());
+        assert!(notifier.payloads(events::MESSAGE_APPENDED).is_empty());
+    }
+
+    #[test]
+    fn test_post_progress_without_counts_is_indeterminate() {
+        let (notifier, state) = state();
+        notifier.clear();
+        state.post_progress("ws-1", "Reconciling… walk", "busy", None).unwrap();
+        let statuses = notifier.payloads(events::STATUS_MESSAGE);
+        assert_eq!(statuses[0]["progress"], serde_json::Value::Null);
     }
 
     #[test]
