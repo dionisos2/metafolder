@@ -79,14 +79,20 @@ fn reconcile_reports_phase_progress() {
 
     let phases = phases.into_inner().unwrap();
     let names: Vec<&str> = phases.iter().map(|(p, _, _)| p.as_str()).collect();
-    // The walk, create, refresh and mime phases are always reported; they
-    // appear in execution order.
+    // The macro-phases are reported in execution order; walk is decomposed into
+    // walk (FS traversal) → index → scan (spec-tasks "Decompose walk").
     assert!(names.contains(&"walk"), "phases: {names:?}");
+    assert!(names.contains(&"index"), "phases: {names:?}");
+    assert!(names.contains(&"scan"), "phases: {names:?}");
     assert!(names.contains(&"create"), "phases: {names:?}");
     assert!(names.contains(&"refresh"), "phases: {names:?}");
     assert!(names.contains(&"mime"), "phases: {names:?}");
-    // The create phase carries a determinate total (new files on disk).
-    let create_total = phases.iter().find(|(p, _, _)| p == "create").unwrap().2;
+    // index, create and scan carry a determinate total; walk does not (the
+    // total is unknown until the traversal finishes).
+    let total_of = |name: &str| phases.iter().find(|(p, _, _)| p == name).unwrap().2;
+    assert!(total_of("index").is_some());
+    assert!(total_of("scan").is_some());
+    let create_total = total_of("create");
     assert!(create_total.is_some() && create_total.unwrap() >= 1);
 }
 

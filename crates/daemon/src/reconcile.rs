@@ -97,17 +97,25 @@ pub fn reconcile_full_reported(
     let mut writer = Writer::begin(&mut conn, db_id, None)?;
     let mut result = ReconcileResult::default();
 
-    // Step 2 — walk the filesystem (eligibility-pruned).
+    // Step 2 — walk the filesystem (eligibility-pruned). `walk` reports a live
+    // discovered-count under the "walk" phase; the total is unknown until it
+    // finishes (spec-tasks "Decompose walk").
     let internal_dir = repo.internal_dir();
     let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
-    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths)?;
+    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths, progress)?;
 
     // New files: paths with no metarecord at that tree position. The regular
     // files (existing or new) are kept for the optional MIME pass below;
-    // `fs_paths` is kept whole for the optional refresh pass.
+    // `fs_paths` is kept whole for the optional refresh pass. Now the total is
+    // known, so this indexing pass reports a determinate "index" phase.
+    let index_total = fs_paths.len() as u64;
+    progress("index", Some(0), Some(index_total));
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
     let mut disk_files: Vec<String> = Vec::new();
-    for (rel, meta) in &fs_paths {
+    for (i, (rel, meta)) in fs_paths.iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("index", Some(i as u64), Some(index_total));
+        }
         if meta.is_file() {
             disk_files.push(rel.clone());
         }
@@ -118,9 +126,15 @@ pub fn reconcile_full_reported(
 
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
-    // ineligible are not mistaken for orphans.)
+    // ineligible are not mistaken for orphans.) Determinate "scan" phase.
+    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
+    let scan_total = tracked.len() as u64;
+    progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
-    for uuid in db::all_tracked_metarecords(writer.connection(), db_id)? {
+    for (i, uuid) in tracked.into_iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("scan", Some(i as u64), Some(scan_total));
+        }
         let Some(path) = cache.path_of(writer.connection(), "mfr_path", uuid)? else {
             continue;
         };
@@ -366,7 +380,7 @@ pub fn reconcile_metarecord_reported(
     if abs_base.exists() {
         let meta = std::fs::metadata(&abs_base).map_err(anyhow::Error::from)?;
         fs_paths.push((base.clone(), meta));
-        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths)?;
+        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths, progress)?;
     }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
@@ -424,6 +438,7 @@ fn walk(
     internal_dir: &Path,
     prefix: &str,
     out: &mut Vec<(String, Metadata)>,
+    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
 ) -> Result<()> {
     let abs = root.join(prefix.trim_start_matches('/'));
     let entries = match std::fs::read_dir(&abs) {
@@ -446,8 +461,13 @@ fn walk(
         let meta = entry.metadata()?;
         let is_dir = meta.is_dir();
         out.push((rel.clone(), meta));
+        // Live count: the total is unknown until the traversal completes
+        // (spec-tasks), so report only the running discovered-count.
+        if out.len() % PROGRESS_STEP == 0 {
+            progress("walk", Some(out.len() as u64), None);
+        }
         if is_dir {
-            walk(writer, cache, root, internal_dir, &rel, out)?;
+            walk(writer, cache, root, internal_dir, &rel, out, progress)?;
         }
     }
     Ok(())
