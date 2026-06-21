@@ -142,6 +142,28 @@ enum Command {
         /// Print the raw JSON response body
         #[arg(long)]
         json: bool,
+        /// Start the (full) reconcile and print its task id without waiting
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+        /// Poll interval in milliseconds while waiting for the task
+        #[arg(long = "poll-interval", default_value_t = 200)]
+        poll_interval: u64,
+    },
+    /// List background tasks (spec-tasks)
+    Tasks {
+        /// List tasks across all loaded repositories (no --repo needed)
+        #[arg(long)]
+        all: bool,
+        /// Print the raw JSON array
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a single background task by id
+    Task {
+        id: String,
+        /// Print the raw JSON object
+        #[arg(long)]
+        json: bool,
     },
     /// Create the metarecord for a single path and print its UUID
     Track { path: PathBuf },
@@ -404,9 +426,20 @@ fn main() {
         Command::Query { predicate, select, sort, limit, values, simplified } => {
             commands::query(&ctx, &QueryArgs { predicate, select, sort, limit, values, simplified })
         }
-        Command::Reconcile { metarecord, threshold, no_mime, no_refresh, json } => {
-            commands::reconcile(&ctx, metarecord.as_deref(), threshold, !no_mime, !no_refresh, json)
+        Command::Reconcile { metarecord, threshold, no_mime, no_refresh, json, no_wait, poll_interval } => {
+            commands::reconcile(
+                &ctx,
+                metarecord.as_deref(),
+                threshold,
+                !no_mime,
+                !no_refresh,
+                json,
+                no_wait,
+                poll_interval,
+            )
         }
+        Command::Tasks { all, json } => commands::tasks(&ctx, all, json),
+        Command::Task { id, json } => commands::task(&ctx, &id, json),
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),
         Command::Log { show, tree, ops, metarecord, limit, since, until, all } => match show {

@@ -584,6 +584,29 @@ fn test_reconcile_reports_created_entries() {
 }
 
 #[test]
+fn test_reconcile_no_wait_and_task_commands() {
+    let (repo, root) = init_repo("notasks");
+    std::fs::write(root.join("a.txt"), b"a").unwrap();
+
+    // --no-wait starts the reconcile and prints just the task id.
+    let out = mf(&["--repo", &repo, "reconcile", "--no-wait"]);
+    assert_ok(&out);
+    let task_id = out.stdout.trim().to_string();
+    assert!(is_hex_uuid(&task_id), "expected a task id, got: '{}'", out.stdout);
+
+    // mf task <id> shows that task (id + kind on the line).
+    let out = mf(&["--repo", &repo, "task", &task_id]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&task_id), "task line: {}", out.stdout);
+    assert!(out.stdout.contains("reconcile"), "task line: {}", out.stdout);
+
+    // mf tasks lists it (retained after completion within the TTL).
+    let out = mf(&["--repo", &repo, "tasks"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&task_id), "tasks output: {}", out.stdout);
+}
+
+#[test]
 fn test_reconcile_single_entry() {
     let (repo, root) = init_repo("reconcile_metarecord");
     std::fs::create_dir_all(root.join("dir")).unwrap();

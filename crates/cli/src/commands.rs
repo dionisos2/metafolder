@@ -474,6 +474,7 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn reconcile(
     ctx: &Ctx,
     entry: Option<&str>,
@@ -481,6 +482,8 @@ pub fn reconcile(
     mime: bool,
     refresh: bool,
     raw_json: bool,
+    no_wait: bool,
+    poll_interval_ms: u64,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let resp = match entry {
@@ -504,7 +507,12 @@ pub fn reconcile(
                 .as_str()
                 .ok_or_else(|| CliError::Op("reconcile: daemon did not return a task id".into()))?
                 .to_string();
-            poll_reconcile_task(ctx, &base, &task_id)?
+            if no_wait {
+                // Just hand back the task id; the caller can poll with `mf task`.
+                println!("{task_id}");
+                return Ok(0);
+            }
+            poll_reconcile_task(ctx, &base, &task_id, poll_interval_ms)?
         }
     };
     if raw_json {
@@ -515,12 +523,14 @@ pub fn reconcile(
     Ok(0)
 }
 
-/// Interval between task polls while a full reconcile runs.
-const RECONCILE_POLL: std::time::Duration = std::time::Duration::from_millis(200);
-
 /// Polls a reconcile task until terminal, rendering progress to stderr.
 /// Returns the task's `result` object on success.
-fn poll_reconcile_task(ctx: &Ctx, base: &str, task_id: &str) -> Result<Json, CliError> {
+fn poll_reconcile_task(
+    ctx: &Ctx,
+    base: &str,
+    task_id: &str,
+    poll_interval_ms: u64,
+) -> Result<Json, CliError> {
     loop {
         let task = ctx.client.request("GET", &format!("{base}/tasks/{task_id}"), &[], None)?;
         match task["status"].as_str() {
@@ -540,10 +550,65 @@ fn poll_reconcile_task(ctx: &Ctx, base: &str, task_id: &str) -> Result<Json, Cli
                     _ if !phase.is_empty() => eprint!("\rreconcile: {phase}\x1b[K"),
                     _ => {}
                 }
-                std::thread::sleep(RECONCILE_POLL);
+                std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
             }
         }
     }
+}
+
+/// `mf tasks [--all]`: lists background tasks (spec-tasks). `--all` queries
+/// every loaded repository (no `--repo` needed); otherwise the current repo.
+pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
+    let path = if all { "/tasks".to_string() } else { format!("{}/tasks", ctx.repo_base()?) };
+    let resp = ctx.client.request("GET", &path, &[], None)?;
+    if raw_json {
+        println!("{resp}");
+    } else {
+        print!("{}", format_tasks(&resp));
+    }
+    Ok(0)
+}
+
+/// `mf task <id>`: shows one task of the current repository.
+pub fn task(ctx: &Ctx, id: &str, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let uuid = Uuid::parse_str(id)
+        .map_err(|_| CliError::Usage(format!("invalid task UUID: '{id}'")))?;
+    let resp = ctx.client.request("GET", &format!("{base}/tasks/{}", uuid.as_simple()), &[], None)?;
+    if raw_json {
+        println!("{resp}");
+    } else {
+        println!("{}", format_task_line(&resp));
+    }
+    Ok(0)
+}
+
+/// One line per task: `<id>  <kind>  <status>  <phase> [done/total]`.
+fn format_tasks(resp: &Json) -> String {
+    let empty = Vec::new();
+    let tasks = resp.as_array().unwrap_or(&empty);
+    if tasks.is_empty() {
+        return "no tasks\n".to_string();
+    }
+    let mut out = String::new();
+    for task in tasks {
+        out.push_str(&format_task_line(task));
+        out.push('\n');
+    }
+    out
+}
+
+fn format_task_line(task: &Json) -> String {
+    let id = task["id"].as_str().unwrap_or("?");
+    let kind = task["kind"].as_str().unwrap_or("?");
+    let status = task["status"].as_str().unwrap_or("?");
+    let phase = task["phase"].as_str().unwrap_or("");
+    let progress = match (task["done"].as_u64(), task["total"].as_u64()) {
+        (Some(done), Some(total)) => format!(" {done}/{total}"),
+        _ => String::new(),
+    };
+    let phase_part = if phase.is_empty() { String::new() } else { format!("  {phase}{progress}") };
+    format!("{id}  {kind}  {status}{phase_part}")
 }
 
 /// Renders the reconcile summary and candidate list (spec-file-tracking
