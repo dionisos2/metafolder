@@ -96,18 +96,14 @@ pub fn reconcile_full_reported(
     let mut writer = Writer::begin(&mut conn, db_id, None)?;
     let mut result = ReconcileResult::default();
 
-    // The prior tracked count is the walk's estimated total (≈ files on disk
-    // for a re-reconcile); also reused below for the orphan scan.
-    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
-    let walk_estimate = (!tracked.is_empty()).then_some(tracked.len() as u64);
-
-    // Step 2 — walk the filesystem (eligibility-pruned). `walk` reports a live
-    // discovered-count against the estimate (spec-tasks "Decompose walk").
+    // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
     let mut elig = eligibility::EligibilityCache::default();
-    let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
-    progress("walk", Some(0), walk_estimate);
-    walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut fs_paths, &mut elig, walk_estimate, progress)?;
+    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, progress)?;
+
+    // Stat phase: the total is now known, so this (the heavy syscall pass) is a
+    // determinate phase (spec-tasks "Decompose walk").
+    let fs_paths = stat_paths(&root, &paths, progress);
 
     // New files: paths with no metarecord at that tree position. The regular
     // files (existing or new) are kept for the optional MIME pass below;
@@ -131,8 +127,8 @@ pub fn reconcile_full_reported(
 
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
-    // ineligible are not mistaken for orphans.) Determinate "scan" phase;
-    // `tracked` was fetched above for the walk estimate.
+    // ineligible are not mistaken for orphans.) Determinate "scan" phase.
+    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
     let scan_total = tracked.len() as u64;
     progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
@@ -362,7 +358,6 @@ pub fn reconcile_metarecord_reported(
     refresh: bool,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
 ) -> Result<ReconcileResult, ApiError> {
-    progress("walk", None, None);
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
@@ -380,15 +375,16 @@ pub fn reconcile_metarecord_reported(
     let mut writer = Writer::begin(&mut conn, db_id, None)?;
     let mut result = ReconcileResult::default();
 
-    let mut fs_paths: Vec<(String, Metadata)> = Vec::new();
+    // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,
+    // same shape as the whole-repository reconcile (spec-tasks).
     let mut elig = eligibility::EligibilityCache::default();
+    let mut paths: Vec<String> = Vec::new();
     let abs_base = root.join(base.trim_start_matches('/'));
     if abs_base.exists() {
-        let meta = std::fs::metadata(&abs_base).map_err(anyhow::Error::from)?;
-        fs_paths.push((base.clone(), meta));
-        // No prior subtree count to estimate from → indeterminate walk.
-        walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut fs_paths, &mut elig, None, progress)?;
+        paths.push(base.clone()); // The subtree root itself.
+        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, progress)?);
     }
+    let mut fs_paths = stat_paths(&root, &paths, progress);
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
     let create_total = fs_paths.len() as u64;
@@ -438,51 +434,89 @@ pub fn reconcile_metarecord_reported(
 /// paths. Ineligible directories are pruned (cascading skip); the
 /// repository's `.metafolder/internal/` directory is always skipped,
 /// matched by absolute path (the metafolder may live anywhere).
-#[allow(clippy::too_many_arguments)]
+/// Pure filesystem traversal (spec-tasks "Decompose walk"): collects every
+/// eligible repo-root-relative path under `base` *without* stat'ing it, BFS by
+/// depth so progress can be reported per level (the current depth and how far
+/// through the level we are). Stat'ing the paths happens afterwards in
+/// [`stat_paths`], once the total is known — so the heavy syscall pass gets an
+/// exact progress bar. Returns the collected paths (files and directories);
+/// `base` itself is not included.
 fn walk(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
-    prefix: &str,
-    out: &mut Vec<(String, Metadata)>,
+    base: &str,
     elig: &mut eligibility::EligibilityCache,
-    est_total: Option<u64>,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
-) -> Result<()> {
-    let abs = root.join(prefix.trim_start_matches('/'));
-    let entries = match std::fs::read_dir(&abs) {
-        Ok(entries) => entries,
-        Err(_) => return Ok(()), // Not a directory or unreadable.
-    };
-    for entry in entries {
-        let entry = entry?;
-        let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-            eprintln!("[reconcile] skipping non-UTF-8 name under {abs:?}");
-            continue;
-        };
-        if entry.path() == internal_dir {
-            continue;
+) -> Result<Vec<String>> {
+    let mut paths: Vec<String> = Vec::new();
+    // The two lists the traversal alternates between: the directories at the
+    // current depth, and those discovered for the next.
+    let mut frontier: Vec<String> = vec![base.to_string()];
+    let mut depth: u64 = 0;
+    while !frontier.is_empty() {
+        let level_total = frontier.len() as u64;
+        let mut next: Vec<String> = Vec::new();
+        for (i, dir) in frontier.iter().enumerate() {
+            if i as u64 % PROGRESS_STEP as u64 == 0 {
+                progress(&format!("walk (depth {depth})"), Some(i as u64), Some(level_total));
+            }
+            let abs = root.join(dir.trim_start_matches('/'));
+            let entries = match std::fs::read_dir(&abs) {
+                Ok(entries) => entries,
+                Err(_) => continue, // Not a directory or unreadable.
+            };
+            for entry in entries {
+                let entry = entry?;
+                let Some(name) = entry.file_name().to_str().map(str::to_string) else {
+                    eprintln!("[reconcile] skipping non-UTF-8 name under {abs:?}");
+                    continue;
+                };
+                if entry.path() == internal_dir {
+                    continue;
+                }
+                let rel = format!("{dir}/{name}");
+                if !eligibility::is_eligible_cached(writer.connection(), cache, &rel, elig)? {
+                    continue;
+                }
+                // `file_type` is free here (from the dir entry, no stat).
+                let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                paths.push(rel.clone());
+                if is_dir {
+                    next.push(rel);
+                }
+            }
         }
-        let rel = format!("{prefix}/{name}");
-        if !eligibility::is_eligible_cached(writer.connection(), cache, &rel, elig)? {
-            continue;
+        frontier = next;
+        depth += 1;
+    }
+    Ok(paths)
+}
+
+/// Stats each path from the pure [`walk`], building the `(path, Metadata)` list
+/// the rest of reconcile consumes. The total is known, so this — the heavy
+/// syscall pass — reports a determinate "stat" phase. Paths that vanished
+/// between the walk and the stat are skipped.
+fn stat_paths(
+    root: &Path,
+    paths: &[String],
+    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+) -> Vec<(String, Metadata)> {
+    let total = paths.len() as u64;
+    progress("stat", Some(0), Some(total));
+    let mut out: Vec<(String, Metadata)> = Vec::with_capacity(paths.len());
+    for (i, rel) in paths.iter().enumerate() {
+        if i % PROGRESS_STEP == 0 {
+            progress("stat", Some(i as u64), Some(total));
         }
-        let meta = entry.metadata()?;
-        let is_dir = meta.is_dir();
-        out.push((rel.clone(), meta));
-        // Live count against an estimated total (the prior tracked count;
-        // spec-tasks "Decompose walk"): the real total is unknown until the
-        // traversal completes, so this is approximate but determinate for a
-        // re-reconcile. `est_total` is `None` (spinner) when there is no prior.
-        if out.len() % PROGRESS_STEP == 0 {
-            progress("walk", Some(out.len() as u64), est_total);
-        }
-        if is_dir {
-            walk(writer, cache, root, internal_dir, &rel, out, elig, est_total, progress)?;
+        let abs = root.join(rel.trim_start_matches('/'));
+        // symlink_metadata matches the former DirEntry::metadata (no symlink follow).
+        if let Ok(meta) = std::fs::symlink_metadata(&abs) {
+            out.push((rel.clone(), meta));
         }
     }
-    Ok(())
+    out
 }
 
 /// Creates the metarecord for a new filesystem path (parents included).

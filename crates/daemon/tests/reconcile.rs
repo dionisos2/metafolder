@@ -79,17 +79,18 @@ fn reconcile_reports_phase_progress() {
 
     let phases = phases.into_inner().unwrap();
     let names: Vec<&str> = phases.iter().map(|(p, _, _)| p.as_str()).collect();
-    // The macro-phases are reported in execution order; walk is decomposed into
-    // walk (FS traversal) → index → scan (spec-tasks "Decompose walk").
-    assert!(names.contains(&"walk"), "phases: {names:?}");
+    // Phases in execution order: the pure walk (labelled by depth) → stat →
+    // index → scan → create → refresh → mime (spec-tasks "Decompose walk").
+    assert!(names.iter().any(|p| p.starts_with("walk")), "phases: {names:?}");
+    assert!(names.contains(&"stat"), "phases: {names:?}");
     assert!(names.contains(&"index"), "phases: {names:?}");
     assert!(names.contains(&"scan"), "phases: {names:?}");
     assert!(names.contains(&"create"), "phases: {names:?}");
     assert!(names.contains(&"refresh"), "phases: {names:?}");
     assert!(names.contains(&"mime"), "phases: {names:?}");
-    // index, create and scan carry a determinate total; walk does not (the
-    // total is unknown until the traversal finishes).
+    // stat, index, scan and create carry a determinate total.
     let total_of = |name: &str| phases.iter().find(|(p, _, _)| p == name).unwrap().2;
+    assert!(total_of("stat").is_some());
     assert!(total_of("index").is_some());
     assert!(total_of("scan").is_some());
     let create_total = total_of("create");
@@ -97,14 +98,13 @@ fn reconcile_reports_phase_progress() {
 }
 
 #[test]
-fn walk_progress_uses_prior_tracked_count_as_estimate() {
-    let (repo, root) = setup("walkest");
+fn stat_phase_total_matches_walked_paths() {
+    let (repo, root) = setup("statphase");
     write_file(&root, "a.txt", b"a");
-    write_file(&root, "b.txt", b"b");
-    run(&repo); // First reconcile populates the tracked set (root + 2 files).
+    write_file(&root, "dir/b.txt", b"b");
 
-    // The second reconcile's walk reports a determinate (estimated) total —
-    // the prior tracked count — rather than an indeterminate spinner.
+    // The pure walk yields the full path list, so the stat phase (the heavy
+    // pass) has an exact total — a.txt, dir, dir/b.txt = 3 eligible paths.
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
     reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
@@ -112,9 +112,8 @@ fn walk_progress_uses_prior_tracked_count_as_estimate() {
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
-    let walk = phases.iter().find(|(p, _, _)| p == "walk").expect("walk reported");
-    assert!(walk.2.is_some(), "walk has an estimated total after a prior reconcile");
-    assert!(walk.2.unwrap() >= 3, "root + a.txt + b.txt tracked, got {:?}", walk.2);
+    let stat_total = phases.iter().find(|(p, _, _)| p == "stat").expect("stat reported").2;
+    assert_eq!(stat_total, Some(3), "stat total = eligible paths discovered by the walk");
 }
 
 // ── Creation ──────────────────────────────────────────────────────────────────
