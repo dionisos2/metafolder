@@ -239,6 +239,7 @@ fn ask_move(from: &str, to: &str, available: bool) -> Result<Policy, CliError> {
 
 pub struct LogArgs {
     pub tree: bool,
+    pub graph: bool,
     pub ops: bool,
     pub metarecord: Option<String>,
     pub limit: Option<usize>,
@@ -250,9 +251,10 @@ pub struct LogArgs {
 pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut query: Vec<(&str, String)> = Vec::new();
-    if args.tree {
-        query.push(("mode", "tree".into()));
-    }
+    // `--graph` and `--tree` need every branch; the default shows the active
+    // line through HEAD (ancestry + the most-recent forward continuation).
+    let mode = if args.graph || args.tree { "tree" } else { "active" };
+    query.push(("mode", mode.into()));
     if let Some(uuid) = &args.metarecord {
         query.push(("metarecord_uuid", uuid.clone()));
     }
@@ -304,6 +306,10 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     if groups.is_empty() {
         println!("(empty history)");
         return Ok(0);
+    }
+
+    if args.graph {
+        return render_graph(&groups, &ops, head_rev, &rev_meta, limit);
     }
 
     let mut shown_ops = 0usize;
@@ -397,6 +403,183 @@ fn head_path(ops: &[&Json], head: Option<i64>) -> std::collections::HashSet<i64>
         cur = by_id.get(&id).and_then(|o| o["parent_id"].as_i64());
     }
     set
+}
+
+// ── mf log --graph ──────────────────────────────────────────────────────────────
+
+/// One rendered line of the history graph: a revision node or a connector row.
+enum GraphLine {
+    Node { gutter: String, rev_id: i64 },
+    Connector(String),
+}
+
+/// Lays out a history forest as an ASCII graph, newest first. `revs` lists the
+/// revisions most-recent first as `(rev_id, parent_rev)` (parent_rev `None` for
+/// a root or when the parent falls outside the shown window). The active line
+/// stays in the leftmost column; divergent branches open a column to the right
+/// and converge back with a `/` connector at their common parent.
+fn graph_layout(revs: &[(i64, Option<i64>)]) -> Vec<GraphLine> {
+    // Each lane holds the rev_id it is currently waiting to draw (going down).
+    let mut lanes: Vec<Option<i64>> = Vec::new();
+    let mut out: Vec<GraphLine> = Vec::new();
+    for &(rev, parent) in revs {
+        let hits: Vec<usize> =
+            lanes.iter().enumerate().filter_map(|(i, l)| (*l == Some(rev)).then_some(i)).collect();
+        let col = match hits.first() {
+            Some(&c) => c,
+            // A tip with no waiting lane: reuse the leftmost free column.
+            None => match lanes.iter().position(|l| l.is_none()) {
+                Some(i) => {
+                    lanes[i] = Some(rev);
+                    i
+                }
+                None => {
+                    lanes.push(Some(rev));
+                    lanes.len() - 1
+                }
+            },
+        };
+        let extra: Vec<usize> = hits.iter().copied().filter(|&i| i != col).collect();
+
+        // Connector row above the node: extra child lanes slope into `col`.
+        if !extra.is_empty() {
+            let mut conn = vec![' '; lanes.len() * 2];
+            for (i, l) in lanes.iter().enumerate() {
+                if l.is_some() && !extra.contains(&i) {
+                    conn[2 * i] = '|';
+                }
+            }
+            for &e in &extra {
+                if e > col {
+                    conn[2 * e - 1] = '/';
+                } else {
+                    conn[2 * e + 1] = '\\';
+                }
+            }
+            out.push(GraphLine::Connector(trim_gutter(&conn)));
+            for &e in &extra {
+                lanes[e] = None;
+            }
+        }
+
+        // Node row.
+        let mut row = vec![' '; lanes.len() * 2];
+        for (i, l) in lanes.iter().enumerate() {
+            if i == col {
+                row[2 * i] = '*';
+            } else if l.is_some() {
+                row[2 * i] = '|';
+            }
+        }
+        out.push(GraphLine::Node { gutter: trim_gutter(&row), rev_id: rev });
+
+        lanes[col] = parent;
+    }
+    out
+}
+
+fn trim_gutter(chars: &[char]) -> String {
+    chars.iter().collect::<String>().trim_end().to_string()
+}
+
+/// Renders `mf log --graph`: the revision forest as an ASCII graph.
+fn render_graph(
+    groups: &[(i64, Vec<&Json>)],
+    ops: &[&Json],
+    head_rev: Option<i64>,
+    rev_meta: &std::collections::HashMap<i64, (i64, Option<String>)>,
+    limit: Option<usize>,
+) -> Result<i32, CliError> {
+    // Operation id → its revision, to resolve each revision's parent revision.
+    let op_rev: std::collections::HashMap<i64, i64> =
+        ops.iter().filter_map(|o| Some((o["id"].as_i64()?, o["rev_id"].as_i64()?))).collect();
+
+    let shown: Vec<i64> =
+        groups.iter().map(|(r, _)| *r).take(limit.unwrap_or(usize::MAX)).collect();
+    let shown_set: std::collections::HashSet<i64> = shown.iter().copied().collect();
+
+    // Parent revision of each shown revision: the rev of the parent of the
+    // revision's root op (the one op parented in another revision, or none).
+    let revs: Vec<(i64, Option<i64>)> = shown
+        .iter()
+        .map(|&rev| {
+            let list = &groups.iter().find(|(r, _)| *r == rev).unwrap().1;
+            let mut parent_rev = None;
+            for o in list {
+                match o["parent_id"].as_i64() {
+                    None => break, // root revision
+                    Some(p) => {
+                        let pr = op_rev.get(&p).copied();
+                        if pr != Some(rev) {
+                            parent_rev = pr;
+                            break;
+                        }
+                    }
+                }
+            }
+            (rev, parent_rev.filter(|pr| shown_set.contains(pr)))
+        })
+        .collect();
+
+    let lines = graph_layout(&revs);
+    let width = lines
+        .iter()
+        .map(|l| match l {
+            GraphLine::Node { gutter, .. } => gutter.len(),
+            GraphLine::Connector(g) => g.len(),
+        })
+        .max()
+        .unwrap_or(0);
+
+    for line in &lines {
+        match line {
+            GraphLine::Connector(g) => println!("{g}"),
+            GraphLine::Node { gutter, rev_id } => {
+                let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
+                let is_head = Some(*rev_id) == head_rev;
+                let list = &groups.iter().find(|(r, _)| r == rev_id).unwrap().1;
+                let mut text = format!("rev {rev_id}  {}", fmt_minute(ts));
+                if let Some(label) = &label {
+                    text.push_str(&format!("  \"{label}\""));
+                } else if list.len() > 1 {
+                    text.push_str(&format!("  ({})", op_breakdown(list)));
+                }
+                if is_head {
+                    text.push_str("   \u{2190} HEAD");
+                }
+                println!("{gutter:<width$}  {text}");
+            }
+        }
+    }
+    Ok(0)
+}
+
+#[cfg(test)]
+mod graph_tests {
+    use super::*;
+
+    fn gutters(revs: &[(i64, Option<i64>)]) -> Vec<String> {
+        graph_layout(revs)
+            .into_iter()
+            .map(|l| match l {
+                GraphLine::Node { gutter, .. } => gutter,
+                GraphLine::Connector(g) => g,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn linear_history_is_a_single_column() {
+        let revs = [(3, Some(2)), (2, Some(1)), (1, None)];
+        assert_eq!(gutters(&revs), vec!["*", "*", "*"]);
+    }
+
+    #[test]
+    fn a_branch_opens_a_column_and_converges_with_a_slash() {
+        // rev3 (the active line) and rev2 are both children of rev1.
+        let revs = [(3, Some(1)), (2, Some(1)), (1, None)];
+        assert_eq!(gutters(&revs), vec!["*", "| *", "|/", "*"]);
+    }
 }
 
 // ── mf log show ───────────────────────────────────────────────────────────────

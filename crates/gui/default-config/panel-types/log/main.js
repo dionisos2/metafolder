@@ -3,6 +3,7 @@
 
 import { el } from '/__ui.js';
 import { moveSelection, edgeSelection } from './selection.js';
+import { graphLayout, revisionParents } from './graph.js';
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar } = metafolder;
@@ -12,6 +13,7 @@ export async function mount(root, metafolder) {
   let operations = []; // raw ops from GET /log
   let selectedRev = null;
   let expandedRev = null;
+  let graphMode = false; // false: active line (list); true: full branch graph
 
   const rows = root.getElementById('rows');
   const table = root.querySelector('table');
@@ -19,6 +21,7 @@ export async function mount(root, metafolder) {
   const rollbackButton = root.getElementById('rollback');
   const pruneButton = root.getElementById('prune');
   const checkpointButton = root.getElementById('checkpoint');
+  const graphCheckbox = root.getElementById('graph');
 
   async function refresh() {
     if (!repo) {
@@ -26,9 +29,11 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      // Tree mode: keep listing revisions left ahead of (or beside) HEAD
-      // after a rollback, so navigating forward again stays possible.
-      const log = await daemon.call('GET', `/repos/${repo}/log?mode=tree`);
+      // `active` shows only the line through HEAD (ancestry + the most-recent
+      // forward continuation, so a rolled-back future stays available for
+      // redo). `tree` adds every divergent branch, drawn as a graph.
+      const mode = graphMode ? 'tree' : 'active';
+      const log = await daemon.call('GET', `/repos/${repo}/log?mode=${mode}`);
       operations = log.operations ?? [];
       const head = log.head;
       const opCount = new Map();
@@ -107,6 +112,38 @@ export async function mount(root, metafolder) {
     );
   }
 
+  // Graph mode: a leading monospace gutter cell drawing the branch structure,
+  // with connector rows between nodes. Nodes stay selectable like list rows.
+  function graphRows() {
+    const byId = new Map(revisions.map((rev) => [rev.id, rev]));
+    const parents = revisionParents(operations);
+    const revs = revisions.map((rev) => ({ id: rev.id, parent: parents.get(rev.id) ?? null }));
+    return graphLayout(revs).map((line) => {
+      if (line.type === 'connector') {
+        return el('tr', { class: 'connector' }, el('td', { colSpan: 4, class: 'gutter' }, line.gutter));
+      }
+      const rev = byId.get(line.revId);
+      return el(
+        'tr',
+        {
+          class: ['rev', rev.id === selectedRev && 'selected'],
+          onclick: () => selectRevision(rev.id),
+          ondblclick: () => selectRevision(rev.id, { toggleOps: true }),
+        },
+        el(
+          'td',
+          {},
+          el('span', { class: 'gutter' }, `${line.gutter} `),
+          `#${rev.id}`,
+          rev.label && [' ', el('span', { class: 'label' }, rev.label)],
+        ),
+        el('td', {}, new Date(rev.timestamp).toLocaleString()),
+        el('td', {}, String(rev.opCount)),
+        el('td', { class: [rev.isHead && 'head-marker'] }, rev.isHead ? 'HEAD' : ''),
+      );
+    });
+  }
+
   function render() {
     placeholderElement.hidden = revisions.length > 0;
     if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
@@ -114,11 +151,14 @@ export async function mount(root, metafolder) {
     rollbackButton.disabled = selectedRev === null;
     pruneButton.disabled = selectedRev === null;
     checkpointButton.disabled = selectedRev === null;
+    graphCheckbox.checked = graphMode;
 
     rows.replaceChildren(
-      ...revisions.flatMap((rev) =>
-        expandedRev === rev.id ? [revisionRow(rev), operationsRow(rev)] : [revisionRow(rev)],
-      ),
+      ...(graphMode
+        ? graphRows()
+        : revisions.flatMap((rev) =>
+            expandedRev === rev.id ? [revisionRow(rev), operationsRow(rev)] : [revisionRow(rev)],
+          )),
     );
   }
 
@@ -187,6 +227,13 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // Toggling list/graph changes the requested mode, so it refetches.
+  async function toggleGraph(on) {
+    graphMode = on ?? !graphMode;
+    await refresh();
+  }
+  graphCheckbox.addEventListener('change', () => void toggleGraph(graphCheckbox.checked));
+
   root.getElementById('refresh').addEventListener('click', refresh);
   // Shell builtins (they work on the active repo, no selection needed).
   root.getElementById('undo').addEventListener('click', () => void commands.invoke('log:undo'));
@@ -209,6 +256,10 @@ export async function mount(root, metafolder) {
     label: 'Log: set or clear the selected revision label',
     reveal: true,
     handler: markCheckpoint,
+  });
+  commands.register('log:toggle-graph', {
+    label: 'Log: toggle the branch graph view',
+    handler: () => toggleGraph(),
   });
   commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
   commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });

@@ -455,7 +455,7 @@ Query parameters:
 
 | Parameter            | Default    | Description                                                                          |
 |----------------------+------------+--------------------------------------------------------------------------------------|
-| =mode=               | =linear=   | =linear=: HEAD ancestry path only (root → HEAD); =tree=: all branches               |
+| =mode=               | =linear=   | =linear=: HEAD ancestry only (root → HEAD); =active=: the line through HEAD (ancestry + forward to the most-recent leaf); =tree=: all branches |
 | =metarecord_uuid=         | —          | Only operations whose =entity_uuid= matches this metarecord UUID                          |
 | =limit=              | —          | Maximum number of operations to return (applied after filtering; most recent first)  |
 | =since=              | —          | Include only operations in revisions with timestamp ≥ T (Unix ms)                    |
@@ -463,8 +463,12 @@ Query parameters:
 | =include_snapshots=  | =false=    | If =true=, each operation includes =snapshots_before= and =snapshots_after= arrays   |
 
 In =linear= mode, operations are ordered from root to HEAD (oldest first). In
-=tree= mode, operations are returned in insertion order (by =id=). The client
-reconstructs tree structure from =parent_id= in both cases.
+=active= mode, operations are ordered root → HEAD → leaf (oldest first): the
+HEAD ancestry plus the forward continuation that, at each fork below HEAD,
+follows the child whose subtree holds the most recently created operation. This
+keeps a rolled-back "future" visible for redo while hiding operations on
+divergent branches. In =tree= mode, operations are returned in insertion order
+(by =id=). The client reconstructs tree structure from =parent_id= in all cases.
 
 Response body:
 #+BEGIN_SRC json
@@ -727,9 +731,11 @@ mf log [options]
 
 *** Behaviour
 
-Calls =GET /log= and formats the result. By default, displays the HEAD ancestry
-path (=mode=linear=) grouped by revision, most recent first. HEAD is marked with
-an asterisk.
+Calls =GET /log= and formats the result. By default, displays the active line
+through HEAD (=mode=active=: the ancestry plus the most-recent forward
+continuation, so a rolled-back future stays listed for redo while divergent
+branches are hidden) grouped by revision, most recent first. HEAD is marked
+with an asterisk.
 
 Default output (one line per revision):
 
@@ -748,15 +754,25 @@ With =--ops=, each revision is expanded to show its individual operations:
   rev 11  ...
 #+END_SRC
 
-With =--tree=, branches created by past rollbacks are shown. Branch points are
-indicated visually; the active branch (containing HEAD) is distinguished from
-inactive branches. Exact rendering is left to the implementation.
+With =--tree=, every branch (including those left behind by past rollbacks) is
+shown as a flat list, with off-active-line revisions tagged =(branch)=. With
+=--graph=, every branch is instead drawn as an ASCII graph: the active line
+keeps the leftmost column and a divergent branch opens a column to its right,
+converging back into its parent with a =/= connector:
+
+#+BEGIN_SRC
+*      rev 12  2024-01-15 14:32   ← HEAD
+| *    rev 11  2024-01-15 14:30
+|/
+*      rev 10  2024-01-14 09:12
+#+END_SRC
 
 *** Options
 
 | Flag                   | Description                                                                    |
 |------------------------+--------------------------------------------------------------------------------|
-| =--tree=               | Show all branches, not just the HEAD ancestry path (passes =mode=tree=)        |
+| =--tree=               | Show all branches as a flat list, not just the active line (passes =mode=tree=) |
+| =--graph=              | Draw all branches as an ASCII graph (passes =mode=tree=)                       |
 | =--ops=                | Expand each revision to show its individual operations                         |
 | =--metarecord <uuid>=       | Show only revisions/ops that affected this metarecord (passes =metarecord_uuid=)         |
 | =--limit N= / =-n N=   | Show at most N revisions (or operations with =--ops=); default: 20             |
@@ -764,9 +780,9 @@ inactive branches. Exact rendering is left to the implementation.
 | =--until T=            | Include only revisions with timestamp ≤ T (ISO-8601 or Unix ms)               |
 | =--all=                | Remove the default limit of 20 (equivalent to =--limit 0=)                    |
 
-=--tree= and =--limit= / =--since= / =--until= can be combined. =--tree= with
-=--metarecord= returns all branches that contain at least one operation touching the
-given metarecord.
+=--tree= / =--graph= and =--limit= / =--since= / =--until= can be combined.
+=--tree= with =--metarecord= returns all branches that contain at least one
+operation touching the given metarecord.
 
 *** =mf log show <target>=
 Displays the full details of a single revision: its operations and the

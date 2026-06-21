@@ -66,6 +66,22 @@
       .head-marker {
         color: var(--mf-ok, #56c44c);
       }
+      .gutter {
+        font-family: var(--mf-font-mono, monospace);
+        white-space: pre;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      tr.connector td {
+        padding: 0 8px;
+        line-height: 1;
+      }
+      #graph-toggle {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+      }
       .label {
         color: var(--mf-accent, #4c56c4);
       }
@@ -84,6 +100,7 @@
       <button id="rollback" disabled>Go to selected (log:rollback)</button>
       <button id="checkpoint" disabled>Label selected (log:mark-checkpoint)</button>
       <button id="prune" disabled>Prune before selected (log:prune)</button>
+      <label id="graph-toggle"><input type="checkbox" id="graph" />Graph</label>
     </div>
     <div id="revisions">
       <p class="placeholder" id="placeholder">Loading…</p>

@@ -179,9 +179,12 @@ enum Command {
         /// `mf log show <N|HEAD>` — full details of one revision
         #[command(subcommand)]
         show: Option<LogShow>,
-        /// Show all branches, not just the HEAD ancestry path
+        /// Show all branches as a flat list, not just the active line
         #[arg(long)]
         tree: bool,
+        /// Draw every branch as an ASCII graph
+        #[arg(long)]
+        graph: bool,
         /// Expand each revision to show its individual operations
         #[arg(long)]
         ops: bool,
@@ -442,11 +445,11 @@ fn main() {
         Command::Task { id, json } => commands::task(&ctx, &id, json),
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),
-        Command::Log { show, tree, ops, metarecord, limit, since, until, all } => match show {
+        Command::Log { show, tree, graph, ops, metarecord, limit, since, until, all } => match show {
             Some(LogShow::Show { target, raw }) => log::log_show(&ctx, &target, raw),
             None => log::log(
                 &ctx,
-                &log::LogArgs { tree, ops, metarecord, limit, since, until, all },
+                &log::LogArgs { tree, graph, ops, metarecord, limit, since, until, all },
             ),
         },
         Command::Rollback {

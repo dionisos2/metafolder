@@ -202,6 +202,55 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
     Ok(ops)
 }
 
+/// The "active line" through HEAD: the ancestry path root→HEAD followed by the
+/// forward continuation that, at each fork below HEAD, follows the child whose
+/// subtree contains the most recently created operation (largest id). This
+/// reconstructs the branch the user was last on, so a rolled-back "future"
+/// stays visible (for redo) while operations on divergent branches are hidden.
+/// Returned root→leaf (oldest first), like the `linear` mode.
+pub fn active_line_ops(conn: &rusqlite::Connection, head: i64) -> Result<Vec<OpRow>> {
+    // Ancestry is HEAD→root; reverse to root→HEAD.
+    let mut line = ancestry_ops(conn, head)?;
+    line.reverse();
+
+    // Build the child map from every operation to walk forward from HEAD.
+    let all = all_ops(conn)?;
+    let mut children: HashMap<i64, Vec<i64>> = HashMap::new();
+    for op in &all {
+        if let Some(parent) = op.parent_id {
+            children.entry(parent).or_default().push(op.id);
+        }
+    }
+    // Subtree-max id per node. A child is always created after its parent
+    // (parent_id < id), so processing ids in descending order visits children
+    // before parents — one bottom-up pass, no recursion.
+    let mut subtree_max: HashMap<i64, i64> = HashMap::new();
+    let mut ids: Vec<i64> = all.iter().map(|o| o.id).collect();
+    ids.sort_unstable_by(|a, b| b.cmp(a));
+    for id in ids {
+        let mut m = id;
+        if let Some(kids) = children.get(&id) {
+            for &c in kids {
+                m = m.max(*subtree_max.get(&c).unwrap_or(&c));
+            }
+        }
+        subtree_max.insert(id, m);
+    }
+
+    // Walk forward from HEAD, always descending toward the largest reachable id.
+    let by_id: HashMap<i64, &OpRow> = all.iter().map(|o| (o.id, o)).collect();
+    let mut cur = head;
+    while let Some(kids) = children.get(&cur) {
+        let Some(&next) = kids.iter().max_by_key(|&&c| subtree_max.get(&c).copied().unwrap_or(c))
+        else {
+            break;
+        };
+        line.push((*by_id.get(&next).expect("child op present")).clone());
+        cur = next;
+    }
+    Ok(line)
+}
+
 /// Snapshot rows of one operation (`is_new` 0 = before, 1 = after).
 pub fn snapshots(conn: &rusqlite::Connection, op_id: i64, is_new: i64) -> Result<Vec<FieldRow>> {
     let mut stmt = conn.prepare_cached(

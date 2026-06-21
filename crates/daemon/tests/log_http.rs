@@ -127,6 +127,60 @@ async fn test_log_linear_and_filters() {
 }
 
 #[tokio::test]
+async fn test_log_active_line_through_head() {
+    let (app, repo, root) = setup("active").await;
+    let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}]))
+        .await;
+    let uuid = entry["uuid"].as_str().unwrap().to_string();
+    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 2})).await;
+    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 3})).await;
+
+    // Helpers reading op ids out of a `/log` body.
+    let ids = |log: &Value| -> Vec<i64> {
+        log["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect()
+    };
+
+    // op_b is the most recent write (s=3); op_a is its parent (s=2).
+    let tree = get_log(&app, &repo, "?mode=tree").await;
+    let op_b = *ids(&tree).iter().max().unwrap();
+    let op_a = tree["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"].as_i64() == Some(op_b))
+        .unwrap()["parent_id"]
+        .as_i64()
+        .unwrap();
+
+    // Rollback to op_a: op_b becomes the redo "future", a descendant of HEAD.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback"),
+        Some(json!({"target": {"id": op_a}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+
+    // active keeps the forward continuation; linear (ancestry only) drops it.
+    let active = get_log(&app, &repo, "?mode=active").await;
+    let linear = get_log(&app, &repo, "").await;
+    assert!(ids(&active).contains(&op_b), "active keeps the redo future: {active}");
+    assert!(!ids(&linear).contains(&op_b), "linear ancestry excludes the future");
+
+    // A new write from HEAD=op_a creates a divergent branch (op_c); HEAD=op_c.
+    patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 99})).await;
+    let tree2 = get_log(&app, &repo, "?mode=tree").await;
+    let op_c = *ids(&tree2).iter().max().unwrap();
+    let active2 = get_log(&app, &repo, "?mode=active").await;
+    assert!(ids(&active2).contains(&op_c), "active follows the branch to HEAD's leaf");
+    assert!(!ids(&active2).contains(&op_b), "active hides the divergent branch: {active2}");
+    assert!(ids(&tree2).contains(&op_b), "tree still shows every branch");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_revision_detail_and_label() {
     let (app, repo, root) = setup("rev").await;
     let entry = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}]))

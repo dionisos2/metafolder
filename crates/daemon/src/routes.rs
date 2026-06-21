@@ -496,9 +496,16 @@ async fn get_log(
                     chain
                 }
             },
+            // The active line through HEAD: ancestry plus the forward
+            // continuation to the most-recent leaf (keeps the redo future
+            // visible, hides divergent branches).
+            "active" => match head {
+                None => vec![],
+                Some(head) => crate::log::active_line_ops(&conn, head)?,
+            },
             other => {
                 return Err(ApiError::bad_request(format!(
-                    "invalid mode '{other}' (expected 'linear' or 'tree')"
+                    "invalid mode '{other}' (expected 'linear', 'active' or 'tree')"
                 )))
             }
         };

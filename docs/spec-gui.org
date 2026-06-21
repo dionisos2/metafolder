@@ -1157,16 +1157,22 @@ completion:
 
 *** Log view (=log= panel type)
 
-Calls =GET .../log?mode=tree= and displays revisions in reverse
-chronological order. Columns: =rev_id=, timestamp, operation count,
-=status= (HEAD marker). Tree mode matters: after a rollback the
-revisions ahead of (or beside) HEAD are not part of the linear history
-anymore, but they must stay listed so the user can navigate forward
-again.
+Displays revisions in reverse chronological order. Columns: =rev_id=,
+timestamp, operation count, =status= (HEAD marker). A =Graph= checkbox
+(command =log:toggle-graph=) switches the presentation, refetching the log:
+
+- Unchecked (default) — calls =GET .../log?mode=active=: the active line
+  through HEAD only. After a rollback the most-recent forward continuation
+  stays listed (so the user can navigate forward again), but revisions on
+  divergent branches are hidden.
+- Checked — calls =GET .../log?mode=tree= and draws every branch as a graph:
+  a leading monospace gutter cell with connector rows, the active line in the
+  leftmost column and divergent branches opening a column to the right.
 
 A click — or =up= / =down= (also =k= / =j=), via =log:prev= / =log:next= —
-moves the selection. A double click or =Enter= (=log:toggle-ops=) expands
-the revision to show its individual operations (and collapses it again).
+moves the selection (over every listed node, in either presentation). A double
+click or =Enter= (=log:toggle-ops=) expands the revision to show its individual
+operations (and collapses it again).
 
 *** Revision commands
 

@@ -832,6 +832,35 @@ fn test_log_lists_revisions_most_recent_first() {
 }
 
 #[test]
+fn test_log_graph_renders_branches_default_hides_them() {
+    let (repo, _) = init_repo("log_graph");
+    let uuid = create_metarecord(&repo, &["rating:int=1"]);
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=2"]));
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=3"]));
+    // Roll back the last write, then write again: this forks a new branch,
+    // leaving the rating=3 revision on a divergent branch.
+    assert_ok(&mf(&["--repo", &repo, "rollback", "--silent"]));
+    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]));
+
+    // The graph draws every branch: a divergent column and its convergence.
+    let graph = mf(&["--repo", &repo, "log", "--graph"]);
+    assert_ok(&graph);
+    assert!(graph.stdout.contains("\u{2190} HEAD"), "stdout: {}", graph.stdout);
+    assert!(graph.stdout.contains("|/"), "expected a convergence: {}", graph.stdout);
+
+    // The default (active line) hides the divergent branch: fewer revisions.
+    let active = mf(&["--repo", &repo, "log"]);
+    assert_ok(&active);
+    let count = |s: &str| s.matches("rev ").count();
+    assert!(
+        count(&active.stdout) < count(&graph.stdout),
+        "active {} should show fewer revisions than graph {}",
+        active.stdout,
+        graph.stdout
+    );
+}
+
+#[test]
 fn test_log_ops_expands_operations() {
     let (repo, _) = init_repo("log_ops");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
