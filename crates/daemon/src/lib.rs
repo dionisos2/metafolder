@@ -15,5 +15,6 @@ pub mod reserved;
 pub mod routes;
 pub mod schema;
 pub mod state;
+pub mod tasks;
 pub mod tree_cache;
 pub mod watcher;
