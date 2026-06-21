@@ -43,7 +43,9 @@ events), reconcile (fingerprint phase only), query language, reserved fields
 daemon-side event log ([[file:spec-event-log.org][spec-event-log.org]]):
 logged write flow, =pending_operation= buffer, atomic metadata-only rollback,
 log reading and pruning. The coordinated navigation protocol and the
-log/rollback/prune CLI (originally v2) are now implemented as well.
+log/rollback/prune CLI (originally v2) are now implemented as well. Background
+tasks and progress reporting ([[file:spec-tasks.org][spec-tasks.org]]) — async
+reconcile, observable queries, the task registry — are part of version 1.
 
 ** Key invariants
 
@@ -183,7 +185,9 @@ Response body: ={"repo_uuid": "..."}=
 |----------------------------------------+-------------+--------------------------------|
 | Repository not found                   | 404         |                                |
 | Metarecord not found              | 404         |                                |
+| Task id unknown / evicted              | 404         | see [[file:spec-tasks.org][spec-tasks.org]]            |
 | Repository already initialised         | 409         |                                |
+| Reconcile requested while one in flight | 409        | see [[file:spec-tasks.org][spec-tasks.org]]            |
 | Malformed JSON body                    | 400         |                                |
 | Invalid query                          | 400         |                                |
 | TreeRef parent metarecord not found         | 400         |                                |
@@ -217,6 +221,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema check=, =mf schema reload=, =mf schema show= |
 | [[file:spec-event-log.org][spec-event-log.org]]     | =mf log=, =mf rollback=, =mf prune=               |
+| [[file:spec-tasks.org][spec-tasks.org]]             | =mf tasks=, =mf task=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
 
 ** Global options

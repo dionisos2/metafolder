@@ -434,6 +434,14 @@ POST /repos/:repo_uuid/reconcile
 
 Walks the repository root on the filesystem and synchronises the database.
 
+This endpoint is *asynchronous*: it returns =202= with a =task_id= immediately
+and runs the work (the steps below, unchanged) as a background /task/, rejecting
+a concurrent reconcile with =409=. Progress and the final =ReconcileResult= are
+observed via the task; see [[file:spec-tasks.org][spec-tasks.org]] "Reconcile as
+a task". (Single-metarecord reconcile, below, stays synchronous.) The steps,
+the single transaction, the candidate semantics and the response body below
+describe the work the task performs.
+
 An optional ={"threshold": <0..1>}= body enables the similarity phase and
 sets the minimum similarity score (absent disables it; v1 behaviour). The
 optional ={"mime": false}= disables MIME computation (on by default; see
