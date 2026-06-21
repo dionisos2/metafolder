@@ -36,7 +36,6 @@ struct Inner {
     left: Slot,
     right: Slot,
     focused: SlotId,
-    ws_counter: u64,
 }
 
 impl Inner {
@@ -69,8 +68,7 @@ impl Inner {
     }
 
     fn new_workspace(&mut self, active_repo: Option<String>) -> String {
-        self.ws_counter += 1;
-        let n = self.ws_counter;
+        let n = self.next_workspace_number();
         let id = format!("ws-{n}");
         self.workspaces.push(Workspace {
             id: id.clone(),
@@ -82,6 +80,15 @@ impl Inner {
             ready_panels: Default::default(),
         });
         id
+    }
+
+    /// Smallest positive integer `n` such that no existing workspace has the
+    /// id `ws-{n}`. Closing a workspace frees its number for reuse, so the
+    /// numbering fills gaps rather than growing without bound.
+    fn next_workspace_number(&self) -> u64 {
+        let used: std::collections::HashSet<&str> =
+            self.workspaces.iter().map(|w| w.id.as_str()).collect();
+        (1..).find(|n| !used.contains(format!("ws-{n}").as_str())).unwrap()
     }
 
     /// Assigns a workspace to a slot, showing the slot and restoring the
@@ -185,7 +192,6 @@ impl GuiState {
             left: Slot::default(),
             right: Slot::default(),
             focused: SlotId::Left,
-            ws_counter: 0,
         };
         let id = inner.new_workspace(None);
         inner
@@ -777,13 +783,29 @@ mod tests {
     }
 
     #[test]
-    fn test_workspace_numbering_continues_after_close() {
+    fn test_workspace_numbering_reuses_freed_number_after_close() {
         let (_, state) = state();
         let id2 = state.tab_new(None);
+        assert_eq!(id2, "ws-2");
         state.close_workspace(&id2).unwrap();
-        let id3 = state.tab_new(None);
-        assert_eq!(id3, "ws-3");
-        assert_eq!(state.workspaces().last().unwrap().name, "Workspace 3");
+        // The freed number 2 is the lowest available, so it is reused.
+        let reused = state.tab_new(None);
+        assert_eq!(reused, "ws-2");
+        assert_eq!(state.workspaces().last().unwrap().name, "Workspace 2");
+    }
+
+    #[test]
+    fn test_workspace_numbering_fills_lowest_gap() {
+        let (_, state) = state();
+        let id2 = state.tab_new(None);
+        let _id3 = state.tab_new(None);
+        // Close the middle one: the gap at 2 is the lowest available number.
+        state.close_workspace(&id2).unwrap();
+        let filled = state.tab_new(None);
+        assert_eq!(filled, "ws-2");
+        // A further workspace takes the next free number above the others.
+        let next = state.tab_new(None);
+        assert_eq!(next, "ws-4");
     }
 
     #[test]
