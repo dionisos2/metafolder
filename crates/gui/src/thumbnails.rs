@@ -34,10 +34,6 @@ pub enum ThumbError {
     NotVideo,
     /// The path does not exist or is not a regular file.
     NotFound,
-    /// The file is not inside any repository (no `.metafolder/` ancestor), so
-    /// there is nowhere to cache a poster: thumbnails are a per-repo feature
-    /// and we never write outside a repo (the panel shows a glyph instead).
-    NotInRepo,
     /// `ffmpeg` could not produce a frame (missing decoder, corrupt file…).
     Failed,
 }
@@ -50,27 +46,23 @@ pub fn is_video(path: &Path) -> bool {
         .is_some_and(|ext| VIDEO_EXTENSIONS.contains(&ext.as_str()))
 }
 
-/// The thumbnail cache directory for a file: `<repo>/.metafolder/internal/
-/// thumbnails`, where `<repo>` is the nearest ancestor containing a
-/// `.metafolder/` directory. `None` when the file is not inside any repository
-/// — thumbnails are a per-repo feature and we never cache outside a repo.
+/// Among the loaded repositories — each a `(root, internal_dir)` pair from the
+/// daemon's `GET /repos` — the internal directory of the one whose root is the
+/// *longest* ancestor of `path` (the innermost repo when repos are nested).
+/// `None` when the file lies inside no repository.
 ///
-/// This resolves the standard layout (`.metafolder/` inside the repo root) by
-/// walking up the path; the external-database layout (`.metafolder/` recorded
-/// elsewhere in config.json) is not detected and is treated as "no repo".
-pub fn cache_dir_for(path: &Path) -> Option<PathBuf> {
-    for ancestor in path.ancestors() {
-        let metafolder = ancestor.join(".metafolder");
-        if metafolder.is_dir() {
-            return Some(metafolder.join(INTERNAL_DIR).join("thumbnails"));
-        }
-    }
-    None
+/// The roots come from the daemon, the authority on repository layout, so this
+/// needs no filesystem walk: nested repos resolve to the innermost, the
+/// external-database layout is handled (the `internal_dir` is wherever the
+/// daemon says), and a stray `.metafolder/` directory on the path cannot be
+/// mistaken for a repo root.
+pub fn match_internal_dir(repos: &[(PathBuf, PathBuf)], path: &Path) -> Option<PathBuf> {
+    repos
+        .iter()
+        .filter(|(root, _)| path.starts_with(root))
+        .max_by_key(|(root, _)| root.components().count())
+        .map(|(_, internal)| internal.clone())
 }
-
-/// Subdirectory of `.metafolder/` holding internal, untracked data (mirrors
-/// `daemon::repo::INTERNAL_DIR`).
-const INTERNAL_DIR: &str = "internal";
 
 /// Cache file name for a source identified by its path, mtime and size: a
 /// content change (which moves mtime/size) yields a new name, so a stale
@@ -103,9 +95,11 @@ fn ffmpeg_args(input: &Path, output: &Path, seek: &str) -> Vec<OsString> {
 }
 
 /// Returns the cached PNG path for `path`'s poster frame, generating it with
-/// `ffmpeg` on a cache miss. Blocking (spawns a process and does file I/O):
-/// call from `spawn_blocking`, not the async runtime.
-pub fn generate(path: &Path) -> Result<PathBuf, ThumbError> {
+/// `ffmpeg` on a cache miss and storing it in `cache_dir` (the resolved
+/// `<repo>/.metafolder/internal/thumbnails`; the caller resolves the repo, so
+/// a file outside any repo never reaches here). Blocking (spawns a process and
+/// does file I/O): call from `spawn_blocking`, not the async runtime.
+pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
     if !is_video(path) {
         return Err(ThumbError::NotVideo);
     }
@@ -120,16 +114,15 @@ pub fn generate(path: &Path) -> Result<PathBuf, ThumbError> {
         .map(|since| since.as_millis() as i128)
         .unwrap_or(0);
 
-    let dir = cache_dir_for(path).ok_or(ThumbError::NotInRepo)?;
-    let output = dir.join(cache_filename(path, mtime_ms, meta.len()));
+    let output = cache_dir.join(cache_filename(path, mtime_ms, meta.len()));
     if output.is_file() {
         return Ok(output);
     }
-    std::fs::create_dir_all(&dir).map_err(|_| ThumbError::Failed)?;
+    std::fs::create_dir_all(cache_dir).map_err(|_| ThumbError::Failed)?;
 
     // Render to a per-call temp file, then atomically rename in, so a
     // concurrent request never observes (or serves) a half-written PNG.
-    let temp = dir.join(temp_name());
+    let temp = cache_dir.join(temp_name());
     let produced = run_ffmpeg(path, &temp, "1") || run_ffmpeg(path, &temp, "0");
     if !produced {
         let _ = std::fs::remove_file(&temp);
@@ -204,46 +197,43 @@ mod tests {
 
     #[test]
     fn test_generate_rejects_non_video() {
-        assert_eq!(generate(Path::new("/tmp/note.txt")), Err(ThumbError::NotVideo));
+        assert_eq!(generate(Path::new("/tmp/note.txt"), Path::new("/tmp")), Err(ThumbError::NotVideo));
     }
 
     #[test]
-    fn test_cache_dir_for_finds_repo_internal() {
-        let repo = std::env::temp_dir().join(format!("mf-thumb-repo-{}", std::process::id()));
-        let sub = repo.join("a/b");
-        std::fs::create_dir_all(&sub).unwrap();
-        std::fs::create_dir_all(repo.join(".metafolder").join("internal")).unwrap();
-
-        let dir = cache_dir_for(&sub.join("clip.mp4")).unwrap();
-        assert_eq!(dir, repo.join(".metafolder").join("internal").join("thumbnails"));
-
-        std::fs::remove_dir_all(&repo).ok();
-    }
-
-    #[test]
-    fn test_cache_dir_for_none_outside_repo() {
-        let dir = std::env::temp_dir().join(format!("mf-thumb-norepo-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(cache_dir_for(&dir.join("clip.mp4")), None);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn test_generate_outside_repo_is_not_in_repo() {
-        // A recognised video that is not inside any repo: no `.metafolder`
-        // ancestor ⇒ NotInRepo, before any ffmpeg call or disk write.
-        let dir = std::env::temp_dir().join(format!("mf-thumb-norepo2-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let video = dir.join("clip.mp4");
-        std::fs::write(&video, b"not really a video").unwrap();
-        assert_eq!(generate(&video), Err(ThumbError::NotInRepo));
-        std::fs::remove_dir_all(&dir).ok();
+    fn test_match_internal_dir_picks_innermost_repo() {
+        // Nested repos; the inner one uses an external-database internal dir.
+        let repos = vec![
+            (
+                PathBuf::from("/data/outer"),
+                PathBuf::from("/data/outer/.metafolder/internal"),
+            ),
+            (
+                PathBuf::from("/data/outer/inner"),
+                PathBuf::from("/elsewhere/inner-db/internal"),
+            ),
+        ];
+        // A file in the inner repo resolves to the innermost root's internal dir.
+        assert_eq!(
+            match_internal_dir(&repos, Path::new("/data/outer/inner/a/clip.mp4")),
+            Some(PathBuf::from("/elsewhere/inner-db/internal"))
+        );
+        // A file only in the outer repo resolves to the outer.
+        assert_eq!(
+            match_internal_dir(&repos, Path::new("/data/outer/x/clip.mp4")),
+            Some(PathBuf::from("/data/outer/.metafolder/internal"))
+        );
+        // Outside every repo: None (no false match, no filesystem walk).
+        assert_eq!(match_internal_dir(&repos, Path::new("/tmp/clip.mp4")), None);
+        // Prefix match is component-wise: /data/outer must not match a sibling
+        // whose name merely starts with it.
+        assert_eq!(match_internal_dir(&repos, Path::new("/data/outerphan/clip.mp4")), None);
     }
 
     #[test]
     fn test_generate_missing_file_is_not_found() {
         assert_eq!(
-            generate(Path::new("/tmp/does-not-exist-xyz.mp4")),
+            generate(Path::new("/tmp/does-not-exist-xyz.mp4"), Path::new("/tmp")),
             Err(ThumbError::NotFound)
         );
     }
@@ -266,9 +256,8 @@ mod tests {
         }
 
         let dir = std::env::temp_dir().join(format!("mf-thumb-test-{}", std::process::id()));
+        let cache_dir = dir.join(".metafolder").join("internal").join("thumbnails");
         std::fs::create_dir_all(&dir).unwrap();
-        // Make `dir` a repo root so the poster is cached in its `.metafolder`.
-        std::fs::create_dir_all(dir.join(".metafolder").join("internal")).unwrap();
         let video = dir.join("clip.mp4");
         let made = std::process::Command::new("ffmpeg")
             .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i"])
@@ -279,17 +268,17 @@ mod tests {
             .unwrap();
         assert!(made.success(), "could not synthesize a test video");
 
-        let png = generate(&video).expect("thumbnail generated");
+        let png = generate(&video, &cache_dir).expect("thumbnail generated");
         assert!(
-            png.starts_with(&dir.join(".metafolder").join("internal").join("thumbnails")),
-            "poster must be cached under the repo's .metafolder/internal: {png:?}"
+            png.starts_with(&cache_dir),
+            "poster must be cached under the given cache dir: {png:?}"
         );
         let bytes = std::fs::read(&png).unwrap();
         assert!(!bytes.is_empty());
         assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "output is a PNG");
 
         // Second call is a cache hit: same path, no regeneration needed.
-        assert_eq!(generate(&video).unwrap(), png);
+        assert_eq!(generate(&video, &cache_dir).unwrap(), png);
 
         std::fs::remove_file(&png).ok();
         std::fs::remove_dir_all(&dir).ok();

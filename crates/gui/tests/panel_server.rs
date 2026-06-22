@@ -94,6 +94,18 @@ async fn test_unknown_panel_or_file_is_404() {
 }
 
 #[tokio::test]
+async fn test_thumbnail_for_file_in_no_repo_is_404() {
+    // The stub daemon is unreachable, so `GET /repos` yields no repository for
+    // the path: the file is "in no repo", the thumbnail is refused (404) and
+    // the panel falls back to a glyph. No ffmpeg runs, nothing is written.
+    let (guard, _config, router) = setup();
+    let video = guard.path().join("clip.mp4");
+    std::fs::write(&video, b"x").unwrap();
+    let uri = format!("/thumbnail?path={}", video.display());
+    assert_eq!(get(&router, &uri).await.0, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn test_path_traversal_is_rejected() {
     let (_guard, config, router) = setup();
     // A real file outside the panel dir that traversal would reach.

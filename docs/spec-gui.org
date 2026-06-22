@@ -630,9 +630,13 @@ serve-time injection). Raw local files for the =file= panel type are served by
 thumbnails are served by =GET /thumbnail?path=...=: a small PNG of one frame
 extracted with =ffmpeg= and cached on disk inside the file's repository, under
 =<repo>/.metafolder/internal/thumbnails= (keyed by the source's
-path/mtime/size), so the cache is scoped to the repo and removed with it. A
-file that is not inside any repository (no =.metafolder/= ancestor) is not
-cached and gets no thumbnail — the panel shows a glyph. A video must never be
+path/mtime/size), so the cache is scoped to the repo and removed with it. The
+owning repository is resolved from the daemon's =GET /repos= (each entry's
+=root= and =internal_dir=) by longest-root match — the innermost repo when
+repos are nested — not by walking the filesystem, so the external-database
+layout is handled and a stray =.metafolder/= directory cannot be mistaken for a
+repo. A file inside no repository is not cached and gets no thumbnail — the
+panel shows a glyph. A video must never be
 handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
 the web process — so the panels point video tiles at =/thumbnail= instead; a
 non-2xx (not a video, not in a repo, missing decoder…) falls back to a type
