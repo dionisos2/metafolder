@@ -13,7 +13,8 @@
         "width": 1000,
         "height": 640,
         "center": true,
-        "maximized": true
+        "maximized": true,
+        "incognito": true
       }
     ],
     "security": {
