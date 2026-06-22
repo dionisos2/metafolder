@@ -287,6 +287,33 @@ fn test_eviction_respects_limit_and_keeps_correctness() {
 }
 
 #[test]
+fn test_eviction_drains_internal_directories_not_just_leaves() {
+    // Eviction only frees leaves, but a directory becomes an evictable leaf
+    // once its last child is evicted, so a deep chain drains bottom-up and the
+    // node limit holds even for internal-directory-heavy trees (refutes the
+    // "internal dirs are un-evictable" concern). All in-memory via apply_insert.
+    let f = "mfr_path";
+    let mut cache = TreeCache::with_limit(false, 3);
+    let root = Uuid::new_v4();
+    let a = Uuid::new_v4();
+    let b = Uuid::new_v4();
+    cache.apply_insert(f, None, "", root);
+    cache.apply_insert(f, Some(root), "a", a); // root -> a
+    cache.apply_insert(f, Some(a), "b", b); // root -> a -> b   (live = 3, at limit)
+    assert_eq!(cache.len(), 3);
+
+    // Add fresh leaves under root. Eight distinct nodes have now been inserted
+    // under a limit of 3; root must stay (it parents the new leaves), so the
+    // only way the limit can hold is by evicting the internal directories `a`
+    // and `b` — which requires the bottom-up parent re-push to work.
+    for i in 0..5 {
+        let leaf = Uuid::new_v4();
+        cache.apply_insert(f, Some(root), &format!("leaf{i}"), leaf);
+        assert!(cache.len() <= 3, "node limit breached at i={i}: {}", cache.len());
+    }
+}
+
+#[test]
 fn test_eviction_prefers_least_recently_used() {
     let (mut conn, db_id) = test_conn();
     let root = tree_entry(&mut conn, db_id, "mfr_path", None, "");
