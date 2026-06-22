@@ -286,6 +286,30 @@ fn test_comparison_with_nothing_is_rejected() {
     assert!(err.message.contains("nothing"), "unexpected error: {}", err.message);
 }
 
+#[test]
+fn test_oversized_query_is_rejected() {
+    let mut f = Fixture::new();
+    f.create(vec![Field::new("rating", Value::Int(1))]);
+    // A wide Or beyond the node limit: cheap to send, rejected before compiling
+    // (our check runs before any SQL is built).
+    let huge = Query::Or {
+        operands: (0..=query_exec::MAX_QUERY_NODES)
+            .map(|_| Query::IsPresent { field: "rating".into() })
+            .collect(),
+    };
+    let err = query_exec::execute(&f.conn, &mut f.cache, f.db_id, &huge, &[], None, None)
+        .unwrap_err();
+    assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
+    // A normal small query is unaffected.
+    let ok = Query::Or {
+        operands: vec![
+            Query::IsPresent { field: "rating".into() },
+            Query::IsAbsent { field: "rating".into() },
+        ],
+    };
+    assert!(query_exec::execute(&f.conn, &mut f.cache, f.db_id, &ok, &[], None, None).is_ok());
+}
+
 // ── Combinators ───────────────────────────────────────────────────────────────
 
 #[test]

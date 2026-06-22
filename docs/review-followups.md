@@ -125,3 +125,33 @@ flag « complet » à l'éviction d'un enfant.
 **Pointeurs code :** `query_exec.rs` (nœud `FollowsTransitive`),
 `tree_cache.rs` (`descendants`, `resolve_path`), `db.rs` (`tree_children`).
 `docs/spec-query.org` pour la sémantique de `->*`.
+
+## 8. Limites de requête — ✅ borne de nœuds / ⏳ reste
+
+**Fait.** Borne du **nombre total de nœuds** d'une requête à `MAX_QUERY_NODES =
+2000` (`query_exec.rs`), vérifiée avant compilation dans `execute`/`count` →
+rejet 400 (« query too large … decompose it »). Garde-fou contre une requête
+bon marché à envoyer mais coûteuse à *compiler* (un `And`/`Or` large ou
+profond construirait une chaîne de CTE géante avant toute lecture). Généreuse :
+les requêtes réalistes sont très en-dessous. Tests : `query_exec` (unit
+`node_count`/`check_query_size`) + `tests/query.rs` (`test_oversized_query_is_rejected`).
+
+**⏳ Reste à faire (différé) :**
+
+- **Opérateur `In { field, values }` natif.** Aujourd'hui « ce champ vaut l'une
+  de ces N valeurs » s'écrit `Or` de N `Eq` = ~2N nœuds. Un `In` natif
+  compilerait en **un** `IN (…)` SQL (ou un join carray/table-temp, cf. §7) →
+  O(1) nœuds, et rendrait la borne indolore pour l'appartenance.
+- **Plafond `SQLITE_MAX_COMPOUND_SELECT` (défaut 500).** `combine` joint les
+  opérandes d'un `And`/`Or` par `INTERSECT`/`UNION` : un combinateur de **plus
+  de 500 opérandes** échoue **côté SQLite** avec une erreur cryptique, *avant*
+  d'atteindre notre borne de 2000. Donc pour les requêtes **larges**, SQLite est
+  en réalité plus strict (500) que notre borne (2000), avec un message moins
+  clair. Options : borner aussi le nombre d'opérandes par combinateur avec un
+  message propre, ou **chunker** le compound en lots imbriqués pour supporter
+  les listes larges (en attendant `In`).
+- **Timeout d'exécution.** La borne de nœuds ne couvre que le coût de
+  *compilation* ; une requête petite mais lente (`Matches` regex sur des
+  millions de lignes, `->*` sur tout le repo — cf. §7) n'est pas bornée en
+  *temps*. Piste : `progress_handler` SQLite (interrompt après N pas de VM) ou
+  `Connection::interrupt()` depuis un watchdog après une deadline wall-clock.

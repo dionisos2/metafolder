@@ -43,6 +43,45 @@ fn default_order() -> SortOrder {
 /// ordering between two real values.
 const NUM_SENTINEL: &str = "-9e99";
 
+/// Upper bound on the number of nodes in a single query. A safety valve
+/// against a query that is cheap to send but expensive to *compile* (a wide
+/// `And`/`Or`, deep nesting): it would otherwise build a giant CTE chain and
+/// tie up a blocking thread before any row is read. Generous on purpose —
+/// realistic hand- or UI-built queries are well under it; a membership filter
+/// over a very large value list (an `Or` of many `Eq`) should be decomposed
+/// (and a future native `In` operator would make it O(1) nodes — see
+/// docs/review-followups.md).
+pub const MAX_QUERY_NODES: usize = 2000;
+
+/// Total number of nodes in a query tree, counting boolean operands and follow
+/// sub-conditions. Recursion is bounded: the JSON deserializer caps query
+/// nesting depth, so a parsed `Query` is shallow enough to walk safely.
+fn node_count(q: &Query) -> usize {
+    let children: usize = match q {
+        Query::And { operands } | Query::Or { operands } => {
+            operands.iter().map(node_count).sum()
+        }
+        Query::Not { operand } => node_count(operand),
+        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
+            FollowTarget::Condition(c) => node_count(c),
+            FollowTarget::Path(_) => 0,
+        },
+        _ => 0, // leaf predicates
+    };
+    1 + children
+}
+
+/// Rejects an over-large query before compiling it (spec-query "Limits").
+fn check_query_size(q: &Query) -> Result<(), ApiError> {
+    let n = node_count(q);
+    if n > MAX_QUERY_NODES {
+        return Err(ApiError::bad_request(format!(
+            "query too large ({n} nodes, maximum {MAX_QUERY_NODES}); decompose it into smaller queries"
+        )));
+    }
+    Ok(())
+}
+
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
 pub fn count(
@@ -51,6 +90,7 @@ pub fn count(
     db_id: Uuid,
     query: &Query,
 ) -> Result<usize, ApiError> {
+    check_query_size(query)?;
     let mut compiler = Compiler::new(conn, cache, db_id);
     let last = compiler.compile_node(query)?;
     let Compiler { ctes, params, .. } = compiler;
@@ -80,6 +120,7 @@ pub fn execute(
     if cursor.is_some() && limit.is_none() {
         return Err(ApiError::bad_request("'cursor' requires 'limit'"));
     }
+    check_query_size(query)?;
 
     // The cursor is bound to the exact (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[
@@ -345,6 +386,37 @@ mod tests {
             let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
             assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
         }
+    }
+
+    #[test]
+    fn query_node_count_and_size_limit() {
+        let leaf = || Query::IsPresent { field: "x".into() };
+        assert_eq!(node_count(&leaf()), 1);
+
+        // 1 (Or) + 5 leaves; nesting and follow conditions also count.
+        let nested = Query::And {
+            operands: vec![
+                leaf(),
+                Query::Not { operand: Box::new(leaf()) },
+                Query::FollowsTransitive {
+                    field: "mfr_path".into(),
+                    target: FollowTarget::Condition(Box::new(leaf())),
+                },
+            ],
+        };
+        // And + leaf + (Not + leaf) + (FollowsTransitive + leaf) = 6
+        assert_eq!(node_count(&nested), 6);
+
+        // At the limit passes; one over is rejected.
+        let at_limit =
+            Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
+        assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
+        assert!(check_query_size(&at_limit).is_ok());
+
+        let over = Query::Or { operands: (0..MAX_QUERY_NODES).map(|_| leaf()).collect() };
+        assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
+        let err = check_query_size(&over).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
     }
 }
 
