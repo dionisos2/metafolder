@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
@@ -1203,14 +1203,18 @@ impl<'c> Writer<'c> {
             return Ok(()); // Root node: nothing to check.
         };
         if *parent == metarecord {
-            bail!("TreeRef write would create a cycle on '{field_name}'");
+            return Err(DomainError::BadRequest(format!(
+                "TreeRef write would create a cycle on '{field_name}'"
+            ))
+            .into());
         }
         let parent_positions = db::get_tree_parents(&self.tx, field_name, *parent)?;
         if parent_positions.is_empty() {
-            bail!(
+            return Err(DomainError::BadRequest(format!(
                 "invalid TreeRef parent {parent}: no such metarecord carrying a \
                  '{field_name}' TreeRef field"
-            );
+            ))
+            .into());
         }
 
         // Walk every ancestor chain (multi-map fields make this a DAG walk):
@@ -1222,7 +1226,10 @@ impl<'c> Writer<'c> {
             let mut next = Vec::new();
             for node in frontier {
                 if node == metarecord {
-                    bail!("TreeRef write would create a cycle on '{field_name}'");
+                    return Err(DomainError::BadRequest(format!(
+                        "TreeRef write would create a cycle on '{field_name}'"
+                    ))
+                    .into());
                 }
                 if !visited.insert(node) {
                     continue;
@@ -1236,13 +1243,13 @@ impl<'c> Writer<'c> {
             }
             chain_len += 1;
             if chain_len >= MAX_TREE_DEPTH {
-                bail!("TreeRef depth exceeds {MAX_TREE_DEPTH}");
+                return Err(DomainError::BadRequest(format!("TreeRef depth exceeds {MAX_TREE_DEPTH}")).into());
             }
             frontier = next;
         }
         // The new node sits one level below the deepest ancestor chain.
         if chain_len + 1 > MAX_TREE_DEPTH {
-            bail!("TreeRef depth exceeds {MAX_TREE_DEPTH}");
+            return Err(DomainError::BadRequest(format!("TreeRef depth exceeds {MAX_TREE_DEPTH}")).into());
         }
         Ok(())
     }

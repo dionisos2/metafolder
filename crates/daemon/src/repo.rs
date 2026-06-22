@@ -11,6 +11,7 @@ use metafolder_core::metarecord::{Field, Value};
 
 use crate::config::RepoConfig;
 use crate::db;
+use crate::error::DomainError;
 use crate::log::Writer;
 
 pub const DB_FILE: &str = "db.sqlite";
@@ -79,23 +80,28 @@ pub fn init_repository(
     metafolder: Option<&Path>,
     name: Option<&str>,
 ) -> Result<OpenedRepo> {
-    let root = root.canonicalize().with_context(|| {
-        format!("Cannot resolve path {root:?}: the root directory must exist")
+    let root = root.canonicalize().map_err(|e| {
+        DomainError::BadRequest(format!(
+            "Cannot resolve path {root:?}: the root directory must exist ({e})"
+        ))
     })?;
     let metafolder_dir = match metafolder {
         Some(dir) => dir.to_path_buf(),
         None => root.join(".metafolder"),
     };
     if RepoConfig::exists(&metafolder_dir) {
-        bail!("Repository already initialised at {metafolder_dir:?}");
+        return Err(DomainError::Conflict(format!(
+            "Repository already initialised at {metafolder_dir:?}"
+        ))
+        .into());
     }
     std::fs::create_dir_all(&metafolder_dir)
         .with_context(|| format!("Failed to create {metafolder_dir:?}"))?;
     // Canonical from here on: the watcher and reconcile exclude internal/
     // by absolute path comparison.
-    let metafolder_dir = metafolder_dir
-        .canonicalize()
-        .with_context(|| format!("Cannot resolve path {metafolder_dir:?}"))?;
+    let metafolder_dir = metafolder_dir.canonicalize().map_err(|e| {
+        DomainError::BadRequest(format!("Cannot resolve path {metafolder_dir:?}: {e}"))
+    })?;
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
@@ -138,8 +144,10 @@ fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {
 pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     let metafolder_dir = match &locator {
         RepoLocator::Root(root) => {
-            let root = root.canonicalize().with_context(|| {
-                format!("Cannot resolve path {root:?}: the root directory must exist")
+            let root = root.canonicalize().map_err(|e| {
+                DomainError::BadRequest(format!(
+                    "Cannot resolve path {root:?}: the root directory must exist ({e})"
+                ))
             })?;
             root.join(".metafolder")
         }
@@ -148,9 +156,9 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
     if !RepoConfig::exists(&metafolder_dir) {
         bail!("No repository found at {metafolder_dir:?} (missing config.json)");
     }
-    let metafolder_dir = metafolder_dir
-        .canonicalize()
-        .with_context(|| format!("Cannot resolve path {metafolder_dir:?}"))?;
+    let metafolder_dir = metafolder_dir.canonicalize().map_err(|e| {
+        DomainError::BadRequest(format!("Cannot resolve path {metafolder_dir:?}: {e}"))
+    })?;
     let config = RepoConfig::read(&metafolder_dir)?;
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)

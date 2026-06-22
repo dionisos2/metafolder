@@ -11,6 +11,8 @@ use uuid::Uuid;
 use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
+use crate::error::DomainError;
+
 /// One row of the `field` table, decoded.
 #[derive(Debug, Clone, PartialEq)]
 pub struct FieldRow {
@@ -704,7 +706,8 @@ pub(crate) fn insert_field_row(
 ) -> Result<i64> {
     let map_unique = |err: rusqlite::Error| -> anyhow::Error {
         if err.to_string().contains("idx_field_tree") {
-            anyhow::anyhow!("tree position already occupied for field '{name}'")
+            DomainError::BadRequest(format!("tree position already occupied for field '{name}'"))
+                .into()
         } else {
             err.into()
         }

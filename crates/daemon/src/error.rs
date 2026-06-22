@@ -65,48 +65,40 @@ impl IntoResponse for ApiError {
 /// A domain error carrying its intended HTTP classification by *type* rather
 /// than by message text. Producers return these (they convert into
 /// `anyhow::Error` through `?`), so the status survives a message rename and is
-/// not derived from substring-matching a message that may contain user data.
+/// never derived from substring-matching a message that may contain user data.
+/// Anything not typed here is an internal error (500).
 #[derive(Debug)]
 pub enum DomainError {
     /// 404 — the addressed entity/operation/label does not exist.
     NotFound(String),
+    /// 409 — the request conflicts with current state (e.g. already exists).
+    Conflict(String),
+    /// 400 — the request itself is invalid (bad path, TreeRef cycle/depth…).
+    BadRequest(String),
 }
 
 impl std::fmt::Display for DomainError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            DomainError::NotFound(m) => f.write_str(m),
+            DomainError::NotFound(m) | DomainError::Conflict(m) | DomainError::BadRequest(m) => {
+                f.write_str(m)
+            }
         }
     }
 }
 
 impl std::error::Error for DomainError {}
 
-/// Classifies internal errors into HTTP statuses. Typed [`DomainError`]s are
-/// matched by type; the remaining producers (still using bare `anyhow`
-/// messages) are matched by message fragment — those fragments are distinctive
-/// phrases owned by this crate (db/log/repo), so the mapping stays in sync.
+/// Classifies internal errors into HTTP statuses purely by type: a
+/// [`DomainError`] (matched through the anyhow chain) maps to its status,
+/// anything else is a 500. No message-text matching.
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
-        if let Some(domain) = err.downcast_ref::<DomainError>() {
-            return match domain {
-                DomainError::NotFound(_) => ApiError::not_found(domain.to_string()),
-            };
-        }
-        let message = format!("{err:#}");
-        let lower = message.to_lowercase();
-        if lower.contains("already initialised") {
-            ApiError::conflict(message)
-        } else if lower.contains("cannot resolve path")
-            || lower.contains("cycle")
-            || lower.contains("depth exceeds")
-            || lower.contains("occupied")
-            || lower.contains("reserved")
-            || lower.contains("invalid treeref")
-        {
-            ApiError::bad_request(message)
-        } else {
-            ApiError::internal(message)
+        match err.downcast_ref::<DomainError>() {
+            Some(domain @ DomainError::NotFound(_)) => ApiError::not_found(domain.to_string()),
+            Some(domain @ DomainError::Conflict(_)) => ApiError::conflict(domain.to_string()),
+            Some(domain @ DomainError::BadRequest(_)) => ApiError::bad_request(domain.to_string()),
+            None => ApiError::internal(format!("{err:#}")),
         }
     }
 }
@@ -116,36 +108,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn typed_not_found_maps_to_404_regardless_of_text() {
-        // By type, not by the words in the message (no "not found" needed).
-        let err: anyhow::Error = DomainError::NotFound("entity 7 is absent".into()).into();
-        let api = ApiError::from(err);
-        assert_eq!(api.status, StatusCode::NOT_FOUND);
-        assert_eq!(api.message, "entity 7 is absent");
+    fn domain_errors_map_by_type_regardless_of_text() {
+        // The status comes from the variant, not the wording of the message.
+        let cases = [
+            (DomainError::NotFound("absent".into()), StatusCode::NOT_FOUND),
+            (DomainError::Conflict("clash".into()), StatusCode::CONFLICT),
+            (DomainError::BadRequest("nope".into()), StatusCode::BAD_REQUEST),
+        ];
+        for (domain, status) in cases {
+            let message = domain.to_string();
+            let api = ApiError::from(anyhow::Error::from(domain));
+            assert_eq!(api.status, status);
+            assert_eq!(api.message, message);
+        }
     }
 
     #[test]
-    fn typed_not_found_survives_propagation_through_anyhow() {
-        // A function returning anyhow::Result that propagates a DomainError via `?`.
+    fn domain_error_survives_propagation_through_anyhow() {
         fn inner() -> anyhow::Result<()> {
-            Err(DomainError::NotFound("gone".into()))?;
+            Err(DomainError::BadRequest("bad treeref".into()))?;
             Ok(())
         }
-        assert_eq!(ApiError::from(inner().unwrap_err()).status, StatusCode::NOT_FOUND);
+        assert_eq!(ApiError::from(inner().unwrap_err()).status, StatusCode::BAD_REQUEST);
     }
 
     #[test]
-    fn distinctive_fragments_still_classify_by_message() {
+    fn an_untyped_error_is_internal() {
+        // No more substring magic: a plain message (even one that says
+        // "not found") is a 500 unless it is a typed DomainError.
         assert_eq!(
-            ApiError::from(anyhow::anyhow!("already initialised at /x")).status,
-            StatusCode::CONFLICT
-        );
-        assert_eq!(
-            ApiError::from(anyhow::anyhow!("TreeRef write would create a cycle")).status,
-            StatusCode::BAD_REQUEST
-        );
-        assert_eq!(
-            ApiError::from(anyhow::anyhow!("something unexpected")).status,
+            ApiError::from(anyhow::anyhow!("disk not found")).status,
             StatusCode::INTERNAL_SERVER_ERROR
         );
     }
