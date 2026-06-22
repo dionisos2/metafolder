@@ -11,4 +11,6 @@ prompts.txt
 .#prompts.txt
 node_modules/
 benchmarks/benchmark*
+benchmarks/A_B*
 benchmarks/real
+corrections.txt
