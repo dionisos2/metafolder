@@ -243,8 +243,11 @@ export function createCache(opts: CacheOptions = {}) {
     if (operations.length > 0) {
       for (const op of operations) invalidateMetarecord(repo, op.entity_uuid);
       clearQueries(repo);
-    } else if (since != null && head !== since) {
-      // head moved with no forward delta (pure rollback/redo): coarse refresh.
+    } else if (since !== undefined && head !== since) {
+      // head moved with no forward delta: a pure rollback/redo, or a repo that
+      // was empty at the baseline (since === null, so no ?op= and thus no
+      // operations) gaining a head. Either way, coarse refresh. `undefined`
+      // (first sync) is excluded — it only establishes the baseline.
       clearRepo(repo);
     }
     lastHead.set(repo, head);

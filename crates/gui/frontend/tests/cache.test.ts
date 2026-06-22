@@ -128,6 +128,25 @@ describe('cache — sync / invalidation', () => {
     expect(cache._stats().queries).toBe(0);
     expect(cache._lastHead('r')).toBe(7);
   });
+
+  test('a repo empty at the baseline refreshes once it gains a head', async () => {
+    const cache = createCache();
+    await seed(cache);
+    let head: number | null = null;
+    const raw = vi.fn(async () => ok({ head, operations: [] }));
+    await cache.sync('r', raw); // baseline: empty repo (head=null) — no clear
+    expect(cache._lastHead('r')).toBe(null);
+    expect(cache._stats().queries).toBe(1); // the seeded query survives the baseline
+
+    // The repo gains data; with a null baseline there is no ?op=, so the
+    // daemon returns no operations — the empty→filled transition must still
+    // refresh the cache.
+    head = 3;
+    await cache.sync('r', raw);
+    expect(cache._stats().queries).toBe(0); // stale "empty repo" query cleared
+    expect(cache._stats().entities).toBe(0);
+    expect(cache._lastHead('r')).toBe(3);
+  });
 });
 
 describe('cache — explicit fetch/read API', () => {
