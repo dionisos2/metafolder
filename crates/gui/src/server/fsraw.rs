@@ -71,4 +71,16 @@ mod tests {
         assert_eq!(url_decode("path=/tmp/plain.txt"), "path=/tmp/plain.txt");
         assert_eq!(url_decode("a%2Fb"), "a/b");
     }
+
+    #[test]
+    fn test_url_decode_escape_at_end_of_string() {
+        // A %XX whose last hex digit is the final byte must still decode:
+        // `i + 2 < len` is exactly `i + 3 <= len`, the bound for `[i+1..i+3]`.
+        assert_eq!(url_decode("a%2F"), "a/");
+        assert_eq!(url_decode("%2F"), "/");
+        assert_eq!(url_decode("dir%20"), "dir ");
+        // A truncated escape at the end stays literal (cannot decode).
+        assert_eq!(url_decode("a%2"), "a%2");
+        assert_eq!(url_decode("a%"), "a%");
+    }
 }
