@@ -7,6 +7,7 @@
 //! creating an `<audio>`/`<video>` element and shows a plain message
 //! when the required elements are missing (spec-gui "file panel type").
 
+use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 
 /// GStreamer elements WebKitGTK needs to build a playback pipeline.
@@ -98,7 +99,7 @@ pub fn parse_discoverer(output: &str) -> MediaProbe {
 pub fn probe_file(path: &std::path::Path) -> MediaProbe {
     let mtime = std::fs::metadata(path).and_then(|meta| meta.modified()).ok();
     if let Some(mtime) = mtime {
-        if let Some((cached_mtime, probe)) = probe_cache().lock().unwrap().get(path) {
+        if let Some((cached_mtime, probe)) = probe_cache().lock_recover().get(path) {
             if *cached_mtime == mtime {
                 return probe.clone();
             }
@@ -106,10 +107,7 @@ pub fn probe_file(path: &std::path::Path) -> MediaProbe {
     }
     let probe = run_discoverer(path);
     if let Some(mtime) = mtime {
-        probe_cache()
-            .lock()
-            .unwrap()
-            .insert(path.to_path_buf(), (mtime, probe.clone()));
+        probe_cache().lock_recover().insert(path.to_path_buf(), (mtime, probe.clone()));
     }
     probe
 }
