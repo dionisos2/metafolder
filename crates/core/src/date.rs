@@ -79,15 +79,43 @@ pub fn iso_to_ms(s: &str) -> Option<i64> {
     let year: i64 = d.next()?.parse().ok()?;
     let month: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
     let day: i64 = d.next().map_or(Ok(1), str::parse).ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    // Bound the year so `days_from_civil` and the scaling below stay within
+    // `i64` (a huge value would otherwise panic in debug / wrap in release);
+    // this range covers every realistic file timestamp and date literal.
+    if !(0..=999_999).contains(&year) || !(1..=12).contains(&month) {
+        return None;
+    }
+    if !(1..=days_in_month(year, month as u32)).contains(&(day as u32)) {
         return None;
     }
     let mut t = time.split(':');
     let hour: i64 = t.next()?.parse().ok()?;
     let min: i64 = t.next().unwrap_or("0").parse().ok()?;
     let sec: i64 = t.next().unwrap_or("0").parse().ok()?;
+    // Allow second 60 for a leap second; reject everything else out of range.
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&min) || !(0..=60).contains(&sec) {
+        return None;
+    }
     let days = days_from_civil(year, month as u32, day as u32);
-    Some((days * SECS_PER_DAY + hour * 3600 + min * 60 + sec) * 1000)
+    days.checked_mul(SECS_PER_DAY)?
+        .checked_add(hour * 3600 + min * 60 + sec)?
+        .checked_mul(1000)
+}
+
+/// Whether `year` is a leap year in the proleptic Gregorian calendar.
+fn is_leap_year(year: i64) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+}
+
+/// Number of days in `month` (1–12) of `year`; 0 for an invalid month.
+fn days_in_month(year: i64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if is_leap_year(year) => 29,
+        2 => 28,
+        _ => 0,
+    }
 }
 
 #[cfg(test)]
@@ -170,6 +198,41 @@ mod tests {
         assert_eq!(iso_to_ms("2021-00"), None);
         assert_eq!(iso_to_ms("2021-01-32"), None);
         assert_eq!(iso_to_ms("2021-01-00"), None);
+    }
+
+    #[test]
+    fn iso_to_ms_rejects_days_beyond_the_month() {
+        // 31 is in `1..=31` but does not exist in these months.
+        assert_eq!(iso_to_ms("2021-02-31"), None);
+        assert_eq!(iso_to_ms("2021-02-30"), None);
+        assert_eq!(iso_to_ms("2021-04-31"), None);
+        assert_eq!(iso_to_ms("2021-06-31"), None);
+        // Real last days are still accepted.
+        assert!(iso_to_ms("2021-04-30").is_some());
+        assert!(iso_to_ms("2021-01-31").is_some());
+    }
+
+    #[test]
+    fn iso_to_ms_handles_february_leap_rules() {
+        assert!(iso_to_ms("2024-02-29").is_some()); // leap year
+        assert_eq!(iso_to_ms("2021-02-29"), None); // common year
+        assert_eq!(iso_to_ms("2100-02-29"), None); // centurial, not leap
+        assert!(iso_to_ms("2000-02-29").is_some()); // divisible by 400
+    }
+
+    #[test]
+    fn iso_to_ms_rejects_out_of_range_time_components() {
+        assert_eq!(iso_to_ms("2021-01-01T24:00:00"), None);
+        assert_eq!(iso_to_ms("2021-01-01T00:60:00"), None);
+        assert_eq!(iso_to_ms("2021-01-01T00:00:99999999999999"), None);
+    }
+
+    #[test]
+    fn iso_to_ms_rejects_absurd_year_without_overflow() {
+        // Must not panic (debug overflow-checks) or silently wrap (release):
+        // an out-of-range year is simply rejected.
+        assert_eq!(iso_to_ms("300000000000000-01-01"), None);
+        assert_eq!(iso_to_ms("9999999999-01-01"), None);
     }
 
     #[test]
