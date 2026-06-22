@@ -35,6 +35,8 @@ pub async fn serve(Query(params): Query<Params>) -> Response {
         },
         Ok(Err(ThumbError::NotVideo)) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
         Ok(Err(ThumbError::NotFound)) => StatusCode::NOT_FOUND.into_response(),
+        // No repository for this file ⇒ no thumbnail; the panel shows a glyph.
+        Ok(Err(ThumbError::NotInRepo)) => StatusCode::NOT_FOUND.into_response(),
         Ok(Err(ThumbError::Failed)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }

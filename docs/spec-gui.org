@@ -628,11 +628,15 @@ panel into a Shadow DOM root and applies the user stylesheet itself (no
 serve-time injection). Raw local files for the =file= panel type are served by
 =GET /fsraw?path=...= with HTTP Range support (media seeking). Video poster
 thumbnails are served by =GET /thumbnail?path=...=: a small PNG of one frame
-extracted with =ffmpeg= and cached on disk (=$XDG_CACHE_HOME/metafolder/
-thumbnails=, keyed by the source's path/mtime/size). A video must never be
+extracted with =ffmpeg= and cached on disk inside the file's repository, under
+=<repo>/.metafolder/internal/thumbnails= (keyed by the source's
+path/mtime/size), so the cache is scoped to the repo and removed with it. A
+file that is not inside any repository (no =.metafolder/= ancestor) is not
+cached and gets no thumbnail — the panel shows a glyph. A video must never be
 handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
 the web process — so the panels point video tiles at =/thumbnail= instead; a
-non-2xx (not a video, missing decoder…) falls back to a type glyph.
+non-2xx (not a video, not in a repo, missing decoder…) falls back to a type
+glyph.
 
 *** The =metafolder= API
 
