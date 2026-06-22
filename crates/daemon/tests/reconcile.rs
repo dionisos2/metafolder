@@ -141,6 +141,29 @@ fn test_reconcile_creates_records_for_new_files() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_reconcile_tracks_a_symlink_without_following_it() {
+    let (repo, root) = setup("symlink");
+    // Target is outside the repo and does not exist: following it would fail to
+    // stat (or read out of the repository); lstat tracks the link itself.
+    let target = "/nonexistent/outside/secret";
+    std::os::unix::fs::symlink(target, root.join("link")).unwrap();
+
+    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+
+    let uuid = resolve(&repo, "/link").expect("the symlink must be tracked");
+    assert_eq!(field_value(&repo, uuid, "mfr_type"), Some(Value::String("symlink".into())));
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_symlink_target"),
+        Some(Value::String(target.into()))
+    );
+    // The target is never opened, so no content fingerprint is ever recorded.
+    assert_eq!(field_value(&repo, uuid, "mfr_partial_hash"), None);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn test_reconcile_respects_eligibility() {
     let (repo, root) = setup("elig");

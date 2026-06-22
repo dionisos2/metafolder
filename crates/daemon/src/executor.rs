@@ -495,7 +495,9 @@ impl Apply<'_, '_> {
             return self.refresh_data(existing, rel);
         }
         let abs = self.abs(rel);
-        let Ok(meta) = std::fs::metadata(&abs) else {
+        // lstat: a symlink is `is_file() == false`, so the fingerprint-based
+        // orphan search below is skipped and the target is never read.
+        let Ok(meta) = std::fs::symlink_metadata(&abs) else {
             return Ok(());
         };
         if meta.is_file() {

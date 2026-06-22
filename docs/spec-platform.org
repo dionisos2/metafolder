@@ -173,7 +173,14 @@ is unresolved.
 
 ** Symbolic links
 
-Symlink semantics differ across platforms (and require privileges on
-Windows). The current spec does not define watcher/reconcile behaviour for
-symlinks at all; this is a prerequisite question, tracked here because the
-answer is likely platform-dependent.
+Symlinks are **never dereferenced**: the daemon stats them with =lstat=
+(=symlink_metadata=), never =stat=. A symlink is a first-class tracked entity
+described by *its own* metadata — =mfr_type = "symlink"=, the link's own
+=mfr_size= / =mfr_mtime= / =mfr_permissions=, and =mfr_symlink_target= holding
+the target **path** (from =readlink=). The target's content is never read and
+never fingerprinted, so the daemon never stats or reads a location outside the
+repository through a link, and the watcher and reconcile agree. The reconcile
+walk does not descend into a symlinked directory (it is a leaf symlink).
+
+Platform note: on Windows, *creating* a symlink requires privileges, but
+reading one (=lstat= / =readlink=) does not, so tracking is unaffected.

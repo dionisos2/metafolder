@@ -110,9 +110,10 @@ The stored fields for a file/directory metarecord are:
 | Field              | Prefix | Value type | Description                                                                                                |
 |--------------------+--------+------------+------------------------------------------------------------------------------------------------------------|
 | =mfr_path=         | mfr    | TreeRef    | Position in filesystem tree; =Nothing= if explicitly deleted (IsAbsent); stale TreeRef if location unconfirmed; absent if never assigned (IsUnknown) |
-| =mfr_type=         | mfr    | String     | ="file"= or ="dir"=                                                                                        |
-| =mfr_size=         | mfr    | Int        | File size in bytes at last watcher/reconcile update                                                        |
-| =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =stat=)                                                               |
+| =mfr_type=         | mfr    | String     | ="file"=, ="dir"= or ="symlink"= (symlinks are never dereferenced — see [[file:spec-platform.org][spec-platform.org]]) |
+| =mfr_size=         | mfr    | Int        | Size in bytes at last watcher/reconcile update; for a symlink, the length of its own target path (=lstat=) |
+| =mfr_mtime=        | mfr    | DateTime   | Last content modification time (from =lstat=; the link's own, for a symlink)                               |
+| =mfr_symlink_target= | mfr  | String     | Target **path** of a symlink (from =readlink=); present only when =mfr_type = "symlink"=                   |
 | =mfr_btime=        | mfr    | DateTime   | File creation time, when the platform/filesystem provides one; absent otherwise (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
