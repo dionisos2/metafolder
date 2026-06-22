@@ -310,6 +310,27 @@ fn test_oversized_query_is_rejected() {
     assert!(query_exec::execute(&f.conn, &mut f.cache, f.db_id, &ok, &[], None, None).is_ok());
 }
 
+#[test]
+fn test_wide_combinator_is_rejected_with_clear_message() {
+    let mut f = Fixture::new();
+    f.create(vec![Field::new("rating", Value::Int(1))]);
+    let leaf = || Query::IsPresent { field: "rating".into() };
+
+    // One past SQLite's compound-select limit: our clear message, not SQLite's
+    // opaque "too many terms in compound SELECT". (Node count stays well under
+    // MAX_QUERY_NODES, so this is the combinator check firing, not the size one.)
+    let over =
+        Query::Or { operands: (0..=query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
+    let err = query_exec::execute(&f.conn, &mut f.cache, f.db_id, &over, &[], None, None)
+        .unwrap_err();
+    assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
+
+    // Exactly the limit compiles and runs in SQLite.
+    let at_limit =
+        Query::Or { operands: (0..query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
+    assert!(query_exec::execute(&f.conn, &mut f.cache, f.db_id, &at_limit, &[], None, None).is_ok());
+}
+
 // ── Combinators ───────────────────────────────────────────────────────────────
 
 #[test]

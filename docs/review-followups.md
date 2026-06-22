@@ -142,14 +142,14 @@ les requêtes réalistes sont très en-dessous. Tests : `query_exec` (unit
   de ces N valeurs » s'écrit `Or` de N `Eq` = ~2N nœuds. Un `In` natif
   compilerait en **un** `IN (…)` SQL (ou un join carray/table-temp, cf. §7) →
   O(1) nœuds, et rendrait la borne indolore pour l'appartenance.
-- **Plafond `SQLITE_MAX_COMPOUND_SELECT` (défaut 500).** `combine` joint les
-  opérandes d'un `And`/`Or` par `INTERSECT`/`UNION` : un combinateur de **plus
-  de 500 opérandes** échoue **côté SQLite** avec une erreur cryptique, *avant*
-  d'atteindre notre borne de 2000. Donc pour les requêtes **larges**, SQLite est
-  en réalité plus strict (500) que notre borne (2000), avec un message moins
-  clair. Options : borner aussi le nombre d'opérandes par combinateur avec un
-  message propre, ou **chunker** le compound en lots imbriqués pour supporter
-  les listes larges (en attendant `In`).
+- **Plafond `SQLITE_MAX_COMPOUND_SELECT` (défaut 500).** ✅ *Message propre fait* :
+  `combine` rejette désormais un `And`/`Or` de plus de
+  `MAX_COMBINATOR_OPERANDS = 500` opérandes avec une erreur claire (« a single
+  'and'/'or' may have at most 500 operands… nest or decompose it »), au lieu de
+  l'erreur cryptique de SQLite (test `test_wide_combinator_is_rejected_with_clear_message`
+  vérifie aussi que 500 pile s'exécute). ⏳ *Reste* : pour **supporter** les
+  listes larges plutôt que les rejeter, **chunker** le compound en lots
+  imbriqués (≤ 500 par niveau) — ou, mieux, l'opérateur `In` natif ci-dessus.
 - **Timeout d'exécution.** La borne de nœuds ne couvre que le coût de
   *compilation* ; une requête petite mais lente (`Matches` regex sur des
   millions de lignes, `->*` sur tout le repo — cf. §7) n'est pas bornée en

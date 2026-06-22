@@ -53,6 +53,14 @@ const NUM_SENTINEL: &str = "-9e99";
 /// docs/review-followups.md).
 pub const MAX_QUERY_NODES: usize = 2000;
 
+/// Maximum number of operands in a single `And`/`Or`. Each operand becomes one
+/// term of a SQLite compound `SELECT` (`UNION`/`INTERSECT`), bounded by
+/// `SQLITE_MAX_COMPOUND_SELECT` (default 500); beyond it SQLite fails the whole
+/// statement with an opaque "too many terms in compound SELECT" error, so we
+/// reject early with a clear message. (Nest or decompose, or use a future
+/// native `In` operator — see docs/review-followups.md §8.)
+pub const MAX_COMBINATOR_OPERANDS: usize = 500;
+
 /// Total number of nodes in a query tree, counting boolean operands and follow
 /// sub-conditions. Recursion is bounded: the JSON deserializer caps query
 /// nesting depth, so a parsed `Query` is shallow enough to walk safely.
@@ -666,6 +674,13 @@ impl<'a> Compiler<'a> {
     fn combine(&mut self, operands: &[Query], set_op: &str) -> Result<String, ApiError> {
         if operands.is_empty() {
             return Err(ApiError::bad_request("'and'/'or' need at least one operand"));
+        }
+        if operands.len() > MAX_COMBINATOR_OPERANDS {
+            return Err(ApiError::bad_request(format!(
+                "a single 'and'/'or' may have at most {MAX_COMBINATOR_OPERANDS} operands \
+                 (got {}); nest or decompose it",
+                operands.len()
+            )));
         }
         let mut parts = Vec::with_capacity(operands.len());
         for operand in operands {
