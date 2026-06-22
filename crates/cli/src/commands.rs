@@ -246,25 +246,27 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
             println!("1");
         }
         Target::Predicate(query) => {
-            let resp = ctx.client.post(&format!("{base}/query"), &json!({"query": query}))?;
-            let uuids: Vec<String> = resp
-                .as_array()
-                .map(|list| {
-                    list.iter().filter_map(|u| u.as_str().map(str::to_string)).collect()
-                })
-                .unwrap_or_default();
-            if uuids.is_empty() {
-                println!("0");
-                return Ok(0);
+            if !force {
+                // Count for the prompt via COUNT(*) (limit+count), without
+                // loading every UUID.
+                let resp = ctx.client.post(
+                    &format!("{base}/query"),
+                    &json!({"query": query, "limit": 1, "count": true}),
+                )?;
+                let matched = resp["total"].as_u64().unwrap_or(0);
+                if matched == 0 {
+                    println!("0");
+                    return Ok(0);
+                }
+                if !confirm(&format!("Delete {matched} metarecords? [y/N] "))? {
+                    eprintln!("aborted");
+                    return Ok(1);
+                }
             }
-            if !force && !confirm(&format!("Delete {} metarecords? [y/N] ", uuids.len()))? {
-                eprintln!("aborted");
-                return Ok(1);
-            }
-            for uuid in &uuids {
-                ctx.client.request("DELETE", &format!("{base}/metarecords/{uuid}"), &[], None)?;
-            }
-            println!("{}", uuids.len());
+            // One atomic request: the daemon selects and deletes in a single
+            // revision (no client-side TOCTOU, no partial deletion).
+            let resp = ctx.client.post(&format!("{base}/delete"), &json!({"query": query}))?;
+            println!("{}", resp["deleted"].as_u64().unwrap_or(0));
         }
     }
     Ok(0)

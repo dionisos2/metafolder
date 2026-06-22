@@ -46,6 +46,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/tree/resolve", post(tree_resolve))
         .route("/repos/:repo/set", post(batch_set))
+        .route("/repos/:repo/delete", post(delete_by_query))
         .route("/repos/:repo/log", get(get_log))
         .route("/repos/:repo/log/since", get(get_log_since))
         .route(
@@ -1408,6 +1409,41 @@ async fn batch_set(
         }
         writer.commit()?;
         Ok(Json(json!({"updated": uuids.len()})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct QueryDeleteBody {
+    query: MetaQuery,
+}
+
+/// `POST /repos/:repo/delete` — deletes every metarecord matching `query` in a
+/// single transaction (one revision). Atomic and free of the client-side
+/// TOCTOU of selecting then deleting one-by-one over HTTP.
+async fn delete_by_query(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<QueryDeleteBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let (uuids, _) =
+            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+        drop(cache);
+
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        for uuid in &uuids {
+            writer.delete_metarecord(*uuid)?;
+        }
+        writer.commit()?;
+        // Deletions remove tree nodes arbitrarily: drop the cache.
+        repo_state.lock_cache().clear();
+        Ok(Json(json!({"deleted": uuids.len()})))
     })
     .await
 }

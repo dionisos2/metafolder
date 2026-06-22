@@ -537,6 +537,10 @@ Deletes the single field row identified by =field_id= (as shown by
 Deletes the matching metarecords (metadata and all fields). Prints the number of
 deleted metarecords. Asks for confirmation when the target is a predicate, unless
 =--force= is passed (same convention as =mf prune=; unambiguous here because
-=mf delete= removes whole metarecords and never writes =mfr_*= fields).
+=mf delete= removes whole metarecords and never writes =mfr_*= fields). For a
+predicate, the deletion goes through the atomic =POST /repos/:repo/delete=
+endpoint (one server-side transaction); the confirmation count is obtained via a
+=COUNT(*)= query (=count= + =limit=), so the client never materialises every
+matching UUID.
 
 * Open questions

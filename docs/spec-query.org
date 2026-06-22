@@ -187,6 +187,26 @@ Writing a protected field name without =force= returns =400=. See [[*Protected f
 
 Response body: ={"updated": <count>}=
 
+*** =POST /repos/:repo_uuid/delete= (Delete by query)
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/delete
+#+END_SRC
+
+Runs a query server-side and deletes every matching metarecord in a single
+transaction (one revision, rollback-able as a unit). Avoids the client-side
+select-then-delete-one-by-one pattern, which is non-atomic (a mid-way failure
+leaves a partial deletion) and racy (the match set can change between the
+client's count and its deletes). Whole metarecords are removed; =mfr_*= fields
+are never written.
+
+Request body:
+#+BEGIN_SRC json
+{ "query": <Query> }
+#+END_SRC
+
+Response body: ={"deleted": <count>}=
+
 * CLI
 
 ** Query DSL

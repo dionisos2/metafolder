@@ -215,6 +215,50 @@ async fn test_query_count_reports_the_full_total() {
 }
 
 #[tokio::test]
+async fn test_delete_by_query() {
+    let (app, repo, _root) = setup("delete_query").await;
+    for genre in ["jazz", "jazz", "rock"] {
+        create(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": genre}}]),
+        )
+        .await;
+    }
+
+    let revisions = |body: &serde_json::Value| body["revisions"].as_array().unwrap().len();
+    let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    let revs_before = revisions(&before);
+
+    // Atomic predicate delete: one request, one revision, returns the count.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/delete"),
+        Some(json!({
+            "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "delete failed: {body}");
+    assert_eq!(body, json!({"deleted": 2}));
+
+    // Only the non-matching metarecord remains.
+    let (_, left) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "genre"}})),
+    )
+    .await;
+    assert_eq!(left.as_array().unwrap().len(), 1);
+
+    // The whole delete is a single revision (atomic, rollback-able as a unit).
+    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(revisions(&after) - revs_before, 1, "bulk delete must be one revision");
+}
+
+#[tokio::test]
 async fn test_batch_set() {
     let (app, repo, root) = setup("set").await;
     for genre in ["jazz", "jazz", "rock"] {
