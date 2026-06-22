@@ -200,10 +200,10 @@ enum Command {
         /// Show at most N revisions (or operations with --ops); default 20
         #[arg(long = "limit", short = 'n')]
         limit: Option<usize>,
-        /// Only revisions with timestamp ≥ T (ISO-8601 or Unix ms)
+        /// Only revisions with timestamp ≥ T (ISO-8601, or @<unix-ms> for raw milliseconds)
         #[arg(long)]
         since: Option<String>,
-        /// Only revisions with timestamp ≤ T (ISO-8601 or Unix ms)
+        /// Only revisions with timestamp ≤ T (ISO-8601, or @<unix-ms> for raw milliseconds)
         #[arg(long)]
         until: Option<String>,
         /// Remove the default limit of 20
@@ -219,7 +219,7 @@ enum Command {
         /// Target operation by id
         #[arg(long)]
         id: Option<i64>,
-        /// Target by revision timestamp (ISO-8601 or Unix ms)
+        /// Target by revision timestamp (ISO-8601, or @<unix-ms> for raw milliseconds)
         #[arg(long)]
         timestamp: Option<String>,
         /// Policy when the file is present: apply|skip|abort|ask (default apply)
@@ -360,7 +360,7 @@ struct TargetOpts {
     /// Target operation by id
     #[arg(long)]
     id: Option<i64>,
-    /// Most recent operation whose revision timestamp ≤ T (ISO-8601 or Unix ms)
+    /// Most recent operation whose revision timestamp ≤ T (ISO-8601, or @<unix-ms> for raw milliseconds)
     #[arg(long)]
     timestamp: Option<String>,
 }

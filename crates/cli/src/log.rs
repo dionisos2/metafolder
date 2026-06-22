@@ -21,7 +21,7 @@ pub struct TargetArgs {
     /// Positional label (`mf rollback <label>`).
     pub label: Option<String>,
     pub id: Option<i64>,
-    /// `--timestamp` accepts Unix ms or ISO-8601.
+    /// `--timestamp` accepts ISO-8601 (bare), or `@<unix-ms>` for raw ms.
     pub timestamp: Option<String>,
 }
 
@@ -708,13 +708,24 @@ pub fn confirm(prompt: &str) -> Result<bool, CliError> {
 
 /// Parses a timestamp given as Unix milliseconds or an ISO-8601 UTC datetime
 /// (`YYYY-MM-DDTHH:MM:SS[Z]`, also accepting a space separator) into Unix ms.
+/// Parses a `--since`/`--until`/`--timestamp` value. Two explicit forms, so
+/// the meaning never depends on the magnitude of the number:
+/// - bare → ISO-8601 (`2017`, `2017-03`, `2017-03-15T10:00`) — a year is the
+///   year, not that many milliseconds;
+/// - `@<n>` → raw Unix milliseconds (mirrors the DSL's `@<ms>` literal).
 fn parse_timestamp(s: &str) -> Result<i64, CliError> {
     let s = s.trim();
-    if let Ok(ms) = s.parse::<i64>() {
-        return Ok(ms);
+    if let Some(raw) = s.strip_prefix('@') {
+        return raw.trim().parse::<i64>().map_err(|_| {
+            CliError::Usage(format!("invalid raw timestamp '{s}' (expected '@<unix-ms>')"))
+        });
     }
-    date::iso_to_ms(s)
-        .ok_or_else(|| CliError::Usage(format!("invalid timestamp '{s}' (use Unix ms or ISO-8601)")))
+    date::iso_to_ms(s).ok_or_else(|| {
+        CliError::Usage(format!(
+            "invalid timestamp '{s}' (use ISO-8601 like 2017 or 2017-03-15T10:00, \
+             or '@<unix-ms>' for raw milliseconds)"
+        ))
+    })
 }
 
 /// `YYYY-MM-DD HH:MM` (UTC) from Unix ms.
@@ -732,6 +743,24 @@ fn fmt_second(ms: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_timestamp_is_iso_by_default_and_at_for_raw_ms() {
+        // Bare value → ISO: a 4-digit year means the *year*, not that many ms.
+        assert_eq!(parse_timestamp("2017").unwrap(), date::iso_to_ms("2017").unwrap());
+        assert_eq!(parse_timestamp("2021-03-15").unwrap(), date::iso_to_ms("2021-03-15").unwrap());
+        assert_ne!(parse_timestamp("2017").unwrap(), 2017, "must not be 2017 ms");
+
+        // `@<n>` → explicit raw Unix milliseconds (mirrors the DSL's `@<ms>`).
+        assert_eq!(parse_timestamp("@1500000000000").unwrap(), 1_500_000_000_000);
+        assert_eq!(parse_timestamp("@0").unwrap(), 0);
+        assert_eq!(parse_timestamp("@-1000").unwrap(), -1000);
+
+        // A bare number that is not a valid date is rejected — raw ms needs `@`.
+        assert!(parse_timestamp("1500000000000").is_err());
+        assert!(parse_timestamp("@notanumber").is_err());
+        assert!(parse_timestamp("not-a-date").is_err());
+    }
 
     fn move_op(from: &str, to: &str) -> Json {
         json!({"op_type": "move_file", "from": from, "to": to})

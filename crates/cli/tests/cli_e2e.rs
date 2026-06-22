@@ -936,7 +936,7 @@ fn test_prune_linearize_with_no_branches_removes_nothing() {
     // A far-future timestamp resolves to HEAD; with no side branches,
     // linearize removes nothing.
     let out = mf(&[
-        "--repo", &repo, "prune", "linearize", "--timestamp", "9999999999999", "--force",
+        "--repo", &repo, "prune", "linearize", "--timestamp", "@9999999999999", "--force",
     ]);
     assert_ok(&out);
     assert!(out.stdout.contains("Pruned 0 operations"), "stdout: {}", out.stdout);
@@ -952,7 +952,7 @@ fn test_prune_before_makes_target_the_root() {
 
     // Prune before HEAD: every older operation is removed.
     let out = mf(&[
-        "--repo", &repo, "prune", "before", "--timestamp", "9999999999999", "--force",
+        "--repo", &repo, "prune", "before", "--timestamp", "@9999999999999", "--force",
     ]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("Pruned "), "stdout: {}", out.stdout);
@@ -1012,7 +1012,7 @@ fn test_prune_without_force_aborts_on_no() {
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
     let out = mf_full(
-        &["--repo", &repo, "prune", "before", "--timestamp", "9999999999999"],
+        &["--repo", &repo, "prune", "before", "--timestamp", "@9999999999999"],
         Some("n\n"),
         &[],
         true,

@@ -776,8 +776,8 @@ converging back into its parent with a =/= connector:
 | =--ops=                | Expand each revision to show its individual operations                         |
 | =--metarecord <uuid>=       | Show only revisions/ops that affected this metarecord (passes =metarecord_uuid=)         |
 | =--limit N= / =-n N=   | Show at most N revisions (or operations with =--ops=); default: 20             |
-| =--since T=            | Include only revisions with timestamp ≥ T (ISO-8601 or Unix ms)               |
-| =--until T=            | Include only revisions with timestamp ≤ T (ISO-8601 or Unix ms)               |
+| =--since T=            | Include only revisions with timestamp ≥ T (ISO-8601, or @<unix-ms>)               |
+| =--until T=            | Include only revisions with timestamp ≤ T (ISO-8601, or @<unix-ms>)               |
 | =--all=                | Remove the default limit of 20 (equivalent to =--limit 0=)                    |
 
 =--tree= / =--graph= and =--limit= / =--since= / =--until= can be combined.
@@ -850,7 +850,7 @@ Target forms:
 - =<label>=: most recent revision with this label on the HEAD ancestry path
 - =--id N=: operation by id
 - =--timestamp T=: most recent operation on the HEAD ancestry path whose
-  revision timestamp ≤ T (Unix ms)
+  revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
 
 *** Behaviour
 
@@ -912,7 +912,7 @@ Target forms (same as =mf rollback=):
 - =<label>=: most recent revision with this label on the HEAD ancestry path
 - =--id N=: operation by id
 - =--timestamp T=: most recent operation on the HEAD ancestry path whose
-  revision timestamp ≤ T (Unix ms)
+  revision timestamp ≤ T (ISO-8601, or @<unix-ms>)
 
 Both sub-commands ask for confirmation before calling the daemon unless
 =--force= is passed.
