@@ -14,6 +14,7 @@ pub use metafolder_core::date::now_ms;
 use metafolder_core::metarecord::{Field, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
+use crate::error::DomainError;
 
 /// Maximum depth of a TreeRef chain (spec-main invariant).
 pub const MAX_TREE_DEPTH: usize = 1000;
@@ -191,7 +192,7 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
         })
         .collect::<Result<Vec<OpRow>>>()?;
     if ops.is_empty() {
-        anyhow::bail!("operation {from} not found");
+        return Err(DomainError::NotFound(format!("operation {from} not found")).into());
     }
     let mut seen = HashSet::new();
     for op in &ops {
@@ -297,7 +298,8 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
     let head = get_head(conn)?;
     match target {
         Target::Id(id) => {
-            get_op(conn, *id)?.with_context(|| format!("operation {id} not found"))?;
+            get_op(conn, *id)?
+                .ok_or_else(|| DomainError::NotFound(format!("operation {id} not found")))?;
             Ok(Some(*id))
         }
         Target::Timestamp(t) => {
@@ -323,7 +325,10 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
         Target::Label(label) => {
             use rusqlite::OptionalExtension as _;
             let Some(head) = head else {
-                anyhow::bail!("label '{label}' not found (empty history)");
+                return Err(DomainError::NotFound(format!(
+                    "label '{label}' not found (empty history)"
+                ))
+                .into());
             };
             // Walking from HEAD down, the first op of a matching revision is
             // the last operation of the most recent matching revision.
@@ -338,9 +343,12 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
                 ))?
                 .query_row(params![head, cycle_cap(conn)?, label], |r| r.get(0))
                 .optional()?;
-            found
-                .map(Some)
-                .with_context(|| format!("label '{label}' not found on the HEAD ancestry path"))
+            found.map(Some).ok_or_else(|| {
+                DomainError::NotFound(format!(
+                    "label '{label}' not found on the HEAD ancestry path"
+                ))
+                .into()
+            })
         }
         Target::PrevRevision => {
             let Some(head) = head else {
@@ -951,7 +959,7 @@ impl<'c> Writer<'c> {
     /// Deletes a metarecord and all its rows.
     pub fn delete_metarecord(&mut self, uuid: Uuid) -> Result<()> {
         let version = db::get_version(&self.tx, uuid)?
-            .with_context(|| format!("Metarecord not found: {uuid}"))?;
+            .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         let before = db::get_field_rows(&self.tx, uuid)?;
         // CASCADE removes field and metarecord_db rows.
         self.tx
@@ -1060,7 +1068,7 @@ impl<'c> Writer<'c> {
     /// Increments `metadata.version` and returns the value before the bump.
     fn bump_version(&self, uuid: Uuid) -> Result<u64> {
         let before = db::get_version(&self.tx, uuid)?
-            .with_context(|| format!("Metarecord not found: {uuid}"))?;
+            .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         self.tx
             .prepare_cached("UPDATE metarecord SET version = version + 1 WHERE uuid = ?1")?
             .execute(params![db::uuid_to_bytes(uuid)])?;
@@ -1072,7 +1080,10 @@ impl<'c> Writer<'c> {
         db::get_field_rows(&self.tx, uuid)?
             .into_iter()
             .find(|r| r.id == field_id)
-            .with_context(|| format!("Field {field_id} not found on metarecord {uuid}"))
+            .ok_or_else(|| {
+                DomainError::NotFound(format!("Field {field_id} not found on metarecord {uuid}"))
+                    .into()
+            })
     }
 
     /// Buffers one operation; the log rows are inserted in bulk, in batches

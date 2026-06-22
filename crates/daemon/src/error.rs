@@ -62,15 +62,40 @@ impl IntoResponse for ApiError {
     }
 }
 
-/// Classifies internal errors by message. The matched fragments are owned by
-/// this crate (db/log/repo modules), so the mapping stays in sync with them.
+/// A domain error carrying its intended HTTP classification by *type* rather
+/// than by message text. Producers return these (they convert into
+/// `anyhow::Error` through `?`), so the status survives a message rename and is
+/// not derived from substring-matching a message that may contain user data.
+#[derive(Debug)]
+pub enum DomainError {
+    /// 404 — the addressed entity/operation/label does not exist.
+    NotFound(String),
+}
+
+impl std::fmt::Display for DomainError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DomainError::NotFound(m) => f.write_str(m),
+        }
+    }
+}
+
+impl std::error::Error for DomainError {}
+
+/// Classifies internal errors into HTTP statuses. Typed [`DomainError`]s are
+/// matched by type; the remaining producers (still using bare `anyhow`
+/// messages) are matched by message fragment — those fragments are distinctive
+/// phrases owned by this crate (db/log/repo), so the mapping stays in sync.
 impl From<anyhow::Error> for ApiError {
     fn from(err: anyhow::Error) -> Self {
+        if let Some(domain) = err.downcast_ref::<DomainError>() {
+            return match domain {
+                DomainError::NotFound(_) => ApiError::not_found(domain.to_string()),
+            };
+        }
         let message = format!("{err:#}");
         let lower = message.to_lowercase();
-        if lower.contains("not found") {
-            ApiError::not_found(message)
-        } else if lower.contains("already initialised") {
+        if lower.contains("already initialised") {
             ApiError::conflict(message)
         } else if lower.contains("cannot resolve path")
             || lower.contains("cycle")
@@ -83,6 +108,46 @@ impl From<anyhow::Error> for ApiError {
         } else {
             ApiError::internal(message)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_not_found_maps_to_404_regardless_of_text() {
+        // By type, not by the words in the message (no "not found" needed).
+        let err: anyhow::Error = DomainError::NotFound("entity 7 is absent".into()).into();
+        let api = ApiError::from(err);
+        assert_eq!(api.status, StatusCode::NOT_FOUND);
+        assert_eq!(api.message, "entity 7 is absent");
+    }
+
+    #[test]
+    fn typed_not_found_survives_propagation_through_anyhow() {
+        // A function returning anyhow::Result that propagates a DomainError via `?`.
+        fn inner() -> anyhow::Result<()> {
+            Err(DomainError::NotFound("gone".into()))?;
+            Ok(())
+        }
+        assert_eq!(ApiError::from(inner().unwrap_err()).status, StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn distinctive_fragments_still_classify_by_message() {
+        assert_eq!(
+            ApiError::from(anyhow::anyhow!("already initialised at /x")).status,
+            StatusCode::CONFLICT
+        );
+        assert_eq!(
+            ApiError::from(anyhow::anyhow!("TreeRef write would create a cycle")).status,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::from(anyhow::anyhow!("something unexpected")).status,
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 }
 
