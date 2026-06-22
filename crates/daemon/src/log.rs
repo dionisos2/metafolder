@@ -793,13 +793,28 @@ pub fn prune(
     let revisions_after: i64 =
         conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
 
-    // Return the freed pages to the filesystem: the deleted snapshots would
-    // otherwise keep the file at its high-water size (spec-event-log
-    // "Log pruning").
-    conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
-        .context("Failed to compact the database after prune")?;
+    // Return the freed pages to the filesystem (best-effort): the deleted
+    // snapshots would otherwise keep the file at its high-water size
+    // (spec-event-log "Log pruning"). The deletion above is already committed,
+    // so a VACUUM failure (no room for its temp copy, a read-only filesystem…)
+    // must not turn a successful prune into an error — it only defers the
+    // space reclaim to a later prune.
+    compact_best_effort(conn);
 
     Ok((to_delete.len(), (revisions_before - revisions_after) as usize))
+}
+
+/// Compacts the database to release freed pages, best-effort. Returns whether
+/// it succeeded; a failure is logged, not propagated, because the caller's
+/// write is already committed (see [`prune`]).
+fn compact_best_effort(conn: &rusqlite::Connection) -> bool {
+    match conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);") {
+        Ok(()) => true,
+        Err(e) => {
+            eprintln!("[prune] warning: could not compact the database after prune: {e}");
+            false
+        }
+    }
 }
 
 /// Multi-row INSERT in chunks. `insert_sql` is the statement up to (and
@@ -1219,5 +1234,24 @@ impl<'c> Writer<'c> {
             bail!("TreeRef depth exceeds {MAX_TREE_DEPTH}");
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compact_best_effort_swallows_a_vacuum_failure() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        // Idle connection: VACUUM runs.
+        assert!(compact_best_effort(&conn), "VACUUM should succeed on an idle connection");
+
+        // VACUUM cannot run inside an open transaction; the failure must be
+        // swallowed (returned as false), not propagated — a committed prune is
+        // never failed by its best-effort compaction.
+        conn.execute_batch("BEGIN").unwrap();
+        assert!(!compact_best_effort(&conn), "a VACUUM failure must be reported, not raised");
+        conn.execute_batch("ROLLBACK").unwrap();
     }
 }
