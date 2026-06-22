@@ -487,11 +487,15 @@ Prints all metarecord UUIDs of the repository, one per line. Calls
 ** =mf get <query|uuid>=
 
 Prints the full metadata objects of the matching metarecords as a JSON array
-(including field =id=s, needed by =mf unset=).
+(including field =id=s, needed by =mf unset=). For a predicate target the
+results are fetched with internal pagination (never a single unbounded request);
+=--sort= and =--limit= apply (they are ignored for a UUID target).
 
-| Flag             | Description                                       |
-|------------------+---------------------------------------------------|
-| =--fields a,b=   | Only include the listed field names               |
+| Flag                  | Description                                            |
+|-----------------------+-------------------------------------------------------|
+| =--fields a,b=        | Only include the listed field names                   |
+| =--sort field[:dir]=  | Sort key (=asc=/=desc=); repeatable (predicate only)  |
+| =--limit N=           | Stop after N metarecords (predicate only)             |
 
 ** =mf create --field <spec> [--field <spec> ...]=
 

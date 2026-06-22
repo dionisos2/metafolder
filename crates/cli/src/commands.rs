@@ -149,10 +149,17 @@ pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
     Ok(0)
 }
 
-pub fn get(ctx: &Ctx, target: &str, fields: Option<&[String]>) -> Result<i32, CliError> {
+pub fn get(
+    ctx: &Ctx,
+    target: &str,
+    fields: Option<&[String]>,
+    sort: &[String],
+    limit: Option<usize>,
+) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let metarecords = match parse_target(target)? {
         Target::Entry(uuid) => {
+            // --sort / --limit do not apply to a single metarecord.
             let mut metarecord =
                 ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
             if let (Some(filter), Some(rows)) = (fields, metarecord["fields"].as_array_mut()) {
@@ -163,12 +170,38 @@ pub fn get(ctx: &Ctx, target: &str, fields: Option<&[String]>) -> Result<i32, Cl
             json!([metarecord])
         }
         Target::Predicate(query) => {
+            let sort = parse_sort(sort)?;
             let select = match fields {
                 Some(list) => json!(list),
                 None => json!("*"),
             };
-            let body = json!({"query": query, "select": select});
-            ctx.client.post(&format!("{base}/query"), &body)?
+            // Paginate internally (like `mf query`): never a single unbounded
+            // request. `--limit` caps the total; without it, all matches are
+            // fetched page by page.
+            let mut objects = Vec::new();
+            let mut remaining = limit;
+            let mut cursor: Option<String> = None;
+            loop {
+                let page = remaining.map_or(PAGE_SIZE, |r| r.min(PAGE_SIZE));
+                if page == 0 {
+                    break;
+                }
+                let mut body = json!({"query": query, "select": select, "sort": sort, "limit": page});
+                if let Some(c) = &cursor {
+                    body["cursor"] = json!(c);
+                }
+                let resp = ctx.client.post(&format!("{base}/query"), &body)?;
+                let results = resp["results"].as_array().cloned().unwrap_or_default();
+                objects.extend(results.iter().cloned());
+                if let Some(r) = remaining.as_mut() {
+                    *r = r.saturating_sub(results.len());
+                }
+                match resp["next_cursor"].as_str() {
+                    Some(c) => cursor = Some(c.to_string()),
+                    None => break,
+                }
+            }
+            json!(objects)
         }
     };
     print_pretty(&metarecords);

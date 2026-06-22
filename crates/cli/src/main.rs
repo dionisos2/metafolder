@@ -61,6 +61,12 @@ enum Command {
         /// Only include the listed field names (comma-separated)
         #[arg(long, value_delimiter = ',')]
         fields: Option<Vec<String>>,
+        /// Sort key field[:asc|desc]; repeatable (predicate targets only)
+        #[arg(long = "sort")]
+        sort: Vec<String>,
+        /// Stop after N metarecords (predicate targets only)
+        #[arg(long)]
+        limit: Option<usize>,
     },
     /// Create a metarecord with the given fields and print its UUID
     Create {
@@ -418,7 +424,9 @@ fn main() {
         }
         Command::Repos => commands::repos(&ctx),
         Command::List { limit } => commands::list(&ctx, limit),
-        Command::Get { target, fields } => commands::get(&ctx, &target, fields.as_deref()),
+        Command::Get { target, fields, sort, limit } => {
+            commands::get(&ctx, &target, fields.as_deref(), &sort, limit)
+        }
         Command::Create { fields, force } => commands::create(&ctx, &fields, force),
         Command::Set { target, spec, force } => commands::set(&ctx, &target, &spec, force),
         Command::Add { uuid, spec, force } => commands::add(&ctx, &uuid, &spec, force),

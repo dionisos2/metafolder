@@ -300,6 +300,34 @@ fn test_get_with_predicate() {
 }
 
 #[test]
+fn test_get_predicate_with_limit_and_sort() {
+    let (repo, _) = init_repo("get_limit_sort");
+    create_metarecord(&repo, &["rating:int=1"]);
+    create_metarecord(&repo, &["rating:int=2"]);
+    create_metarecord(&repo, &["rating:int=3"]);
+
+    let out = mf(&["--repo", &repo, "get", "rating >= 1", "--sort", "rating:desc", "--limit", "2"]);
+    assert_ok(&out);
+    let list: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
+    let arr = list.as_array().unwrap();
+    assert_eq!(arr.len(), 2, "--limit must cap the result at 2");
+
+    let rating = |m: &serde_json::Value| -> i64 {
+        m["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == "rating")
+            .unwrap()["value"]["value"]
+            .as_i64()
+            .unwrap()
+    };
+    // --sort rating:desc → the two highest, in order.
+    assert_eq!(rating(&arr[0]), 3);
+    assert_eq!(rating(&arr[1]), 2);
+}
+
+#[test]
 fn test_list_prints_uuids_one_per_line() {
     let (repo, _) = init_repo("list");
     let a = create_metarecord(&repo, &["x:int=1"]);
