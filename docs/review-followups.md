@@ -54,3 +54,74 @@ vide ou un `Nothing`. Les quatre politiques (`apply|skip|abort|ask`) restent
 disponibles dans les deux situations. Implémenté dans `cli/src/log.rs`
 (`decide_move` ne tente le `mv` que si le fichier est présent), spec mise à jour
 (`spec-event-log.org` : section « skip » + « Policies for move_file »).
+
+## 7. `FollowsTransitive` : coût O(taille du sous-arbre) — ⏳ DIFFÉRÉ (gros chantier)
+
+**Constat.** `Query::FollowsTransitive` (l'opérateur DSL `->*`, « tous les
+descendants de ce nœud dans la forêt TreeRef ») est compilé de façon *hybride*
+(`crates/daemon/src/query_exec.rs`, nœud `FollowsTransitive`) :
+
+1. la **racine** est résolue via le tree cache (`resolve_path`, fallback DB) —
+   bon marché ;
+2. les **descendants** sont collectés par `TreeCache::descendants`
+   (`tree_cache.rs`), qui **marche la base** en BFS (`db::tree_children`, une
+   requête SQL par nœud) — **pas l'arène mémoire** ;
+3. le `Vec<Uuid>` obtenu est **inliné en littéraux** dans le SQL :
+   `SELECT column1 AS uuid FROM (VALUES (x'…'),(x'…'),…)`.
+
+Deux coûts, tous deux **linéaires en la taille du sous-arbre** (non bornée par
+`max_nodes` du cache, c'est la taille réelle en DB) :
+
+- **(a) Texte SQL géant.** Chaque littéral ≈ 38 octets ⇒ ~19 Mo de SQL pour
+  500k descendants (≈38 Mo à 1M), construit en `String` puis parsé par SQLite.
+  Risque de buter sur `SQLITE_MAX_SQL_LENGTH` (défaut ~1 Go) sur de très gros
+  sous-arbres, coût mémoire/CPU lourd bien avant.
+- **(b) N requêtes `tree_children`.** Un aller-retour SQLite par nœud du
+  sous-arbre.
+
+**Le vrai problème de fond (à régler plus tard).** On **matérialise tout le
+sous-arbre** alors qu'on ne veut en général que la **page** demandée (~100
+résultats triés). Le coût devrait dépendre de la taille de page, pas du dossier.
+L'approche actuelle « matérialiser puis filtrer/paginer en aval » devra
+probablement être revue vers une **intégration dans la requête paginée/triée**
+(push-down). Limite inhérente à garder en tête : dès qu'on **trie par un
+champ**, il faut de toute façon l'ensemble complet des candidats pour choisir le
+top-N — la linéarité n'est totalement évitable que pour les requêtes **sans
+tri** (où une CTE en flux peut s'arrêter tôt sous `LIMIT`).
+
+**Pourquoi le cache ne peut pas servir tel quel** (utile pour le design futur).
+La map `children` d'un nœud en cache est **partielle** : `resolve_path` n'insère
+que les enfants rencontrés sur un chemin déjà résolu, et un *miss* sur un enfant
+signifie « pas en cache », **pas** « n'existe pas ». Il n'y a **aucun marqueur
+« tous les enfants chargés »**. Énumérer les descendants depuis l'arène
+raterait donc silencieusement des nœuds → résultats faux. Seule la DB est
+autoritaire sur la liste complète des enfants.
+
+**Pistes (par ordre de complétude) :**
+
+| Approche | Corrige (a) littéraux | Corrige (b) N requêtes | Coût |
+|---|---|---|---|
+| `carray` / `rarray(?)` (feature rusqlite `array`) | ✅ | ❌ | feature + variante `SqlValue::Array` + `array::load_module` |
+| table TEMP (insert par lots) | ✅ | ❌ | gestion du cycle de vie (DROP après exécution, y compris sur erreur) |
+| **CTE récursive** (`WITH RECURSIVE … JOIN field …`) | ✅ | ✅ | refonte du nœud en SQL pur ; racine = param (cas `Path`) ou sous-CTE (cas `Condition`) ; `UNION` (pas `ALL`) pour dédup + anti-cycle |
+
+La CTE récursive est la plus complète (corrige (a) **et** (b), pas de
+matérialisation Rust) et reste compatible avec les deux formes de racine
+(`Path` / `Condition`). C'est elle qu'il faudra viser si on intègre la
+traversée dans la requête paginée.
+
+**Idée utilisateur : compteur d'enfants dénormalisé.** Stocker en DB le nombre
+d'enfants par `(field_name, parent_uuid)`, incrémenté/décrémenté à chaque
+ajout/retrait de `tree_ref`. Bénéfices : éviter la requête `tree_children` pour
+les **feuilles** (compteur = 0 — souvent la majorité des nœuds), et permettre au
+cache de **détecter la complétude** (taille de la map `children` == compteur DB
+⇒ l'arène a tous les enfants ⇒ énumération sans DB). Limites/coûts à peser :
+ne corrige **pas** la linéarité de fond (on visite quand même chaque nœud) ; et
+la maintenance du compteur doit passer par le `log::Writer` (chaque write
+TreeRef) **et** être restaurée exactement par le rollback (charge de cohérence
+non triviale) ; la détection de complétude côté cache devrait aussi invalider le
+flag « complet » à l'éviction d'un enfant.
+
+**Pointeurs code :** `query_exec.rs` (nœud `FollowsTransitive`),
+`tree_cache.rs` (`descendants`, `resolve_path`), `db.rs` (`tree_children`).
+`docs/spec-query.org` pour la sémantique de `->*`.
