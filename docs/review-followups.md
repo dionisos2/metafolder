@@ -155,3 +155,46 @@ les requêtes réalistes sont très en-dessous. Tests : `query_exec` (unit
   millions de lignes, `->*` sur tout le repo — cf. §7) n'est pas bornée en
   *temps*. Piste : `progress_handler` SQLite (interrompt après N pas de VM) ou
   `Connection::interrupt()` depuis un watchdog après une deadline wall-clock.
+
+## 9. Link metarecords : écritures non « link-aware » — ⏳ DIFFÉRÉ (v2)
+
+**Contexte.** Un *link metarecord* est possédé par **plusieurs** repos (plusieurs
+lignes `metarecord_db` pour le même `metarecord_uuid`). C'est un concept **v2,
+non implémenté** : aujourd'hui chaque metarecord a un seul propriétaire et chaque
+repo est sa propre base, donc **aucune corruption actuelle**. Les **lectures**
+sont déjà link-aware (le CTE `_repo` de `query_exec` exige la propriété
+**exclusive**, `COUNT(*) = 1` → les links sont invisibles aux requêtes).
+
+**Constat (les écritures ne le sont pas).** Aucune opération d'écriture ne
+vérifie l'exclusivité de propriété ni « tous les repos propriétaires chargés » :
+
+- `log::Writer::delete_metarecord` : `DELETE FROM metarecord WHERE uuid = ?1` →
+  supprime **l'entité entière** (CASCADE efface **toutes** les lignes
+  `metarecord_db`, donc tous les copropriétaires).
+- `log::navigate`/`prune` (vers l'état vide) : le `SELECT` est cadré
+  `WHERE db_id = ?1`, mais le `DELETE` porte sur `metarecord` → efface aussi les
+  copropriétaires (c'est le **M4** de l'audit).
+- `set_field` / écritures de champ : opèrent sur le `uuid` sans contrôle de
+  propriété.
+
+Donc si un link existait, une suppression/rollback dans le repo A détruirait le
+metarecord partagé avec B, et une modif de champ s'appliquerait à la donnée
+partagée sans coordination.
+
+**Invariant voulu (à appliquer quand les links arrivent).** Aucune modification
+sur un link tant que **tous** les repos propriétaires ne sont pas chargés (pour
+que le changement soit cohérent/visible des deux côtés et géré par le daemon).
+Concrètement :
+- **suppression** cadrée par propriétaire : retirer la ligne `metarecord_db` du
+  repo courant ; ne supprimer l'entité `metarecord` que quand le **dernier**
+  propriétaire la retire ;
+- **modification** d'un metarecord partagé : refusée tant que les repos
+  propriétaires ne sont pas tous chargés (ou coordonnée entre les repos
+  chargés) ;
+- cohérent avec les lectures qui excluent déjà les links.
+
+Non implémentable maintenant : le modèle de stockage/sync des links est v2 et
+non défini ; un garde-fou serait du code mort (rien ne crée de link). À traiter
+lors de la conception des links (`docs/spec-sync.org`). **Pointeurs :**
+`log.rs` (`delete_metarecord`, `navigate`, `prune`), `query_exec.rs` (CTE
+`_repo`, le modèle d'exclusivité de référence), `db.rs` (`metarecord_db`).
