@@ -22,15 +22,21 @@ The daemon is a long-running background HTTP server that manages one or more
 metarecords are tracked in a local SQLite database. The daemon exposes a REST API
 consumed by the CLI and GUI.
 
-The daemon is local-only (binds to =127.0.0.1= by default) and handles no
-authentication; access control is left to the OS.
+The daemon is local-only (binds to =127.0.0.1= by default). It performs no
+*user* access control (single-user model), but it does gate every request with
+a per-session token that only a process able to read a user-only token file can
+supply (see [[file:spec-auth.org][spec-auth.org]]). This keeps web content
+running in the user's browser — which can reach =127.0.0.1= — out.
 
 ** Non-goals
 
 - No built-in remote protocol: the daemon is local-only and makes no network
   calls. Cross-machine synchronisation is handled at the CLI/script level (e.g.
   loading a remote repo over an SSH-mounted filesystem into the local daemon).
-- No authentication or multi-user access control.
+- No multi-user access control. A single local user is assumed; the only
+  authentication is the loopback session token of [[file:spec-auth.org][spec-auth.org]]
+  (which keeps non-token-bearing local processes, notably browser content, out
+  — it is not a user-to-user mechanism).
 - No conflict resolution between concurrent daemon instances on the same repo.
 
 ** Version scope

@@ -29,6 +29,7 @@ function setup() {
       wsId: 'ws-1',
       panelType: 'metarecord-list',
       guiServer: 'http://127.0.0.1:7524',
+      sessionToken: 'test-token',
       root: {} as ShadowRoot,
       visibilityGate,
     },

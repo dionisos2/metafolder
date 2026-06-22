@@ -26,6 +26,7 @@ export const store = $state({
   commands: [] as CommandDef[],
   panelTypes: [] as string[],
   guiPort: 7524,
+  sessionToken: '',
   pageSizes: {} as Record<string, number>,
   daemonUrl: '',
   daemonConnected: true,
@@ -108,6 +109,7 @@ export async function initStore() {
   store.commands = initial.commands;
   store.panelTypes = initial.panel_types;
   store.guiPort = initial.gui_port;
+  store.sessionToken = initial.session_token;
   store.pageSizes = initial.page_sizes;
   store.daemonUrl = initial.daemon_url;
   applyStyle(initial.style_css);

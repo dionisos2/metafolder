@@ -74,6 +74,33 @@ pub fn build(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
+/// The router with the session-token authentication layer (spec-auth): every
+/// request must carry `Authorization: Bearer <token>`. Used by the daemon
+/// binary; tests drive [`build`] directly (no network, no token).
+pub fn build_authenticated(state: Arc<AppState>, token: Arc<str>) -> Router {
+    build(state).layer(axum::middleware::from_fn_with_state(token, require_token))
+}
+
+/// Rejects requests whose bearer token does not match (constant-time).
+async fn require_token(
+    State(token): State<Arc<str>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let provided = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    let authorized = metafolder_core::auth::bearer_token(provided)
+        .map(|t| metafolder_core::auth::constant_time_eq(t, &token))
+        .unwrap_or(false);
+    if authorized {
+        next.run(request).await
+    } else {
+        ApiError::unauthorized("missing or invalid session token").into_response()
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn parse_uuid(s: &str) -> Result<Uuid, ApiError> {

@@ -123,6 +123,17 @@ on macOS, WebView2 on Windows. Media codec support in the =file= panel type
 therefore varies by platform; on Linux, H.264 may require GStreamer plugin
 packages (e.g. =gst-plugins-bad=, =gst-libav=).
 
+** Session-token runtime directory
+
+The loopback session tokens ([[file:spec-auth.org][spec-auth.org]]) live in a
+per-user runtime directory. On Unix this is =$XDG_RUNTIME_DIR/metafolder/=
+(typically =/run/user/<uid>/=, already =0700=) or, when =XDG_RUNTIME_DIR= is
+unset, a hardened =/tmp/metafolder-<uid>/= (created =0700=, refused if squatted
+or a symlink). On Windows, which has neither =XDG_RUNTIME_DIR=, uid, nor the
+=0600/0700= mode model, the tokens fall back to
+=%LOCALAPPDATA%\metafolder\= with a best-effort restriction; full Windows
+hardening is an open question (deferred with v1).
+
 * Daemon
 
 - Path conversion and case-sensitivity probing as described in

@@ -48,7 +48,14 @@ async fn main() {
         eprintln!("[daemon] Warning: {warning}");
     }
 
-    let app = routes::build(state);
+    let token = match metafolder_core::auth::ensure_token("daemon") {
+        Ok(token) => token,
+        Err(e) => {
+            eprintln!("[daemon] Cannot establish the session token: {e}");
+            std::process::exit(1);
+        }
+    };
+    let app = routes::build_authenticated(state, token.into());
 
     let addr = format!("127.0.0.1:{}", args.port);
     let listener = TcpListener::bind(&addr).await.expect("Failed to bind the listening port");

@@ -106,19 +106,22 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * image/poster load fall back to a type glyph <span> (see `fileTypeGlyph`).
  *
  * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (fallback for an
- * unknown type, default 📄), `glyphClass` (CSS class for the glyph span).
+ * unknown type, default 📄), `glyphClass` (CSS class for the glyph span),
+ * `token` (the session token appended as `?token=`, required for the protected
+ * `/fsraw` and `/thumbnail` routes — spec-auth).
  */
 export function thumbnail(guiServer, path, options = {}) {
-  const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '' } = options;
+  const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '', token = '' } = options;
   const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
   if (isDir) return glyph(dirGlyph);
   if (!path) return glyph(fileGlyph);
   const image = isThumbnailable(path);
   if (image || isVideoThumbnailable(path)) {
     const endpoint = image ? 'fsraw' : 'thumbnail';
+    const auth = token ? `&token=${encodeURIComponent(token)}` : '';
     return el('img', {
       loading: 'lazy',
-      src: `${guiServer}/${endpoint}?path=${encodeURIComponent(path)}`,
+      src: `${guiServer}/${endpoint}?path=${encodeURIComponent(path)}${auth}`,
       onerror: (event) => event.target.replaceWith(glyph(fileTypeGlyph(path, fileGlyph))),
     });
   }

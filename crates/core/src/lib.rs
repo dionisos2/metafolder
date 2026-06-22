@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod config;
 #[cfg(feature = "sync-config")]
 pub mod config_sync;

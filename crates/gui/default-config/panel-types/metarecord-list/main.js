@@ -289,7 +289,10 @@ export async function mount(root, metafolder) {
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
           },
-          thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], { glyphClass: 'glyph' }),
+          thumbnail(metafolder.guiServer, pathsOf(metarecord)[0], {
+            glyphClass: 'glyph',
+            token: metafolder.sessionToken,
+          }),
           el(
             'div',
             { class: 'name' },

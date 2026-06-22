@@ -2172,6 +2172,7 @@ name = "metafolder-bench"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "metafolder-core",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

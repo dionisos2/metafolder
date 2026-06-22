@@ -61,7 +61,10 @@ export async function mount(root, metafolder) {
   let detachDirScroll = null;
 
   function rawUrl(path) {
-    return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}`;
+    const auth = metafolder.sessionToken
+      ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
+      : '';
+    return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
   }
 
   function placeholder(text) {
@@ -246,8 +249,11 @@ export async function mount(root, metafolder) {
   // the full decode pipeline). Returns null when the probe is unreachable.
   async function probeFile(path) {
     try {
+      const auth = metafolder.sessionToken
+        ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
+        : '';
       const response = await fetch(
-        `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}`,
+        `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}${auth}`,
       );
       if (response.ok) return await response.json();
     } catch {
@@ -325,7 +331,11 @@ export async function mount(root, metafolder) {
         el(
           'span',
           { class: 'thumb' },
-          thumbnail(metafolder.guiServer, entry.path, { isDir: entry.is_dir, glyphClass: 'glyph' }),
+          thumbnail(metafolder.guiServer, entry.path, {
+            isDir: entry.is_dir,
+            glyphClass: 'glyph',
+            token: metafolder.sessionToken,
+          }),
         ),
         el('span', { class: 'name' }, entry.name),
       );

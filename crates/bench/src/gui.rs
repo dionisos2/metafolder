@@ -98,7 +98,12 @@ pub async fn run_on_repos(
     }
     println!("GUI ready.\n");
 
-    let gui = Gui { http: Client::new(), gui_url, daemon_url: daemon_url.to_string() };
+    let gui = Gui {
+        http: crate::authed_client(&gui_token()),
+        gui_url,
+        daemon_url: daemon_url.to_string(),
+        daemon_token: crate::daemon_token(),
+    };
     for (label, repo) in repos {
         println!("### GUI — {label} ({repo}) ###");
         if let Err(e) = run_scenarios(&gui, repo, scenarios).await {
@@ -255,17 +260,41 @@ fn gui_config_path() -> Option<PathBuf> {
 
 // ─── GUI client ────────────────────────────────────────────────────────────────
 
+/// The GUI session token, read from the token file and cached after the first
+/// success (spec-auth). Mirrors `crate::daemon_token`.
+fn gui_token() -> String {
+    static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(token) = TOKEN.get() {
+        return token.clone();
+    }
+    match metafolder_core::auth::read_token("gui") {
+        Ok(token) => {
+            let _ = TOKEN.set(token.clone());
+            token
+        }
+        Err(_) => String::new(),
+    }
+}
+
 struct Gui {
+    /// Carries the GUI token as a default header (for `/gui/*`); daemon calls
+    /// in `http_baseline` override it with the daemon token.
     http: Client,
     gui_url: String,
     daemon_url: String,
+    daemon_token: String,
 }
 
 impl Gui {
     /// Connects and confirms the GUI answers `GET /gui/status`. Returns
     /// `Ok(None)` when the GUI is simply not running (connection refused).
     async fn connect(gui_url: String, daemon_url: String) -> Result<Option<Gui>> {
-        let gui = Gui { http: Client::new(), gui_url, daemon_url };
+        let gui = Gui {
+            http: crate::authed_client(&gui_token()),
+            gui_url,
+            daemon_url,
+            daemon_token: crate::daemon_token(),
+        };
         match gui.http.get(format!("{}/gui/status", gui.gui_url)).send().await {
             Ok(resp) => {
                 resp.error_for_status().context("GUI status request failed")?;
@@ -419,14 +448,22 @@ impl Gui {
         let base = format!("{}/repos/{repo}/metarecords", self.daemon_url);
 
         let t = Instant::now();
-        let all: Vec<String> =
-            self.http.get(&base).send().await?.error_for_status()?.json().await?;
+        let all: Vec<String> = self
+            .http
+            .get(&base)
+            .bearer_auth(&self.daemon_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
         let full = t.elapsed();
 
         let t = Instant::now();
         let _page: Value = self
             .http
             .post(format!("{}/repos/{repo}/query", self.daemon_url))
+            .bearer_auth(&self.daemon_token)
             .json(&json!({
                 "query": { "type": "is_present", "field": "mfr_path" },
                 "limit": 100,

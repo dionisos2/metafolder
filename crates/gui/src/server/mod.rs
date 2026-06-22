@@ -85,10 +85,83 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/status", get(gui_api::get_status))
         // Panels run in the Svelte shell's (Tauri) origin but fetch their
         // HTML and `import()` their modules from this server's origin, so the
-        // panel assets and helper modules must be CORS-readable. The server is
-        // bound to 127.0.0.1, so a permissive policy is acceptable.
+        // panel assets and helper modules must be CORS-readable. Permissive
+        // CORS is safe because the *sensitive* routes (file contents, the
+        // scripting API) are gated by the session token (spec-auth); the open
+        // routes only serve shipped panel code and styling.
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
+}
+
+/// The router with the session-token authentication layer (spec-auth). Only
+/// the sensitive routes are gated; the static panel assets and helper modules
+/// stay open because they are loaded via `import()`/`<link>` which cannot
+/// carry an `Authorization` header (and they serve no private data).
+///
+/// Used by the GUI binary; tests drive [`build_router`] directly (no token).
+pub fn build_router_authenticated(state: ServerState, token: Arc<str>) -> Router {
+    build_router(state).layer(axum::middleware::from_fn_with_state(token, require_token))
+}
+
+/// Routes that expose file contents or drive the GUI, and so require the
+/// session token. Everything else (panel code, styles, sink availability) is
+/// open. `/fsraw`, `/thumbnail` and `/__media-probe` accept the token as a
+/// `?token=` query parameter (they are loaded as `<img>/<video>` `src` or via
+/// a simple GET that cannot set a header); the rest require the header.
+fn is_protected(path: &str) -> bool {
+    matches!(path, "/fsraw" | "/thumbnail" | "/__media-probe") || path.starts_with("/gui/")
+}
+
+fn accepts_query_token(path: &str) -> bool {
+    matches!(path, "/fsraw" | "/thumbnail" | "/__media-probe")
+}
+
+async fn require_token(
+    axum::extract::State(token): axum::extract::State<Arc<str>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let path = request.uri().path();
+    // CORS preflight carries no Authorization header; let the CORS layer answer
+    // it. Open routes pass straight through.
+    if request.method() == axum::http::Method::OPTIONS || !is_protected(path) {
+        return next.run(request).await;
+    }
+
+    let header = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    let mut authorized = metafolder_core::auth::bearer_token(header)
+        .map(|provided| metafolder_core::auth::constant_time_eq(provided, &token))
+        .unwrap_or(false);
+
+    if !authorized && accepts_query_token(path) {
+        authorized = request
+            .uri()
+            .query()
+            .and_then(query_token)
+            .map(|provided| metafolder_core::auth::constant_time_eq(provided, &token))
+            .unwrap_or(false);
+    }
+
+    if authorized {
+        next.run(request).await
+    } else {
+        (
+            axum::http::StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "missing or invalid session token" })),
+        )
+            .into_response()
+    }
+}
+
+/// The `token` parameter from a raw query string (tokens are hex, so no
+/// percent-decoding is needed).
+fn query_token(query: &str) -> Option<&str> {
+    query.split('&').find_map(|pair| pair.strip_prefix("token="))
 }
 
 fn javascript(source: &'static str) -> axum::response::Response {

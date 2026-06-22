@@ -1,0 +1,142 @@
+#+TITLE: metafolder — local authentication (spec)
+#+STARTUP: showeverything
+
+This spec defines how the daemon and the GUI HTTP servers authenticate their
+clients with a per-service *session token*. It supersedes the "no
+authentication" statements of:
+
+- spec-main "Daemon / General description" ("handles no authentication") and
+  "Daemon / Non-goals" ("No authentication or multi-user access control");
+- spec-gui "Custom panel type trust model" and the GUI server's permissive
+  CORS rationale, insofar as they assumed any local process may call the
+  server.
+
+Those servers still bind =127.0.0.1= only and perform no *user* access control
+(a single-user model is unchanged). What is added is a gate that admits only
+clients able to read a token file the OS protects.
+
+* Motivation / threat model
+
+Both servers listen on a loopback TCP port with no authentication. =127.0.0.1=
+keeps other *machines* out, but not the *browser running on the same machine*:
+any web page the user visits can issue cross-origin =fetch=/=XHR= requests to
+=127.0.0.1:<port>=. Concretely, with the GUI server's permissive CORS, a
+malicious page can read arbitrary local files through =GET /fsraw?path=…= and
+drive the scripting API (=POST /gui/command=). The daemon, although it sets no
+permissive CORS, is still reachable for blind side-effecting writes and is
+defeatable by DNS-rebinding (after the rebind the request is same-origin and
+CORS no longer applies).
+
+The defence is a shared secret that web content *cannot* obtain: a random token
+written to a file the OS makes readable only by the current user. Every
+legitimate client of these servers is a *native* process running with the
+user's privileges, so it can read the file; sandboxed web content cannot.
+
+- Daemon clients: =mf= (direct), the GUI backend (=daemon_proxy=). The WebView
+  never calls the daemon directly.
+- GUI server clients: the WebView/shell (and the panels that run in its realm),
+  =mf gui=.
+
+The token raises the bar to "must be able to read a user-only file". It is
+*not* a defence against malware already running as the same user (which can
+read the file too); that is out of scope, consistent with the single-user
+model. What it stops is web content and any process that cannot read the file.
+
+* Token location
+
+Each service has its own token (separate secrets, least privilege): the daemon
+owns =daemon.token=, the GUI owns =gui.token=. They live in a per-user runtime
+directory, resolved (Unix) in order:
+
+1. =$XDG_RUNTIME_DIR/metafolder/= when =XDG_RUNTIME_DIR= holds an absolute
+   path. This directory (typically =/run/user/<uid>/=) is already per-user and
+   mode =0700=, the canonical home for runtime secrets.
+2. Otherwise =/tmp/metafolder-<uid>/=, where =<uid>= is the current user's uid.
+   =/tmp= is shared (sticky =1777=), so the directory MUST be hardened (see
+   below) to prevent another user from squatting the path or planting a
+   symlink.
+
+The token is *never* stored under =~/.config/metafolder/= — that is the
+git-tracked user-configuration repository (spec-config), and a per-session
+secret must not be committed. This re-introduces a runtime sidecar file (the
+=gui.port= discovery file was previously removed); that decision was about not
+adding runtime files *to the configuration*, which this is not.
+
+The =metafolder/= subdirectory is created mode =0700=. If it already exists it
+MUST be: a real directory (not a symlink), owned by the current user, and mode
+=0700=; otherwise the server refuses to start (a hard error, never writing a
+secret into an attacker-controlled location). Under =$XDG_RUNTIME_DIR= the same
+checks apply but practically always pass.
+
+The reference uid (for naming the =/tmp= fallback and for the ownership check)
+is the owner uid of =$HOME=. If =$HOME= is unavailable and =XDG_RUNTIME_DIR= is
+unset, the server errors out asking the user to set =XDG_RUNTIME_DIR=.
+
+** Platform note
+
+The above is Unix (Linux/macOS). Windows lacks =XDG_RUNTIME_DIR=, uid and the
+=0600/0700= mode model; v1 targets Unix for this feature. On Windows the token
+falls back to =%LOCALAPPDATA%\metafolder\= (per-user by default ACL) with a
+best-effort restriction; full Windows hardening is deferred. (See
+spec-platform.)
+
+* Token format and lifecycle
+
+- The token is 32 bytes of CSPRNG output, read from =/dev/urandom=, hex-encoded
+  to a 64-character lowercase ASCII string. No external crate is used.
+- The token is *stable across restarts within a session*: at startup the server
+  calls =ensure_token(service)=:
+  - if the token file is absent, generate a token and write it =0600=
+    (create-new, then the directory's =0700= protects it);
+  - if the token file is present (inside the already-verified =0700= directory),
+    reuse its contents.
+  Stability lets long-running clients (the GUI backend) cache the token without
+  being invalidated by a daemon restart.
+- Token files are not deleted on shutdown; =$XDG_RUNTIME_DIR= is cleared by the
+  OS on logout, and a stale =/tmp= token inside a =0700= user-owned directory is
+  harmless (still secret). A new server reuses or overwrites it.
+
+* Enforcement (server side)
+
+Both routers wrap *all* routes in an authentication layer:
+
+- The request must carry =Authorization: Bearer <token>= with =<token>= equal to
+  the service token. Comparison is *constant-time* (no early-exit on first
+  differing byte).
+- On a missing or non-matching header the server responds =401 Unauthorized=
+  with the JSON error shape =({"error": "..."})= and does not run the handler.
+- =/health= is *not* exempt: every legitimate client holds the token, and an
+  unauthenticated liveness probe is not required.
+- For sub-resource loads that cannot set a header (=<img>=/=<video>= =src= in
+  the GUI: =/fsraw=, =/thumbnail=), the token is accepted as a =token=
+  *query parameter* in addition to the header. Such cross-origin loads are
+  opaque to a web attacker (the response cannot be read), but the token query
+  param still gates *issuing* the request. The query form is only honoured on
+  these media/raw GET routes, never on the scripting or daemon API.
+
+The constructor that builds the router takes the token; tests that drive the
+router with =oneshot= either inject a known token and send the header, or build
+the router without the layer via a test-only constructor.
+
+* Client behaviour
+
+- =mf= reads the daemon token with =read_token("daemon")= once per invocation
+  and sends =Authorization: Bearer=. =mf gui= reads =read_token("gui")=. A
+  missing token file is reported like an unreachable peer (the server is not
+  running, or not as this user).
+- The GUI backend (=daemon_proxy=) reads the daemon token and attaches the
+  header to every forwarded request. Because the token is stable it may cache
+  it; on a =401= it re-reads the file once and retries (covers the daemon
+  having regenerated the file after the GUI started).
+- The WebView receives the GUI token from Rust through a Tauri command
+  (=session_token=) — never over the network — and a single =fetch= wrapper in
+  the shell attaches the header to every request to the GUI server (panel asset
+  =import()=, =/gui/*=, =/__*= helpers). Panel-built =<img>/<video>= URLs to
+  =/fsraw= / =/thumbnail= append =?token=<token>= via the panel API helper.
+
+* Out of scope
+
+- Authenticating one *user* to another, or any multi-user model.
+- Protecting against same-user malware (it can read the token file).
+- Encrypting traffic (loopback only).
+- Rotating the token mid-session.

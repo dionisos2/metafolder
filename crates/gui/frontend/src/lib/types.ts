@@ -62,4 +62,6 @@ export interface InitialState {
   daemon_url: string;
   /** Per-panel progressive-loading page sizes, keyed by panel-type name. */
   page_sizes: Record<string, number>;
+  /** Session token (spec-auth) for the GUI server's protected routes. */
+  session_token: string;
 }

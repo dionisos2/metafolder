@@ -35,6 +35,8 @@ pub struct App {
     pub bench: Arc<crate::server::bench::BenchBuffer>,
     /// Keeps the style.css auto-reload watcher alive.
     pub style_watcher: Mutex<Option<crate::style_watcher::StyleWatcher>>,
+    /// Session token for this GUI server (spec-auth), handed to the WebView.
+    pub gui_token: Arc<str>,
 }
 
 type AppHandle<'a> = tauri::State<'a, Arc<App>>;
@@ -51,6 +53,9 @@ pub struct InitialState {
     pub daemon_url: String,
     /// Per-panel page sizes, keyed by panel-type name (kebab-case).
     pub page_sizes: crate::config::PageSizes,
+    /// Session token (spec-auth): the shell attaches it to requests to the GUI
+    /// server's protected routes (`/fsraw`, `/thumbnail`, `/__media-probe`).
+    pub session_token: String,
 }
 
 #[tauri::command]
@@ -65,6 +70,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
         page_sizes: app.page_sizes.clone(),
+        session_token: app.gui_token.to_string(),
     })
 }
 

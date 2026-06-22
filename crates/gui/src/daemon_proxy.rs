@@ -23,6 +23,10 @@ pub struct DaemonProxy {
     base_url: Mutex<String>,
     /// Last known reachability; `None` until the first check.
     connected: Mutex<Option<bool>>,
+    /// Cached daemon session token (spec-auth), read lazily from the token
+    /// file. Stable across daemon restarts, so caching is safe; cleared and
+    /// re-read once on a 401 (covers the daemon having regenerated it).
+    token: Mutex<Option<String>>,
 }
 
 impl DaemonProxy {
@@ -34,7 +38,22 @@ impl DaemonProxy {
                 .expect("reqwest client"),
             base_url: Mutex::new(base_url),
             connected: Mutex::new(None),
+            token: Mutex::new(None),
         }
+    }
+
+    /// The daemon token, read from the token file and cached. `None` when the
+    /// file is missing (daemon not running, or not as this user).
+    fn token(&self) -> Option<String> {
+        let mut guard = self.token.lock_recover();
+        if guard.is_none() {
+            *guard = metafolder_core::auth::read_token("daemon").ok();
+        }
+        guard.clone()
+    }
+
+    fn invalidate_token(&self) {
+        *self.token.lock_recover() = None;
     }
 
     pub fn base_url(&self) -> String {
@@ -54,12 +73,34 @@ impl DaemonProxy {
         path: &str,
         body: Option<Value>,
     ) -> Result<ProxyResponse, String> {
+        let response = self.send(method, path, body.clone(), self.token()).await?;
+        // A 401 means our cached token is stale (the daemon regenerated it).
+        // Drop it, re-read the file once and retry.
+        if response.status == 401 {
+            self.invalidate_token();
+            if let Some(token) = self.token() {
+                return self.send(method, path, body, Some(token)).await;
+            }
+        }
+        Ok(response)
+    }
+
+    async fn send(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        token: Option<String>,
+    ) -> Result<ProxyResponse, String> {
         let url = format!("{}{}", self.base_url(), path);
         let method: reqwest::Method = method
             .parse()
             .map_err(|_| format!("invalid HTTP method: {method}"))?;
 
         let mut request = self.client.request(method, &url);
+        if let Some(token) = token {
+            request = request.bearer_auth(token);
+        }
         if let Some(body) = body {
             request = request.json(&body);
         }

@@ -52,6 +52,41 @@ pub(crate) fn ms(d: Duration) -> f64 {
     d.as_secs_f64() * 1000.0
 }
 
+/// A reqwest client carrying the session token as a default `Authorization`
+/// header (spec-auth). Empty token ⇒ no header (peer not running yet).
+pub(crate) fn authed_client(token: &str) -> Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    if !token.is_empty() {
+        if let Ok(value) = reqwest::header::HeaderValue::from_str(&format!("Bearer {token}")) {
+            headers.insert(reqwest::header::AUTHORIZATION, value);
+        }
+    }
+    Client::builder().default_headers(headers).build().expect("reqwest client")
+}
+
+/// The daemon session token, read from the token file and cached after the
+/// first success (so per-call reads do not skew the benchmark timings). The
+/// daemon writes the file before it binds the port, so it is present by the
+/// time any request succeeds; a failed early read is not cached.
+pub(crate) fn daemon_token() -> String {
+    static TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    if let Some(token) = TOKEN.get() {
+        return token.clone();
+    }
+    match metafolder_core::auth::read_token("daemon") {
+        Ok(token) => {
+            let _ = TOKEN.set(token.clone());
+            token
+        }
+        Err(_) => String::new(),
+    }
+}
+
+/// A daemon HTTP client pre-authenticated with the session token.
+pub(crate) fn daemon_client() -> Client {
+    authed_client(&daemon_token())
+}
+
 pub(crate) fn find_binary(name: &str) -> Result<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -109,7 +144,7 @@ fn daemon_start(port: u16) -> Result<Daemon> {
 
 pub(crate) async fn daemon_wait_ready(url: &str) -> Result<()> {
     for _ in 0..50 {
-        if Client::new().get(format!("{url}/health")).send().await.is_ok() {
+        if daemon_client().get(format!("{url}/health")).send().await.is_ok() {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -134,7 +169,7 @@ fn name_matches(pattern: &str) -> serde_json::Value {
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
 pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
-    let v: serde_json::Value = Client::new()
+    let v: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/init"))
         .json(&json!({ "root": root }))
         .send()
@@ -148,7 +183,7 @@ pub(crate) async fn api_init_repo(url: &str, root: &Path) -> Result<Uuid> {
 
 /// Runs a query and returns the matching metarecord UUIDs (hex strings).
 async fn api_query(url: &str, repo: Uuid, query: serde_json::Value) -> Result<Vec<String>> {
-    Ok(Client::new()
+    Ok(daemon_client()
         .post(format!("{url}/repos/{repo}/query"))
         .json(&json!({ "query": query }))
         .send()
@@ -173,7 +208,7 @@ async fn api_root_uuid(url: &str, repo: Uuid) -> Result<String> {
 /// every path as ineligible and create nothing.
 async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
     let root = api_root_uuid(url, repo).await?;
-    Client::new()
+    daemon_client()
         .patch(format!("{url}/repos/{repo}/metarecords/{root}"))
         .json(&json!({ "name": "mf_watch", "value": { "type": "bool", "value": true } }))
         .send()
@@ -187,7 +222,7 @@ async fn api_enable_watch(url: &str, repo: Uuid) -> Result<()> {
 /// each file to sniff its type — disabled here to keep reconcile about indexing.
 async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usize)> {
     // Reconcile is asynchronous (spec-tasks): start it, then poll the task.
-    let started: serde_json::Value = Client::new()
+    let started: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/{repo}/reconcile"))
         .json(&json!({ "mime": mime }))
         .send()
@@ -197,7 +232,7 @@ async fn api_reconcile(url: &str, repo: Uuid, mime: bool) -> Result<(usize, usiz
         .await?;
     let task_id = started["task_id"].as_str().context("missing task_id")?.to_string();
     loop {
-        let task: serde_json::Value = Client::new()
+        let task: serde_json::Value = daemon_client()
             .get(format!("{url}/repos/{repo}/tasks/{task_id}"))
             .send()
             .await?
@@ -458,7 +493,7 @@ async fn timed_query_limited(
     query: serde_json::Value,
     limit: usize,
 ) -> Result<usize> {
-    let v: serde_json::Value = Client::new()
+    let v: serde_json::Value = daemon_client()
         .post(format!("{url}/repos/{repo}/query"))
         .json(&json!({ "query": query, "limit": limit }))
         .send()
@@ -471,7 +506,7 @@ async fn timed_query_limited(
 
 /// `GET /metarecords?limit=` (the unfiltered first page).
 async fn timed_list_limited(url: &str, repo: Uuid, limit: usize) -> Result<usize> {
-    let v: serde_json::Value = Client::new()
+    let v: serde_json::Value = daemon_client()
         .get(format!("{url}/repos/{repo}/metarecords?limit={limit}"))
         .send()
         .await?

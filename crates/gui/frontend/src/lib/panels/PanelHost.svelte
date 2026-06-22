@@ -68,6 +68,7 @@
         wsId,
         panelType,
         guiServer: base,
+        sessionToken: store.sessionToken,
         pageSize: store.pageSizes[panelType],
         root: shadow,
         visibilityGate,

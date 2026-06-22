@@ -139,6 +139,16 @@ pub fn run(options: Options) {
     let daemon_url = options.daemon_url.unwrap_or(gui_config.daemon_url);
     let daemon = Arc::new(daemon_proxy::DaemonProxy::new(daemon_url));
 
+    // Session token (spec-auth): gates the GUI server's sensitive routes and
+    // is handed to the WebView through the initial state.
+    let gui_token: Arc<str> = match metafolder_core::auth::ensure_token("gui") {
+        Ok(token) => token.into(),
+        Err(error) => {
+            eprintln!("metafolder-gui: cannot establish the session token: {error}");
+            std::process::exit(1);
+        }
+    };
+
     tauri::Builder::default()
         .setup(move |tauri_app| {
             let notifier = Arc::new(TauriNotifier(tauri_app.handle().clone()));
@@ -167,6 +177,7 @@ pub fn run(options: Options) {
                 commands: command_wait.clone(),
                 bench: bench.clone(),
                 style_watcher: Mutex::new(style_watcher),
+                gui_token: gui_token.clone(),
             });
             tauri::Manager::manage(tauri_app, app);
 
@@ -226,8 +237,9 @@ pub fn run(options: Options) {
                 commands: command_wait,
                 bench,
             };
+            let server_token = gui_token.clone();
             tauri::async_runtime::spawn(async move {
-                let router = server::build_router(server_state);
+                let router = server::build_router_authenticated(server_state, server_token);
                 let address = std::net::SocketAddr::from(([127, 0, 0, 1], gui_port));
                 match tokio::net::TcpListener::bind(address).await {
                     Ok(listener) => {
