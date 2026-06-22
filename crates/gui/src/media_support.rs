@@ -121,15 +121,22 @@ fn probe_cache() -> &'static std::sync::Mutex<ProbeCache> {
     CACHE.get_or_init(|| std::sync::Mutex::new(ProbeCache::new()))
 }
 
+/// Hard timeout for one `gst-discoverer-1.0` probe: it normally returns in a
+/// fraction of a second; a hang (FIFO, malformed stream) is killed.
+const DISCOVERER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 fn run_discoverer(path: &std::path::Path) -> MediaProbe {
-    match std::process::Command::new("gst-discoverer-1.0").arg(path).output() {
-        Ok(output) => {
+    let mut cmd = std::process::Command::new("gst-discoverer-1.0");
+    cmd.arg(path);
+    match crate::proc::run_with_timeout(cmd, DISCOVERER_TIMEOUT) {
+        Some(output) => {
             let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
             text.push_str(&String::from_utf8_lossy(&output.stderr));
             parse_discoverer(&text)
         }
-        // discoverer unavailable: no codec info, panel shows a generic message.
-        Err(_) => MediaProbe { missing: Vec::new() },
+        // discoverer unavailable or timed out: no codec info, panel shows a
+        // generic message.
+        None => MediaProbe { missing: Vec::new() },
     }
 }
 
@@ -145,14 +152,9 @@ fn element_present(element: &str) -> bool {
 }
 
 fn gst_inspect(element: &str) -> Option<bool> {
-    std::process::Command::new("gst-inspect-1.0")
-        .arg("--exists")
-        .arg(element)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()
-        .map(|status| status.success())
+    let mut cmd = std::process::Command::new("gst-inspect-1.0");
+    cmd.arg("--exists").arg(element);
+    crate::proc::run_with_timeout(cmd, DISCOVERER_TIMEOUT).map(|output| output.status.success())
 }
 
 /// Both required elements live in libgstautodetect.so: look for it in

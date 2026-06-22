@@ -126,7 +126,7 @@ fn cached_regex(ec: &mut EligibilityCache, pattern: &str) -> Result<Regex> {
     if let Some(re) = ec.regex.get(pattern) {
         return Ok(re.clone());
     }
-    let re = Regex::new(pattern)
+    let re = crate::regexp::compile(pattern)
         .with_context(|| format!("invalid mf_ignore pattern '{pattern}'"))?;
     ec.regex.insert(pattern.to_string(), re.clone());
     Ok(re)

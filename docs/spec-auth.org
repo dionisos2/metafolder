@@ -134,6 +134,16 @@ the router without the layer via a test-only constructor.
   =import()=, =/gui/*=, =/__*= helpers). Panel-built =<img>/<video>= URLs to
   =/fsraw= / =/thumbnail= append =?token=<token>= via the panel API helper.
 
+* The scripting command surface
+
+=POST /gui/command= dispatches an arbitrary invocation, including a =!=-prefixed
+*shell* command (spec-gui "Command input"). This is gated by the token like the
+rest of =/gui/*=, so only a token-bearing process can reach it. Such a process
+already runs as the user and can execute a shell directly, so dispatching a
+shell command through =/gui/command= grants it *no* capability it lacks; the
+token closes the web-origin path (which could not otherwise run a shell), and
+no further restriction of =!= is needed.
+
 * Out of scope
 
 - Authenticating one *user* to another, or any multi-user model.

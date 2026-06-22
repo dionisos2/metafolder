@@ -140,16 +140,19 @@ fn temp_name() -> String {
     format!(".tmp-{}-{}.png", std::process::id(), n)
 }
 
-/// Runs `ffmpeg` and reports whether a non-empty frame was written.
+/// Hard timeout for one `ffmpeg` frame extraction. Extracting a single frame
+/// is near-instant; anything approaching this is hung (a FIFO, a pathological
+/// input) and is killed rather than pinning a `spawn_blocking` thread.
+const FFMPEG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
+/// Runs `ffmpeg` (bounded by [`FFMPEG_TIMEOUT`]) and reports whether a
+/// non-empty frame was written.
 fn run_ffmpeg(input: &Path, output: &Path, seek: &str) -> bool {
-    let status = std::process::Command::new("ffmpeg")
-        .args(ffmpeg_args(input, output, seek))
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status();
-    matches!(status, Ok(status) if status.success())
-        && std::fs::metadata(output).map(|meta| meta.len() > 0).unwrap_or(false)
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(ffmpeg_args(input, output, seek));
+    let succeeded = crate::proc::run_with_timeout(cmd, FFMPEG_TIMEOUT)
+        .is_some_and(|out| out.status.success());
+    succeeded && std::fs::metadata(output).map(|meta| meta.len() > 0).unwrap_or(false)
 }
 
 #[cfg(test)]

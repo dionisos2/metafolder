@@ -14,6 +14,7 @@ pub mod fs_commands;
 pub mod keybindings;
 pub mod media_support;
 pub mod notifier;
+pub mod proc;
 pub mod reconcile;
 pub mod server;
 pub mod shell_exec;

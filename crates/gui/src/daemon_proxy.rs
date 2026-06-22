@@ -34,6 +34,10 @@ impl DaemonProxy {
         DaemonProxy {
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
+                // The daemon never redirects; following one would let a
+                // crafted path/response steer the request to another host
+                // (SSRF). Refuse redirects outright.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("reqwest client"),
             base_url: Mutex::new(base_url),
@@ -73,6 +77,7 @@ impl DaemonProxy {
         path: &str,
         body: Option<Value>,
     ) -> Result<ProxyResponse, String> {
+        validate_path(path)?;
         let response = self.send(method, path, body.clone(), self.token()).await?;
         // A 401 means our cached token is stale (the daemon regenerated it).
         // Drop it, re-read the file once and retry.
@@ -140,5 +145,46 @@ impl DaemonProxy {
             gui.notify(events::DAEMON_HEALTH_CHANGED, json!({ "connected": healthy }));
         }
         healthy
+    }
+}
+
+/// Rejects forwarded paths that could alter the request's host. The URL is
+/// built as `base_url + path`; a path must begin with `/` so the base's
+/// authority is terminated before `path`. A path like `@evil.com` (or anything
+/// not starting with `/`) would extend the authority into `userinfo@host` and
+/// reparse to another host — an SSRF. A leading `//` is safe: the first `/`
+/// after the existing authority still terminates it.
+fn validate_path(path: &str) -> Result<(), String> {
+    if path.starts_with('/') {
+        Ok(())
+    } else {
+        Err(format!("invalid daemon path (must start with '/'): {path}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_path_accepts_normal_paths() {
+        assert!(validate_path("/health").is_ok());
+        assert!(validate_path("/repos/abc/query").is_ok());
+        // A leading `//` stays on the same host (the authority is already set).
+        assert!(validate_path("//evil.com/x").is_ok());
+    }
+
+    #[test]
+    fn validate_path_rejects_authority_injection() {
+        assert!(validate_path("@evil.com/x").is_err());
+        assert!(validate_path("evil.com").is_err());
+        assert!(validate_path("").is_err());
+    }
+
+    #[tokio::test]
+    async fn request_rejects_host_injecting_path() {
+        let proxy = DaemonProxy::new("http://127.0.0.1:7523".into());
+        let err = proxy.request("GET", "@evil.com/steal", None).await.unwrap_err();
+        assert!(err.contains("must start with '/'"), "got: {err}");
     }
 }

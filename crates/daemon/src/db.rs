@@ -73,7 +73,7 @@ fn configure_connection(conn: &Connection) -> Result<()> {
                 if cache.len() >= 64 {
                     cache.clear();
                 }
-                let compiled = regex::Regex::new(&pattern)
+                let compiled = crate::regexp::compile(&pattern)
                     .map_err(|e| rusqlite::Error::UserFunctionError(Box::new(e)))?;
                 cache.insert(pattern.clone(), compiled);
             }

@@ -443,7 +443,7 @@ impl<'a> Compiler<'a> {
             }
 
             Query::Matches { field, pattern } => {
-                regex::Regex::new(pattern).map_err(|e| {
+                crate::regexp::compile(pattern).map_err(|e| {
                     ApiError::bad_request(format!("invalid regex pattern: {e}"))
                 })?;
                 self.push_text(field);
