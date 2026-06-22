@@ -70,6 +70,13 @@ export function createCache(opts: CacheOptions = {}) {
   const treeRefs = new Map<string, string[]>(); // `${repo}|${field}|${uuid}` → [paths]
   const queries = new Map<string, DaemonResponse>(); // `${repo}|${queryKey}` → response
   const lastHead = new Map<string, number | null>(); // repo → last-synced head op id
+  // Per-repo invalidation epoch: bumped on every clear/invalidate. A fetch
+  // captures it before its `await` and only writes to the cache if it is
+  // unchanged afterwards, so a response that landed *after* a concurrent
+  // invalidation (and may predate it) does not re-pollute the cache.
+  const epochs = new Map<string, number>();
+  const epochOf = (repo: string) => epochs.get(repo) ?? 0;
+  const bumpEpoch = (repo: string) => epochs.set(repo, epochOf(repo) + 1);
 
   const eKey = (repo: string, uuid: string) => `${repo}|${uuid}`;
   const tKey = (repo: string, field: string, uuid: string) => `${repo}|${field}|${uuid}`;
@@ -104,6 +111,7 @@ export function createCache(opts: CacheOptions = {}) {
 
   /** Drops every cached datum about one metarecord. */
   function invalidateMetarecord(repo: string, uuid: string) {
+    bumpEpoch(repo);
     entities.delete(eKey(repo, uuid));
     const suffix = `|${uuid}`;
     for (const key of treeRefs.keys()) {
@@ -119,6 +127,7 @@ export function createCache(opts: CacheOptions = {}) {
   }
 
   function clearQueries(repo: string) {
+    bumpEpoch(repo);
     for (const key of queries.keys()) if (key.startsWith(`${repo}|`)) queries.delete(key);
   }
 
@@ -139,8 +148,9 @@ export function createCache(opts: CacheOptions = {}) {
       const key = `${repo}|${queryKey(body as Record<string, unknown>)}`;
       const hit = touch(queries, key);
       if (hit) return hit;
+      const epoch = epochOf(repo);
       const res = await raw(method, path, body);
-      if (res.status === 200) {
+      if (res.status === 200 && epochOf(repo) === epoch) {
         const results = (res.body as { results?: Metarecord[] })?.results ?? [];
         putEntities(repo, results);
         put(queries, key, res, maxQueries);
@@ -154,8 +164,9 @@ export function createCache(opts: CacheOptions = {}) {
       const [, repo, uuid] = m;
       const cached = touch(entities, eKey(repo, uuid));
       if (cached) return ok(cached);
+      const epoch = epochOf(repo);
       const res = await raw(method, path, body);
-      if (res.status === 200) putEntities(repo, [res.body as Metarecord]);
+      if (res.status === 200 && epochOf(repo) === epoch) putEntities(repo, [res.body as Metarecord]);
       return res;
     }
 
@@ -172,10 +183,11 @@ export function createCache(opts: CacheOptions = {}) {
         else missing.push(uuid);
       }
       if (missing.length === 0) return ok(out);
+      const epoch = epochOf(repo);
       const res = await raw(method, path, { uuids: missing });
       if (res.status !== 200) return res;
       const fetched = (res.body as Record<string, Metarecord>) ?? {};
-      putEntities(repo, Object.values(fetched));
+      if (epochOf(repo) === epoch) putEntities(repo, Object.values(fetched));
       return ok({ ...out, ...fetched });
     }
 
@@ -194,12 +206,14 @@ export function createCache(opts: CacheOptions = {}) {
       }
       if (missing.length === 0) return ok(out);
       const reqBody = { ...(body as object), uuids: missing };
+      const epoch = epochOf(repo);
       const res = await raw(method, path, reqBody);
       if (res.status !== 200) return res;
       const fetched = (res.body as Record<string, string[]>) ?? {};
+      const fresh = epochOf(repo) === epoch;
       for (const uuid of missing) {
         const paths = fetched[uuid] ?? [];
-        put(treeRefs, tKey(repo, field, uuid), paths, maxTreeRefs);
+        if (fresh) put(treeRefs, tKey(repo, field, uuid), paths, maxTreeRefs);
         out[uuid] = paths;
       }
       return ok(out);

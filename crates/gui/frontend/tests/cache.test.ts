@@ -216,6 +216,33 @@ describe('cache — write invalidation (own edits show immediately)', () => {
     await cache.request('PATCH', '/repos/r/metarecords/a1', { name: 'x' }, raw);
     expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1')); // still cached
   });
+
+  test('a query response that lands after a concurrent invalidation is not cached', async () => {
+    const cache = createCache();
+    // Hold the query's fetch open so an invalidation can land mid-flight.
+    let landQuery!: (v: { status: number; body: unknown }) => void;
+    const queryRaw = vi.fn(() => new Promise((resolve) => (landQuery = resolve)));
+    const inFlight = cache.request(
+      'POST',
+      '/repos/r/query',
+      { query: {}, select: '*' },
+      queryRaw as never,
+    );
+
+    // A concurrent write clears the repo's queries while the query is in flight.
+    await cache.request('PUT', '/repos/r/metarecords/a1/fields/3', { value: 9 }, async () =>
+      ok({ ok: true }),
+    );
+
+    // The query's now-stale response finally lands.
+    landQuery(ok({ results: [rec('a1')], next_cursor: null }));
+    await inFlight;
+
+    // It must not pollute the cache (an invalidation happened during the fetch):
+    // the next identical query refetches.
+    expect(cache._stats().queries).toBe(0);
+    expect(cache._stats().entities).toBe(0);
+  });
 });
 
 describe('cache — LRU pruning bounds memory', () => {
