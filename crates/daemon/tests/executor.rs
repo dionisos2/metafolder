@@ -48,7 +48,16 @@ fn write_file(root: &Path, rel: &str, content: &[u8]) {
 fn enqueue(repo: &RepoState, events: &[FsEvent]) {
     let conn = repo.conn.lock().unwrap();
     for ev in events {
-        executor::enqueue(&conn, ev).unwrap();
+        executor::enqueue(&conn, ev, None).unwrap();
+    }
+}
+
+/// Enqueues `(event, cookie)` pairs, modelling notify's per-rename inotify
+/// cookie so the executor can correlate a split From/To pair.
+fn enqueue_tracked(repo: &RepoState, events: &[(FsEvent, Option<i64>)]) {
+    let conn = repo.conn.lock().unwrap();
+    for (ev, tracker) in events {
+        executor::enqueue(&conn, ev, *tracker).unwrap();
     }
 }
 
@@ -201,6 +210,46 @@ fn test_rename_updates_tree_ref_and_children_follow() {
     );
     // One file_moved operation was logged.
     assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_split_rename_with_cookie_is_one_move_not_delete_plus_arrival() {
+    // notify failed to correlate the rename and delivered RenameFrom and
+    // RenameTo separately, but tagged both with the same inotify cookie. The
+    // executor must fuse them back into one move (not delete + arrival).
+    let (repo, root, root_uuid) = setup("split_rename");
+    write_file(&root, "old/file.txt", b"f");
+    enqueue(
+        &repo,
+        &[FsEvent::Create("/old".into()), FsEvent::Create("/old/file.txt".into())],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let dir = resolve(&repo, "/old").unwrap();
+    let file = resolve(&repo, "/old/file.txt").unwrap();
+
+    std::fs::rename(root.join("old"), root.join("new")).unwrap();
+    enqueue_tracked(
+        &repo,
+        &[
+            (FsEvent::RenameFrom("/old".into()), Some(9)),
+            (FsEvent::RenameTo("/new".into()), Some(9)),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    // Same metarecord, moved; children follow — exactly as a native Both would.
+    assert_eq!(resolve(&repo, "/new"), Some(dir));
+    assert_eq!(resolve(&repo, "/new/file.txt"), Some(file));
+    assert!(resolve(&repo, "/old").is_none());
+    assert_eq!(
+        field_value(&repo, dir, "mfr_path"),
+        Some(Value::TreeRef { parent: Some(root_uuid), name: "new".into() })
+    );
+    // One file_moved op, and crucially no delete (no Nothing was written).
+    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 1);
+    assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_deleted'"), 0);
 
     std::fs::remove_dir_all(root).unwrap();
 }

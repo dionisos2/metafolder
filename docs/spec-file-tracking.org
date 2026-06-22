@@ -292,6 +292,15 @@ surfaces as =Remove= + =Create= and identity is recovered via the fingerprint
 search of the =Rename(To)= path (see
 [[file:spec-platform.org][spec-platform.org]]).
 
+=notify='s own From/To correlation can still fail under load and deliver a
+single in-tree rename as separate =Rename(From)= and =Rename(To)= events. To
+avoid degrading such a rename into a delete + arrival (two revisions; identity
+preserved only when the content is unchanged), the watcher records each rename
+event's inotify cookie in =pending_operation.tracker=, and compaction re-fuses
+a =Rename(From)= / =Rename(To)= pair sharing the same non-null cookie back into
+a single =Rename(Both)=. Events without a cookie, and genuine one-sided renames
+(no matching cookie), are left as-is.
+
 Before processing any event, the daemon evaluates eligibility for the affected
 path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
 inside the repository's own =.metafolder/internal/= directory are always

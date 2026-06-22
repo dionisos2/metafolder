@@ -89,8 +89,34 @@ pub fn open_database(path: &Path) -> Result<Connection> {
         .with_context(|| format!("Failed to open SQLite database at {path:?}"))?;
     configure_connection(&conn)?;
     migrate_legacy_table_names(&conn)?;
+    ensure_pending_tracker_column(&conn)?;
     ensure_perf_indexes(&conn)?;
     Ok(conn)
+}
+
+/// Adds `pending_operation.tracker` to databases created before it existed, so
+/// the executor can correlate split rename From/To events by their inotify
+/// cookie. Idempotent; a no-op on fresh databases (`init_schema` already
+/// includes the column) and on databases that have no `pending_operation` yet.
+fn ensure_pending_tracker_column(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pending_operation'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(());
+    }
+    let has_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('pending_operation') WHERE name = 'tracker'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_column == 0 {
+        conn.execute("ALTER TABLE pending_operation ADD COLUMN tracker INTEGER", [])
+            .context("Failed to add pending_operation.tracker column")?;
+    }
+    Ok(())
 }
 
 /// Creates the performance indexes if missing, so repositories created before
@@ -266,7 +292,8 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             value_real     REAL,
             value_uuid     BLOB,
             value_ref_repo BLOB,
-            value_name     TEXT
+            value_name     TEXT,
+            tracker        INTEGER
         );
         ",
     )

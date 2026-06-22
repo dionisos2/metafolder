@@ -84,40 +84,43 @@ fn handle_event(
     use notify::event::{ModifyKind, RenameMode};
 
     let rel = |p: &Path| relative(root, internal_dir, p);
-    let mut events: Vec<FsEvent> = Vec::new();
+    // The inotify rename cookie correlates a split From/To pair; carried so the
+    // executor can fuse them back into one rename (see `correlate_renames`).
+    let cookie = event.attrs.tracker().map(|c| c as i64);
+    let mut events: Vec<(FsEvent, Option<i64>)> = Vec::new();
     match event.kind {
         notify::EventKind::Create(_) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::Create));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Create(p), None)));
         }
         notify::EventKind::Remove(_) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::Remove));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Remove(p), None)));
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
             if let [from, to] = event.paths.as_slice() {
                 match (rel(from), rel(to)) {
-                    (Some(a), Some(b)) => events.push(FsEvent::Rename(a, b)),
+                    (Some(a), Some(b)) => events.push((FsEvent::Rename(a, b), None)),
                     // One side is outside the watched scope (e.g. into
                     // .metafolder/internal/): degrade to the one-sided forms.
-                    (Some(a), None) => events.push(FsEvent::RenameFrom(a)),
-                    (None, Some(b)) => events.push(FsEvent::RenameTo(b)),
+                    (Some(a), None) => events.push((FsEvent::RenameFrom(a), cookie)),
+                    (None, Some(b)) => events.push((FsEvent::RenameTo(b), cookie)),
                     (None, None) => {}
                 }
             }
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::RenameFrom));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameFrom(p), cookie)));
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::RenameTo));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameTo(p), cookie)));
         }
         notify::EventKind::Modify(ModifyKind::Metadata(_)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::ModifyMeta));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyMeta(p), None)));
         }
         // Data modifications; unknown Modify kinds fall back to Data
         // semantics (full refresh + hash invalidation, spec-platform).
         notify::EventKind::Modify(ModifyKind::Data(_))
         | notify::EventKind::Modify(ModifyKind::Any) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(FsEvent::ModifyData));
+            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyData(p), None)));
         }
         _ => {}
     }
@@ -126,8 +129,8 @@ fn handle_event(
         return;
     }
     let conn = repo.conn.lock_recover();
-    for ev in &events {
-        if let Err(err) = executor::enqueue(&conn, ev) {
+    for (ev, tracker) in &events {
+        if let Err(err) = executor::enqueue(&conn, ev, *tracker) {
             eprintln!("[watcher] failed to enqueue {ev:?}: {err:#}");
         }
     }

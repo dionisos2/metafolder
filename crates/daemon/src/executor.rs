@@ -40,8 +40,11 @@ pub enum FsEvent {
     ModifyMeta(String),
 }
 
-/// Appends one event to the persistent buffer.
-pub fn enqueue(conn: &Connection, ev: &FsEvent) -> Result<()> {
+/// Appends one event to the persistent buffer. `tracker` is the rename
+/// correlation cookie (notify's inotify cookie) for `RenameFrom`/`RenameTo`
+/// events, used by [`correlate_renames`] to fuse a split rename; `None` for
+/// everything else.
+pub fn enqueue(conn: &Connection, ev: &FsEvent, tracker: Option<i64>) -> Result<()> {
     let (op_type, path, from, to): (&str, Option<&str>, Option<&str>, Option<&str>) = match ev {
         FsEvent::Create(p) => ("fs_create", Some(p), None, None),
         FsEvent::Remove(p) => ("fs_remove", Some(p), None, None),
@@ -52,16 +55,16 @@ pub fn enqueue(conn: &Connection, ev: &FsEvent) -> Result<()> {
         FsEvent::ModifyMeta(p) => ("fs_modify_meta", Some(p), None, None),
     };
     conn.execute(
-        "INSERT INTO pending_operation (op_type, path, from_path, to_path)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![op_type, path, from, to],
+        "INSERT INTO pending_operation (op_type, path, from_path, to_path, tracker)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![op_type, path, from, to, tracker],
     )?;
     Ok(())
 }
 
-fn load_pending(conn: &Connection) -> Result<(Vec<FsEvent>, i64)> {
+fn load_pending(conn: &Connection) -> Result<(Vec<(FsEvent, Option<i64>)>, i64)> {
     let mut stmt = conn.prepare(
-        "SELECT id, op_type, path, from_path, to_path FROM pending_operation
+        "SELECT id, op_type, path, from_path, to_path, tracker FROM pending_operation
          WHERE op_type LIKE 'fs_%' ORDER BY id",
     )?;
     let mut events = Vec::new();
@@ -73,10 +76,11 @@ fn load_pending(conn: &Connection) -> Result<(Vec<FsEvent>, i64)> {
             r.get::<_, Option<String>>(2)?,
             r.get::<_, Option<String>>(3)?,
             r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<i64>>(5)?,
         ))
     })?;
     for row in rows {
-        let (id, op, path, from, to) = row?;
+        let (id, op, path, from, to, tracker) = row?;
         max_id = max_id.max(id);
         let p = || path.clone().context("missing path in pending_operation");
         let ev = match op.as_str() {
@@ -92,9 +96,41 @@ fn load_pending(conn: &Connection) -> Result<(Vec<FsEvent>, i64)> {
             "fs_modify_meta" => FsEvent::ModifyMeta(p()?),
             other => anyhow::bail!("unknown pending op_type '{other}'"),
         };
-        events.push(ev);
+        events.push((ev, tracker));
     }
     Ok((events, max_id))
+}
+
+/// Fuses a rename that the notify backend delivered as separate
+/// `RenameFrom`/`RenameTo` events (its From/To correlation can fail under load)
+/// back into a single [`FsEvent::Rename`], by pairing events that carry the
+/// same non-null inotify cookie. Without this, an intra-tree rename would
+/// degrade into a delete + arrival (two revisions; identity preserved only if
+/// the content is unchanged, via the fingerprint search). Events without a
+/// cookie, and genuine one-sided renames (a file that left or entered the
+/// repository, with no matching cookie), are left untouched.
+fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
+    let mut slots: Vec<Option<(FsEvent, Option<i64>)>> = events.into_iter().map(Some).collect();
+    for i in 0..slots.len() {
+        let to = match &slots[i] {
+            Some((FsEvent::RenameTo(b), Some(cookie))) => Some((b.clone(), *cookie)),
+            _ => None,
+        };
+        let Some((to_path, cookie)) = to else { continue };
+        // The most recent earlier RenameFrom sharing this cookie is the source
+        // (inotify cookies are unique per rename).
+        let from_index = (0..i).rev().find(|&j| {
+            matches!(&slots[j], Some((FsEvent::RenameFrom(_), Some(c))) if *c == cookie)
+        });
+        if let Some(j) = from_index {
+            let from_path = match slots[j].take() {
+                Some((FsEvent::RenameFrom(a), _)) => a,
+                _ => unreachable!("filtered to RenameFrom above"),
+            };
+            slots[i] = Some((FsEvent::Rename(from_path, to_path), None));
+        }
+    }
+    slots.into_iter().flatten().map(|(ev, _)| ev).collect()
 }
 
 /// Compaction rules of spec-file-tracking: redundant sequences within the
@@ -222,7 +258,7 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     if events.is_empty() {
         return Ok(FlushStats { events: 0, revisions: revisions_from_restore });
     }
-    let events = compact(events);
+    let events = compact(correlate_renames(events));
     let n_events = events.len();
 
     // Group by kind, keeping groups ordered by first occurrence.
@@ -690,4 +726,55 @@ pub fn spawn(repo: &Arc<RepoState>, quiet: Duration) -> ExecutorHandle {
         }
     });
     ExecutorHandle { tx, join: Some(join) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn from(p: &str) -> FsEvent {
+        FsEvent::RenameFrom(p.into())
+    }
+    fn to(p: &str) -> FsEvent {
+        FsEvent::RenameTo(p.into())
+    }
+    fn rename(a: &str, b: &str) -> FsEvent {
+        FsEvent::Rename(a.into(), b.into())
+    }
+
+    #[test]
+    fn correlate_pairs_split_rename_by_cookie() {
+        let out = correlate_renames(vec![(from("/a"), Some(7)), (to("/b"), Some(7))]);
+        assert_eq!(out, vec![rename("/a", "/b")]);
+    }
+
+    #[test]
+    fn correlate_leaves_cookieless_or_mismatched_events_untouched() {
+        // No cookie: genuine boundary crossings (a file left, another arrived).
+        let out = correlate_renames(vec![(from("/a"), None), (to("/b"), None)]);
+        assert_eq!(out, vec![from("/a"), to("/b")]);
+        // Different cookies: unrelated renames, not fused.
+        let out = correlate_renames(vec![(from("/a"), Some(1)), (to("/b"), Some(2))]);
+        assert_eq!(out, vec![from("/a"), to("/b")]);
+    }
+
+    #[test]
+    fn correlate_pairs_each_rename_by_its_own_cookie() {
+        let out = correlate_renames(vec![
+            (from("/a"), Some(1)),
+            (from("/c"), Some(2)),
+            (to("/d"), Some(2)),
+            (to("/b"), Some(1)),
+        ]);
+        assert_eq!(out.len(), 2);
+        assert!(out.contains(&rename("/a", "/b")));
+        assert!(out.contains(&rename("/c", "/d")));
+    }
+
+    #[test]
+    fn correlate_does_not_pair_a_lone_rename_to() {
+        // A `To` whose cookie has no matching `From` is a real arrival.
+        let out = correlate_renames(vec![(to("/b"), Some(5))]);
+        assert_eq!(out, vec![to("/b")]);
+    }
 }
