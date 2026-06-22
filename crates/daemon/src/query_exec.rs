@@ -189,14 +189,14 @@ pub fn execute(
         let mut keys = Vec::new();
         if limit.is_some() {
             for c in 0..(5 * sort.len()) {
-                // Component layout per sort key: nf, g (ints), n (real),
-                // t (text), b (blob, hex-encoded in the cursor).
+                // Component layout per sort key: nf, g (ints), n (real,
+                // IEEE-754 bits hex-encoded), t (text), b (blob, hex-encoded).
                 let col = c + 1;
                 let v = match c % 5 {
                     0 | 1 => {
                         serde_json::json!(row.get::<_, i64>(col).map_err(anyhow::Error::from)?)
                     }
-                    2 => serde_json::json!(row.get::<_, f64>(col).map_err(anyhow::Error::from)?),
+                    2 => float_to_cursor(row.get::<_, f64>(col).map_err(anyhow::Error::from)?),
                     3 => serde_json::json!(row.get::<_, String>(col).map_err(anyhow::Error::from)?),
                     _ => serde_json::json!(hex_encode(
                         &row.get::<_, Vec<u8>>(col).map_err(anyhow::Error::from)?
@@ -239,7 +239,7 @@ fn cursor_values(cursor: &Cursor, n_sort: usize) -> Result<Vec<SqlValue>, ApiErr
     for (i, key) in cursor.keys.iter().enumerate() {
         let v = match i % 5 {
             0 | 1 => SqlValue::Integer(key.as_i64().ok_or_else(invalid)?),
-            2 => SqlValue::Real(key.as_f64().ok_or_else(invalid)?),
+            2 => SqlValue::Real(float_from_cursor(key)?),
             3 => SqlValue::Text(key.as_str().ok_or_else(invalid)?.to_string()),
             _ => SqlValue::Blob(hex_decode(key.as_str().ok_or_else(invalid)?)?),
         };
@@ -292,6 +292,60 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
                 .map_err(|_| ApiError::bad_request("invalid cursor"))
         })
         .collect()
+}
+
+/// Encodes a float sort-key value into the cursor as the hex of its raw
+/// IEEE-754 bits (not a JSON number). serde_json's default float parser is not
+/// correctly rounded, so a decimal encoding can come back off by 1 ULP, which
+/// at a page boundary duplicates or skips a row; the bit form round-trips
+/// exactly, like the blob component.
+fn float_to_cursor(f: f64) -> serde_json::Value {
+    serde_json::json!(hex_encode(&f.to_bits().to_be_bytes()))
+}
+
+/// Inverse of [`float_to_cursor`].
+fn float_from_cursor(key: &serde_json::Value) -> Result<f64, ApiError> {
+    let invalid = || ApiError::bad_request("invalid cursor");
+    let bytes = hex_decode(key.as_str().ok_or_else(invalid)?)?;
+    let arr: [u8; 8] = bytes.as_slice().try_into().map_err(|_| invalid())?;
+    Ok(f64::from_bits(u64::from_be_bytes(arr)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_cursor_roundtrip_is_bit_exact() {
+        let mut cases = vec![
+            0.0,
+            -0.0,
+            0.1,
+            0.1 + 0.2,
+            1.0 / 3.0,
+            std::f64::consts::PI,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1), // smallest subnormal
+            f64::MAX,
+            f64::MIN,
+            2f64.powi(53) + 2.0,
+        ];
+        // Deterministic sweep of bit patterns (one such value drifts by 1 ULP
+        // through a decimal JSON round-trip, which this encoding avoids).
+        for i in 0..5000u64 {
+            let f = f64::from_bits(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            if f.is_finite() {
+                cases.push(f);
+            }
+        }
+        for &f in &cases {
+            // Through the same JSON serialization the cursor undergoes.
+            let value = float_to_cursor(f);
+            let json = serde_json::to_vec(&value).unwrap();
+            let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
+            assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
+        }
+    }
 }
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
