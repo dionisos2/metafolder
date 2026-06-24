@@ -207,6 +207,24 @@ impl RepoIndex {
         bm.iter().filter_map(|id| self.registry.uuid(id)).collect()
     }
 
+    pub fn universe_len(&self) -> usize {
+        self.universe.len() as usize
+    }
+
+    /// Number of distinct field names indexed.
+    pub fn field_count(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Approximate resident size of all bitmaps (serialized size), the figure
+    /// the memory-budget gate measures (spec-indexing "What to measure").
+    pub fn approx_serialized_bytes(&self) -> usize {
+        self.universe.serialized_size()
+            + field_index::sum_bytes(self.present.values())
+            + field_index::sum_bytes(self.absent.values())
+            + self.fields.values().map(|f| f.approx_serialized_bytes()).sum::<usize>()
+    }
+
     fn present_of(&self, field: &str) -> RoaringBitmap {
         self.present.get(field).cloned().unwrap_or_default()
     }

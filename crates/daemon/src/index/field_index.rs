@@ -115,6 +115,31 @@ impl FieldIndex {
             _ => None,
         }
     }
+
+    /// Approximate resident size: the serialized size of every bitmap held.
+    /// Used by the memory-budget measurement (spec-indexing "What to measure").
+    pub fn approx_serialized_bytes(&self) -> usize {
+        match self {
+            FieldIndex::Categorical(c) => sum_bytes(c.by_value.values()),
+            FieldIndex::Bsi(b) => {
+                b.has_value.serialized_size()
+                    + sum_bytes(b.exact.values())
+                    + sum_bytes(b.min_slices.iter())
+                    + sum_bytes(b.max_slices.iter())
+            }
+            FieldIndex::Reverse(r) => {
+                r.has_value.serialized_size()
+                    + sum_bytes(r.exact.values())
+                    + sum_bytes(r.by_name.values())
+                    + sum_bytes(r.by_value_uuid.values())
+            }
+            FieldIndex::Unimplemented(_) => 0,
+        }
+    }
+}
+
+pub(super) fn sum_bytes<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) -> usize {
+    bitmaps.map(|b| b.serialized_size()).sum()
 }
 
 // ── Categorical (Bool, String) ──────────────────────────────────────────────
