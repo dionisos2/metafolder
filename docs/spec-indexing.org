@@ -372,10 +372,14 @@ emptied buckets). A rewritten history (rollback / prune), an unrecognised op, or
 an oversized delta falls back to a full rebuild — always correct. The replay
 happens lazily on the read path, not on the write path, but the effect is the
 spec's "single write path updates both": every write advances HEAD, and the next
-query reconciles the index to it. Not yet done: cursor pagination is offset-based
-(not keyset on a sort key), the sort representatives are a separate store rather
-than folded into the BSI, and a long-lived index accumulates dense-id tombstones
-for deleted metarecords until the next full rebuild.
+query reconciles the index to it. Pagination is *keyset*: the cursor encodes the
+last entry's sort key (one representative per key) and uuid, so the next page
+resumes strictly after it — stable under concurrent inserts/deletes, matching the
+SQL engine. Deleted metarecords leave dense-id tombstones on the incremental
+path; when they exceed a fraction of the interned ids a refresh rebuilds and
+reclaims them. The one remaining shortcut is memory: the sort representatives are
+a separate min/max store rather than folded into the BSI (≈ the dominant
+resident cost at scale — see [[*Sort semantics in one orderable key][sort key]]).
 
 ** No per-query transfer (read)
 

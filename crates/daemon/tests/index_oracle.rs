@@ -592,6 +592,40 @@ fn pagination_matches_sql_pages() {
 }
 
 #[test]
+fn keyset_pagination_is_stable_under_insertion() {
+    // Page through ascending rate; between pages insert a row that sorts BEFORE
+    // the cursor. With keyset (not offset) the next page is unaffected — and it
+    // matches the SQL engine, which is also keyset.
+    let mut o = Oracle::new();
+    for n in [10, 20, 30, 40, 50] {
+        o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(n))]);
+    }
+    let q = present("all");
+    let idx_keys = [SortBy { field: "rate".into(), ascending: true }];
+    let sql_keys = [SortKey { field: "rate".into(), order: SortOrder::Asc }];
+
+    let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
+    let (_s1, scur) = query_exec::execute(
+        &o.conn, &mut o.cache, o.db_id, &q, &sql_keys, Some(2), None,
+    )
+    .unwrap();
+
+    // Insert a row (rate 15) that sorts within the already-returned region.
+    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
+
+    let index2 = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
+    let (sp2, _) = query_exec::execute(
+        &o.conn, &mut o.cache, o.db_id, &q, &sql_keys, Some(2), scur.as_deref(),
+    )
+    .unwrap();
+
+    // Both resume strictly after rate=20 → rates 30, 40 (never re-showing 15).
+    assert_eq!(ip2, sp2, "index keyset page must match the SQL keyset page");
+}
+
+#[test]
 fn cursor_is_bound_to_query_and_sort() {
     let mut o = sortable();
     let index = RepoIndex::build(&o.conn, o.db_id).unwrap();

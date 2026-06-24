@@ -222,6 +222,36 @@ fn incremental_mixed_sequence() {
     r.write(|w| w.set_field(file, "note", Value::Nothing).unwrap());
 }
 
+/// Deleted metarecords leave dense-id tombstones behind on the incremental
+/// path; once they pile up, a refresh rebuilds and reclaims them.
+#[test]
+fn incremental_tombstones_are_compacted() {
+    let mut r = Repo::new();
+    let uuids: Vec<Uuid> = r.write(|w| {
+        (0..5000i64)
+            .map(|n| w.create_metarecord(vec![Field::new("rate", i(n))]).unwrap().uuid)
+            .collect()
+    });
+    assert_eq!(r.index.dense_id_count(), 5000);
+
+    // Delete most: applied incrementally, so their dense ids stay interned.
+    r.write(|w| {
+        for u in &uuids[..4900] {
+            w.delete_metarecord(*u).unwrap();
+        }
+    });
+    assert_eq!(r.index.dense_id_count(), 5000, "dead ids not reclaimed yet");
+
+    // The next refresh sees the tombstones are heavy and rebuilds, compacting
+    // the registry down to the live set.
+    r.write(|w| w.set_field(uuids[4999], "rate", i(7)).unwrap());
+    assert!(
+        r.index.dense_id_count() <= 200,
+        "expected compaction to ~100 live ids, got {}",
+        r.index.dense_id_count()
+    );
+}
+
 /// A rollback rewrites history (the new HEAD is not a forward extension), so
 /// `refresh` must detect it and fall back to a full rebuild — still correct.
 #[test]

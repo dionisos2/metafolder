@@ -20,7 +20,7 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::db;
-use field_index::{CmpOp, FieldIndex, SortReps};
+use field_index::{CmpOp, FieldIndex, SortRep, SortReps};
 use id_registry::IdRegistry;
 
 /// One sort key: a field name and its direction.
@@ -29,6 +29,12 @@ pub struct SortBy {
     pub field: String,
     pub ascending: bool,
 }
+
+/// A metarecord's position in a sort order: one representative per sort key
+/// (`None` = the field is absent, which sorts last) plus the uuid tiebreak.
+/// This is what a keyset cursor encodes, so pagination resumes *after* a known
+/// position rather than at an absolute offset — stable under concurrent edits.
+type SortEntry = (Vec<Option<SortRep>>, Uuid);
 
 /// A query shape (or operand type) the bitmap path does not accelerate in this
 /// increment (e.g. `Matches`, a `Path`-target `Follows`). The caller may fall
@@ -105,6 +111,17 @@ impl RepoIndex {
         self.built_at_head
     }
 
+    /// Interned dense ids no longer in the universe — deleted metarecords whose
+    /// id the incremental path never frees. Heavy ⇒ a rebuild compacts them.
+    fn tombstones(&self) -> usize {
+        self.registry.len().saturating_sub(self.universe.len() as usize)
+    }
+
+    fn tombstones_heavy(&self) -> bool {
+        let dead = self.tombstones();
+        dead > 4096 && dead * 4 > self.registry.len()
+    }
+
     /// Brings the index up to the current log HEAD. When the new HEAD is a
     /// forward extension of [`Self::built_at_head`] (the common case: writes
     /// appended), the operations in between are replayed incrementally —
@@ -122,11 +139,14 @@ impl RepoIndex {
             None => None, // HEAD reset to empty: not a forward extension.
         };
         match delta {
-            Some(delta) => {
+            // Incremental, unless dead dense ids (deleted metarecords, never
+            // reused) have piled up — a rebuild re-interns only the live set
+            // and reclaims them.
+            Some(delta) if !self.tombstones_heavy() => {
                 self.apply_ops(conn, &delta)?;
                 self.built_at_head = head;
             }
-            None => *self = Self::build(conn, db_id)?,
+            _ => *self = Self::build(conn, db_id)?,
         }
         Ok(())
     }
@@ -296,62 +316,50 @@ impl RepoIndex {
         limit: Option<usize>,
         cursor: Option<&str>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        use std::cmp::Ordering;
         let guard = page_guard(q, sort);
-        let offset = match cursor {
-            None => 0usize,
+        let after: Option<SortEntry> = match cursor {
+            None => None,
             Some(c) => {
-                let (g, off) = parse_cursor(c).ok_or_else(|| unsupported("malformed cursor"))?;
+                let (g, entry) =
+                    decode_cursor(c, sort.len()).ok_or_else(|| unsupported("malformed cursor"))?;
                 if g != guard {
                     return Err(unsupported("cursor does not match this query and sort"));
                 }
-                off as usize
+                Some(entry)
             }
         };
 
         let matched = self.evaluate(q)?;
-        let mut ids: Vec<u32> = matched.iter().collect();
-        ids.sort_by(|&a, &b| self.cmp_ids(a, b, sort));
+        let mut entries: Vec<SortEntry> = matched.iter().map(|id| self.entry_of(id, sort)).collect();
+        // Keyset: keep only what sorts strictly after the cursor position.
+        if let Some(after) = &after {
+            entries.retain(|e| cmp_entry(e, after, sort) == Ordering::Greater);
+        }
+        entries.sort_by(|a, b| cmp_entry(a, b, sort));
 
-        let total = ids.len();
-        let start = offset.min(total);
+        let total = entries.len();
         let end = match limit {
-            Some(l) => start.saturating_add(l).min(total),
+            Some(l) => l.min(total),
             None => total,
         };
-        let page = ids[start..end].iter().filter_map(|&id| self.registry.uuid(id)).collect();
+        let page = entries[..end].iter().map(|e| e.1).collect();
         let next = match limit {
-            Some(_) if end < total => Some(encode_cursor(guard, end as u64)),
+            Some(_) if end > 0 && end < total => Some(encode_cursor(guard, &entries[end - 1])),
             _ => None,
         };
         Ok((page, next))
     }
 
-    fn cmp_ids(&self, a: u32, b: u32, keys: &[SortBy]) -> std::cmp::Ordering {
-        use std::cmp::Ordering;
-        for key in keys {
-            let reps = self.sort.get(&key.field);
-            let want_max = !key.ascending;
-            let ra = reps.and_then(|s| s.rep(a, want_max));
-            let rb = reps.and_then(|s| s.rep(b, want_max));
-            let ord = match (ra, rb) {
-                (Some(x), Some(y)) => {
-                    if key.ascending {
-                        x.cmp(y)
-                    } else {
-                        y.cmp(x)
-                    }
-                }
-                // A metarecord lacking the field sorts last, both directions.
-                (Some(_), None) => Ordering::Less,
-                (None, Some(_)) => Ordering::Greater,
-                (None, None) => Ordering::Equal,
-            };
-            if ord != Ordering::Equal {
-                return ord;
-            }
-        }
-        // Final tiebreak: uuid ascending (matches the SQL keyset order).
-        self.registry.uuid(a).cmp(&self.registry.uuid(b))
+    /// A metarecord's [`SortEntry`] under `sort` (its representative per key +
+    /// uuid). The representative is the max for a descending key, the min for an
+    /// ascending one — the same one the SQL sort picks.
+    fn entry_of(&self, id: u32, sort: &[SortBy]) -> SortEntry {
+        let reps = sort
+            .iter()
+            .map(|k| self.sort.get(&k.field).and_then(|s| s.rep(id, !k.ascending)).cloned())
+            .collect();
+        (reps, self.registry.uuid(id).expect("interned id"))
     }
 
     /// Evaluates a query to the bitmap of matching dense ids.
@@ -492,6 +500,11 @@ impl RepoIndex {
         self.sort.values().map(|s| s.len()).sum()
     }
 
+    /// Number of interned dense ids (live + not-yet-reclaimed tombstones).
+    pub fn dense_id_count(&self) -> usize {
+        self.registry.len()
+    }
+
     /// Approximate resident size of all bitmaps (serialized size), the figure
     /// the memory-budget gate measures (spec-indexing "What to measure").
     pub fn approx_serialized_bytes(&self) -> usize {
@@ -530,17 +543,133 @@ fn page_guard(q: &Query, sort: &[SortBy]) -> u64 {
     h
 }
 
-fn encode_cursor(guard: u64, offset: u64) -> String {
-    let mut bytes = [0u8; 16];
-    bytes[..8].copy_from_slice(&guard.to_le_bytes());
-    bytes[8..].copy_from_slice(&offset.to_le_bytes());
+/// Total order over [`SortEntry`]s: per key the representative compared in the
+/// key's direction (`None`/field-absent last in both), then uuid ascending.
+fn cmp_entry(a: &SortEntry, b: &SortEntry, sort: &[SortBy]) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    for (idx, key) in sort.iter().enumerate() {
+        let ord = match (&a.0[idx], &b.0[idx]) {
+            (Some(x), Some(y)) => {
+                if key.ascending {
+                    x.cmp(y)
+                } else {
+                    y.cmp(x)
+                }
+            }
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        if ord != Ordering::Equal {
+            return ord;
+        }
+    }
+    a.1.cmp(&b.1)
+}
+
+/// Keyset cursor: the guard, then the last returned entry's sort key (one
+/// representative per key) and uuid, so the next page resumes strictly after it.
+fn encode_cursor(guard: u64, entry: &SortEntry) -> String {
+    let mut bytes = Vec::with_capacity(32);
+    bytes.extend_from_slice(&guard.to_le_bytes());
+    bytes.extend_from_slice(&(entry.0.len() as u32).to_le_bytes());
+    for rep in &entry.0 {
+        match rep {
+            None => bytes.push(0),
+            Some(rep) => {
+                bytes.push(1);
+                encode_rep(&mut bytes, rep);
+            }
+        }
+    }
+    bytes.extend_from_slice(entry.1.as_bytes());
     base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
 }
 
-fn parse_cursor(token: &str) -> Option<(u64, u64)> {
+fn encode_rep(out: &mut Vec<u8>, rep: &SortRep) {
+    let mut text = |tag: u8, s: &str| {
+        out.push(tag);
+        out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+        out.extend_from_slice(s.as_bytes());
+    };
+    match rep {
+        SortRep::Bool(b) => out.extend_from_slice(&[0, *b as u8]),
+        SortRep::Num(f) => {
+            out.push(1);
+            out.extend_from_slice(&f.to_bits().to_le_bytes());
+        }
+        SortRep::Str(s) => text(2, s),
+        SortRep::DateTime(ms) => {
+            out.push(3);
+            out.extend_from_slice(&ms.to_le_bytes());
+        }
+        SortRep::Ref(bytes) => {
+            out.push(4);
+            out.extend_from_slice(bytes);
+        }
+        SortRep::Tree(s) => text(5, s),
+    }
+}
+
+/// A cursor byte reader; every accessor is bounds-checked so a malformed or
+/// truncated token decodes to `None` rather than panicking.
+struct Reader<'a> {
+    bytes: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Reader<'a> {
+    fn take(&mut self, n: usize) -> Option<&'a [u8]> {
+        let slice = self.bytes.get(self.pos..self.pos + n)?;
+        self.pos += n;
+        Some(slice)
+    }
+    fn u8(&mut self) -> Option<u8> {
+        Some(self.take(1)?[0])
+    }
+    fn u32(&mut self) -> Option<u32> {
+        Some(u32::from_le_bytes(self.take(4)?.try_into().ok()?))
+    }
+    fn u64(&mut self) -> Option<u64> {
+        Some(u64::from_le_bytes(self.take(8)?.try_into().ok()?))
+    }
+}
+
+fn decode_rep(r: &mut Reader<'_>) -> Option<SortRep> {
+    let text = |r: &mut Reader<'_>| -> Option<String> {
+        let len = r.u32()? as usize;
+        Some(String::from_utf8(r.take(len)?.to_vec()).ok()?)
+    };
+    Some(match r.u8()? {
+        0 => SortRep::Bool(r.u8()? != 0),
+        1 => SortRep::Num(f64::from_bits(r.u64()?)),
+        2 => SortRep::Str(text(r)?),
+        3 => SortRep::DateTime(r.u64()? as i64),
+        4 => SortRep::Ref(r.take(16)?.try_into().ok()?),
+        5 => SortRep::Tree(text(r)?),
+        _ => return None,
+    })
+}
+
+fn decode_cursor(token: &str, expected_keys: usize) -> Option<(u64, SortEntry)> {
     let bytes = base64::engine::general_purpose::STANDARD_NO_PAD.decode(token).ok()?;
-    let bytes: [u8; 16] = bytes.try_into().ok()?;
-    let guard = u64::from_le_bytes(bytes[..8].try_into().unwrap());
-    let offset = u64::from_le_bytes(bytes[8..].try_into().unwrap());
-    Some((guard, offset))
+    let mut r = Reader { bytes: &bytes, pos: 0 };
+    let guard = r.u64()?;
+    let n = r.u32()? as usize;
+    if n != expected_keys {
+        return None;
+    }
+    let mut reps = Vec::with_capacity(n);
+    for _ in 0..n {
+        reps.push(match r.u8()? {
+            0 => None,
+            1 => Some(decode_rep(&mut r)?),
+            _ => return None,
+        });
+    }
+    let uuid = Uuid::from_slice(r.take(16)?).ok()?;
+    if r.pos != bytes.len() {
+        return None; // trailing garbage
+    }
+    Some((guard, (reps, uuid)))
 }
