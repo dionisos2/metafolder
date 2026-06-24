@@ -387,6 +387,17 @@ pub fn established_value_type(conn: &Connection, name: &str) -> Result<Option<St
         .optional()?)
 }
 
+/// The current log HEAD operation id (`log_head.op_id`), or `None` before any
+/// operation. Used as the freshness marker for the in-memory query index.
+pub fn current_head(conn: &Connection) -> Result<Option<i64>> {
+    Ok(conn
+        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| {
+            r.get::<_, Option<i64>>(0)
+        })
+        .optional()?
+        .flatten())
+}
+
 /// Distinct metarecord UUIDs carrying at least one row of `name` (served by
 /// `idx_field_name`). Used by the retype operation to walk a field's holders.
 pub fn metarecords_with_field(conn: &Connection, name: &str) -> Result<Vec<Uuid>> {

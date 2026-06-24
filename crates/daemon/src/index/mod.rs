@@ -54,6 +54,9 @@ pub struct RepoIndex {
     fields: HashMap<String, FieldIndex>,
     /// Per field name: min/max sort representatives, for `ORDER BY`.
     sort: HashMap<String, SortReps>,
+    /// The log HEAD (`log_head.op_id`) this index reflects. The caller only
+    /// uses the index while this matches the current HEAD, then rebuilds.
+    built_at_head: Option<i64>,
 }
 
 impl RepoIndex {
@@ -61,6 +64,7 @@ impl RepoIndex {
     /// Link metarecords (shared ownership) are excluded by construction: only
     /// the exclusively-owned set (`db::list_entries`) is interned and scanned.
     pub fn build(conn: &Connection, db_id: Uuid) -> anyhow::Result<RepoIndex> {
+        let built_at_head = db::current_head(conn)?;
         let mut registry = IdRegistry::new();
         let mut universe = RoaringBitmap::new();
         for uuid in db::list_entries(conn, db_id)? {
@@ -93,7 +97,12 @@ impl RepoIndex {
             fi.finalize();
         }
 
-        Ok(RepoIndex { registry, universe, present, absent, fields, sort })
+        Ok(RepoIndex { registry, universe, present, absent, fields, sort, built_at_head })
+    }
+
+    /// The log HEAD this index reflects (see [`Self::build`]).
+    pub fn built_at_head(&self) -> Option<i64> {
+        self.built_at_head
     }
 
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,

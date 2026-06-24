@@ -34,6 +34,12 @@ pub struct RepoState {
     /// separate from `conn` so progress reads never block behind a running
     /// reconcile.
     pub tasks: crate::tasks::TaskRegistry,
+    /// Derived in-memory query accelerator (spec-indexing). Rebuilt from the
+    /// `field` table whenever the log HEAD it was built at no longer matches
+    /// the current HEAD (it carries no incremental maintenance yet), and only
+    /// consulted while fresh — so it never serves stale results. `None` until
+    /// the first query builds it.
+    pub index: Mutex<Option<crate::index::RepoIndex>>,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -61,6 +67,7 @@ impl RepoState {
             schema: Mutex::new(None),
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
+            index: Mutex::new(None),
         }
     }
 

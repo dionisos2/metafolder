@@ -311,3 +311,56 @@ async fn test_batch_set() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── In-memory index wiring (spec-indexing increment 5) ──────────────────────
+
+/// After a write advances the log HEAD, the index is rebuilt before the next
+/// query, so results reflect the write (it is never served stale).
+#[tokio::test]
+async fn test_index_reflects_writes_after_rebuild() {
+    let (app, repo, root) = setup("freshness").await;
+    create(&app, &repo, json!([{"name": "rate", "value": {"type": "int", "value": 5}}])).await;
+
+    let q = |min: i64| {
+        json!({
+            "query": {"type": "gte", "field": "rate", "value": {"type": "int", "value": min}},
+            "limit": 100,
+            "count": true
+        })
+    };
+
+    // First query builds the index from the current state.
+    let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(5))).await;
+    assert_eq!(p["total"], json!(1));
+
+    // A second create advances HEAD; the next query must rebuild and see it.
+    create(&app, &repo, json!([{"name": "rate", "value": {"type": "int", "value": 10}}])).await;
+    let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(8))).await;
+    assert_eq!(p["total"], json!(1), "the new rate=10 record");
+    let (_, p) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(q(5))).await;
+    assert_eq!(p["total"], json!(2), "both records");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// A query the index does not accelerate (`matches`) falls back to the SQL
+/// engine transparently and returns the correct result.
+#[tokio::test]
+async fn test_unsupported_query_falls_back_to_sql() {
+    let (app, repo, root) = setup("fallback").await;
+    create(&app, &repo, json!([{"name": "name", "value": {"type": "string", "value": "hello"}}]))
+        .await;
+    create(&app, &repo, json!([{"name": "name", "value": {"type": "string", "value": "world"}}]))
+        .await;
+
+    let body = json!({
+        "query": {"type": "matches", "field": "name", "pattern": "^h"},
+        "limit": 100
+    });
+    let (status, page) =
+        request(&app, "POST", &format!("/repos/{repo}/query"), Some(body)).await;
+    assert_eq!(status, StatusCode::OK, "matches query failed: {page}");
+    assert_eq!(page["results"].as_array().unwrap().len(), 1);
+
+    std::fs::remove_dir_all(root).unwrap();
+}

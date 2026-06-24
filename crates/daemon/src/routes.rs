@@ -1316,6 +1316,64 @@ async fn run_query(
     .await
 }
 
+/// Resolves a query's page (and optional total) through the in-memory bitmap
+/// index when it is applicable, falling back to the SQL engine otherwise.
+///
+/// The index is consulted only while it reflects the current log HEAD; after any
+/// write the HEAD advances and the index is rebuilt before use, so it can never
+/// serve stale results. A query shape the index does not accelerate (`Matches`,
+/// a path-target `Follows`, or a foreign cursor) returns `Unsupported` and the
+/// SQL engine handles it — including its own cursor. Because supportedness is a
+/// property of the query, a paginated session stays on one engine throughout.
+fn run_query_filter(
+    repo_state: &RepoState,
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    repo_uuid: Uuid,
+    body: &QueryBody,
+) -> Result<(Vec<Uuid>, Option<String>, Option<usize>), ApiError> {
+    let sort_by: Vec<crate::index::SortBy> = body
+        .sort
+        .iter()
+        .map(|k| crate::index::SortBy {
+            field: k.field.clone(),
+            ascending: matches!(k.order, query_exec::SortOrder::Asc),
+        })
+        .collect();
+
+    let mut index_guard = repo_state.index.lock_recover();
+    let head = db::current_head(conn)?;
+    if index_guard.as_ref().map(|i| i.built_at_head()) != Some(head) {
+        *index_guard = Some(crate::index::RepoIndex::build(conn, repo_uuid)?);
+    }
+    let index = index_guard.as_ref().expect("index built above");
+
+    match index.evaluate_page(&body.query, &sort_by, body.limit, body.cursor.as_deref()) {
+        Ok((uuids, next_cursor)) => {
+            let total = body
+                .count
+                .then(|| index.count(&body.query).expect("a page-able query also counts") as usize);
+            Ok((uuids, next_cursor, total))
+        }
+        Err(_unsupported) => {
+            let (uuids, next_cursor) = query_exec::execute(
+                conn,
+                cache,
+                repo_uuid,
+                &body.query,
+                &body.sort,
+                body.limit,
+                body.cursor.as_deref(),
+            )?;
+            let total = body
+                .count
+                .then(|| query_exec::count(conn, cache, repo_uuid, &body.query))
+                .transpose()?;
+            Ok((uuids, next_cursor, total))
+        }
+    }
+}
+
 fn run_query_inner(
     repo_state: &RepoState,
     repo_uuid: Uuid,
@@ -1328,20 +1386,8 @@ fn run_query_inner(
         }
         let conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, next_cursor) = query_exec::execute(
-            &conn,
-            &mut cache,
-            repo_uuid,
-            &body.query,
-            &body.sort,
-            body.limit,
-            body.cursor.as_deref(),
-        )?;
-        let total = if body.count {
-            Some(query_exec::count(&conn, &mut cache, repo_uuid, &body.query)?)
-        } else {
-            None
-        };
+        let (uuids, next_cursor, total) =
+            run_query_filter(repo_state, &conn, &mut cache, repo_uuid, body)?;
         drop(cache);
 
         let results: Vec<serde_json::Value> = match &body.select {
