@@ -19,8 +19,14 @@ use rusqlite::Connection;
 use uuid::Uuid;
 
 use crate::db;
-use field_index::{CmpOp, FieldIndex};
+use field_index::{CmpOp, FieldIndex, SortReps};
 use id_registry::IdRegistry;
+
+/// One sort key: a field name and its direction.
+pub struct SortBy {
+    pub field: String,
+    pub ascending: bool,
+}
 
 /// A query shape (or operand type) the bitmap path does not accelerate in this
 /// increment (e.g. `Matches`, a `Path`-target `Follows`). The caller may fall
@@ -44,6 +50,8 @@ pub struct RepoIndex {
     absent: HashMap<String, RoaringBitmap>,
     /// Per field name: the value encoding answering comparisons / traversal.
     fields: HashMap<String, FieldIndex>,
+    /// Per field name: min/max sort representatives, for `ORDER BY`.
+    sort: HashMap<String, SortReps>,
 }
 
 impl RepoIndex {
@@ -60,6 +68,7 @@ impl RepoIndex {
         let mut present: HashMap<String, RoaringBitmap> = HashMap::new();
         let mut absent: HashMap<String, RoaringBitmap> = HashMap::new();
         let mut fields: HashMap<String, FieldIndex> = HashMap::new();
+        let mut sort: HashMap<String, SortReps> = HashMap::new();
         for id in 0..registry.len() as u32 {
             let uuid = registry.uuid(id).expect("dense id in range");
             for row in db::get_field_rows(conn, uuid)? {
@@ -69,6 +78,7 @@ impl RepoIndex {
                     }
                     value => {
                         present.entry(row.name.clone()).or_default().insert(id);
+                        sort.entry(row.name.clone()).or_default().insert(&value, id);
                         fields
                             .entry(row.name)
                             .or_insert_with(|| FieldIndex::for_value(&value))
@@ -81,7 +91,55 @@ impl RepoIndex {
             fi.finalize();
         }
 
-        Ok(RepoIndex { registry, universe, present, absent, fields })
+        Ok(RepoIndex { registry, universe, present, absent, fields, sort })
+    }
+
+    /// Evaluates a query and returns the matching uuids in sort order (and
+    /// truncated to `limit`). Reproduces the SQL sort semantics: per key the
+    /// multi-map representative (min ascending / max descending), the fixed
+    /// type-group precedence, metarecords lacking the field last, uuid tiebreak.
+    /// Cursor pagination is a later increment.
+    pub fn evaluate_sorted(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+    ) -> Result<Vec<Uuid>, Unsupported> {
+        let matched = self.evaluate(q)?;
+        let mut ids: Vec<u32> = matched.iter().collect();
+        ids.sort_by(|&a, &b| self.cmp_ids(a, b, sort));
+        if let Some(limit) = limit {
+            ids.truncate(limit);
+        }
+        Ok(ids.iter().filter_map(|&id| self.registry.uuid(id)).collect())
+    }
+
+    fn cmp_ids(&self, a: u32, b: u32, keys: &[SortBy]) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        for key in keys {
+            let reps = self.sort.get(&key.field);
+            let want_max = !key.ascending;
+            let ra = reps.and_then(|s| s.rep(a, want_max));
+            let rb = reps.and_then(|s| s.rep(b, want_max));
+            let ord = match (ra, rb) {
+                (Some(x), Some(y)) => {
+                    if key.ascending {
+                        x.cmp(y)
+                    } else {
+                        y.cmp(x)
+                    }
+                }
+                // A metarecord lacking the field sorts last, both directions.
+                (Some(_), None) => Ordering::Less,
+                (None, Some(_)) => Ordering::Greater,
+                (None, None) => Ordering::Equal,
+            };
+            if ord != Ordering::Equal {
+                return ord;
+            }
+        }
+        // Final tiebreak: uuid ascending (matches the SQL keyset order).
+        self.registry.uuid(a).cmp(&self.registry.uuid(b))
     }
 
     /// Evaluates a query to the bitmap of matching dense ids.
@@ -214,6 +272,12 @@ impl RepoIndex {
     /// Number of distinct field names indexed.
     pub fn field_count(&self) -> usize {
         self.fields.len()
+    }
+
+    /// Total number of sort representatives held (min + max per metarecord per
+    /// field) — the extra resident cost of `ORDER BY` support.
+    pub fn sort_rep_count(&self) -> usize {
+        self.sort.values().map(|s| s.len()).sum()
     }
 
     /// Approximate resident size of all bitmaps (serialized size), the figure

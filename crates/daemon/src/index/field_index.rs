@@ -142,6 +142,115 @@ pub(super) fn sum_bytes<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) ->
     bitmaps.map(|b| b.serialized_size()).sum()
 }
 
+// ── Sort representatives ────────────────────────────────────────────────────
+
+/// A value reduced to its sort key, reproducing the SQL sort order
+/// ([`crate::query_exec`]): a fixed type-group precedence (bool < numeric <
+/// string < datetime < reference < tree_ref), then the natural in-group order.
+/// A field is homogeneous, so all of a field's reps share one group; the
+/// cross-group arm only guards mixed historical data.
+#[derive(Clone, PartialEq)]
+pub enum SortRep {
+    Bool(bool),
+    Num(f64),
+    Str(String),
+    DateTime(i64),
+    Ref([u8; 16]),
+    Tree(String),
+}
+
+impl SortRep {
+    fn group(&self) -> u8 {
+        match self {
+            SortRep::Bool(_) => 0,
+            SortRep::Num(_) => 1,
+            SortRep::Str(_) => 2,
+            SortRep::DateTime(_) => 3,
+            SortRep::Ref(_) => 4,
+            SortRep::Tree(_) => 5,
+        }
+    }
+}
+
+impl Eq for SortRep {}
+
+impl Ord for SortRep {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (SortRep::Bool(a), SortRep::Bool(b)) => a.cmp(b),
+            (SortRep::Num(a), SortRep::Num(b)) => a.total_cmp(b),
+            (SortRep::Str(a), SortRep::Str(b)) => a.cmp(b),
+            (SortRep::DateTime(a), SortRep::DateTime(b)) => a.cmp(b),
+            (SortRep::Ref(a), SortRep::Ref(b)) => a.cmp(b),
+            (SortRep::Tree(a), SortRep::Tree(b)) => a.cmp(b),
+            _ => self.group().cmp(&other.group()),
+        }
+    }
+}
+
+impl PartialOrd for SortRep {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn sort_rep(value: &Value) -> Option<SortRep> {
+    let norm = |f: f64| if f == 0.0 { 0.0 } else { f }; // merge -0.0 / 0.0 like SQL
+    match value {
+        Value::Bool(b) => Some(SortRep::Bool(*b)),
+        Value::Int(n) => Some(SortRep::Num(norm(*n as f64))),
+        Value::Float(f) => Some(SortRep::Num(norm(*f))),
+        Value::String(s) => Some(SortRep::Str(s.clone())),
+        Value::DateTime(ms) => Some(SortRep::DateTime(*ms)),
+        Value::Ref(u) | Value::RefBase(u) => Some(SortRep::Ref(*u.as_bytes())),
+        Value::ExternalRef { metarecord, .. } => Some(SortRep::Ref(*metarecord.as_bytes())),
+        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.clone())),
+        Value::Nothing => None,
+    }
+}
+
+/// Per-field sort representatives: each metarecord's minimum and maximum value
+/// (multi-map: ascending sorts on the min, descending on the max — the same
+/// representative the SQL sort picks).
+#[derive(Default)]
+pub struct SortReps {
+    min: HashMap<u32, SortRep>,
+    max: HashMap<u32, SortRep>,
+}
+
+impl SortReps {
+    pub fn insert(&mut self, value: &Value, id: u32) {
+        let Some(rep) = sort_rep(value) else { return };
+        self.min
+            .entry(id)
+            .and_modify(|m| {
+                if rep < *m {
+                    *m = rep.clone();
+                }
+            })
+            .or_insert_with(|| rep.clone());
+        self.max
+            .entry(id)
+            .and_modify(|m| {
+                if rep > *m {
+                    *m = rep.clone();
+                }
+            })
+            .or_insert(rep);
+    }
+
+    /// The representative used for the requested direction: max for descending,
+    /// min for ascending. `None` when the metarecord has no non-`Nothing` value
+    /// for this field (it then sorts last, like the SQL `nf` flag).
+    pub fn rep(&self, id: u32, want_max: bool) -> Option<&SortRep> {
+        if want_max { self.max.get(&id) } else { self.min.get(&id) }
+    }
+
+    pub fn len(&self) -> usize {
+        self.min.len() + self.max.len()
+    }
+}
+
 // ── Categorical (Bool, String) ──────────────────────────────────────────────
 
 /// A hashable equality key for a categorical value (the column the SQL keys on:

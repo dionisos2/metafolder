@@ -10,9 +10,9 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{FollowTarget, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::RepoIndex;
+use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec;
+use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -63,6 +63,33 @@ impl Oracle {
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "divergence on {q:?}");
+    }
+
+    /// Asserts the bitmap index agrees with the SQL engine on the *ordered*,
+    /// limited result of `q` (comparison is order-sensitive — a `Vec`, not a set).
+    fn check_sorted(&mut self, q: &Query, by: &[(&str, bool)], limit: Option<usize>) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let sql_keys: Vec<SortKey> = by
+            .iter()
+            .map(|(f, asc)| SortKey {
+                field: f.to_string(),
+                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
+            })
+            .collect();
+        let (sql, _) = query_exec::execute(
+            &self.conn,
+            &mut self.cache,
+            self.db_id,
+            q,
+            &sql_keys,
+            limit,
+            None,
+        )
+        .unwrap();
+        let idx_keys: Vec<SortBy> =
+            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
+        let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
+        assert_eq!(got, sql, "sort divergence on {q:?} by {by:?} limit {limit:?}");
     }
 }
 
@@ -421,4 +448,61 @@ fn reverse_tree_transitive_conjunction() {
         gte("rate", i(5)),
         eq("kind", s("file")),
     ]));
+}
+
+// ── Sorting (ORDER BY) ──────────────────────────────────────────────────────
+
+/// Five records all carrying `all`, with varied `rate` (incl. a multi-map and
+/// a missing one) plus a `kind`, to exercise representative selection, ties,
+/// and field-missing-last.
+fn sortable() -> Oracle {
+    let mut o = Oracle::new();
+    let all = || Field::new("all", Value::Bool(true));
+    o.create(vec![all(), Field::new("kind", s("film")), Field::new("rate", i(5))]);
+    o.create(vec![all(), Field::new("kind", s("film")), Field::new("rate", i(2))]);
+    o.create(vec![all(), Field::new("kind", s("book")), Field::new("rate", i(8))]);
+    // multi-map rate {2, 9}: asc rep = 2 (ties with the i(2) record), desc rep = 9
+    o.create(vec![all(), Field::new("kind", s("book")), Field::new("rate", i(2)), Field::new("rate", i(9))]);
+    o.create(vec![all(), Field::new("kind", s("film")), Field::new("rate", Value::Nothing)]);
+    o.create(vec![all(), Field::new("kind", s("book"))]); // no rate → sorts last
+    o
+}
+
+#[test]
+fn sort_single_key_int_asc_desc() {
+    let mut o = sortable();
+    o.check_sorted(&present("all"), &[("rate", true)], None);
+    o.check_sorted(&present("all"), &[("rate", false)], None);
+}
+
+#[test]
+fn sort_with_limit() {
+    let mut o = sortable();
+    o.check_sorted(&present("all"), &[("rate", false)], Some(3));
+    o.check_sorted(&present("all"), &[("rate", true)], Some(2));
+}
+
+#[test]
+fn sort_string_key() {
+    let mut o = sortable();
+    o.check_sorted(&present("all"), &[("kind", true)], None);
+    o.check_sorted(&present("all"), &[("kind", false)], None);
+}
+
+#[test]
+fn sort_multi_key() {
+    let mut o = sortable();
+    o.check_sorted(&present("all"), &[("kind", true), ("rate", false)], None);
+    o.check_sorted(&present("all"), &[("kind", false), ("rate", true)], None);
+}
+
+#[test]
+fn sort_datetime_latest_first() {
+    // The motivating "latest modified files" query: descending datetime.
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2024-01-01T00:00:00Z"))]);
+    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2025-06-15T12:00:00Z"))]);
+    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2023-03-03T03:03:03Z"))]);
+    o.check_sorted(&present("all"), &[("added", false)], Some(2));
+    o.check_sorted(&present("all"), &[("added", true)], None);
 }

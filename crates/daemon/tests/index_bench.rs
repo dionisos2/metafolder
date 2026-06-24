@@ -11,9 +11,9 @@ use std::time::Instant;
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{FollowTarget, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::RepoIndex;
+use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::query_exec;
+use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -98,7 +98,7 @@ fn battery() -> Vec<(&'static str, Query)> {
     ]
 }
 
-fn run_scale(dirs: usize, files: usize) {
+fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     let n = dirs + files;
     let (conn, db_id) = build_repo(dirs, files);
 
@@ -106,11 +106,15 @@ fn run_scale(dirs: usize, files: usize) {
     let index = RepoIndex::build(&conn, db_id).unwrap();
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let mem_mb = index.approx_serialized_bytes() as f64 / (1024.0 * 1024.0);
+    // Rough sort-rep memory: ~56 B per entry (u32 key + enum value + map overhead).
+    let sort_mb = index.sort_rep_count() as f64 * 56.0 / (1024.0 * 1024.0);
 
     println!("\n=== scale: {n} metarecords ({dirs} dirs + {files} files) ===");
     println!(
         "build: {build_ms:.0} ms   resident(bitmaps): {mem_mb:.2} MB   \
-         universe: {}   fields: {}",
+         sort-reps: {:.2} MB (~{} entries)   universe: {}   fields: {}",
+        sort_mb,
+        index.sort_rep_count(),
         index.universe_len(),
         index.field_count()
     );
@@ -141,11 +145,48 @@ fn run_scale(dirs: usize, files: usize) {
             sql_ms / idx_ms.max(1e-6)
         );
     }
+
+    // Sorted page (the GUI's core gesture): ORDER BY … LIMIT 100.
+    // The SQL sort path is pathologically slow at scale (window-function CTE
+    // over the EAV table: ~190 s at 57k for one query), so the SQL comparison
+    // runs only at the small scale; the big scale times the index alone.
+    println!("-- sorted, LIMIT 100 --");
+    let sorted: Vec<(&str, Query, &str, bool)> = vec![
+        ("latest by added", Query::IsPresent { field: "added".into() }, "added", false),
+        ("films by rate desc", Query::Eq { field: "kind".into(), value: s("file") }, "rate", false),
+        ("by size asc", Query::IsPresent { field: "size".into() }, "size", true),
+    ];
+    for (name, q, field, asc) in sorted {
+        let idx_keys = [SortBy { field: field.into(), ascending: asc }];
+
+        let t = Instant::now();
+        let got = index.evaluate_sorted(&q, &idx_keys, Some(100)).unwrap();
+        let idx_ms = t.elapsed().as_secs_f64() * 1e3;
+
+        if compare_sql_sort {
+            let sql_keys = [SortKey {
+                field: field.into(),
+                order: if asc { SortOrder::Asc } else { SortOrder::Desc },
+            }];
+            let t = Instant::now();
+            let (sql, _) = query_exec::execute(&conn, &mut cache, db_id, &q, &sql_keys, Some(100), None)
+                .unwrap();
+            let sql_ms = t.elapsed().as_secs_f64() * 1e3;
+            assert_eq!(got, sql, "sorted divergence at scale on {name}");
+            println!(
+                "{name:<42} {:>8} {sql_ms:>11.2} {idx_ms:>11.3} {:>8.1}x",
+                got.len(),
+                sql_ms / idx_ms.max(1e-6)
+            );
+        } else {
+            println!("{name:<42} {:>8} {:>11} {idx_ms:>11.3} {:>8}", got.len(), "-", "-");
+        }
+    }
 }
 
 #[test]
 #[ignore = "scale measurement; run with --release --ignored --nocapture"]
 fn index_scale_measurement() {
-    run_scale(700, 5_000);
-    run_scale(7_000, 50_000);
+    run_scale(700, 5_000, true);
+    run_scale(7_000, 50_000, false);
 }

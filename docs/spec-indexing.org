@@ -284,6 +284,19 @@ then reproduces the total order, and =ORDER BY field LIMIT k= is a range scan
 for the aligned / sparse cases (the two motivating examples: "latest modified
 files", "films by rating").
 
+*Implementation status (increment 3).* =RepoIndex::evaluate_sorted= reproduces
+the full sort order (multi-map min/max representative, type-group precedence,
+field-missing last, uuid tiebreak; multi-key; =LIMIT=) but as a *shortcut*
+stores the per-(metarecord, field) min/max representative in a *separate* map,
+rather than folding the order-preserving key into the field's BSI as above. It
+sorts the filtered set in O(m log m) — at 57k, ~60 ms vs the SQL window-function
+sort's 190 s (the SQL EAV sort is unusable at scale). The cost is *memory*: the
+separate rep store is ~29 MB at 57k (vs ~5 MB for all filter bitmaps),
+extrapolating to ~1 GB at 2 M — over budget. Folding the sort key into the BSI
+(and deriving categorical/reference reps from the existing value partitions)
+instead of a standalone store is the pending compaction before 2 M. Cursor
+pagination over the sort key is also deferred.
+
 ** Counts are approximate by default
 
 Given the COUNT wall, the listing/pagination envelope reports an *approximate*
