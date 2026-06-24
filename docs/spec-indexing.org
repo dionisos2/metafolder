@@ -302,6 +302,41 @@ becomes a true O(log n + k) range scan. That single shape is plausibly the
 central UX gesture, which is what justifies the composite there and nowhere
 else.
 
+*Spatial trees (kd-tree / BKD-tree) as the general primitive* — evaluated and
+rejected. A kd-tree indexes points in a *fixed k-dimensional* space; our model
+violates nearly every assumption it needs:
+
+- *Open schema ⇒ high dimensionality.* A repo has hundreds of distinct
+  =field_name=; which ones are filtered is not knowable in advance (the same
+  reason indexing is not opt-in). A kd-tree must fix its axes at build time, and
+  past ~10–20 dimensions it degenerates to a linear scan (the query box touches
+  almost every node — the curse of dimensionality).
+- *Sparse data + three-valued logic.* Each metarecord carries ~8 fields out of
+  hundreds. A point needs a coordinate on *every* axis; =Unknown=/=Nothing= have
+  no coordinate, and inventing a per-axis sentinel corrupts range queries.
+- *Real queries are 1-D.* "latest modified", "films by =rate=" are single-field
+  sorts/ranges; in one dimension a kd-tree adds nothing over a B-tree/BSI. The
+  wall is *conjunction*, not the mono-field query.
+- *Dynamic conjunction over arbitrary fields* is precisely what bitmap set
+  algebra gives (intersect any subset of predicates at query time); a kd-tree
+  fixes its axes, and putting every field on an axis re-triggers the curse.
+- *Write-heavy.* The watcher mutates =mfr_path=/=mfr_mtime=/=mfr_size=
+  continuously; classic kd-trees unbalance on insert and need periodic rebuilds,
+  whereas bitmaps/BSI update per value in microseconds.
+- *Ref / TreeRef are graph, not spatial* — reverse bitmaps are the fit; a
+  kd-tree offers nothing there.
+
+The *one* place a kd-tree derivative would genuinely win is a *correlated
+multi-dimensional numeric box* (=date ∈ [a,b] AND size ∈ [c,d] AND rate ∈
+[e,f]= as a single k-D query, vs intersecting three BSI ranges with intermediate
+bitmaps). This is exactly how Lucene uses a *BKD-tree* (a write-friendly,
+block-balanced variant that fixes the update problem) — for numeric/geo *point*
+fields, *beside* its postings (≈ bitmaps), never as the general index. So a BKD
+index stays a possible *specialised, opt-in secondary* for that one motif, to be
+revisited only if the bench shows BSI intersection insufficient for it — the
+same posture as the tree-scoped sort index above. It is not a candidate to
+replace the bitmap/BSI/reverse-bitmap core.
+
 * Storage model: a derived in-memory cache
 
 The bitmaps/BSI are *not* SQL objects loaded per query and rewritten per edit.
