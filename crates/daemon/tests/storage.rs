@@ -188,18 +188,17 @@ fn test_retype_field_records_fallbacks() {
 
 #[test]
 fn test_value_type_probe_seeks_via_index() {
-    // The established-type probe must seek the (field_name, value_type) index,
-    // not scan the field_name range (mfr_path has ~one row per metarecord).
+    // The established-type probe seeks the field_name range via idx_field_name
+    // (stopping at the first non-Nothing row), never a full table scan.
     let conn = test_conn();
     let plan = query_plan(
         &conn,
         "SELECT value_type FROM field \
-         WHERE field_name = 'rating' AND value_type != 'nothing' \
-         ORDER BY value_type LIMIT 1",
+         WHERE field_name = 'rating' AND value_type != 'nothing' LIMIT 1",
     );
     assert!(
-        plan.contains("idx_field_name_type"),
-        "type probe should use idx_field_name_type, plan was: {plan}"
+        plan.contains("idx_field_name"),
+        "type probe should seek via idx_field_name, plan was: {plan}"
     );
     assert!(
         !plan.contains("SCAN field"),

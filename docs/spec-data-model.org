@@ -114,12 +114,15 @@ The type is established by the first non-=Nothing= write to that name; the user
 schema may also declare it explicitly (see
 [[file:spec-schema.org][spec-schema.org]]). A later write of a conflicting type
 is rejected with =400=. The current implementation realises the =field_type=
-registry as a *derived index probe* — the established type is read on each write
-from the =field= table via the =(field_name, value_type)= index (an O(log n)
-min/max seek), with no separate registry table — so the type unlocks
-automatically when a name's last non-=Nothing= value is removed. A materialised
-registry (and its role as the per-field index-encoding selector) comes with the
-indexing work (see [[file:spec-indexing.org][spec-indexing.org]]).
+registry as a *derived probe* with no separate registry table: the established
+type is read as one representative non-=Nothing= row of the name
+(=… WHERE field_name = ? AND value_type != 'nothing' LIMIT 1=, seeking the
+=field_name= range via the existing =idx_field_name=, stopping at the first such
+row), amortised by a per-revision cache in the =Writer= (one probe per field
+name per revision). The type therefore unlocks automatically when a name's last
+non-=Nothing= value is removed. A materialised registry (and its role as the
+per-field index-encoding selector) comes with the indexing work (see
+[[file:spec-indexing.org][spec-indexing.org]]).
 
 This uniformity simplifies the rest of the model: comparisons
 ([[file:spec-query.org][spec-query.org]]) are same-type, and sorting needs no

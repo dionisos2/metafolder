@@ -139,8 +139,7 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
     }
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_metarecord_db_uuid ON metarecord_db(db_id, metarecord_uuid);
-         CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);
-         CREATE INDEX IF NOT EXISTS idx_field_name_type ON field(field_name, value_type);",
+         CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
     )
     .context("Failed to ensure performance indexes")?;
     Ok(())
@@ -234,10 +233,6 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         -- range instead of scanning the whole EAV table. metarecord_uuid second
         -- makes it cover the `DISTINCT metarecord_uuid` projection.
         CREATE INDEX idx_field_name ON field(field_name, metarecord_uuid);
-        -- The one-value-type-per-field-name invariant probes the established
-        -- type per write; value_type second makes the min/max (ORDER BY .. LIMIT 1)
-        -- probe an index seek rather than a scan of the field_name range.
-        CREATE INDEX idx_field_name_type ON field(field_name, value_type);
         CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
             WHERE value_type IN ('ref', 'externalref');
         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
@@ -375,27 +370,21 @@ pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result
     collect_field_rows(rows)
 }
 
-/// The established non-`Nothing` value type(s) of a field name, file-wide, as
-/// `(min, max)` of the `value_type` column (excluding `nothing`). `None` when the
-/// name has no non-`Nothing` rows (type not yet established). For a compliant
-/// field `min == max`; a differing `min`/`max` means pre-existing mixed data.
-/// Both ends are index seeks via `idx_field_name_type` (no scan), so this is
-/// cheap enough to run on every write — see [`crate::log::Writer`].
-pub fn value_type_bounds(conn: &Connection, name: &str) -> Result<Option<(String, String)>> {
-    let probe = |order: &str| -> Result<Option<String>> {
-        Ok(conn
-            .prepare_cached(&format!(
-                "SELECT value_type FROM field \
-                 WHERE field_name = ?1 AND value_type != 'nothing' \
-                 ORDER BY value_type {order} LIMIT 1"
-            ))?
-            .query_row(params![name], |r| r.get::<_, String>(0))
-            .optional()?)
-    };
-    match (probe("ASC")?, probe("DESC")?) {
-        (Some(min), Some(max)) => Ok(Some((min, max))),
-        _ => Ok(None),
-    }
+/// The established non-`Nothing` value type of a field name, file-wide, or
+/// `None` when the name has no non-`Nothing` rows (type not yet established).
+/// The "one value type per field name" invariant guarantees at most one such
+/// type, so any one non-`Nothing` row is representative — `LIMIT 1` over the
+/// existing `idx_field_name` (it seeks the `field_name` range and stops at the
+/// first non-`Nothing` row, almost always the first), cheap enough to run per
+/// write and amortised further by the [`crate::log::Writer`] per-revision cache.
+pub fn established_value_type(conn: &Connection, name: &str) -> Result<Option<String>> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT value_type FROM field \
+             WHERE field_name = ?1 AND value_type != 'nothing' LIMIT 1",
+        )?
+        .query_row(params![name], |r| r.get::<_, String>(0))
+        .optional()?)
 }
 
 /// Distinct metarecord UUIDs carrying at least one row of `name` (served by

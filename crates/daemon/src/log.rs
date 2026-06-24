@@ -1289,9 +1289,9 @@ impl<'c> Writer<'c> {
 
         // Not cached yet: probe the DB once. An established differing type is a
         // conflict; otherwise this write fixes the type — cache it either way.
-        if let Some((min, max)) = db::value_type_bounds(&self.tx, field_name)? {
-            if min != new_type || max != new_type {
-                return Err(Self::type_conflict(field_name, &min, new_type));
+        if let Some(established) = db::established_value_type(&self.tx, field_name)? {
+            if established != new_type {
+                return Err(Self::type_conflict(field_name, &established, new_type));
             }
         }
         self.field_types.insert(field_name.to_string(), new_type.to_string());
