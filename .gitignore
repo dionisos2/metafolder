@@ -10,7 +10,7 @@ crates/gui/gen/
 prompts.txt
 .#prompts.txt
 node_modules/
-benchmarks/benchmark*
+benchmarks/bench_result
 benchmarks/A_B*
 benchmarks/real
 corrections.txt
