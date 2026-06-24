@@ -104,12 +104,37 @@ The shift in model: stop thinking "scan rows + filter one by one" and move to
 Pilosa/FeatureBase, Oracle bitmap indexes) to make ad-hoc filters + ranges
 viable over millions of rows.
 
-** Indexed columns are declared
+** Every field is indexed; the encoding is chosen by type
 
-Indexing is opt-in per field, declared in the user schema
-([[file:spec-schema.org][spec-schema.org]]). At 2 M metarecords × ~8 fields,
-indexing *every* field would multiply write cost; declaring the "sortable /
-filterable" fields keeps the cost where it is useful.
+Indexing is *not* opt-in: every field is indexed automatically. Metafolder is
+about arbitrary, ad-hoc metadata — which fields a user filters or sorts on is
+not knowable in advance, so requiring a declaration would fight the model and
+produce "why is this query slow?" surprises. There is no "sortable / filterable"
+declaration to maintain.
+
+Because there is no declaration to say how to index a field, the *encoding is
+selected automatically from the field's value type* (the =value_type= already
+recorded per row):
+
+| Value type(s)                  | Encoding                          | See                                  |
+|--------------------------------+-----------------------------------+--------------------------------------|
+| =Int= / =Float= / =DateTime=   | bit-sliced index (BSI), range     | [[*Bit-sliced index (BSI) for ordered/range fields][BSI]]               |
+| =Bool= / low-cardinality =String= | one bitmap per value           | [[*Bitmaps for categorical predicates][categorical bitmaps]]            |
+| =Ref= / =TreeRef=              | reverse (inverted) bitmaps        | [[*Reverse bitmaps for Ref / TreeRef][reverse bitmaps]]                 |
+| high-cardinality =String=      | inverted bitmaps for equality; =Matches= stays the REGEXP scan (FTS5 is the v2 acceleration, see [[file:spec-query.org][spec-query.org]]) | |
+
+A field is a multi-map and could in principle hold mixed value types; the
+encoding follows the dominant type, with off-type values handled as a
+categorical fallback.
+
+Since updates are cheap in memory and persistence is deferred (see
+[[*Storage model: a derived in-memory cache][Storage model]]), the cost of "index
+everything" is *not* write amplification but *resident memory*: ~16 M field
+rows at 2 M metarecords, order ~100–200 MB of bitmaps (to be measured). The
+gating mechanism is therefore the memory budget, with two fallbacks if it is
+exceeded — *opt-out* (the schema may *exclude* a pathological field, e.g. a
+near-unique string never usefully filtered), and the on-disk / mmap roaring
+regime beyond the in-RAM range (≈ 100 M). Opt-out, never opt-in.
 
 ** Bitmaps for categorical predicates
 
@@ -139,11 +164,41 @@ Range-encoded bitmaps (cumulative =R_v = {field ≤ v}=, a range = 1–2 bitmaps
 are an alternative for bucketised ranges; BSI is preferred as the general tool
 because it also serves aggregates and avoids one-bitmap-per-bucket.
 
-** The tree as a range dimension
+Note that the encoding choice is about *queryability, not bit-width*: a value
+that fits in few bits (e.g. a metarecord id in ~21 bits at 2 M) is *not* a BSI
+candidate unless it is range-queried. Ids are queried only by equality /
+traversal — see the next subsection.
 
-If metarecord ids are assigned in tree order (or each node carries a nested-set
-interval), a sub-tree =/A= becomes a *contiguous id range*, i.e. a range bitmap.
-The path filter then becomes a cheap AND operand:
+** Reverse bitmaps for Ref / TreeRef
+
+=Ref= and =TreeRef= fields are never range-queried: an id has no meaningful
+order, so =target_id ≥ T= is meaningless. The only operation is equality /
+traversal — =Follows X= ("which metarecords point to X?"). BSI is therefore the
+*wrong* tool here (equality via BSI is ~b slice-ANDs to reconstruct, vs a single
+fetch); the bit-width of the id is irrelevant.
+
+The right encoding is a *reverse (inverted) bitmap index*: =target_id → set of
+source ids=, i.e. one bitmap per target value, keyed on the referent (for =Ref=)
+or the parent id (for =TreeRef=). This is the in-memory equivalent of the
+existing SQL =idx_field_reverse=. The "up to 2 M distinct targets" is not a
+storage problem: each bitmap is tiny (a node has few direct children; a
+metarecord has few referrers) and the total set bits = number of edges ≈ O(n) —
+many small bitmaps, not a storage explosion.
+
+Consequence: the *direct* =Follows= ("direct children of =/A=" =
+=parent = id(A)=) is a single =bitmap[id(A)]= fetch, with no need for the
+contiguous-id trick below. Only the *transitive* descendant query
+(=FollowsTransitive=) needs the tree-as-range optimisation, which isolates that
+difficulty to one operator.
+
+** The tree as a range dimension                                  :future:
+
+A deferred optimisation, only for =FollowsTransitive= (whole-sub-tree
+descendants); the direct-children case is already handled by the reverse bitmaps
+above. If metarecord ids are assigned in tree order (DFS pre-order) — or each
+node carries a nested-set interval — a sub-tree =/A= becomes a *contiguous id
+range*, i.e. a range bitmap, and the transitive path filter becomes a cheap AND
+operand:
 
 #+begin_example
   mfr_path ->* /A  AND  mfr_type = file  AND  date ≥ T
@@ -151,8 +206,16 @@ The path filter then becomes a cheap AND operand:
 #+end_example
 
 = two ANDs + one BSI comparison = O(b · n/64) ≈ a few ms at 2 M, *uniform*
-(no corruption by correlation, unlike scan-and-skip). The tree cache already
-maintains the structure this builds on.
+(no corruption by correlation, unlike scan-and-skip).
+
+The catch — and why this is deferred — is that tree-order ids are *not stable
+under moves*: relocating a sub-tree breaks contiguity and would force
+renumbering a range of ids, whereas the tree cache renames/moves in O(1) today
+by repointing the parent. The viable compromise (pre-order ids with gaps, lazy
+renumbering, or floating nested-set intervals) is unresolved; until then,
+=FollowsTransitive= keeps its current O(sub-tree) tree-cache walk, and this is
+an optimisation to prototype and measure later. See [[*Open questions][Open
+questions]].
 
 ** Adaptive query planner
 
@@ -224,9 +287,10 @@ concerns.
 
 The bitmaps live resident in =RepoState= (next to the tree cache). A query is
 in-process bitmap algebra — zero SQLite I/O, zero deserialisation per query.
-Size at 2 M: one bitmap ≈ 250 KB dense; a BSI column ≈ a few MB; ~10 declared
-columns ≈ tens of MB resident — comparable to the tree cache and SQLite page
-cache. The cost is at *repository load*, not per query.
+Size at 2 M: one bitmap ≈ 250 KB dense; a BSI field ≈ a few MB; indexing *all*
+fields ≈ ~100–200 MB resident (≈ 16 M field rows) — the budget to measure (see
+[[*Every field is indexed; the encoding is chosen by type][Every field is
+indexed]]). The cost is at *repository load*, not per query.
 
 ** No per-write persistence (write)
 
@@ -260,10 +324,12 @@ the tree cache it already maintains.
 The design rests on assumptions that must be validated with =crates/bench=
 (and a focused prototype) rather than assumed:
 
-- *Write amplification* of maintaining a BSI in memory per write, vs the current
-  ~8 ms/write — is the microsecond claim borne out end to end?
-- *Resident memory budget* at 2 M across the realistic set of declared columns;
-  the regime change toward on-disk / mmap roaring needed beyond (≈ 100 M).
+- *Write amplification* of maintaining every field's index in memory per write
+  (all ~8 fields of a metarecord), vs the current ~8 ms/write — is the
+  microsecond claim borne out end to end?
+- *Resident memory budget* at 2 M with *all* fields indexed (the gating concern,
+  ~100–200 MB estimated); the regime change toward on-disk / mmap roaring needed
+  beyond (≈ 100 M), and whether any opt-out is forced in practice.
 - *Load cost* of snapshot + event-log replay vs a cold rebuild, at realistic
   snapshot intervals.
 - *Rust libraries*: maturity of =croaring= / =roaring-rs=; whether a BSI layer
@@ -274,11 +340,14 @@ The design rests on assumptions that must be validated with =crates/bench=
 
 * Open questions
 
-- Id assignment for the tree-as-range trick: stable tree-order ids vs nested-set
-  intervals vs a separate path-prefix encoding — interaction with rename/move
-  (which the tree cache handles in O(1) today).
-- Where the "indexed field" declaration lives in the schema and how changing it
-  triggers a (background) index build.
+- Id assignment for the deferred tree-as-range trick (=FollowsTransitive=):
+  stable tree-order ids vs nested-set intervals vs a separate path-prefix
+  encoding — interaction with rename/move (which the tree cache handles in O(1)
+  today). This is the unresolved blocker that keeps the optimisation future.
+- Auto-encoding of a multi-map field with *mixed* value types: dominant type +
+  categorical fallback, or a per-type sub-index?
+- High-cardinality string fields: an inverted-bitmap equality index is O(n) but
+  rarely queried — confirm it is worth keeping vs. opt-out by heuristic.
 - Whether the tree-scoped composite sort index is worth its write cost, or
   whether filter-first + BSI is fast enough for folder browsing at 2 M.
 - Exact-count UX: when, if ever, a precise total is offered, and how it is
