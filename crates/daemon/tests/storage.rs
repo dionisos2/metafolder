@@ -110,6 +110,25 @@ fn test_field_type_unlocks_when_empty() {
 }
 
 #[test]
+fn test_field_type_unlocks_within_one_revision() {
+    // The per-Writer type cache must not go stale: clearing a field to Nothing
+    // mid-revision unlocks its type, so a later different-type write succeeds in
+    // the *same* Writer.
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![Field::new("note", Value::Int(1))]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    w.set_field(m.uuid, "note", Value::Int(2)).unwrap(); // caches "int"
+    w.set_field(m.uuid, "note", Value::Nothing).unwrap(); // clears → must drop cache
+    w.set_field(m.uuid, "note", Value::String("text".into())).unwrap(); // now allowed
+    w.commit().unwrap();
+
+    let g = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
+    assert_eq!(g.get("note"), Some(&Value::String("text".into())));
+}
+
+#[test]
 fn test_retype_field_converts_rolls_back_and_relocks() {
     use metafolder_core::metarecord::ScalarType;
     let mut conn = test_conn();

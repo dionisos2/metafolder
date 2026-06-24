@@ -888,6 +888,11 @@ pub struct Writer<'c> {
     /// Number of operations already flushed to the database.
     flushed: i64,
     pending: Vec<PendingOp>,
+    /// Per-revision cache of each field name's established (non-`Nothing`) value
+    /// type, populated lazily on the first checked write of a name. Collapses the
+    /// per-write type probe to one DB seek per field name (a bulk reconcile/watcher
+    /// revision writes the same ~8 reserved names across thousands of records).
+    field_types: HashMap<String, String>,
 }
 
 impl<'c> Writer<'c> {
@@ -905,7 +910,15 @@ impl<'c> Writer<'c> {
             params![now_ms(), label],
         )?;
         let rev_id = tx.last_insert_rowid();
-        Ok(Self { tx, db_id, rev_id, chain_head: head, flushed: 0, pending: Vec::new() })
+        Ok(Self {
+            tx,
+            db_id,
+            rev_id,
+            chain_head: head,
+            flushed: 0,
+            pending: Vec::new(),
+            field_types: HashMap::new(),
+        })
     }
 
     pub fn rev_id(&self) -> i64 {
@@ -936,6 +949,7 @@ impl<'c> Writer<'c> {
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, vec![])?;
+        self.field_types.remove(name); // rows removed: the type may have unlocked
         Ok(())
     }
 
@@ -1000,9 +1014,14 @@ impl<'c> Writer<'c> {
         self.tx
             .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
             .execute(params![db::uuid_to_bytes(uuid), name])?;
+        let cleared_to_nothing = matches!(value, Value::Nothing);
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
         self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
+        if cleared_to_nothing {
+            // The only remaining row is Nothing: the type may have unlocked.
+            self.field_types.remove(name);
+        }
         Ok(())
     }
 
@@ -1060,6 +1079,9 @@ impl<'c> Writer<'c> {
     /// rows are left untouched (explicit absence is preserved). Returns how many
     /// rows changed and the metarecords whose values fell back to the sentinel.
     pub fn retype_field(&mut self, name: &str, to: ScalarType) -> Result<RetypeSummary> {
+        // The field's established type changes here; drop any cached entry so a
+        // later checked write in this revision re-probes.
+        self.field_types.remove(name);
         let mut converted = 0usize;
         let mut fallback: std::collections::BTreeSet<Uuid> = Default::default();
         for uuid in db::metarecords_with_field(&self.tx, name)? {
@@ -1091,9 +1113,10 @@ impl<'c> Writer<'c> {
             uuid,
             Some(&old.name.clone()),
             Some(version_before),
-            vec![old],
+            vec![old.clone()],
             vec![],
         )?;
+        self.field_types.remove(&old.name); // a row removed: the type may have unlocked
         Ok(())
     }
 
@@ -1247,22 +1270,40 @@ impl<'c> Writer<'c> {
     /// `Nothing` is absence, not a type, so it is always allowed. A non-`Nothing`
     /// value whose type differs from the established one is rejected; changing a
     /// field's type is the dedicated `retype` operation (which bypasses this).
-    /// Cheap per-write: one index seek via `idx_field_name_type`.
-    fn validate_value_type(&self, field_name: &str, value: &Value) -> Result<()> {
+    /// At most one index seek (`idx_field_name_type`) per field name per revision:
+    /// the established type is cached in [`Self::field_types`] after the first
+    /// probe (or after this write establishes it).
+    fn validate_value_type(&mut self, field_name: &str, value: &Value) -> Result<()> {
         if matches!(value, Value::Nothing) {
             return Ok(());
         }
         let new_type = db::encode_value(value).value_type;
+
+        if let Some(established) = self.field_types.get(field_name) {
+            return if established == new_type {
+                Ok(())
+            } else {
+                Err(Self::type_conflict(field_name, established, new_type))
+            };
+        }
+
+        // Not cached yet: probe the DB once. An established differing type is a
+        // conflict; otherwise this write fixes the type — cache it either way.
         if let Some((min, max)) = db::value_type_bounds(&self.tx, field_name)? {
             if min != new_type || max != new_type {
-                return Err(DomainError::BadRequest(format!(
-                    "field '{field_name}' has value type '{min}'; cannot write a \
-                     '{new_type}' value (use retype to change the field's type)"
-                ))
-                .into());
+                return Err(Self::type_conflict(field_name, &min, new_type));
             }
         }
+        self.field_types.insert(field_name.to_string(), new_type.to_string());
         Ok(())
+    }
+
+    fn type_conflict(field_name: &str, established: &str, attempted: &str) -> anyhow::Error {
+        DomainError::BadRequest(format!(
+            "field '{field_name}' has value type '{established}'; cannot write a \
+             '{attempted}' value (use retype to change the field's type)"
+        ))
+        .into()
     }
 
     /// For TreeRef values: the parent must be null (root) or an existing metarecord
