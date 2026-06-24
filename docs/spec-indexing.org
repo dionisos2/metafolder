@@ -123,9 +123,12 @@ recorded per row):
 | =Ref= / =TreeRef=              | reverse (inverted) bitmaps        | [[*Reverse bitmaps for Ref / TreeRef][reverse bitmaps]]                 |
 | high-cardinality =String=      | inverted bitmaps for equality; =Matches= stays the REGEXP scan (FTS5 is the v2 acceleration, see [[file:spec-query.org][spec-query.org]]) | |
 
-A field is a multi-map and could in principle hold mixed value types; the
-encoding follows the dominant type, with off-type values handled as a
-categorical fallback.
+A field name has exactly one non-=Nothing= value type repository-wide (see
+[[file:spec-data-model.org][spec-data-model.org]] → "One value type per field
+name"), so the encoding is unambiguous — the =field_type= registry that enforces
+the invariant *is* the encoding selector, with no dominant-type inference or
+mixed-type fallback. A =retype= operation rebuilds the field's index under the
+new encoding.
 
 Since updates are cheap in memory and persistence is deferred (see
 [[*Storage model: a derived in-memory cache][Storage model]]), the cost of "index
@@ -368,8 +371,6 @@ The design rests on assumptions that must be validated with =crates/bench=
   stable tree-order ids vs nested-set intervals vs a separate path-prefix
   encoding — interaction with rename/move (which the tree cache handles in O(1)
   today). This is the unresolved blocker that keeps the optimisation future.
-- Auto-encoding of a multi-map field with *mixed* value types: dominant type +
-  categorical fallback, or a per-type sub-index?
 - High-cardinality string fields: an inverted-bitmap equality index is O(n) but
   rarely queried — confirm it is worth keeping vs. opt-out by heuristic.
 - Whether the tree-scoped composite sort index is worth its write cost, or

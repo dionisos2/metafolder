@@ -76,6 +76,19 @@ it; the same pair can be expressed in the DSL as
 setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
 regex to =value_name= (the single name component).
 
+** Comparison typing
+
+A field name has a single non-=Nothing= value type repository-wide (see
+[[file:spec-data-model.org][spec-data-model.org]] → "One value type per field
+name"), so comparisons are always *same-type*: =Eq=/=Neq= and the ordered
+operators compare the operand against rows of the field's one type, with no
+cross-type coercion rules to define. =Int= and =Float= remain mutually
+comparable as the single numeric domain; =DateTime= compares numerically by its
+Unix-ms value. A =Nothing= row never matches a value comparison (use
+=IsAbsent=/=IsUnknown= for absence). The =TreeRef= name convention above is the
+one apparent exception — a string operand compares against =value_name=, not a
+different type.
+
 ** Indexing & scaling
 
 Filtered + sorted + paginated query performance at large scale (the EAV

@@ -16,6 +16,16 @@ constraint: the only schema-related data in the database is the reserved
 user writes against the loaded schema and rejects violating writes with
 =400=.
 
+Note that a field name carrying a single non-=Nothing= value type is *not* a
+schema option but a universal invariant of the data model (see
+[[file:spec-data-model.org][spec-data-model.org]] → "One value type per field
+name"): the type is fixed by the first non-=Nothing= write and tracked in the
+=field_type= registry even with no schema loaded. A =type= constraint here is
+therefore the *explicit declaration* of that one type (pinning it before any
+write, and documenting it); a constraint that contradicts the registry's
+established type is itself a schema error. Changing an established type is the
+[[file:spec-data-model.org][retype]] operation, not a schema edit.
+
 * Concepts
 
 ** Metarecord types

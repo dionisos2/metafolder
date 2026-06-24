@@ -96,6 +96,52 @@ All values serialize to JSON as ={"type": "<variant>", "value": <json_value>}=.
 =DateTime= is held internally as Unix milliseconds but encoded on the wire as an
 ISO-8601 UTC string; a non-parsable datetime string is rejected on deserialization.
 
+** One value type per field name
+
+A field name has a *single non-=Nothing= value type* across the whole
+repository. =Nothing= always coexists with it (it is absence, not a type): a
+field may be its type where it applies and =Nothing= where it does not. The
+multi-map is unaffected — several rows of the same name are still allowed, but
+they all share that one type (e.g. many =tag= rows, all =String=; many =author=
+rows, all =Ref=). Mixing value types under one field name is rejected.
+
+The reference variants are treated as *distinct* types, not a family: a field is
+=Ref=, or =RefBase=, or =ExternalRef=, or =TreeRef= — never a mix. A link that
+is sometimes local and sometimes cross-repo is modelled uniformly as
+=ExternalRef=.
+
+The type is established by the first non-=Nothing= write to that name and
+recorded in a per-repository =field_type= registry (=field_name → value_type=);
+the user schema may also declare it explicitly (see
+[[file:spec-schema.org][spec-schema.org]]). A later write of a conflicting type
+is rejected with =400=. The registry is authoritative at runtime and doubles as
+the per-field index-encoding selector (see
+[[file:spec-indexing.org][spec-indexing.org]]).
+
+This uniformity simplifies the rest of the model: comparisons
+([[file:spec-query.org][spec-query.org]]) are same-type, and sorting needs no
+cross-type precedence (see [[*Sort specification (=POST /query=)]]).
+
+*** Changing a field's type (retype)
+
+Because the first write locks the type, an explicit *retype* operation changes a
+field name's type repository-wide, converting every existing non-=Nothing= row:
+
+- HTTP: =POST /repos/:repo_uuid/fields/:name/retype= with body ={"to":
+  "<type>"}=; CLI: =mf retype <name> <type>=.
+- It is a logged write (one revision through =log::Writer=, so it is rollbackable
+  like any other change) and updates the =field_type= registry.
+- Conversions follow a defined table: lossless where possible (=Int ↔ Float=,
+  =Bool ↔ Int= as =0/1=, =DateTime ↔ Int= as Unix-ms, any type → =String= via
+  its display form), parsed where textual (=String → Int/Float/Bool/DateTime=).
+  =Ref=/=RefBase=/=ExternalRef=/=TreeRef= have no scalar conversion.
+- A value that cannot be converted is set to the target type's *default
+  sentinel*, chosen to be easily found afterwards: =Int= =0=, =Float= =0.0=,
+  =Bool= =false=, =String= ="="" (empty), =DateTime= the Unix epoch
+  (=1970-01-01T00:00:00Z=), the reference types =Nothing= (findable via
+  =IS ABSENT=). The operation returns a summary (counts, and the uuids whose
+  values fell back to the sentinel) so they can be located and fixed.
+
 ** Reserved fields
 
 Two categories of reserved field names exist, distinguished by prefix:
@@ -279,12 +325,12 @@ Sort semantics per metarecord for a sort field =F=:
   *after* all metarecords with a value, regardless of =order=.
 - Multi-map fields: the metarecord's sort key is its smallest value of =F= for
   ="asc"=, its largest for ="desc"=.
-- When rows of =F= have mixed value types across metarecords, a fixed type
-  precedence orders the groups: bool < int/float (compared together
-  numerically) < string < datetime (its own group, compared numerically by its
-  Unix-ms =value_int=) < ref/refbase/externalref (by UUID bytes)
-  < tree_ref (by =value_name=). Values are compared within their group using
-  their natural order.
+- All non-=Nothing= rows of =F= share one value type (see [[*One value type per
+  field name]]), so values compare within that single type by its natural order:
+  numeric for =Int=/=Float=/=DateTime= (the Unix-ms =value_int=), lexicographic
+  for =String=, =value_name= for =TreeRef=, UUID bytes for the reference types.
+  No cross-type precedence is needed (it cannot arise within one field); only the
+  =Nothing=/unknown-last rule above applies.
 
 *** Response envelope
 
