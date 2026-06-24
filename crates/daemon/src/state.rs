@@ -201,12 +201,14 @@ impl AppState {
     /// and executor, and releases the exclusive SQLite lock — so it can be
     /// re-loaded or opened by another daemon (spec-main "Repository management").
     ///
-    /// An unknown repository is a 404 (no idempotency claimed). A repository in
-    /// a coordinated-rollback navigation is refused with 409 until the
-    /// navigation is completed or aborted (its lock must not be silently
-    /// dropped). A background task still holding an `Arc` (a running reconcile)
-    /// keeps the state alive until it finishes; the repository is removed from
-    /// the loaded set immediately, so it is no longer addressable.
+    /// An unknown repository is a 404 (no idempotency claimed). The unload is
+    /// refused with 409 if:
+    /// - a coordinated-rollback navigation is in progress (its lock must not be
+    ///   silently dropped — complete or abort it first), or
+    /// - a cancellable task (reconcile/query) is in flight: the caller is asked
+    ///   to stop it first (`POST …/tasks/:id/cancel`), so the repository is
+    ///   never pulled out from under running work. Transient `flush` tasks do
+    ///   not block the unload.
     pub fn unload_repo(&self, repo_uuid: Uuid) -> Result<(), ApiError> {
         let removed = {
             let mut repos = self.repos.lock_recover();
@@ -216,6 +218,11 @@ impl AppState {
             if repo_state.is_rollback_locked() {
                 return Err(ApiError::conflict(
                     "repository is in rollback lock; complete or abort the navigation first",
+                ));
+            }
+            if repo_state.tasks.has_active_cancellable() {
+                return Err(ApiError::conflict(
+                    "a task is in progress; stop it first, then unload",
                 ));
             }
             repos.remove(&repo_uuid)

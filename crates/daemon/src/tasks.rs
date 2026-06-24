@@ -27,6 +27,14 @@ pub enum TaskKind {
     Flush,
 }
 
+impl TaskKind {
+    /// Whether a task of this kind can be cancelled (spec-tasks "Cancellation").
+    /// `flush` is internal and transient, so it is not.
+    pub fn is_cancellable(self) -> bool {
+        !matches!(self, TaskKind::Flush)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
@@ -222,7 +230,7 @@ impl TaskRegistry {
         if !t.status.is_active() {
             return CancelOutcome::AlreadyTerminal;
         }
-        if t.kind == TaskKind::Flush {
+        if !t.kind.is_cancellable() {
             return CancelOutcome::NotCancellable;
         }
         t.cancel_requested = true;
@@ -236,6 +244,15 @@ impl TaskRegistry {
     /// workers; `false` for an unknown task.
     pub fn is_cancel_requested(&self, id: Uuid) -> bool {
         self.tasks.lock_recover().get(&id).is_some_and(|t| t.cancel_requested)
+    }
+
+    /// Whether any *cancellable* task (reconcile/query) is currently active.
+    /// Used to refuse unloading a repository out from under in-flight work — the
+    /// user is asked to stop the task first. Transient `flush` tasks are ignored.
+    pub fn has_active_cancellable(&self) -> bool {
+        let mut tasks = self.tasks.lock_recover();
+        Self::evict_locked(&mut tasks, Instant::now());
+        tasks.values().any(|t| t.status.is_active() && t.kind.is_cancellable())
     }
 
     /// Registers an `on_cancel` side effect for a task (e.g. a closure capturing
@@ -465,6 +482,30 @@ mod tests {
         assert_eq!(r.request_cancel(done), CancelOutcome::AlreadyTerminal);
 
         assert_eq!(r.request_cancel(Uuid::new_v4()), CancelOutcome::NotFound);
+    }
+
+    #[test]
+    fn has_active_cancellable_ignores_flush_and_terminal() {
+        let r = reg();
+        assert!(!r.has_active_cancellable(), "empty registry");
+
+        // An active flush does not count (transient, internal).
+        let flush = r.start(TaskKind::Flush);
+        r.mark_running(flush);
+        assert!(!r.has_active_cancellable(), "flush is ignored");
+
+        // An active reconcile counts.
+        let rec = r.start(TaskKind::Reconcile);
+        r.mark_running(rec);
+        assert!(r.has_active_cancellable(), "running reconcile counts");
+
+        // Once it is terminal, it no longer counts.
+        r.finish(rec, None);
+        assert!(!r.has_active_cancellable(), "finished reconcile does not count");
+
+        // A pending query also counts (it is active).
+        r.start(TaskKind::Query);
+        assert!(r.has_active_cancellable(), "pending query counts");
     }
 
     #[test]

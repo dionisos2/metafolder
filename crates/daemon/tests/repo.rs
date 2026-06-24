@@ -287,6 +287,32 @@ fn test_config_exists_helper() {
 }
 
 #[test]
+fn test_unload_refused_while_a_task_is_in_flight() {
+    use metafolder_daemon::state::AppState;
+    use metafolder_daemon::tasks::TaskKind;
+
+    let root = temp_dir("unload_task");
+    let state = AppState::new();
+    let uuid = state.init_repo(&root, None, None).unwrap();
+
+    // A running reconcile task blocks the unload.
+    let task = state.repo(uuid).unwrap().tasks.start(TaskKind::Reconcile);
+    state.repo(uuid).unwrap().tasks.mark_running(task);
+    let err = state.unload_repo(uuid).unwrap_err();
+    assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
+    assert!(state.repo(uuid).is_ok(), "repo stays loaded while the task runs");
+
+    // A transient flush task does NOT block the unload.
+    state.repo(uuid).unwrap().tasks.finish(task, None);
+    let flush = state.repo(uuid).unwrap().tasks.start(TaskKind::Flush);
+    state.repo(uuid).unwrap().tasks.mark_running(flush);
+    state.unload_repo(uuid).unwrap();
+    assert!(state.repo(uuid).is_err(), "unload succeeds with only a flush active");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_unload_refused_during_rollback_navigation() {
     use metafolder_daemon::state::{AppState, RollbackLock};
 

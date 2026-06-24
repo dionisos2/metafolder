@@ -199,11 +199,10 @@ Response body: ={"repo_uuid": "..."}=
 - =409= if a coordinated-rollback navigation is in progress (complete or abort
   it first; see [[file:spec-event-log.org][spec-event-log.org]] "Rollback
   lock"). Its lock must not be silently dropped.
-
-A background task still running (a reconcile holding the connection) keeps its
-own handle alive until it finishes, but the repository is removed from the
-loaded set immediately and is no longer addressable. To stop such a task first,
-see [[file:spec-tasks.org][spec-tasks.org]] "Cancellation".
+- =409= if a cancellable task (reconcile/query) is in flight: the repository is
+  never pulled out from under running work. Stop the task first
+  (see [[file:spec-tasks.org][spec-tasks.org]] "Cancellation"), then unload. A
+  transient =flush= task does not block the unload.
 
 ** Error handling
 
