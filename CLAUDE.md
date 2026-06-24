@@ -78,9 +78,11 @@ without it. Arch package names in parentheses.
 The implementation follows the specs under `docs/` (`spec-main.org`,
 `spec-data-model.org`, `spec-query.org`, `spec-file-tracking.org`,
 `spec-event-log.org`, `spec-schema.org`, `spec-platform.org`, `spec-config.org`;
-`spec-sync.org` and parts tagged `:v2:` are deferred). When changing daemon
-behaviour, check the relevant spec section first; when deviating, update the
-spec.
+`spec-sync.org` and parts tagged `:v2:` are deferred). `spec-indexing.org` is a
+forward-looking *design* doc (indexing & query-performance architecture for
+large repos: bitmap/BSI indexes, adaptive planner) — only its baseline indexes
+are implemented. When changing daemon behaviour, check the relevant spec section
+first; when deviating, update the spec.
 
 ## Architecture
 

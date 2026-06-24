@@ -76,6 +76,14 @@ it; the same pair can be expressed in the DSL as
 setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
 regex to =value_name= (the single name component).
 
+** Indexing & scaling
+
+Filtered + sorted + paginated query performance at large scale (the EAV
+=field=-scan and conjunction costs, the proposed bitmap/BSI architecture and
+adaptive planner) is analysed in its own design document,
+[[file:spec-indexing.org][spec-indexing.org]]. The two baseline indexes
+described there are implemented; the rest is forward-looking.
+
 ** MATCHES performance
 
 In v1, =MATCHES= performs a full scan of the candidate rows with the =REGEXP=

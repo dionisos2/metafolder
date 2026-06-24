@@ -1,0 +1,285 @@
+#+TITLE: Metafolder — Indexing & Query Performance Design
+#+OPTIONS: toc:2 num:t
+
+* Status
+
+This is a *design* document, not an implemented specification. It records the
+analysis and the chosen direction for making filtered + sorted + paginated
+queries scale to large repositories (target: ~2 000 000 metarecords). Only the
+two baseline indexes of [[*Baseline indexes (implemented)][Baseline indexes]]
+are implemented today; everything from [[*The proposed architecture][The
+proposed architecture]] onward is forward-looking and tagged =:v2:= or later.
+
+Numbers below come from =crates/bench= run against the two persistent data
+folders (=benchmarks/bench_data= ≈ 5 101 and =benchmarks/bench_data_big= ≈
+50 201 metarecords); see =benchmarks/results-before-indexes.txt= and
+=results-after-indexes.txt=.
+
+* The problem
+
+The data model is EAV (entity–attribute–value): the =field= table holds roughly
+one row per field per metarecord, so a 2 M-metarecord repository is ~16 M field
+rows. Two distinct costs emerge at scale.
+
+** Pagination was super-linear (fixed)
+
+=mf list= and =mf query= paginate by following a cursor (=PAGE_SIZE= 500), so a
+full traversal of 50 k metarecords is 100 round-trips. Before the baseline
+indexes, *each page* was itself O(n):
+
+- the query path re-materialised the whole repository universe (the =_repo= CTE)
+  per page and full-scanned =field= for the predicate;
+- the list path sorted the whole repo in a temp b-tree per page (no keyset
+  seek).
+
+Total ≈ O(n²/PAGE_SIZE). Measured: ×10 data → ×64 (query) / ×63 (list) time.
+
+** Bounded retrieval is still linear (open)
+
+Even =LIMIT 100= over HTTP is ~linear in the DB size, not constant: every query
+materialises the full =_repo= universe before the limit applies, and the
+predicate still scans =field=. Measured: =mfr_path IS PRESENT LIMIT 100=
+57 ms @ 5 k → 421 ms @ 50 k (≈ ×7–9). Point lookups (=get=/=path=/=create=)
+are already constant.
+
+* The complexity wall
+
+The core theoretical limits, established by analysis (see the design discussion
+that produced this document):
+
+1. *Single indexed dimension + limit can be sub-linear.* =X LIMIT k= is
+   O(log n + k) when one index yields =X= already in the requested order
+   (e.g. =rate IS PRESENT ORDER BY rate=: only films carry =rate=, the index is
+   the films pre-sorted).
+
+2. *Conjunction breaks output-proportionality.* =X AND Y LIMIT k= has *no*
+   index yielding =X ∩ Y= in order. With only single-attribute indexes,
+   intersecting two index-accessible sets costs Ω(min(|X|, |Y|)) in the worst
+   case — an adversary can interleave so almost everything must be visited. A
+   *small result does not imply little work*: the cost is governed by
+   =R = count(value ≥ T)= over the *whole* base (the sort-index scan length)
+   and by the size of the filtered set, never by the result size.
+
+3. *Sort independent of filter is the same wall.* =/A AND date ≥ T= where =/A=
+   is half the base and =/B= is entirely newer: both access paths touch ~n/2
+   (scan =/A= testing the date, or scan =date ≥ T= which includes all of =/B=
+   testing membership). O(n/2) for 100 results.
+
+4. *Exact COUNT of a large filtered set is O(m), irreducible.* A B-tree does not
+   store sub-tree cardinalities, so counting a range means enumerating it. A
+   top-k can stop early; a COUNT cannot. Treat exact counts as O(n) and avoid
+   them on the hot path (approximate / "k+" instead).
+
+True O(log n + k) for an *independent* conjunction exists only with an index on
+the *pair* (a composite). We cannot have one per pair (combinatorial blow-up).
+The design therefore aims not to remove the wall but to (a) never hit it by
+accident, (b) degrade gracefully and *knowingly* when a query is intrinsically
+hard, and (c) shrink the constant of the unavoidable O(n) work by ~3–4 orders
+of magnitude.
+
+* Baseline indexes (implemented)
+
+Two indexes, added in the daemon schema (=crates/daemon/src/db.rs=), created by
+=init_schema= and back-filled on open for existing repositories
+(=ensure_perf_indexes=, idempotent):
+
+| Index                     | Definition                              | Fixes                                |
+|---------------------------+-----------------------------------------+--------------------------------------|
+| =idx_field_name=          | =field(field_name, metarecord_uuid)=    | predicate seeks the field_name range instead of scanning the EAV table; covers the =DISTINCT metarecord_uuid= projection |
+| =idx_metarecord_db_uuid=  | =metarecord_db(db_id, metarecord_uuid)= | listing seeks by keyset, reads rows already ordered — no temp b-tree per page |
+
+=list_entries_page= emits a *conditional* keyset (the cursor predicate is
+omitted on the first page) so the composite index can seek; folding it into
+=(?=NULL OR uuid > ?)= would defeat the seek.
+
+Result: the LIST path is fixed (=list LIMIT 100= ≈ constant across sizes,
+20 ms @ 50 k); the full paginated traversal is now ~linear instead of
+quadratic. The QUERY path improved only marginally (still re-materialises =_repo=
+per page, limit not pushed down) — addressed below.
+
+* The proposed architecture
+
+The shift in model: stop thinking "scan rows + filter one by one" and move to
+*set algebra over compressed bitmaps*, which is the established way (Druid,
+Pilosa/FeatureBase, Oracle bitmap indexes) to make ad-hoc filters + ranges
+viable over millions of rows.
+
+** Indexed columns are declared
+
+Indexing is opt-in per field, declared in the user schema
+([[file:spec-schema.org][spec-schema.org]]). At 2 M metarecords × ~8 fields,
+indexing *every* field would multiply write cost; declaring the "sortable /
+filterable" fields keeps the cost where it is useful.
+
+** Bitmaps for categorical predicates
+
+For low-cardinality / categorical fields (=mfr_type=, =mfr_mime=, booleans,
+tags, coarse buckets), keep one *roaring bitmap* per value: the set of
+metarecord ids satisfying =field = v=. Then:
+
+- =X AND Y= is a bitwise AND, O(n/64) worst case but in machine-word ops;
+- =LIMIT k= is the first =k= set bits of the result;
+- roaring skips empty blocks, so a small / clustered =X ∩ Y= is well under the
+  worst case in practice.
+
+** Bit-sliced index (BSI) for ordered/range fields
+
+A bitmap-per-value is useless for =field ≥ v= over a large domain (date, size,
+fine-grained rate). The right encoding is a *bit-sliced index*: store one
+bitmap per *bit position* of the (order-preserving encoded) value — ~30 bitmaps
+for an integer, ~20 for a day-resolution date, not one per value. Then:
+
+- =field ≥ v= / =≤ v= / range is a comparison walked over the bit-slices,
+  O(b · n/64) with b ≈ 30, yielding the matching bitmap;
+- it composes with the other bitmaps as just another AND operand;
+- bonus: BSI also answers aggregates (SUM, top-k, median) without touching rows,
+  which folds part of the COUNT/sort work into the same structure.
+
+Range-encoded bitmaps (cumulative =R_v = {field ≤ v}=, a range = 1–2 bitmaps)
+are an alternative for bucketised ranges; BSI is preferred as the general tool
+because it also serves aggregates and avoids one-bitmap-per-bucket.
+
+** The tree as a range dimension
+
+If metarecord ids are assigned in tree order (or each node carries a nested-set
+interval), a sub-tree =/A= becomes a *contiguous id range*, i.e. a range bitmap.
+The path filter then becomes a cheap AND operand:
+
+#+begin_example
+  mfr_path ->* /A  AND  mfr_type = file  AND  date ≥ T
+  = range_bitmap(/A) AND eq_bitmap(type, file) AND bsi_ge(date, T)
+#+end_example
+
+= two ANDs + one BSI comparison = O(b · n/64) ≈ a few ms at 2 M, *uniform*
+(no corruption by correlation, unlike scan-and-skip). The tree cache already
+maintains the structure this builds on.
+
+** Adaptive query planner
+
+No single plan is always right; the planner estimates and picks, always under a
+work budget so a wrong estimate costs O(budget), never an accidental O(n):
+
+1. *Estimate m* (the filtered-set size): O(1) from a maintained per-node
+   sub-tree count for a tree filter; from field statistics (histograms) for a
+   field filter. An *upper bound* on m is enough to decide.
+
+2. *m small (≤ budget)* → *filter-first + top-k heap*: enumerate =X ∩ Y= (cheap
+   via bitmaps), keep the best k in a size-k heap, O(m·log k), memory bounded by
+   k. This is the *default robust plan* — O(m) regardless of correlation.
+
+3. *m large* → consider *sort-index scan*: sample E rows of the filtered set,
+   build a histogram of the sort value, derive a threshold T for ~k·margin
+   results, then *check the cost before committing*: =R = count(value ≥ T)=
+   globally in O(log n) via a counted sort-index.
+   - =R= small → *threshold-jump*: scan =value ≥ T= (O(R)), filter, sort,
+     return; widen/narrow T if the result over/undershoots.
+   - =R= large (and m large) → intrinsically hard query → degrade *knowingly*
+     (approximate top-k from the sample, or best-effort under budget) instead
+     of scanning n by surprise.
+
+The sample-based estimate replaces the O(m) exact COUNT: a histogram of a sample
+gives both selectivity and the cut threshold, and respects the spec sort
+semantics (buckets ordered by the type-group precedence, Nothing/unknown a
+terminal bucket).
+
+** Sort semantics in one orderable key
+
+The spec sort is not a plain =ORDER BY column=: multi-map (a field with several
+values sorts on its min/max), fixed type-group precedence, unknown/Nothing last.
+Encode all of it into a single order-preserving BLOB *sort key* — one
+type-group byte, then the order-preserving value, a high sentinel for
+Nothing/unknown — and store, per (metarecord, field), the *min* and *max* key
+(ascending reads min, descending reads max). A plain index / BSI on that key
+then reproduces the total order, and =ORDER BY field LIMIT k= is a range scan
+for the aligned / sparse cases (the two motivating examples: "latest modified
+files", "films by rating").
+
+** Counts are approximate by default
+
+Given the COUNT wall, the listing/pagination envelope reports an *approximate*
+or "k+" total derived from the cursor (a sub-tree filter can still give an exact
+O(1) descendant count from the maintained node counters; an =AND= with another
+predicate breaks that). Exact counts are a lazy / on-demand operation, never on
+the hot path (mirrors PostgreSQL/SQLite "estimated count").
+
+** What we explicitly do NOT build
+
+General per-pair composite indexes ("layer 3" for an arbitrary (filter, sort)
+pair) — combinatorial blow-up, low value. The *one* narrow exception worth
+considering is a tree-scoped sort index — keys =(parent_uuid | path-prefix,
+sort_key, uuid)= — so "browse a folder sorted by date/name/size, limit k"
+becomes a true O(log n + k) range scan. That single shape is plausibly the
+central UX gesture, which is what justifies the composite there and nowhere
+else.
+
+* Storage model: a derived in-memory cache
+
+The bitmaps/BSI are *not* SQL objects loaded per query and rewritten per edit.
+They are a *derived in-memory accelerator*, exactly like the existing
+=tree_cache=: authoritative data stays in the =field= table; the bitmaps are a
+query cache that can always be rebuilt. This dissolves both performance
+concerns.
+
+** No per-query transfer (read)
+
+The bitmaps live resident in =RepoState= (next to the tree cache). A query is
+in-process bitmap algebra — zero SQLite I/O, zero deserialisation per query.
+Size at 2 M: one bitmap ≈ 250 KB dense; a BSI column ≈ a few MB; ~10 declared
+columns ≈ tens of MB resident — comparable to the tree cache and SQLite page
+cache. The cost is at *repository load*, not per query.
+
+** No per-write persistence (write)
+
+- Editing a bitmap in memory is microseconds (a roaring container edit). A BSI
+  value change touches ~b ≈ 30 slices → still microseconds, negligible against
+  the current ~8 ms/write.
+- The trap is *persisting* per write (re-serialising MB per edit). We avoid it:
+  =field= is already written transactionally (the single =log::Writer= path), so
+  *durability is already provided*. On write we update only the in-memory
+  bitmaps (best-effort); a crash loses at most the bitmaps since the last
+  snapshot, rebuilt on next load. No real data is ever at risk.
+
+** Load via snapshot + event-log replay
+
+Rebuilding from a full =field= scan at every start is too slow (field scans are
+seconds at scale). Instead: snapshot the bitmaps to disk periodically with a
+"current as of revision R" marker; on load, read the snapshot and *replay the
+operations since R* from the event log
+([[file:spec-event-log.org][spec-event-log.org]]), which already exists. Load
+cost is bounded by the replay delta, tunable via snapshot frequency.
+
+** The single write path updates both
+
+Writes touch two places — =field= (transactional) and the in-memory bitmaps
+(best-effort). The discipline "one write path updates all derived state" is
+natural here because =log::Writer= is already that single chokepoint, alongside
+the tree cache it already maintains.
+
+* What to measure before committing
+
+The design rests on assumptions that must be validated with =crates/bench=
+(and a focused prototype) rather than assumed:
+
+- *Write amplification* of maintaining a BSI in memory per write, vs the current
+  ~8 ms/write — is the microsecond claim borne out end to end?
+- *Resident memory budget* at 2 M across the realistic set of declared columns;
+  the regime change toward on-disk / mmap roaring needed beyond (≈ 100 M).
+- *Load cost* of snapshot + event-log replay vs a cold rebuild, at realistic
+  snapshot intervals.
+- *Rust libraries*: maturity of =croaring= / =roaring-rs=; whether a BSI layer
+  exists or must be built on top of roaring.
+- *Real query distributions*: how often queries fall in the easy (aligned /
+  sparse / small-m) regime vs the intrinsically hard one, to confirm the
+  adaptive planner's default (filter-first) is the common path.
+
+* Open questions
+
+- Id assignment for the tree-as-range trick: stable tree-order ids vs nested-set
+  intervals vs a separate path-prefix encoding — interaction with rename/move
+  (which the tree cache handles in O(1) today).
+- Where the "indexed field" declaration lives in the schema and how changing it
+  triggers a (background) index build.
+- Whether the tree-scoped composite sort index is worth its write cost, or
+  whether filter-first + BSI is fast enough for folder browsing at 2 M.
+- Exact-count UX: when, if ever, a precise total is offered, and how it is
+  surfaced as a background/lazy result.
