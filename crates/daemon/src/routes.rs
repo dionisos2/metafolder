@@ -1342,9 +1342,11 @@ fn run_query_filter(
         .collect();
 
     let mut index_guard = repo_state.index.lock_recover();
-    let head = db::current_head(conn)?;
-    if index_guard.as_ref().map(|i| i.built_at_head()) != Some(head) {
-        *index_guard = Some(crate::index::RepoIndex::build(conn, repo_uuid)?);
+    match index_guard.as_mut() {
+        // Already built: bring it up to the current HEAD (incrementally when the
+        // delta is a forward extension, else an internal full rebuild).
+        Some(index) => index.refresh(conn, repo_uuid)?,
+        None => *index_guard = Some(crate::index::RepoIndex::build(conn, repo_uuid)?),
     }
     let index = index_guard.as_ref().expect("index built above");
 

@@ -105,6 +105,166 @@ impl RepoIndex {
         self.built_at_head
     }
 
+    /// Brings the index up to the current log HEAD. When the new HEAD is a
+    /// forward extension of [`Self::built_at_head`] (the common case: writes
+    /// appended), the operations in between are replayed incrementally —
+    /// recomputing only the touched `(metarecord, field)` cells from the current
+    /// DB state. Anything else (a rollback / prune that rewrote history, an
+    /// unrecognised op, or `built_at_head` no longer on the chain) triggers a
+    /// full rebuild, which is always correct.
+    pub fn refresh(&mut self, conn: &Connection, db_id: Uuid) -> anyhow::Result<()> {
+        let head = db::current_head(conn)?;
+        if head == self.built_at_head {
+            return Ok(());
+        }
+        let delta = match head {
+            Some(current) => self.forward_delta(conn, current)?,
+            None => None, // HEAD reset to empty: not a forward extension.
+        };
+        match delta {
+            Some(delta) => {
+                self.apply_ops(conn, &delta)?;
+                self.built_at_head = head;
+            }
+            None => *self = Self::build(conn, db_id)?,
+        }
+        Ok(())
+    }
+
+    /// The operations strictly between `built_at_head` and `current_head` along
+    /// the HEAD parent chain, oldest first — or `None` if `built_at_head` is not
+    /// an ancestor of `current_head` (history was rewritten), an op type is not
+    /// one we replay, or the delta is large enough that a rebuild is cheaper.
+    fn forward_delta(
+        &self,
+        conn: &Connection,
+        current_head: i64,
+    ) -> anyhow::Result<Option<Vec<crate::log::OpRow>>> {
+        const KNOWN: &[&str] = &[
+            "create_metarecord",
+            "delete_metarecord",
+            "set_field",
+            "append_field",
+            "delete_field",
+            "file_deleted",
+            "file_moved",
+            "file_modified",
+        ];
+        const REBUILD_OVER: usize = 20_000;
+
+        let mut delta = Vec::new();
+        let mut reached = false;
+        for op in crate::log::ancestry_ops(conn, current_head)? {
+            if Some(op.id) == self.built_at_head {
+                reached = true;
+                break;
+            }
+            if !KNOWN.contains(&op.op_type.as_str()) || delta.len() >= REBUILD_OVER {
+                return Ok(None);
+            }
+            delta.push(op);
+        }
+        if !reached {
+            return Ok(None);
+        }
+        delta.reverse();
+        Ok(Some(delta))
+    }
+
+    /// Applies a forward delta: updates universe membership for created/deleted
+    /// metarecords, then recomputes every touched `(metarecord, field)` cell
+    /// from its current DB rows (the before-snapshots supply the old values to
+    /// clear, so buckets a value left are emptied).
+    fn apply_ops(&mut self, conn: &Connection, delta: &[crate::log::OpRow]) -> anyhow::Result<()> {
+        use std::collections::{HashMap, HashSet};
+
+        let mut created: Vec<Uuid> = Vec::new();
+        let mut deleted: HashSet<Uuid> = HashSet::new();
+        let mut touched: HashMap<(Uuid, String), Vec<Value>> = HashMap::new();
+
+        for op in delta {
+            let before = crate::log::snapshots(conn, op.id, 0)?;
+            match op.op_type.as_str() {
+                "create_metarecord" => {
+                    created.push(op.entity_uuid);
+                    for row in crate::log::snapshots(conn, op.id, 1)? {
+                        touched.entry((op.entity_uuid, row.name)).or_default();
+                    }
+                }
+                "delete_metarecord" => {
+                    deleted.insert(op.entity_uuid);
+                    for row in before {
+                        touched.entry((op.entity_uuid, row.name)).or_default().push(row.value);
+                    }
+                }
+                _ => {
+                    // A field-scoped op (set/append/delete_field/file_*): the
+                    // before-rows are this field's pre-change values.
+                    let field = op.field_name.clone().unwrap_or_default();
+                    let entry = touched.entry((op.entity_uuid, field)).or_default();
+                    for row in before {
+                        entry.push(row.value);
+                    }
+                }
+            }
+        }
+
+        for uuid in created {
+            let id = self.registry.intern(uuid);
+            self.universe.insert(id);
+        }
+        for uuid in &deleted {
+            if let Some(id) = self.registry.id(*uuid) {
+                self.universe.remove(id);
+            }
+        }
+        for ((uuid, field), old_values) in touched {
+            let Some(id) = self.registry.id(uuid) else { continue };
+            let new_values: Vec<Value> = db::get_field_rows_named(conn, uuid, &field)?
+                .into_iter()
+                .map(|row| row.value)
+                .collect();
+            self.recompute_field(id, &field, &old_values, &new_values);
+        }
+        Ok(())
+    }
+
+    /// Replaces metarecord `id`'s contribution to one field: clears it from the
+    /// buckets of its old + new values (so emptied values drop it), then re-adds
+    /// it for its current non-`Nothing` values. Mirrors the `build` row routing.
+    fn recompute_field(&mut self, id: u32, field: &str, old: &[Value], new: &[Value]) {
+        if let Some(b) = self.present.get_mut(field) {
+            b.remove(id);
+        }
+        if let Some(b) = self.absent.get_mut(field) {
+            b.remove(id);
+        }
+        if let Some(sr) = self.sort.get_mut(field) {
+            sr.remove(id);
+        }
+        let clear: Vec<&Value> = old.iter().chain(new.iter()).collect();
+        if let Some(enc) = self.fields.get_mut(field) {
+            enc.clear_member(id, &clear);
+        }
+
+        let non_nothing: Vec<&Value> =
+            new.iter().filter(|v| !matches!(v, Value::Nothing)).collect();
+        if new.iter().any(|v| matches!(v, Value::Nothing)) {
+            self.absent.entry(field.to_string()).or_default().insert(id);
+        }
+        if let Some(&first) = non_nothing.first() {
+            self.present.entry(field.to_string()).or_default().insert(id);
+            let sr = self.sort.entry(field.to_string()).or_default();
+            for &v in &non_nothing {
+                sr.insert(v, id);
+            }
+            self.fields
+                .entry(field.to_string())
+                .or_insert_with(|| FieldIndex::for_value(first))
+                .set_member(id, &non_nothing);
+        }
+    }
+
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
     /// where the SQL `COUNT` is `O(n)` (the irreducible count wall).
     pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {

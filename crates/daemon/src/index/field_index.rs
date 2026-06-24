@@ -96,6 +96,29 @@ impl FieldIndex {
         }
     }
 
+    /// Incremental maintenance: remove `id` from every bucket referenced by
+    /// `values` (its old + new values, so stale buckets are cleared too).
+    pub fn clear_member(&mut self, id: u32, values: &[&Value]) {
+        match self {
+            FieldIndex::Categorical(c) => c.clear_member(id, values),
+            FieldIndex::Bsi(b) => b.clear_member(id, values),
+            FieldIndex::Reverse(r) => r.clear_member(id, values),
+            FieldIndex::Unimplemented(_) => {}
+        }
+    }
+
+    /// Incremental maintenance: add `id` for its complete current value set
+    /// (`values`, all non-`Nothing`). For the BSI this recomputes the per-id
+    /// min/max from the whole set, so it must receive every current value.
+    pub fn set_member(&mut self, id: u32, values: &[&Value]) {
+        match self {
+            FieldIndex::Categorical(c) => c.set_member(id, values),
+            FieldIndex::Bsi(b) => b.set_member(id, values),
+            FieldIndex::Reverse(r) => r.set_member(id, values),
+            FieldIndex::Unimplemented(_) => {}
+        }
+    }
+
     /// Whether `Follows` (direct) applies: only `ref` / `tree_ref` fields, as
     /// in the SQL `value_type IN ('ref', 'tree_ref')`.
     pub fn supports_follows(&self) -> bool {
@@ -246,6 +269,13 @@ impl SortReps {
         if want_max { self.max.get(&id) } else { self.min.get(&id) }
     }
 
+    /// Drops a metarecord's representatives (incremental maintenance): the
+    /// caller re-inserts its current values afterwards.
+    pub fn remove(&mut self, id: u32) {
+        self.min.remove(&id);
+        self.max.remove(&id);
+    }
+
     pub fn len(&self) -> usize {
         self.min.len() + self.max.len()
     }
@@ -278,6 +308,22 @@ impl CategoricalIndex {
     fn insert(&mut self, value: &Value, id: u32) {
         if let Some(k) = cat_key(value) {
             self.by_value.entry(k).or_default().insert(id);
+        }
+    }
+
+    fn clear_member(&mut self, id: u32, values: &[&Value]) {
+        for &v in values {
+            if let Some(k) = cat_key(v) {
+                if let Some(b) = self.by_value.get_mut(&k) {
+                    b.remove(id);
+                }
+            }
+        }
+    }
+
+    fn set_member(&mut self, id: u32, values: &[&Value]) {
+        for &v in values {
+            self.insert(v, id);
         }
     }
 
@@ -389,8 +435,10 @@ impl BsiIndex {
             exact: HashMap::new(),
             min_key: HashMap::new(),
             max_key: HashMap::new(),
-            min_slices: Vec::new(),
-            max_slices: Vec::new(),
+            // Pre-sized so the incremental path (set_member/clear_member, which
+            // never calls finalize) can address every bit slice directly.
+            min_slices: vec![RoaringBitmap::new(); KEY_BITS],
+            max_slices: vec![RoaringBitmap::new(); KEY_BITS],
         }
     }
 
@@ -417,6 +465,37 @@ impl BsiIndex {
     fn finalize(&mut self) {
         self.min_slices = build_slices(&std::mem::take(&mut self.min_key));
         self.max_slices = build_slices(&std::mem::take(&mut self.max_key));
+    }
+
+    fn clear_member(&mut self, id: u32, values: &[&Value]) {
+        for slice in self.min_slices.iter_mut().chain(self.max_slices.iter_mut()) {
+            slice.remove(id);
+        }
+        self.has_value.remove(id);
+        for &v in values {
+            if let Some(k) = self.key_of(v) {
+                if let Some(b) = self.exact.get_mut(&k) {
+                    b.remove(id);
+                }
+            }
+        }
+    }
+
+    fn set_member(&mut self, id: u32, values: &[&Value]) {
+        let keys: Vec<u64> = values.iter().filter_map(|v| self.key_of(v)).collect();
+        let (Some(&min), Some(&max)) = (keys.iter().min(), keys.iter().max()) else { return };
+        self.has_value.insert(id);
+        for b in 0..KEY_BITS {
+            if (min >> b) & 1 == 1 {
+                self.min_slices[b].insert(id);
+            }
+            if (max >> b) & 1 == 1 {
+                self.max_slices[b].insert(id);
+            }
+        }
+        for k in keys {
+            self.exact.entry(k).or_default().insert(id);
+        }
     }
 
     fn compare(&self, op: CmpOp, value: &Value) -> RoaringBitmap {
@@ -583,6 +662,47 @@ impl ReverseIndex {
             CmpOp::Eq => Ok(self.eq(value)),
             CmpOp::Neq => Ok(self.neq(value)),
             _ => self.ordered(value, op),
+        }
+    }
+
+    fn clear_member(&mut self, id: u32, values: &[&Value]) {
+        for &v in values {
+            if let Some(k) = target_key(v) {
+                if let Some(b) = self.exact.get_mut(&k) {
+                    b.remove(id);
+                }
+            }
+            if let Value::TreeRef { name, .. } = v {
+                if let Some(b) = self.by_name.get_mut(name) {
+                    b.remove(id);
+                }
+            }
+            if self.supports_follows() {
+                if let Some(u) = value_uuid_of(v) {
+                    if let Some(b) = self.by_value_uuid.get_mut(&u) {
+                        b.remove(id);
+                    }
+                }
+            }
+        }
+        self.has_value.remove(id);
+    }
+
+    fn set_member(&mut self, id: u32, values: &[&Value]) {
+        let follows = self.supports_follows();
+        for &v in values {
+            if let Some(k) = target_key(v) {
+                self.exact.entry(k).or_default().insert(id);
+                self.has_value.insert(id);
+            }
+            if let Value::TreeRef { name, .. } = v {
+                self.by_name.entry(name.clone()).or_default().insert(id);
+            }
+            if follows {
+                if let Some(u) = value_uuid_of(v) {
+                    self.by_value_uuid.entry(u).or_default().insert(id);
+                }
+            }
         }
     }
 

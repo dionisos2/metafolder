@@ -358,6 +358,25 @@ They are a *derived in-memory accelerator*, exactly like the existing
 query cache that can always be rebuilt. This dissolves both performance
 concerns.
 
+*Implementation status (increments 5–6).* =RepoIndex= lives in =RepoState=
+behind a mutex and carries the =log_head.op_id= it was built at. The query route
+(=run_query_filter=) consults it only while it reflects the current HEAD, so it
+never serves stale results; supported query shapes go through it (filter / sort /
+count / paginate) and unsupported ones (=Matches=, path-target =Follows=) fall
+back to the SQL engine, cursors included. Freshness is maintained by
+=RepoIndex::refresh=: when the new HEAD is a *forward extension* of the built
+HEAD (the common case — writes appended), it replays that forward delta
+incrementally, recomputing only the touched =(metarecord, field)= cells from
+their current DB rows (the log's before-snapshots supply the old values to clear
+emptied buckets). A rewritten history (rollback / prune), an unrecognised op, or
+an oversized delta falls back to a full rebuild — always correct. The replay
+happens lazily on the read path, not on the write path, but the effect is the
+spec's "single write path updates both": every write advances HEAD, and the next
+query reconciles the index to it. Not yet done: cursor pagination is offset-based
+(not keyset on a sort key), the sort representatives are a separate store rather
+than folded into the BSI, and a long-lived index accumulates dense-id tombstones
+for deleted metarecords until the next full rebuild.
+
 ** No per-query transfer (read)
 
 The bitmaps live resident in =RepoState= (next to the tree cache). A query is
