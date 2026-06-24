@@ -66,6 +66,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/schema/check", post(check_schema))
         .route("/repos/:repo/tasks", get(list_repo_tasks))
         .route("/repos/:repo/tasks/:task", get(get_task))
+        .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
         .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
@@ -307,6 +308,37 @@ async fn get_task(
         .get(task_uuid)
         .map(|t| Json(serde_json::to_value(t).expect("task serialization")))
         .ok_or_else(|| ApiError::not_found(format!("Task not found: {task_uuid}")))
+}
+
+/// `POST /repos/:repo/tasks/:task/cancel`: requests cancellation of a task
+/// (spec-tasks "Cancellation"). A `reconcile` is stopped cooperatively (it rolls
+/// its transaction back); a running `query` is interrupted via SQLite. The task
+/// transitions to `cancelled` once its worker unwinds; this returns the task's
+/// current view. `flush` is not cancellable (400); a terminal task is a 409;
+/// an unknown id a 404.
+async fn cancel_task(
+    State(state): State<Arc<AppState>>,
+    Path((repo, task)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    use crate::tasks::CancelOutcome;
+    let task_uuid = parse_uuid(&task)?;
+    let repo = state.repo(parse_uuid(&repo)?)?;
+    match repo.tasks.request_cancel(task_uuid) {
+        CancelOutcome::Requested => repo
+            .tasks
+            .get(task_uuid)
+            .map(|t| Json(serde_json::to_value(t).expect("task serialization")))
+            .ok_or_else(|| ApiError::not_found(format!("Task not found: {task_uuid}"))),
+        CancelOutcome::AlreadyTerminal => {
+            Err(ApiError::conflict(format!("Task already finished: {task_uuid}")))
+        }
+        CancelOutcome::NotCancellable => {
+            Err(ApiError::bad_request("this kind of task cannot be cancelled"))
+        }
+        CancelOutcome::NotFound => {
+            Err(ApiError::not_found(format!("Task not found: {task_uuid}")))
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1172,6 +1204,10 @@ async fn full_reconcile(
         let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
             repo_state.tasks.set_progress(task_id, phase, done, total);
         };
+        // Cooperative cancellation (spec-tasks): the reconcile polls this at its
+        // progress checkpoints and bails (rolling its transaction back) when a
+        // `POST …/tasks/:id/cancel` has flipped the flag.
+        let cancel = || repo_state.tasks.is_cancel_requested(task_id);
         let outcome = match scope {
             Some(uuid) => crate::reconcile::reconcile_metarecord_reported(
                 &repo_state,
@@ -1179,6 +1215,7 @@ async fn full_reconcile(
                 body.mime,
                 body.refresh,
                 &progress,
+                &cancel,
             ),
             None => crate::reconcile::reconcile_full_reported(
                 &repo_state,
@@ -1186,6 +1223,7 @@ async fn full_reconcile(
                 body.mime,
                 body.refresh,
                 &progress,
+                &cancel,
             ),
         };
         match outcome {
@@ -1193,6 +1231,9 @@ async fn full_reconcile(
                 let value = serde_json::to_value(result).expect("reconcile result serialization");
                 repo_state.tasks.finish(task_id, Some(value));
             }
+            // A bail triggered by the cancel flag becomes a `cancelled` task, not
+            // a `failed` one — the distinction the user asked for.
+            Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
             Err(e) => repo_state.tasks.fail(task_id, &e.message),
         }
     });
@@ -1306,7 +1347,14 @@ async fn run_query(
         let task = repo_state.tasks.start(TaskKind::Query);
         repo_state.tasks.mark_running(task);
         repo_state.tasks.set_progress(task, "querying", None, None);
-        let outcome = run_query_inner(repo_state, repo_uuid, &body);
+        let outcome = run_query_inner(repo_state, repo_uuid, &body, task);
+        // A cancel request interrupts the SQLite statement, surfacing here as an
+        // error: record the task as `cancelled` (not `failed`) and report it as
+        // a 409 to the waiting client.
+        if outcome.is_err() && repo_state.tasks.is_cancel_requested(task) {
+            repo_state.tasks.mark_cancelled(task);
+            return Err(ApiError::conflict("query cancelled"));
+        }
         match &outcome {
             Ok(_) => repo_state.tasks.finish(task, None),
             Err(e) => repo_state.tasks.fail(task, &e.message),
@@ -1380,6 +1428,7 @@ fn run_query_inner(
     repo_state: &RepoState,
     repo_uuid: Uuid,
     body: &QueryBody,
+    task: Uuid,
 ) -> Result<Response, ApiError> {
     {
         if body.count && body.limit.is_none() {
@@ -1387,6 +1436,11 @@ fn run_query_inner(
             return Err(ApiError::bad_request("'count' requires 'limit'"));
         }
         let conn = repo_state.conn.lock_recover();
+        // Register the SQLite interrupt handle so `POST …/tasks/:id/cancel` can
+        // abort this query while it runs (spec-tasks "Cancellation"). The handle
+        // is harmless once the query finishes (no running statement to stop).
+        let handle = conn.get_interrupt_handle();
+        repo_state.tasks.set_canceller(task, Box::new(move || handle.interrupt()));
         let mut cache = repo_state.lock_cache();
         let (uuids, next_cursor, total) =
             run_query_filter(repo_state, &conn, &mut cache, repo_uuid, body)?;

@@ -37,6 +37,50 @@
       li.selected {
         background: var(--mf-bg-raised, #26262e);
       }
+      /* A repository entry is a block: a clickable header plus a task list. */
+      li.repo {
+        display: block;
+        padding: 0;
+        cursor: default;
+      }
+      li.repo:hover {
+        background: transparent;
+      }
+      .repo-head {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .repo-head:hover {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      .repo-tasks {
+        padding: 0 8px 4px 20px;
+      }
+      .repo-task {
+        justify-content: space-between;
+        padding: 2px 6px;
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+        cursor: default;
+      }
+      .repo-task:hover {
+        background: transparent;
+      }
+      .task-label {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .task-stop {
+        padding: 1px 8px;
+        font-size: 0.9em;
+        border-color: var(--mf-error, #c44c56);
+        color: var(--mf-error, #c44c56);
+      }
       .uuid {
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.85em;

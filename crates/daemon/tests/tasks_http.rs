@@ -154,6 +154,51 @@ async fn concurrent_reconcile_is_rejected_with_409() {
 }
 
 #[tokio::test]
+async fn cancel_active_reconcile_sets_the_flag_and_returns_the_task() {
+    let (app, state, repo) = app_with_repo("cancelok");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    // Seed a running reconcile (no real worker, so it stays running with the
+    // flag set; the route's contract is what we assert here).
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Reconcile);
+    state.repo(repo_uuid).unwrap().tasks.mark_running(id);
+    let hex = id.as_simple().to_string();
+
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"].as_str().unwrap(), hex);
+    assert!(state.repo(repo_uuid).unwrap().tasks.is_cancel_requested(id));
+}
+
+#[tokio::test]
+async fn cancel_flush_task_is_400() {
+    let (app, state, repo) = app_with_repo("cancelflush");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Flush);
+    let hex = id.as_simple().to_string();
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn cancel_terminal_task_is_409() {
+    let (app, state, repo) = app_with_repo("cancelterm");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Reconcile);
+    state.repo(repo_uuid).unwrap().tasks.finish(id, None);
+    let hex = id.as_simple().to_string();
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn cancel_unknown_task_is_404() {
+    let (app, _state, repo) = app_with_repo("cancelghost");
+    let ghost = Uuid::new_v4().as_simple().to_string();
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{ghost}/cancel")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn global_tasks_lists_across_repos() {
     let (app, state, repo) = app_with_repo("global");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();

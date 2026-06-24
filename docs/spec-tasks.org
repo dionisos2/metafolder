@@ -31,7 +31,7 @@ A task is one observable unit of work on a single repository. It has:
 - a *kind*: =reconcile=, =query=, or =flush= (the watcher's executor flush;
   see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event
   batching"),
-- a *status*: =pending=, =running=, =done=, or =failed=,
+- a *status*: =pending=, =running=, =done=, =failed=, or =cancelled=,
 - a *progress* record: a =phase= string and optional =done= / =total= counts
   (see [[*Progress]]),
 - timestamps =started_at= (ISO-8601, set when the task is created) and
@@ -50,6 +50,7 @@ own run's result with a later run that happens to reuse a slot.
 #+BEGIN_SRC
 pending  → running → done
                    → failed
+                   → cancelled
 #+END_SRC
 
 - =pending=: the task is registered but is waiting for the per-repository
@@ -57,9 +58,11 @@ pending  → running → done
   already observable.
 - =running=: the task holds the connection and is doing work; its progress
   record is updated as it advances.
-- =done= / =failed=: terminal. The task is retained in the registry for a short
-  time (see [[*Result retention and eviction]]) so a client polling slightly
-  after completion can still read the outcome.
+- =done= / =failed= / =cancelled=: terminal. The task is retained in the
+  registry for a short time (see [[*Result retention and eviction]]) so a client
+  polling slightly after completion can still read the outcome. =cancelled= is a
+  task stopped at the user's request (see [[*Cancellation]]); it is distinct from
+  =failed= so a deliberate stop is not read as an error.
 
 ** Progress
 
@@ -294,12 +297,51 @@ user-initiated tasks. (Clients MAY offer a filter to hide =flush= tasks, since
 flushes are frequent — one per 500 ms quiet period of filesystem activity — but
 the default is to show them.)
 
+** Cancellation
+
+A task that is still active (=pending= or =running=) can be stopped:
+
+*** =POST /repos/:repo_uuid/tasks/:task_uuid/cancel=
+
+Requests cancellation of the task. The mechanism depends on the kind:
+
+- *reconcile* — *cooperative*. The reconcile polls a cancellation flag at its
+  progress checkpoints (the same points it reports =done= / =total=); when the
+  flag is set it stops at the next checkpoint and *drops its transaction without
+  committing*, so the database is left exactly as it was before the reconcile
+  started (the single-transaction guarantee makes the rollback automatic — there
+  is no partial reconcile). Cancellation therefore takes effect within one
+  progress step of the request, not instantly mid-syscall.
+- *query* — *interrupted*. The running SQL is aborted via SQLite's interrupt
+  handle, registered on the task while the query holds the connection. The
+  waiting =POST …/query= client receives a =409= (=query cancelled=) instead of
+  results.
+- *flush* — *not cancellable* (it is short and internal). → =400=.
+
+On success the task transitions to =cancelled= (terminal) once its worker
+unwinds, and is retained/evicted like any other terminal task. The response is
+=200 OK= with the task's current view (it may still read =running= for the brief
+window before the worker observes the request).
+
+| Situation                                  | HTTP status |
+|--------------------------------------------+-------------|
+| Cancellation requested, task still active  | 200         |
+| Task already terminal (nothing to stop)    | 409         |
+| Task kind not cancellable (=flush=)        | 400         |
+| Task id unknown / evicted                  | 404         |
+
+The flag is set and the SQLite interrupt fired *synchronously* in the cancel
+request; the =cancelled= status appears once the worker reaches its next
+checkpoint (reconcile) or the interrupted statement returns (query).
+
 ** Error handling
 
 | Situation                                   | HTTP status | Notes                                   |
 |---------------------------------------------+-------------+-----------------------------------------|
 | Reconcile requested while one is in flight  | 409         | In-flight task at =GET …/tasks=         |
 | Task id unknown / evicted                   | 404         |                                         |
+| Cancel of a terminal task                   | 409         | Nothing to stop                         |
+| Cancel of a =flush= task                    | 400         | Not cancellable                         |
 
 (Other statuses are as in [[file:spec-main.org][spec-main.org]] "Error
 handling".)
@@ -318,10 +360,15 @@ the global =GET /tasks=. Human-oriented table by default (id, kind, status,
 phase, progress); =--json= prints the raw array. All kinds, including =flush=,
 are shown by default.
 
-** =mf task <id> [--json]=
+** =mf task <id> [--stop] [--json]=
 
-Calls =GET /repos/:repo/tasks/:id= and prints the single task. Exit code 1 if
-the id is unknown (404).
+Without =--stop=, calls =GET /repos/:repo/tasks/:id= and prints the single task.
+Exit code 1 if the id is unknown (404).
+
+With =--stop= (alias =--cancel=), calls =POST /repos/:repo/tasks/:id/cancel= to
+stop the task instead of showing it (see [[*Cancellation]]), then prints the
+returned task line. A task that is already finished (409), of a non-cancellable
+kind (400), or unknown (404) is reported as an error on stderr with exit code 1.
 
 ** =mf reconcile= (updated)
 
@@ -359,12 +406,15 @@ progress never saturates it:
   between polls).
 - The poll cadence is chosen entirely client-side, independently of the CLI.
 
+The *repos panel* additionally lists each repository's active tasks beneath it,
+each with a *Stop* button for the cancellable kinds (reconcile, query) that
+calls =POST …/tasks/:id/cancel= (see [[*Cancellation]]). It polls =GET /tasks=
+on its own cadence while mounted. This is the in-panel counterpart to the global
+task bar: it ties a running task to the repository it belongs to and gives a
+direct affordance to stop it.
+
 * Future extensions
 
-- *Cancellation*: a daemon-owned task with an id is the natural place to add
-  cancellation (=DELETE /repos/:repo/tasks/:id= or a =POST …/cancel=),
-  including the question of how to abort a reconcile cleanly mid-transaction.
-  Out of scope here.
 - *Explicit result ack*: a =DELETE= that frees a terminal task's result before
   its TTL, for clients that want to reclaim memory eagerly. The retention TTL
   makes this unnecessary for correctness.

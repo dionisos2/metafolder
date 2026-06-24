@@ -657,6 +657,22 @@ fn test_reconcile_no_wait_and_task_commands() {
     let out = mf(&["--repo", &repo, "tasks"]);
     assert_ok(&out);
     assert!(out.stdout.contains(&task_id), "tasks output: {}", out.stdout);
+
+    // The tiny reconcile has finished, so stopping it is a conflict reported on
+    // stderr with a non-zero exit (the happy-path stop is covered by the daemon
+    // integration tests; it is racy through the CLI on a trivially small repo).
+    let out = mf(&["--repo", &repo, "task", &task_id, "--stop"]);
+    assert_eq!(out.code, 1, "stopping a finished task should fail; stderr: {}", out.stderr);
+    assert!(out.stderr.contains("error:"), "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_task_stop_unknown_id_errors() {
+    let (repo, _root) = init_repo("stopghost");
+    let ghost = uuid::Uuid::new_v4().as_simple().to_string();
+    let out = mf(&["--repo", &repo, "task", &ghost, "--stop"]);
+    assert_eq!(out.code, 1, "stopping an unknown task should fail; stderr: {}", out.stderr);
+    assert!(out.stderr.contains("error:"), "stderr: {}", out.stderr);
 }
 
 #[test]

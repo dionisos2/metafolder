@@ -34,6 +34,9 @@ pub enum TaskStatus {
     Running,
     Done,
     Failed,
+    /// Stopped at the user's request (spec-tasks "Cancellation"). Terminal,
+    /// distinct from `failed` so a deliberate stop is not read as an error.
+    Cancelled,
 }
 
 impl TaskStatus {
@@ -43,9 +46,26 @@ impl TaskStatus {
     }
 }
 
+/// Outcome of a cancellation request, mapped to an HTTP status by the route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CancelOutcome {
+    /// The cooperative flag was set (and any registered canceller fired). The
+    /// task becomes `cancelled` once the worker observes the request.
+    Requested,
+    /// The task is already terminal (`done` / `failed` / `cancelled`): nothing
+    /// to stop. → `409`.
+    AlreadyTerminal,
+    /// This kind of task cannot be cancelled (currently `flush`). → `400`.
+    NotCancellable,
+    /// No such task (unknown id or already evicted). → `404`.
+    NotFound,
+}
+
 /// Internal task record. Carries a wall-clock `started_at_ms` for display and
 /// a monotonic `finished_instant` for retention/eviction.
-#[derive(Debug, Clone)]
+///
+/// Not `Clone`/`Debug`: it may own an `on_cancel` side-effect closure (e.g. the
+/// SQLite interrupt handle for a query), which is neither.
 struct Task {
     id: Uuid,
     repo_uuid: Uuid,
@@ -60,6 +80,14 @@ struct Task {
     error: Option<String>,
     /// Monotonic instant of completion; drives TTL eviction. `None` while active.
     finished_instant: Option<Instant>,
+    /// Set by [`TaskRegistry::request_cancel`]; polled cooperatively by the
+    /// worker (reconcile) at progress checkpoints. Guarded by the registry
+    /// mutex like every other field, so a plain `bool` suffices.
+    cancel_requested: bool,
+    /// Optional side effect run *immediately* when cancellation is requested,
+    /// for work that cannot poll a flag (a running query: the closure calls the
+    /// connection's SQLite interrupt handle). `None` for cooperative kinds.
+    on_cancel: Option<Box<dyn Fn() + Send + Sync>>,
 }
 
 /// Public, serializable view of a task (the JSON shape in spec-tasks.org).
@@ -170,6 +198,54 @@ impl TaskRegistry {
         }
     }
 
+    /// Marks a task `cancelled` (terminal). Called by a worker once it observes
+    /// that cancellation was requested and has unwound (rolling back its
+    /// transaction). No-op if unknown.
+    pub fn mark_cancelled(&self, id: Uuid) {
+        if let Some(t) = self.tasks.lock_recover().get_mut(&id) {
+            t.status = TaskStatus::Cancelled;
+            t.finished_at_ms = Some(metafolder_core::date::now_ms());
+            t.finished_instant = Some(Instant::now());
+        }
+    }
+
+    /// Requests cancellation of a task: sets the cooperative flag and fires any
+    /// registered [`on_cancel`](Task::on_cancel) side effect (e.g. interrupting
+    /// a running query). The task only becomes `cancelled` once its worker
+    /// observes the request and unwinds. See [`CancelOutcome`].
+    pub fn request_cancel(&self, id: Uuid) -> CancelOutcome {
+        let mut tasks = self.tasks.lock_recover();
+        Self::evict_locked(&mut tasks, Instant::now());
+        let Some(t) = tasks.get_mut(&id) else {
+            return CancelOutcome::NotFound;
+        };
+        if !t.status.is_active() {
+            return CancelOutcome::AlreadyTerminal;
+        }
+        if t.kind == TaskKind::Flush {
+            return CancelOutcome::NotCancellable;
+        }
+        t.cancel_requested = true;
+        if let Some(on_cancel) = &t.on_cancel {
+            on_cancel();
+        }
+        CancelOutcome::Requested
+    }
+
+    /// Whether cancellation has been requested for a task. Polled by cooperative
+    /// workers; `false` for an unknown task.
+    pub fn is_cancel_requested(&self, id: Uuid) -> bool {
+        self.tasks.lock_recover().get(&id).is_some_and(|t| t.cancel_requested)
+    }
+
+    /// Registers an `on_cancel` side effect for a task (e.g. a closure capturing
+    /// a query's SQLite interrupt handle). No-op if unknown.
+    pub fn set_canceller(&self, id: Uuid, on_cancel: Box<dyn Fn() + Send + Sync>) {
+        if let Some(t) = self.tasks.lock_recover().get_mut(&id) {
+            t.on_cancel = Some(on_cancel);
+        }
+    }
+
     /// Returns one task's view, or `None` if unknown or already evicted.
     pub fn get(&self, id: Uuid) -> Option<TaskView> {
         let mut tasks = self.tasks.lock_recover();
@@ -209,6 +285,8 @@ impl TaskRegistry {
             result: None,
             error: None,
             finished_instant: None,
+            cancel_requested: false,
+            on_cancel: None,
         }
     }
 
@@ -349,5 +427,59 @@ mod tests {
         assert!(r.get(id).is_some());
         assert!(r.get(id).is_some(), "a read must not delete the task");
         assert_eq!(r.list().len(), 1);
+    }
+
+    #[test]
+    fn request_cancel_on_active_reconcile_sets_the_flag() {
+        let r = reg();
+        let id = r.start(TaskKind::Reconcile);
+        assert!(!r.is_cancel_requested(id));
+        assert_eq!(r.request_cancel(id), CancelOutcome::Requested);
+        assert!(r.is_cancel_requested(id), "the cooperative flag is now set");
+        // The task is not terminal yet: the worker flips it to `cancelled` once
+        // it observes the flag.
+        assert!(r.get(id).unwrap().status.is_active());
+    }
+
+    #[test]
+    fn request_cancel_fires_the_registered_canceller() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let r = reg();
+        let id = r.start(TaskKind::Query);
+        let fired = Arc::new(AtomicBool::new(false));
+        let flag = fired.clone();
+        r.set_canceller(id, Box::new(move || flag.store(true, Ordering::SeqCst)));
+        assert_eq!(r.request_cancel(id), CancelOutcome::Requested);
+        assert!(fired.load(Ordering::SeqCst), "the canceller (e.g. sqlite interrupt) ran");
+    }
+
+    #[test]
+    fn request_cancel_rejects_flush_and_terminal_and_unknown() {
+        let r = reg();
+        let flush = r.start(TaskKind::Flush);
+        assert_eq!(r.request_cancel(flush), CancelOutcome::NotCancellable);
+
+        let done = r.start(TaskKind::Reconcile);
+        r.finish(done, None);
+        assert_eq!(r.request_cancel(done), CancelOutcome::AlreadyTerminal);
+
+        assert_eq!(r.request_cancel(Uuid::new_v4()), CancelOutcome::NotFound);
+    }
+
+    #[test]
+    fn mark_cancelled_is_terminal_and_evictable() {
+        let r = reg();
+        let id = r.start(TaskKind::Reconcile);
+        r.mark_running(id);
+        r.request_cancel(id);
+        r.mark_cancelled(id);
+        let t = r.get(id).unwrap();
+        assert_eq!(t.status, TaskStatus::Cancelled);
+        assert!(t.finished_at.is_some());
+        assert!(!t.status.is_active());
+        // Subject to the same retention as done/failed.
+        r.evict_expired(Instant::now() + RETENTION + Duration::from_millis(1));
+        assert!(r.get(id).is_none());
     }
 }

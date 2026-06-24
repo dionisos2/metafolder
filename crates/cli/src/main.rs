@@ -171,9 +171,13 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Show a single background task by id
+    /// Show a single background task by id (or stop it with --stop)
     Task {
         id: String,
+        /// Request cancellation of the task instead of showing it (spec-tasks).
+        /// Only `reconcile` and `query` tasks are cancellable.
+        #[arg(long, alias = "cancel")]
+        stop: bool,
         /// Print the raw JSON object
         #[arg(long)]
         json: bool,
@@ -458,7 +462,7 @@ fn main() {
             )
         }
         Command::Tasks { all, json } => commands::tasks(&ctx, all, json),
-        Command::Task { id, json } => commands::task(&ctx, &id, json),
+        Command::Task { id, stop, json } => commands::task(&ctx, &id, stop, json),
         Command::Track { path } => commands::track(&ctx, &path),
         Command::Path { uuid, relative } => commands::path(&ctx, &uuid, relative),
         Command::Log { show, tree, graph, ops, metarecord, limit, since, until, all } => match show {

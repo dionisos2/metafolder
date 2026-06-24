@@ -74,7 +74,7 @@ fn reconcile_reports_phase_progress() {
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
     reconcile::reconcile_full_reported(&repo, None, true, true, &|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
-    })
+    }, &|| false)
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -108,7 +108,7 @@ fn stat_phase_total_matches_walked_paths() {
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
     reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
-    })
+    }, &|| false)
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -467,6 +467,31 @@ fn test_reconcile_mismatched_partial_creates_new_metarecord() {
     assert!(result.candidates.is_empty());
     assert_eq!(result.created, 1);
     assert!(resolve(&repo, "/b.bin").is_some());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cancelled_reconcile_bails_and_rolls_back() {
+    // A cancellation probe that is already true makes the reconcile bail at its
+    // first checkpoint (spec-tasks "Cancellation"). The single transaction is
+    // dropped without committing, so nothing is created.
+    let (repo, root) = setup("cancel");
+    write_file(&root, "a.txt", b"hello");
+    write_file(&root, "sub/b.txt", b"world");
+
+    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, &|_, _, _| {}, &|| true);
+    assert!(outcome.is_err(), "a pre-cancelled reconcile must bail");
+
+    // Rolled back: no file metarecords exist.
+    assert!(resolve(&repo, "/a.txt").is_none());
+    assert!(resolve(&repo, "/sub/b.txt").is_none());
+
+    // A subsequent, non-cancelled reconcile still works (the connection and
+    // transaction state are clean).
+    let result = run(&repo);
+    assert_eq!(result.created, 3); // a.txt, sub/, sub/b.txt
+    assert!(resolve(&repo, "/a.txt").is_some());
 
     std::fs::remove_dir_all(root).unwrap();
 }

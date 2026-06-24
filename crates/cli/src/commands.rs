@@ -612,12 +612,18 @@ pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf task <id>`: shows one task of the current repository.
-pub fn task(ctx: &Ctx, id: &str, raw_json: bool) -> Result<i32, CliError> {
+/// `mf task <id>`: shows one task of the current repository. With `stop`, it
+/// requests cancellation (`POST …/tasks/:id/cancel`) instead (spec-tasks).
+pub fn task(ctx: &Ctx, id: &str, stop: bool, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid = Uuid::parse_str(id)
         .map_err(|_| CliError::Usage(format!("invalid task UUID: '{id}'")))?;
-    let resp = ctx.client.request("GET", &format!("{base}/tasks/{}", uuid.as_simple()), &[], None)?;
+    let (method, path) = if stop {
+        ("POST", format!("{base}/tasks/{}/cancel", uuid.as_simple()))
+    } else {
+        ("GET", format!("{base}/tasks/{}", uuid.as_simple()))
+    };
+    let resp = ctx.client.request(method, &path, &[], None)?;
     if raw_json {
         println!("{resp}");
     } else {

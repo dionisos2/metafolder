@@ -59,6 +59,24 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
 /// to bound the cost of progress updates on large repositories.
 const PROGRESS_STEP: usize = 128;
 
+/// Cooperative cancellation probe: returns `true` once the task has been asked
+/// to stop (spec-tasks "Cancellation"). Checked alongside the progress
+/// checkpoints; when it returns `true` the reconcile bails early, dropping its
+/// `Writer` so the in-progress transaction rolls back.
+pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
+
+/// A reconcile that never cancels (used by the synchronous, non-task wrappers).
+fn never() -> impl Fn() -> bool {
+    || false
+}
+
+/// The error a reconcile returns when it observes a cancellation request and
+/// unwinds. The route maps the task to `cancelled` from the registry flag, so
+/// this message is not surfaced to a client for the (async) reconcile.
+fn cancelled() -> ApiError {
+    ApiError::conflict("reconcile cancelled")
+}
+
 /// Full reconcile: walk the repository root and synchronise the database.
 /// Everything runs in a single transaction (one revision). When `threshold`
 /// is `Some`, the v2 similarity phase runs after fingerprinting, appending
@@ -75,7 +93,7 @@ pub fn reconcile_full(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_full_reported(repo, threshold, compute_mime, refresh, &|_, _, _| {})
+    reconcile_full_reported(repo, threshold, compute_mime, refresh, &|_, _, _| {}, &never())
 }
 
 /// Like [`reconcile_full`], reporting phase progress through `progress`
@@ -88,6 +106,7 @@ pub fn reconcile_full_reported(
     compute_mime: bool,
     refresh: bool,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    cancel: CancelProbe,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
@@ -99,11 +118,14 @@ pub fn reconcile_full_reported(
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
     let mut elig = eligibility::EligibilityCache::default();
-    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, progress)?;
+    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, progress, cancel)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
     // determinate phase (spec-tasks "Decompose walk").
     let fs_paths = stat_paths(&root, &paths, progress);
+    if cancel() {
+        return Err(cancelled());
+    }
 
     // New files: paths with no metarecord at that tree position. The regular
     // files (existing or new) are kept for the optional MIME pass below;
@@ -116,6 +138,9 @@ pub fn reconcile_full_reported(
     for (i, (rel, meta)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             progress("index", Some(i as u64), Some(index_total));
+            if cancel() {
+                return Err(cancelled());
+            }
         }
         if meta.is_file() {
             disk_files.push(rel.clone());
@@ -135,6 +160,9 @@ pub fn reconcile_full_reported(
     for (i, uuid) in tracked.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             progress("scan", Some(i as u64), Some(scan_total));
+            if cancel() {
+                return Err(cancelled());
+            }
         }
         let Some(path) = cache.path_of(writer.connection(), "mfr_path", uuid)? else {
             continue;
@@ -169,6 +197,9 @@ pub fn reconcile_full_reported(
     for (i, (orphan, stale_path)) in orphans.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             progress("fingerprint", Some(i as u64), Some(orphan_total));
+            if cancel() {
+                return Err(cancelled());
+            }
         }
         let is_dir = string_field(&writer, orphan, "mfr_type")?.as_deref() == Some("dir");
         let size = int_field(&writer, orphan, "mfr_size")?;
@@ -251,6 +282,9 @@ pub fn reconcile_full_reported(
     // still-unmatched new path of the same kind, append score-based candidates.
     if let Some(threshold) = threshold {
         progress("similarity", None, None);
+        if cancel() {
+            return Err(cancelled());
+        }
         for state in states.iter_mut().filter(|s| !s.moved) {
             let orphan_sig = FileSig::from_path(&state.stale_path, state.size);
             for (rel, meta) in &new_files {
@@ -286,6 +320,9 @@ pub fn reconcile_full_reported(
     for (i, (rel, _)) in new_files.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             progress("create", Some(i as u64), Some(create_total));
+            if cancel() {
+                return Err(cancelled());
+            }
         }
         if claimed.contains(rel) {
             continue;
@@ -309,6 +346,9 @@ pub fn reconcile_full_reported(
         for (i, (rel, _)) in fs_paths.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
                 progress("refresh", Some(i as u64), Some(refresh_total));
+                if cancel() {
+                    return Err(cancelled());
+                }
             }
             if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
@@ -324,6 +364,9 @@ pub fn reconcile_full_reported(
         for (i, rel) in disk_files.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
                 progress("mime", Some(i as u64), Some(mime_total));
+                if cancel() {
+                    return Err(cancelled());
+                }
             }
             if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
@@ -345,7 +388,7 @@ pub fn reconcile_metarecord(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &|_, _, _| {})
+    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &|_, _, _| {}, &never())
 }
 
 /// Like [`reconcile_metarecord`], reporting phase progress for a task
@@ -357,6 +400,7 @@ pub fn reconcile_metarecord_reported(
     compute_mime: bool,
     refresh: bool,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    cancel: CancelProbe,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
@@ -382,9 +426,12 @@ pub fn reconcile_metarecord_reported(
     let abs_base = root.join(base.trim_start_matches('/'));
     if abs_base.exists() {
         paths.push(base.clone()); // The subtree root itself.
-        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, progress)?);
+        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, progress, cancel)?);
     }
     let mut fs_paths = stat_paths(&root, &paths, progress);
+    if cancel() {
+        return Err(cancelled());
+    }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
     let create_total = fs_paths.len() as u64;
@@ -392,6 +439,9 @@ pub fn reconcile_metarecord_reported(
     for (i, (rel, _)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             progress("create", Some(i as u64), Some(create_total));
+            if cancel() {
+                return Err(cancelled());
+            }
         }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
@@ -414,6 +464,9 @@ pub fn reconcile_metarecord_reported(
         for (i, (rel, meta)) in fs_paths.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
                 progress("mime", Some(i as u64), Some(mime_total));
+                if cancel() {
+                    return Err(cancelled());
+                }
             }
             if !meta.is_file() {
                 continue;
@@ -449,6 +502,7 @@ fn walk(
     base: &str,
     elig: &mut eligibility::EligibilityCache,
     progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    cancel: CancelProbe,
 ) -> Result<Vec<String>> {
     let mut paths: Vec<String> = Vec::new();
     // The two lists the traversal alternates between: the directories at the
@@ -461,6 +515,9 @@ fn walk(
         for (i, dir) in frontier.iter().enumerate() {
             if i as u64 % PROGRESS_STEP as u64 == 0 {
                 progress(&format!("walk (depth {depth})"), Some(i as u64), Some(level_total));
+                if cancel() {
+                    anyhow::bail!("reconcile cancelled");
+                }
             }
             let abs = root.join(dir.trim_start_matches('/'));
             let entries = match std::fs::read_dir(&abs) {

@@ -116,13 +116,78 @@ export async function mount(root, metafolder) {
       ...repos.map((repo) =>
         el(
           'li',
-          { onclick: () => openRepo(repo.repo_uuid) },
-          el('strong', {}, repo.name),
-          el('span', { class: 'root' }, repo.root),
-          el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+          { class: 'repo' },
+          // Only the header opens the repo; the tasks block below it carries its
+          // own (stop) buttons, so it must not share the row's click target.
+          el(
+            'div',
+            { class: 'repo-head', onclick: () => openRepo(repo.repo_uuid) },
+            el('strong', {}, repo.name),
+            el('span', { class: 'root' }, repo.root),
+            el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+          ),
+          el('ul', { class: 'repo-tasks', 'data-tasks-for': repo.repo_uuid }),
         ),
       ),
     );
+    // Repaint the (now empty) task blocks right away so they don't wait a full
+    // poll interval to appear.
+    await pollTasks();
+  }
+
+  // ── Running tasks ─────────────────────────────────────────────────────────
+  // Poll the daemon for in-flight tasks (spec-tasks) and surface the active
+  // ones under their repository, each with a Stop button. Reconcile and query
+  // are cancellable; flush is shown but not stoppable.
+  const CANCELLABLE = new Set(['reconcile', 'query']);
+
+  async function pollTasks() {
+    let tasks;
+    try {
+      tasks = (await daemon.call('GET', '/tasks')) ?? [];
+    } catch {
+      return; // A transient daemon hiccup: leave the last paint in place.
+    }
+    const byRepo = new Map();
+    for (const task of tasks) {
+      if (task.status !== 'running' && task.status !== 'pending') continue;
+      if (!byRepo.has(task.repo_uuid)) byRepo.set(task.repo_uuid, []);
+      byRepo.get(task.repo_uuid).push(task);
+    }
+    for (const container of list.querySelectorAll('.repo-tasks')) {
+      renderTasks(container, container.dataset.tasksFor, byRepo.get(container.dataset.tasksFor) ?? []);
+    }
+  }
+
+  function renderTasks(container, repoUuid, tasks) {
+    container.replaceChildren(
+      ...tasks.map((task) => {
+        const progress =
+          task.done !== null && task.total !== null ? ` ${task.done}/${task.total}` : '';
+        const label = `${task.kind}: ${task.phase || task.status}${progress}`;
+        const children = [el('span', { class: 'task-label' }, label)];
+        if (CANCELLABLE.has(task.kind)) {
+          children.push(
+            el(
+              'button',
+              { class: 'task-stop', type: 'button', onclick: () => void stopTask(repoUuid, task.id) },
+              'Stop',
+            ),
+          );
+        }
+        return el('li', { class: 'repo-task' }, ...children);
+      }),
+    );
+  }
+
+  async function stopTask(repoUuid, taskId) {
+    try {
+      await daemon.call('POST', `/repos/${repoUuid}/tasks/${taskId}/cancel`);
+      statusBar.message('stopping task…', 3000);
+    } catch (error) {
+      statusBar.message(`cannot stop task: ${error.message ?? error}`, 6000);
+    }
+    await pollTasks();
   }
 
   // Selecting a repo: adopt it in place when the workspace has none yet
@@ -202,4 +267,8 @@ export async function mount(root, metafolder) {
     handler: refresh,
   });
   await refresh();
+
+  // Keep the per-repo task blocks live while the panel is mounted.
+  const taskTimer = setInterval(() => void pollTasks(), 1500);
+  return () => clearInterval(taskTimer);
 }
