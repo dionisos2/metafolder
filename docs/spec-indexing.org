@@ -377,9 +377,14 @@ last entry's sort key (one representative per key) and uuid, so the next page
 resumes strictly after it — stable under concurrent inserts/deletes, matching the
 SQL engine. Deleted metarecords leave dense-id tombstones on the incremental
 path; when they exceed a fraction of the interned ids a refresh rebuilds and
-reclaims them. The one remaining shortcut is memory: the sort representatives are
-a separate min/max store rather than folded into the BSI (≈ the dominant
-resident cost at scale — see [[*Sort semantics in one orderable key][sort key]]).
+reclaims them. For Int/Float/DateTime fields the sort representative is read
+*from the BSI bit-slices* (the order-preserving key inverted back to its value),
+not a separate store — so the high-cardinality numeric fields, which dominated
+the sort memory, cost nothing extra; a small min/max store is kept only for
+categorical and reference fields, which have no BSI. The residual cost is the
+tree_ref (=mfr_path=) name representatives (≈ one string per file); folding those
+needs the deferred tree-scoped sort index (see [[*What we explicitly do NOT
+build]]).
 
 ** No per-query transfer (read)
 

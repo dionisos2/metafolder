@@ -125,6 +125,23 @@ impl FieldIndex {
         matches!(self, FieldIndex::Reverse(r) if r.supports_follows())
     }
 
+    /// The sort representative derived from the BSI bit-slices, for a numeric /
+    /// datetime field — so no separate sort store is needed for those. `None`
+    /// for any other encoding (the caller falls back to the small sort store)
+    /// or when `id` has no value.
+    pub fn bsi_sort_rep(&self, id: u32, want_max: bool) -> Option<SortRep> {
+        match self {
+            FieldIndex::Bsi(b) => b.sort_rep(id, want_max),
+            _ => None,
+        }
+    }
+
+    /// Whether this encoding derives its sort representative from the BSI (so it
+    /// must NOT also be added to the separate sort store).
+    pub fn is_bsi(&self) -> bool {
+        matches!(self, FieldIndex::Bsi(_))
+    }
+
     /// Whether `FollowsTransitive` applies: only `tree_ref` forests.
     pub fn supports_transitive(&self) -> bool {
         matches!(self, FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef)
@@ -412,6 +429,18 @@ fn dt_key(ms: i64) -> u64 {
     (ms as u64) ^ SIGN
 }
 
+/// Inverse of [`num_key`]: a key whose top bit is set came from a non-negative
+/// float (sign bit cleared then XORed), otherwise from a negative one.
+fn inv_num_key(key: u64) -> f64 {
+    let bits = if key & SIGN != 0 { key ^ SIGN } else { !key };
+    f64::from_bits(bits)
+}
+
+/// Inverse of [`dt_key`].
+fn inv_dt_key(key: u64) -> i64 {
+    (key ^ SIGN) as i64
+}
+
 /// A bit-sliced index storing, per dense id, the **min** and **max** of its
 /// multi-map values (so "some value ≥ v" ⇔ max ≥ v, "some value ≤ v" ⇔ min ≤ v),
 /// plus an exact value→ids map for equality (not derivable from min/max).
@@ -465,6 +494,28 @@ impl BsiIndex {
     fn finalize(&mut self) {
         self.min_slices = build_slices(&std::mem::take(&mut self.min_key));
         self.max_slices = build_slices(&std::mem::take(&mut self.max_key));
+    }
+
+    /// The sort representative for `id`, read directly from the bit-slices (no
+    /// separate store): the min for an ascending key, the max for a descending
+    /// one. The order-preserving key is inverted back to its `f64`/`i64` value
+    /// so it compares identically to a stored [`SortRep`]. `None` when `id` has
+    /// no value (it then sorts last).
+    fn sort_rep(&self, id: u32, want_max: bool) -> Option<SortRep> {
+        if !self.has_value.contains(id) {
+            return None;
+        }
+        let slices = if want_max { &self.max_slices } else { &self.min_slices };
+        let mut key = 0u64;
+        for (b, slice) in slices.iter().enumerate() {
+            if slice.contains(id) {
+                key |= 1u64 << b;
+            }
+        }
+        Some(match self.kind {
+            NumKind::Numeric => SortRep::Num(inv_num_key(key)),
+            NumKind::Datetime => SortRep::DateTime(inv_dt_key(key)),
+        })
     }
 
     fn clear_member(&mut self, id: u32, values: &[&Value]) {

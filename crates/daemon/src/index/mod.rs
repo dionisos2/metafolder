@@ -46,6 +46,13 @@ fn unsupported(what: impl Into<String>) -> Unsupported {
     Unsupported(what.into())
 }
 
+/// Whether a value lands in a BSI encoding (Int / Float / DateTime) — whose
+/// sort representative is read from the bit-slices, so it is *not* mirrored in
+/// the separate sort store.
+fn is_bsi_value(value: &Value) -> bool {
+    matches!(value, Value::Int(_) | Value::Float(_) | Value::DateTime(_))
+}
+
 pub struct RepoIndex {
     registry: IdRegistry,
     /// All interned ids — the exclusively-owned universe (`_repo`). Complement
@@ -90,7 +97,11 @@ impl RepoIndex {
                     }
                     value => {
                         present.entry(row.name.clone()).or_default().insert(id);
-                        sort.entry(row.name.clone()).or_default().insert(&value, id);
+                        // BSI fields derive their sort representative from the
+                        // bit-slices, so they skip the separate sort store.
+                        if !is_bsi_value(&value) {
+                            sort.entry(row.name.clone()).or_default().insert(&value, id);
+                        }
                         fields
                             .entry(row.name)
                             .or_insert_with(|| FieldIndex::for_value(&value))
@@ -274,14 +285,22 @@ impl RepoIndex {
         }
         if let Some(&first) = non_nothing.first() {
             self.present.entry(field.to_string()).or_default().insert(id);
-            let sr = self.sort.entry(field.to_string()).or_default();
-            for &v in &non_nothing {
-                sr.insert(v, id);
+            let is_bsi = {
+                let enc = self
+                    .fields
+                    .entry(field.to_string())
+                    .or_insert_with(|| FieldIndex::for_value(first));
+                enc.set_member(id, &non_nothing);
+                enc.is_bsi()
+            };
+            // BSI fields read their sort representative from the bit-slices,
+            // so they keep no entry in the separate sort store.
+            if !is_bsi {
+                let sr = self.sort.entry(field.to_string()).or_default();
+                for &v in &non_nothing {
+                    sr.insert(v, id);
+                }
             }
-            self.fields
-                .entry(field.to_string())
-                .or_insert_with(|| FieldIndex::for_value(first))
-                .set_member(id, &non_nothing);
         }
     }
 
@@ -357,7 +376,15 @@ impl RepoIndex {
     fn entry_of(&self, id: u32, sort: &[SortBy]) -> SortEntry {
         let reps = sort
             .iter()
-            .map(|k| self.sort.get(&k.field).and_then(|s| s.rep(id, !k.ascending)).cloned())
+            .map(|k| {
+                let want_max = !k.ascending;
+                // A BSI field reads its representative from the bit-slices;
+                // every other encoding uses the small sort store.
+                self.fields
+                    .get(&k.field)
+                    .and_then(|fi| fi.bsi_sort_rep(id, want_max))
+                    .or_else(|| self.sort.get(&k.field).and_then(|s| s.rep(id, want_max)).cloned())
+            })
             .collect();
         (reps, self.registry.uuid(id).expect("interned id"))
     }
