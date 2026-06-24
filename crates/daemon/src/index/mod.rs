@@ -12,6 +12,7 @@ pub mod id_registry;
 
 use std::collections::HashMap;
 
+use base64::Engine;
 use metafolder_core::metarecord::Value;
 use metafolder_core::query::{FollowTarget, Query};
 use roaring::RoaringBitmap;
@@ -23,6 +24,7 @@ use field_index::{CmpOp, FieldIndex, SortReps};
 use id_registry::IdRegistry;
 
 /// One sort key: a field name and its direction.
+#[derive(Debug)]
 pub struct SortBy {
     pub field: String,
     pub ascending: bool,
@@ -94,24 +96,65 @@ impl RepoIndex {
         Ok(RepoIndex { registry, universe, present, absent, fields, sort })
     }
 
-    /// Evaluates a query and returns the matching uuids in sort order (and
-    /// truncated to `limit`). Reproduces the SQL sort semantics: per key the
-    /// multi-map representative (min ascending / max descending), the fixed
-    /// type-group precedence, metarecords lacking the field last, uuid tiebreak.
-    /// Cursor pagination is a later increment.
+    /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
+    /// where the SQL `COUNT` is `O(n)` (the irreducible count wall).
+    pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
+        Ok(self.evaluate(q)?.len())
+    }
+
+    /// Evaluates a query and returns the matching uuids in sort order, truncated
+    /// to `limit` (no pagination). See [`Self::evaluate_page`].
     pub fn evaluate_sorted(
         &self,
         q: &Query,
         sort: &[SortBy],
         limit: Option<usize>,
     ) -> Result<Vec<Uuid>, Unsupported> {
+        Ok(self.evaluate_page(q, sort, limit, None)?.0)
+    }
+
+    /// Evaluates a query into one sorted, paginated page and the cursor for the
+    /// next one (present only when `limit` is set and more rows remain).
+    /// Reproduces the SQL sort semantics: per key the multi-map representative
+    /// (min ascending / max descending), the fixed type-group precedence,
+    /// metarecords lacking the field last, uuid tiebreak. The cursor is an
+    /// opaque offset bound to a hash of (query, sort) — reused against a
+    /// different query/sort it is rejected, matching the SQL engine.
+    pub fn evaluate_page(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        let guard = page_guard(q, sort);
+        let offset = match cursor {
+            None => 0usize,
+            Some(c) => {
+                let (g, off) = parse_cursor(c).ok_or_else(|| unsupported("malformed cursor"))?;
+                if g != guard {
+                    return Err(unsupported("cursor does not match this query and sort"));
+                }
+                off as usize
+            }
+        };
+
         let matched = self.evaluate(q)?;
         let mut ids: Vec<u32> = matched.iter().collect();
         ids.sort_by(|&a, &b| self.cmp_ids(a, b, sort));
-        if let Some(limit) = limit {
-            ids.truncate(limit);
-        }
-        Ok(ids.iter().filter_map(|&id| self.registry.uuid(id)).collect())
+
+        let total = ids.len();
+        let start = offset.min(total);
+        let end = match limit {
+            Some(l) => start.saturating_add(l).min(total),
+            None => total,
+        };
+        let page = ids[start..end].iter().filter_map(|&id| self.registry.uuid(id)).collect();
+        let next = match limit {
+            Some(_) if end < total => Some(encode_cursor(guard, end as u64)),
+            _ => None,
+        };
+        Ok((page, next))
     }
 
     fn cmp_ids(&self, a: u32, b: u32, keys: &[SortBy]) -> std::cmp::Ordering {
@@ -296,4 +339,39 @@ impl RepoIndex {
     fn absent_of(&self, field: &str) -> RoaringBitmap {
         self.absent.get(field).cloned().unwrap_or_default()
     }
+}
+
+// ── Pagination cursor ───────────────────────────────────────────────────────
+
+/// A deterministic hash binding a cursor to its (query, sort) so a token from
+/// one query cannot be replayed against another (matches the SQL engine).
+fn page_guard(q: &Query, sort: &[SortBy]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut feed = |bytes: &[u8]| {
+        for &b in bytes {
+            h ^= b as u64;
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+    };
+    feed(format!("{q:?}").as_bytes());
+    for key in sort {
+        feed(key.field.as_bytes());
+        feed(&[key.ascending as u8]);
+    }
+    h
+}
+
+fn encode_cursor(guard: u64, offset: u64) -> String {
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&guard.to_le_bytes());
+    bytes[8..].copy_from_slice(&offset.to_le_bytes());
+    base64::engine::general_purpose::STANDARD_NO_PAD.encode(bytes)
+}
+
+fn parse_cursor(token: &str) -> Option<(u64, u64)> {
+    let bytes = base64::engine::general_purpose::STANDARD_NO_PAD.decode(token).ok()?;
+    let bytes: [u8; 16] = bytes.try_into().ok()?;
+    let guard = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+    let offset = u64::from_le_bytes(bytes[8..].try_into().unwrap());
+    Some((guard, offset))
 }

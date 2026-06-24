@@ -91,6 +91,64 @@ impl Oracle {
         let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
         assert_eq!(got, sql, "sort divergence on {q:?} by {by:?} limit {limit:?}");
     }
+
+    /// Asserts the index `count` matches the SQL `COUNT`.
+    fn check_count(&mut self, q: &Query) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let sql = query_exec::count(&self.conn, &mut self.cache, self.db_id, q).unwrap();
+        assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
+    }
+
+    /// Walks both engines page by page through the whole sorted result and
+    /// asserts every page (and thus the partitioning) is identical.
+    fn check_paginated(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let sql_keys: Vec<SortKey> = by
+            .iter()
+            .map(|(f, asc)| SortKey {
+                field: f.to_string(),
+                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
+            })
+            .collect();
+        let idx_keys: Vec<SortBy> =
+            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
+
+        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let (page, next) =
+                index.evaluate_page(q, &idx_keys, Some(limit), cursor.as_deref()).unwrap();
+            ipages.push(page);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+            assert!(ipages.len() < 10_000, "runaway index pagination");
+        }
+
+        let mut spages: Vec<Vec<Uuid>> = Vec::new();
+        let mut scursor: Option<String> = None;
+        loop {
+            let (page, next) = query_exec::execute(
+                &self.conn,
+                &mut self.cache,
+                self.db_id,
+                q,
+                &sql_keys,
+                Some(limit),
+                scursor.as_deref(),
+            )
+            .unwrap();
+            spages.push(page);
+            match next {
+                Some(c) => scursor = Some(c),
+                None => break,
+            }
+            assert!(spages.len() < 10_000, "runaway sql pagination");
+        }
+
+        assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
+    }
 }
 
 fn s(v: &str) -> Value {
@@ -505,4 +563,44 @@ fn sort_datetime_latest_first() {
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2023-03-03T03:03:03Z"))]);
     o.check_sorted(&present("all"), &[("added", false)], Some(2));
     o.check_sorted(&present("all"), &[("added", true)], None);
+}
+
+// ── COUNT ───────────────────────────────────────────────────────────────────
+
+#[test]
+fn count_matches_sql() {
+    let mut o = sortable();
+    o.check_count(&present("all"));
+    o.check_count(&present("rate"));
+    o.check_count(&unknown("rate"));
+    o.check_count(&and(vec![eq("kind", s("film")), gte("rate", i(3))]));
+    o.check_count(&not(eq("kind", s("film"))));
+    o.check_count(&eq("kind", s("nope"))); // zero
+}
+
+// ── Pagination ──────────────────────────────────────────────────────────────
+
+#[test]
+fn pagination_matches_sql_pages() {
+    let mut o = sortable();
+    // limits that do and do not divide the total
+    for limit in [1usize, 2, 3, 100] {
+        o.check_paginated(&present("all"), &[("rate", true)], limit);
+        o.check_paginated(&present("all"), &[("rate", false)], limit);
+        o.check_paginated(&present("all"), &[("kind", true), ("rate", false)], limit);
+    }
+}
+
+#[test]
+fn cursor_is_bound_to_query_and_sort() {
+    let mut o = sortable();
+    let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let by_rate = [SortBy { field: "rate".into(), ascending: true }];
+    let (_p, next) = index.evaluate_page(&present("all"), &by_rate, Some(2), None).unwrap();
+    let cursor = next.expect("more pages");
+    // Reusing the cursor against a different sort is rejected.
+    let by_kind = [SortBy { field: "kind".into(), ascending: true }];
+    assert!(index.evaluate_page(&present("all"), &by_kind, Some(2), Some(&cursor)).is_err());
+    // Against the original query+sort it is accepted.
+    assert!(index.evaluate_page(&present("all"), &by_rate, Some(2), Some(&cursor)).is_ok());
 }
