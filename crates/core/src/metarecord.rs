@@ -122,6 +122,115 @@ pub enum Value {
     },
 }
 
+/// The scalar value types a field can be retyped to (spec-data-model "Changing
+/// a field's type"). Reference variants are never retype targets — you cannot
+/// fabricate a reference from a scalar — so they are not represented here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScalarType {
+    String,
+    Int,
+    Float,
+    Bool,
+    DateTime,
+}
+
+impl ScalarType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ScalarType::String => "string",
+            ScalarType::Int => "int",
+            ScalarType::Float => "float",
+            ScalarType::Bool => "bool",
+            ScalarType::DateTime => "datetime",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "string" => Some(ScalarType::String),
+            "int" => Some(ScalarType::Int),
+            "float" => Some(ScalarType::Float),
+            "bool" => Some(ScalarType::Bool),
+            "datetime" => Some(ScalarType::DateTime),
+            _ => None,
+        }
+    }
+}
+
+impl Value {
+    /// Converts this value to `target`, for the `retype` operation. Returns the
+    /// converted value and whether it fell back to the target's *sentinel*
+    /// (because the source could not be meaningfully converted) — the sentinels
+    /// are chosen to be easily found afterwards (`""`, `0`, `0.0`, `false`, the
+    /// Unix epoch). Lossless where possible (`Int↔Float`, `Bool→Int` as `0/1`,
+    /// `DateTime↔Int` as Unix-ms, any → `String`); parsing for `String →`
+    /// scalar. The reference variants have no scalar form and always fall back.
+    /// `Nothing` is preserved (the caller skips it; never converted).
+    pub fn convert_to(&self, target: ScalarType) -> (Value, bool) {
+        use ScalarType as T;
+        // Sentinel for an impossible conversion.
+        let sentinel = || match target {
+            T::String => Value::String(String::new()),
+            T::Int => Value::Int(0),
+            T::Float => Value::Float(0.0),
+            T::Bool => Value::Bool(false),
+            T::DateTime => Value::DateTime(0),
+        };
+        let ok = |v: Value| (v, false);
+        let fallback = || (sentinel(), true);
+
+        match (self, target) {
+            (Value::Nothing, _) => (Value::Nothing, false),
+
+            // → String: every scalar has a display form.
+            (Value::String(s), T::String) => ok(Value::String(s.clone())),
+            (Value::Int(n), T::String) => ok(Value::String(n.to_string())),
+            (Value::Float(f), T::String) => ok(Value::String(f.to_string())),
+            (Value::Bool(b), T::String) => ok(Value::String(b.to_string())),
+            (Value::DateTime(ms), T::String) => ok(Value::String(crate::date::iso8601_from_ms(*ms))),
+
+            // → Int.
+            (Value::Int(n), T::Int) => ok(Value::Int(*n)),
+            (Value::Float(f), T::Int) => ok(Value::Int(*f as i64)),
+            (Value::Bool(b), T::Int) => ok(Value::Int(*b as i64)),
+            (Value::DateTime(ms), T::Int) => ok(Value::Int(*ms)),
+            (Value::String(s), T::Int) => s.trim().parse::<i64>().map(Value::Int).map_or_else(|_| fallback(), ok),
+
+            // → Float.
+            (Value::Float(f), T::Float) => ok(Value::Float(*f)),
+            (Value::Int(n), T::Float) => ok(Value::Float(*n as f64)),
+            (Value::Bool(b), T::Float) => ok(Value::Float(*b as i64 as f64)),
+            (Value::DateTime(ms), T::Float) => ok(Value::Float(*ms as f64)),
+            (Value::String(s), T::Float) => s.trim().parse::<f64>().map(Value::Float).map_or_else(|_| fallback(), ok),
+
+            // → Bool.
+            (Value::Bool(b), T::Bool) => ok(Value::Bool(*b)),
+            (Value::Int(n), T::Bool) => ok(Value::Bool(*n != 0)),
+            (Value::Float(f), T::Bool) => ok(Value::Bool(*f != 0.0)),
+            (Value::DateTime(ms), T::Bool) => ok(Value::Bool(*ms != 0)),
+            (Value::String(s), T::Bool) => match s.trim() {
+                "true" => ok(Value::Bool(true)),
+                "false" => ok(Value::Bool(false)),
+                _ => fallback(),
+            },
+
+            // → DateTime.
+            (Value::DateTime(ms), T::DateTime) => ok(Value::DateTime(*ms)),
+            (Value::Int(n), T::DateTime) => ok(Value::DateTime(*n)),
+            (Value::Float(f), T::DateTime) => ok(Value::DateTime(*f as i64)),
+            (Value::String(s), T::DateTime) => {
+                crate::date::iso_to_ms(s.trim()).map(Value::DateTime).map_or_else(fallback, ok)
+            }
+            (Value::Bool(_), T::DateTime) => fallback(),
+
+            // Reference variants have no scalar form.
+            (Value::Ref(_) | Value::TreeRef { .. } | Value::RefBase(_) | Value::ExternalRef { .. }, _) => {
+                fallback()
+            }
+        }
+    }
+}
+
 /// A field: name + value. Multiple fields can share the same name (multi-map).
 /// `id` is the database row id; present in API responses, absent in requests.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -186,6 +295,47 @@ mod tests {
     fn roundtrip(v: &Value) -> Value {
         let json = serde_json::to_string(v).expect("serialization failed");
         serde_json::from_str(&json).expect("deserialization failed")
+    }
+
+    // ── Value: retype conversions ────────────────────────────────────────────
+
+    #[test]
+    fn test_convert_lossless_and_display() {
+        use ScalarType as T;
+        assert_eq!(Value::Int(5).convert_to(T::String), (Value::String("5".into()), false));
+        assert_eq!(Value::Int(5).convert_to(T::Float), (Value::Float(5.0), false));
+        assert_eq!(Value::Bool(true).convert_to(T::Int), (Value::Int(1), false));
+        assert_eq!(Value::String("5".into()).convert_to(T::Int), (Value::Int(5), false));
+        // Float→Int truncates (a real conversion, not a sentinel fallback).
+        assert_eq!(Value::Float(4.5).convert_to(T::Int), (Value::Int(4), false));
+    }
+
+    #[test]
+    fn test_convert_datetime_roundtrip() {
+        use ScalarType as T;
+        let ms = crate::date::iso_to_ms("2024-03-15T10:30:00Z").unwrap();
+        let (as_str, fell) = Value::DateTime(ms).convert_to(T::String);
+        assert_eq!((as_str.clone(), fell), (Value::String("2024-03-15T10:30:00Z".into()), false));
+        assert_eq!(as_str.convert_to(T::DateTime), (Value::DateTime(ms), false));
+        // DateTime ↔ Int as Unix-ms (lossless).
+        assert_eq!(Value::DateTime(ms).convert_to(T::Int), (Value::Int(ms), false));
+        assert_eq!(Value::Int(ms).convert_to(T::DateTime), (Value::DateTime(ms), false));
+    }
+
+    #[test]
+    fn test_convert_impossible_falls_back_to_sentinel() {
+        use ScalarType as T;
+        assert_eq!(Value::String("x".into()).convert_to(T::Int), (Value::Int(0), true));
+        assert_eq!(Value::String("x".into()).convert_to(T::Float), (Value::Float(0.0), true));
+        assert_eq!(Value::String("x".into()).convert_to(T::Bool), (Value::Bool(false), true));
+        assert_eq!(Value::String("x".into()).convert_to(T::DateTime), (Value::DateTime(0), true));
+        // References have no scalar form.
+        assert_eq!(Value::Ref(Uuid::nil()).convert_to(T::String), (Value::String(String::new()), true));
+    }
+
+    #[test]
+    fn test_convert_nothing_is_preserved() {
+        assert_eq!(Value::Nothing.convert_to(ScalarType::Int), (Value::Nothing, false));
     }
 
     // ── Value: JSON format (spec-data-model) ─────────────────────────────────

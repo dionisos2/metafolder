@@ -223,10 +223,13 @@ fn test_ordered_string_comparison_on_tree_ref_name() {
 
 #[test]
 fn test_ordered_comparisons_numeric() {
+    // Under the one-value-type-per-field invariant a numeric field is uniform
+    // (here all Float); query-time comparability across the numeric domain is
+    // still exercised by comparing against Int *literals*.
     let mut f = Fixture::new();
-    let three = f.create(vec![Field::new("rating", Value::Int(3))]);
+    let three = f.create(vec![Field::new("rating", Value::Float(3.0))]);
     let four_half = f.create(vec![Field::new("rating", Value::Float(4.5))]);
-    let five = f.create(vec![Field::new("rating", Value::Int(5))]);
+    let five = f.create(vec![Field::new("rating", Value::Float(5.0))]);
 
     assert_same_set(
         f.run(&Query::Gt { field: "rating".into(), value: Value::Int(3) }),
@@ -693,21 +696,13 @@ fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
     assert_eq!(f.run_sorted(&all, &[sort_desc("n")]), vec![a, b], "desc: max(a)=9 > 5");
 }
 
-#[test]
-fn test_sort_mixed_types_follow_precedence() {
-    let mut f = Fixture::new();
-    // bool < int/float < string < datetime
-    let e_str = f.create(vec![Field::new("v", s("alpha")), Field::new("k", s("x"))]);
-    let e_bool = f.create(vec![Field::new("v", Value::Bool(true)), Field::new("k", s("x"))]);
-    let e_dt = f.create(vec![
-        Field::new("v", dt("2024-01-01T00:00:00Z")),
-        Field::new("k", s("x")),
-    ]);
-    let e_int = f.create(vec![Field::new("v", Value::Int(99)), Field::new("k", s("x"))]);
-
-    let all = Query::Eq { field: "k".into(), value: s("x") };
-    assert_eq!(f.run_sorted(&all, &[sort_asc("v")]), vec![e_bool, e_int, e_str, e_dt]);
-}
+// NOTE: a former `test_sort_mixed_types_follow_precedence` asserted the
+// cross-type sort precedence (bool < int/float < string < datetime) for a field
+// holding several value types at once. That state is no longer reachable through
+// the Writer: a field name carries a single value type repository-wide (the
+// "one value type per field name" invariant, spec-data-model). The query_exec
+// cross-type precedence code is kept as a defensive fallback for any pre-invariant
+// data, but it has no supported way to be produced, so the test was removed.
 
 #[test]
 fn test_sort_secondary_key_and_uuid_tiebreak() {

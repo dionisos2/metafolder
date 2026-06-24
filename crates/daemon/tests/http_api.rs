@@ -539,3 +539,86 @@ async fn test_list_metadata_plain_and_paginated() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── One value type per field name + retype ─────────────────────────────────────
+
+#[tokio::test]
+async fn test_conflicting_value_type_rejected() {
+    let (app, repo, root) = app_with_repo("typeconflict").await;
+    create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}]))
+        .await;
+    // A String write to the now-Int field is rejected.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [{"name": "rating", "value": {"type": "string", "value": "x"}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "body: {body}");
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_retype_endpoint_converts_and_relocks() {
+    let (app, repo, root) = app_with_repo("retype").await;
+    let m = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "rating", "value": {"type": "int", "value": 5}}]),
+    )
+    .await;
+    let uuid = m["uuid"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/fields/rating/retype"),
+        Some(json!({"to": "string"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["converted"], 1);
+    assert_eq!(body["fallback_count"], 0);
+
+    // The value now reads back as a string.
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let rating = got["fields"].as_array().unwrap().iter().find(|f| f["name"] == "rating").unwrap();
+    assert_eq!(rating["value"]["type"], "string");
+    assert_eq!(rating["value"]["value"], "5");
+
+    // The field is String repo-wide now: an Int write is rejected.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [{"name": "rating", "value": {"type": "int", "value": 1}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_retype_rejects_reserved_and_unknown_type() {
+    let (app, repo, root) = app_with_repo("retyperej").await;
+    // Reserved field: rejected unconditionally.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/fields/mfr_size/retype"),
+        Some(json!({"to": "string"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    // Unknown / non-scalar target type: rejected.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/fields/anything/retype"),
+        Some(json!({"to": "ref"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    std::fs::remove_dir_all(root).unwrap();
+}

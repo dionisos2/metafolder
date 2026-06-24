@@ -11,7 +11,7 @@ use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
 pub use metafolder_core::date::now_ms;
-use metafolder_core::metarecord::{Field, MetaRecord, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
@@ -375,6 +375,14 @@ pub struct NavResult {
     pub new_head: Option<i64>,
     pub operations_unapplied: usize,
     pub operations_applied: usize,
+}
+
+/// Outcome of [`Writer::retype_field`]: how many rows were converted and the
+/// metarecords whose values could not be converted and fell back to the
+/// target's sentinel (deduped, sorted).
+pub struct RetypeSummary {
+    pub converted: usize,
+    pub fallback_uuids: Vec<Uuid>,
 }
 
 /// Moves HEAD to `target` in one atomic transaction: inverse operations on
@@ -947,6 +955,9 @@ impl<'c> Writer<'c> {
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
         for f in fields {
+            // Checked inside the loop so two rows of the same name with different
+            // types within one create are rejected (the second sees the first).
+            self.validate_value_type(&f.name, &f.value)?;
             let id = db::insert_field_row(&self.tx, uuid, &f.name, &f.value, None)?;
             after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
             out_fields.push(Field { id: Some(id), ..f });
@@ -983,6 +994,7 @@ impl<'c> Writer<'c> {
         value: Value,
     ) -> Result<()> {
         self.validate_tree_ref(uuid, name, &value)?;
+        self.validate_value_type(name, &value)?;
         let version_before = self.bump_version(uuid)?;
         let before = db::get_field_rows_named(&self.tx, uuid, name)?;
         self.tx
@@ -998,6 +1010,7 @@ impl<'c> Writer<'c> {
     /// Returns the new field row id.
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<i64> {
         self.validate_tree_ref(uuid, name, &value)?;
+        self.validate_value_type(name, &value)?;
         let version_before = self.bump_version(uuid)?;
         let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
         let after = vec![FieldRow { id, name: name.to_string(), value }];
@@ -1012,7 +1025,16 @@ impl<'c> Writer<'c> {
     pub fn replace_field(&mut self, uuid: Uuid, field_id: i64, value: Value) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
         self.validate_tree_ref(uuid, &old.name, &value)?;
+        self.validate_value_type(&old.name, &value)?;
+        self.replace_owned_row(uuid, old, value)
+    }
 
+    /// The logged delete+append core of [`Self::replace_field`], without the
+    /// invariant checks. Shared with [`Self::retype_field`], which is itself the
+    /// authority that changes a field's established type (so it must not be
+    /// rejected by the per-write type check while converting row by row).
+    fn replace_owned_row(&mut self, uuid: Uuid, old: FieldRow, value: Value) -> Result<()> {
+        let field_id = old.id;
         let v1 = self.bump_version(uuid)?;
         self.tx.execute("DELETE FROM field WHERE id = ?1", params![field_id])?;
         self.log_op(
@@ -1029,6 +1051,34 @@ impl<'c> Writer<'c> {
         let after = vec![FieldRow { id: field_id, name: old.name.clone(), value }];
         self.log_op(OpType::AppendField, uuid, Some(&old.name), Some(v2), vec![], after)?;
         Ok(())
+    }
+
+    /// Converts every non-`Nothing` row of field `name` to the scalar type `to`,
+    /// repository-wide, in this one revision (spec-data-model "Changing a field's
+    /// type"). Row-scoped (each row keeps its id, so rollback restores it exactly)
+    /// and bypasses the per-write type check (it *is* the type change). `Nothing`
+    /// rows are left untouched (explicit absence is preserved). Returns how many
+    /// rows changed and the metarecords whose values fell back to the sentinel.
+    pub fn retype_field(&mut self, name: &str, to: ScalarType) -> Result<RetypeSummary> {
+        let mut converted = 0usize;
+        let mut fallback: std::collections::BTreeSet<Uuid> = Default::default();
+        for uuid in db::metarecords_with_field(&self.tx, name)? {
+            for row in db::get_field_rows_named(&self.tx, uuid, name)? {
+                if matches!(row.value, Value::Nothing) {
+                    continue;
+                }
+                let (new_value, fell_back) = row.value.convert_to(to);
+                if new_value == row.value {
+                    continue; // already the target type
+                }
+                if fell_back {
+                    fallback.insert(uuid);
+                }
+                self.replace_owned_row(uuid, row, new_value)?;
+                converted += 1;
+            }
+        }
+        Ok(RetypeSummary { converted, fallback_uuids: fallback.into_iter().collect() })
     }
 
     /// Removes the single row identified by `field_id`.
@@ -1189,6 +1239,29 @@ impl<'c> Writer<'c> {
         )?;
         self.flushed += pending.len() as i64;
         self.chain_head = Some(base + pending.len() as i64 - 1);
+        Ok(())
+    }
+
+    /// Enforces the "one value type per field name" invariant (spec-data-model):
+    /// a field name carries a single non-`Nothing` value type repository-wide.
+    /// `Nothing` is absence, not a type, so it is always allowed. A non-`Nothing`
+    /// value whose type differs from the established one is rejected; changing a
+    /// field's type is the dedicated `retype` operation (which bypasses this).
+    /// Cheap per-write: one index seek via `idx_field_name_type`.
+    fn validate_value_type(&self, field_name: &str, value: &Value) -> Result<()> {
+        if matches!(value, Value::Nothing) {
+            return Ok(());
+        }
+        let new_type = db::encode_value(value).value_type;
+        if let Some((min, max)) = db::value_type_bounds(&self.tx, field_name)? {
+            if min != new_type || max != new_type {
+                return Err(DomainError::BadRequest(format!(
+                    "field '{field_name}' has value type '{min}'; cannot write a \
+                     '{new_type}' value (use retype to change the field's type)"
+                ))
+                .into());
+            }
+        }
         Ok(())
     }
 

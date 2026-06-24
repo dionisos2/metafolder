@@ -39,6 +39,155 @@ fn query_plan(conn: &Connection, sql: &str) -> String {
     rows.join(" | ")
 }
 
+// ── One value type per field name (invariant) ──────────────────────────────────
+
+#[test]
+fn test_field_first_write_establishes_type() {
+    // The first non-Nothing write of a name succeeds and fixes its type.
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+    let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
+    assert_eq!(got.get("rating"), Some(&Value::Int(5)));
+}
+
+#[test]
+fn test_field_rejects_conflicting_value_type() {
+    // Once `rating` is an Int repo-wide, a String write to it is rejected (400).
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let err = w
+        .set_field(Uuid::new_v4(), "rating", Value::String("five".into()))
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("type"),
+        "expected a type-conflict error, got: {err}"
+    );
+}
+
+#[test]
+fn test_field_rejects_conflicting_type_within_one_create() {
+    // Two rows of the same name with different types in a single create are rejected.
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let err = w
+        .create_metarecord(vec![
+            Field::new("tag", Value::String("a".into())),
+            Field::new("tag", Value::Int(1)),
+        ])
+        .unwrap_err();
+    assert!(err.to_string().contains("type"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_field_allows_nothing_against_any_type() {
+    // Nothing is absence, not a type: it coexists with the established type.
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    w.set_field(m.uuid, "rating", Value::Nothing).unwrap();
+    w.commit().unwrap();
+}
+
+#[test]
+fn test_field_type_unlocks_when_empty() {
+    // With no non-Nothing rows left, the name's type is unestablished again and a
+    // new (different) type may be written.
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m = create(&mut conn, db_id, vec![Field::new("note", Value::Int(1))]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    w.set_field(m.uuid, "note", Value::Nothing).unwrap(); // clears the Int row
+    w.set_field(m.uuid, "note", Value::String("now text".into())).unwrap();
+    w.commit().unwrap();
+}
+
+#[test]
+fn test_retype_field_converts_rolls_back_and_relocks() {
+    use metafolder_core::metarecord::ScalarType;
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let m1 = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(3))]);
+    // Nothing coexists and must survive the retype untouched.
+    let m2 = create(
+        &mut conn,
+        db_id,
+        vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)],
+    );
+
+    let head_before = metafolder_daemon::log::get_head(&conn).unwrap();
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let summary = w.retype_field("rating", ScalarType::String).unwrap();
+    w.commit().unwrap();
+    assert_eq!(summary.converted, 2, "both Int rows convert; the Nothing row is skipped");
+    assert!(summary.fallback_uuids.is_empty(), "Int→String never falls back");
+
+    let g1 = db::get_metarecord(&conn, m1.uuid).unwrap().unwrap();
+    assert_eq!(g1.get("rating"), Some(&Value::String("3".into())));
+    let g2 = db::get_metarecord(&conn, m2.uuid).unwrap().unwrap();
+    assert!(g2.get_all("rating").contains(&&Value::String("5".into())));
+    assert!(g2.get_all("rating").contains(&&Value::Nothing), "Nothing preserved");
+
+    // The field is now String repo-wide: a conflicting Int write is rejected.
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    assert!(w.set_field(m1.uuid, "rating", Value::Int(9)).is_err());
+    drop(w);
+
+    // Rollback to before the retype restores the original Int values exactly.
+    metafolder_daemon::log::navigate(&mut conn, db_id, head_before).unwrap();
+    let g1 = db::get_metarecord(&conn, m1.uuid).unwrap().unwrap();
+    assert_eq!(g1.get("rating"), Some(&Value::Int(3)));
+}
+
+#[test]
+fn test_retype_field_records_fallbacks() {
+    use metafolder_core::metarecord::ScalarType;
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let good = create(&mut conn, db_id, vec![Field::new("code", Value::String("42".into()))]);
+    let bad = create(&mut conn, db_id, vec![Field::new("code", Value::String("oops".into()))]);
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let summary = w.retype_field("code", ScalarType::Int).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(summary.converted, 2);
+    assert_eq!(summary.fallback_uuids, vec![bad.uuid], "only the un-parsable value fell back");
+    let g = db::get_metarecord(&conn, good.uuid).unwrap().unwrap();
+    assert_eq!(g.get("code"), Some(&Value::Int(42)));
+    let b = db::get_metarecord(&conn, bad.uuid).unwrap().unwrap();
+    assert_eq!(b.get("code"), Some(&Value::Int(0)), "un-parsable → sentinel 0");
+}
+
+#[test]
+fn test_value_type_probe_seeks_via_index() {
+    // The established-type probe must seek the (field_name, value_type) index,
+    // not scan the field_name range (mfr_path has ~one row per metarecord).
+    let conn = test_conn();
+    let plan = query_plan(
+        &conn,
+        "SELECT value_type FROM field \
+         WHERE field_name = 'rating' AND value_type != 'nothing' \
+         ORDER BY value_type LIMIT 1",
+    );
+    assert!(
+        plan.contains("idx_field_name_type"),
+        "type probe should use idx_field_name_type, plan was: {plan}"
+    );
+    assert!(
+        !plan.contains("SCAN field"),
+        "type probe should not scan the field table, plan was: {plan}"
+    );
+}
+
 #[test]
 fn test_field_name_predicate_seeks_not_scans() {
     // IsPresent/Eq-style predicates filter the EAV `field` table by field_name.

@@ -260,6 +260,31 @@ fn test_create_and_get_by_uuid() {
 }
 
 #[test]
+fn test_retype_converts_field_type() {
+    let (repo, _root) = init_repo("retype");
+    let uuid = create_metarecord(&repo, &["rating:int=5"]);
+
+    let out = mf(&["--repo", &repo, "retype", "rating", "string"]);
+    assert_ok(&out);
+
+    // The value now reads back as a string.
+    let entries = get_entries(&repo, &uuid);
+    let entry = &entries.as_array().unwrap()[0];
+    let rating = entry["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "rating")
+        .expect("rating field");
+    assert_eq!(rating["value"]["type"], "string");
+    assert_eq!(rating["value"]["value"], "5");
+
+    // A conflicting Int write to the now-String field is rejected (exit != 0).
+    let out = mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]);
+    assert_ne!(out.code, 0, "a conflicting-type write must fail: {}", out.stderr);
+}
+
+#[test]
 fn test_create_reserved_field_requires_force() {
     let (repo, _) = init_repo("create_force");
     let out = mf(&["--repo", &repo, "create", "--field", "mfr_path:tree_ref=/created_name"]);
@@ -805,8 +830,10 @@ fn test_schema_workflow() {
     assert!(out.stdout.contains(&bad), "violation line should name the entry");
     assert!(out.stdout.contains("Checked 2 metarecords, 1 violation"), "stdout: {}", out.stdout);
 
-    // Fix the entry: no violations left, exit code 0.
-    let out = mf(&["--repo", &repo, "set", &bad, "rating:int=5"]);
+    // Fix the wrong-typed field: under the one-value-type-per-field invariant a
+    // String field cannot be set to an Int directly — `retype` is the way to
+    // change an established type (the un-parsable "oops" falls back to 0).
+    let out = mf(&["--repo", &repo, "retype", "rating", "int"]);
     assert_ok(&out);
     let out = mf(&["--repo", &repo, "schema", "check"]);
     assert_ok(&out);

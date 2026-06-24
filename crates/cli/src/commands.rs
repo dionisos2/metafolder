@@ -243,6 +243,15 @@ pub fn set(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
     Ok(0)
 }
 
+pub fn retype(ctx: &Ctx, name: &str, to: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.post(&format!("{base}/fields/{name}/retype"), &json!({"to": to}))?;
+    let converted = resp["converted"].as_u64().unwrap_or(0);
+    let fallbacks = resp["fallback_count"].as_u64().unwrap_or(0);
+    println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} fell back to the default");
+    Ok(0)
+}
+
 pub fn add(ctx: &Ctx, uuid: &str, spec: &str, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid = Uuid::parse_str(uuid)

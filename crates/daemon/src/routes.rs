@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value};
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
@@ -46,6 +46,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/tree/resolve", post(tree_resolve))
         .route("/repos/:repo/set", post(batch_set))
+        .route("/repos/:repo/fields/:name/retype", post(retype_field))
         .route("/repos/:repo/delete", post(delete_by_query))
         .route("/repos/:repo/log", get(get_log))
         .route("/repos/:repo/log/since", get(get_log_since))
@@ -1409,6 +1410,48 @@ async fn batch_set(
         }
         writer.commit()?;
         Ok(Json(json!({"updated": uuids.len()})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct RetypeBody {
+    to: String,
+}
+
+/// `POST /repos/:repo/fields/:name/retype`: converts every non-`Nothing` row of
+/// the field to a new scalar type, repository-wide, in one revision
+/// (spec-data-model "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`)
+/// are rejected unconditionally — the system owns their types.
+async fn retype_field(
+    State(state): State<Arc<AppState>>,
+    Path((repo, name)): Path<(String, String)>,
+    payload: Result<Json<RetypeBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    if name.starts_with("mfr_") || name.starts_with("mf_") {
+        return Err(ApiError::bad_request(format!(
+            "field '{name}' is reserved; its type is owned by the system and cannot be retyped"
+        )));
+    }
+    let to = ScalarType::parse(&body.to).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "invalid target type '{}': retype targets one of string/int/float/bool/datetime",
+            body.to
+        ))
+    })?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let summary = writer.retype_field(&name, to)?;
+        writer.commit()?;
+        Ok(Json(json!({
+            "converted": summary.converted,
+            "fallback_count": summary.fallback_uuids.len(),
+            "fallback_uuids": summary.fallback_uuids.iter().map(|u| hex(*u)).collect::<Vec<_>>(),
+        })))
     })
     .await
 }

@@ -110,13 +110,16 @@ The reference variants are treated as *distinct* types, not a family: a field is
 is sometimes local and sometimes cross-repo is modelled uniformly as
 =ExternalRef=.
 
-The type is established by the first non-=Nothing= write to that name and
-recorded in a per-repository =field_type= registry (=field_name → value_type=);
-the user schema may also declare it explicitly (see
+The type is established by the first non-=Nothing= write to that name; the user
+schema may also declare it explicitly (see
 [[file:spec-schema.org][spec-schema.org]]). A later write of a conflicting type
-is rejected with =400=. The registry is authoritative at runtime and doubles as
-the per-field index-encoding selector (see
-[[file:spec-indexing.org][spec-indexing.org]]).
+is rejected with =400=. The current implementation realises the =field_type=
+registry as a *derived index probe* — the established type is read on each write
+from the =field= table via the =(field_name, value_type)= index (an O(log n)
+min/max seek), with no separate registry table — so the type unlocks
+automatically when a name's last non-=Nothing= value is removed. A materialised
+registry (and its role as the per-field index-encoding selector) comes with the
+indexing work (see [[file:spec-indexing.org][spec-indexing.org]]).
 
 This uniformity simplifies the rest of the model: comparisons
 ([[file:spec-query.org][spec-query.org]]) are same-type, and sorting needs no

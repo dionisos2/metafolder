@@ -222,7 +222,7 @@ section; this section defines the conventions shared by all commands.
 | Spec file                                          | Commands                                          |
 |----------------------------------------------------+---------------------------------------------------|
 | this file                                          | =mf init=, =mf load=, =mf repos=                  |
-| [[file:spec-data-model.org][spec-data-model.org]]   | =mf list=, =mf get=, =mf create=, =mf set=, =mf add=, =mf unset=, =mf delete= |
+| [[file:spec-data-model.org][spec-data-model.org]]   | =mf list=, =mf get=, =mf create=, =mf set=, =mf add=, =mf unset=, =mf delete=, =mf retype= |
 | [[file:spec-query.org][spec-query.org]]             | =mf query=, query DSL grammar                     |
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema check=, =mf schema reload=, =mf schema show= |

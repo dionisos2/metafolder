@@ -96,6 +96,13 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Convert a field's value type repository-wide (string|int|float|bool|datetime)
+    Retype {
+        /// Field name
+        name: String,
+        /// Target type: string, int, float, bool, or datetime
+        to: String,
+    },
     /// Delete a single field row by id (as shown by mf get)
     Unset {
         uuid: String,
@@ -430,6 +437,7 @@ fn main() {
         Command::Create { fields, force } => commands::create(&ctx, &fields, force),
         Command::Set { target, spec, force } => commands::set(&ctx, &target, &spec, force),
         Command::Add { uuid, spec, force } => commands::add(&ctx, &uuid, &spec, force),
+        Command::Retype { name, to } => commands::retype(&ctx, &name, &to),
         Command::Unset { uuid, field_id, force } => {
             commands::unset(&ctx, &uuid, field_id, force)
         }
