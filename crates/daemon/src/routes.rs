@@ -37,6 +37,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
+        .route("/repos/:repo/unload", post(unload_repo))
         .route("/repos/:repo/metarecords", get(list_metarecords).post(create_record_endpoint))
         .route("/repos/:repo/metarecords/batch", post(batch_get_records))
         .route(
@@ -391,6 +392,22 @@ async fn load_repo(
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(Json(json!({"repo_uuid": hex(uuid)})))
+}
+
+/// `POST /repos/:repo/unload`: stops the repository's watcher/executor and
+/// releases its database lock, removing it from the loaded set (spec-main
+/// "Repository management"). 404 if not loaded; 409 if a rollback navigation is
+/// in progress. Runs on a blocking thread because dropping the state joins the
+/// executor thread.
+async fn unload_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    tokio::task::spawn_blocking(move || state.unload_repo(repo_uuid))
+        .await
+        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    Ok(Json(json!({"repo_uuid": hex(repo_uuid)})))
 }
 
 // ── MetaRecord listing ──────────────────────────────────────────────────────────

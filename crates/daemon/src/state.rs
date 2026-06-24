@@ -197,6 +197,39 @@ impl AppState {
         Ok(uuid)
     }
 
+    /// Unloads a repository: removes it from the loaded set, stops its watcher
+    /// and executor, and releases the exclusive SQLite lock — so it can be
+    /// re-loaded or opened by another daemon (spec-main "Repository management").
+    ///
+    /// An unknown repository is a 404 (no idempotency claimed). A repository in
+    /// a coordinated-rollback navigation is refused with 409 until the
+    /// navigation is completed or aborted (its lock must not be silently
+    /// dropped). A background task still holding an `Arc` (a running reconcile)
+    /// keeps the state alive until it finishes; the repository is removed from
+    /// the loaded set immediately, so it is no longer addressable.
+    pub fn unload_repo(&self, repo_uuid: Uuid) -> Result<(), ApiError> {
+        let removed = {
+            let mut repos = self.repos.lock_recover();
+            let Some(repo_state) = repos.get(&repo_uuid) else {
+                return Err(ApiError::not_found(format!("Repository not found: {repo_uuid}")));
+            };
+            if repo_state.is_rollback_locked() {
+                return Err(ApiError::conflict(
+                    "repository is in rollback lock; complete or abort the navigation first",
+                ));
+            }
+            repos.remove(&repo_uuid)
+            // The `repos` guard is released at the end of this block, before the
+            // `Arc` is dropped below.
+        };
+        // Dropping the last `Arc` runs `RepoHandles::drop` (watcher stopped,
+        // executor joined) and closes the connection (releasing the lock). Done
+        // outside the map lock so the executor-thread join cannot block another
+        // repository operation that needs the map.
+        drop(removed);
+        Ok(())
+    }
+
     /// Fetches a loaded repository or fails with 404.
     pub fn repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
         self.repos

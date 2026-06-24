@@ -285,3 +285,28 @@ fn test_config_exists_helper() {
     drop(opened);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn test_unload_refused_during_rollback_navigation() {
+    use metafolder_daemon::state::{AppState, RollbackLock};
+
+    let root = temp_dir("unload_rb");
+    let state = AppState::new();
+    let uuid = state.init_repo(&root, None, None).unwrap();
+
+    // Simulate an in-progress coordinated rollback navigation.
+    *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() = Some(RollbackLock { target: None });
+
+    // Unload is refused with a 409 while the navigation holds the lock.
+    let err = state.unload_repo(uuid).unwrap_err();
+    assert_eq!(err.status, axum::http::StatusCode::CONFLICT);
+    // Still loaded.
+    assert!(state.repo(uuid).is_ok());
+
+    // Once the navigation is cleared, unload succeeds.
+    *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() = None;
+    state.unload_repo(uuid).unwrap();
+    assert!(state.repo(uuid).is_err());
+
+    std::fs::remove_dir_all(root).unwrap();
+}

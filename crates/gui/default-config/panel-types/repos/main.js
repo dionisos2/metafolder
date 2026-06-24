@@ -125,6 +125,20 @@ export async function mount(root, metafolder) {
             el('strong', {}, repo.name),
             el('span', { class: 'root' }, repo.root),
             el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+            el(
+              'button',
+              {
+                class: 'repo-unload',
+                type: 'button',
+                title: 'Unload this repository from the daemon',
+                // The header row opens the repo on click; keep that from firing.
+                onclick: (event) => {
+                  event.stopPropagation();
+                  void unloadRepo(repo.repo_uuid);
+                },
+              },
+              'Unload',
+            ),
           ),
           el('ul', { class: 'repo-tasks', 'data-tasks-for': repo.repo_uuid }),
         ),
@@ -188,6 +202,18 @@ export async function mount(root, metafolder) {
       statusBar.message(`cannot stop task: ${error.message ?? error}`, 6000);
     }
     await pollTasks();
+  }
+
+  // Unload a repository from the daemon (spec-main "Repository management"):
+  // stops its watcher and releases its DB lock, then refreshes the list.
+  async function unloadRepo(repoUuid) {
+    try {
+      await daemon.call('POST', `/repos/${repoUuid}/unload`);
+      statusBar.message('repository unloaded', 3000);
+    } catch (error) {
+      statusBar.message(`cannot unload: ${error.message ?? error}`, 6000);
+    }
+    await refresh();
   }
 
   // Selecting a repo: adopt it in place when the workspace has none yet

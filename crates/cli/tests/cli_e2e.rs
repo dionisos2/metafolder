@@ -195,6 +195,36 @@ fn test_repos_lists_loaded_repositories() {
     assert!(parsed.is_array() || parsed.is_object());
 }
 
+#[test]
+fn test_unload_removes_repo_and_allows_reload() {
+    let (repo, root) = init_repo("unload");
+
+    // Loaded: it appears in the list.
+    assert!(mf(&["repos"]).stdout.contains(&repo));
+
+    // Unload prints the uuid and removes it from the list.
+    let out = mf(&["--repo", &repo, "unload"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+    assert!(!mf(&["repos"]).stdout.contains(&repo), "still listed after unload");
+
+    // Unloading again fails (no longer loaded).
+    let out = mf(&["--repo", &repo, "unload"]);
+    assert_eq!(out.code, 1, "second unload should fail; stderr: {}", out.stderr);
+
+    // The lock was released: the same root loads again with the same uuid.
+    let out = mf(&["load", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+}
+
+#[test]
+fn test_unload_requires_repo() {
+    // Repo-scoped: missing --repo is a usage error (exit 2), no daemon round-trip.
+    let out = mf(&["unload"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
 // ── Global options and exit codes ─────────────────────────────────────────────
 
 #[test]

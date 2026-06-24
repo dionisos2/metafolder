@@ -622,3 +622,43 @@ async fn test_retype_rejects_reserved_and_unknown_type() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn unload_removes_repo_and_releases_the_lock() {
+    let (app, repo, root) = app_with_repo("unload").await;
+
+    // It is loaded and listed.
+    let (_, before) = request(&app, "GET", "/repos", None).await;
+    assert_eq!(before.as_array().unwrap().len(), 1);
+
+    // Unload it: 200 with the repo uuid.
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert_eq!(status, StatusCode::OK, "unload failed: {body}");
+    assert_eq!(body["repo_uuid"].as_str().unwrap(), repo);
+
+    // No longer listed; repo-scoped calls now 404.
+    let (_, after) = request(&app, "GET", "/repos", None).await;
+    assert!(after.as_array().unwrap().is_empty(), "still listed: {after}");
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metarecords"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Unloading again is a 404 (it is gone).
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // The exclusive SQLite lock was released: the same root loads again.
+    let (status, body) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "reload failed: {body}");
+    assert_eq!(body["repo_uuid"].as_str().unwrap(), repo);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn unload_unknown_repo_is_404() {
+    let app = app();
+    let ghost = Uuid::new_v4().as_simple().to_string();
+    let (status, _) = request(&app, "POST", &format!("/repos/{ghost}/unload"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

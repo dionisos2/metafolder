@@ -77,7 +77,7 @@ Built-in panel types:
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
 | =log=            | Event log (revisions and operations)                         |
-| =repos=          | Repository list, init, load                                  |
+| =repos=          | Repository list, init, load, unload, per-repo running tasks   |
 
 Users can add custom panel types by creating a new directory under
 =~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside

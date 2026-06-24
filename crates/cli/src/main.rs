@@ -48,6 +48,9 @@ enum Command {
     },
     /// List the loaded repositories (pretty-printed JSON)
     Repos,
+    /// Unload the repository from the daemon (stops its watcher, releases its
+    /// database lock). Repo-scoped: use --repo / METAFOLDER_REPO.
+    Unload,
     /// Print all metarecord UUIDs of the repository, one per line
     List {
         /// Stop after N UUIDs
@@ -434,6 +437,7 @@ fn main() {
             commands::load(&ctx, root.as_deref(), metafolder.as_deref())
         }
         Command::Repos => commands::repos(&ctx),
+        Command::Unload => commands::unload(&ctx),
         Command::List { limit } => commands::list(&ctx, limit),
         Command::Get { target, fields, sort, limit } => {
             commands::get(&ctx, &target, fields.as_deref(), &sort, limit)

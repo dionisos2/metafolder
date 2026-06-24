@@ -123,6 +123,7 @@ Response: =200 OK=, body ={"status": "ok"}=.
 GET  /repos
 POST /repos/init
 POST /repos/load
+POST /repos/:repo_uuid/unload
 #+END_SRC
 
 *** =GET /repos=
@@ -185,6 +186,25 @@ read from =config.json= inside it):
 
 Response body: ={"repo_uuid": "..."}=
 
+*** =POST /repos/:repo_uuid/unload=
+
+Unloads a loaded repository: removes it from the daemon's in-memory state,
+stops its file watcher and executor, and releases the exclusive SQLite lock — so
+the repository can be re-loaded later or opened by another daemon. The on-disk
+data is untouched (this is *not* a delete). No request body.
+
+Response body: ={"repo_uuid": "..."}=
+
+- =404= if the repository is not loaded.
+- =409= if a coordinated-rollback navigation is in progress (complete or abort
+  it first; see [[file:spec-event-log.org][spec-event-log.org]] "Rollback
+  lock"). Its lock must not be silently dropped.
+
+A background task still running (a reconcile holding the connection) keeps its
+own handle alive until it finishes, but the repository is removed from the
+loaded set immediately and is no longer addressable. To stop such a task first,
+see [[file:spec-tasks.org][spec-tasks.org]] "Cancellation".
+
 ** Error handling
 
 | Situation                              | HTTP status | Notes                          |
@@ -204,12 +224,6 @@ Response body: ={"repo_uuid": "..."}=
 | Invalid pagination cursor              | 400         | Cursor/query-sort mismatch     |
 | Internal error (DB, I/O)               | 500         | Error message in body          |
 
-** Open questions
-
-*** Daemon lifecycle
-No mechanism yet for cleanly unloading a repository (stopping its watcher,
-releasing its DB connection) without restarting the whole daemon.
-
 * CLI
 
 ** General description
@@ -221,7 +235,7 @@ section; this section defines the conventions shared by all commands.
 
 | Spec file                                          | Commands                                          |
 |----------------------------------------------------+---------------------------------------------------|
-| this file                                          | =mf init=, =mf load=, =mf repos=                  |
+| this file                                          | =mf init=, =mf load=, =mf repos=, =mf unload=     |
 | [[file:spec-data-model.org][spec-data-model.org]]   | =mf list=, =mf get=, =mf create=, =mf set=, =mf add=, =mf unset=, =mf delete=, =mf retype= |
 | [[file:spec-query.org][spec-query.org]]             | =mf query=, query DSL grammar                     |
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
@@ -272,6 +286,14 @@ database form with =--metafolder=) and prints the repository UUID.
 *** =mf repos=
 
 Calls =GET /repos= and prints the loaded repositories as pretty-printed JSON.
+
+*** =mf unload=
+
+Repo-scoped (=--repo= / =METAFOLDER_REPO=). Calls
+=POST /repos/:repo/unload= and prints the repository UUID. The repository is
+removed from the daemon (its watcher stopped, its DB lock released); its on-disk
+data is untouched. A repository not loaded (404) or in a rollback navigation
+(409) is reported as an error (exit 1).
 
 * GUI
 

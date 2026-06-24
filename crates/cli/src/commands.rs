@@ -118,6 +118,16 @@ pub fn repos(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf unload`: unloads the repository from the daemon (`POST …/unload`),
+/// printing its UUID. A repository not loaded (404) or in a rollback navigation
+/// (409) is reported as an error.
+pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.request("POST", &format!("{base}/unload"), &[], None)?;
+    println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
 // ── MetaRecord manipulation (spec-data-model) ──────────────────────────────────────
 
 pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
