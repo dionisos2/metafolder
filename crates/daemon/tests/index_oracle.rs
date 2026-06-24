@@ -1,0 +1,424 @@
+//! Equivalence oracle for the in-memory bitmap index (spec-indexing.org).
+//!
+//! Every query in the battery is run through BOTH the SQL engine
+//! (`query_exec::execute`, the oracle) and `RepoIndex::evaluate`, asserting an
+//! identical result *set* (order is irrelevant — sorting is a later increment).
+//! Fixtures are crafted to exercise the correctness pitfalls: present/absent
+//! overlap, multi-map min/max, the exclusively-owned universe, ZERO_UUID tree
+//! roots.
+
+use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::query::{FollowTarget, Query};
+use metafolder_daemon::db;
+use metafolder_daemon::index::RepoIndex;
+use metafolder_daemon::log::Writer;
+use metafolder_daemon::query_exec;
+use metafolder_daemon::tree_cache::TreeCache;
+use rusqlite::Connection;
+use uuid::Uuid;
+
+struct Oracle {
+    conn: Connection,
+    cache: TreeCache,
+    db_id: Uuid,
+}
+
+impl Oracle {
+    fn new() -> Self {
+        let conn = db::open_in_memory().unwrap();
+        db::init_schema(&conn).unwrap();
+        Self { conn, cache: TreeCache::new(false), db_id: Uuid::new_v4() }
+    }
+
+    fn create(&mut self, fields: Vec<Field>) -> Uuid {
+        self.create_in(self.db_id, fields)
+    }
+
+    fn create_in(&mut self, db_id: Uuid, fields: Vec<Field>) -> Uuid {
+        let mut w = Writer::begin(&mut self.conn, db_id, None).unwrap();
+        let m = w.create_metarecord(fields).unwrap();
+        w.commit().unwrap();
+        m.uuid
+    }
+
+    /// Makes `uuid` a link metarecord by adding a second owning repository, so
+    /// it drops out of the exclusively-owned universe. A direct insert (no log)
+    /// suffices for the fixture: both engines read `metarecord_db` directly.
+    fn add_owner(&mut self, uuid: Uuid, db_id: Uuid) {
+        self.conn
+            .execute(
+                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
+                rusqlite::params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(db_id)],
+            )
+            .unwrap();
+    }
+
+    /// Asserts the bitmap index agrees with the SQL engine on `q`.
+    fn check(&mut self, q: &Query) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let (mut sql, _) =
+            query_exec::execute(&self.conn, &mut self.cache, self.db_id, q, &[], None, None)
+                .unwrap();
+        let mut got = index.to_uuids(&index.evaluate(q).unwrap());
+        sql.sort();
+        got.sort();
+        assert_eq!(got, sql, "divergence on {q:?}");
+    }
+}
+
+fn s(v: &str) -> Value {
+    Value::String(v.into())
+}
+fn dt(iso: &str) -> Value {
+    Value::DateTime(metafolder_core::date::iso_to_ms(iso).unwrap())
+}
+fn eq(field: &str, value: Value) -> Query {
+    Query::Eq { field: field.into(), value }
+}
+fn neq(field: &str, value: Value) -> Query {
+    Query::Neq { field: field.into(), value }
+}
+fn lt(field: &str, value: Value) -> Query {
+    Query::Lt { field: field.into(), value }
+}
+fn lte(field: &str, value: Value) -> Query {
+    Query::Lte { field: field.into(), value }
+}
+fn gt(field: &str, value: Value) -> Query {
+    Query::Gt { field: field.into(), value }
+}
+fn gte(field: &str, value: Value) -> Query {
+    Query::Gte { field: field.into(), value }
+}
+
+fn tref(field: &str, parent: Option<Uuid>, name: &str) -> Field {
+    Field::new(field, Value::TreeRef { parent, name: name.into() })
+}
+fn follows(field: &str, cond: Query) -> Query {
+    Query::Follows { field: field.into(), target: FollowTarget::Condition(Box::new(cond)) }
+}
+fn follows_t(field: &str, cond: Query) -> Query {
+    Query::FollowsTransitive { field: field.into(), target: FollowTarget::Condition(Box::new(cond)) }
+}
+
+fn and(operands: Vec<Query>) -> Query {
+    Query::And { operands }
+}
+fn or(operands: Vec<Query>) -> Query {
+    Query::Or { operands }
+}
+fn not(operand: Query) -> Query {
+    Query::Not { operand: Box::new(operand) }
+}
+
+fn present(field: &str) -> Query {
+    Query::IsPresent { field: field.into() }
+}
+fn absent(field: &str) -> Query {
+    Query::IsAbsent { field: field.into() }
+}
+fn unknown(field: &str) -> Query {
+    Query::IsUnknown { field: field.into() }
+}
+
+// ── Three-valued logic ──────────────────────────────────────────────────────
+
+#[test]
+fn three_valued_present_absent_unknown() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("rating", Value::Int(5))]); // present
+    o.create(vec![Field::new("rating", Value::Nothing)]); // absent
+    o.create(vec![Field::new("other", Value::Int(1))]); // unknown for "rating"
+
+    o.check(&present("rating"));
+    o.check(&absent("rating"));
+    o.check(&unknown("rating"));
+}
+
+#[test]
+fn three_valued_present_absent_overlap() {
+    // One metarecord carries BOTH a real value and a Nothing for "rating":
+    // it must appear in IsPresent AND IsAbsent, and NOT in IsUnknown.
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)]);
+    o.create(vec![Field::new("rating", Value::Nothing)]);
+    o.create(vec![Field::new("rating", Value::Int(9))]);
+    o.create(vec![Field::new("elsewhere", Value::Int(1))]);
+
+    o.check(&present("rating"));
+    o.check(&absent("rating"));
+    o.check(&unknown("rating"));
+}
+
+#[test]
+fn universe_excludes_link_metarecords() {
+    // A link metarecord (two owners) is outside the exclusively-owned universe,
+    // so it must never appear — including in IsUnknown's complement.
+    let mut o = Oracle::new();
+    let own = o.create(vec![Field::new("rating", Value::Int(5))]);
+    let link = o.create(vec![Field::new("rating", Value::Int(7))]);
+    o.add_owner(link, Uuid::new_v4());
+    let _ = (own, link);
+
+    o.check(&present("rating"));
+    o.check(&absent("rating"));
+    o.check(&unknown("rating"));
+    o.check(&unknown("never_used"));
+}
+
+// ── Categorical: string ─────────────────────────────────────────────────────
+
+#[test]
+fn categorical_string_eq_multimap() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
+    o.create(vec![Field::new("tag", s("blues"))]);
+
+    o.check(&eq("tag", s("jazz")));
+    o.check(&eq("tag", s("live")));
+    o.check(&eq("tag", s("blues")));
+    o.check(&eq("tag", s("rock"))); // empty
+}
+
+#[test]
+fn categorical_string_neq_multimap() {
+    // {jazz, live} must match Neq("jazz") via the "live" row; {jazz} alone
+    // must not. A type-mismatched operand differs from every row.
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
+    o.create(vec![Field::new("tag", s("jazz"))]);
+    o.create(vec![Field::new("tag", s("blues"))]);
+
+    o.check(&neq("tag", s("jazz")));
+    o.check(&neq("tag", s("blues")));
+    o.check(&neq("tag", s("rock")));
+    o.check(&neq("tag", Value::Int(1))); // mismatched type: all differ
+}
+
+#[test]
+fn categorical_string_ordered() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("name", s("alice"))]);
+    o.create(vec![Field::new("name", s("bob"))]);
+    o.create(vec![Field::new("name", s("carol"))]);
+    // multi-map: matches if ANY value satisfies
+    o.create(vec![Field::new("name", s("aaron")), Field::new("name", s("zoe"))]);
+
+    o.check(&lt("name", s("bob")));
+    o.check(&lte("name", s("bob")));
+    o.check(&gt("name", s("bob")));
+    o.check(&gte("name", s("bob")));
+}
+
+// ── Categorical: bool ───────────────────────────────────────────────────────
+
+#[test]
+fn categorical_bool_eq_neq() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("seen", Value::Bool(true))]);
+    o.create(vec![Field::new("seen", Value::Bool(false))]);
+    // multi-map both: matches Eq(true), Eq(false), and Neq(either)
+    o.create(vec![Field::new("seen", Value::Bool(true)), Field::new("seen", Value::Bool(false))]);
+
+    o.check(&eq("seen", Value::Bool(true)));
+    o.check(&eq("seen", Value::Bool(false)));
+    o.check(&neq("seen", Value::Bool(true)));
+    o.check(&neq("seen", Value::Bool(false)));
+}
+
+// ── BSI: int / float / datetime ─────────────────────────────────────────────
+
+fn i(n: i64) -> Value {
+    Value::Int(n)
+}
+
+#[test]
+fn bsi_int_ranges_multimap() {
+    let mut o = Oracle::new();
+    // multi-map {3,7}: 5 is strictly between min and max — Eq(5) must be empty,
+    // yet Gte(5) and Lte(5) both match (max 7 ≥ 5, min 3 ≤ 5).
+    o.create(vec![Field::new("rate", i(3)), Field::new("rate", i(7))]);
+    o.create(vec![Field::new("rate", i(5))]);
+    o.create(vec![Field::new("rate", i(10))]);
+    o.create(vec![Field::new("rate", i(-4))]); // negative: order-preserving key
+    o.create(vec![Field::new("other", i(1))]);
+
+    for v in [-4, 0, 3, 5, 7, 10, 11] {
+        o.check(&eq("rate", i(v)));
+        o.check(&neq("rate", i(v)));
+        o.check(&lt("rate", i(v)));
+        o.check(&lte("rate", i(v)));
+        o.check(&gt("rate", i(v)));
+        o.check(&gte("rate", i(v)));
+    }
+}
+
+#[test]
+fn bsi_int_only_max_or_min_satisfies() {
+    // {1, 100}: Gte(50) matches only via the max; Lte(50) only via the min.
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("n", i(1)), Field::new("n", i(100))]);
+    o.create(vec![Field::new("n", i(40))]);
+    o.create(vec![Field::new("n", i(60))]);
+
+    o.check(&gte("n", i(50)));
+    o.check(&gt("n", i(50)));
+    o.check(&lte("n", i(50)));
+    o.check(&lt("n", i(50)));
+}
+
+#[test]
+fn bsi_float_ranges() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("score", Value::Float(2.5))]);
+    o.create(vec![Field::new("score", Value::Float(-1.5)), Field::new("score", Value::Float(3.5))]);
+    o.create(vec![Field::new("score", Value::Float(0.0))]);
+
+    for v in [-1.5_f64, 0.0, 2.5, 3.0, 3.5] {
+        o.check(&eq("score", Value::Float(v)));
+        o.check(&neq("score", Value::Float(v)));
+        o.check(&lt("score", Value::Float(v)));
+        o.check(&gte("score", Value::Float(v)));
+    }
+    // Int operand against a float field compares numerically (f64 space).
+    o.check(&gte("score", i(3)));
+    o.check(&eq("score", i(0)));
+}
+
+#[test]
+fn bsi_datetime_ranges() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("added", dt("2024-01-01T00:00:00Z"))]);
+    o.create(vec![Field::new("added", dt("2024-06-15T12:00:00Z"))]);
+    o.create(vec![
+        Field::new("added", dt("2023-01-01T00:00:00Z")),
+        Field::new("added", dt("2025-01-01T00:00:00Z")),
+    ]);
+
+    let pivot = dt("2024-06-15T12:00:00Z");
+    o.check(&eq("added", pivot.clone()));
+    o.check(&neq("added", pivot.clone()));
+    o.check(&lt("added", pivot.clone()));
+    o.check(&lte("added", pivot.clone()));
+    o.check(&gt("added", pivot.clone()));
+    o.check(&gte("added", pivot));
+    // Mismatched operand family: int vs a datetime field → empty / present.
+    o.check(&eq("added", i(0)));
+    o.check(&neq("added", i(0)));
+}
+
+// ── Boolean algebra ─────────────────────────────────────────────────────────
+
+#[test]
+fn boolean_and_or_not() {
+    let mut o = Oracle::new();
+    o.create(vec![Field::new("kind", s("film")), Field::new("rate", i(8))]);
+    o.create(vec![Field::new("kind", s("film")), Field::new("rate", i(3))]);
+    o.create(vec![Field::new("kind", s("book")), Field::new("rate", i(9))]);
+    o.create(vec![Field::new("kind", s("book"))]); // no rate
+    o.create(vec![Field::new("other", i(1))]);
+
+    o.check(&and(vec![eq("kind", s("film")), gte("rate", i(5))]));
+    o.check(&or(vec![eq("kind", s("book")), gte("rate", i(8))]));
+    o.check(&not(eq("kind", s("film"))));
+    // Not over a three-valued predicate: complement within the universe.
+    o.check(&not(present("rate")));
+    o.check(&not(unknown("rate")));
+    // Nested.
+    o.check(&and(vec![
+        or(vec![eq("kind", s("film")), eq("kind", s("book"))]),
+        not(lt("rate", i(8))),
+    ]));
+}
+
+// ── Reverse: Ref ────────────────────────────────────────────────────────────
+
+#[test]
+fn reverse_ref_eq_neq_follows() {
+    let mut o = Oracle::new();
+    let target = o.create(vec![Field::new("name", s("target"))]);
+    let other = o.create(vec![Field::new("name", s("other"))]);
+    let r1 = o.create(vec![Field::new("author", Value::Ref(target))]);
+    let _r2 = o.create(vec![Field::new("author", Value::Ref(target))]);
+    let _r3 = o.create(vec![Field::new("author", Value::Ref(other))]);
+
+    o.check(&eq("author", Value::Ref(target)));
+    o.check(&neq("author", Value::Ref(target)));
+    o.check(&eq("author", Value::Ref(r1))); // referenced by nobody → empty
+    o.check(&follows("author", eq("name", s("target"))));
+    o.check(&follows("author", eq("name", s("other"))));
+    // Follows on a non-reference field is empty.
+    o.check(&follows("name", eq("name", s("target"))));
+}
+
+// ── Reverse: TreeRef forest ─────────────────────────────────────────────────
+
+/// root ─┬─ b ── c
+///       └─ d
+fn forest() -> (Oracle, [Uuid; 4]) {
+    let mut o = Oracle::new();
+    let root = o.create(vec![
+        Field::new("tag", s("root")),
+        Field::new("kind", s("dir")),
+        Field::new("rate", i(1)),
+        tref("loc", None, "root"),
+    ]);
+    let b = o.create(vec![
+        Field::new("kind", s("dir")),
+        Field::new("rate", i(7)),
+        tref("loc", Some(root), "b"),
+    ]);
+    let c = o.create(vec![
+        Field::new("kind", s("file")),
+        Field::new("rate", i(9)),
+        tref("loc", Some(b), "c"),
+    ]);
+    let d = o.create(vec![
+        Field::new("kind", s("file")),
+        Field::new("rate", i(3)),
+        tref("loc", Some(root), "d"),
+    ]);
+    (o, [root, b, c, d])
+}
+
+#[test]
+fn reverse_tree_eq_by_value_and_by_name() {
+    let (mut o, [root, _b, _c, _d]) = forest();
+
+    // Full TreeRef equality (parent + name).
+    o.check(&eq("loc", Value::TreeRef { parent: Some(root), name: "b".into() }));
+    o.check(&eq("loc", Value::TreeRef { parent: None, name: "root".into() }));
+    // String operand compares the name component (any parent).
+    o.check(&eq("loc", s("b")));
+    o.check(&eq("loc", s("root")));
+    o.check(&neq("loc", s("b")));
+    // Mismatched: an int operand on a tree_ref field.
+    o.check(&eq("loc", i(0)));
+    o.check(&neq("loc", i(0)));
+}
+
+#[test]
+fn reverse_tree_follows_direct() {
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    o.check(&follows("loc", eq("tag", s("root")))); // direct children of root: b, d
+    o.check(&follows("loc", eq("kind", s("file")))); // children of c,d (none) → empty
+}
+
+#[test]
+fn reverse_tree_follows_transitive() {
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    o.check(&follows_t("loc", eq("tag", s("root")))); // b, c, d
+    // FollowsTransitive on a ref field has no descendants → empty.
+    o.check(&follows_t("author", eq("tag", s("root"))));
+}
+
+#[test]
+fn reverse_tree_transitive_conjunction() {
+    // The spec's motivating shape: descendants ∧ value predicate ∧ category.
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    o.check(&and(vec![
+        follows_t("loc", eq("tag", s("root"))),
+        gte("rate", i(5)),
+        eq("kind", s("file")),
+    ]));
+}
