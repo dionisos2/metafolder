@@ -186,35 +186,59 @@ metarecord has few referrers) and the total set bits = number of edges ≈ O(n) 
 many small bitmaps, not a storage explosion.
 
 Consequence: the *direct* =Follows= ("direct children of =/A=" =
-=parent = id(A)=) is a single =bitmap[id(A)]= fetch, with no need for the
-contiguous-id trick below. Only the *transitive* descendant query
-(=FollowsTransitive=) needs the tree-as-range optimisation, which isolates that
-difficulty to one operator.
+=parent = id(A)=) is a single =bitmap[id(A)]= fetch. The *transitive* query
+=FollowsTransitive= is built from those direct fetches by iterative expansion —
+see below; the contiguous-id range is only a later optimisation for one case.
+
+** FollowsTransitive by iterative bitmap expansion
+
+The default (v1-bitmap) way to compute all descendants of =/A=, with no
+contiguous-id scheme: expand the reverse (direct-children) bitmaps level by
+level, unioning into a result bitmap.
+
+#+begin_example
+  frontier = { id(A) };  result = ∅
+  while frontier ≠ ∅:
+      next = ⋃ bitmap[parent = n]  for n in frontier   (k-way union)
+      result |= next
+      frontier = next                                  (newly discovered nodes)
+#+end_example
+
+Each descendant is visited once → *O(sub-tree)*, the same cost as today's
+tree-cache walk. Two wins over today: it stays in bitmap algebra — the
+descendant set *is* a bitmap that ANDs natively with the other predicate
+bitmaps, removing the current hybrid that injects a UUID =IN= clause into SQL —
+and it reuses the =TreeRef= reverse index (the tree cache is then only needed to
+resolve ="/A" → id(A)=). This is fine for the common case (browsing a normal
+folder of thousands of files is sub-millisecond).
 
 ** The tree as a range dimension                                  :future:
 
-A deferred optimisation, only for =FollowsTransitive= (whole-sub-tree
-descendants); the direct-children case is already handled by the reverse bitmaps
-above. If metarecord ids are assigned in tree order (DFS pre-order) — or each
-node carries a nested-set interval — a sub-tree =/A= becomes a *contiguous id
-range*, i.e. a range bitmap, and the transitive path filter becomes a cheap AND
-operand:
+An optimisation over iterative expansion for *one* case: a *large* sub-tree
+combined with a *selective* other predicate. Iterative expansion materialises
+the whole sub-tree before the =AND= (e.g. =/A= = half the base with few matching
+files is still O(|/A|), even when the result is tiny), and the value predicate
+cannot prune the walk — a non-file directory may still contain file descendants.
+
+If metarecord ids are assigned in tree order (DFS pre-order) — or each node
+carries a nested-set interval — a sub-tree =/A= becomes a *contiguous id range*,
+i.e. a range bitmap. The transitive filter then never enumerates the sub-tree;
+it is a range test the planner intersects with the most selective operand:
 
 #+begin_example
   mfr_path ->* /A  AND  mfr_type = file  AND  date ≥ T
   = range_bitmap(/A) AND eq_bitmap(type, file) AND bsi_ge(date, T)
 #+end_example
 
-= two ANDs + one BSI comparison = O(b · n/64) ≈ a few ms at 2 M, *uniform*
-(no corruption by correlation, unlike scan-and-skip).
+so the cost can drop to O(|files|) instead of O(|/A|).
 
 The catch — and why this is deferred — is that tree-order ids are *not stable
 under moves*: relocating a sub-tree breaks contiguity and would force
 renumbering a range of ids, whereas the tree cache renames/moves in O(1) today
 by repointing the parent. The viable compromise (pre-order ids with gaps, lazy
 renumbering, or floating nested-set intervals) is unresolved; until then,
-=FollowsTransitive= keeps its current O(sub-tree) tree-cache walk, and this is
-an optimisation to prototype and measure later. See [[*Open questions][Open
+=FollowsTransitive= uses the iterative bitmap expansion above, and this is an
+optimisation to prototype and measure later. See [[*Open questions][Open
 questions]].
 
 ** Adaptive query planner
