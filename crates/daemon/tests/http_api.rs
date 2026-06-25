@@ -129,6 +129,41 @@ async fn test_init_with_explicit_name_is_reflected_in_the_repo_list() {
 }
 
 #[tokio::test]
+async fn test_loading_a_duplicate_name_is_a_conflict() {
+    let app = app();
+    // Two distinct repositories sharing one explicit name.
+    let root_a = temp_dir("dupname_a");
+    let root_b = temp_dir("dupname_b");
+    let (status, _) = request(
+        &app,
+        "POST",
+        "/repos/init",
+        Some(json!({"root": root_a.to_str().unwrap(), "name": "Shared"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A second repo with the same name must be rejected (names are unique among
+    // loaded repos, so `mf -n <name>` resolves to one UUID).
+    let (status, body) = request(
+        &app,
+        "POST",
+        "/repos/init",
+        Some(json!({"root": root_b.to_str().unwrap(), "name": "Shared"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "duplicate name should be 409: {body}");
+    assert!(body["error"].as_str().unwrap().contains("Shared"));
+
+    // Only the first repo is loaded.
+    let (_, repos) = request(&app, "GET", "/repos", None).await;
+    assert_eq!(repos.as_array().unwrap().len(), 1);
+
+    std::fs::remove_dir_all(root_a).unwrap();
+    std::fs::remove_dir_all(root_b).unwrap();
+}
+
+#[tokio::test]
 async fn test_init_with_missing_root_is_bad_request() {
     let (status, body) =
         request(&app(), "POST", "/repos/init", Some(json!({"root": "/nonexistent/xyz"}))).await;

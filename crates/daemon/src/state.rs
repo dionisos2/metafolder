@@ -177,6 +177,7 @@ impl AppState {
     ) -> Result<Uuid, ApiError> {
         let opened = repo::init_repository(root, metafolder, name)?;
         let uuid = opened.config.repo_uuid;
+        self.ensure_name_available(&opened.config.name)?;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
         // A fresh repository is tiny, so warm it synchronously (no progress bar).
         repo_state.warmup(&|_, _, _| {});
@@ -224,9 +225,22 @@ impl AppState {
         }
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
         let uuid = opened.config.repo_uuid;
+        self.ensure_name_available(&opened.config.name)?;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
+    }
+
+    /// Rejects a name already held by a loaded repository — names are unique
+    /// among loaded repos, so the CLI's `-n <name>` selector resolves to exactly
+    /// one UUID (spec-main "Global selection flags").
+    fn ensure_name_available(&self, name: &str) -> Result<(), ApiError> {
+        if self.repos.lock_recover().values().any(|r| r.config.name == name) {
+            return Err(ApiError::conflict(format!(
+                "a repository named '{name}' is already loaded; names must be unique"
+            )));
+        }
+        Ok(())
     }
 
     /// Unloads a repository: removes it from the loaded set, stops its watcher
