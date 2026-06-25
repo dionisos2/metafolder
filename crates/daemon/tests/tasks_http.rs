@@ -199,6 +199,39 @@ async fn cancel_unknown_task_is_404() {
 }
 
 #[tokio::test]
+async fn load_runs_an_observable_warmup_task() {
+    // Loading a repository returns immediately and warms it (tree cache + query
+    // index) in the background as an observable `load` task, so the GUI can show
+    // a load progress bar (the point of the feature). Init then unload to get an
+    // on-disk repo to load through the HTTP route.
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("loadwarmup");
+    let repo = state.init_repo(&root, None, None).unwrap().as_simple().to_string();
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["repo_uuid"], repo, "load returns the uuid immediately");
+
+    // The warmup is observable as a `load` task that reaches `done` (terminal
+    // tasks are retained for a while, so polling catches it even when quick).
+    let mut saw_load = false;
+    for _ in 0..50 {
+        let (_, tasks) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+        if let Some(t) = tasks.as_array().and_then(|a| a.iter().find(|t| t["kind"] == "load")) {
+            saw_load = true;
+            if t["status"] == "done" {
+                return;
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("did not observe a completed `load` task (saw one: {saw_load})");
+}
+
+#[tokio::test]
 async fn global_tasks_lists_across_repos() {
     let (app, state, repo) = app_with_repo("global");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();

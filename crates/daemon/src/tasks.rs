@@ -25,13 +25,18 @@ pub enum TaskKind {
     Reconcile,
     Query,
     Flush,
+    /// Warming a freshly loaded repository: populating the tree cache and
+    /// building the in-memory query index. Observable so the GUI can show a
+    /// load progress bar; not cancellable (a partial warmup just falls back to
+    /// the DB, so there is nothing to roll back or refuse an unload for).
+    Load,
 }
 
 impl TaskKind {
     /// Whether a task of this kind can be cancelled (spec-tasks "Cancellation").
-    /// `flush` is internal and transient, so it is not.
+    /// `flush` is internal and transient; `load` is a harmless warmup.
     pub fn is_cancellable(self) -> bool {
-        !matches!(self, TaskKind::Flush)
+        !matches!(self, TaskKind::Flush | TaskKind::Load)
     }
 }
 

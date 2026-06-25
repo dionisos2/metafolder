@@ -75,8 +75,15 @@ pub fn apply(state: &AppState, config: DaemonConfig) -> Vec<String> {
         let path = match &locator {
             RepoLocator::Root(p) | RepoLocator::Metafolder(p) => p.display().to_string(),
         };
-        if let Err(e) = state.load_repo(locator) {
-            warnings.push(format!("failed to load {path}: {}", e.message));
+        match state.load_repo(locator) {
+            // Warm the freshly loaded repo synchronously at startup (no client
+            // is watching for a progress bar yet).
+            Ok(uuid) => {
+                if let Ok(repo_state) = state.repo(uuid) {
+                    repo_state.warmup(&|_, _, _| {});
+                }
+            }
+            Err(e) => warnings.push(format!("failed to load {path}: {}", e.message)),
         }
     }
     warnings

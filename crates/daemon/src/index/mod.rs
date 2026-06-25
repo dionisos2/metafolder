@@ -107,6 +107,17 @@ impl RepoIndex {
     /// Link metarecords (shared ownership) are excluded by construction: only
     /// the exclusively-owned set (`db::list_entries`) is interned and scanned.
     pub fn build(conn: &Connection, db_id: Uuid) -> anyhow::Result<RepoIndex> {
+        Self::build_reported(conn, db_id, &|_, _| {})
+    }
+
+    /// [`Self::build`] reporting progress as `(done, total)` metarecords scanned,
+    /// for the load progress bar. `progress` is called every few thousand rows
+    /// and once at completion.
+    pub fn build_reported(
+        conn: &Connection,
+        db_id: Uuid,
+        progress: &dyn Fn(u64, u64),
+    ) -> anyhow::Result<RepoIndex> {
         let built_at_head = db::current_head(conn)?;
         let mut registry = IdRegistry::new();
         let mut universe = RoaringBitmap::new();
@@ -118,7 +129,11 @@ impl RepoIndex {
         let mut absent: HashMap<String, RoaringBitmap> = HashMap::new();
         let mut fields: HashMap<String, FieldIndex> = HashMap::new();
         let mut sort: HashMap<String, SortReps> = HashMap::new();
+        let total = registry.len() as u64;
         for id in 0..registry.len() as u32 {
+            if id % 2048 == 0 {
+                progress(id as u64, total);
+            }
             let uuid = registry.uuid(id).expect("dense id in range");
             for row in db::get_field_rows(conn, uuid)? {
                 match row.value {
@@ -143,6 +158,7 @@ impl RepoIndex {
         for fi in fields.values_mut() {
             fi.finalize();
         }
+        progress(total, total);
 
         Ok(RepoIndex { registry, universe, present, absent, fields, sort, built_at_head })
     }

@@ -174,7 +174,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   inverse).
 - `tree_cache.rs`: per-repo in-memory path→UUID cache shared across TreeRef
   field names. **Eagerly populated at repo load** (`populate`, one bulk scan of
-  the forest) so read-side navigation — `resolve_path`, `descendants`,
+  the forest, run by the background warmup — see `RepoState::warmup`) so
+  read-side navigation — `resolve_path`, `descendants`,
   `path_of`/`paths_of` — is served entirely from memory (`is_complete()`); the
   DB walks remain only as a fallback when the forest exceeds the node budget or
   a drop-and-reload shortcut leaves the cache incomplete. O(1) rename/move, LRU
@@ -207,8 +208,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   min/max, fixed type-group precedence) via window functions; keyset pagination
   uses opaque cursors bound to a hash of (query, sort).
 - `index/`: the in-memory bitmap/BSI accelerator (spec-indexing). **Built at
-  repo load** (`RepoIndex::build` in `state.rs::activate`, best-effort) and
-  refreshed to HEAD per query; `run_query_filter` (routes) tries it first and
+  repo load** by the background warmup (`RepoState::warmup`, a `load` task —
+  see below) and refreshed to HEAD per query; `run_query_filter` (routes) tries it first and
   falls back to `query_exec` only on `Unsupported`. Serves predicates as
   RoaringBitmaps, `FollowsTransitive` by iterative bitmap expansion, sort from
   BSI representatives, `count` in O(1). `Path`-target follows are resolved to a
@@ -224,7 +225,11 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   rules (`mfr_*` need `force`; unknown `mf_*` rejected).
 - `state.rs` + `routes.rs`: `AppState` (loaded repos), `RepoState` (conn,
   tree cache, schema, watcher/executor handles), Axum handlers (blocking
-  SQLite work via `spawn_blocking`).
+  SQLite work via `spawn_blocking`). `POST /repos/load` returns the uuid
+  immediately and warms the repo (tree cache + index) in the background as an
+  observable `load` task (`RepoState::warmup`), so the GUI shows a load
+  progress bar; the repo answers via the DB fallback meanwhile. `init` and
+  startup auto-load warm synchronously (no client is watching).
 
 ### `crates/cli`
 

@@ -394,10 +394,36 @@ async fn load_repo(
             ))
         }
     };
+    let state_for_warmup = state.clone();
     let uuid = tokio::task::spawn_blocking(move || state.load_repo(locator))
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
+    // Warm the repository (tree cache + query index) in the background, as an
+    // observable `load` task so the GUI shows a progress bar (spec-tasks). The
+    // repository is already loaded and answers queries meanwhile (via the DB
+    // fallback); the response returns its uuid immediately, unchanged.
+    spawn_load_warmup(state_for_warmup, uuid);
     Ok(Json(json!({"repo_uuid": hex(uuid)})))
+}
+
+/// Spawns the background warmup task for a freshly loaded repository. A no-op
+/// when the repository is already warm (a redundant load) or a warmup is
+/// already running.
+fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) {
+    let Ok(repo_state) = state.repo(repo_uuid) else { return };
+    if repo_state.lock_cache().is_complete() {
+        return; // already warm (e.g. re-load of a loaded repo)
+    }
+    let Some(task_id) = repo_state.tasks.start_unique(TaskKind::Load) else {
+        return; // a warmup is already in progress
+    };
+    tokio::task::spawn_blocking(move || {
+        repo_state.tasks.mark_running(task_id);
+        repo_state.warmup(&|phase, done, total| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        });
+        repo_state.tasks.finish(task_id, None);
+    });
 }
 
 /// `POST /repos/:repo/unload`: stops the repository's watcher/executor and

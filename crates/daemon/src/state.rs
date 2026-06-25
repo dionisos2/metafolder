@@ -95,6 +95,36 @@ impl RepoState {
         self.rollback_lock.lock_recover().is_some()
     }
 
+    /// Warms the in-memory accelerators of a freshly loaded repository:
+    /// eagerly populates the tree cache (so tree navigation is served from
+    /// memory — spec-file-tracking "Tree Cache") and builds the query index (so
+    /// the first query pays no build cost — spec-indexing). Both are
+    /// best-effort: a failure just leaves the repository in DB-fallback mode,
+    /// which is correct, only slower. `progress` reports `(phase, done, total)`
+    /// for the load progress bar; it is a no-op for the synchronous callers
+    /// (startup auto-load, `init`).
+    ///
+    /// Holds the connection for its duration (a single bulk read), so queries
+    /// on this repository wait until it finishes — the load progress bar tells
+    /// the user why. Idempotent enough: re-running on an already-warm repo just
+    /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
+    pub fn warmup(&self, progress: &dyn Fn(&str, Option<u64>, Option<u64>)) {
+        let conn = self.conn.lock_recover();
+        progress("tree cache", None, None);
+        if let Err(e) = self.lock_cache().populate(&conn) {
+            eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
+            return;
+        }
+        match crate::index::RepoIndex::build_reported(&conn, self.config.repo_uuid, &|done, total| {
+            progress("index", Some(done), Some(total));
+        }) {
+            Ok(index) => *self.index.lock_recover() = Some(index),
+            Err(e) => {
+                eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid)
+            }
+        }
+    }
+
     /// Rejects a metadata write with `423 Locked` while a rollback navigation
     /// is in progress (spec-event-log "Rollback lock").
     pub fn ensure_writable(&self) -> Result<(), ApiError> {
@@ -148,6 +178,8 @@ impl AppState {
         let opened = repo::init_repository(root, metafolder, name)?;
         let uuid = opened.config.repo_uuid;
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
+        // A fresh repository is tiny, so warm it synchronously (no progress bar).
+        repo_state.warmup(&|_, _, _| {});
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }
@@ -161,24 +193,6 @@ impl AppState {
             crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
                 .map_err(ApiError::bad_request)?;
         *repo_state.schema.lock_recover() = schema;
-        // Eagerly load the whole TreeRef forest into memory so read-side tree
-        // navigation (path resolution, descendants) is served without per-node
-        // DB queries (spec-file-tracking "Tree Cache"). Lock order: conn, cache.
-        {
-            let conn = repo_state.conn.lock_recover();
-            repo_state.lock_cache().populate(&conn)?;
-            // Build the in-memory query index up front too (spec-indexing), so
-            // the first query is served from memory rather than paying the
-            // build cost. Best-effort: a failure just leaves it to be built
-            // lazily on first use.
-            match crate::index::RepoIndex::build(&conn, repo_state.config.repo_uuid) {
-                Ok(index) => *repo_state.index.lock_recover() = Some(index),
-                Err(e) => eprintln!(
-                    "warning: failed to pre-build query index for {}: {e}",
-                    repo_state.config.repo_uuid
-                ),
-            }
-        }
         crate::executor::flush_pending(&repo_state)?;
         let quiet = std::time::Duration::from_millis(500);
         let executor = crate::executor::spawn(&repo_state, quiet);
