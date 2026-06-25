@@ -19,24 +19,66 @@ const PAGE_SIZE: usize = 500;
 
 pub struct Ctx {
     pub client: Client,
-    pub repo: Option<String>,
+    name: Option<String>,
+    uuid: Option<String>,
+    /// Cached `/repos/<uuid>` prefix (resolving `-n` costs one daemon round-trip).
+    base: std::cell::OnceCell<String>,
 }
 
 impl Ctx {
-    pub fn new(daemon_url: &str, repo: Option<String>) -> Self {
-        Self { client: Client::new(daemon_url), repo }
+    pub fn new(port: u16, name: Option<String>, uuid: Option<String>) -> Self {
+        Self {
+            client: Client::new(&format!("http://127.0.0.1:{port}")),
+            name,
+            uuid,
+            base: std::cell::OnceCell::new(),
+        }
     }
 
-    /// Resolves `--repo` / `METAFOLDER_REPO` into the `/repos/<uuid>` URL
-    /// prefix; missing or invalid is a usage error (exit 2), raised before
-    /// any daemon round-trip.
+    /// Resolves the repository selector (`-u`/`-n`, or their env vars) into the
+    /// `/repos/<uuid>` URL prefix. `-u`/`-n` are mutually exclusive; a missing
+    /// selector is a usage error (exit 2). A name is resolved through
+    /// `GET /repos` (names are unique among loaded repos), once and cached.
     pub(crate) fn repo_base(&self) -> Result<String, CliError> {
-        let raw = self.repo.as_deref().ok_or_else(|| {
-            CliError::Usage("--repo <UUID> (or METAFOLDER_REPO) is required for this command".into())
-        })?;
-        let uuid = Uuid::parse_str(raw)
-            .map_err(|_| CliError::Usage(format!("invalid repository UUID: '{raw}'")))?;
-        Ok(format!("/repos/{}", uuid.as_simple()))
+        if let Some(base) = self.base.get() {
+            return Ok(base.clone());
+        }
+        let uuid = match (&self.name, &self.uuid) {
+            (Some(_), Some(_)) => {
+                return Err(CliError::Usage("use either -n <name> or -u <uuid>, not both".into()))
+            }
+            (None, None) => {
+                return Err(CliError::Usage(
+                    "a repository selector is required: -n <name> or -u <uuid> \
+                     (or METAFOLDER_REPO_NAME / METAFOLDER_REPO)"
+                        .into(),
+                ))
+            }
+            (None, Some(raw)) => Uuid::parse_str(raw)
+                .map_err(|_| CliError::Usage(format!("invalid repository UUID: '{raw}'")))?,
+            (Some(name), None) => self.resolve_name(name)?,
+        };
+        let base = format!("/repos/{}", uuid.as_simple());
+        let _ = self.base.set(base.clone());
+        Ok(base)
+    }
+
+    /// Maps a unique repository name to its UUID via `GET /repos`.
+    fn resolve_name(&self, name: &str) -> Result<Uuid, CliError> {
+        let repos = self.client.get("/repos", &[])?;
+        let matches: Vec<&Json> = repos
+            .as_array()
+            .map(|a| a.iter().filter(|r| r["name"].as_str() == Some(name)).collect())
+            .unwrap_or_default();
+        match matches.as_slice() {
+            [] => Err(CliError::Op(format!("no loaded repository named '{name}'"))),
+            [repo] => {
+                let raw = repo["repo_uuid"].as_str().unwrap_or_default();
+                Uuid::parse_str(raw)
+                    .map_err(|_| CliError::Op(format!("daemon returned an invalid uuid: '{raw}'")))
+            }
+            _ => Err(CliError::Op(format!("several loaded repositories named '{name}'"))),
+        }
     }
 }
 
@@ -517,6 +559,199 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
         keys.push(json!({"field": field, "order": order}));
     }
     Ok(Json::Array(keys))
+}
+
+// ── Verb tree: metarecord / field (spec-data-model "* CLI") ───────────────────
+
+/// `mf metarecord get [<selector>]` — merges the former list/query/get:
+/// a UUID selector prints the full JSON object; a predicate (or no selector)
+/// prints UUIDs (with `--select`/`--values` for fields/raw values).
+pub fn metarecord_get(
+    ctx: &Ctx,
+    selector: Option<&str>,
+    select: Option<&str>,
+    sort: &[String],
+    limit: Option<usize>,
+    values: bool,
+    simplified: bool,
+) -> Result<i32, CliError> {
+    match selector {
+        None => list(ctx, limit),
+        // A bare UUID prints the full metadata object (`--select` restricts it).
+        Some(s) if !simplified && Uuid::parse_str(s).is_ok() => {
+            let fields: Option<Vec<String>> = select
+                .filter(|sel| *sel != "*")
+                .map(|sel| sel.split(',').map(|f| f.trim().to_string()).collect());
+            get(ctx, s, fields.as_deref(), &[], None)
+        }
+        Some(s) => query(
+            ctx,
+            &QueryArgs {
+                predicate: s.to_string(),
+                select: select.map(String::from),
+                sort: sort.to_vec(),
+                limit,
+                values,
+                simplified,
+            },
+        ),
+    }
+}
+
+/// `mf metarecord set <uuid> <spec>...` — whole-record overwrite (PUT). The
+/// mandatory `-f` is the guard against confusing it with `field set`.
+pub fn metarecord_set(ctx: &Ctx, uuid: &str, specs: &[String], force: bool) -> Result<i32, CliError> {
+    if !force {
+        return Err(CliError::Usage(
+            "mf metarecord set requires -f/--force (it overwrites the entire field set)".into(),
+        ));
+    }
+    let base = ctx.repo_base()?;
+    let uuid = Uuid::parse_str(uuid)
+        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
+    let mut fields = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let (name, value) = parse_spec(spec)?;
+        fields.push(json!({"name": name, "value": value}));
+    }
+    let body = json!({"fields": fields, "force": true});
+    let resp = ctx.client.request(
+        "PUT",
+        &format!("{base}/metarecords/{}", uuid.as_simple()),
+        &[],
+        Some(&body),
+    )?;
+    println!("{}", resp["uuid"].as_str().unwrap_or_default());
+    Ok(0)
+}
+
+/// `mf metarecord <sel> field set <spec>...` — replace all rows of a field
+/// (one or several values, multi-map) on the selected metarecord(s).
+pub fn field_set(ctx: &Ctx, selector: &str, specs: &[String], force: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut parsed = Vec::with_capacity(specs.len());
+    for spec in specs {
+        parsed.push(parse_spec(spec)?);
+    }
+    let name = parsed[0].0.clone();
+    if parsed.iter().any(|(n, _)| *n != name) {
+        return Err(CliError::Usage("all field specs in a set must share the same name".into()));
+    }
+    let values: Vec<Json> = parsed.into_iter().map(|(_, v)| v).collect();
+    let value_field = |body: &mut Json| {
+        if values.len() == 1 {
+            body["value"] = values[0].clone();
+        } else {
+            body["values"] = json!(values);
+        }
+    };
+    match parse_target(selector)? {
+        Target::Entry(uuid) => {
+            let mut body = json!({"name": name, "force": force});
+            value_field(&mut body);
+            ctx.client.request(
+                "PATCH",
+                &format!("{base}/metarecords/{}", uuid.as_simple()),
+                &[],
+                Some(&body),
+            )?;
+        }
+        Target::Predicate(query) => {
+            let mut body = json!({"query": query, "name": name, "force": force});
+            value_field(&mut body);
+            let resp = ctx.client.post(&format!("{base}/set"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
+    Ok(0)
+}
+
+/// `mf metarecord <sel> field get <name>` — print the field's value(s).
+pub fn field_get(ctx: &Ctx, selector: &str, name: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    match parse_target(selector)? {
+        Target::Entry(uuid) => {
+            let entry =
+                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+            for field in entry["fields"].as_array().into_iter().flatten() {
+                if field["name"].as_str() == Some(name) {
+                    if let Some(line) = raw_value_line(&field["value"]) {
+                        println!("{line}");
+                    }
+                }
+            }
+            Ok(0)
+        }
+        Target::Predicate(_) => query(
+            ctx,
+            &QueryArgs {
+                predicate: selector.to_string(),
+                select: Some(name.to_string()),
+                sort: vec![],
+                limit: None,
+                values: true,
+                simplified: false,
+            },
+        ),
+    }
+}
+
+/// `mf metarecord <sel> field unset <name>` — remove the field entirely.
+pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    match parse_target(selector)? {
+        Target::Entry(uuid) => {
+            // No per-uuid unset endpoint: delete each row of the name by id.
+            let entry =
+                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+            let ids: Vec<i64> = entry["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|f| f["name"].as_str() == Some(name))
+                .filter_map(|f| f["id"].as_i64())
+                .collect();
+            for id in &ids {
+                ctx.client.request(
+                    "DELETE",
+                    &format!("{base}/fields/{id}"),
+                    &[],
+                    Some(&json!({"force": force})),
+                )?;
+            }
+            println!("{}", if ids.is_empty() { 0 } else { 1 });
+        }
+        Target::Predicate(query) => {
+            let body = json!({"query": query, "name": name, "force": force});
+            let resp = ctx.client.post(&format!("{base}/unset"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
+    Ok(0)
+}
+
+/// `mf field get <id>` — print one field row (JSON) by its id.
+pub fn field_by_id_get(ctx: &Ctx, id: i64) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let row = ctx.client.get(&format!("{base}/fields/{id}"), &[])?;
+    print_pretty(&row);
+    Ok(0)
+}
+
+/// `mf field set <id> <spec>` — change a row's name and/or value, keeping its id.
+pub fn field_by_id_set(ctx: &Ctx, id: i64, spec: &str, force: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let (name, value) = parse_spec(spec)?;
+    let body = json!({"name": name, "value": value, "force": force});
+    ctx.client.request("PATCH", &format!("{base}/fields/{id}"), &[], Some(&body))?;
+    Ok(0)
+}
+
+/// `mf field delete <id>` — remove a field row by its id.
+pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    ctx.client.request("DELETE", &format!("{base}/fields/{id}"), &[], Some(&json!({"force": force})))?;
+    Ok(0)
 }
 
 // ── File tracking (spec-file-tracking) ────────────────────────────────────────

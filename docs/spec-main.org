@@ -247,7 +247,7 @@ section; this section defines the conventions shared by all commands.
 | Spec file                                          | Commands                                          |
 |----------------------------------------------------+---------------------------------------------------|
 | this file                                          | =mf repo {list,init,load,unload}=                 |
-| [[file:spec-data-model.org][spec-data-model.org]]   | =mf metarecord {get,set,add,delete}=, =mf metarecord … field {get,set,add,delete,unset}=, =mf field {get,set,delete}=, =mf retype= |
+| [[file:spec-data-model.org][spec-data-model.org]]   | =mf metarecord {get,set,add,delete}=, =mf metarecord field <sel> {get,set,add,delete,unset}=, =mf field {get,set,delete} <id>=, =mf retype= |
 | [[file:spec-query.org][spec-query.org]]             | query DSL grammar (consumed by =mf metarecord get=) |
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema {check,reload,show}=                    |

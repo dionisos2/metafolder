@@ -634,36 +634,39 @@ Confirms for a predicate target unless =--force= is passed. A predicate goes
 through the atomic =POST /repos/:repo/delete= (one revision); the confirmation
 count comes from a =count=+=limit= query, never a full UUID materialisation.
 
-*** =mf metarecord <query|uuid> field <verb> <name> [<spec-value> ...]=
+*** =mf metarecord field <query|uuid> <verb> ...=
 
-Field operations scoped to the selected metarecord(s). =<name>= is the field
-name; required value(s) are given in field-spec value form:
+Field operations scoped to the selected metarecord(s). The selector follows the
+=field= keyword (a clap constraint: a positional cannot precede a subcommand).
+=get=/=unset= take a bare field =name=; =set=/=add=/=delete= take field specs:
 
 - =get <name>= — prints the field's value(s);
-- =set <name> <v> [<v> ...]= — replaces *all* rows of =name= with the given
-  value set (one or several — multi-map), in *one* log operation per metarecord;
-- =add <name> <v>= — appends one row (inverse of =delete=);
-- =delete <name> <v>= — removes the row(s) equal to =(name, v)= (inverse of
-  =add=); other rows of the same name, and non-matching metarecords, are kept;
+- =set <spec> [<spec> ...]= — replaces *all* rows of the field with the given
+  value set (one or several — multi-map; the specs must share one name), in *one*
+  log operation per metarecord;
+- =add <spec>= — appends one row (inverse of =delete=);
+- =delete <spec>= — removes the row(s) equal to the spec's =(name, value)=
+  (inverse of =add=); other rows of the same name, and non-matching metarecords,
+  are kept;
 - =unset <name>= — removes the field *entirely* (all rows → /unknown/), distinct
-  from =set <name> :nothing= (an explicit =Nothing= row).
+  from =set name:nothing= (an explicit =Nothing= row).
 
 A UUID selector targets that one metarecord; a predicate applies the write across
 every match in one server-side transaction (one revision, one operation per
-affected metarecord). =--force= is required for reserved =mfr_*= fields.
+affected metarecord). =-f=/=--force= is required for reserved =mfr_*= fields.
 
 ** =mf field <verb> <id>= (direct row access)
 
 Operates on a single field row by its DB id (as shown by =mf metarecord get=):
 
-- =get <id>= — prints the row;
-- =set <id> [--name <name>] [<spec-value>]= — changes the row's name and/or
-  value in place, *keeping its id*; the value type is validated against the
-  (target) field name's established type;
-- =delete <id>= — removes the row (the former =mf unset=).
+- =get <id>= — prints the row (JSON);
+- =set <id> <spec>= — sets the row to the field spec's name and value in place,
+  *keeping its id*; a differing name renames the row, and the value type is
+  validated against the (target) field name's established type;
+- =delete <id>= — removes the row.
 
-There is no =mf field add=: new rows are born at the name level (=mf metarecord …
-field add=). =--force= is required for reserved =mfr_*= fields.
+There is no =mf field add=: new rows are born at the name level (=mf metarecord
+field … add=). =-f=/=--force= is required for reserved =mfr_*= fields.
 
 ** Log granularity
 

@@ -33,6 +33,12 @@ fn daemon_url() -> &'static str {
     })
 }
 
+/// The shared daemon's port, as a string (the CLI addresses it with `-p`).
+fn daemon_port() -> &'static str {
+    static PORT: OnceLock<String> = OnceLock::new();
+    PORT.get_or_init(|| daemon_url().rsplit(':').next().unwrap().to_string())
+}
+
 struct Out {
     code: i32,
     stdout: String,
@@ -42,10 +48,12 @@ struct Out {
 fn mf_full(args: &[&str], stdin: Option<&str>, envs: &[(&str, &str)], daemon: bool) -> Out {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mf"));
     if daemon {
-        cmd.arg("--daemon-url").arg(daemon_url());
+        cmd.arg("-p").arg(daemon_port());
     }
     cmd.args(args);
-    cmd.env_remove("METAFOLDER_REPO").env_remove("METAFOLDER_DAEMON_URL");
+    cmd.env_remove("METAFOLDER_REPO")
+        .env_remove("METAFOLDER_REPO_NAME")
+        .env_remove("METAFOLDER_DAEMON_PORT");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -108,7 +116,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
 /// Initialises a fresh repository; returns (repo uuid, root path).
 fn init_repo(prefix: &str) -> (String, PathBuf) {
     let root = temp_dir(prefix);
-    let out = mf(&["init", root.to_str().unwrap()]);
+    let out = mf(&["repo", "init", root.to_str().unwrap()]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&uuid), "init should print a 32-hex uuid, got: '{uuid}'");
@@ -117,11 +125,8 @@ fn init_repo(prefix: &str) -> (String, PathBuf) {
 
 /// Creates an entry from field specs; returns its UUID.
 fn create_metarecord(repo: &str, specs: &[&str]) -> String {
-    let mut args = vec!["--repo", repo, "create"];
-    for spec in specs {
-        args.push("--field");
-        args.push(spec);
-    }
+    let mut args = vec!["-u", repo, "metarecord", "add"];
+    args.extend_from_slice(specs);
     let out = mf(&args);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
@@ -130,7 +135,9 @@ fn create_metarecord(repo: &str, specs: &[&str]) -> String {
 }
 
 fn get_entries(repo: &str, target: &str) -> serde_json::Value {
-    let out = mf(&["--repo", repo, "get", target]);
+    // `--select '*'` yields the full JSON objects for both a UUID (one object)
+    // and a predicate (the matching array).
+    let out = mf(&["-u", repo, "metarecord", "get", target, "--select", "*"]);
     assert_ok(&out);
     serde_json::from_str(&out.stdout).expect("mf get should print JSON")
 }
@@ -148,7 +155,7 @@ fn test_init_with_external_metafolder() {
     let root = temp_dir("init_ext_root");
     let external = temp_dir("init_ext_db");
     let out =
-        mf(&["init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+        mf(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
     assert_ok(&out);
     assert!(is_hex_uuid(out.stdout.trim()));
     assert!(external.join("config.json").exists());
@@ -158,7 +165,7 @@ fn test_init_with_external_metafolder() {
 #[test]
 fn test_load_root_is_idempotent() {
     let (repo, root) = init_repo("load");
-    let out = mf(&["load", root.to_str().unwrap()]);
+    let out = mf(&["repo", "load", root.to_str().unwrap()]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), repo);
 }
@@ -168,27 +175,27 @@ fn test_load_with_metafolder_flag() {
     let root = temp_dir("load_ext_root");
     let external = temp_dir("load_ext_db");
     let out =
-        mf(&["init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+        mf(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
     assert_ok(&out);
     let repo = out.stdout.trim().to_string();
-    let out = mf(&["load", "--metafolder", external.to_str().unwrap()]);
+    let out = mf(&["repo", "load", "--metafolder", external.to_str().unwrap()]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), repo);
 }
 
 #[test]
 fn test_load_requires_exactly_one_locator() {
-    let out = mf(&["load"]);
+    let out = mf(&["repo", "load"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
     let root = temp_dir("load_both");
-    let out = mf(&["load", root.to_str().unwrap(), "--metafolder", root.to_str().unwrap()]);
+    let out = mf(&["repo", "load", root.to_str().unwrap(), "--metafolder", root.to_str().unwrap()]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_repos_lists_loaded_repositories() {
     let (repo, _) = init_repo("repos");
-    let out = mf(&["repos"]);
+    let out = mf(&["repo", "list"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).expect("pretty JSON");
     assert!(out.stdout.contains(&repo), "repos output should mention {repo}");
@@ -200,20 +207,20 @@ fn test_unload_removes_repo_and_allows_reload() {
     let (repo, root) = init_repo("unload");
 
     // Loaded: it appears in the list.
-    assert!(mf(&["repos"]).stdout.contains(&repo));
+    assert!(mf(&["repo", "list"]).stdout.contains(&repo));
 
     // Unload prints the uuid and removes it from the list.
-    let out = mf(&["--repo", &repo, "unload"]);
+    let out = mf(&["-u", &repo, "repo", "unload"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), repo);
-    assert!(!mf(&["repos"]).stdout.contains(&repo), "still listed after unload");
+    assert!(!mf(&["repo", "list"]).stdout.contains(&repo), "still listed after unload");
 
     // Unloading again fails (no longer loaded).
-    let out = mf(&["--repo", &repo, "unload"]);
+    let out = mf(&["-u", &repo, "repo", "unload"]);
     assert_eq!(out.code, 1, "second unload should fail; stderr: {}", out.stderr);
 
     // The lock was released: the same root loads again with the same uuid.
-    let out = mf(&["load", root.to_str().unwrap()]);
+    let out = mf(&["repo", "load", root.to_str().unwrap()]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), repo);
 }
@@ -221,7 +228,7 @@ fn test_unload_removes_repo_and_allows_reload() {
 #[test]
 fn test_unload_requires_repo() {
     // Repo-scoped: missing --repo is a usage error (exit 2), no daemon round-trip.
-    let out = mf(&["unload"]);
+    let out = mf(&["repo", "unload"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -230,19 +237,19 @@ fn test_unload_requires_repo() {
 #[test]
 fn test_missing_repo_is_usage_error_without_contacting_daemon() {
     // Unreachable daemon URL: exit code 2 proves no HTTP round-trip happened.
-    let out = mf_full(&["--daemon-url", "http://127.0.0.1:1", "list"], None, &[], false);
+    let out = mf_full(&["-p", "1", "metarecord", "get"], None, &[], false);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_invalid_repo_uuid_is_usage_error() {
-    let out = mf(&["--repo", "not-a-uuid", "list"]);
+    let out = mf(&["-u", "not-a-uuid", "metarecord", "get"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_unreachable_daemon_is_operation_error() {
-    let out = mf_full(&["--daemon-url", "http://127.0.0.1:1", "repos"], None, &[], false);
+    let out = mf_full(&["-p", "1", "repo", "list"], None, &[], false);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
 }
@@ -251,9 +258,9 @@ fn test_unreachable_daemon_is_operation_error() {
 fn test_env_variables_are_honoured() {
     let (repo, _) = init_repo("env");
     let out = mf_full(
-        &["list"],
+        &["metarecord", "get"],
         None,
-        &[("METAFOLDER_DAEMON_URL", daemon_url()), ("METAFOLDER_REPO", repo.as_str())],
+        &[("METAFOLDER_DAEMON_PORT", daemon_port()), ("METAFOLDER_REPO", repo.as_str())],
         false,
     );
     assert_ok(&out);
@@ -264,7 +271,7 @@ fn test_env_variables_are_honoured() {
 fn test_daemon_error_goes_to_stderr() {
     let (repo, _) = init_repo("daemon_err");
     let missing = "00000000000000000000000000000099";
-    let out = mf(&["--repo", &repo, "get", missing]);
+    let out = mf(&["-u", &repo, "metarecord", "get", missing]);
     assert_eq!(out.code, 1);
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
     assert!(out.stdout.is_empty());
@@ -294,7 +301,7 @@ fn test_retype_converts_field_type() {
     let (repo, _root) = init_repo("retype");
     let uuid = create_metarecord(&repo, &["rating:int=5"]);
 
-    let out = mf(&["--repo", &repo, "retype", "rating", "string"]);
+    let out = mf(&["-u", &repo, "retype", "rating", "string"]);
     assert_ok(&out);
 
     // The value now reads back as a string.
@@ -310,20 +317,18 @@ fn test_retype_converts_field_type() {
     assert_eq!(rating["value"]["value"], "5");
 
     // A conflicting Int write to the now-String field is rejected (exit != 0).
-    let out = mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=9"]);
     assert_ne!(out.code, 0, "a conflicting-type write must fail: {}", out.stderr);
 }
 
 #[test]
 fn test_create_reserved_field_requires_force() {
     let (repo, _) = init_repo("create_force");
-    let out = mf(&["--repo", &repo, "create", "--field", "mfr_path:tree_ref=/created_name"]);
+    let out = mf(&["-u", &repo, "metarecord", "add", "mfr_path:tree_ref=/created_name"]);
     assert_eq!(out.code, 1, "creating with mfr_* without --force must fail");
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
 
-    let out = mf(&[
-        "--repo", &repo, "create", "--field", "mfr_path:tree_ref=/created_name", "--force",
-    ]);
+    let out = mf(&["-u", &repo, "metarecord", "add", "mfr_path:tree_ref=/created_name", "--force"]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&uuid));
@@ -335,7 +340,7 @@ fn test_create_reserved_field_requires_force() {
 fn test_get_with_fields_filter() {
     let (repo, _) = init_repo("get_fields");
     let uuid = create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
-    let out = mf(&["--repo", &repo, "get", &uuid, "--fields", "genre"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", &uuid, "--select", "genre"]);
     assert_ok(&out);
     let entries: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let fields = entries[0]["fields"].as_array().unwrap();
@@ -361,7 +366,7 @@ fn test_get_predicate_with_limit_and_sort() {
     create_metarecord(&repo, &["rating:int=2"]);
     create_metarecord(&repo, &["rating:int=3"]);
 
-    let out = mf(&["--repo", &repo, "get", "rating >= 1", "--sort", "rating:desc", "--limit", "2"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "rating >= 1", "--select", "*", "--sort", "rating:desc", "--limit", "2"]);
     assert_ok(&out);
     let list: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let arr = list.as_array().unwrap();
@@ -387,7 +392,7 @@ fn test_list_prints_uuids_one_per_line() {
     let (repo, _) = init_repo("list");
     let a = create_metarecord(&repo, &["x:int=1"]);
     let b = create_metarecord(&repo, &["x:int=2"]);
-    let out = mf(&["--repo", &repo, "list"]);
+    let out = mf(&["-u", &repo, "metarecord", "get"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
     // Root entry + the two created entries.
@@ -395,7 +400,7 @@ fn test_list_prints_uuids_one_per_line() {
     assert!(lines.iter().all(|l| is_hex_uuid(l)));
     assert!(lines.contains(&a.as_str()) && lines.contains(&b.as_str()));
 
-    let out = mf(&["--repo", &repo, "list", "--limit", "2"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "--limit", "2"]);
     assert_ok(&out);
     assert_eq!(out.stdout.lines().count(), 2);
 }
@@ -404,7 +409,7 @@ fn test_list_prints_uuids_one_per_line() {
 fn test_set_uuid_replaces_all_rows() {
     let (repo, _) = init_repo("set");
     let uuid = create_metarecord(&repo, &["tag:string=a", "tag:string=b"]);
-    let out = mf(&["--repo", &repo, "set", &uuid, "tag:string=c"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "tag:string=c"]);
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
@@ -420,10 +425,10 @@ fn test_set_with_predicate_prints_updated_count() {
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
-    let out = mf(&["--repo", &repo, "set", r#"genre = "jazz""#, "rating:int=4"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", r#"genre = "jazz""#, "set", "rating:int=4"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
-    let out = mf(&["--repo", &repo, "query", "rating = 4"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "rating = 4"]);
     assert_ok(&out);
     assert_eq!(out.stdout.lines().count(), 2);
 }
@@ -432,11 +437,11 @@ fn test_set_with_predicate_prints_updated_count() {
 fn test_set_reserved_field_requires_force() {
     let (repo, _) = init_repo("set_force");
     let uuid = create_metarecord(&repo, &["x:int=1"]);
-    let out = mf(&["--repo", &repo, "set", &uuid, "mfr_path:tree_ref=/forced_name"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "mfr_path:tree_ref=/forced_name"]);
     assert_eq!(out.code, 1, "writing mfr_* without --force must fail");
     assert!(out.stderr.starts_with("error:"));
     let out =
-        mf(&["--repo", &repo, "set", &uuid, "mfr_path:tree_ref=/forced_name", "--force"]);
+        mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "mfr_path:tree_ref=/forced_name", "--force"]);
     assert_ok(&out);
 }
 
@@ -444,7 +449,7 @@ fn test_set_reserved_field_requires_force() {
 fn test_add_appends_multimap_row() {
     let (repo, _) = init_repo("add");
     let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
-    let out = mf(&["--repo", &repo, "add", &uuid, "genre:string=blues"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "add", "genre:string=blues"]);
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
@@ -457,10 +462,10 @@ fn test_add_with_predicate_appends_to_matches() {
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
-    let out = mf(&["--repo", &repo, "add", r#"genre = "jazz""#, "tag:string=x"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", r#"genre = "jazz""#, "add", "tag:string=x"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
-    let out = mf(&["--repo", &repo, "query", r#"tag = "x""#]);
+    let out = mf(&["-u", &repo, "metarecord", "get", r#"tag = "x""#]);
     assert_eq!(out.stdout.lines().count(), 2);
 }
 
@@ -468,7 +473,7 @@ fn test_add_with_predicate_appends_to_matches() {
 fn test_remove_by_uuid_drops_only_matching_value_rows() {
     let (repo, _) = init_repo("remove_uuid");
     let uuid = create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
-    let out = mf(&["--repo", &repo, "remove", &uuid, "tag:string=test"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "delete", "tag:string=test"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "1");
     let entries = get_entries(&repo, &uuid);
@@ -484,11 +489,11 @@ fn test_remove_by_predicate_prints_changed_count() {
     create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
     create_metarecord(&repo, &["tag:string=test"]);
     create_metarecord(&repo, &["tag:string=keep"]);
-    let out = mf(&["--repo", &repo, "remove", "tag IS PRESENT", "tag:string=test"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", "tag IS PRESENT", "delete", "tag:string=test"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2", "two metarecords carried tag=test");
-    assert_eq!(mf(&["--repo", &repo, "query", r#"tag = "test""#]).stdout.lines().count(), 0);
-    assert_eq!(mf(&["--repo", &repo, "query", r#"tag = "keep""#]).stdout.lines().count(), 2);
+    assert_eq!(mf(&["-u", &repo, "metarecord", "get", r#"tag = "test""#]).stdout.lines().count(), 0);
+    assert_eq!(mf(&["-u", &repo, "metarecord", "get", r#"tag = "keep""#]).stdout.lines().count(), 2);
 }
 
 #[test]
@@ -502,7 +507,7 @@ fn test_unset_deletes_single_row_by_id() {
         .find(|f| f["value"]["value"] == "jazz")
         .and_then(|f| f["id"].as_i64())
         .expect("jazz row id");
-    let out = mf(&["--repo", &repo, "unset", &uuid, &jazz_id.to_string()]);
+    let out = mf(&["-u", &repo, "field", "delete", &jazz_id.to_string()]);
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
@@ -516,10 +521,10 @@ fn test_unset_deletes_single_row_by_id() {
 fn test_delete_by_uuid_prints_count() {
     let (repo, _) = init_repo("delete");
     let uuid = create_metarecord(&repo, &["x:int=1"]);
-    let out = mf(&["--repo", &repo, "delete", &uuid]);
+    let out = mf(&["-u", &repo, "metarecord", "delete", &uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "1");
-    let out = mf(&["--repo", &repo, "get", &uuid]);
+    let out = mf(&["-u", &repo, "metarecord", "get", &uuid]);
     assert_eq!(out.code, 1);
 }
 
@@ -531,20 +536,20 @@ fn test_delete_predicate_asks_for_confirmation() {
 
     // Refusing the confirmation aborts without deleting.
     let out = mf_full(
-        &["--daemon-url", daemon_url(), "--repo", &repo, "delete", r#"genre = "del_me""#],
+        &["-p", daemon_port(), "-u", &repo, "metarecord", "delete", r#"genre = "del_me""#],
         Some("n\n"),
         &[],
         false,
     );
     assert_eq!(out.code, 1, "refused confirmation should exit 1");
-    let out = mf(&["--repo", &repo, "query", r#"genre = "del_me""#]);
+    let out = mf(&["-u", &repo, "metarecord", "get", r#"genre = "del_me""#]);
     assert_eq!(out.stdout.lines().count(), 2, "entries must survive a refused confirmation");
 
     // --force skips the prompt.
-    let out = mf(&["--repo", &repo, "delete", r#"genre = "del_me""#, "--force"]);
+    let out = mf(&["-u", &repo, "metarecord", "delete", r#"genre = "del_me""#, "--force"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
-    let out = mf(&["--repo", &repo, "query", r#"genre = "del_me""#]);
+    let out = mf(&["-u", &repo, "metarecord", "get", r#"genre = "del_me""#]);
     assert_eq!(out.stdout.trim(), "");
 }
 
@@ -555,7 +560,7 @@ fn test_query_prints_matching_uuids() {
     let (repo, _) = init_repo("query");
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
-    let out = mf(&["--repo", &repo, "query", "rating > 3"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "rating > 3"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
 }
@@ -566,7 +571,7 @@ fn test_query_simplified_expands_before_running() {
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
     // `rating=5` expands to `rating = 5` locally via the core grammar.
-    let out = mf_cfg(&["--repo", &repo, "query", "-s", "rating=5"]);
+    let out = mf_cfg(&["-u", &repo, "metarecord", "get", "-s", "rating=5"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), high);
 }
@@ -576,17 +581,13 @@ fn test_query_simplified_date_macro_filters() {
     let (repo, _) = init_repo("query_date_macro");
     // mfr_btime is reserved, so set it with --force. The datetime field spec
     // parses the ISO string to Unix ms.
-    let recent = mf(&[
-        "--repo", &repo, "create", "--field", "mfr_btime:datetime=2024-06-01", "--force",
-    ]);
+    let recent = mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2024-06-01", "--force"]);
     assert_ok(&recent);
     let recent = recent.stdout.trim().to_string();
-    let old = mf(&[
-        "--repo", &repo, "create", "--field", "mfr_btime:datetime=2020-01-01", "--force",
-    ]);
+    let old = mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2020-01-01", "--force"]);
     assert_ok(&old);
     // `created since "2023-01-01"` → mfr_btime >= @"2023-01-01": only the recent one.
-    let out = mf_cfg(&["--repo", &repo, "query", "-s", "created since \"2023-01-01\""]);
+    let out = mf_cfg(&["-u", &repo, "metarecord", "get", "-s", "created since \"2023-01-01\""]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), recent);
 }
@@ -595,7 +596,7 @@ fn test_query_simplified_date_macro_filters() {
 fn test_query_select_star_prints_objects() {
     let (repo, _) = init_repo("query_star");
     create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
-    let out = mf(&["--repo", &repo, "query", "rating = 5", "--select", "*"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "rating = 5", "--select", "*"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let list = parsed.as_array().unwrap();
@@ -607,7 +608,7 @@ fn test_query_select_star_prints_objects() {
 fn test_query_select_field_list_restricts_fields() {
     let (repo, _) = init_repo("query_select");
     create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
-    let out = mf(&["--repo", &repo, "query", "rating = 5", "--select", "genre"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "rating = 5", "--select", "genre"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let fields = parsed[0]["fields"].as_array().unwrap();
@@ -621,14 +622,12 @@ fn test_query_sort_and_limit() {
     let r1 = create_metarecord(&repo, &["rating:int=1", "kind:string=s"]);
     let r3 = create_metarecord(&repo, &["rating:int=3", "kind:string=s"]);
     let r2 = create_metarecord(&repo, &["rating:int=2", "kind:string=s"]);
-    let out = mf(&["--repo", &repo, "query", r#"kind = "s""#, "--sort", "rating:desc"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", r#"kind = "s""#, "--sort", "rating:desc"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
     assert_eq!(lines, vec![r3.as_str(), r2.as_str(), r1.as_str()]);
 
-    let out = mf(&[
-        "--repo", &repo, "query", r#"kind = "s""#, "--sort", "rating:asc", "--limit", "2",
-    ]);
+    let out = mf(&["-u", &repo, "metarecord", "get", r#"kind = "s""#, "--sort", "rating:asc", "--limit", "2"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
     assert_eq!(lines, vec![r1.as_str(), r2.as_str()]);
@@ -637,7 +636,7 @@ fn test_query_sort_and_limit() {
 #[test]
 fn test_query_bad_dsl_is_usage_error() {
     let (repo, _) = init_repo("query_bad");
-    let out = mf(&["--repo", &repo, "query", "a = 1 and b = 2"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "a = 1 and b = 2"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"));
 }
@@ -645,7 +644,7 @@ fn test_query_bad_dsl_is_usage_error() {
 #[test]
 fn test_query_bad_sort_is_usage_error() {
     let (repo, _) = init_repo("query_bad_sort");
-    let out = mf(&["--repo", &repo, "query", "a = 1", "--sort", "rating:sideways"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "a = 1", "--sort", "rating:sideways"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -658,18 +657,18 @@ fn test_track_creates_entry_and_rejects_duplicates() {
     std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
     let path = root.join("sub/file.txt");
 
-    let out = mf(&["--repo", &repo, "track", path.to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
     assert_ok(&out);
     assert!(is_hex_uuid(out.stdout.trim()));
 
     // Already tracked → operation error.
-    let out = mf(&["--repo", &repo, "track", path.to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
 
     // Outside the repository root → operation error.
     let outside = temp_dir("track_outside");
     std::fs::write(outside.join("f.txt"), b"x").unwrap();
-    let out = mf(&["--repo", &repo, "track", outside.join("f.txt").to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "track", outside.join("f.txt").to_str().unwrap()]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
 }
 
@@ -680,15 +679,15 @@ fn test_reconcile_reports_created_entries() {
     std::fs::write(root.join("b.txt"), b"bbb").unwrap();
 
     // The repository starts with a single entry: the filesystem root.
-    let out = mf(&["--repo", &repo, "list"]);
+    let out = mf(&["-u", &repo, "metarecord", "get"]);
     assert_ok(&out);
     let root_uuid = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&root_uuid));
 
-    let out = mf(&["--repo", &repo, "set", &root_uuid, "mf_watch:bool=true"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &root_uuid, "set", "mf_watch:bool=true"]);
     assert_ok(&out);
 
-    let out = mf(&["--repo", &repo, "reconcile"]);
+    let out = mf(&["-u", &repo, "reconcile"]);
     assert_ok(&out);
     // a.txt + b.txt only: .metafolder is ignored by default (hidden-entry
     // and .metafolder patterns), so config.json under it is not tracked.
@@ -699,7 +698,7 @@ fn test_reconcile_reports_created_entries() {
     );
 
     // A second reconcile is a no-op; --json prints the raw body.
-    let out = mf(&["--repo", &repo, "reconcile", "--json"]);
+    let out = mf(&["-u", &repo, "reconcile", "--json"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(parsed["created"], 0);
@@ -712,26 +711,26 @@ fn test_reconcile_no_wait_and_task_commands() {
     std::fs::write(root.join("a.txt"), b"a").unwrap();
 
     // --no-wait starts the reconcile and prints just the task id.
-    let out = mf(&["--repo", &repo, "reconcile", "--no-wait"]);
+    let out = mf(&["-u", &repo, "reconcile", "--no-wait"]);
     assert_ok(&out);
     let task_id = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&task_id), "expected a task id, got: '{}'", out.stdout);
 
     // mf task <id> shows that task (id + kind on the line).
-    let out = mf(&["--repo", &repo, "task", &task_id]);
+    let out = mf(&["-u", &repo, "task", "show", &task_id]);
     assert_ok(&out);
     assert!(out.stdout.contains(&task_id), "task line: {}", out.stdout);
     assert!(out.stdout.contains("reconcile"), "task line: {}", out.stdout);
 
     // mf tasks lists it (retained after completion within the TTL).
-    let out = mf(&["--repo", &repo, "tasks"]);
+    let out = mf(&["-u", &repo, "task", "list"]);
     assert_ok(&out);
     assert!(out.stdout.contains(&task_id), "tasks output: {}", out.stdout);
 
     // The tiny reconcile has finished, so stopping it is a conflict reported on
     // stderr with a non-zero exit (the happy-path stop is covered by the daemon
     // integration tests; it is racy through the CLI on a trivially small repo).
-    let out = mf(&["--repo", &repo, "task", &task_id, "--stop"]);
+    let out = mf(&["-u", &repo, "task", "show", &task_id, "--stop"]);
     assert_eq!(out.code, 1, "stopping a finished task should fail; stderr: {}", out.stderr);
     assert!(out.stderr.contains("error:"), "stderr: {}", out.stderr);
 }
@@ -740,7 +739,7 @@ fn test_reconcile_no_wait_and_task_commands() {
 fn test_task_stop_unknown_id_errors() {
     let (repo, _root) = init_repo("stopghost");
     let ghost = uuid::Uuid::new_v4().as_simple().to_string();
-    let out = mf(&["--repo", &repo, "task", &ghost, "--stop"]);
+    let out = mf(&["-u", &repo, "task", "show", &ghost, "--stop"]);
     assert_eq!(out.code, 1, "stopping an unknown task should fail; stderr: {}", out.stderr);
     assert!(out.stderr.contains("error:"), "stderr: {}", out.stderr);
 }
@@ -751,13 +750,13 @@ fn test_reconcile_single_entry() {
     std::fs::create_dir_all(root.join("dir")).unwrap();
     std::fs::write(root.join("dir/inside.txt"), b"in").unwrap();
 
-    let out = mf(&["--repo", &repo, "track", root.join("dir").to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "track", root.join("dir").to_str().unwrap()]);
     assert_ok(&out);
     let dir_uuid = out.stdout.trim().to_string();
 
-    let out = mf(&["--repo", &repo, "set", &dir_uuid, "mf_watch:bool=true"]);
+    let out = mf(&["-u", &repo, "metarecord", "field", &dir_uuid, "set", "mf_watch:bool=true"]);
     assert_ok(&out);
-    let out = mf(&["--repo", &repo, "reconcile", "--metarecord", &dir_uuid]);
+    let out = mf(&["-u", &repo, "reconcile", "--metarecord", &dir_uuid]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("created: 1"), "unexpected summary: {}", out.stdout);
 }
@@ -768,15 +767,15 @@ fn test_reconcile_threshold_yields_similarity_candidate() {
     std::fs::create_dir_all(root.join("music")).unwrap();
     std::fs::write(root.join("music/old_song.mp3"), vec![b'a'; 1000]).unwrap();
 
-    let root_uuid = mf(&["--repo", &repo, "list"]).stdout.trim().to_string();
-    assert_ok(&mf(&["--repo", &repo, "set", &root_uuid, "mf_watch:bool=true"]));
-    assert_ok(&mf(&["--repo", &repo, "reconcile"]));
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &root_uuid, "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
 
     // Move + modify: different name and size defeat the fingerprint phase.
     std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
     std::fs::write(root.join("music/old_song_v2.mp3"), vec![b'b'; 1100]).unwrap();
 
-    let out = mf(&["--repo", &repo, "reconcile", "--threshold", "0.6", "--json"]);
+    let out = mf(&["-u", &repo, "reconcile", "--threshold", "0.6", "--json"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let matches = &parsed["candidates"][0]["matches"][0];
@@ -784,7 +783,7 @@ fn test_reconcile_threshold_yields_similarity_candidate() {
     assert!(matches["score"].as_f64().unwrap() >= 0.6);
 
     // An out-of-range threshold is rejected by the daemon.
-    let bad = mf(&["--repo", &repo, "reconcile", "--threshold", "2"]);
+    let bad = mf(&["-u", &repo, "reconcile", "--threshold", "2"]);
     assert_eq!(bad.code, 1, "stderr: {}", bad.stderr);
 }
 
@@ -794,18 +793,18 @@ fn test_reconcile_computes_and_can_disable_mime() {
     // PNG magic header → infer detects image/png.
     std::fs::write(root.join("pic.png"), [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).unwrap();
 
-    let root_uuid = mf(&["--repo", &repo, "list"]).stdout.trim().to_string();
-    assert_ok(&mf(&["--repo", &repo, "set", &root_uuid, "mf_watch:bool=true"]));
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &root_uuid, "set", "mf_watch:bool=true"]));
 
     // With --no-mime, no mfr_mime is written.
-    assert_ok(&mf(&["--repo", &repo, "reconcile", "--no-mime"]));
-    let q = mf(&["--repo", &repo, "query", "mfr_mime IS PRESENT"]);
+    assert_ok(&mf(&["-u", &repo, "reconcile", "--no-mime"]));
+    let q = mf(&["-u", &repo, "metarecord", "get", "mfr_mime IS PRESENT"]);
     assert_ok(&q);
     assert!(q.stdout.trim().is_empty(), "no mime expected, got: {}", q.stdout);
 
     // A default reconcile computes it.
-    assert_ok(&mf(&["--repo", &repo, "reconcile"]));
-    let pic = mf(&["--repo", &repo, "query", "mfr_mime = \"image/png\"", "--select", "mfr_mime"]);
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    let pic = mf(&["-u", &repo, "metarecord", "get", "mfr_mime = \"image/png\"", "--select", "mfr_mime"]);
     assert_ok(&pic);
     assert!(pic.stdout.contains("image/png"), "stdout: {}", pic.stdout);
 }
@@ -818,13 +817,13 @@ fn test_query_values_prints_raw_scalars() {
     create_metarecord(&repo, &["type:string=tag", "name:string=jazz"]);
     create_metarecord(&repo, &["type:string=tag", "name:string=rock", "weight:int=3"]);
 
-    let out = mf(&["--repo", &repo, "query", "type = \"tag\"", "--select", "name", "--values"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "type = \"tag\"", "--select", "name", "--values"]);
     assert_ok(&out);
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort_unstable();
     assert_eq!(names, vec!["jazz", "rock"]);
 
-    let out = mf(&["--repo", &repo, "query", "name = \"rock\"", "--select", "weight", "--values"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "name = \"rock\"", "--select", "weight", "--values"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "3");
 }
@@ -832,9 +831,9 @@ fn test_query_values_prints_raw_scalars() {
 #[test]
 fn test_query_values_requires_a_single_selected_field() {
     let (repo, _root) = init_repo("values_usage");
-    let out = mf(&["--repo", &repo, "query", "name = \"x\"", "--values"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "name = \"x\"", "--values"]);
     assert_eq!(out.code, 2, "stdout: {}", out.stdout);
-    let out = mf(&["--repo", &repo, "query", "name = \"x\"", "--select", "a,b", "--values"]);
+    let out = mf(&["-u", &repo, "metarecord", "get", "name = \"x\"", "--select", "a,b", "--values"]);
     assert_eq!(out.code, 2, "stdout: {}", out.stdout);
 }
 
@@ -846,15 +845,15 @@ fn test_path_resolves_tracked_file() {
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
 
-    let out = mf(&["--repo", &repo, "track", root.join("sub/file.txt").to_str().unwrap()]);
+    let out = mf(&["-u", &repo, "track", root.join("sub/file.txt").to_str().unwrap()]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
 
-    let out = mf(&["--repo", &repo, "path", &uuid]);
+    let out = mf(&["-u", &repo, "path", &uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), root.join("sub/file.txt").to_str().unwrap());
 
-    let out = mf(&["--repo", &repo, "path", "--relative", &uuid]);
+    let out = mf(&["-u", &repo, "path", "--relative", &uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "/sub/file.txt");
 }
@@ -862,15 +861,15 @@ fn test_path_resolves_tracked_file() {
 #[test]
 fn test_path_of_the_root_entry() {
     let (repo, root) = init_repo("path_root");
-    let out = mf(&["--repo", &repo, "list"]);
+    let out = mf(&["-u", &repo, "metarecord", "get"]);
     assert_ok(&out);
     let root_uuid = out.stdout.trim().to_string();
 
-    let out = mf(&["--repo", &repo, "path", &root_uuid]);
+    let out = mf(&["-u", &repo, "path", &root_uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), root.to_str().unwrap());
 
-    let out = mf(&["--repo", &repo, "path", "--relative", &root_uuid]);
+    let out = mf(&["-u", &repo, "path", "--relative", &root_uuid]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "/");
 }
@@ -879,7 +878,7 @@ fn test_path_of_the_root_entry() {
 fn test_path_fails_on_entry_without_mfr_path() {
     let (repo, _root) = init_repo("path_none");
     let uuid = create_metarecord(&repo, &["title:string=no path"]);
-    let out = mf(&["--repo", &repo, "path", &uuid]);
+    let out = mf(&["-u", &repo, "path", &uuid]);
     assert_eq!(out.code, 1, "stdout: {}", out.stdout);
     assert!(out.stderr.contains("mfr_path"), "stderr: {}", out.stderr);
 }
@@ -902,16 +901,16 @@ fn test_schema_workflow() {
     let bad = create_metarecord(&repo, &["mf_schema:string=film", "rating:string=oops"]);
 
     std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
-    let out = mf(&["--repo", &repo, "schema", "reload"]);
+    let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_ok(&out);
 
-    let out = mf(&["--repo", &repo, "schema", "show"]);
+    let out = mf(&["-u", &repo, "schema", "show"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(parsed["version"], 1);
 
     // One violation: exit code 1, one line per violation plus the summary.
-    let out = mf(&["--repo", &repo, "schema", "check"]);
+    let out = mf(&["-u", &repo, "schema", "check"]);
     assert_eq!(out.code, 1, "violations must yield exit code 1\nstdout: {}", out.stdout);
     assert!(out.stdout.contains(&bad), "violation line should name the entry");
     assert!(out.stdout.contains("Checked 2 metarecords, 1 violation"), "stdout: {}", out.stdout);
@@ -919,14 +918,14 @@ fn test_schema_workflow() {
     // Fix the wrong-typed field: under the one-value-type-per-field invariant a
     // String field cannot be set to an Int directly — `retype` is the way to
     // change an established type (the un-parsable "oops" falls back to 0).
-    let out = mf(&["--repo", &repo, "retype", "rating", "int"]);
+    let out = mf(&["-u", &repo, "retype", "rating", "int"]);
     assert_ok(&out);
-    let out = mf(&["--repo", &repo, "schema", "check"]);
+    let out = mf(&["-u", &repo, "schema", "check"]);
     assert_ok(&out);
     assert!(out.stdout.contains("0 violations"), "stdout: {}", out.stdout);
 
     // --json prints the raw response body.
-    let out = mf(&["--repo", &repo, "schema", "check", "--json"]);
+    let out = mf(&["-u", &repo, "schema", "check", "--json"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(parsed["checked"], 2);
@@ -937,11 +936,11 @@ fn test_schema_check_with_predicate() {
     let (repo, root) = init_repo("schema_pred");
     create_metarecord(&repo, &["mf_schema:string=film", "rating:string=bad"]);
     std::fs::write(root.join(".metafolder/schema.json"), FILM_SCHEMA).unwrap();
-    let out = mf(&["--repo", &repo, "schema", "reload"]);
+    let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_ok(&out);
 
     // The predicate restricts the scan to non-matching entries: no violation.
-    let out = mf(&["--repo", &repo, "schema", "check", r#"mf_schema = "documentary""#]);
+    let out = mf(&["-u", &repo, "schema", "check", r#"mf_schema = "documentary""#]);
     assert_ok(&out);
     assert!(out.stdout.contains("Checked 0 metarecords"), "stdout: {}", out.stdout);
 }
@@ -950,7 +949,7 @@ fn test_schema_check_with_predicate() {
 fn test_schema_reload_invalid_file_fails() {
     let (repo, root) = init_repo("schema_invalid");
     std::fs::write(root.join(".metafolder/schema.json"), "{not json").unwrap();
-    let out = mf(&["--repo", &repo, "schema", "reload"]);
+    let out = mf(&["-u", &repo, "schema", "reload"]);
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"));
 }
@@ -961,9 +960,9 @@ fn test_schema_reload_invalid_file_fails() {
 fn test_log_lists_revisions_most_recent_first() {
     let (repo, _) = init_repo("log_list");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
 
-    let out = mf(&["--repo", &repo, "log"]);
+    let out = mf(&["-u", &repo, "log", "list"]);
     assert_ok(&out);
     // HEAD is marked and is the first (most recent) line.
     assert!(out.stdout.contains("\u{2190} HEAD"), "stdout: {}", out.stdout);
@@ -976,21 +975,21 @@ fn test_log_lists_revisions_most_recent_first() {
 fn test_log_graph_renders_branches_default_hides_them() {
     let (repo, _) = init_repo("log_graph");
     let uuid = create_metarecord(&repo, &["rating:int=1"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=2"]));
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=3"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=2"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=3"]));
     // Roll back the last write, then write again: this forks a new branch,
     // leaving the rating=3 revision on a divergent branch.
-    assert_ok(&mf(&["--repo", &repo, "rollback", "--silent"]));
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]));
+    assert_ok(&mf(&["-u", &repo, "log", "rollback", "--silent"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=9"]));
 
     // The graph draws every branch: a divergent column and its convergence.
-    let graph = mf(&["--repo", &repo, "log", "--graph"]);
+    let graph = mf(&["-u", &repo, "log", "list", "--graph"]);
     assert_ok(&graph);
     assert!(graph.stdout.contains("\u{2190} HEAD"), "stdout: {}", graph.stdout);
     assert!(graph.stdout.contains("|/"), "expected a convergence: {}", graph.stdout);
 
     // The default (active line) hides the divergent branch: fewer revisions.
-    let active = mf(&["--repo", &repo, "log"]);
+    let active = mf(&["-u", &repo, "log", "list"]);
     assert_ok(&active);
     let count = |s: &str| s.matches("rev ").count();
     assert!(
@@ -1005,9 +1004,9 @@ fn test_log_graph_renders_branches_default_hides_them() {
 fn test_log_ops_expands_operations() {
     let (repo, _) = init_repo("log_ops");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
 
-    let out = mf(&["--repo", &repo, "log", "--ops"]);
+    let out = mf(&["-u", &repo, "log", "list", "--ops"]);
     assert_ok(&out);
     assert!(out.stdout.contains("set_field(rating)"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("op "), "stdout: {}", out.stdout);
@@ -1017,9 +1016,9 @@ fn test_log_ops_expands_operations() {
 fn test_log_show_displays_before_and_after() {
     let (repo, _) = init_repo("log_show");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
 
-    let out = mf(&["--repo", &repo, "log", "show", "HEAD"]);
+    let out = mf(&["-u", &repo, "log", "show", "HEAD"]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("Revision "), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("set_field(rating)"), "stdout: {}", out.stdout);
@@ -1027,7 +1026,7 @@ fn test_log_show_displays_before_and_after() {
     assert!(out.stdout.contains("after:   5"), "stdout: {}", out.stdout);
 
     // --raw prints JSON with the revision object.
-    let raw = mf(&["--repo", &repo, "log", "show", "HEAD", "--raw"]);
+    let raw = mf(&["-u", &repo, "log", "show", "HEAD", "--raw"]);
     assert_ok(&raw);
     let parsed: serde_json::Value = serde_json::from_str(&raw.stdout).unwrap();
     assert!(parsed["revision"]["is_head"].as_bool().unwrap());
@@ -1036,7 +1035,7 @@ fn test_log_show_displays_before_and_after() {
 #[test]
 fn test_log_show_rejects_bad_target() {
     let (repo, _) = init_repo("log_show_bad");
-    let out = mf(&["--repo", &repo, "log", "show", "notanumber"]);
+    let out = mf(&["-u", &repo, "log", "show", "notanumber"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -1044,13 +1043,11 @@ fn test_log_show_rejects_bad_target() {
 fn test_prune_linearize_with_no_branches_removes_nothing() {
     let (repo, _) = init_repo("prune_lin");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
 
     // A far-future timestamp resolves to HEAD; with no side branches,
     // linearize removes nothing.
-    let out = mf(&[
-        "--repo", &repo, "prune", "linearize", "--timestamp", "@9999999999999", "--force",
-    ]);
+    let out = mf(&["-u", &repo, "log", "prune", "linearize", "--timestamp", "@9999999999999", "--force"]);
     assert_ok(&out);
     assert!(out.stdout.contains("Pruned 0 operations"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("linearized"), "stdout: {}", out.stdout);
@@ -1060,23 +1057,21 @@ fn test_prune_linearize_with_no_branches_removes_nothing() {
 fn test_prune_before_makes_target_the_root() {
     let (repo, _) = init_repo("prune_before");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=7"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=7"]));
 
     // Prune before HEAD: every older operation is removed.
-    let out = mf(&[
-        "--repo", &repo, "prune", "before", "--timestamp", "@9999999999999", "--force",
-    ]);
+    let out = mf(&["-u", &repo, "log", "prune", "before", "--timestamp", "@9999999999999", "--force"]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("Pruned "), "stdout: {}", out.stdout);
     // History still readable afterwards.
-    assert_ok(&mf(&["--repo", &repo, "log"]));
+    assert_ok(&mf(&["-u", &repo, "log", "list"]));
 }
 
 #[test]
 fn test_prune_requires_a_target() {
     let (repo, _) = init_repo("prune_notarget");
-    let out = mf(&["--repo", &repo, "prune", "before"]);
+    let out = mf(&["-u", &repo, "log", "prune", "before"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -1084,8 +1079,8 @@ fn test_prune_requires_a_target() {
 fn test_rollback_plan_previews_operations() {
     let (repo, _) = init_repo("rbk_plan");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
-    let out = mf(&["--repo", &repo, "rollback", "plan"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
+    let out = mf(&["-u", &repo, "log", "rollback", "plan"]);
     assert_ok(&out);
     assert!(out.stdout.contains("set_field"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("operations."), "stdout: {}", out.stdout);
@@ -1095,9 +1090,9 @@ fn test_rollback_plan_previews_operations() {
 fn test_rollback_undoes_last_revision_and_releases_lock() {
     let (repo, _) = init_repo("rbk_run");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
 
-    let out = mf(&["--repo", &repo, "rollback", "--silent"]);
+    let out = mf(&["-u", &repo, "log", "rollback", "--silent"]);
     assert_ok(&out);
 
     // The last set was undone.
@@ -1107,15 +1102,15 @@ fn test_rollback_undoes_last_revision_and_releases_lock() {
     assert_eq!(rating["value"]["value"], 3, "rating should revert to 3");
 
     // The lock was released: a subsequent write succeeds.
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=9"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=9"]));
 }
 
 #[test]
 fn test_rollback_bad_move_policy_is_usage_error() {
     let (repo, _) = init_repo("rbk_policy");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
-    let out = mf(&["--repo", &repo, "rollback", "--on-move-available", "bogus"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
+    let out = mf(&["-u", &repo, "log", "rollback", "--on-move-available", "bogus"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -1123,13 +1118,102 @@ fn test_rollback_bad_move_policy_is_usage_error() {
 fn test_prune_without_force_aborts_on_no() {
     let (repo, _) = init_repo("prune_confirm");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
-    assert_ok(&mf(&["--repo", &repo, "set", &uuid, "rating:int=5"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "field", &uuid, "set", "rating:int=5"]));
     let out = mf_full(
-        &["--repo", &repo, "prune", "before", "--timestamp", "@9999999999999"],
+        &["-u", &repo, "log", "prune", "before", "--timestamp", "@9999999999999"],
         Some("n\n"),
         &[],
         true,
     );
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
     assert!(out.stderr.contains("aborted"), "stderr: {}", out.stderr);
+}
+
+// ── Verb-tree additions (spec-data-model "* CLI") ─────────────────────────────
+
+#[test]
+fn test_repo_selected_by_name() {
+    // The repo's name is derived from its (unique) directory basename; -n
+    // resolves it to the uuid through GET /repos.
+    let (uuid, root) = init_repo("by_name");
+    let name = root.file_name().unwrap().to_str().unwrap().to_string();
+
+    let by_name = mf(&["-n", &name, "metarecord", "add", "tag:string=x"]);
+    assert_ok(&by_name);
+    // The record is visible when addressing the same repo by uuid.
+    let listed = mf(&["-u", &uuid, "metarecord", "get"]);
+    assert_ok(&listed);
+    assert!(listed.stdout.contains(by_name.stdout.trim()));
+
+    // An unknown name is an operation error.
+    let missing = mf(&["-n", "no-such-repo-xyz", "metarecord", "get"]);
+    assert_eq!(missing.code, 1, "stderr: {}", missing.stderr);
+}
+
+#[test]
+fn test_metarecord_set_overwrites_whole_record_and_needs_force() {
+    let (repo, _) = init_repo("mset");
+    let uuid = create_metarecord(&repo, &["a:int=1", "b:string=keep"]);
+
+    // Without -f it refuses and changes nothing.
+    let no_force = mf(&["-u", &repo, "metarecord", "set", &uuid, "c:int=9"]);
+    assert_eq!(no_force.code, 2, "stderr: {}", no_force.stderr);
+
+    let out = mf(&["-u", &repo, "metarecord", "set", &uuid, "c:int=9", "-f"]);
+    assert_ok(&out);
+    let entries = get_entries(&repo, &uuid);
+    let entry = &entries.as_array().unwrap()[0];
+    let names: Vec<&str> =
+        entry["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["c"], "old fields dropped, only the new set remains");
+}
+
+#[test]
+fn test_field_multi_value_set_and_unset() {
+    let (repo, _) = init_repo("fmulti");
+    let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
+
+    // Set two values of `tag` at once (multi-map).
+    let out = mf(&[
+        "-u", &repo, "metarecord", "field", &uuid, "set", "tag:string=a", "tag:string=b",
+    ]);
+    assert_ok(&out);
+    let count_tags = |target: &str| -> usize {
+        let entries = get_entries(&repo, target);
+        let entry = &entries.as_array().unwrap()[0];
+        entry["fields"].as_array().unwrap().iter().filter(|f| f["name"] == "tag").count()
+    };
+    assert_eq!(count_tags(&uuid), 2);
+
+    // Unset removes the whole field.
+    let out = mf(&["-u", &repo, "metarecord", "field", &uuid, "unset", "tag"]);
+    assert_ok(&out);
+    assert_eq!(count_tags(&uuid), 0);
+}
+
+#[test]
+fn test_field_by_id_get_set_delete() {
+    let (repo, _) = init_repo("fbyid");
+    let uuid = create_metarecord(&repo, &["rating:int=5"]);
+    let entries = get_entries(&repo, &uuid);
+    let id = entries.as_array().unwrap()[0]["fields"][0]["id"].as_i64().unwrap().to_string();
+
+    // get by id
+    let got = mf(&["-u", &repo, "field", "get", &id]);
+    assert_ok(&got);
+    assert!(got.stdout.contains("rating"));
+
+    // set by id: rename + revalue, keeping the id
+    let set = mf(&["-u", &repo, "field", "set", &id, "score:int=9"]);
+    assert_ok(&set);
+    let entries = get_entries(&repo, &uuid);
+    let entry = &entries.as_array().unwrap()[0];
+    assert_eq!(entry["fields"][0]["id"].as_i64().unwrap().to_string(), id);
+    assert_eq!(entry["fields"][0]["name"], "score");
+
+    // delete by id
+    let del = mf(&["-u", &repo, "field", "delete", &id]);
+    assert_ok(&del);
+    let entries = get_entries(&repo, &uuid);
+    assert_eq!(entries.as_array().unwrap()[0]["fields"].as_array().unwrap().len(), 0);
 }

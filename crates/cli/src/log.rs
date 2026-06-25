@@ -237,6 +237,7 @@ fn ask_move(from: &str, to: &str, available: bool) -> Result<Policy, CliError> {
 
 // ── mf log ────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct LogArgs {
     pub tree: bool,
     pub graph: bool,
