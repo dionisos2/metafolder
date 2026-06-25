@@ -46,6 +46,16 @@ pub enum Query {
     /// The field has a string value matching the regex. On a `TreeRef`
     /// field, the regex applies to the name component.
     Matches { field: String, pattern: String },
+
+    // --- Explicit set ---
+    /// The metarecord's UUID is one of `uuids` (32-hex in JSON). Bridges the
+    /// resource layer and the `/query/*` set layer: it lets set operations
+    /// target an explicit set of metarecords (e.g. a multi-selection). An empty
+    /// list matches nothing.
+    UuidIn {
+        #[serde(with = "crate::metarecord::hex_uuid_vec")]
+        uuids: Vec<uuid::Uuid>,
+    },
 }
 
 /// Right-hand side of `Follows` and `FollowsTransitive`: either a path string
@@ -82,6 +92,17 @@ mod tests {
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"eq","field":"rating","value":{"type":"int","value":5}}"#
         );
+    }
+
+    #[test]
+    fn test_uuid_in_json_format_and_roundtrip() {
+        let u = uuid::Uuid::from_u128(0x2b);
+        let q = Query::UuidIn { uuids: vec![u] };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"uuid_in","uuids":["0000000000000000000000000000002b"]}"#
+        );
+        assert_eq!(roundtrip(&q), q);
     }
 
     #[test]

@@ -516,6 +516,19 @@ impl RepoIndex {
                 self.follows_transitive(field, target, roots)
             }
 
+            Query::UuidIn { uuids } => {
+                // Interned ids of the given uuids, restricted to the universe
+                // (unknown / non-owned uuids drop out).
+                let mut r = RoaringBitmap::new();
+                for u in uuids {
+                    if let Some(id) = self.registry.id(*u) {
+                        r.insert(id);
+                    }
+                }
+                r &= &self.universe;
+                Ok(r)
+            }
+
             other => Err(unsupported(format!("{other:?}"))),
         }
     }

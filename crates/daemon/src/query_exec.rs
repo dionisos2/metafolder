@@ -758,6 +758,22 @@ impl<'a> Compiler<'a> {
                     literals.join(",")
                 )))
             }
+
+            Query::UuidIn { uuids } => {
+                if uuids.is_empty() {
+                    return Ok(self.empty());
+                }
+                // Inline the uuids as literals (no bound-parameter limit) and
+                // intersect with `_repo` so non-owned / unknown uuids drop out.
+                let literals: Vec<String> = uuids
+                    .iter()
+                    .map(|u| format!("(x'{}')", hex_encode(u.as_bytes())))
+                    .collect();
+                Ok(self.add(format!(
+                    "SELECT uuid FROM _repo WHERE uuid IN (SELECT column1 FROM (VALUES {}))",
+                    literals.join(",")
+                )))
+            }
         }
     }
 

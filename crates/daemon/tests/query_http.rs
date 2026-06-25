@@ -435,6 +435,43 @@ async fn test_batch_set() {
 }
 
 #[tokio::test]
+async fn test_query_uuid_in_selects_the_named_set() {
+    let (app, repo, root) = setup("uuid_in").await;
+    let a = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "x"}}])).await;
+    let b = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "y"}}])).await;
+    let _c = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "z"}}])).await;
+
+    // uuid_in returns exactly the owned uuids in the list; a bogus one drops out.
+    let bogus = "00000000000000000000000000000099";
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "uuid_in", "uuids": [a, bogus, b]}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "uuid_in failed: {body}");
+    let mut got: Vec<String> =
+        body.as_array().unwrap().iter().map(|u| u.as_str().unwrap().to_string()).collect();
+    got.sort();
+    let mut want = vec![a, b];
+    want.sort();
+    assert_eq!(got, want);
+
+    // Empty list matches nothing.
+    let (_, none) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "uuid_in", "uuids": []}})),
+    )
+    .await;
+    assert_eq!(none.as_array().unwrap().len(), 0);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_batch_set_multi_value() {
     let (app, repo, root) = setup("set_multi").await;
     for genre in ["jazz", "jazz", "rock"] {

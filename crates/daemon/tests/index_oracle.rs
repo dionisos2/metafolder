@@ -329,6 +329,22 @@ fn categorical_string_eq_multimap() {
 }
 
 #[test]
+fn uuid_in_explicit_set() {
+    let mut o = Oracle::new();
+    let a = o.create(vec![Field::new("tag", s("a"))]);
+    let _b = o.create(vec![Field::new("tag", s("b"))]);
+    let c = o.create(vec![Field::new("tag", s("c"))]);
+    let bogus = Uuid::from_u128(0x99);
+
+    o.check(&Query::UuidIn { uuids: vec![a, c, bogus] });
+    o.check(&Query::UuidIn { uuids: vec![] }); // empty
+    // Combined with another predicate (intersection).
+    o.check(&Query::And {
+        operands: vec![Query::UuidIn { uuids: vec![a, c] }, eq("tag", s("a"))],
+    });
+}
+
+#[test]
 fn categorical_string_neq_multimap() {
     // {jazz, live} must match Neq("jazz") via the "live" row; {jazz} alone
     // must not. A type-mismatched operand differs from every row.
