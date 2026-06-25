@@ -509,12 +509,18 @@ fn walk(
     // current depth, and those discovered for the next.
     let mut frontier: Vec<String> = vec![base.to_string()];
     let mut depth: u64 = 0;
+    // Files seen across the *whole* walk so far. Reported in the phase label so
+    // the displayed count actually advances: the per-depth `done/total`
+    // (directories at this depth) is too coarse — a level usually holds fewer
+    // than `PROGRESS_STEP` directories, so `done` never leaves 0.
+    let mut files: u64 = 0;
     while !frontier.is_empty() {
-        let level_total = frontier.len() as u64;
+        let dirs_at_depth = frontier.len() as u64;
+        let label = |files: u64| format!("walk (depth {depth}, {dirs_at_depth} dirs, {files} files)");
         let mut next: Vec<String> = Vec::new();
         for (i, dir) in frontier.iter().enumerate() {
             if i as u64 % PROGRESS_STEP as u64 == 0 {
-                progress(&format!("walk (depth {depth})"), Some(i as u64), Some(level_total));
+                progress(&label(files), Some(i as u64), Some(dirs_at_depth));
                 if cancel() {
                     anyhow::bail!("reconcile cancelled");
                 }
@@ -542,9 +548,23 @@ fn walk(
                 paths.push(rel.clone());
                 if is_dir {
                     next.push(rel);
+                } else {
+                    files += 1;
+                    // Keep the count moving and cancellation responsive even
+                    // inside a single huge directory (the per-dir checkpoint
+                    // above would not fire until the next directory).
+                    if files % PROGRESS_STEP as u64 == 0 {
+                        progress(&label(files), Some(i as u64), Some(dirs_at_depth));
+                        if cancel() {
+                            anyhow::bail!("reconcile cancelled");
+                        }
+                    }
                 }
             }
         }
+        // End-of-level tick: the cumulative file count now includes this whole
+        // depth, so the reported number reaches the true total for small trees.
+        progress(&label(files), Some(dirs_at_depth), Some(dirs_at_depth));
         frontier = next;
         depth += 1;
     }

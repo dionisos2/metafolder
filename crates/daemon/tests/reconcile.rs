@@ -116,6 +116,35 @@ fn stat_phase_total_matches_walked_paths() {
     assert_eq!(stat_total, Some(3), "stat total = eligible paths discovered by the walk");
 }
 
+#[test]
+fn walk_phase_reports_cumulative_file_count() {
+    let (repo, root) = setup("walkfiles");
+    write_file(&root, "a.txt", b"a");
+    write_file(&root, "dir/b.txt", b"b");
+
+    // The walk labels its progress by depth and a *cumulative* file count, so
+    // the displayed number actually advances instead of being stuck at 0 (the
+    // per-depth `done/total` is too coarse for trees smaller than the step).
+    let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
+    reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
+        phases.lock().unwrap().push((phase.to_string(), done, total));
+    }, &|| false)
+    .unwrap();
+
+    let phases = phases.into_inner().unwrap();
+    let walk_labels: Vec<&str> = phases
+        .iter()
+        .map(|(p, _, _)| p.as_str())
+        .filter(|p| p.starts_with("walk"))
+        .collect();
+    assert!(walk_labels.iter().any(|p| p.contains("depth")), "labels: {walk_labels:?}");
+    // Two files created (a.txt, dir/b.txt): the cumulative count reaches 2.
+    assert!(
+        walk_labels.iter().any(|p| p.contains("2 files")),
+        "cumulative file count should reach 2: {walk_labels:?}"
+    );
+}
+
 // ── Creation ──────────────────────────────────────────────────────────────────
 
 #[test]
