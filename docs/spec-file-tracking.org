@@ -270,8 +270,15 @@ promoted leaf always carries the correct recency timestamp.
 
 *** Startup
 
-The cache starts empty; metarecords are populated lazily on first access. No
-pre-loading from the database is required.
+The whole TreeRef forest is loaded into the cache at repository load, in a
+single scan of the =tree_ref= rows, so that read-side navigation (path
+resolution, descendant collection, path reconstruction) is served entirely from
+memory rather than walking the database node by node — the dominant cost of a
+first =FollowsTransitive= query on a large repository. The lazy, DB-backed path
+(populate-on-miss, descendant walk) is kept as a fallback for the case where the
+forest exceeds the in-memory node budget (it then no longer fits, and the cache
+reports itself incomplete). Manual API writes that change a TreeRef field rebuild
+the cache; the watcher and reconcile keep it in sync incrementally.
 
 ** File Watcher
 

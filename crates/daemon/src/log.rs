@@ -936,6 +936,16 @@ impl<'c> Writer<'c> {
         self.flushed + self.pending.len() as i64
     }
 
+    /// True if this revision created or removed any `tree_ref` field row.
+    /// Manual API writes do not go through the watcher's incremental tree-cache
+    /// maintenance (`apply_*`), so a caller that keeps a complete cache must
+    /// rebuild it after such a write; this is the cheap signal that it needs to.
+    pub fn touched_tree(&self) -> bool {
+        self.pending.iter().any(|op| {
+            op.before.iter().chain(op.after.iter()).any(|f| matches!(f.value, Value::TreeRef { .. }))
+        })
+    }
+
     /// Removes every row of `(uuid, name)`, leaving the field unknown.
     /// Set-field shaped (before = all rows, after = none) so the standard
     /// `set_field` inverse applies. Used to invalidate `mfr_*` hashes.

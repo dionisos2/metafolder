@@ -1,11 +1,13 @@
 //! In-memory bitmap/BSI query index (spec-indexing.org), increment 1.
 //!
-//! A *derived, read-only* accelerator built once from the `field` table. It
-//! answers a [`Query`] as a `RoaringBitmap` of dense metarecord ids and is
-//! validated against the SQL engine ([`crate::query_exec`]) by an equivalence
-//! oracle (`tests/index_oracle.rs`). It is not yet wired into `RepoState` or
-//! the live query route, is never mutated incrementally, and is not persisted —
-//! those are later increments.
+//! A *derived, read-only* accelerator built from the `field` table. It answers
+//! a [`Query`] as a `RoaringBitmap` of dense metarecord ids and is validated
+//! against the SQL engine ([`crate::query_exec`]) by an equivalence oracle
+//! (`tests/index_oracle.rs`). It is built at repo load and refreshed to HEAD
+//! per query (`run_query_filter`), which falls back to the SQL engine on any
+//! `Unsupported` shape. `Path`-target follows are resolved to a root
+//! metarecord through the tree cache by the caller and supplied as
+//! [`PathRoots`]. Not persisted — rebuilt each session.
 
 pub mod field_index;
 pub mod id_registry;
@@ -28,6 +30,34 @@ use id_registry::IdRegistry;
 pub struct SortBy {
     pub field: String,
     pub ascending: bool,
+}
+
+/// Pre-resolved `(field, path)` → root metarecord uuid for the `Path`-target
+/// `Follows`/`FollowsTransitive` nodes of a query. The index has no tree
+/// structure of its own, so the caller resolves path targets through the (now
+/// eagerly populated) tree cache and hands the roots in; a path absent from the
+/// map resolved to nothing and yields an empty result, matching the SQL engine.
+pub type PathRoots = HashMap<(String, String), Uuid>;
+
+/// Collects the `(field, path)` of every `Path`-target `Follows`/
+/// `FollowsTransitive` in `q`, so the caller can resolve them in one pass
+/// before evaluation.
+pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
+    match q {
+        Query::Follows { field, target } | Query::FollowsTransitive { field, target } => {
+            if let FollowTarget::Path(p) = target {
+                out.push((field.clone(), p.clone()));
+            }
+            if let FollowTarget::Condition(c) = target {
+                collect_path_targets(c, out);
+            }
+        }
+        Query::And { operands } | Query::Or { operands } => {
+            operands.iter().for_each(|o| collect_path_targets(o, out));
+        }
+        Query::Not { operand } => collect_path_targets(operand, out),
+        _ => {}
+    }
 }
 
 /// A metarecord's position in a sort order: one representative per sort key
@@ -307,7 +337,12 @@ impl RepoIndex {
     /// Number of metarecords matching `q` — `O(1)` from the result bitmap,
     /// where the SQL `COUNT` is `O(n)` (the irreducible count wall).
     pub fn count(&self, q: &Query) -> Result<u64, Unsupported> {
-        Ok(self.evaluate(q)?.len())
+        Ok(self.eval(q, None)?.len())
+    }
+
+    /// [`Self::count`] with pre-resolved path-target roots (see [`PathRoots`]).
+    pub fn count_with_roots(&self, q: &Query, roots: &PathRoots) -> Result<u64, Unsupported> {
+        Ok(self.eval(q, Some(roots))?.len())
     }
 
     /// Evaluates a query and returns the matching uuids in sort order, truncated
@@ -335,6 +370,29 @@ impl RepoIndex {
         limit: Option<usize>,
         cursor: Option<&str>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        self.page(q, sort, limit, cursor, None)
+    }
+
+    /// [`Self::evaluate_page`] with pre-resolved path-target roots ([`PathRoots`]).
+    pub fn evaluate_page_with_roots(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: &PathRoots,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        self.page(q, sort, limit, cursor, Some(roots))
+    }
+
+    fn page(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: Option<&PathRoots>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
         let guard = page_guard(q, sort);
         let after: Option<SortEntry> = match cursor {
@@ -349,7 +407,7 @@ impl RepoIndex {
             }
         };
 
-        let matched = self.evaluate(q)?;
+        let matched = self.eval(q, roots)?;
         let mut entries: Vec<SortEntry> = matched.iter().map(|id| self.entry_of(id, sort)).collect();
         // Keyset: keep only what sorts strictly after the cursor position.
         if let Some(after) = &after {
@@ -389,8 +447,17 @@ impl RepoIndex {
         (reps, self.registry.uuid(id).expect("interned id"))
     }
 
-    /// Evaluates a query to the bitmap of matching dense ids.
+    /// Evaluates a query to the bitmap of matching dense ids (path targets
+    /// unsupported; use [`Self::evaluate_page_with_roots`] for those).
     pub fn evaluate(&self, q: &Query) -> Result<RoaringBitmap, Unsupported> {
+        self.eval(q, None)
+    }
+
+    /// Evaluates a query to the bitmap of matching dense ids. `roots` is
+    /// `Some(map)` once the caller has resolved the query's `Path` targets (see
+    /// [`PathRoots`]); `None` means they have not, so a `Path` target is
+    /// reported `Unsupported` and the caller falls back to the SQL engine.
+    fn eval(&self, q: &Query, roots: Option<&PathRoots>) -> Result<RoaringBitmap, Unsupported> {
         match q {
             Query::IsPresent { field } => Ok(self.present_of(field)),
             Query::IsAbsent { field } => Ok(self.absent_of(field)),
@@ -410,38 +477,66 @@ impl RepoIndex {
             Query::Gt { field, value } => self.compare(field, CmpOp::Gt, value),
             Query::Gte { field, value } => self.compare(field, CmpOp::Gte, value),
 
-            Query::And { operands } => self.combine(operands, true),
-            Query::Or { operands } => self.combine(operands, false),
+            Query::And { operands } => self.combine(operands, true, roots),
+            Query::Or { operands } => self.combine(operands, false, roots),
             Query::Not { operand } => {
                 let mut r = self.universe.clone();
-                r -= &self.evaluate(operand)?;
+                r -= &self.eval(operand, roots)?;
                 Ok(r)
             }
 
-            Query::Follows { field, target } => self.follows(field, target),
-            Query::FollowsTransitive { field, target } => self.follows_transitive(field, target),
+            Query::Follows { field, target } => self.follows(field, target, roots),
+            Query::FollowsTransitive { field, target } => {
+                self.follows_transitive(field, target, roots)
+            }
 
             other => Err(unsupported(format!("{other:?}"))),
         }
     }
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
-    /// Path targets need the tree cache and are deferred (`Unsupported`).
-    fn follows(&self, field: &str, target: &FollowTarget) -> Result<RoaringBitmap, Unsupported> {
-        let FollowTarget::Condition(cond) = target else {
-            return Err(unsupported("path-target follows"));
+    /// Direct referrers of the target metarecords. A `Path` target is resolved
+    /// through `roots` (the tree cache, upstream) to a single root metarecord;
+    /// a `Condition` target is evaluated to its match set.
+    /// The root metarecord a `Path` target resolves to, looked up in the
+    /// caller-supplied `roots`. `None` roots means the caller did not resolve
+    /// path targets, so this shape is `Unsupported` (fall back to SQL); a path
+    /// absent from a supplied map resolved to nothing (`Ok(None)`, empty result).
+    fn resolved_root(
+        &self,
+        field: &str,
+        path: &str,
+        roots: Option<&PathRoots>,
+    ) -> Result<Option<Uuid>, Unsupported> {
+        match roots {
+            None => Err(unsupported("path-target follows")),
+            Some(map) => Ok(map.get(&(field.to_string(), path.to_string())).copied()),
+        }
+    }
+
+    fn follows(
+        &self,
+        field: &str,
+        target: &FollowTarget,
+        roots: Option<&PathRoots>,
+    ) -> Result<RoaringBitmap, Unsupported> {
+        let target_uuids: Vec<Uuid> = match target {
+            FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
+                Some(root) => vec![root],
+                None => return Ok(RoaringBitmap::new()), // path resolved to nothing
+            },
+            FollowTarget::Condition(cond) => {
+                self.eval(cond, roots)?.iter().filter_map(|tid| self.registry.uuid(tid)).collect()
+            }
         };
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         if !fi.supports_follows() {
             return Ok(RoaringBitmap::new());
         }
-        let targets = self.evaluate(cond)?;
         let mut out = RoaringBitmap::new();
-        for tid in &targets {
-            if let Some(uuid) = self.registry.uuid(tid) {
-                if let Some(referrers) = fi.referrers_of(uuid) {
-                    out |= referrers;
-                }
+        for uuid in target_uuids {
+            if let Some(referrers) = fi.referrers_of(uuid) {
+                out |= referrers;
             }
         }
         Ok(out)
@@ -454,16 +549,28 @@ impl RepoIndex {
         &self,
         field: &str,
         target: &FollowTarget,
+        roots: Option<&PathRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
-        let FollowTarget::Condition(cond) = target else {
-            return Err(unsupported("path-target follows_transitive"));
+        // Seed the expansion with the matching roots' dense ids. For a path
+        // target that is the single metarecord resolved through the tree cache;
+        // for a condition it is the sub-query's match set. (Resolve the seed
+        // before the index-support check so an unsupported sub-query still
+        // surfaces, matching the SQL fallback contract.)
+        let mut frontier = match target {
+            FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
+                Some(root) => match self.registry.id(root) {
+                    Some(id) => RoaringBitmap::from_iter([id]),
+                    None => return Ok(RoaringBitmap::new()), // root not in the index
+                },
+                None => return Ok(RoaringBitmap::new()), // path resolved to nothing
+            },
+            FollowTarget::Condition(cond) => self.eval(cond, roots)?,
         };
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         if !fi.supports_transitive() {
             return Ok(RoaringBitmap::new());
         }
         let mut result = RoaringBitmap::new();
-        let mut frontier = self.evaluate(cond)?;
         while !frontier.is_empty() {
             let mut next = RoaringBitmap::new();
             for nid in &frontier {
@@ -480,12 +587,17 @@ impl RepoIndex {
         Ok(result)
     }
 
-    fn combine(&self, operands: &[Query], is_and: bool) -> Result<RoaringBitmap, Unsupported> {
+    fn combine(
+        &self,
+        operands: &[Query],
+        is_and: bool,
+        roots: Option<&PathRoots>,
+    ) -> Result<RoaringBitmap, Unsupported> {
         let mut it = operands.iter();
         let first = it.next().ok_or_else(|| unsupported("'and'/'or' need an operand"))?;
-        let mut acc = self.evaluate(first)?;
+        let mut acc = self.eval(first, roots)?;
         for operand in it {
-            let bm = self.evaluate(operand)?;
+            let bm = self.eval(operand, roots)?;
             if is_and {
                 acc &= &bm;
             } else {

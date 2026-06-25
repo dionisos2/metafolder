@@ -161,6 +161,24 @@ impl AppState {
             crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
                 .map_err(ApiError::bad_request)?;
         *repo_state.schema.lock_recover() = schema;
+        // Eagerly load the whole TreeRef forest into memory so read-side tree
+        // navigation (path resolution, descendants) is served without per-node
+        // DB queries (spec-file-tracking "Tree Cache"). Lock order: conn, cache.
+        {
+            let conn = repo_state.conn.lock_recover();
+            repo_state.lock_cache().populate(&conn)?;
+            // Build the in-memory query index up front too (spec-indexing), so
+            // the first query is served from memory rather than paying the
+            // build cost. Best-effort: a failure just leaves it to be built
+            // lazily on first use.
+            match crate::index::RepoIndex::build(&conn, repo_state.config.repo_uuid) {
+                Ok(index) => *repo_state.index.lock_recover() = Some(index),
+                Err(e) => eprintln!(
+                    "warning: failed to pre-build query index for {}: {e}",
+                    repo_state.config.repo_uuid
+                ),
+            }
+        }
         crate::executor::flush_pending(&repo_state)?;
         let quiet = std::time::Duration::from_millis(500);
         let executor = crate::executor::spawn(&repo_state, quiet);

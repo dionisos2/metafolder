@@ -173,11 +173,16 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   spec's one-op-per-event snapshot table, chosen so every op has a uniform
   inverse).
 - `tree_cache.rs`: per-repo in-memory path→UUID cache shared across TreeRef
-  field names; lazy population from the DB, O(1) rename/move, LRU eviction
-  via a lazy min-heap of leaves; descendant collection walks the DB.
-  `path_of`/`paths_of` resolve a metarecord's position(s) to root-relative
-  paths — exposed as `POST /repos/:repo/tree/resolve` so the CLI/GUI never
-  re-walk the chain client-side.
+  field names. **Eagerly populated at repo load** (`populate`, one bulk scan of
+  the forest) so read-side navigation — `resolve_path`, `descendants`,
+  `path_of`/`paths_of` — is served entirely from memory (`is_complete()`); the
+  DB walks remain only as a fallback when the forest exceeds the node budget or
+  a drop-and-reload shortcut leaves the cache incomplete. O(1) rename/move, LRU
+  eviction via a lazy min-heap of leaves. Manual API writes that change a
+  TreeRef (`Writer::touched_tree`) rebuild the cache; the watcher/reconcile keep
+  it in sync incrementally via `apply_*`. `path_of`/`paths_of` are exposed as
+  `POST /repos/:repo/tree/resolve` so the CLI/GUI never re-walk the chain
+  client-side.
 - `eligibility.rs`: watch/ignore algorithm (`mf_watch` inherited, direct
   override, nearest-ancestor `mf_ignore` pattern set, no merging).
 - `watcher.rs` + `executor.rs`: the watcher (notify/inotify) enqueues raw
@@ -193,12 +198,24 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 - `reconcile.rs`: full reconcile (fs walk with eligibility pruning, the
   fingerprint phase with definitive moves and strong/weak candidates, metarecord
   creation; never writes `mfr_path = Nothing`) and single-metarecord reconcile.
-- `query_exec.rs`: compiles a `Query` into a CTE chain (one CTE per node,
-  `_repo` CTE = universe/isolation). `FollowsTransitive` is hybrid:
-  descendants come from the tree cache and are inlined as literals. Sorting
-  implements the spec semantics (unknown/Nothing last, multi-map min/max,
-  fixed type-group precedence) via window functions; keyset pagination uses
-  opaque cursors bound to a hash of (query, sort).
+- `query_exec.rs`: the SQL fallback engine — compiles a `Query` into a CTE
+  chain (one CTE per node, `_repo` CTE = universe/isolation). `FollowsTransitive`
+  is hybrid: descendants come from the tree cache and are inlined as literals.
+  Sorting computes each metarecord's representative by joining the *filtered*
+  universe `_res` to `field` (so the window is over the filtered rows only) and
+  drives straight from `_s0`; spec semantics (unknown/Nothing last, multi-map
+  min/max, fixed type-group precedence) via window functions; keyset pagination
+  uses opaque cursors bound to a hash of (query, sort).
+- `index/`: the in-memory bitmap/BSI accelerator (spec-indexing). **Built at
+  repo load** (`RepoIndex::build` in `state.rs::activate`, best-effort) and
+  refreshed to HEAD per query; `run_query_filter` (routes) tries it first and
+  falls back to `query_exec` only on `Unsupported`. Serves predicates as
+  RoaringBitmaps, `FollowsTransitive` by iterative bitmap expansion, sort from
+  BSI representatives, `count` in O(1). `Path`-target follows are resolved to a
+  root metarecord through the (eager) tree cache by the caller and passed in as
+  `PathRoots` (`evaluate_page_with_roots`/`count_with_roots`), so
+  `mfr_path ->* "/dir"` + sort is fully in-memory; validated against the SQL
+  engine by `tests/index_oracle.rs`.
 - `schema.rs`: user schema parsing/validation (errors identify the offending
   constraint), per-field index, delta validation of user writes (violations
   roll the transaction back and return 400 with a `violations` array).

@@ -545,7 +545,9 @@ pub fn tree_children(
     field_name: &str,
     parent: Uuid,
 ) -> Result<Vec<(Uuid, String)>> {
-    let mut stmt = conn.prepare(
+    // `prepare_cached`: this is the per-node hot path of the (fallback) tree
+    // walk, so the statement must not be re-compiled for every node.
+    let mut stmt = conn.prepare_cached(
         "SELECT metarecord_uuid, value_name FROM field
          WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_uuid = ?2",
     )?;
@@ -559,6 +561,47 @@ pub fn tree_children(
         })
         .collect::<Result<Vec<(Uuid, String)>>>()?;
     Ok(children)
+}
+
+/// One TreeRef position: the metarecord, the field name whose forest it belongs
+/// to, its parent (`None` = a forest root) and the name component it contributes.
+pub struct TreeRow {
+    pub field_name: String,
+    pub uuid: Uuid,
+    pub parent: Option<Uuid>,
+    pub name: String,
+}
+
+/// Every TreeRef position in the database, across all field names, ordered so
+/// that a metarecord's positions are grouped and stable (`metarecord_uuid`,
+/// then `id`). Used to populate the tree cache in a single scan at load time
+/// instead of walking the forest node by node.
+pub fn load_tree_forest(conn: &Connection) -> Result<Vec<TreeRow>> {
+    let mut stmt = conn.prepare(
+        "SELECT field_name, metarecord_uuid, value_uuid, value_name FROM field
+         WHERE value_type = 'tree_ref'
+         ORDER BY field_name, metarecord_uuid, id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Vec<u8>>(1)?,
+            r.get::<_, Vec<u8>>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (field_name, uuid, parent, name) = row?;
+        let parent = bytes_to_uuid(parent)?;
+        out.push(TreeRow {
+            field_name,
+            uuid: bytes_to_uuid(uuid)?,
+            parent: if parent == ZERO_UUID { None } else { Some(parent) },
+            name,
+        });
+    }
+    Ok(out)
 }
 
 /// The first tree position `(parent, name)` of a metarecord for `field_name`,

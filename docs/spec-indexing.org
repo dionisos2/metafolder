@@ -362,8 +362,13 @@ concerns.
 behind a mutex and carries the =log_head.op_id= it was built at. The query route
 (=run_query_filter=) consults it only while it reflects the current HEAD, so it
 never serves stale results; supported query shapes go through it (filter / sort /
-count / paginate) and unsupported ones (=Matches=, path-target =Follows=) fall
-back to the SQL engine, cursors included. Freshness is maintained by
+count / paginate) and unsupported ones (=Matches=) fall back to the SQL engine,
+cursors included. =Path=-target =Follows=/=FollowsTransitive= are *supported*:
+=run_query_filter= resolves each path to its root metarecord through the
+(eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
+bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
+served fully in memory. The index is built at repository load (best-effort) so
+the first query pays no build cost. Freshness is maintained by
 =RepoIndex::refresh=: when the new HEAD is a *forward extension* of the built
 HEAD (the common case — writes appended), it replays that forward delta
 incrementally, recomputing only the touched =(metarecord, field)= cells from

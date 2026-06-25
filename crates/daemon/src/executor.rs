@@ -371,7 +371,9 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache, db_id: Uuid)
     }
     let wrote = writer.op_count() > 0;
     writer.commit()?;
-    cache.clear();
+    // The restore rewrote tree positions arbitrarily: rebuild the cache from
+    // the new state (keeps it complete; `populate` clears first).
+    cache.populate(conn)?;
     conn.execute("DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'", params![max_id])?;
     Ok(if wrote { 1 } else { 0 })
 }

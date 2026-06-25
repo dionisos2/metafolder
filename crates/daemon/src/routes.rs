@@ -259,7 +259,13 @@ where
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
+        // Manual TreeRef writes bypass the watcher's incremental cache upkeep;
+        // rebuild the complete cache so reads stay correct (no-op if absent).
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         metarecord_response(&conn, uuid)
     })
     .await
@@ -795,8 +801,9 @@ async fn rollback(
         let mut conn = repo_state.conn.lock_recover();
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let result = crate::log::navigate(&mut conn, repo_uuid, resolved)?;
-        // Navigation rewrites tree positions arbitrarily: drop the cache.
-        repo_state.lock_cache().clear();
+        // Navigation rewrites tree positions arbitrarily: rebuild the cache
+        // from the new state (keeps it complete; `populate` clears first).
+        repo_state.lock_cache().populate(&conn)?;
         Ok(Json(result))
     })
     .await
@@ -1033,8 +1040,9 @@ async fn rollback_step(
         let done = {
             let mut conn = repo_state.conn.lock_recover();
             let new_head = crate::log::coordinated_step(&mut conn, repo_uuid, target, skip)?;
-            // The step rewrote tree positions arbitrarily: drop the cache.
-            repo_state.lock_cache().clear();
+            // The step rewrote tree positions arbitrarily: rebuild the cache
+            // from the new state (keeps it complete; `populate` clears first).
+            repo_state.lock_cache().populate(&conn)?;
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = repo_state.lock_cache();
@@ -1406,6 +1414,18 @@ fn run_query_filter(
         })
         .collect();
 
+    // Resolve every Path-target follows in the query to its root metarecord
+    // through the (eagerly populated) tree cache, so the bitmap index can serve
+    // `mfr_path ->* "/dir"` by in-memory expansion instead of deferring to SQL.
+    let mut path_targets = Vec::new();
+    crate::index::collect_path_targets(&body.query, &mut path_targets);
+    let mut roots = crate::index::PathRoots::new();
+    for (field, path) in path_targets {
+        if let Some(uuid) = cache.resolve_path(conn, &field, &path)? {
+            roots.insert((field, path), uuid);
+        }
+    }
+
     let mut index_guard = repo_state.index.lock_recover();
     match index_guard.as_mut() {
         // Already built: bring it up to the current HEAD (incrementally when the
@@ -1415,11 +1435,13 @@ fn run_query_filter(
     }
     let index = index_guard.as_ref().expect("index built above");
 
-    match index.evaluate_page(&body.query, &sort_by, body.limit, body.cursor.as_deref()) {
+    match index.evaluate_page_with_roots(&body.query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
+    {
         Ok((uuids, next_cursor)) => {
-            let total = body
-                .count
-                .then(|| index.count(&body.query).expect("a page-able query also counts") as usize);
+            let total = body.count.then(|| {
+                index.count_with_roots(&body.query, &roots).expect("a page-able query also counts")
+                    as usize
+            });
             Ok((uuids, next_cursor, total))
         }
         Err(_unsupported) => {
@@ -1527,7 +1549,11 @@ async fn batch_set(
             writer.set_field(*uuid, &body.name, body.value.clone())?;
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
         }
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         Ok(Json(json!({"updated": uuids.len()})))
     })
     .await
@@ -1565,7 +1591,11 @@ async fn retype_field(
         let mut conn = repo_state.conn.lock_recover();
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         let summary = writer.retype_field(&name, to)?;
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         Ok(Json(json!({
             "converted": summary.converted,
             "fallback_count": summary.fallback_uuids.len(),
@@ -1602,9 +1632,13 @@ async fn delete_by_query(
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;
         }
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
-        // Deletions remove tree nodes arbitrarily: drop the cache.
-        repo_state.lock_cache().clear();
+        // Deleting a metarecord with a TreeRef removes tree nodes: rebuild the
+        // complete cache so reads stay correct (no-op if absent).
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         Ok(Json(json!({"deleted": uuids.len()})))
     })
     .await
@@ -1634,7 +1668,11 @@ async fn create_record_endpoint(
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         let created = writer.create_metarecord(body.fields)?;
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         Ok(Json(created))
     })
     .await
@@ -1667,7 +1705,11 @@ async fn delete_record_endpoint(
         }
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         writer.delete_metarecord(uuid)?;
+        let tree_touched = writer.touched_tree();
         writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
         Ok(StatusCode::NO_CONTENT)
     })
     .await

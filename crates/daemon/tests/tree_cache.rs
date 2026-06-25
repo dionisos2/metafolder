@@ -187,6 +187,99 @@ fn test_descendants_collects_transitively() {
     assert!(cache.descendants(&conn, "mfr_path", file).unwrap().is_empty());
 }
 
+// ── Eager population ────────────────────────────────────────────────────────
+
+#[test]
+fn test_populate_serves_reads_without_db() {
+    // After an eager populate, the whole forest is resident: every read-side
+    // navigation is served from memory, so `misses` (DB fallbacks) stays 0.
+    let (mut conn, db_id) = test_conn();
+    let (root, music, jazz, file) = build_tree(&mut conn, db_id);
+    let rock = tree_entry(&mut conn, db_id, "mfr_path", Some(music), "rock");
+
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+    assert!(cache.is_complete(), "a forest within budget populates completely");
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), Some(jazz));
+    assert_eq!(
+        cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(),
+        Some(file)
+    );
+    // A genuinely absent path resolves to None without touching the DB.
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/none").unwrap(), None);
+
+    assert_eq!(
+        cache.path_of(&conn, "mfr_path", file).unwrap(),
+        Some("/music/jazz/file.mp3".to_string())
+    );
+    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["music/jazz/file.mp3"]);
+
+    let mut got = cache.descendants(&conn, "mfr_path", music).unwrap();
+    got.sort();
+    let mut expected = vec![jazz, file, rock];
+    expected.sort();
+    assert_eq!(got, expected);
+    assert_eq!(cache.descendants(&conn, "mfr_path", root).unwrap().len(), 4);
+    assert!(cache.descendants(&conn, "mfr_path", file).unwrap().is_empty());
+
+    assert_eq!(cache.misses(), 0, "no read should fall back to the database");
+}
+
+#[test]
+fn test_populate_matches_lazy_descendants() {
+    // The eager walk must return exactly what the DB walk returns.
+    let (mut conn, db_id) = test_conn();
+    let (root, music, _, _) = build_tree(&mut conn, db_id);
+    let _rock = tree_entry(&mut conn, db_id, "mfr_path", Some(music), "rock");
+
+    let mut lazy = TreeCache::new(false);
+    let mut from_db = lazy.descendants(&conn, "mfr_path", root).unwrap();
+    from_db.sort();
+
+    let mut eager = TreeCache::new(false);
+    eager.populate(&conn).unwrap();
+    let mut from_cache = eager.descendants(&conn, "mfr_path", root).unwrap();
+    from_cache.sort();
+
+    assert_eq!(from_cache, from_db);
+}
+
+#[test]
+fn test_populate_then_mutations_stay_complete_and_correct() {
+    let (mut conn, db_id) = test_conn();
+    let (root, music, jazz, _file) = build_tree(&mut conn, db_id);
+
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+
+    // Insert a new file under jazz: cache stays complete and reflects it.
+    let new = tree_entry(&mut conn, db_id, "mfr_path", Some(jazz), "b.mp3");
+    cache.apply_insert("mfr_path", Some(jazz), "b.mp3", new);
+    assert!(cache.is_complete());
+    assert!(cache.descendants(&conn, "mfr_path", root).unwrap().contains(&new));
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/b.mp3").unwrap(), Some(new));
+
+    // Remove the jazz subtree: descendants no longer include it.
+    cache.apply_remove("mfr_path", jazz);
+    let ds = cache.descendants(&conn, "mfr_path", music).unwrap();
+    assert!(!ds.contains(&jazz) && !ds.contains(&new));
+    assert_eq!(cache.misses(), 0, "maintenance keeps reads in memory");
+}
+
+#[test]
+fn test_populate_skipped_when_forest_exceeds_budget() {
+    // A forest larger than the node budget stays in lazy mode (DB fallback).
+    let (mut conn, db_id) = test_conn();
+    let _ = build_tree(&mut conn, db_id); // 4 nodes
+    let mut cache = TreeCache::with_limit(false, 2);
+    cache.populate(&conn).unwrap();
+    assert!(!cache.is_complete(), "over-budget forest must not claim completeness");
+    // Reads still work via the DB fallback.
+    assert!(cache.resolve_path(&conn, "mfr_path", "/music").unwrap().is_some());
+    assert!(cache.misses() > 0);
+}
+
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
 #[test]

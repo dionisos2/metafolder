@@ -498,6 +498,48 @@ fn reverse_tree_follows_transitive() {
 }
 
 #[test]
+fn reverse_tree_follows_path_target_matches_sql() {
+    // The path-target shape the GUI uses (`mfr_path ->* "/dir"`): the index
+    // serves it once the caller resolves the path to its root through the tree
+    // cache. Each path must agree with the SQL engine, and an unresolved path
+    // (no roots supplied) must stay `Unsupported` so the route falls back.
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    for path in ["root", "root/b", "root/d", "root/nope"] {
+        for transitive in [true, false] {
+            let target = FollowTarget::Path(path.to_string());
+            let q = if transitive {
+                Query::FollowsTransitive { field: "loc".into(), target }
+            } else {
+                Query::Follows { field: "loc".into(), target }
+            };
+            // Resolve the path root exactly as `run_query_filter` does.
+            let mut roots = metafolder_daemon::index::PathRoots::new();
+            if let Some(uuid) = o.cache.resolve_path(&o.conn, "loc", path).unwrap() {
+                roots.insert(("loc".to_string(), path.to_string()), uuid);
+            }
+            let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+
+            let (mut sql, _) =
+                query_exec::execute(&o.conn, &mut o.cache, o.db_id, &q, &[], None, None).unwrap();
+            let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            sql.sort();
+            got.sort();
+            assert_eq!(got, sql, "path divergence on {q:?}");
+
+            let sql_count = query_exec::count(&o.conn, &mut o.cache, o.db_id, &q).unwrap();
+            assert_eq!(
+                index.count_with_roots(&q, &roots).unwrap() as usize,
+                sql_count,
+                "count divergence on {q:?}"
+            );
+
+            // Without resolved roots the bitmap path defers to SQL.
+            assert!(index.evaluate(&q).is_err(), "path target needs roots: {q:?}");
+        }
+    }
+}
+
+#[test]
 fn reverse_tree_transitive_conjunction() {
     // The spec's motivating shape: descendants ∧ value predicate ∧ category.
     let (mut o, [_root, _b, _c, _d]) = forest();
