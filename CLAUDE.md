@@ -24,9 +24,10 @@ cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
 cargo run -p metafolder-daemon
 cargo run -p metafolder-daemon -- --port 8080
 
-# Run the CLI (binary name: mf)
+# Run the CLI (binary name: mf). Repo/daemon are chosen by global flags before
+# the command: -n <name> / -u <uuid> (repo), -p <port> (daemon, default 7523).
 cargo run -p metafolder-cli -- --help
-cargo run -p metafolder-cli -- --repo <UUID> list
+cargo run -p metafolder-cli -- -u <UUID> metarecord get
 
 # GUI: frontend tests + build (run from crates/gui/frontend; npm install once)
 npm --prefix crates/gui/frontend test
@@ -245,32 +246,56 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
 The `mf` binary (package `metafolder-cli`): a thin client over the daemon's
 HTTP API, specified in the `* CLI` sections of the spec files (the log,
 rollback and prune commands are implemented in `log.rs`; only the sync
-commands remain v2 and unimplemented). Library + thin `main.rs`:
+commands remain v2 and unimplemented). Library + thin `main.rs`.
 
-- `fieldspec.rs`: parses `name:type[=value]` field specs into
-  `(String, Value)`.
+The command tree (spec-data-model "* CLI") is a noun/verb hierarchy whose verbs
+follow one pattern at every level — `get`⁻¹`set`, `add`⁻¹`delete`:
+
+- `mf repo {list,init,load,unload}`, `mf task {list,show}`,
+  `mf log {list,rollback,prune}` — `list` is each group's default.
+- `mf metarecord [selector] <verb>` where the **selector is an option that
+  precedes the verb** (so it can serve every verb, `field` included, without
+  clap's "positional before subcommand" limit): `-q "<DSL>"` (query; add `-s`
+  for simplified text), `-i <uuid>` (one metarecord), or none (all). Verbs:
+  `get` (-i → full JSON; -q/none → uuids, `--select/--sort/--limit/--values`),
+  `add <specs>` (create, no selector), `set <specs>` (whole-record overwrite —
+  needs `-i` and mandatory `-f`), `delete` (needs a selector), and
+  `field <verb> <name|spec>` (`get/set/add/delete/unset`, scoped by the
+  selector). Example: `mf -n music metarecord -q 'rating>3' field set tag:string=x`.
+- `mf field {get,set,delete} <id>` — direct field-row access by DB id.
+- `mf retype <name> <type>` (top-level; name-scoped, repo-wide).
+
+main.rs holds only clap structs + `dispatch_*`; the work is in:
+
+- `fieldspec.rs`: parses `name:type[=value]` field specs into `(String, Value)`.
 - The query DSL parser is shared from core (`lib.rs` re-exports
   `metafolder_core::dsl`); the simplified→DSL expansion is also done locally
   via `metafolder_core::simplified` (no daemon round-trip).
 - `client.rs`: `ureq`-based HTTP client; `CliError::Usage` (exit 2) vs
   `CliError::Op` (exit 1), daemon/GUI `{"error": ...}` bodies become
   `error: <message>` on stderr.
-- `commands.rs`: one function per command; `<query|uuid>` targets, internal
-  pagination (`PAGE_SIZE` 500, follows `next_cursor`), reconcile/violation
-  formatting, confirmation prompt for predicate `mf delete`, `mf path`
-  (one `POST /tree/resolve` call), `mf query --values` (raw values, one per line).
+- `commands.rs`: one function per command; `Ctx` resolves the repo (`-n` name →
+  uuid via `GET /repos`, cached) and builds the base URL from `-p`;
+  `resolve_selector` turns `-q/-i/-s` into a target string (+ simplified
+  expansion). Internal pagination (`PAGE_SIZE` 500, follows `next_cursor`),
+  reconcile/violation formatting, confirmation prompt for query `delete`,
+  `mf path` (one `POST /tree/resolve` call), `field get`/`metarecord get
+  --values` (raw values, one per line).
 - `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
   mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
   port discovery via the GUI `config.toml` (`gui-port`), `--gui-url`/`METAFOLDER_GUI_URL`.
-- `log.rs`: `mf log` / `mf log show`, `mf rollback` (+ `rollback plan`, with
-  the `--on-move-available/-unavailable` skip policies driving the coordinated
-  navigation), `mf prune before|linearize`. ISO-8601 ↔ Unix-ms conversion is
-  shared from `metafolder_core::date` (the single dependency-free date helper,
-  also used by the daemon's `fs_meta`).
+- `log.rs`: `mf log {list,show,rollback,prune}` (+ `rollback plan`, with the
+  `--on-move-available/-unavailable` skip policies driving the coordinated
+  navigation). ISO-8601 ↔ Unix-ms conversion is shared from
+  `metafolder_core::date` (the single dependency-free date helper, also used by
+  the daemon's `fs_meta`).
 
-Repo-scoped commands require `--repo`/`METAFOLDER_REPO` (checked before any
-HTTP round-trip); `--daemon-url`/`METAFOLDER_DAEMON_URL` defaults to
-`http://127.0.0.1:7523`.
+Repo selection (`-n <name>` / `-u <uuid>`, mutually exclusive) and the daemon
+port (`-p`, default 7523) are **global flags that precede the command** — not
+clap-`global`, so they appear only in `mf --help`, not in every subcommand's
+help. Env fallbacks: `METAFOLDER_REPO_NAME`, `METAFOLDER_REPO`,
+`METAFOLDER_DAEMON_PORT`. A repo-scoped command with no selector fails with a
+usage error (exit 2) before any HTTP round-trip.
 
 ### `crates/gui`
 
