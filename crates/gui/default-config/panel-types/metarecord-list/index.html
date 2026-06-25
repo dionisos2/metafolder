@@ -80,6 +80,13 @@
       #bulk-form #bulk-value input {
         flex: 1;
       }
+      #bulk-form select {
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 3px 6px;
+      }
       #scroll {
         flex: 1;
         overflow-y: auto;
@@ -225,9 +232,14 @@
         <button id="columns-apply">Apply</button>
       </div>
       <div id="columns-error" class="editor-error"></div>
-      <button id="bulk-open" type="button" title="Set a field value on every metarecord matching the current query (uses POST /set)">Set field on query…</button>
+      <button id="bulk-open" type="button" title="Set, append, or remove a field on every metarecord matching the current query">Edit field on query…</button>
       <div id="bulk-form">
         <div class="editor-row">
+          <select id="bulk-op" title="set: replace all rows · append: add a row · remove: delete rows equal to this value">
+            <option value="set">Set (replace all rows)</option>
+            <option value="append">Append (add a row)</option>
+            <option value="remove">Remove (delete matching rows)</option>
+          </select>
           <input id="bulk-name" placeholder="field name, e.g. rating" />
           <button id="bulk-type" type="button">string ▾</button>
         </div>
@@ -238,7 +250,7 @@
           <label class="freeze-label" title="Required to write reserved mfr_* fields">
             <input id="bulk-force" type="checkbox" /> Force
           </label>
-          <button id="bulk-apply">Apply set</button>
+          <button id="bulk-apply">Apply</button>
           <button id="bulk-cancel" type="button">Cancel</button>
         </div>
         <div id="bulk-error" class="editor-error"></div>

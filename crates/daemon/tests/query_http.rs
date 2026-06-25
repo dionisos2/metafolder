@@ -434,6 +434,131 @@ async fn test_batch_set() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn test_batch_append() {
+    let (app, repo, root) = setup("append").await;
+    for genre in ["jazz", "jazz", "rock"] {
+        create(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": genre}}]),
+        )
+        .await;
+    }
+
+    // Append a tag row to every jazz metarecord (multi-map: never replaces).
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/append"),
+        Some(json!({
+            "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
+            "name": "tag",
+            "value": {"type": "string", "value": "a"}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "append failed: {body}");
+    assert_eq!(body, json!({"updated": 2}));
+
+    // A second append adds a second row rather than replacing the first.
+    let (_, body2) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/append"),
+        Some(json!({
+            "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
+            "name": "tag",
+            "value": {"type": "string", "value": "b"}
+        })),
+    )
+    .await;
+    assert_eq!(body2, json!({"updated": 2}));
+
+    // Both tag rows coexist on the two jazz metarecords (multi-map preserved).
+    for tag in ["a", "b"] {
+        let (_, hits) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query"),
+            Some(json!({"query": {"type": "eq", "field": "tag",
+                                  "value": {"type": "string", "value": tag}}})),
+        )
+        .await;
+        assert_eq!(hits.as_array().unwrap().len(), 2, "tag={tag}");
+    }
+
+    // Reserved field without force → 400.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/append"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "genre"},
+            "name": "mfr_size",
+            "value": {"type": "int", "value": 1}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_remove_by_query() {
+    let (app, repo, root) = setup("remove").await;
+    // Two metarecords, each carrying tag=test and tag=keep (multi-map).
+    for _ in 0..2 {
+        create(
+            &app,
+            &repo,
+            json!([
+                {"name": "tag", "value": {"type": "string", "value": "test"}},
+                {"name": "tag", "value": {"type": "string", "value": "keep"}}
+            ]),
+        )
+        .await;
+    }
+
+    // Remove only the tag=test rows across every metarecord (inverse of add).
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/remove"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "tag"},
+            "name": "tag",
+            "value": {"type": "string", "value": "test"}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "remove failed: {body}");
+    assert_eq!(body, json!({"updated": 2}));
+
+    // tag=test is gone; tag=keep is untouched.
+    let (_, gone) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "tag",
+                              "value": {"type": "string", "value": "test"}}})),
+    )
+    .await;
+    assert_eq!(gone.as_array().unwrap().len(), 0);
+    let (_, kept) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "tag",
+                              "value": {"type": "string", "value": "keep"}}})),
+    )
+    .await;
+    assert_eq!(kept.as_array().unwrap().len(), 2);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── In-memory index wiring (spec-indexing increment 5) ──────────────────────
 
 /// After a write advances the log HEAD, the index is rebuilt before the next

@@ -570,20 +570,38 @@ of updated metarecords.
 |-----------+------------------------------------------------------------|
 | =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
 
-** =mf add <uuid> <spec>=
+** =mf add <query|uuid> <spec>=
 
 Appends one field row without touching existing rows of that name (multi-map
-append, =POST .../fields=). Only accepts a UUID target: the batch endpoint
-has =set= semantics only.
+append). With a UUID target, issues a direct =POST .../fields=; with a
+predicate, uses the batch =POST /repos/:repo/append= endpoint (single
+server-side transaction) and prints the number of metarecords that gained a row.
 
 | Flag      | Description                          |
 |-----------+--------------------------------------|
 | =--force= | Required to write =mfr_*= fields     |
 
+** =mf remove <query|uuid> <spec>=
+
+Removes every field row equal to the spec's =(name, value)= — the *inverse* of
+=mf add=. With a UUID target, removes the matching rows of that one metarecord;
+with a predicate, uses the batch =POST /repos/:repo/remove= endpoint (single
+server-side transaction). Prints the number of metarecords actually changed.
+Only rows whose value equals the spec value are removed; other rows of the same
+name and rows on non-matching metarecords are kept. Removing all rows of a name
+leaves the field /unknown/ (absent), distinct from setting it to =Nothing= with
+=mf set ... :nothing=.
+
+| Flag      | Description                          |
+|-----------+--------------------------------------|
+| =--force= | Required to remove =mfr_*= fields    |
+
 ** =mf unset <uuid> <field_id>=
 
-Deletes the single field row identified by =field_id= (as shown by
-=mf get=). Calls =DELETE .../fields/:field_id=.
+Deletes the single field row identified by =field_id= (as shown by =mf get=) —
+the low-level, row-precise delete used for fixing one specific row. Calls
+=DELETE .../fields/:field_id=. (To remove rows by value across a query, use
+=mf remove=.)
 
 | Flag      | Description                          |
 |-----------+--------------------------------------|

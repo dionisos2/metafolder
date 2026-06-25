@@ -92,10 +92,21 @@ enum Command {
     },
     /// Append one field row without touching existing rows (multi-map)
     Add {
-        uuid: String,
+        /// MetaRecord UUID or query predicate
+        target: String,
         /// Field spec name:type[=value]
         spec: String,
         /// Required to write mfr_* fields
+        #[arg(long)]
+        force: bool,
+    },
+    /// Remove field rows equal to the spec (inverse of `add`)
+    Remove {
+        /// MetaRecord UUID or query predicate
+        target: String,
+        /// Field spec name:type[=value] — only rows with this value are removed
+        spec: String,
+        /// Required to remove mfr_* fields
         #[arg(long)]
         force: bool,
     },
@@ -444,7 +455,8 @@ fn main() {
         }
         Command::Create { fields, force } => commands::create(&ctx, &fields, force),
         Command::Set { target, spec, force } => commands::set(&ctx, &target, &spec, force),
-        Command::Add { uuid, spec, force } => commands::add(&ctx, &uuid, &spec, force),
+        Command::Add { target, spec, force } => commands::add(&ctx, &target, &spec, force),
+        Command::Remove { target, spec, force } => commands::remove(&ctx, &target, &spec, force),
         Command::Retype { name, to } => commands::retype(&ctx, &name, &to),
         Command::Unset { uuid, field_id, force } => {
             commands::unset(&ctx, &uuid, field_id, force)

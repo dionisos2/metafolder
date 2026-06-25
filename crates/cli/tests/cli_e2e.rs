@@ -452,6 +452,46 @@ fn test_add_appends_multimap_row() {
 }
 
 #[test]
+fn test_add_with_predicate_appends_to_matches() {
+    let (repo, _) = init_repo("add_pred");
+    create_metarecord(&repo, &["genre:string=jazz"]);
+    create_metarecord(&repo, &["genre:string=jazz"]);
+    create_metarecord(&repo, &["genre:string=rock"]);
+    let out = mf(&["--repo", &repo, "add", r#"genre = "jazz""#, "tag:string=x"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "2");
+    let out = mf(&["--repo", &repo, "query", r#"tag = "x""#]);
+    assert_eq!(out.stdout.lines().count(), 2);
+}
+
+#[test]
+fn test_remove_by_uuid_drops_only_matching_value_rows() {
+    let (repo, _) = init_repo("remove_uuid");
+    let uuid = create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
+    let out = mf(&["--repo", &repo, "remove", &uuid, "tag:string=test"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "1");
+    let entries = get_entries(&repo, &uuid);
+    let fields = entries[0]["fields"].as_array().unwrap();
+    let tags: Vec<&serde_json::Value> = fields.iter().filter(|f| f["name"] == "tag").collect();
+    assert_eq!(tags.len(), 1, "only the matching-value row is removed");
+    assert_eq!(tags[0]["value"]["value"], "keep");
+}
+
+#[test]
+fn test_remove_by_predicate_prints_changed_count() {
+    let (repo, _) = init_repo("remove_pred");
+    create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
+    create_metarecord(&repo, &["tag:string=test"]);
+    create_metarecord(&repo, &["tag:string=keep"]);
+    let out = mf(&["--repo", &repo, "remove", "tag IS PRESENT", "tag:string=test"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "2", "two metarecords carried tag=test");
+    assert_eq!(mf(&["--repo", &repo, "query", r#"tag = "test""#]).stdout.lines().count(), 0);
+    assert_eq!(mf(&["--repo", &repo, "query", r#"tag = "keep""#]).stdout.lines().count(), 2);
+}
+
+#[test]
 fn test_unset_deletes_single_row_by_id() {
     let (repo, _) = init_repo("unset");
     let uuid = create_metarecord(&repo, &["genre:string=jazz", "genre:string=blues"]);

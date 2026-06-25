@@ -262,13 +262,56 @@ pub fn retype(ctx: &Ctx, name: &str, to: &str) -> Result<i32, CliError> {
     Ok(0)
 }
 
-pub fn add(ctx: &Ctx, uuid: &str, spec: &str, force: bool) -> Result<i32, CliError> {
+pub fn add(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let uuid = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
     let (name, value) = parse_spec(spec)?;
-    let body = json!({"name": name, "value": value, "force": force});
-    ctx.client.post(&format!("{base}/metarecords/{}/fields", uuid.as_simple()), &body)?;
+    match parse_target(target)? {
+        Target::Entry(uuid) => {
+            let body = json!({"name": name, "value": value, "force": force});
+            ctx.client.post(&format!("{base}/metarecords/{}/fields", uuid.as_simple()), &body)?;
+        }
+        Target::Predicate(query) => {
+            let body = json!({"query": query, "name": name, "value": value, "force": force});
+            let resp = ctx.client.post(&format!("{base}/append"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
+    Ok(0)
+}
+
+/// Removes field rows equal to the spec's `(name, value)` — the inverse of `add`.
+/// A predicate target uses the atomic `POST /remove`; a UUID target has no
+/// dedicated endpoint, so it deletes each matching row by id. Both print the
+/// number of metarecords changed (0 or 1 for a UUID).
+pub fn remove(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let (name, value) = parse_spec(spec)?;
+    match parse_target(target)? {
+        Target::Entry(uuid) => {
+            let entry = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+            let ids: Vec<i64> = entry["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|f| f["name"] == name && f["value"] == value)
+                .filter_map(|f| f["id"].as_i64())
+                .collect();
+            for id in &ids {
+                ctx.client.request(
+                    "DELETE",
+                    &format!("{base}/metarecords/{}/fields/{id}", uuid.as_simple()),
+                    &[],
+                    Some(&json!({"force": force})),
+                )?;
+            }
+            println!("{}", if ids.is_empty() { 0 } else { 1 });
+        }
+        Target::Predicate(query) => {
+            let body = json!({"query": query, "name": name, "value": value, "force": force});
+            let resp = ctx.client.post(&format!("{base}/remove"), &body)?;
+            println!("{}", resp["updated"].as_u64().unwrap_or(0));
+        }
+    }
     Ok(0)
 }
 

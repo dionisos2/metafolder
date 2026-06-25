@@ -1138,6 +1138,21 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
+    /// Removes every row of `(uuid, name)` whose value equals `value` — the
+    /// inverse of [`Self::append_field`]. Row-scoped (each removal reuses the
+    /// `delete_field` snapshot, so rollback restores the exact rows). Returns the
+    /// number of rows removed.
+    pub fn delete_fields_valued(&mut self, uuid: Uuid, name: &str, value: &Value) -> Result<usize> {
+        let mut removed = 0;
+        for row in db::get_field_rows_named(&self.tx, uuid, name)? {
+            if &row.value == value {
+                self.delete_field(uuid, row.id)?;
+                removed += 1;
+            }
+        }
+        Ok(removed)
+    }
+
     /// Flushes the remaining buffered operations, writes the final HEAD and
     /// commits the transaction.
     pub fn commit(mut self) -> Result<()> {

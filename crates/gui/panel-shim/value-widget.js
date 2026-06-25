@@ -148,8 +148,9 @@ export const MATCH_ALL = {
 };
 
 /**
- * Body for `POST /repos/:repo/set` — set a field value over a whole query
- * result. A null `queryIR` (the empty/match-all query of metarecord-list) maps
+ * Body for the batch field endpoints `POST /repos/:repo/{set,append,remove}` —
+ * a field value applied over a whole query result (the three share one body
+ * shape). A null `queryIR` (the empty/match-all query of metarecord-list) maps
  * to MATCH_ALL; `force` is only sent when set (the daemon requires it for
  * reserved `mfr_*` fields).
  */

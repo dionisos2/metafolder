@@ -56,6 +56,7 @@ export async function mount(root, metafolder) {
   const normalError = root.getElementById('normal-error');
   const normalFreeze = root.getElementById('normal-freeze');
   const bulkForm = root.getElementById('bulk-form');
+  const bulkOp = root.getElementById('bulk-op');
   const bulkName = root.getElementById('bulk-name');
   const bulkValueSlot = root.getElementById('bulk-value');
   const bulkForce = root.getElementById('bulk-force');
@@ -467,9 +468,16 @@ export async function mount(root, metafolder) {
     void fetchPage(true);
   }
 
-  // ── Bulk set (set a field on the whole query result) ────────────────────
+  // ── Bulk edit (set/append/remove a field over the whole query result) ────
 
   let bulkWidget = null; // {element, read()} following the picked type
+
+  // Each operation maps to its batch endpoint and a confirmation verb.
+  const BULK_OPS = {
+    set: { path: 'set', verb: 'Set', prep: 'on' },
+    append: { path: 'append', verb: 'Append', prep: 'to' },
+    remove: { path: 'remove', verb: 'Remove', prep: 'from' },
+  };
 
   /** The form's value widget follows the picked type. */
   function setBulkWidget(type) {
@@ -496,20 +504,28 @@ export async function mount(root, metafolder) {
     return result.total ?? 0;
   }
 
-  async function applyBulkSet() {
+  async function applyBulkEdit() {
     bulkError.textContent = '';
     try {
       if (!repo) throw new Error('no active repository');
+      const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
       const name = bulkName.value.trim();
       if (!name) throw new Error('field name is required');
       const value = bulkWidget.read();
       const force = name.startsWith('mfr_') || bulkForce.checked;
       const n = await countMatches();
-      if (!confirm(`Set "${name}" on ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
-      const resp = await daemon.call('POST', `/repos/${repo}/set`, bulkSetBody(queryIR, name, value, force));
+      if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
+      const resp = await daemon.call(
+        'POST',
+        `/repos/${repo}/${op.path}`,
+        bulkSetBody(queryIR, name, value, force),
+      );
       const updated = resp.updated ?? 0;
       bulkForm.classList.remove('open');
-      statusBar.message(`Field "${name}" set on ${updated} metarecord${updated === 1 ? '' : 's'}.`, 5000);
+      statusBar.message(
+        `${op.verb} "${name}": ${updated} metarecord${updated === 1 ? '' : 's'} changed.`,
+        5000,
+      );
       // Refresh this list and any metarecord-detail mirror (the cache picks the
       // write up via the change feed on the next reset fetch).
       await workspace.set('metarecords:dirty', Date.now());
@@ -549,11 +565,11 @@ export async function mount(root, metafolder) {
   });
   root
     .getElementById('bulk-open')
-    .addEventListener('click', () => void commands.invoke('metarecord-list:bulk-set'));
-  root.getElementById('bulk-apply').addEventListener('click', () => void applyBulkSet());
+    .addEventListener('click', () => void commands.invoke('metarecord-list:bulk-edit'));
+  root.getElementById('bulk-apply').addEventListener('click', () => void applyBulkEdit());
   root.getElementById('bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
   bulkName.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyBulkSet();
+    if (event.key === 'Enter') void applyBulkEdit();
   });
 
   // ── Wiring ──────────────────────────────────────────────────────────────
@@ -617,8 +633,8 @@ export async function mount(root, metafolder) {
     label: 'Metarecord list: reload from the daemon',
     handler: () => fetchPage(true),
   });
-  commands.register('metarecord-list:bulk-set', {
-    label: 'Metarecord list: set a field on every metarecord matching the query',
+  commands.register('metarecord-list:bulk-edit', {
+    label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
     reveal: true,
     handler: openBulkForm,
   });

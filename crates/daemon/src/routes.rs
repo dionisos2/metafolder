@@ -47,6 +47,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/tree/resolve", post(tree_resolve))
         .route("/repos/:repo/set", post(batch_set))
+        .route("/repos/:repo/append", post(batch_append))
+        .route("/repos/:repo/remove", post(batch_remove))
         .route("/repos/:repo/fields/:name/retype", post(retype_field))
         .route("/repos/:repo/delete", post(delete_by_query))
         .route("/repos/:repo/log", get(get_log))
@@ -1585,6 +1587,78 @@ async fn batch_set(
             repo_state.lock_cache().populate(&conn)?;
         }
         Ok(Json(json!({"updated": uuids.len()})))
+    })
+    .await
+}
+
+/// Runs the query server-side and appends one field row to every match in a
+/// single transaction (one revision) — the bulk form of `POST
+/// /metarecords/:uuid/fields`. Multi-map: never replaces existing rows.
+async fn batch_append(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchSetBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&body.name, body.force)?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let (uuids, _) =
+            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+        drop(cache);
+
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        for uuid in &uuids {
+            writer.append_field(*uuid, &body.name, body.value.clone())?;
+            validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+        }
+        let tree_touched = writer.touched_tree();
+        writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
+        Ok(Json(json!({"updated": uuids.len()})))
+    })
+    .await
+}
+
+/// Runs the query server-side and removes every field row equal to
+/// `(name, value)` from each match in a single transaction (one revision) — the
+/// inverse of `batch_append`. `updated` counts the metarecords actually changed
+/// (those that carried at least one matching row).
+async fn batch_remove(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchSetBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&body.name, body.force)?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let (uuids, _) =
+            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+        drop(cache);
+
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut changed = 0usize;
+        for uuid in &uuids {
+            if writer.delete_fields_valued(*uuid, &body.name, &body.value)? > 0 {
+                changed += 1;
+                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+            }
+        }
+        let tree_touched = writer.touched_tree();
+        writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
+        Ok(Json(json!({"updated": changed})))
     })
     .await
 }

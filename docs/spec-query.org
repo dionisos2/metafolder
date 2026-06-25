@@ -251,6 +251,37 @@ Writing a protected field name without =force= returns =400=. See [[*Protected f
 
 Response body: ={"updated": <count>}=
 
+*** =POST /repos/:repo_uuid/append= (Batch append)
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/append
+#+END_SRC
+
+Runs a query server-side and appends one field row to every matching metarecord
+in a single transaction (one revision) — the bulk form of =POST
+/metarecords/:uuid/fields=. Multi-map: existing rows of the field name are never
+replaced. Same request body and protected-field rule as [[*=POST /repos/:repo_uuid/set= (Batch set)][Batch set]].
+
+Response body: ={"updated": <count>}= — the number of matching metarecords (each
+gains one row).
+
+*** =POST /repos/:repo_uuid/remove= (Batch remove)
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/remove
+#+END_SRC
+
+Runs a query server-side and removes every field row equal to =(name, value)=
+from each matching metarecord in a single transaction (one revision) — the
+*inverse of* [[*=POST /repos/:repo_uuid/append= (Batch append)][Batch append]]. Only rows whose value equals =value= are removed;
+other rows of the same field name (multi-map) and rows on non-matching
+metarecords are left untouched. Removing all rows of a name leaves the field
+*unknown* (absent), which is distinct from setting it to =Nothing=. Same request
+body and protected-field rule as [[*=POST /repos/:repo_uuid/set= (Batch set)][Batch set]].
+
+Response body: ={"updated": <count>}= — the number of metarecords actually
+changed (those that carried at least one matching row).
+
 *** =POST /repos/:repo_uuid/delete= (Delete by query)
 
 #+BEGIN_SRC
