@@ -1560,10 +1560,12 @@ the panel has been instantiated at least once in the session.
 ** Path display
 
 Path resolution runs **daemon-side**, in one round-trip whatever the depth:
-=POST /repos/:repo/tree/resolve= ={ field?, uuids[] }= walks each metarecord's
-TreeRef positions through the in-memory tree cache and returns repo-root-relative
-paths. It is general over any TreeRef field (=mfr_path= by default) and multi-map
-(an array per metarecord; stale positions skipped). The CLI's =mf path= and the
+=POST /repos/:repo/query/fields/resolve-tree= ={ query, field? }= walks each
+matching metarecord's TreeRef positions through the in-memory tree cache and
+returns repo-root-relative paths (the explicit-UUID case uses a =uuid_in= query).
+It is general over any TreeRef field (=mfr_path= by default) and multi-map
+(an array per metarecord; stale positions skipped). A single metarecord can also
+use the direct =GET …/metarecords/:uuid/fields/:name/resolve-tree=. The CLI's =mf path= and the
 GUI shim's =metafolder.daemon.resolvePath= / =resolveTreeRef= /
 =metarecordPaths= are thin wrappers over it (the shim keeps a per-repo memo
 cache; =invalidatePath= drops one metarecord after a move); =repoRoot= gives the

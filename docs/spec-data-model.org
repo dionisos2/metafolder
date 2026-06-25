@@ -133,7 +133,7 @@ cross-type precedence (see [[*Sort specification (=POST /query=)]]).
 Because the first write locks the type, an explicit *retype* operation changes a
 field name's type repository-wide, converting every existing non-=Nothing= row:
 
-- HTTP: =POST /repos/:repo_uuid/fields/:name/retype= with body ={"to":
+- HTTP: =POST /repos/:repo_uuid/retype= with body ={"name": "<field>", "to":
   "<type>"}=; CLI: =mf retype <name> <type>=.
 - It is a logged write (one revision through =log::Writer=, so it is rollbackable
   like any other change) and updates the =field_type= registry.
@@ -374,128 +374,98 @@ sort)= pair. Clients must not parse it.
 
 ** HTTP API
 
+Two layers: *resources* (a single, directly-addressed thing — cheap, idempotent)
+and the *=/query/*= set layer* ([[file:spec-query.org][spec-query.org]]). They overlap only on the n=1 case
+(a resource path vs a =uuid_in= query), by design. Listing/reading *several*
+metarecords is a query (=POST /query=, empty query = all, =uuid_in= = a named
+set) — there is no =GET /metarecords= list nor a batch-read endpoint.
+
 #+BEGIN_SRC
-GET    /repos/:repo_uuid/metarecords
-POST   /repos/:repo_uuid/metarecords
-GET    /repos/:repo_uuid/metarecords/:metarecord_uuid
-DELETE /repos/:repo_uuid/metarecords/:metarecord_uuid
-PATCH  /repos/:repo_uuid/metarecords/:metarecord_uuid
-POST   /repos/:repo_uuid/metarecords/:metarecord_uuid/fields
-PUT    /repos/:repo_uuid/metarecords/:metarecord_uuid/fields/:field_id
-DELETE /repos/:repo_uuid/metarecords/:metarecord_uuid/fields/:field_id
+POST   /repos/:repo_uuid/metarecords                                   create
+GET    /repos/:repo_uuid/metarecords/:uuid                             read one
+PUT    /repos/:repo_uuid/metarecords/:uuid                             set whole record
+DELETE /repos/:repo_uuid/metarecords/:uuid                             delete one
+POST   /repos/:repo_uuid/metarecords/:uuid/fields                      append one row
+GET    /repos/:repo_uuid/metarecords/:uuid/fields/:name               read a field's value(s)
+PUT    /repos/:repo_uuid/metarecords/:uuid/fields/:name               set a field (replace rows)
+DELETE /repos/:repo_uuid/metarecords/:uuid/fields/:name               unset a field
+GET    /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree  TreeRef → path(s)
+GET    /repos/:repo_uuid/fields/:id                                    read a field row by id
+PATCH  /repos/:repo_uuid/fields/:id                                    rename and/or revalue a row
+DELETE /repos/:repo_uuid/fields/:id                                    delete a row by id
+POST   /repos/:repo_uuid/retype                                        retype a field repo-wide
 #+END_SRC
-
-*** =GET /repos/:repo_uuid/metarecords=
-
-Returns all metadata UUIDs in the repository.
-
-Response body: =["uuid1", "uuid2", ...]=
-
-Optional =?limit=N&cursor=...= query parameters paginate the result (sorted
-by UUID); the response is then the pagination envelope (see [[*Pagination]]).
 
 *** =POST /repos/:repo_uuid/metarecords=
 
-Creates a new metadata metarecord with the given fields.
+Creates a metadata metarecord. Body ={"fields": [{"name", "value"}, ...], "force"?}=.
+For =TreeRef= fields the client supplies =(parent_uuid, name)= directly; the
+daemon validates the =parent_uuid= (null = a root, else an existing metarecord
+carrying that =TreeRef= name). The filesystem root (=value_uuid = x'00...00'=,
+=value_name = ""=) is created at =repo init= and is unique per field name. A
+metarecord may carry several =mfr_path= rows (multi-map = several locations).
+Response: the full metadata object (=id= on each field).
 
-Request body:
+*** =GET /repos/:repo_uuid/metarecords/:uuid=
+
+Returns one metarecord with all its fields. Each field carries its DB-row =id=
+(used by the by-id endpoints).
 #+BEGIN_SRC json
-{
-  "fields": [
-    {"name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
-    {"name": "rating", "value": {"type": "int", "value": 5}}
-  ]
-}
+{ "uuid": "...", "db_ids": ["<repo>"], "version": 3,
+  "fields": [ {"id": 42, "name": "rating", "value": {"type": "int", "value": 5}} ] }
 #+END_SRC
 
-For =TreeRef= fields, the client supplies =(parent_uuid, name)= directly.
-The daemon validates that the given =parent_uuid= either is =null= (creating a
-root node) or refers to an existing metarecord that has a =TreeRef= field of the same
-name. The filesystem root (=value_uuid = x'00...00'=, =value_name = ""=) is
-created at =repo init= time and is unique per field name (enforced by the
-=idx_field_tree= UNIQUE index). Other roots can be created freely.
+*** =PUT /repos/:repo_uuid/metarecords/:uuid=
 
-A metadata metarecord may have multiple =mfr_path= fields (multi-map), indicating the
-metarecord is accessible at several locations (e.g. a file with copies in different
-directories). =set_field= on =mfr_path= replaces all existing =mfr_path= rows with a
-single new one.
+*Whole-record set*: replaces the entire field set, keeping the UUID, as one
+=SetRecord= operation (=before= = all old fields, =after= = the given set).
+Literal overwrite — fields not listed are dropped, reserved =mfr_*=/=mf_*=
+included (so a careless set can untrack a file; round-trip =GET= to preserve).
+Body ={"fields": [...], "force"?}= → updated full object.
 
-Response body: full metadata object with =id= on each field (see =GET .../metarecords/:uuid= below).
+*** =DELETE /repos/:repo_uuid/metarecords/:uuid=
 
-*** =GET /repos/:repo_uuid/metarecords/:metarecord_uuid=
+Deletes the metarecord and all its fields (one =DeleteRecord= op). =204=.
 
-Returns a single metadata metarecord with all its fields.
+*** =POST /repos/:repo_uuid/metarecords/:uuid/fields=
 
-Response body:
-#+BEGIN_SRC json
-{
-  "uuid": "...",
-  "db_ids": ["<repo_uuid>"],
-  "version": 3,
-  "fields": [
-    {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
-    {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
-  ]
-}
-#+END_SRC
+Appends one row without touching existing rows of that name (multi-map append).
+Body ={"name", "value", "force"?}= → updated full object. Protected name without
+=force= → =400=.
 
-Each field carries an =id= (the internal DB row id) that uniquely identifies
-it within the repository. This id is used to target individual fields in
-multi-map operations (see below).
+*** =GET|PUT|DELETE /repos/:repo_uuid/metarecords/:uuid/fields/:name=
 
-*** =DELETE /repos/:repo_uuid/metarecords/:metarecord_uuid=
+A field of one metarecord, addressed by name (the direct analog of the
+=/query/fields/{...}= set operations):
+- =GET= → the field's value(s): ={"name": "tag", "values": [<Value>, ...]}=
+  (empty list when the field is unknown).
+- =PUT= → *set*: replaces all rows of =name= (one =SetField= op). Body =value=
+  (one row) or =values= (a list, multi-map) — exactly one.
+- =DELETE= → *unset*: removes every row of =name= (the field becomes unknown).
+Protected names need =force= (in the body for PUT/DELETE). Updated full object
+(PUT) / =204= (DELETE).
 
-Deletes the metadata metarecord and all its fields. Returns =204 No Content=.
+*** =GET /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree=
 
-*** =PATCH /repos/:repo_uuid/metarecords/:metarecord_uuid=
+Resolves a =TreeRef= field of this metarecord to its root-relative path(s).
+Response ={"paths": ["<path>", ...]}= (empty when the field is absent or not a
+=TreeRef=). The set form is =POST /query/fields/resolve-tree= ([[file:spec-query.org][spec-query.org]]).
 
-Replaces *all* existing rows for a given field name with a single new value
-(=set_field= semantics — collapses multi-map to one metarecord).
+*** =GET|PATCH|DELETE /repos/:repo_uuid/fields/:id=
 
-Request body:
-#+BEGIN_SRC json
-{"name": "rating", "value": {"type": "int", "value": 9}}
-#+END_SRC
+A single field *row* by its repository-unique DB id (no metarecord UUID in the
+path — the id alone addresses it). =404= if the id is unknown.
+- =GET= → the row: ={"id", "name", "value"}=.
+- =PATCH= → change its *name and/or value* in place, keeping the id; the value
+  type is validated against the (target) field name. Body ={"name"?, "value"?, "force"?}=.
+- =DELETE= → remove the row. Body ={"force"?}=, =204=.
 
-Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+*** =POST /repos/:repo_uuid/retype=
 
-Response body: updated full metadata object.
-
-*** =POST /repos/:repo_uuid/metarecords/:metarecord_uuid/fields=
-
-Appends one field value without touching existing rows for that name (multi-map
-append). Use this to add a second =tag= without removing the first.
-
-Request body:
-#+BEGIN_SRC json
-{"name": "tag", "value": {"type": "string", "value": "jazz"}}
-#+END_SRC
-
-Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
-
-Response body: updated full metadata object.
-
-*** =PUT /repos/:repo_uuid/metarecords/:metarecord_uuid/fields/:field_id=
-
-Replaces the single field row identified by =field_id=. Returns =404= if the id
-does not belong to this metadata metarecord.
-
-Request body:
-#+BEGIN_SRC json
-{"value": {"type": "string", "value": "blues"}}
-#+END_SRC
-
-If the targeted field row is protected, omitting =force= returns =400=. See [[*Protected fields]].
-
-Response body: updated full metadata object.
-
-*** =DELETE /repos/:repo_uuid/metarecords/:metarecord_uuid/fields/:field_id=
-
-Removes the single field row identified by =field_id=. Returns =404= if the id
-does not belong to this metadata metarecord.
-
-If the targeted field row is protected, the request body must contain
-={"force": true}=; otherwise returns =400=. Returns =204 No Content= on success.
+Converts a field's value type repository-wide (=string|int|float|bool|datetime=)
+— see [[*Changing a field's type (retype)]]. Body ={"name": "<field>", "to": "<type>"}= →
+={"converted": <n>, "fallback_count": <n>, "fallback_uuids": [...]}=. Reserved
+=mfr_*=/=mf_*= names are rejected (the system owns their types).
 
 * CLI
 
@@ -639,7 +609,7 @@ confused with =field set= (one field).
 
 Deletes the selected metarecords (metadata and all fields); prints the count.
 Requires a selector. Confirms for a =-q= selector unless =--force= is passed. A
-query goes through the atomic =POST /repos/:repo/delete= (one revision); the
+query goes through the atomic =POST /repos/:repo/query/delete= (one revision); the
 confirmation count comes from a =count=+=limit= query.
 
 *** =mf metarecord [-i|-q] field <verb> ...=

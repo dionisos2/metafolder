@@ -28,6 +28,14 @@ CLI provides a DSL that compiles to this representation.
 | Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
 | FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition) |
 | Matches             | =matches=             | String field matches a regex pattern                           |
+| UuidIn              | =uuid_in=             | Metarecord UUID is in an explicit list (=uuids=, 32-hex)        |
+
+=UuidIn= is the bridge between the resource layer (a single thing at its URL)
+and the set layer: it lets the =/query/*= operations target an *explicit set of
+UUIDs* instead of a predicate. JSON: ={"type": "uuid_in", "uuids": ["<32hex>", ...]}=
+(an empty list matches nothing). It is the canonical way to read or write *several
+named metarecords at once* in one request — e.g. a GUI multi-selection — rather
+than one request per UUID.
 
 * Daemon
 
@@ -228,129 +236,66 @@ Example response with =select=:
 Fields absent from the metarecord (not present in the DB for that metarecord) are simply
 omitted from the response — they are not included as =Nothing=.
 
-*** =POST /repos/:repo_uuid/set= (Batch set)
+*** The =/query/*= family (operations over a set)
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/set
-#+END_SRC
+Every operation over a *set* of metarecords lives under =/query=, with a
+=query= field in the body (use a =uuid_in= predicate to target an explicit set,
+e.g. a multi-selection). This is the only mechanism for set-scoped reads and
+writes; single, directly-addressed things use the resource endpoints in
+[[file:spec-data-model.org][spec-data-model.org]] (=/metarecords/:uuid=, =/metarecords/:uuid/fields/:name=,
+=/fields/:id=). The two overlap only on the n=1 case (direct = cheap/idempotent,
+=/query= = one call over a set), by design.
 
-Runs a query server-side and replaces *all* rows of a field on every matching
-metarecord in a single transaction. More efficient than issuing individual PATCH
-requests from the client. Recorded as *one* =SetField= operation per affected
-metarecord (=before= = all old rows of the name, =after= = the new rows).
+The field writes are each *one log operation per affected metarecord* (see
+[[file:spec-data-model.org][spec-data-model.org]] "Log granularity"); a write to a protected field name
+without =force= returns =400= ([[*Protected fields]]).
 
-Request body — =value= sets a single row; =values= (a list) sets several rows of
-the name at once (multi-map), still in one operation. Exactly one of the two is
-given:
+**** =POST /repos/:repo_uuid/query/delete=
+
+Deletes every matching metarecord (metadata and all fields) in one transaction
+(one revision, rollback-able as a unit) — atomic, free of the client-side
+select-then-delete TOCTOU. =mfr_*= fields are never written.
+Body ={"query": <Query>}= → ={"deleted": <count>}=.
+
+**** =POST /repos/:repo_uuid/query/fields/set=
+
+Replaces *all* rows of a field on every match, as one =SetField= op per
+metarecord. Body =value= sets one row, =values= (a list) sets several at once
+(multi-map) — exactly one of the two:
 #+BEGIN_SRC json
-{
-  "query": <Query>,
-  "name": "rating",
-  "value": {"type": "int", "value": 5}
-}
+{ "query": <Query>, "name": "tag",
+  "values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}] }
 #+END_SRC
-#+BEGIN_SRC json
-{
-  "query": <Query>,
-  "name": "tag",
-  "values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}]
-}
-#+END_SRC
+Response ={"updated": <count>}=.
 
-Writing a protected field name without =force= returns =400=. See [[*Protected fields]].
+**** =POST /repos/:repo_uuid/query/fields/append=
 
-Response body: ={"updated": <count>}=
-
-*** =POST /repos/:repo_uuid/append= (Batch append)
-
-#+BEGIN_SRC
-POST /repos/:repo_uuid/append
-#+END_SRC
-
-Runs a query server-side and appends one field row to every matching metarecord
-in a single transaction (one revision) — the bulk form of =POST
-/metarecords/:uuid/fields=. Multi-map: existing rows of the field name are never
-replaced. Same request body and protected-field rule as [[*=POST /repos/:repo_uuid/set= (Batch set)][Batch set]].
-
-Response body: ={"updated": <count>}= — the number of matching metarecords (each
+Appends one row to every match (multi-map; never replaces). Body
+={"query", "name", "value", "force"?}= → ={"updated": <count>}= (each match
 gains one row).
 
-*** =POST /repos/:repo_uuid/remove= (Batch remove)
+**** =POST /repos/:repo_uuid/query/fields/remove=
 
-#+BEGIN_SRC
-POST /repos/:repo_uuid/remove
-#+END_SRC
+Removes every row equal to =(name, value)= from each match — the *inverse of*
+append — as one =DeleteField= op per metarecord. Other rows of the same name and
+non-matching metarecords are untouched. Body ={"query", "name", "value"}= →
+={"updated": <count>}= (metarecords actually changed).
 
-Runs a query server-side and removes every field row equal to =(name, value)=
-from each matching metarecord in a single transaction (one revision) — the
-*inverse of* [[*=POST /repos/:repo_uuid/append= (Batch append)][Batch append]]. Only rows whose value equals =value= are removed;
-other rows of the same field name (multi-map) and rows on non-matching
-metarecords are left untouched. Removing all rows of a name leaves the field
-*unknown* (absent), which is distinct from setting it to =Nothing=. Same request
-body and protected-field rule as [[*=POST /repos/:repo_uuid/set= (Batch set)][Batch set]].
+**** =POST /repos/:repo_uuid/query/fields/unset=
 
-Each affected metarecord is recorded as *one* =DeleteField= operation (=before= =
-the removed rows, =after= = empty), so the removal is one reversible log line per
-metarecord, not one per row.
+Removes the field *entirely* (every row of =name=) from each match, as one
+=DeleteField= op per metarecord → the field becomes /unknown/, distinct from
+=Nothing=. Body ={"query", "name"}= → ={"updated": <count>}=.
 
-Response body: ={"updated": <count>}= — the number of metarecords actually
-changed (those that carried at least one matching row).
+**** =POST /repos/:repo_uuid/query/fields/resolve-tree=
 
-*** =POST /repos/:repo_uuid/unset= (Batch unset)
-
-#+BEGIN_SRC
-POST /repos/:repo_uuid/unset
-#+END_SRC
-
-Runs a query server-side and removes the field *entirely* — every row of =name=,
-whatever its value — from each matching metarecord, in a single transaction (one
-revision; one =DeleteField= operation per affected metarecord). The field becomes
-*unknown* (absent), distinct from setting it to =Nothing=. Request body
-={"query": <Query>, "name": "tag", "force": <bool>}=; same protected-field rule
-as Batch set.
-
-Response body: ={"updated": <count>}= — the number of metarecords that carried
-the field.
-
-*** Per-metarecord and per-row writes (non-query)
-
-Beyond the batch (query-scoped) endpoints above, the verb tree (spec-data-model
-"* CLI") also uses single-target writes, each its own one operation:
-
-- =PUT /repos/:repo/metarecords/:uuid= — *whole-record set*: replaces the entire
-  field set of one metarecord, keeping its UUID, as one =SetRecord= operation
-  (=before= = all old fields, =after= = the given set). Literal overwrite (drops
-  unlisted fields, reserved ones included).
-- =GET /repos/:repo/fields/:id= — read one field row (=mf field get=).
-- =PATCH /repos/:repo/fields/:id= — change a row's *name and/or value* in place,
-  keeping its id (type-validated against the target name) (=mf field set=).
-- =DELETE /repos/:repo/fields/:id= — delete one row (=mf field delete=).
-
-  The field row id is unique per repository (AUTOINCREMENT), so the by-id
-  endpoints carry no metarecord UUID in the path — =mf field <id>= addresses a
-  row with the id alone. Appending a row, by contrast, targets a specific
-  metarecord: =POST /repos/:repo/metarecords/:uuid/fields= (=mf metarecord <uuid>
-  field add=), unchanged.
-
-*** =POST /repos/:repo_uuid/delete= (Delete by query)
-
-#+BEGIN_SRC
-POST /repos/:repo_uuid/delete
-#+END_SRC
-
-Runs a query server-side and deletes every matching metarecord in a single
-transaction (one revision, rollback-able as a unit). Avoids the client-side
-select-then-delete-one-by-one pattern, which is non-atomic (a mid-way failure
-leaves a partial deletion) and racy (the match set can change between the
-client's count and its deletes). Whole metarecords are removed; =mfr_*= fields
-are never written.
-
-Request body:
-#+BEGIN_SRC json
-{ "query": <Query> }
-#+END_SRC
-
-Response body: ={"deleted": <count>}=
+Resolves a =TreeRef= field to its root-relative path(s) for every match — the
+set form of the direct =GET …/fields/:name/resolve-tree= ([[file:spec-data-model.org][spec-data-model.org]]).
+A read/projection (not a write), but set-scoped, so it lives here. Body
+={"query": <Query>, "field": "mfr_path"}= (=field= defaults to =mfr_path=) →
+={"<uuid>": ["<path>", ...], ...}= (paths are root-relative, no leading slash; a
+metarecord absent from the result carries no resolvable path). The tree-cache
+serves it from memory; the GUI memoises it per =(field, uuid)=.
 
 * CLI
 

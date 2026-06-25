@@ -115,15 +115,19 @@ metafolder = "/ssd/meta/music/.metafolder"
 GET /health
 #+END_SRC
 
-Response: =200 OK=, body ={"status": "ok"}=.
+Response: =200 OK=, body ={"status": "ok", "version": "<crate version>",
+"repos": <number of loaded repos>}= — enough for a client to confirm the daemon,
+its build, and that it has repositories loaded in one call.
 
 ** Repository management
 
 #+BEGIN_SRC
-GET  /repos
-POST /repos/init
-POST /repos/load
-POST /repos/:repo_uuid/unload
+GET    /repos
+POST   /repos/init
+POST   /repos/load
+GET    /repos/:repo_uuid                read one repo's info
+PATCH  /repos/:repo_uuid                rename a repo
+POST   /repos/:repo_uuid/unload
 #+END_SRC
 
 *** =GET /repos=
@@ -142,6 +146,18 @@ Response body:
   }
   ]
 #+END_SRC
+
+*** =GET /repos/:repo_uuid=
+
+Returns one loaded repository's info — the same object shape as an entry of
+=GET /repos=. =404= if the repository is not loaded.
+
+*** =PATCH /repos/:repo_uuid=
+
+Renames a loaded repository. Body ={"name": "<new name>"}=. The name must stay
+unique among loaded repos (=409= on collision), since =-n <name>= resolves it to
+a UUID. The new name is persisted to =config.json=. Response: the updated repo
+info object.
 
 *** =POST /repos/init=
 
