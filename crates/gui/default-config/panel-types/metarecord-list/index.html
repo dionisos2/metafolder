@@ -44,8 +44,8 @@
         opacity: 0.55;
       }
       #normal-toggle {
-        align-self: flex-start;
         font-size: 11px;
+        white-space: nowrap;
       }
       .freeze-label {
         display: flex;
@@ -55,8 +55,9 @@
         color: var(--mf-fg-dim, #8a8a96);
       }
       #bulk-open {
-        align-self: flex-start;
         font-size: 11px;
+        white-space: nowrap;
+        margin-right: 8px;
       }
       #bulk-form {
         display: none;
@@ -187,11 +188,19 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      #footer {
+        display: flex;
+        align-items: center;
+        background: var(--mf-bg-raised, #26262e);
+      }
       #status-line {
+        flex: 1;
         padding: 3px 8px;
         color: var(--mf-fg-dim, #8a8a96);
-        background: var(--mf-bg-raised, #26262e);
         font-size: 0.9em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
       .placeholder {
         display: flex;
@@ -211,9 +220,9 @@
       <div class="editor-row">
         <input id="query-input" placeholder='simplified query, e.g. fav genre=jazz (empty = all)' />
         <button id="query-apply">Apply</button>
+        <button id="normal-toggle" type="button">Show normal DSL</button>
       </div>
       <div id="query-error" class="editor-error"></div>
-      <button id="normal-toggle" type="button">Show normal DSL</button>
       <div id="normal-editor" hidden>
         <div class="editor-row">
           <input id="normal-input" readonly placeholder="normal DSL" />
@@ -232,30 +241,6 @@
         <button id="columns-apply">Apply</button>
       </div>
       <div id="columns-error" class="editor-error"></div>
-      <button id="bulk-open" type="button" title="Set, append, remove, or unset a field on every metarecord matching the current query">Edit field on query…</button>
-      <div id="bulk-form">
-        <div class="editor-row">
-          <select id="bulk-op" title="set: replace all rows · append: add a row · remove: delete rows equal to this value · unset: remove the field entirely">
-            <option value="set">Set (replace all rows)</option>
-            <option value="append">Append (add a row)</option>
-            <option value="remove">Remove (delete matching rows)</option>
-            <option value="unset">Unset (remove the field)</option>
-          </select>
-          <input id="bulk-name" placeholder="field name, e.g. rating" />
-          <button id="bulk-type" type="button">string ▾</button>
-        </div>
-        <div class="editor-row" id="bulk-value-row">
-          <span id="bulk-value"></span>
-        </div>
-        <div class="editor-row">
-          <label class="freeze-label" title="Required to write reserved mfr_* fields">
-            <input id="bulk-force" type="checkbox" /> Force
-          </label>
-          <button id="bulk-apply">Apply</button>
-          <button id="bulk-cancel" type="button">Cancel</button>
-        </div>
-        <div id="bulk-error" class="editor-error"></div>
-      </div>
     </div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
@@ -267,6 +252,32 @@
       </table>
       <div id="grid"></div>
     </div>
-    <div id="status-line"></div>
+    <div id="bulk-form">
+      <div class="editor-row">
+        <select id="bulk-op" title="set: replace all rows · append: add a row · remove: delete rows equal to this value · unset: remove the field entirely">
+          <option value="set">Set (replace all rows)</option>
+          <option value="append">Append (add a row)</option>
+          <option value="remove">Remove (delete matching rows)</option>
+          <option value="unset">Unset (remove the field)</option>
+        </select>
+        <input id="bulk-name" placeholder="field name, e.g. rating" />
+        <button id="bulk-type" type="button">string ▾</button>
+      </div>
+      <div class="editor-row" id="bulk-value-row">
+        <span id="bulk-value"></span>
+      </div>
+      <div class="editor-row">
+        <label class="freeze-label" title="Required to write reserved mfr_* fields">
+          <input id="bulk-force" type="checkbox" /> Force
+        </label>
+        <button id="bulk-apply">Apply</button>
+        <button id="bulk-cancel" type="button">Cancel</button>
+      </div>
+      <div id="bulk-error" class="editor-error"></div>
+    </div>
+    <div id="footer">
+      <div id="status-line"></div>
+      <button id="bulk-open" type="button" title="Set, append, remove, or unset a field on every metarecord matching the current query">Edit field on query…</button>
+    </div>
   </body>
 </html>
