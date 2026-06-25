@@ -35,7 +35,7 @@ npm --prefix crates/gui/frontend run build
 
 # Run the GUI (binary name: metafolder-gui; build the frontend first)
 cargo run -p metafolder-gui
-cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
+cargo run -p metafolder-gui -- --gui-port 7524 --daemon-port 7523
 
 # Install/update the user configuration repo at ~/.config/metafolder/
 # (feature-gated: NOT built by a plain `cargo build`). Run from the checkout
@@ -318,8 +318,9 @@ shared data cache). `index.html` is markup only; `main.js` is the entry.
 - `command_registry.rs`: builtin + panel-registered commands, autocomplete
   listing (global + focused panel's local commands).
 - `config.rs`: `~/.config/metafolder/gui/` — reads `config.toml` (`GuiConfig`:
-  `daemon-url`, default the daemon's default port, + `gui-port`, default 7524;
-  CLI flags override), the keybindings, stylesheet and panel types that
+  `daemon-port`, default the daemon's default port 7523 — the GUI connects on
+  127.0.0.1 — + `gui-port`, default 7524; CLI flags `--daemon-port`/`--gui-port`
+  override), the keybindings, stylesheet and panel types that
   `metafolder-sync-config` installed (no install, mirror or embedded fallback
   here; missing files error). `keybindings.toml` is the **complete** set
   (single-file model: `set` upserts, `remove` unbinds, and reverting to a

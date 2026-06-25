@@ -26,7 +26,7 @@ fn test_installed_defaults_are_readable() {
     assert!(config.load_style().is_ok());
     // The shipped config defaults to the daemon's own default port.
     let gui_config = config.load_config().unwrap();
-    assert_eq!(gui_config.daemon_url, "http://127.0.0.1:7523");
+    assert_eq!(gui_config.daemon_port, 7523);
     assert_eq!(gui_config.gui_port, 7524);
 }
 

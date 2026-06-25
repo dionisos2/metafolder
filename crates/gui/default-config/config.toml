@@ -1,10 +1,11 @@
 # Metafolder GUI settings (spec-config; spec-gui "Connection to the daemon").
 # Installed into ~/.config/metafolder/gui/ by metafolder-sync-config.
-# CLI flags (--daemon-url / --gui-port) override these at launch.
+# CLI flags (--daemon-port / --gui-port) override these at launch.
 
-# Base URL of the daemon the GUI connects to. Defaults to the daemon's own
-# default port, so the GUI connects out of the box without any flag.
-daemon-url = "http://127.0.0.1:7523"
+# Port of the daemon the GUI connects to (on 127.0.0.1, the only address the
+# daemon listens on). Defaults to the daemon's own default port, so the GUI
+# connects out of the box without any flag.
+daemon-port = 7523
 
 # Port the GUI's own HTTP server (panel assets + scripting API) binds. The
 # `mf gui` CLI reads this same value to reach the GUI (no gui.port file).

@@ -9,16 +9,16 @@ struct Args {
     /// Overrides `gui-port` in config.toml (default 7524).
     #[arg(long)]
     gui_port: Option<u16>,
-    /// Base URL of the metafolder daemon. Overrides `daemon-url` in
-    /// config.toml (default http://127.0.0.1:7523, the daemon's default).
+    /// Port of the metafolder daemon on 127.0.0.1. Overrides `daemon-port` in
+    /// config.toml (default 7523, the daemon's default).
     #[arg(long)]
-    daemon_url: Option<String>,
+    daemon_port: Option<u16>,
 }
 
 fn main() {
     let args = Args::parse();
     metafolder_gui::run(metafolder_gui::Options {
         gui_port: args.gui_port,
-        daemon_url: args.daemon_url,
+        daemon_port: args.daemon_port,
     });
 }

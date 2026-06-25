@@ -39,21 +39,25 @@ impl Default for PageSizes {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case", default)]
 pub struct GuiConfig {
-    /// Base URL of the daemon the GUI talks to.
-    pub daemon_url: String,
+    /// Port of the daemon the GUI talks to (on 127.0.0.1, the only address it
+    /// listens on).
+    pub daemon_port: u16,
     /// Port the GUI's own HTTP server (panel assets + scripting API) binds.
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes.
     pub page_size: PageSizes,
 }
 
+impl GuiConfig {
+    /// The daemon base URL the GUI connects to (loopback + the configured port).
+    pub fn daemon_base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.daemon_port)
+    }
+}
+
 impl Default for GuiConfig {
     fn default() -> Self {
-        GuiConfig {
-            daemon_url: "http://127.0.0.1:7523".to_string(),
-            gui_port: 7524,
-            page_size: PageSizes::default(),
-        }
+        GuiConfig { daemon_port: 7523, gui_port: 7524, page_size: PageSizes::default() }
     }
 }
 
@@ -226,18 +230,19 @@ mod tests {
 
     #[test]
     fn test_config_defaults_to_the_daemon_default_port() {
-        // An empty config still yields the daemon's default URL and the GUI
+        // An empty config still yields the daemon's default port and the GUI
         // default port, so no flag or extra file is needed out of the box.
         let parsed: GuiConfig = toml::from_str("").unwrap();
-        assert_eq!(parsed.daemon_url, "http://127.0.0.1:7523");
+        assert_eq!(parsed.daemon_port, 7523);
+        assert_eq!(parsed.daemon_base_url(), "http://127.0.0.1:7523");
         assert_eq!(parsed.gui_port, 7524);
     }
 
     #[test]
     fn test_config_overrides_each_field() {
         let parsed: GuiConfig =
-            toml::from_str("daemon-url = \"http://127.0.0.1:9000\"\ngui-port = 8800\n").unwrap();
-        assert_eq!(parsed.daemon_url, "http://127.0.0.1:9000");
+            toml::from_str("daemon-port = 9000\ngui-port = 8800\n").unwrap();
+        assert_eq!(parsed.daemon_port, 9000);
         assert_eq!(parsed.gui_port, 8800);
     }
 
@@ -285,7 +290,7 @@ mod tests {
         let loaded = config.load_config().unwrap();
         assert_eq!(loaded.gui_port, 7600);
         // Unspecified field keeps the default.
-        assert_eq!(loaded.daemon_url, "http://127.0.0.1:7523");
+        assert_eq!(loaded.daemon_port, 7523);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

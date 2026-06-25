@@ -40,7 +40,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   daemon/
     config.toml                  ← repos to auto-load
   gui/
-    config.toml                  ← daemon-url + gui-port + [page-size]
+    config.toml                  ← daemon-port + gui-port + [page-size]
     keybindings.toml
     style.css
     panel-types/
@@ -48,9 +48,9 @@ A single git repository at =~/.config/metafolder/= (respecting
   cli/                           ← (no config yet; reserved)
 #+END_SRC
 
-The GUI reads =gui/config.toml= for the daemon URL it connects to
-(=daemon-url=, default the daemon's own default port) and the port its own
-HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI reads the same
+The GUI reads =gui/config.toml= for the daemon port it connects to on
+127.0.0.1 (=daemon-port=, default the daemon's own default port 7523) and the
+port its own HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI reads the same
 =gui-port=, so there is no runtime port discovery file. The optional
 =[page-size]= table tunes progressive list loading per panel
 (=metarecord-list= 100, =file= 150, =file-manager= 200 by default); each key is

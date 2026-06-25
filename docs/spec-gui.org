@@ -328,11 +328,11 @@ in place instead.
 
 ** Connection to the daemon
 
-The GUI connects to a daemon URL configured by the user: =daemon-url= in
-=~/.config/metafolder/gui/config.toml= (default =http://127.0.0.1:7523=, the
+The GUI connects to the daemon on 127.0.0.1 at the port configured by the user:
+=daemon-port= in =~/.config/metafolder/gui/config.toml= (default =7523=, the
 daemon's own default port — so a fresh install connects with no flag),
-overridable at launch with =--daemon-url= and at runtime via the
-=daemon:set-url= command.
+overridable at launch with =--daemon-port=. At runtime the =daemon:set-url=
+command can repoint the proxy at an arbitrary URL (a power-user override).
 
 On startup (and whenever the URL changes) the GUI calls =GET /health=. If the
 daemon is unreachable or returns a non-200 response, a prominent error banner

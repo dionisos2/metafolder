@@ -35,7 +35,7 @@ use tauri::Emitter;
 /// corresponding `config.toml` setting (which itself defaults sensibly).
 pub struct Options {
     pub gui_port: Option<u16>,
-    pub daemon_url: Option<String>,
+    pub daemon_port: Option<u16>,
 }
 
 /// Production notifier: forwards engine events to the WebView.
@@ -137,7 +137,10 @@ pub fn run(options: Options) {
     };
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
-    let daemon_url = options.daemon_url.unwrap_or(gui_config.daemon_url);
+    let daemon_url = match options.daemon_port {
+        Some(port) => format!("http://127.0.0.1:{port}"),
+        None => gui_config.daemon_base_url(),
+    };
     let daemon = Arc::new(daemon_proxy::DaemonProxy::new(daemon_url));
 
     // Session token (spec-auth): gates the GUI server's sensitive routes and
