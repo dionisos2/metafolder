@@ -681,6 +681,51 @@ fn test_sort_asc_desc_with_unknown_last() {
 }
 
 #[test]
+fn test_sort_over_follows_transitive_subset() {
+    // Regression: sorting the descendants of a subtree must (a) only ever
+    // return rows inside that subtree, and (b) push descendants lacking the
+    // sort field last — even though the sort representative is now computed by
+    // joining the *filtered* universe to `field` (the fix for the pathological
+    // `FollowsTransitive` + sort plan on large repos).
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let docs = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "documents".into() },
+    )]);
+    let mk = |f: &mut Fixture, name: &str, mtime: Option<i64>| {
+        let mut fields =
+            vec![Field::new("mfr_path", Value::TreeRef { parent: Some(docs), name: name.into() })];
+        if let Some(m) = mtime {
+            fields.push(Field::new("mtime", Value::Int(m)));
+        }
+        f.create(fields)
+    };
+    let a = mk(&mut f, "a.txt", Some(100));
+    let b = mk(&mut f, "b.txt", Some(200));
+    let c = mk(&mut f, "c.txt", None); // no mtime → must sort last
+    // A file outside /documents with a large mtime: must never appear.
+    let music = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "music".into() },
+    )]);
+    let _outside = f.create(vec![
+        Field::new("mfr_path", Value::TreeRef { parent: Some(music), name: "x.mp3".into() }),
+        Field::new("mtime", Value::Int(999)),
+    ]);
+
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/documents".into()),
+    };
+    let desc = f.run_sorted(&q, &[sort_desc("mtime")]);
+    assert_eq!(desc, vec![b, a, c], "in-subtree, mtime desc, missing-field last");
+
+    let asc = f.run_sorted(&q, &[sort_asc("mtime")]);
+    assert_eq!(asc, vec![a, b, c], "in-subtree, mtime asc, missing-field still last");
+}
+
+#[test]
 fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
     let mut f = Fixture::new();
     // a: {1, 9}, b: {5}

@@ -142,15 +142,26 @@ pub fn execute(
     let last = compiler.compile_node(query)?;
     let Compiler { mut ctes, mut params, .. } = compiler;
 
+    // The filtered universe. Marked MATERIALIZED where the CTEs are emitted
+    // below, so it is computed once and joined to `field` per sort key rather
+    // than re-evaluated each time (which re-runs the whole filter — see there).
     ctes.push((
         "_res".into(),
         format!("SELECT uuid FROM {last} WHERE uuid IN (SELECT uuid FROM _repo)"),
     ));
 
     // One CTE per sort key: the metarecord's representative row for that field
-    // (min for asc, max for desc), normalised into comparable components.
+    // (min for asc, max for desc), normalised into comparable components. Each
+    // `_s{i}` is built by joining the *filtered* universe `_res` to `field`
+    // (LEFT, so a metarecord lacking the field still yields one row, flagged
+    // `present = 0`), so it carries exactly the `_res` uuids — one per uuid.
+    // The window is therefore computed only over the filtered rows, and the
+    // final query drives straight from `_s0` (no `_res LEFT JOIN _s{i}` against
+    // an unindexed window output, which is the O(filtered × total) trap that
+    // made `FollowsTransitive` + sort pathological on large repos).
+    let driver = if sort.is_empty() { "_res" } else { "_s0" };
     let mut joins = String::new();
-    let mut select_cols = "_res.uuid AS uuid".to_string();
+    let mut select_cols = format!("{driver}.uuid AS uuid");
     let mut order_by = Vec::new();
     // (alias, ascending) pairs forming the total order.
     let mut components: Vec<(String, bool)> = Vec::new();
@@ -160,37 +171,44 @@ pub fn execute(
             SortOrder::Asc => "ASC",
             SortOrder::Desc => "DESC",
         };
-        let grp = "CASE value_type \
+        let grp = "CASE field.value_type \
              WHEN 'bool' THEN 0 WHEN 'int' THEN 1 WHEN 'float' THEN 1 \
              WHEN 'string' THEN 2 WHEN 'datetime' THEN 3 \
              WHEN 'ref' THEN 4 WHEN 'refbase' THEN 4 WHEN 'externalref' THEN 4 \
              WHEN 'tree_ref' THEN 5 ELSE 6 END";
         // datetime is stored as Unix ms in value_int, so it sorts numerically;
         // its own `grp` (3) keeps it from interleaving with bool/int/float.
-        let num = "CASE WHEN value_type IN ('bool', 'int', 'datetime') THEN CAST(value_int AS REAL) \
-             WHEN value_type = 'float' THEN value_real END";
-        let text = "CASE WHEN value_type = 'string' THEN value_text \
-             WHEN value_type = 'tree_ref' THEN value_name END";
-        let blob = "CASE WHEN value_type IN ('ref', 'refbase', 'externalref') \
-             THEN value_uuid END";
+        let num = "CASE WHEN field.value_type IN ('bool', 'int', 'datetime') \
+                THEN CAST(field.value_int AS REAL) \
+             WHEN field.value_type = 'float' THEN field.value_real END";
+        let text = "CASE WHEN field.value_type = 'string' THEN field.value_text \
+             WHEN field.value_type = 'tree_ref' THEN field.value_name END";
+        let blob = "CASE WHEN field.value_type IN ('ref', 'refbase', 'externalref') \
+             THEN field.value_uuid END";
         ctes.push((
             format!("_s{i}"),
             format!(
-                "SELECT metarecord_uuid, grp, vnum, vtext, vblob FROM ( \
-                   SELECT metarecord_uuid, {grp} AS grp, {num} AS vnum, \
-                          {text} AS vtext, {blob} AS vblob, \
-                          ROW_NUMBER() OVER (PARTITION BY metarecord_uuid \
+                "SELECT uuid, present, grp, vnum, vtext, vblob FROM ( \
+                   SELECT _res.uuid AS uuid, \
+                          CASE WHEN field.metarecord_uuid IS NULL THEN 0 ELSE 1 END AS present, \
+                          {grp} AS grp, {num} AS vnum, {text} AS vtext, {blob} AS vblob, \
+                          ROW_NUMBER() OVER (PARTITION BY _res.uuid \
                               ORDER BY {grp} {dir}, {num} {dir}, {text} {dir}, {blob} {dir}) \
                               AS rn \
-                   FROM field WHERE field_name = ? AND value_type != 'nothing' \
+                   FROM _res LEFT JOIN field \
+                     ON field.metarecord_uuid = _res.uuid \
+                        AND field.field_name = ? AND field.value_type != 'nothing' \
                  ) WHERE rn = 1"
             ),
         ));
         params.push(SqlValue::Text(key.field.clone()));
 
-        joins.push_str(&format!(" LEFT JOIN _s{i} ON _s{i}.metarecord_uuid = _res.uuid"));
+        // `_s0` is the driver; later keys join 1:1 on uuid (same uuid set).
+        if i > 0 {
+            joins.push_str(&format!(" LEFT JOIN _s{i} ON _s{i}.uuid = _s0.uuid"));
+        }
         select_cols.push_str(&format!(
-            ", CASE WHEN _s{i}.metarecord_uuid IS NULL THEN 1 ELSE 0 END AS nf{i}, \
+            ", CASE WHEN _s{i}.present = 0 THEN 1 ELSE 0 END AS nf{i}, \
                COALESCE(_s{i}.grp, -1) AS g{i}, COALESCE(_s{i}.vnum, {NUM_SENTINEL}) AS n{i}, \
                COALESCE(_s{i}.vtext, '') AS t{i}, COALESCE(_s{i}.vblob, x'') AS b{i}"
         ));
@@ -215,9 +233,20 @@ pub fn execute(
     }
 
     let cte_sql: Vec<String> =
-        ctes.into_iter().map(|(name, body)| format!("{name} AS ({body})")).collect();
+        ctes
+            .into_iter()
+            .map(|(name, body)| {
+                // Force materialisation of the filtered universe: it is joined
+                // to `field` once per sort CTE (and is the driver when there is
+                // no sort), and re-evaluating it per reference (SQLite's default
+                // for an inlined view) re-runs the whole filter each time —
+                // catastrophic when the filter is itself a tree walk.
+                let hint = if name == "_res" { " MATERIALIZED" } else { "" };
+                format!("{name} AS{hint} ({body})")
+            })
+            .collect();
     let mut sql = format!(
-        "WITH {} SELECT * FROM (SELECT {select_cols} FROM _res{joins}){where_clause} ORDER BY {}",
+        "WITH {} SELECT * FROM (SELECT {select_cols} FROM {driver}{joins}){where_clause} ORDER BY {}",
         cte_sql.join(", "),
         order_by.join(", ")
     );
