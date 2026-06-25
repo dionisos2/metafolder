@@ -188,7 +188,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   eviction via a lazy min-heap of leaves. Manual API writes that change a
   TreeRef (`Writer::touched_tree`) rebuild the cache; the watcher/reconcile keep
   it in sync incrementally via `apply_*`. `path_of`/`paths_of` are exposed as
-  `POST /repos/:repo/tree/resolve` so the CLI/GUI never re-walk the chain
+  `POST /repos/:repo/query/fields/resolve-tree` (set form, `{query, field}`) and
+  `GET …/metarecords/:uuid/fields/:name/resolve-tree` (direct) so the CLI/GUI never re-walk the chain
   client-side.
 - `eligibility.rs`: watch/ignore algorithm (`mf_watch` inherited, direct
   override, nearest-ancestor `mf_ignore` pattern set, no merging).
@@ -234,8 +235,16 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   `{"error": ...}` JSON error type (status classification), reserved field
   rules (`mfr_*` need `force`; unknown `mf_*` rejected).
 - `state.rs` + `routes.rs`: `AppState` (loaded repos), `RepoState` (conn,
-  tree cache, schema, watcher/executor handles), Axum handlers (blocking
-  SQLite work via `spawn_blocking`). `POST /repos/load` returns the uuid
+  tree cache, schema, watcher/executor handles + a mutable `name` for rename),
+  Axum handlers (blocking SQLite work via `spawn_blocking`). The API has two
+  layers (spec-data-model/spec-query): *resources* for a single directly-
+  addressed thing — `…/metarecords/:uuid`, per-record fields by name
+  `…/metarecords/:uuid/fields/:name` (+ `/resolve-tree`), rows by id
+  `…/fields/:id`, `…/retype`, `GET`/`PATCH /repos/:repo` (info/rename) — and the
+  *set layer* `POST …/query/*` (query, query/delete,
+  query/fields/{set,append,remove,unset,resolve-tree}) where every body carries a
+  `query`; a `uuid_in` predicate (core) targets an explicit set, so the two
+  layers overlap only on n=1. `POST /repos/load` returns the uuid
   immediately and warms the repo (tree cache + index) in the background as an
   observable `load` task (`RepoState::warmup`), so the GUI shows a load
   progress bar; the repo answers via the DB fallback meanwhile. `init` and
@@ -279,7 +288,7 @@ main.rs holds only clap structs + `dispatch_*`; the work is in:
   `resolve_selector` turns `-q/-i/-s` into a target string (+ simplified
   expansion). Internal pagination (`PAGE_SIZE` 500, follows `next_cursor`),
   reconcile/violation formatting, confirmation prompt for query `delete`,
-  `mf path` (one `POST /tree/resolve` call), `field get`/`metarecord get
+  `mf path` (one `POST /query/fields/resolve-tree` call, uuid_in query), `field get`/`metarecord get
   --values` (raw values, one per line).
 - `gui.rs`: `mf gui …` — client for the GUI scripting API (spec-gui "CLI:
   mf gui"): status/repo/workspace/layout/view/message/input/prompt, GUI
@@ -350,7 +359,7 @@ shared data cache). `index.html` is markup only; `main.js` is the entry.
   at query/refresh/display), write-invalidation, and LRU pruning. Validated by
   oracle/equivalence tests (`tests/cache-oracle.test.ts`).
   `panel-shim/` holds the framework-free helpers it reuses: `resolve.js`
-  (memoized `tree/resolve` paths), `visibility.js`, `menu.js`, `keymatch.js`;
+  (memoized `query/fields/resolve-tree` paths), `visibility.js`, `menu.js`, `keymatch.js`;
   `ui.js` (served as `/__ui.js`, imported by panels): `el()` DOM builder,
   `formatValue()`, `byName()`/`field()`/`fields()` (memoized field index).
 - `default-config/panel-types/`: the built-in panels (repos, metarecord-list,
