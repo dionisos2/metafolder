@@ -300,11 +300,7 @@ export async function mount(root, metafolder) {
           `the type's default (and Nothing rows are left untouched).`,
       );
       if (!ok) return;
-      const resp = await daemon.call(
-        'POST',
-        `/repos/${retypeTarget}/fields/${encodeURIComponent(name)}/retype`,
-        { to },
-      );
+      const resp = await daemon.call('POST', `/repos/${retypeTarget}/retype`, { name, to });
       toggleForm(retypeForm, false);
       const converted = resp.converted ?? 0;
       const fell = resp.fallback_count ?? 0;

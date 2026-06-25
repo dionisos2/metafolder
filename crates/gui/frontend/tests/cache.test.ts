@@ -49,20 +49,21 @@ describe('cache — batch & tree-resolve fetch only the missing', () => {
     await cache.request('POST', '/repos/r/query', { select: '*' }, async () =>
       ok({ results: [rec('aaa')] }),
     );
+    // The cache reads a named set with a uuid_in query (no batch endpoint).
     const raw = vi.fn(async (_m: string, _p: string, body: unknown) => {
-      const uuids = (body as { uuids: string[] }).uuids;
-      return ok(Object.fromEntries(uuids.map((u) => [u, rec(u)])));
+      const uuids = (body as { query: { uuids: string[] } }).query.uuids;
+      return ok({ results: uuids.map((u) => rec(u)) });
     });
     const res = await cache.request('POST', '/repos/r/metarecords/batch', { uuids: ['aaa', 'bbb'] }, raw);
     // Only 'bbb' was missing.
-    expect((raw.mock.calls[0][2] as { uuids: string[] }).uuids).toEqual(['bbb']);
+    expect((raw.mock.calls[0][2] as { query: { uuids: string[] } }).query.uuids).toEqual(['bbb']);
     expect(Object.keys(res.body as object).sort()).toEqual(['aaa', 'bbb']);
   });
 
   test('tree/resolve caches per (field, uuid)', async () => {
     const cache = createCache();
     const raw = vi.fn(async (_m: string, _p: string, body: unknown) => {
-      const uuids = (body as { uuids: string[] }).uuids;
+      const uuids = (body as { query: { uuids: string[] } }).query.uuids;
       return ok(Object.fromEntries(uuids.map((u) => [u, [`/path/${u}`]])));
     });
     await cache.request('POST', '/repos/r/tree/resolve', { field: 'mfr_path', uuids: ['aaa'] }, raw);

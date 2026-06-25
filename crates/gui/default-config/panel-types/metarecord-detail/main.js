@@ -220,7 +220,8 @@ export async function mount(root, metafolder) {
 
   async function saveField(field, newValue) {
     try {
-      await daemon.call('PUT', api(`/fields/${field.id}`), {
+      // A field row by its repo-global id (PATCH /repos/:repo/fields/:id).
+      await daemon.call('PATCH', `/repos/${current.repo}/fields/${field.id}`, {
         value: newValue,
         ...(isReserved(field.name) && { force: true }),
       });
@@ -237,7 +238,7 @@ export async function mount(root, metafolder) {
     try {
       await daemon.call(
         'DELETE',
-        api(`/fields/${field.id}`),
+        `/repos/${current.repo}/fields/${field.id}`,
         isReserved(field.name) ? { force: true } : null,
       );
       await load();
@@ -265,7 +266,7 @@ export async function mount(root, metafolder) {
       if (!current) throw new Error('no metarecord selected');
       const force = isReserved(name) ? { force: true } : {};
       if (replace) {
-        await daemon.call('PATCH', api(''), { name, value, ...force });
+        await daemon.call('PUT', api(`/fields/${encodeURIComponent(name)}`), { value, ...force });
       } else {
         await daemon.call('POST', api('/fields'), { name, value, ...force });
       }
@@ -320,7 +321,7 @@ export async function mount(root, metafolder) {
     const { repo, uuid } = current;
     try {
       statusBar.message('Reconciling…', null);
-      await daemon.call('PATCH', api(''), { name: 'mf_watch', value: { type: 'bool', value: true } });
+      await daemon.call('PUT', api('/fields/mf_watch'), { value: { type: 'bool', value: true } });
       // One reconcile endpoint, scoped via `metarecord` (spec-tasks). It is
       // asynchronous: poll the task to completion (the task bar shows live
       // progress) before refreshing the view.
@@ -406,10 +407,12 @@ export async function mount(root, metafolder) {
       }
       const value = parseRawValue(type, raw);
       const repo = current?.repo ?? (await workspace.get('active_repo'));
-      // No uuid predicate in the query IR yet: one PATCH per metarecord.
-      for (const uuid of selected) {
-        await daemon.call('PATCH', `/repos/${repo}/metarecords/${uuid}`, { name, value });
-      }
+      // One server-side call: a uuid_in query targets the whole selection.
+      await daemon.call('POST', `/repos/${repo}/query/fields/set`, {
+        query: { type: 'uuid_in', uuids: selected },
+        name,
+        value,
+      });
       statusBar.message(`Field "${name}" set on ${selected.length} metarecords.`, 5000);
       await dirty();
     },

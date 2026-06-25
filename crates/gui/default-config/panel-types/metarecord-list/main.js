@@ -475,10 +475,10 @@ export async function mount(root, metafolder) {
   // Each operation maps to its batch endpoint and a confirmation verb.
   // `valueless` ops (unset) act on the field name alone — no value widget.
   const BULK_OPS = {
-    set: { path: 'set', verb: 'Set', prep: 'on' },
-    append: { path: 'append', verb: 'Append', prep: 'to' },
-    remove: { path: 'remove', verb: 'Remove', prep: 'from' },
-    unset: { path: 'unset', verb: 'Unset', prep: 'from', valueless: true },
+    set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
+    append: { path: 'query/fields/append', verb: 'Append', prep: 'to' },
+    remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
+    unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
   };
 
   /** The form's value widget follows the picked type. */

@@ -184,10 +184,17 @@ export function createCache(opts: CacheOptions = {}) {
       }
       if (missing.length === 0) return ok(out);
       const epoch = epochOf(repo);
-      const res = await raw(method, path, { uuids: missing });
+      // Reading a named set is a uuid_in query (no batch endpoint).
+      const res = await raw('POST', `/repos/${repo}/query`, {
+        query: { type: 'uuid_in', uuids: missing },
+        select: '*',
+        limit: missing.length,
+      });
       if (res.status !== 200) return res;
-      const fetched = (res.body as Record<string, Metarecord>) ?? {};
-      if (epochOf(repo) === epoch) putEntities(repo, Object.values(fetched));
+      const results = (res.body as { results?: Metarecord[] })?.results ?? [];
+      const fetched: Record<string, Metarecord> = {};
+      for (const r of results) fetched[r.uuid] = r;
+      if (epochOf(repo) === epoch) putEntities(repo, results);
       return ok({ ...out, ...fetched });
     }
 
@@ -205,9 +212,11 @@ export function createCache(opts: CacheOptions = {}) {
         else missing.push(uuid);
       }
       if (missing.length === 0) return ok(out);
-      const reqBody = { ...(body as object), uuids: missing };
       const epoch = epochOf(repo);
-      const res = await raw(method, path, reqBody);
+      const res = await raw('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+        query: { type: 'uuid_in', uuids: missing },
+        field,
+      });
       if (res.status !== 200) return res;
       const fetched = (res.body as Record<string, string[]>) ?? {};
       const fresh = epochOf(repo) === epoch;

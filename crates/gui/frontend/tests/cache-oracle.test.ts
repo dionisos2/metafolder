@@ -56,12 +56,15 @@ class FakeDaemon {
     const ok = (b: unknown): DaemonResponse => ({ status: 200, body: b });
 
     if (method === 'POST' && /\/query$/.test(path)) {
-      const b = body as { query: { field?: string; value?: unknown }; limit?: number; cursor?: string; count?: boolean };
+      const b = body as { query: { type?: string; field?: string; value?: unknown; uuids?: string[] }; limit?: number; cursor?: string; count?: boolean };
       // Predicate: records whose `b.query.field` equals `b.query.value`
-      // (field undefined ⇒ match all). Deterministic order by uuid.
+      // (field undefined ⇒ match all), or a uuid_in explicit set. Order by uuid.
       let matches = [...this.records.values()].sort((a, z) => a.uuid.localeCompare(z.uuid));
       const f = b.query.field;
-      if (f !== undefined) {
+      if (b.query.type === 'uuid_in') {
+        const set = new Set(b.query.uuids ?? []);
+        matches = matches.filter((r) => set.has(r.uuid));
+      } else if (f !== undefined) {
         matches = matches.filter((r) => r.fields.some((x) => x.name === f && x.value.value === b.query.value));
       }
       const offset = b.cursor ? Number(b.cursor) : 0;
@@ -89,6 +92,14 @@ class FakeDaemon {
       const field = b.field ?? 'mfr_path';
       const out: Record<string, string[]> = {};
       for (const u of b.uuids) out[u] = this.paths.get(`${field}|${u}`) ?? [];
+      return ok(out);
+    }
+    // The endpoint the cache actually calls for tree resolution.
+    if (method === 'POST' && /\/query\/fields\/resolve-tree$/.test(path)) {
+      const b = body as { field?: string; query: { uuids: string[] } };
+      const field = b.field ?? 'mfr_path';
+      const out: Record<string, string[]> = {};
+      for (const u of b.query.uuids) out[u] = this.paths.get(`${field}|${u}`) ?? [];
       return ok(out);
     }
     if (method === 'GET' && /\/log\/since$/.test(path)) {
