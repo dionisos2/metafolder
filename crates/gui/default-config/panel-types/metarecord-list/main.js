@@ -4,6 +4,7 @@
 import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
+import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL } from '/__value-widget.js';
 import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
 
 // Smallest page of the three list panels: each row needs several daemon
@@ -15,16 +16,6 @@ import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRef
 const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
 const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
-
-// "Empty query matches all": three-valued tautology on any field.
-const MATCH_ALL = {
-  type: 'or',
-  operands: [
-    { type: 'is_present', field: 'mfr_path' },
-    { type: 'is_absent', field: 'mfr_path' },
-    { type: 'is_unknown', field: 'mfr_path' },
-  ],
-};
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
@@ -64,6 +55,11 @@ export async function mount(root, metafolder) {
   const normalInput = root.getElementById('normal-input');
   const normalError = root.getElementById('normal-error');
   const normalFreeze = root.getElementById('normal-freeze');
+  const bulkForm = root.getElementById('bulk-form');
+  const bulkName = root.getElementById('bulk-name');
+  const bulkValueSlot = root.getElementById('bulk-value');
+  const bulkForce = root.getElementById('bulk-force');
+  const bulkError = root.getElementById('bulk-error');
 
   // ── Data access (all daemon data comes from the shared cache) ─────────────
 
@@ -471,6 +467,57 @@ export async function mount(root, metafolder) {
     void fetchPage(true);
   }
 
+  // ── Bulk set (set a field on the whole query result) ────────────────────
+
+  let bulkWidget = null; // {element, read()} following the picked type
+
+  /** The form's value widget follows the picked type. */
+  function setBulkWidget(type) {
+    bulkWidget = widgetFor(type, undefined);
+    bulkValueSlot.replaceChildren(bulkWidget.element);
+  }
+  const bulkTypePicker = createTypePicker(root.getElementById('bulk-type'), 'string', setBulkWidget);
+  setBulkWidget(bulkTypePicker.get());
+
+  function openBulkForm() {
+    bulkError.textContent = '';
+    bulkForm.classList.add('open');
+    bulkName.focus();
+  }
+
+  /** Counts the metarecords the current query matches (for the confirmation). */
+  async function countMatches() {
+    const result = await daemon.call('POST', `/repos/${repo}/query`, {
+      query: queryIR ?? MATCH_ALL,
+      select: '*',
+      limit: 1,
+      count: true,
+    });
+    return result.total ?? 0;
+  }
+
+  async function applyBulkSet() {
+    bulkError.textContent = '';
+    try {
+      if (!repo) throw new Error('no active repository');
+      const name = bulkName.value.trim();
+      if (!name) throw new Error('field name is required');
+      const value = bulkWidget.read();
+      const force = name.startsWith('mfr_') || bulkForce.checked;
+      const n = await countMatches();
+      if (!confirm(`Set "${name}" on ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
+      const resp = await daemon.call('POST', `/repos/${repo}/set`, bulkSetBody(queryIR, name, value, force));
+      const updated = resp.updated ?? 0;
+      bulkForm.classList.remove('open');
+      statusBar.message(`Field "${name}" set on ${updated} metarecord${updated === 1 ? '' : 's'}.`, 5000);
+      // Refresh this list and any metarecord-detail mirror (the cache picks the
+      // write up via the change feed on the next reset fetch).
+      await workspace.set('metarecords:dirty', Date.now());
+    } catch (error) {
+      bulkError.textContent = String(error.message ?? error);
+    }
+  }
+
   // Progressive loading: the shared controller owns the scroll threshold and
   // the one-fetch-at-a-time guard; the footer below stays custom (it carries
   // the selection count too). hasMore tracks the daemon cursor.
@@ -499,6 +546,14 @@ export async function mount(root, metafolder) {
   });
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyColumns();
+  });
+  root
+    .getElementById('bulk-open')
+    .addEventListener('click', () => void commands.invoke('metarecord-list:bulk-set'));
+  root.getElementById('bulk-apply').addEventListener('click', () => void applyBulkSet());
+  root.getElementById('bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
+  bulkName.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') void applyBulkSet();
   });
 
   // ── Wiring ──────────────────────────────────────────────────────────────
@@ -561,6 +616,11 @@ export async function mount(root, metafolder) {
   commands.register('metarecord-list:refresh', {
     label: 'Metarecord list: reload from the daemon',
     handler: () => fetchPage(true),
+  });
+  commands.register('metarecord-list:bulk-set', {
+    label: 'Metarecord list: set a field on every metarecord matching the query',
+    reveal: true,
+    handler: openBulkForm,
   });
   commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',

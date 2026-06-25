@@ -3,7 +3,7 @@
 
 import { el, formatValue, valueEl } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { createTypePicker, parseRawValue } from './add-type.js';
+import { createTypePicker, parseRawValue, widgetFor } from '/__value-widget.js';
 import { createAnnotator } from './annotations.js';
 
 export async function mount(root, metafolder) {
@@ -49,63 +49,6 @@ export async function mount(root, metafolder) {
   /** Follows a reference: the panel itself reacts to selected_metarecord. */
   function openRef(uuid, repo = null) {
     void workspace.set('selected_metarecord', { uuid, repo: repo ?? current.repo });
-  }
-
-  // ── Value editing widgets ───────────────────────────────────────────────
-
-  /** Builds an input widget for a value; returns {element, read()}. */
-  function widgetFor(type, initial) {
-    switch (type) {
-      case 'int': {
-        const input = el('input', { type: 'number', step: '1', value: initial ?? '' });
-        return { element: input, read: () => ({ type, value: Number(input.value) }) };
-      }
-      case 'float': {
-        const input = el('input', { type: 'number', step: 'any', value: initial ?? '' });
-        return { element: input, read: () => ({ type, value: Number(input.value) }) };
-      }
-      case 'bool': {
-        const input = el('input', { type: 'checkbox', checked: initial === true });
-        return { element: input, read: () => ({ type, value: input.checked }) };
-      }
-      case 'datetime': {
-        const input = el('input', { placeholder: '2024-03-15T10:30:00Z', value: initial ?? '' });
-        return { element: input, read: () => ({ type, value: input.value.trim() }) };
-      }
-      case 'nothing':
-        return { element: el('span', {}, '∅'), read: () => ({ type: 'nothing' }) };
-      case 'ref':
-      case 'refbase': {
-        const input = el('input', { placeholder: '32-char hex uuid', value: initial ?? '' });
-        return { element: input, read: () => ({ type, value: input.value.trim() }) };
-      }
-      case 'tree_ref': {
-        const parent = el('input', {
-          placeholder: 'parent uuid (empty = root)',
-          value: initial?.parent ?? '',
-        });
-        const name = el('input', { placeholder: 'name', value: initial?.name ?? '' });
-        return {
-          element: el('span', {}, parent, ' / ', name),
-          read: () => ({
-            type,
-            value: { parent: parent.value.trim() || null, name: name.value.trim() },
-          }),
-        };
-      }
-      case 'externalref': {
-        const repo = el('input', { placeholder: 'repo uuid', value: initial?.repo ?? '' });
-        const target = el('input', { placeholder: 'metarecord uuid', value: initial?.metarecord ?? '' });
-        return {
-          element: el('span', {}, repo, ' :: ', target),
-          read: () => ({ type, value: { repo: repo.value.trim(), metarecord: target.value.trim() } }),
-        };
-      }
-      default: {
-        const input = el('input', { value: initial ?? '' });
-        return { element: input, read: () => ({ type: 'string', value: input.value }) };
-      }
-    }
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────

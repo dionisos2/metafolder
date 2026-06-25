@@ -1,10 +1,18 @@
-// metarecord-detail add-form type picker: a button + HTML menu (/__menu.js)
-// replacing the native <select>, whose WebKitGTK popup overflows the
-// screen when the add form sits near the bottom of the panel.
+// Shared field-value widgets (panel-shim/value-widget.js): the type picker
+// (button + HTML menu, replacing the off-screen native <select>), the per-type
+// input widgets and the bulk-set request body, imported by both the
+// metarecord-detail add-field form and the metarecord-list bulk-set form.
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
-import { TYPES, createTypePicker, parseRawValue } from '../../default-config/panel-types/metarecord-detail/add-type.js';
+// @ts-expect-error plain-JS module shared with the panels
+import {
+  TYPES,
+  createTypePicker,
+  parseRawValue,
+  widgetFor,
+  bulkSetBody,
+  MATCH_ALL,
+} from '../../panel-shim/value-widget.js';
 
 function press(key: string) {
   window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
@@ -111,5 +119,60 @@ describe('parseRawValue', () => {
 
   test('rejects unknown types', () => {
     expect(() => parseRawValue('banana', 'x')).toThrow(/banana/);
+  });
+});
+
+describe('widgetFor', () => {
+  test('int reads a numeric value from its input', () => {
+    const w = widgetFor('int', 3);
+    expect((w.element as HTMLInputElement).value).toBe('3');
+    (w.element as HTMLInputElement).value = '42';
+    expect(w.read()).toEqual({ type: 'int', value: 42 });
+  });
+
+  test('bool reads the checkbox state', () => {
+    const w = widgetFor('bool', true);
+    expect((w.element as HTMLInputElement).checked).toBe(true);
+    (w.element as HTMLInputElement).checked = false;
+    expect(w.read()).toEqual({ type: 'bool', value: false });
+  });
+
+  test('nothing has no input and reads the explicit absence', () => {
+    const w = widgetFor('nothing', undefined);
+    expect(w.read()).toEqual({ type: 'nothing' });
+  });
+
+  test('string trims nothing and is the fallback for unknown types', () => {
+    const w = widgetFor('string', 'hi');
+    expect(w.read()).toEqual({ type: 'string', value: 'hi' });
+    const fallback = widgetFor('banana', 'x');
+    expect(fallback.read()).toEqual({ type: 'string', value: 'x' });
+  });
+
+  test('tree_ref reads parent (empty = root) and name', () => {
+    const w = widgetFor('tree_ref', { parent: 'abcd', name: 'notes.txt' });
+    expect(w.read()).toEqual({ type: 'tree_ref', value: { parent: 'abcd', name: 'notes.txt' } });
+  });
+});
+
+describe('bulkSetBody', () => {
+  const value = { type: 'int', value: 5 };
+
+  test('a null query maps to the match-all tautology', () => {
+    expect(bulkSetBody(null, 'rating', value, false)).toEqual({
+      query: MATCH_ALL,
+      name: 'rating',
+      value,
+    });
+  });
+
+  test('an explicit query is used as-is', () => {
+    const q = { type: 'is_present', field: 'rating' };
+    expect(bulkSetBody(q, 'rating', value, false)).toEqual({ query: q, name: 'rating', value });
+  });
+
+  test('force is only present when set', () => {
+    expect(bulkSetBody(null, 'mfr_path', value, true)).toMatchObject({ force: true });
+    expect('force' in bulkSetBody(null, 'rating', value, false)).toBe(false);
   });
 });

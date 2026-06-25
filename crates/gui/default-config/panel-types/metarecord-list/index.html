@@ -54,6 +54,32 @@
         white-space: nowrap;
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #bulk-open {
+        align-self: flex-start;
+        font-size: 11px;
+      }
+      #bulk-form {
+        display: none;
+        flex-direction: column;
+        gap: 4px;
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 6px;
+      }
+      #bulk-form.open {
+        display: flex;
+      }
+      #bulk-form .editor-row {
+        align-items: center;
+      }
+      #bulk-form #bulk-value {
+        flex: 1;
+        display: flex;
+        gap: 4px;
+      }
+      #bulk-form #bulk-value input {
+        flex: 1;
+      }
       #scroll {
         flex: 1;
         overflow-y: auto;
@@ -199,6 +225,24 @@
         <button id="columns-apply">Apply</button>
       </div>
       <div id="columns-error" class="editor-error"></div>
+      <button id="bulk-open" type="button" title="Set a field value on every metarecord matching the current query (uses POST /set)">Set field on query…</button>
+      <div id="bulk-form">
+        <div class="editor-row">
+          <input id="bulk-name" placeholder="field name, e.g. rating" />
+          <button id="bulk-type" type="button">string ▾</button>
+        </div>
+        <div class="editor-row">
+          <span id="bulk-value"></span>
+        </div>
+        <div class="editor-row">
+          <label class="freeze-label" title="Required to write reserved mfr_* fields">
+            <input id="bulk-force" type="checkbox" /> Force
+          </label>
+          <button id="bulk-apply">Apply set</button>
+          <button id="bulk-cancel" type="button">Cancel</button>
+        </div>
+        <div id="bulk-error" class="editor-error"></div>
+      </div>
     </div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
