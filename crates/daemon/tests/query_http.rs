@@ -640,6 +640,53 @@ async fn test_remove_by_query() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn test_batch_unset_removes_the_whole_field() {
+    let (app, repo, root) = setup("unset").await;
+    // Two metarecords, each with two tag rows.
+    for _ in 0..2 {
+        create(
+            &app,
+            &repo,
+            json!([
+                {"name": "tag", "value": {"type": "string", "value": "a"}},
+                {"name": "tag", "value": {"type": "string", "value": "b"}}
+            ]),
+        )
+        .await;
+    }
+
+    let revisions = |body: &serde_json::Value| body["revisions"].as_array().unwrap().len();
+    let (_, before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    let revs_before = revisions(&before);
+
+    // Unset removes the whole field (both rows) from every match, one revision.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/unset"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}, "name": "tag"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "unset failed: {body}");
+    assert_eq!(body, json!({"updated": 2}));
+
+    let (_, left) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}})),
+    )
+    .await;
+    assert_eq!(left.as_array().unwrap().len(), 0, "field is now unknown everywhere");
+
+    // One revision per metarecord change, but bundled into one revision overall.
+    let (_, after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(revisions(&after) - revs_before, 1, "bulk unset must be one revision");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── In-memory index wiring (spec-indexing increment 5) ──────────────────────
 
 /// After a write advances the log HEAD, the index is rebuilt before the next

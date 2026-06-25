@@ -49,6 +49,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/set", post(batch_set))
         .route("/repos/:repo/append", post(batch_append))
         .route("/repos/:repo/remove", post(batch_remove))
+        .route("/repos/:repo/unset", post(batch_unset))
         .route("/repos/:repo/fields/:name/retype", post(retype_field))
         .route("/repos/:repo/delete", post(delete_by_query))
         .route("/repos/:repo/log", get(get_log))
@@ -1678,6 +1679,52 @@ async fn batch_remove(
         let mut changed = 0usize;
         for uuid in &uuids {
             if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
+                changed += 1;
+                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+            }
+        }
+        let tree_touched = writer.touched_tree();
+        writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
+        Ok(Json(json!({"updated": changed})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct BatchUnsetBody {
+    query: MetaQuery,
+    name: String,
+    #[serde(default)]
+    force: bool,
+}
+
+/// Runs the query server-side and removes the field *entirely* (every row of
+/// `name`) from each match in a single transaction (one revision; one
+/// `DeleteField` op per affected metarecord). The field becomes unknown. `updated`
+/// counts the metarecords that carried the field.
+async fn batch_unset(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<BatchUnsetBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        check_writable(&body.name, body.force)?;
+        let mut conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let (uuids, _) =
+            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+        drop(cache);
+
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut changed = 0usize;
+        for uuid in &uuids {
+            if writer.delete_fields_named(*uuid, &body.name)? > 0 {
                 changed += 1;
                 validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
             }

@@ -1167,19 +1167,40 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// Removes every row of `(uuid, name)` whose value equals `value` — the
-    /// inverse of [`Self::append_field`]. Row-scoped (each removal reuses the
-    /// `delete_field` snapshot, so rollback restores the exact rows). Returns the
-    /// number of rows removed.
-    pub fn delete_fields_valued(&mut self, uuid: Uuid, name: &str, value: &Value) -> Result<usize> {
-        let mut removed = 0;
-        for row in db::get_field_rows_named(&self.tx, uuid, name)? {
-            if &row.value == value {
-                self.delete_field(uuid, row.id)?;
-                removed += 1;
-            }
+    /// Deletes the given rows of `(uuid, name)` and logs them as *one*
+    /// `DeleteField` operation (before = the rows, after = empty), so a bulk
+    /// removal is one reversible log line per metarecord rather than one per row.
+    /// Returns the number removed; logs nothing when `rows` is empty.
+    fn delete_field_rows(&mut self, uuid: Uuid, name: &str, rows: Vec<FieldRow>) -> Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
         }
+        let version_before = self.bump_version(uuid)?;
+        for row in &rows {
+            db::delete_field_text_by_id(&self.tx, row.id)?;
+            self.tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
+        }
+        let removed = rows.len();
+        self.log_op(OpType::DeleteField, uuid, Some(name), Some(version_before), rows, vec![])?;
+        self.field_types.remove(name); // rows removed: the type may have unlocked
         Ok(removed)
+    }
+
+    /// Removes every row of `(uuid, name)` whose value equals `value` — the
+    /// inverse of [`Self::append_field`] — in one operation. Returns the count.
+    pub fn delete_fields_valued(&mut self, uuid: Uuid, name: &str, value: &Value) -> Result<usize> {
+        let rows: Vec<FieldRow> = db::get_field_rows_named(&self.tx, uuid, name)?
+            .into_iter()
+            .filter(|r| &r.value == value)
+            .collect();
+        self.delete_field_rows(uuid, name, rows)
+    }
+
+    /// Removes the field *entirely* — every row of `(uuid, name)`, whatever its
+    /// value — in one operation, leaving the field unknown (absent).
+    pub fn delete_fields_named(&mut self, uuid: Uuid, name: &str) -> Result<usize> {
+        let rows = db::get_field_rows_named(&self.tx, uuid, name)?;
+        self.delete_field_rows(uuid, name, rows)
     }
 
     /// Flushes the remaining buffered operations, writes the final HEAD and
