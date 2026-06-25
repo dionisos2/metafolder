@@ -103,6 +103,36 @@ fn parse_spec(spec: &str) -> Result<(String, Json), CliError> {
     Ok((name, serde_json::to_value(value).expect("Value serialization")))
 }
 
+/// Expands simplified-language text to the normal DSL (pure, client-side via
+/// the shared grammar in core — never a daemon round-trip; spec-query).
+fn expand_simplified(text: &str) -> Result<String, CliError> {
+    let grammar = metafolder_core::simplified::load::load().map_err(CliError::Op)?;
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    metafolder_core::simplified::engine::expand_at(&grammar, text, now_ms).map_err(CliError::Op)
+}
+
+/// Resolves the `mf metarecord` selector flags into a target string: a UUID for
+/// `-i`, or a normal-DSL query for `-q` (expanding `-s` simplified text first).
+/// `-q`/`-i` are mutually exclusive; none → `None` ("all"). The result feeds
+/// [`parse_target`].
+pub fn resolve_selector(
+    query: Option<&str>,
+    id: Option<&str>,
+    simplified: bool,
+) -> Result<Option<String>, CliError> {
+    match (query, id) {
+        (Some(_), Some(_)) => Err(CliError::Usage("-q and -i are mutually exclusive".into())),
+        (None, Some(uuid)) => Ok(Some(uuid.to_string())),
+        (Some(q), None) => {
+            Ok(Some(if simplified { expand_simplified(q)? } else { q.to_string() }))
+        }
+        (None, None) => Ok(None),
+    }
+}
+
 fn parse_dsl(predicate: &str) -> Result<Json, CliError> {
     let query = dsl::parse_query(predicate).map_err(|e| CliError::Usage(format!("invalid query: {e}")))?;
     Ok(serde_json::to_value(query).expect("Query serialization"))
@@ -455,15 +485,7 @@ fn raw_value_line(value: &Json) -> Option<String> {
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let predicate = if args.simplified {
-        // Expansion is a pure transformation: done locally via the shared
-        // grammar in core, never a daemon round-trip (spec-query).
-        let grammar = metafolder_core::simplified::load::load().map_err(CliError::Op)?;
-        let now_ms = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as i64)
-            .unwrap_or(0);
-        metafolder_core::simplified::engine::expand_at(&grammar, &args.predicate, now_ms)
-            .map_err(CliError::Op)?
+        expand_simplified(&args.predicate)?
     } else {
         args.predicate.clone()
     };
@@ -573,12 +595,12 @@ pub fn metarecord_get(
     sort: &[String],
     limit: Option<usize>,
     values: bool,
-    simplified: bool,
 ) -> Result<i32, CliError> {
     match selector {
         None => list(ctx, limit),
-        // A bare UUID prints the full metadata object (`--select` restricts it).
-        Some(s) if !simplified && Uuid::parse_str(s).is_ok() => {
+        // A UUID selector (-i) prints the full metadata object (`--select`
+        // restricts it); a query selector (-q, already expanded) lists UUIDs.
+        Some(s) if Uuid::parse_str(s).is_ok() => {
             let fields: Option<Vec<String>> = select
                 .filter(|sel| *sel != "*")
                 .map(|sel| sel.split(',').map(|f| f.trim().to_string()).collect());
@@ -592,7 +614,7 @@ pub fn metarecord_get(
                 sort: sort.to_vec(),
                 limit,
                 values,
-                simplified,
+                simplified: false,
             },
         ),
     }

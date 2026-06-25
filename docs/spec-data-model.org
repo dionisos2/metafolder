@@ -540,11 +540,22 @@ Commands that write fields take a /field spec/ argument of the form
 | =refbase=     | =name:refbase=<repo_uuid>=              | =origin:refbase=47ab...=                          |
 | =externalref= | =name:externalref=<repo_uuid>:<metarecord_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
 
-** Selector arguments
+** Selector options
 
-Commands written =<query|uuid>= accept either a bare metarecord UUID (targets that
-single metarecord, no daemon query round-trip) or a DSL predicate (see
-[[file:spec-query.org][spec-query.org]]) evaluated by the daemon.
+=mf metarecord= picks its target metarecord(s) with a *selector option that
+precedes the verb* (so the selector and verb don't compete for the same
+positional, and one selector serves every verb including =field=):
+
+| Option        | Selects                                                       |
+|---------------+--------------------------------------------------------------|
+| =-i <uuid>=   | one metarecord by UUID (no daemon query round-trip)          |
+| =-q "<DSL>"=  | the metarecords matching a DSL predicate ([[file:spec-query.org][spec-query.org]])         |
+| =-s=          | with =-q=: treat it as simplified-language text, expand first |
+| (none)        | all metarecords                                              |
+
+=-q= and =-i= are mutually exclusive; =-s= requires =-q=. =-s= expansion is a
+pure client-side transformation (the shared grammar in =core=), never a daemon
+round-trip. Example: =mf -n music metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true=.
 
 ** Verb pattern
 
@@ -585,59 +596,55 @@ Kept at the top level deliberately: it is a *name-scoped, whole-repository*
 migration, not a selection- or id-scoped edit, so it belongs to none of the
 get/set/add/delete groups.
 
-** =mf metarecord …=
+** =mf metarecord [selector] <verb>=
 
-*** =mf metarecord get [<query|uuid>]= (default for =mf metarecord=)
+The verb follows the selector options above. =add= takes no selector; =set=
+needs =-i=; =delete= and =field= need a selector; =get= defaults to all.
+
+*** =mf metarecord [-i|-q] get=
 
 Reads metarecords; subsumes the former =list=, =query= and =get=:
-- a *UUID* selector prints that metarecord's full JSON object (fields incl. ids);
-- a *predicate* selector, or *no selector* (match-all), prints the matching
-  UUIDs, one per line (internal pagination over =next_cursor=).
+- with =-i <uuid>=, prints that metarecord's full JSON object (fields incl. ids);
+- with =-q= or no selector (match-all), prints the matching UUIDs, one per line
+  (internal pagination over =next_cursor=).
 
-=--select=, =--sort=, =--limit=, =--values= and =--simplified/-s= apply as on the
-former =mf query= and override the default output shape.
+=--select=, =--sort=, =--limit=, =--values= override the default output shape.
 
 *** =mf metarecord add <spec> [<spec> ...]=
 
 Creates a metarecord with the given fields and prints its UUID (the former =mf
-create=). The inverse of =mf metarecord delete= on that UUID.
+create=). Takes *no selector* (it makes a new metarecord). The inverse of
+=mf metarecord -i <uuid> delete=.
 
 | Flag      | Description                                                |
 |-----------+------------------------------------------------------------|
 | =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
 
-*** =mf metarecord set <uuid> <spec> [<spec> ...]=
+*** =mf metarecord -i <uuid> set <spec> [<spec> ...]=
 
-Replaces the *entire* field set of an existing metarecord with the given specs,
-keeping its UUID — the inverse of =mf metarecord get <uuid>=, equivalent to a
-delete + create at fixed UUID. *Literal overwrite*: any field not listed is
-removed, including reserved =mfr_*=/=mf_*= ones, so a careless set can untrack a
-file (round-trip the output of =mf metarecord get= to preserve everything).
-Recorded as *one* log operation per metarecord (=SetRecord=: =before= = all old
-fields, =after= = the new set), exactly as create and delete are one operation.
-UUID target only.
-
-*Requires =-f= / =--force= to run at all* — with no force flag the command
-refuses and changes nothing. This is a deliberate guard: a whole-record
-overwrite is a rare, scripting-oriented operation that must not be confused with
-=mf metarecord <uuid> field set= (which sets one field). The force requirement is
-unconditional here, whether or not reserved fields are involved.
+Replaces the *entire* field set of the selected metarecord, keeping its UUID —
+the inverse of =mf metarecord -i <uuid> get=, equivalent to a delete + create at
+fixed UUID. *Literal overwrite*: any field not listed is removed, including
+reserved =mfr_*=/=mf_*= ones, so a careless set can untrack a file (round-trip
+the output of =get= to preserve everything). Recorded as *one* =SetRecord=
+operation. *Needs =-i=* (a single metarecord) and *requires =-f=/=--force= to run
+at all* — a deliberate guard so this rare, scripting-oriented overwrite is not
+confused with =field set= (one field).
 
 | Flag          | Description                                                |
 |---------------+------------------------------------------------------------|
 | =-f=/=--force= | Mandatory: confirms the full-record overwrite             |
 
-*** =mf metarecord delete <query|uuid>=
+*** =mf metarecord [-i|-q] delete=
 
-Deletes the matching metarecords (metadata and all fields); prints the count.
-Confirms for a predicate target unless =--force= is passed. A predicate goes
-through the atomic =POST /repos/:repo/delete= (one revision); the confirmation
-count comes from a =count=+=limit= query, never a full UUID materialisation.
+Deletes the selected metarecords (metadata and all fields); prints the count.
+Requires a selector. Confirms for a =-q= selector unless =--force= is passed. A
+query goes through the atomic =POST /repos/:repo/delete= (one revision); the
+confirmation count comes from a =count=+=limit= query.
 
-*** =mf metarecord field <query|uuid> <verb> ...=
+*** =mf metarecord [-i|-q] field <verb> ...=
 
-Field operations scoped to the selected metarecord(s). The selector follows the
-=field= keyword (a clap constraint: a positional cannot precede a subcommand).
+Field operations scoped to the selected metarecord(s) (the selector is required).
 =get=/=unset= take a bare field =name=; =set=/=add=/=delete= take field specs:
 
 - =get <name>= — prints the field's value(s);

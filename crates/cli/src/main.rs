@@ -19,15 +19,15 @@ use metafolder_cli::log;
 #[command(name = "mf", about = "metafolder CLI — thin client over the daemon HTTP API")]
 struct Cli {
     /// Target repository by (unique) name
-    #[arg(short = 'n', long = "name", global = true, env = "METAFOLDER_REPO_NAME")]
+    #[arg(short = 'n', long = "name", env = "METAFOLDER_REPO_NAME")]
     repo_name: Option<String>,
 
     /// Target repository by UUID
-    #[arg(short = 'u', long = "uuid", global = true, env = "METAFOLDER_REPO")]
+    #[arg(short = 'u', long = "uuid", env = "METAFOLDER_REPO")]
     repo_uuid: Option<String>,
 
     /// Daemon port on 127.0.0.1
-    #[arg(short = 'p', long = "port", global = true, env = "METAFOLDER_DAEMON_PORT", default_value_t = 7523)]
+    #[arg(short = 'p', long = "port", env = "METAFOLDER_DAEMON_PORT", default_value_t = 7523)]
     port: u16,
 
     #[command(subcommand)]
@@ -51,10 +51,28 @@ enum Command {
         #[command(subcommand)]
         command: Option<LogCommand>,
     },
-    /// Metarecord operations (default: get)
+    /// Metarecord operations: `mf metarecord [selector] <verb>`
+    ///
+    /// The selector picks the target metarecord(s) and precedes the verb:
+    /// `-q "<DSL query>"` (add `-s` for the simplified language), `-i <uuid>`
+    /// for a single metarecord, or none to mean all. Examples:
+    ///   mf metarecord get                         # every uuid
+    ///   mf metarecord -i <uuid> get               # one metarecord, full JSON
+    ///   mf metarecord -q 'rating > 3' get         # matching uuids
+    ///   mf metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true
+    #[command(verbatim_doc_comment)]
     Metarecord {
+        /// DSL query selector (use -s to write it in the simplified language)
+        #[arg(short = 'q', long = "query")]
+        query: Option<String>,
+        /// Single-metarecord selector by UUID
+        #[arg(short = 'i', long = "id", conflicts_with = "query")]
+        id: Option<String>,
+        /// Treat -q as simplified-language text and expand it first
+        #[arg(short = 's', long = "simplified", requires = "query")]
+        simplified: bool,
         #[command(subcommand)]
-        command: Option<MetarecordCommand>,
+        verb: Option<MetarecordVerb>,
     },
     /// Field operations by row id (direct access)
     Field {
@@ -226,15 +244,13 @@ enum LogCommand {
 }
 
 #[derive(Subcommand)]
-enum MetarecordCommand {
-    /// Read metarecords: UUID selector → full JSON; predicate/none → UUIDs
+enum MetarecordVerb {
+    /// Read: -i <uuid> → full JSON; -q/none → UUIDs (--select for fields)
     Get {
-        /// MetaRecord UUID or query predicate (omitted: all metarecords)
-        selector: Option<String>,
         /// Print full metadata restricted to these fields, or '*' for all
         #[arg(long)]
         select: Option<String>,
-        /// Sort key field[:asc|desc]; repeatable (predicate selectors only)
+        /// Sort key field[:asc|desc]; repeatable (query selectors only)
         #[arg(long = "sort")]
         sort: Vec<String>,
         /// Stop after N metarecords
@@ -243,11 +259,8 @@ enum MetarecordCommand {
         /// Print the selected field's raw values, one per line
         #[arg(long, requires = "select")]
         values: bool,
-        /// Treat the selector as simplified-language text and expand it first
-        #[arg(short = 's', long)]
-        simplified: bool,
     },
-    /// Create a metarecord with the given fields and print its UUID
+    /// Create a metarecord with the given fields and print its UUID (no selector)
     Add {
         /// Field spec name:type[=value]; repeatable
         #[arg(required = true)]
@@ -256,10 +269,8 @@ enum MetarecordCommand {
         #[arg(long, short = 'f')]
         force: bool,
     },
-    /// Replace the ENTIRE field set of a metarecord (force required)
+    /// Replace the ENTIRE field set of the selected metarecord (needs -i, force)
     Set {
-        /// MetaRecord UUID
-        uuid: String,
         /// Field spec name:type[=value]; repeatable
         #[arg(required = true)]
         specs: Vec<String>,
@@ -267,18 +278,14 @@ enum MetarecordCommand {
         #[arg(long, short = 'f')]
         force: bool,
     },
-    /// Delete the matching metarecords (metadata and all fields)
+    /// Delete the selected metarecords (metadata and all fields)
     Delete {
-        /// MetaRecord UUID or query predicate
-        selector: String,
-        /// Skip the confirmation prompt for predicate selectors
+        /// Skip the confirmation prompt for query selectors
         #[arg(long, short = 'f')]
         force: bool,
     },
     /// Field operations scoped to the selected metarecord(s)
     Field {
-        /// MetaRecord UUID or query predicate
-        selector: String,
         #[command(subcommand)]
         verb: FieldVerb,
     },
@@ -523,7 +530,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
         }
         Command::Log { command } => dispatch_log(ctx, command),
-        Command::Metarecord { command } => dispatch_metarecord(ctx, command),
+        Command::Metarecord { query, id, simplified, verb } => {
+            dispatch_metarecord(ctx, query, id, simplified, verb)
+        }
         Command::Field { command } => dispatch_field(ctx, command),
         Command::Retype { name, to } => commands::retype(ctx, &name, &to),
         Command::Reconcile {
@@ -557,34 +566,52 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     }
 }
 
-fn dispatch_metarecord(ctx: &Ctx, command: Option<MetarecordCommand>) -> CmdResult {
-    match command {
-        None => commands::metarecord_get(ctx, None, None, &[], None, false, false),
-        Some(MetarecordCommand::Get { selector, select, sort, limit, values, simplified }) => {
-            commands::metarecord_get(
-                ctx,
-                selector.as_deref(),
-                select.as_deref(),
-                &sort,
-                limit,
-                values,
-                simplified,
-            )
+fn dispatch_metarecord(
+    ctx: &Ctx,
+    query: Option<String>,
+    id: Option<String>,
+    simplified: bool,
+    verb: Option<MetarecordVerb>,
+) -> CmdResult {
+    use metafolder_cli::client::CliError::Usage;
+    let by_id = id.is_some();
+    // -q is expanded here when -s is set, so the rest sees a normal-DSL selector.
+    let selector = commands::resolve_selector(query.as_deref(), id.as_deref(), simplified)?;
+    let verb = verb.unwrap_or(MetarecordVerb::Get {
+        select: None,
+        sort: Vec::new(),
+        limit: None,
+        values: false,
+    });
+    match verb {
+        MetarecordVerb::Get { select, sort, limit, values } => {
+            commands::metarecord_get(ctx, selector.as_deref(), select.as_deref(), &sort, limit, values)
         }
-        Some(MetarecordCommand::Add { specs, force }) => commands::create(ctx, &specs, force),
-        Some(MetarecordCommand::Set { uuid, specs, force }) => {
-            commands::metarecord_set(ctx, &uuid, &specs, force)
+        MetarecordVerb::Add { specs, force } => {
+            if selector.is_some() {
+                return Err(Usage("mf metarecord add creates a new metarecord and takes no selector".into()));
+            }
+            commands::create(ctx, &specs, force)
         }
-        Some(MetarecordCommand::Delete { selector, force }) => {
-            commands::delete(ctx, &selector, force)
-        }
-        Some(MetarecordCommand::Field { selector, verb }) => match verb {
-            FieldVerb::Get { name } => commands::field_get(ctx, &selector, &name),
-            FieldVerb::Set { specs, force } => commands::field_set(ctx, &selector, &specs, force),
-            FieldVerb::Add { spec, force } => commands::add(ctx, &selector, &spec, force),
-            FieldVerb::Delete { spec, force } => commands::remove(ctx, &selector, &spec, force),
-            FieldVerb::Unset { name, force } => commands::field_unset(ctx, &selector, &name, force),
+        MetarecordVerb::Set { specs, force } => match selector {
+            Some(uuid) if by_id => commands::metarecord_set(ctx, &uuid, &specs, force),
+            _ => Err(Usage("mf metarecord set requires -i <uuid> (whole-record overwrite)".into())),
         },
+        MetarecordVerb::Delete { force } => {
+            let sel = selector.ok_or_else(|| Usage("mf metarecord delete requires -q or -i".into()))?;
+            commands::delete(ctx, &sel, force)
+        }
+        MetarecordVerb::Field { verb } => {
+            let sel = selector
+                .ok_or_else(|| Usage("a field operation requires a selector (-q or -i)".into()))?;
+            match verb {
+                FieldVerb::Get { name } => commands::field_get(ctx, &sel, &name),
+                FieldVerb::Set { specs, force } => commands::field_set(ctx, &sel, &specs, force),
+                FieldVerb::Add { spec, force } => commands::add(ctx, &sel, &spec, force),
+                FieldVerb::Delete { spec, force } => commands::remove(ctx, &sel, &spec, force),
+                FieldVerb::Unset { name, force } => commands::field_unset(ctx, &sel, &name, force),
+            }
+        }
     }
 }
 
