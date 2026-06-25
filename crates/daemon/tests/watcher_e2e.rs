@@ -83,9 +83,9 @@ async fn test_watcher_tracks_create_rename_delete() {
     let root_uuid = roots[0].as_str().unwrap().to_string();
     let (status, _) = request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{root_uuid}"),
-        Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);

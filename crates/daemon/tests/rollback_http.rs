@@ -52,9 +52,9 @@ async fn create(app: &Router, repo: &str, fields: Value) -> String {
 async fn set(app: &Router, repo: &str, uuid: &str, name: &str, value: Value) {
     let (status, body) = request(
         app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": name, "value": value})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/{name}"),
+        Some(json!({"value": value})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "set failed: {body}");
@@ -171,9 +171,9 @@ async fn test_lock_blocks_writes_but_allows_reads() {
     // A metadata write is rejected with 423 Locked.
     let (status, _) = request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": "rating", "value": {"type": "int", "value": 9}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/rating"),
+        Some(json!({"value": {"type": "int", "value": 9}})),
     )
     .await;
     assert_eq!(status, StatusCode::LOCKED, "writes must be locked");
@@ -198,9 +198,9 @@ async fn test_lock_blocks_writes_but_allows_reads() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": "rating", "value": {"type": "int", "value": 9}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/rating"),
+        Some(json!({"value": {"type": "int", "value": 9}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "lock should be released");

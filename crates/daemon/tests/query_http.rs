@@ -356,7 +356,7 @@ async fn test_delete_by_query() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/delete"),
+        &format!("/repos/{repo}/query/delete"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}}
         })),
@@ -395,7 +395,7 @@ async fn test_batch_set() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "rating",
@@ -421,7 +421,7 @@ async fn test_batch_set() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "is_present", "field": "genre"},
             "name": "mfr_size",
@@ -487,7 +487,7 @@ async fn test_batch_set_multi_value() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -515,7 +515,7 @@ async fn test_batch_set_multi_value() {
     let (_, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -538,7 +538,7 @@ async fn test_batch_set_multi_value() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "is_present", "field": "genre"},
             "name": "tag",
@@ -568,7 +568,7 @@ async fn test_batch_append() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/append"),
+        &format!("/repos/{repo}/query/fields/append"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -583,7 +583,7 @@ async fn test_batch_append() {
     let (_, body2) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/append"),
+        &format!("/repos/{repo}/query/fields/append"),
         Some(json!({
             "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
             "name": "tag",
@@ -610,7 +610,7 @@ async fn test_batch_append() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/append"),
+        &format!("/repos/{repo}/query/fields/append"),
         Some(json!({
             "query": {"type": "is_present", "field": "genre"},
             "name": "mfr_size",
@@ -643,7 +643,7 @@ async fn test_remove_by_query() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/remove"),
+        &format!("/repos/{repo}/query/fields/remove"),
         Some(json!({
             "query": {"type": "is_present", "field": "tag"},
             "name": "tag",
@@ -743,7 +743,7 @@ async fn test_batch_unset_removes_the_whole_field() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/unset"),
+        &format!("/repos/{repo}/query/fields/unset"),
         Some(json!({"query": {"type": "is_present", "field": "tag"}, "name": "tag"})),
     )
     .await;

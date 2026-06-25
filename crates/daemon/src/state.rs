@@ -20,6 +20,10 @@ pub struct RepoState {
     pub conn: Mutex<Connection>,
     pub cache: Mutex<TreeCache>,
     pub config: RepoConfig,
+    /// The repository's display name. Starts at `config.name` but is mutable
+    /// (rename, spec-main "PATCH /repos/:repo") — persisted to `config.json` and
+    /// the single source of truth for uniqueness and the repo listing.
+    pub name: Mutex<String>,
     pub metafolder_dir: PathBuf,
     pub case_insensitive: bool,
     /// Watcher + executor; None until started (or in unit tests).
@@ -57,10 +61,12 @@ impl RepoState {
 
     pub fn from_opened(opened: OpenedRepo) -> Self {
         let repo_uuid = opened.config.repo_uuid;
+        let name = Mutex::new(opened.config.name.clone());
         Self {
             conn: Mutex::new(opened.conn),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
             config: opened.config,
+            name,
             metafolder_dir: opened.metafolder_dir,
             case_insensitive: opened.case_insensitive,
             handles: Mutex::new(None),
@@ -69,6 +75,33 @@ impl RepoState {
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
         }
+    }
+
+    /// The repository's current (mutable) display name.
+    pub fn name(&self) -> String {
+        self.name.lock_recover().clone()
+    }
+
+    /// This repository's listing info (the `GET /repos` / `GET /repos/:repo`
+    /// shape), reading the live name.
+    pub fn info(&self) -> RepoInfo {
+        RepoInfo {
+            repo_uuid: self.config.repo_uuid,
+            name: self.name(),
+            root: self.config.root.clone(),
+            internal_dir: self.internal_dir(),
+            created_at: self.config.created_at,
+        }
+    }
+
+    /// Renames the repository: rewrites `config.json` with the new name, then
+    /// swaps the in-memory name. Uniqueness is enforced by the caller
+    /// ([`AppState::rename_repo`]).
+    pub fn rename(&self, new_name: String) -> anyhow::Result<()> {
+        let cfg = RepoConfig { name: new_name.clone(), ..self.config.clone() };
+        cfg.write(&self.metafolder_dir)?;
+        *self.name.lock_recover() = new_name;
+        Ok(())
     }
 
     /// Locks the tree cache, recovering from a poisoned mutex. Unlike the
@@ -235,7 +268,7 @@ impl AppState {
     /// among loaded repos, so the CLI's `-n <name>` selector resolves to exactly
     /// one UUID (spec-main "Global selection flags").
     fn ensure_name_available(&self, name: &str) -> Result<(), ApiError> {
-        if self.repos.lock_recover().values().any(|r| r.config.name == name) {
+        if self.repos.lock_recover().values().any(|r| r.name() == name) {
             return Err(ApiError::conflict(format!(
                 "a repository named '{name}' is already loaded; names must be unique"
             )));
@@ -303,18 +336,35 @@ impl AppState {
 
     pub fn list_repos(&self) -> Vec<RepoInfo> {
         let repos = self.repos.lock_recover();
-        let mut infos: Vec<RepoInfo> = repos
-            .values()
-            .map(|r| RepoInfo {
-                repo_uuid: r.config.repo_uuid,
-                name: r.config.name.clone(),
-                root: r.config.root.clone(),
-                internal_dir: r.internal_dir(),
-                created_at: r.config.created_at,
-            })
-            .collect();
+        let mut infos: Vec<RepoInfo> = repos.values().map(|r| r.info()).collect();
         infos.sort_by_key(|i| i.repo_uuid);
         infos
+    }
+
+    /// One loaded repository's info, or 404.
+    pub fn repo_info(&self, repo_uuid: Uuid) -> Result<RepoInfo, ApiError> {
+        Ok(self.repo(repo_uuid)?.info())
+    }
+
+    /// Renames a loaded repository, keeping names unique among loaded repos
+    /// (409 on clash) and persisting to `config.json`.
+    pub fn rename_repo(&self, repo_uuid: Uuid, new_name: &str) -> Result<RepoInfo, ApiError> {
+        let target = {
+            let repos = self.repos.lock_recover();
+            if repos.iter().any(|(u, r)| *u != repo_uuid && r.name() == new_name) {
+                return Err(ApiError::conflict(format!(
+                    "a repository named '{new_name}' is already loaded; names must be unique"
+                )));
+            }
+            repos
+                .get(&repo_uuid)
+                .cloned()
+                .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))?
+        };
+        target
+            .rename(new_name.to_string())
+            .map_err(|e| ApiError::internal(format!("failed to persist the rename: {e}")))?;
+        Ok(target.info())
     }
 
     /// All tasks across every loaded repository (global `GET /tasks`).

@@ -56,12 +56,12 @@ async fn create(app: &Router, repo: &str, fields: Value) -> Value {
 async fn patch(app: &Router, repo: &str, uuid: &str, name: &str, value: Value) -> Value {
     let (status, body) = request(
         app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": name, "value": value})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/{name}"),
+        Some(json!({"value": value})),
     )
     .await;
-    assert_eq!(status, StatusCode::OK, "patch failed: {body}");
+    assert_eq!(status, StatusCode::OK, "set field failed: {body}");
     body
 }
 
@@ -285,7 +285,7 @@ async fn test_rollback_prev_revision_undoes_batch() {
     let (status, _) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "is_present", "field": "g"},
             "name": "seen",
@@ -498,7 +498,13 @@ async fn test_rollback_to_empty_state() {
     assert_eq!(status, StatusCode::OK, "got {body}");
     assert_eq!(body["new_head"], Value::Null);
 
-    let (_, all) = request(&app, "GET", &format!("/repos/{repo}/metarecords"), None).await;
+    let (_, all) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_unknown", "field": "__never__"}})),
+    )
+    .await;
     assert_eq!(all.as_array().unwrap().len(), 0, "empty state");
 
     std::fs::remove_dir_all(root).unwrap();

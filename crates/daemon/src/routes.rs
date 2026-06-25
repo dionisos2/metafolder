@@ -9,7 +9,7 @@ use axum::extract::rejection::JsonRejection;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -23,7 +23,7 @@ use metafolder_core::query::Query as MetaQuery;
 use crate::db;
 use crate::error::ApiError;
 use crate::log::Writer;
-use crate::pagination::{self, Cursor, Page};
+use crate::pagination::Page;
 use crate::query_exec::{self, SortKey};
 use crate::repo::RepoLocator;
 use crate::reserved;
@@ -37,28 +37,36 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
         .route("/repos/load", post(load_repo))
+        .route("/repos/:repo", get(get_repo).patch(rename_repo))
         .route("/repos/:repo/unload", post(unload_repo))
-        .route("/repos/:repo/metarecords", get(list_metarecords).post(create_record_endpoint))
-        .route("/repos/:repo/metarecords/batch", post(batch_get_records))
+        // ── Resource layer (single, directly-addressed) ──────────────────────
+        .route("/repos/:repo/metarecords", post(create_record_endpoint))
         .route(
             "/repos/:repo/metarecords/:uuid",
-            get(get_record_endpoint)
-                .put(put_metarecord)
-                .delete(delete_record_endpoint)
-                .patch(patch_metarecord),
+            get(get_record_endpoint).put(put_metarecord).delete(delete_record_endpoint),
         )
-        .route("/repos/:repo/query", post(run_query))
-        .route("/repos/:repo/tree/resolve", post(tree_resolve))
-        .route("/repos/:repo/set", post(batch_set))
-        .route("/repos/:repo/append", post(batch_append))
-        .route("/repos/:repo/remove", post(batch_remove))
-        .route("/repos/:repo/unset", post(batch_unset))
+        .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
+        .route(
+            "/repos/:repo/metarecords/:uuid/fields/:name",
+            get(get_record_field).put(set_record_field).delete(unset_record_field),
+        )
+        .route(
+            "/repos/:repo/metarecords/:uuid/fields/:name/resolve-tree",
+            get(resolve_record_field_tree),
+        )
         .route(
             "/repos/:repo/fields/:id",
             get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),
         )
-        .route("/repos/:repo/fields/:name/retype", post(retype_field))
-        .route("/repos/:repo/delete", post(delete_by_query))
+        .route("/repos/:repo/retype", post(retype_field))
+        // ── Set layer (by predicate) ─────────────────────────────────────────
+        .route("/repos/:repo/query", post(run_query))
+        .route("/repos/:repo/query/delete", post(delete_by_query))
+        .route("/repos/:repo/query/fields/set", post(batch_set))
+        .route("/repos/:repo/query/fields/append", post(batch_append))
+        .route("/repos/:repo/query/fields/remove", post(batch_remove))
+        .route("/repos/:repo/query/fields/unset", post(batch_unset))
+        .route("/repos/:repo/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/:repo/log", get(get_log))
         .route("/repos/:repo/log/since", get(get_log_since))
         .route(
@@ -80,11 +88,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
-        .route("/repos/:repo/metarecords/:uuid/fields", post(append_field))
-        .route(
-            "/repos/:repo/metarecords/:uuid/fields/:field_id",
-            put(replace_field).delete(delete_field),
-        )
         .with_state(state)
 }
 
@@ -138,38 +141,35 @@ where
 }
 
 #[derive(Deserialize)]
-struct TreeResolveBody {
+struct QueryResolveTreeBody {
+    query: MetaQuery,
     #[serde(default = "default_tree_field")]
     field: String,
-    #[serde(default)]
-    uuids: Vec<String>,
 }
 
 fn default_tree_field() -> String {
     "mfr_path".to_string()
 }
 
-/// `POST /repos/:repo/tree/resolve`: resolves each metarecord's TreeRef
-/// positions for `field` (default `mfr_path`) to repo-root-relative paths.
-/// A field is a multi-map, so each metarecord maps to an array of paths
-/// (positions whose parent is stale are skipped). Resolution uses the in-memory
-/// tree cache — one round-trip whatever the depth.
-async fn tree_resolve(
+/// `POST /repos/:repo/query/fields/resolve-tree`: resolves the TreeRef `field`
+/// (default `mfr_path`) of every metarecord matching `query` to repo-root-
+/// relative paths. A field is a multi-map, so each metarecord maps to an array
+/// of paths (stale positions skipped). Resolution uses the in-memory tree cache
+/// — one round-trip whatever the depth. (Target an explicit set with a
+/// `uuid_in` query.)
+async fn query_resolve_tree(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
-    payload: Result<Json<TreeResolveBody>, JsonRejection>,
+    payload: Result<Json<QueryResolveTreeBody>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let Json(body) = payload?;
-    let uuids = body
-        .uuids
-        .iter()
-        .map(|s| parse_uuid(s))
-        .collect::<Result<Vec<_>, _>>()?;
     let field = body.field;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
+        let (uuids, _) =
+            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
@@ -180,38 +180,19 @@ async fn tree_resolve(
     .await
 }
 
-#[derive(Deserialize)]
-struct BatchGetBody {
-    #[serde(default)]
-    uuids: Vec<String>,
-}
-
-/// `POST /repos/:repo/metarecords/batch`: fetches several metarecords in one
-/// round-trip, keyed by uuid. Unknown uuids are omitted (not an error). Lets
-/// clients dereference a page of `Ref`s without N requests.
-async fn batch_get_records(
+/// `GET /repos/:repo/metarecords/:uuid/fields/:name/resolve-tree`: the direct
+/// (single-metarecord) form of `resolve-tree`.
+async fn resolve_record_field_tree(
     State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-    payload: Result<Json<BatchGetBody>, JsonRejection>,
-) -> Result<Response, ApiError> {
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let Json(body) = payload?;
-    let uuids = body
-        .uuids
-        .iter()
-        .map(|s| parse_uuid(s))
-        .collect::<Result<Vec<_>, _>>()?;
+    let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
-        let mut out = serde_json::Map::new();
-        for uuid in uuids {
-            if let Some(record) = db::get_metarecord(&conn, uuid)? {
-                let value = serde_json::to_value(record)
-                    .map_err(|e| ApiError::internal(format!("serializing metarecord: {e}")))?;
-                out.insert(hex(uuid), value);
-            }
-        }
-        Ok(Json(serde_json::Value::Object(out)).into_response())
+        let mut cache = repo_state.lock_cache();
+        let paths = cache.paths_of(&conn, &name, uuid)?;
+        Ok(Json(json!({ "paths": paths })))
     })
     .await
 }
@@ -292,12 +273,48 @@ fn ensure_exists(conn: &rusqlite::Connection, uuid: Uuid) -> Result<(), ApiError
 
 // ── Health and repositories ───────────────────────────────────────────────────
 
-async fn health() -> Json<serde_json::Value> {
-    Json(json!({"status": "ok"}))
+async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
+    Json(json!({
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "repos": state.list_repos().len(),
+    }))
 }
 
 async fn list_repos(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(serde_json::to_value(state.list_repos()).expect("repo list serialization"))
+}
+
+/// `GET /repos/:repo` — one loaded repository's info (404 if not loaded).
+async fn get_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let info = state.repo_info(repo_uuid)?;
+    Ok(Json(serde_json::to_value(info).expect("repo info serialization")))
+}
+
+#[derive(Deserialize)]
+struct RenameBody {
+    name: String,
+}
+
+/// `PATCH /repos/:repo` — rename a loaded repository (409 on name clash,
+/// persisted to config.json).
+async fn rename_repo(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<RenameBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let name = body.name.trim();
+    if name.is_empty() {
+        return Err(ApiError::bad_request("repository name must not be empty"));
+    }
+    let info = state.rename_repo(repo_uuid, name)?;
+    Ok(Json(serde_json::to_value(info).expect("repo info serialization")))
 }
 
 /// `GET /tasks`: every task across all loaded repositories (spec-tasks).
@@ -450,52 +467,6 @@ async fn unload_repo(
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
     Ok(Json(json!({"repo_uuid": hex(repo_uuid)})))
-}
-
-// ── MetaRecord listing ──────────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-struct PageParams {
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    cursor: Option<String>,
-}
-
-async fn list_metarecords(
-    State(state): State<Arc<AppState>>,
-    Path(repo): Path<String>,
-    Query(params): Query<PageParams>,
-) -> Result<Response, ApiError> {
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        match params.limit {
-            None => {
-                let uuids = db::list_entries(&conn, repo_uuid)?;
-                let hexes: Vec<String> = uuids.into_iter().map(hex).collect();
-                Ok(Json(hexes).into_response())
-            }
-            Some(limit) => {
-                let hash = pagination::context_hash(&["metarecord-list", &hex(repo_uuid)]);
-                let after = match &params.cursor {
-                    None => None,
-                    Some(token) => Some(pagination::decode(token, hash)?.last_uuid()?),
-                };
-                let mut uuids = db::list_entries_page(&conn, repo_uuid, after, limit + 1)?;
-                let next_cursor = if uuids.len() > limit {
-                    uuids.truncate(limit);
-                    let last = *uuids.last().expect("non-empty page");
-                    Some(pagination::encode(&Cursor { keys: vec![], uuid: hex(last), h: hash }))
-                } else {
-                    None
-                };
-                let results: Vec<String> = uuids.into_iter().map(hex).collect();
-                Ok(Json(Page { results, next_cursor, total: None }).into_response())
-            }
-        }
-    })
-    .await
 }
 
 // ── MetaRecord CRUD ─────────────────────────────────────────────────────────────
@@ -1748,20 +1719,22 @@ async fn batch_unset(
 
 #[derive(Deserialize)]
 struct RetypeBody {
+    name: String,
     to: String,
 }
 
-/// `POST /repos/:repo/fields/:name/retype`: converts every non-`Nothing` row of
-/// the field to a new scalar type, repository-wide, in one revision
-/// (spec-data-model "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`)
-/// are rejected unconditionally — the system owns their types.
+/// `POST /repos/:repo/retype`: converts every non-`Nothing` row of the field
+/// `name` to a new scalar type, repository-wide, in one revision (spec-data-model
+/// "Changing a field's type"). Reserved fields (`mfr_*`/`mf_*`) are rejected
+/// unconditionally — the system owns their types.
 async fn retype_field(
     State(state): State<Arc<AppState>>,
-    Path((repo, name)): Path<(String, String)>,
+    Path(repo): Path<String>,
     payload: Result<Json<RetypeBody>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    let name = body.name;
     if name.starts_with("mfr_") || name.starts_with("mf_") {
         return Err(ApiError::bad_request(format!(
             "field '{name}' is reserved; its type is owned by the system and cannot be retyped"
@@ -1913,23 +1886,72 @@ struct SetFieldBody {
     force: bool,
 }
 
-async fn patch_metarecord(
+#[derive(Deserialize)]
+struct RecordFieldBody {
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    values: Option<Vec<Value>>,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `GET /repos/:repo/metarecords/:uuid/fields/:name` — the field's value(s).
+async fn get_record_field(
     State(state): State<Arc<AppState>>,
-    Path((repo, uuid)): Path<(String, String)>,
-    payload: Result<Json<SetFieldBody>, JsonRejection>,
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        ensure_exists(&conn, uuid)?;
+        let rows = db::get_field_rows_named(&conn, uuid, &name)?;
+        let values: Vec<&Value> = rows.iter().map(|r| &r.value).collect();
+        Ok(Json(json!({ "name": name, "values": values })))
+    })
+    .await
+}
+
+/// `PUT /repos/:repo/metarecords/:uuid/fields/:name` — set: replaces all rows of
+/// `name` (one `SetField` op). `value` (one row) or `values` (multi-map).
+async fn set_record_field(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+    payload: Result<Json<RecordFieldBody>, JsonRejection>,
 ) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     let rows = resolved_values(body.value, body.values)?;
     write_record(&state, repo_uuid, uuid, move |writer| {
-        check_writable(&body.name, body.force)?;
+        check_writable(&name, body.force)?;
         ensure_exists(writer.connection(), uuid)?;
-        writer.set_field_multi(uuid, &body.name, rows)?;
-        Ok(vec![body.name])
+        writer.set_field_multi(uuid, &name, rows)?;
+        Ok(vec![name])
     })
     .await
     .map(Json)
+}
+
+/// `DELETE /repos/:repo/metarecords/:uuid/fields/:name` — unset: removes every
+/// row of `name` (one `DeleteField` op), leaving the field unknown.
+async fn unset_record_field(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid, name)): Path<(String, String, String)>,
+    payload: Option<Json<ForceBody>>,
+) -> Result<StatusCode, ApiError> {
+    let force = payload.map(|Json(b)| b.force).unwrap_or(false);
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
+        check_writable(&name, force)?;
+        ensure_exists(writer.connection(), uuid)?;
+        writer.delete_fields_named(uuid, &name)?;
+        Ok(vec![name])
+    })
+    .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
@@ -1982,68 +2004,10 @@ async fn append_field(
     .map(Json)
 }
 
-#[derive(Deserialize)]
-struct ReplaceFieldBody {
-    value: Value,
-    #[serde(default)]
-    force: bool,
-}
-
-/// Finds the field row of a metarecord by id, or 404.
-fn owned_field_name(
-    conn: &rusqlite::Connection,
-    uuid: Uuid,
-    field_id: i64,
-) -> Result<String, ApiError> {
-    db::get_field_rows(conn, uuid)?
-        .into_iter()
-        .find(|r| r.id == field_id)
-        .map(|r| r.name)
-        .ok_or_else(|| {
-            ApiError::not_found(format!("Field {field_id} not found on entry {uuid}"))
-        })
-}
-
-async fn replace_field(
-    State(state): State<Arc<AppState>>,
-    Path((repo, uuid, field_id)): Path<(String, String, i64)>,
-    payload: Result<Json<ReplaceFieldBody>, JsonRejection>,
-) -> Result<Json<MetaRecord>, ApiError> {
-    let Json(body) = payload?;
-    let repo_uuid = parse_uuid(&repo)?;
-    let uuid = parse_uuid(&uuid)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
-        let name = owned_field_name(writer.connection(), uuid, field_id)?;
-        check_writable(&name, body.force)?;
-        writer.replace_field(uuid, field_id, body.value)?;
-        Ok(vec![name])
-    })
-    .await
-    .map(Json)
-}
-
 #[derive(Deserialize, Default)]
 struct ForceBody {
     #[serde(default)]
     force: bool,
-}
-
-async fn delete_field(
-    State(state): State<Arc<AppState>>,
-    Path((repo, uuid, field_id)): Path<(String, String, i64)>,
-    payload: Option<Json<ForceBody>>,
-) -> Result<StatusCode, ApiError> {
-    let force = payload.map(|Json(b)| b.force).unwrap_or(false);
-    let repo_uuid = parse_uuid(&repo)?;
-    let uuid = parse_uuid(&uuid)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
-        let name = owned_field_name(writer.connection(), uuid, field_id)?;
-        check_writable(&name, force)?;
-        writer.delete_field(uuid, field_id)?;
-        Ok(vec![name])
-    })
-    .await?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 // ── By-id field access (repo-level: the row id is unique per repo) ────────────

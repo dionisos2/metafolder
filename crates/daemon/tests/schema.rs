@@ -255,7 +255,7 @@ async fn test_per_type_cardinality() {
     let (status, body) = request(
         &app,
         "DELETE",
-        &format!("/repos/{repo}/metarecords/{film_uuid}/fields/{name_id}"),
+        &format!("/repos/{repo}/fields/{name_id}"),
         None,
     )
     .await;
@@ -290,9 +290,9 @@ async fn test_delta_validation_ignores_untouched_fields() {
     // new type are violated (film requires one name).
     let (status, _) = request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": "mf_schema", "value": {"type": "string", "value": "film"}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
+        Some(json!({"value": {"type": "string", "value": "film"}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -300,9 +300,9 @@ async fn test_delta_validation_ignores_untouched_fields() {
     // Writing an unrelated field is fine despite the missing required name.
     let (status, _) = request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": "genre", "value": {"type": "string", "value": "horror"}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/genre"),
+        Some(json!({"value": {"type": "string", "value": "horror"}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -320,7 +320,7 @@ async fn test_batch_set_rolls_back_on_violation() {
     let (status, body) = request(
         &app,
         "POST",
-        &format!("/repos/{repo}/set"),
+        &format!("/repos/{repo}/query/fields/set"),
         Some(json!({
             "query": {"type": "is_present", "field": "genre"},
             "name": "rating",
@@ -364,9 +364,9 @@ async fn test_schema_check_reports_existing_violations() {
     // Declare it a film (never validated): now rating max=1 is violated.
     request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{uuid}"),
-        Some(json!({"name": "mf_schema", "value": {"type": "string", "value": "film"}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
+        Some(json!({"value": {"type": "string", "value": "film"}})),
     )
     .await;
 

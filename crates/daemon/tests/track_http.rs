@@ -114,9 +114,9 @@ async fn test_full_reconcile_endpoint() {
     let root_uuid = roots[0].as_str().unwrap();
     request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{root_uuid}"),
-        Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
     )
     .await;
 
@@ -170,9 +170,9 @@ async fn test_single_metarecord_reconcile_endpoint() {
     let dir_uuid = body["uuid"].as_str().unwrap().to_string();
     request(
         &app,
-        "PATCH",
-        &format!("/repos/{repo}/metarecords/{dir_uuid}"),
-        Some(json!({"name": "mf_watch", "value": {"type": "bool", "value": true}})),
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{dir_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
     )
     .await;
 
