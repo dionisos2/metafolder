@@ -232,18 +232,19 @@
         <button id="columns-apply">Apply</button>
       </div>
       <div id="columns-error" class="editor-error"></div>
-      <button id="bulk-open" type="button" title="Set, append, or remove a field on every metarecord matching the current query">Edit field on query…</button>
+      <button id="bulk-open" type="button" title="Set, append, remove, or unset a field on every metarecord matching the current query">Edit field on query…</button>
       <div id="bulk-form">
         <div class="editor-row">
-          <select id="bulk-op" title="set: replace all rows · append: add a row · remove: delete rows equal to this value">
+          <select id="bulk-op" title="set: replace all rows · append: add a row · remove: delete rows equal to this value · unset: remove the field entirely">
             <option value="set">Set (replace all rows)</option>
             <option value="append">Append (add a row)</option>
             <option value="remove">Remove (delete matching rows)</option>
+            <option value="unset">Unset (remove the field)</option>
           </select>
           <input id="bulk-name" placeholder="field name, e.g. rating" />
           <button id="bulk-type" type="button">string ▾</button>
         </div>
-        <div class="editor-row">
+        <div class="editor-row" id="bulk-value-row">
           <span id="bulk-value"></span>
         </div>
         <div class="editor-row">

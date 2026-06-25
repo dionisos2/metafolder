@@ -473,10 +473,12 @@ export async function mount(root, metafolder) {
   let bulkWidget = null; // {element, read()} following the picked type
 
   // Each operation maps to its batch endpoint and a confirmation verb.
+  // `valueless` ops (unset) act on the field name alone — no value widget.
   const BULK_OPS = {
     set: { path: 'set', verb: 'Set', prep: 'on' },
     append: { path: 'append', verb: 'Append', prep: 'to' },
     remove: { path: 'remove', verb: 'Remove', prep: 'from' },
+    unset: { path: 'unset', verb: 'Unset', prep: 'from', valueless: true },
   };
 
   /** The form's value widget follows the picked type. */
@@ -486,6 +488,17 @@ export async function mount(root, metafolder) {
   }
   const bulkTypePicker = createTypePicker(root.getElementById('bulk-type'), 'string', setBulkWidget);
   setBulkWidget(bulkTypePicker.get());
+
+  // Hide the type picker + value row for value-less ops (unset).
+  const bulkValueRow = root.getElementById('bulk-value-row');
+  const bulkTypeBtn = root.getElementById('bulk-type');
+  function syncBulkOpUi() {
+    const valueless = (BULK_OPS[bulkOp.value] ?? BULK_OPS.set).valueless === true;
+    bulkValueRow.hidden = valueless;
+    bulkTypeBtn.hidden = valueless;
+  }
+  bulkOp.addEventListener('change', syncBulkOpUi);
+  syncBulkOpUi();
 
   function openBulkForm() {
     bulkError.textContent = '';
@@ -511,15 +524,14 @@ export async function mount(root, metafolder) {
       const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
       const name = bulkName.value.trim();
       if (!name) throw new Error('field name is required');
-      const value = bulkWidget.read();
       const force = name.startsWith('mfr_') || bulkForce.checked;
       const n = await countMatches();
       if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
-      const resp = await daemon.call(
-        'POST',
-        `/repos/${repo}/${op.path}`,
-        bulkSetBody(queryIR, name, value, force),
-      );
+      // Value-less ops (unset) act on the name alone.
+      const body = op.valueless
+        ? { query: queryIR ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
+        : bulkSetBody(queryIR, name, bulkWidget.read(), force);
+      const resp = await daemon.call('POST', `/repos/${repo}/${op.path}`, body);
       const updated = resp.updated ?? 0;
       bulkForm.classList.remove('open');
       statusBar.message(
