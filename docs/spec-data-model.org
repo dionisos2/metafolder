@@ -499,9 +499,28 @@ If the targeted field row is protected, the request body must contain
 
 * CLI
 
-Metarecord manipulation commands. Global conventions (binary name, =--repo=,
-=--daemon-url=, exit codes) are defined in
-[[file:spec-main.org][spec-main.org]].
+Metarecord manipulation commands. Global conventions (binary name, exit codes)
+are defined in [[file:spec-main.org][spec-main.org]].
+
+*** Global selection flags
+
+The repository and daemon are chosen *once*, by flags that precede the command —
+never per-command:
+
+| Flag           | Selects                                                     |
+|----------------+------------------------------------------------------------|
+| =-n <name>=    | the loaded repository by its (unique) name                 |
+| =-u <uuid>=    | the loaded repository by UUID                              |
+| =-p <port>=    | the daemon TCP port on =127.0.0.1= (default =7523=)        |
+
+=-n= and =-u= are mutually exclusive. The daemon only listens on loopback, so a
+port is all that is needed to address it (no full URL). Environment fallbacks:
+=METAFOLDER_REPO= (UUID), =METAFOLDER_REPO_NAME= (name), =METAFOLDER_DAEMON_PORT=.
+Daemon-wide commands (=mf repo=, =mf task=) ignore =-n=/=-u=.
+
+Repository *names are unique among loaded repositories*: the daemon rejects
+loading a repo whose name collides with one already loaded, so =-n= always
+resolves to a single UUID.
 
 ** Field specification syntax
 
@@ -521,101 +540,147 @@ Commands that write fields take a /field spec/ argument of the form
 | =refbase=     | =name:refbase=<repo_uuid>=              | =origin:refbase=47ab...=                          |
 | =externalref= | =name:externalref=<repo_uuid>:<metarecord_uuid>= | =link_a:externalref=47ab...:8f3a...=          |
 
-** Query-or-UUID arguments
+** Selector arguments
 
 Commands written =<query|uuid>= accept either a bare metarecord UUID (targets that
 single metarecord, no daemon query round-trip) or a DSL predicate (see
 [[file:spec-query.org][spec-query.org]]) evaluated by the daemon.
 
-** =mf list=
+** Verb pattern
 
-Prints all metarecord UUIDs of the repository, one per line. Calls
-=GET /metarecords=; for large repositories the CLI paginates internally
-(following =next_cursor=) and streams the output.
+The repo-scoped data commands form a tree (=metarecord=, =field=) whose verbs
+follow one pattern at every level:
 
-| Flag        | Description                          |
-|-------------+--------------------------------------|
-| =--limit N= | Stop after N UUIDs                   |
+- =get= reads; =set= replaces *everything at that level*; =add= creates a new
+  element (with a fresh id/UUID); =delete= removes one element.
 
-** =mf get <query|uuid>=
+So =get= is the inverse of =set=, and =add= the inverse of =delete=. =set= at the
+metarecord level replaces all of its fields; at the field-name level, all rows of
+that name; at the row level, the one row. =add= lives only where new ids are
+born (a metarecord, or a row under a field name), so the by-id =field= group has
+no =add=.
 
-Prints the full metadata objects of the matching metarecords as a JSON array
-(including field =id=s, needed by =mf unset=). For a predicate target the
-results are fetched with internal pagination (never a single unbounded request);
-=--sort= and =--limit= apply (they are ignored for a UUID target).
+** Daemon- and repo-management groups
 
-| Flag                  | Description                                            |
-|-----------------------+-------------------------------------------------------|
-| =--fields a,b=        | Only include the listed field names                   |
-| =--sort field[:dir]=  | Sort key (=asc=/=desc=); repeatable (predicate only)  |
-| =--limit N=           | Stop after N metarecords (predicate only)             |
+*** =mf repo {list|init|load|unload}=
 
-** =mf create --field <spec> [--field <spec> ...]=
+Daemon-wide; take no =-n=/=-u= selector. =list= (the default for =mf repo=)
+pretty-prints the loaded repositories; =init <path>= / =load <path>= print the
+repo UUID; =unload= releases the repo selected by =-n=/=-u=.
 
-Creates a metarecord with the given fields (=POST /metarecords=) and prints its
-UUID.
+*** =mf task {list|show}=
+
+Background tasks (spec-tasks). =list= (default) lists tasks (=--all= across
+repos); =show <id>= shows one (=--stop= cancels it).
+
+*** =mf log {list|rollback|prune}=
+
+Repository history (spec-event-log). =list= (default) is the former flat =mf
+log=; =rollback= and =prune= are unchanged.
+
+*** =mf retype <name> <type>=
+
+Converts a field's value type repository-wide (=string|int|float|bool|datetime=).
+Kept at the top level deliberately: it is a *name-scoped, whole-repository*
+migration, not a selection- or id-scoped edit, so it belongs to none of the
+get/set/add/delete groups.
+
+** =mf metarecord …=
+
+*** =mf metarecord get [<query|uuid>]= (default for =mf metarecord=)
+
+Reads metarecords; subsumes the former =list=, =query= and =get=:
+- a *UUID* selector prints that metarecord's full JSON object (fields incl. ids);
+- a *predicate* selector, or *no selector* (match-all), prints the matching
+  UUIDs, one per line (internal pagination over =next_cursor=).
+
+=--select=, =--sort=, =--limit=, =--values= and =--simplified/-s= apply as on the
+former =mf query= and override the default output shape.
+
+*** =mf metarecord add <spec> [<spec> ...]=
+
+Creates a metarecord with the given fields and prints its UUID (the former =mf
+create=). The inverse of =mf metarecord delete= on that UUID.
 
 | Flag      | Description                                                |
 |-----------+------------------------------------------------------------|
 | =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
 
-** =mf set <query|uuid> <spec>=
+*** =mf metarecord set <uuid> <spec> [<spec> ...]=
 
-Sets a field with =set_field= semantics (replaces all rows of that name).
-With a UUID target, issues a direct =PATCH=; with a predicate, uses the batch
-=POST /set= endpoint (single server-side transaction) and prints the number
-of updated metarecords.
+Replaces the *entire* field set of an existing metarecord with the given specs,
+keeping its UUID — the inverse of =mf metarecord get <uuid>=, equivalent to a
+delete + create at fixed UUID. *Literal overwrite*: any field not listed is
+removed, including reserved =mfr_*=/=mf_*= ones, so a careless set can untrack a
+file (round-trip the output of =mf metarecord get= to preserve everything).
+Recorded as *one* log operation per metarecord (=SetRecord=: =before= = all old
+fields, =after= = the new set), exactly as create and delete are one operation.
+UUID target only.
 
-| Flag      | Description                                                |
-|-----------+------------------------------------------------------------|
-| =--force= | Required to write =mfr_*= fields (see [[*Reserved fields]]) |
+*Requires =-f= / =--force= to run at all* — with no force flag the command
+refuses and changes nothing. This is a deliberate guard: a whole-record
+overwrite is a rare, scripting-oriented operation that must not be confused with
+=mf metarecord <uuid> field set= (which sets one field). The force requirement is
+unconditional here, whether or not reserved fields are involved.
 
-** =mf add <query|uuid> <spec>=
+| Flag          | Description                                                |
+|---------------+------------------------------------------------------------|
+| =-f=/=--force= | Mandatory: confirms the full-record overwrite             |
 
-Appends one field row without touching existing rows of that name (multi-map
-append). With a UUID target, issues a direct =POST .../fields=; with a
-predicate, uses the batch =POST /repos/:repo/append= endpoint (single
-server-side transaction) and prints the number of metarecords that gained a row.
+*** =mf metarecord delete <query|uuid>=
 
-| Flag      | Description                          |
-|-----------+--------------------------------------|
-| =--force= | Required to write =mfr_*= fields     |
+Deletes the matching metarecords (metadata and all fields); prints the count.
+Confirms for a predicate target unless =--force= is passed. A predicate goes
+through the atomic =POST /repos/:repo/delete= (one revision); the confirmation
+count comes from a =count=+=limit= query, never a full UUID materialisation.
 
-** =mf remove <query|uuid> <spec>=
+*** =mf metarecord <query|uuid> field <verb> <name> [<spec-value> ...]=
 
-Removes every field row equal to the spec's =(name, value)= — the *inverse* of
-=mf add=. With a UUID target, removes the matching rows of that one metarecord;
-with a predicate, uses the batch =POST /repos/:repo/remove= endpoint (single
-server-side transaction). Prints the number of metarecords actually changed.
-Only rows whose value equals the spec value are removed; other rows of the same
-name and rows on non-matching metarecords are kept. Removing all rows of a name
-leaves the field /unknown/ (absent), distinct from setting it to =Nothing= with
-=mf set ... :nothing=.
+Field operations scoped to the selected metarecord(s). =<name>= is the field
+name; required value(s) are given in field-spec value form:
 
-| Flag      | Description                          |
-|-----------+--------------------------------------|
-| =--force= | Required to remove =mfr_*= fields    |
+- =get <name>= — prints the field's value(s);
+- =set <name> <v> [<v> ...]= — replaces *all* rows of =name= with the given
+  value set (one or several — multi-map), in *one* log operation per metarecord;
+- =add <name> <v>= — appends one row (inverse of =delete=);
+- =delete <name> <v>= — removes the row(s) equal to =(name, v)= (inverse of
+  =add=); other rows of the same name, and non-matching metarecords, are kept;
+- =unset <name>= — removes the field *entirely* (all rows → /unknown/), distinct
+  from =set <name> :nothing= (an explicit =Nothing= row).
 
-** =mf unset <uuid> <field_id>=
+A UUID selector targets that one metarecord; a predicate applies the write across
+every match in one server-side transaction (one revision, one operation per
+affected metarecord). =--force= is required for reserved =mfr_*= fields.
 
-Deletes the single field row identified by =field_id= (as shown by =mf get=) —
-the low-level, row-precise delete used for fixing one specific row. Calls
-=DELETE .../fields/:field_id=. (To remove rows by value across a query, use
-=mf remove=.)
+** =mf field <verb> <id>= (direct row access)
 
-| Flag      | Description                          |
-|-----------+--------------------------------------|
-| =--force= | Required to delete =mfr_*= fields    |
+Operates on a single field row by its DB id (as shown by =mf metarecord get=):
 
-** =mf delete <query|uuid>=
+- =get <id>= — prints the row;
+- =set <id> [--name <name>] [<spec-value>]= — changes the row's name and/or
+  value in place, *keeping its id*; the value type is validated against the
+  (target) field name's established type;
+- =delete <id>= — removes the row (the former =mf unset=).
 
-Deletes the matching metarecords (metadata and all fields). Prints the number of
-deleted metarecords. Asks for confirmation when the target is a predicate, unless
-=--force= is passed (same convention as =mf prune=; unambiguous here because
-=mf delete= removes whole metarecords and never writes =mfr_*= fields). For a
-predicate, the deletion goes through the atomic =POST /repos/:repo/delete=
-endpoint (one server-side transaction); the confirmation count is obtained via a
-=COUNT(*)= query (=count= + =limit=), so the client never materialises every
-matching UUID.
+There is no =mf field add=: new rows are born at the name level (=mf metarecord …
+field add=). =--force= is required for reserved =mfr_*= fields.
+
+** Log granularity
+
+Every command maps to *one log operation per metarecord it changes* — the unit
+the log shows and rollback reverses:
+
+| Command                       | Operation(s)                                  |
+|-------------------------------+-----------------------------------------------|
+| =metarecord add= / =delete=   | one =CreateRecord= / =DeleteRecord=           |
+| =metarecord set=              | one =SetRecord= (all fields before→after)     |
+| =field set <name>= (n values) | one =SetField= (all rows of the name)         |
+| =field add=                   | one =AppendField=                             |
+| =field delete= (by value)     | one =DeleteField= (the removed rows)          |
+| =field unset=                 | one =DeleteField= (all rows of the name)      |
+| =field set <id>= / =delete=   | one row-scoped op (keeps the row id)          |
+
+A query-scoped write is still *one revision* containing one such operation per
+affected metarecord.
 
 * Open questions

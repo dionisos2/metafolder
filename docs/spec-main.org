@@ -173,6 +173,10 @@ Response body: ={"repo_uuid": "..."}=
 Loads an existing repository into the daemon's in-memory state, starts the
 file watcher.
 
+The load is *rejected with =409=* if another loaded repository already has the
+same =name= (from its =config.json=). Names are therefore unique among loaded
+repositories, so the CLI's =-n <name>= selector resolves to exactly one UUID.
+
 The response returns the repository uuid *immediately*; the in-memory
 accelerators (tree cache + query index) are then warmed in the *background* as
 an observable =load= task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
@@ -242,24 +246,33 @@ section; this section defines the conventions shared by all commands.
 
 | Spec file                                          | Commands                                          |
 |----------------------------------------------------+---------------------------------------------------|
-| this file                                          | =mf init=, =mf load=, =mf repos=, =mf unload=     |
-| [[file:spec-data-model.org][spec-data-model.org]]   | =mf list=, =mf get=, =mf create=, =mf set=, =mf add=, =mf unset=, =mf delete=, =mf retype= |
-| [[file:spec-query.org][spec-query.org]]             | =mf query=, query DSL grammar                     |
+| this file                                          | =mf repo {list,init,load,unload}=                 |
+| [[file:spec-data-model.org][spec-data-model.org]]   | =mf metarecord {get,set,add,delete}=, =mf metarecord … field {get,set,add,delete,unset}=, =mf field {get,set,delete}=, =mf retype= |
+| [[file:spec-query.org][spec-query.org]]             | query DSL grammar (consumed by =mf metarecord get=) |
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
-| [[file:spec-schema.org][spec-schema.org]]           | =mf schema check=, =mf schema reload=, =mf schema show= |
-| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log=, =mf rollback=, =mf prune=               |
-| [[file:spec-tasks.org][spec-tasks.org]]             | =mf tasks=, =mf task=                              |
+| [[file:spec-schema.org][spec-schema.org]]           | =mf schema {check,reload,show}=                    |
+| [[file:spec-event-log.org][spec-event-log.org]]     | =mf log {list,rollback,prune}=                     |
+| [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
 
 ** Global options
 
-| Option         | Env variable             | Description                                                |
-|----------------+--------------------------+------------------------------------------------------------|
-| =--daemon-url= | =METAFOLDER_DAEMON_URL=  | Daemon base URL; default =http://127.0.0.1:7523=           |
-| =--repo <UUID>= | =METAFOLDER_REPO=       | Target repository; required by all repo-scoped commands    |
+The repository and daemon are selected once, by flags preceding the command:
 
-A repo-scoped command invoked without =--repo= / =METAFOLDER_REPO= fails
-immediately with a usage error (exit code 2), without contacting the daemon.
+| Option        | Env variable             | Description                                              |
+|---------------+--------------------------+---------------------------------------------------------|
+| =-n <name>=   | =METAFOLDER_REPO_NAME=   | Target repository by (unique) name                      |
+| =-u <uuid>=   | =METAFOLDER_REPO=        | Target repository by UUID                               |
+| =-p <port>=   | =METAFOLDER_DAEMON_PORT= | Daemon port on =127.0.0.1=; default =7523=              |
+
+=-n= and =-u= are mutually exclusive (a usage error if both are given). The
+daemon listens only on loopback, so a port fully addresses it — there is no
+base-URL option. =-n= resolves to a UUID through the daemon's repository list,
+relying on name uniqueness among loaded repos (this file, =mf repo load=).
+
+A repo-scoped command invoked with no repository selector (neither flag nor env)
+fails immediately with a usage error (exit code 2), without contacting the
+daemon. Daemon-wide commands (=mf repo=, =mf task=) ignore =-n=/=-u=.
 
 ** Output conventions
 
@@ -276,27 +289,34 @@ immediately with a usage error (exit code 2), without contacting the daemon.
 |------+------------------------------------------------------------------|
 | 0    | Success                                                          |
 | 1    | Operation failed (daemon error, violations found, no match, ...) |
-| 2    | Usage error (bad arguments, unparsable DSL/field spec, missing =--repo=) |
+| 2    | Usage error (bad arguments, unparsable DSL/field spec, missing repo selector) |
 
 ** Repository commands
 
-*** =mf init <root> [--metafolder <path>]=
+Grouped under =mf repo=; =list= is the default (=mf repo= ≡ =mf repo list=).
+These are daemon-wide and ignore =-n=/=-u= (except =unload=, which uses them to
+pick its target).
+
+*** =mf repo list=
+
+Calls =GET /repos= and prints the loaded repositories as pretty-printed JSON.
+The default subcommand of =mf repo=.
+
+*** =mf repo init <root> [--metafolder <path>]=
 
 Calls =POST /repos/init= and prints the new repository UUID. =--metafolder=
 selects an external database location (see [[*=POST /repos/init=]]).
 
-*** =mf load <root | --metafolder <path>>=
+*** =mf repo load <root | --metafolder <path>>=
 
 Calls =POST /repos/load= (standard form with a root path, or external
-database form with =--metafolder=) and prints the repository UUID.
+database form with =--metafolder=) and prints the repository UUID. The daemon
+*rejects the load if the repository's name collides with an already-loaded one*
+(=409=), keeping names unique among loaded repos so =-n= resolves unambiguously.
 
-*** =mf repos=
+*** =mf repo unload=
 
-Calls =GET /repos= and prints the loaded repositories as pretty-printed JSON.
-
-*** =mf unload=
-
-Repo-scoped (=--repo= / =METAFOLDER_REPO=). Calls
+Picks its target with =-n=/=-u= (or env). Calls
 =POST /repos/:repo/unload= and prints the repository UUID. The repository is
 removed from the daemon (its watcher stopped, its DB lock released); its on-disk
 data is untouched. A repository not loaded (404) or in a rollback navigation

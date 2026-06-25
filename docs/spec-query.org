@@ -234,16 +234,26 @@ omitted from the response — they are not included as =Nothing=.
 POST /repos/:repo_uuid/set
 #+END_SRC
 
-Runs a query server-side and sets a field on every matching metarecord in a single
-transaction. More efficient than issuing individual PATCH requests from the
-client.
+Runs a query server-side and replaces *all* rows of a field on every matching
+metarecord in a single transaction. More efficient than issuing individual PATCH
+requests from the client. Recorded as *one* =SetField= operation per affected
+metarecord (=before= = all old rows of the name, =after= = the new rows).
 
-Request body:
+Request body — =value= sets a single row; =values= (a list) sets several rows of
+the name at once (multi-map), still in one operation. Exactly one of the two is
+given:
 #+BEGIN_SRC json
 {
   "query": <Query>,
   "name": "rating",
   "value": {"type": "int", "value": 5}
+}
+#+END_SRC
+#+BEGIN_SRC json
+{
+  "query": <Query>,
+  "name": "tag",
+  "values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}]
 }
 #+END_SRC
 
@@ -279,8 +289,48 @@ metarecords are left untouched. Removing all rows of a name leaves the field
 *unknown* (absent), which is distinct from setting it to =Nothing=. Same request
 body and protected-field rule as [[*=POST /repos/:repo_uuid/set= (Batch set)][Batch set]].
 
+Each affected metarecord is recorded as *one* =DeleteField= operation (=before= =
+the removed rows, =after= = empty), so the removal is one reversible log line per
+metarecord, not one per row.
+
 Response body: ={"updated": <count>}= — the number of metarecords actually
 changed (those that carried at least one matching row).
+
+*** =POST /repos/:repo_uuid/unset= (Batch unset)
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/unset
+#+END_SRC
+
+Runs a query server-side and removes the field *entirely* — every row of =name=,
+whatever its value — from each matching metarecord, in a single transaction (one
+revision; one =DeleteField= operation per affected metarecord). The field becomes
+*unknown* (absent), distinct from setting it to =Nothing=. Request body
+={"query": <Query>, "name": "tag", "force": <bool>}=; same protected-field rule
+as Batch set.
+
+Response body: ={"updated": <count>}= — the number of metarecords that carried
+the field.
+
+*** Per-metarecord and per-row writes (non-query)
+
+Beyond the batch (query-scoped) endpoints above, the verb tree (spec-data-model
+"* CLI") also uses single-target writes, each its own one operation:
+
+- =PUT /repos/:repo/metarecords/:uuid= — *whole-record set*: replaces the entire
+  field set of one metarecord, keeping its UUID, as one =SetRecord= operation
+  (=before= = all old fields, =after= = the given set). Literal overwrite (drops
+  unlisted fields, reserved ones included).
+- =GET /repos/:repo/fields/:id= — read one field row (=mf field get=).
+- =PATCH /repos/:repo/fields/:id= — change a row's *name and/or value* in place,
+  keeping its id (type-validated against the target name) (=mf field set=).
+- =DELETE /repos/:repo/fields/:id= — delete one row (=mf field delete=).
+
+  The field row id is unique per repository (AUTOINCREMENT), so the by-id
+  endpoints carry no metarecord UUID in the path — =mf field <id>= addresses a
+  row with the id alone. Appending a row, by contrast, targets a specific
+  metarecord: =POST /repos/:repo/metarecords/:uuid/fields= (=mf metarecord <uuid>
+  field add=), unchanged.
 
 *** =POST /repos/:repo_uuid/delete= (Delete by query)
 
