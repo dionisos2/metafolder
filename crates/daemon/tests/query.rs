@@ -290,6 +290,53 @@ fn test_comparison_with_nothing_is_rejected() {
 }
 
 #[test]
+fn test_validate_query_rejects_meaningless_comparisons() {
+    // The canonical, engine-independent comparison validator (spec-query): a
+    // comparison against `nothing`, and an *ordered* comparison on a type with
+    // no meaningful order (bool / references), are rejected; equality on those
+    // and ordered comparison on strings/numbers/datetimes stay allowed.
+    let f = "x".to_string();
+    let nope = [Value::Nothing];
+    for v in nope {
+        assert!(query_exec::validate_query(&Query::Eq { field: f.clone(), value: v.clone() }).is_err());
+        assert!(query_exec::validate_query(&Query::Lt { field: f.clone(), value: v }).is_err());
+    }
+    let unordered = [
+        Value::Bool(true),
+        Value::Ref(Uuid::new_v4()),
+        Value::RefBase(Uuid::new_v4()),
+        Value::TreeRef { parent: None, name: "n".into() },
+        Value::ExternalRef { repo: Uuid::new_v4(), metarecord: Uuid::new_v4() },
+    ];
+    for v in unordered {
+        let err =
+            query_exec::validate_query(&Query::Gt { field: f.clone(), value: v.clone() }).unwrap_err();
+        assert!(err.message.contains("ordered comparison"), "got: {}", err.message);
+        // Equality is still fine on the same value.
+        assert!(query_exec::validate_query(&Query::Eq { field: f.clone(), value: v }).is_ok());
+    }
+    // Ordered comparison on naturally-ordered types is allowed.
+    assert!(query_exec::validate_query(&Query::Lt { field: f.clone(), value: Value::Int(1) }).is_ok());
+    assert!(query_exec::validate_query(&Query::Gte { field: f.clone(), value: s("a") }).is_ok());
+    assert!(
+        query_exec::validate_query(&Query::Gt { field: f.clone(), value: Value::DateTime(0) }).is_ok()
+    );
+    // The rejection surfaces through combinators and follows-conditions.
+    let nested = Query::And {
+        operands: vec![
+            Query::IsPresent { field: "k".into() },
+            Query::Gt { field: f.clone(), value: Value::Bool(false) },
+        ],
+    };
+    assert!(query_exec::validate_query(&nested).is_err());
+    let in_follows = Query::FollowsTransitive {
+        field: "loc".into(),
+        target: FollowTarget::Condition(Box::new(Query::Lt { field: f, value: Value::Nothing })),
+    };
+    assert!(query_exec::validate_query(&in_follows).is_err());
+}
+
+#[test]
 fn test_oversized_query_is_rejected() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("rating", Value::Int(1))]);

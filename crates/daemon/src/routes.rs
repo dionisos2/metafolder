@@ -1431,6 +1431,10 @@ fn run_query_filter(
     repo_uuid: Uuid,
     body: &QueryBody,
 ) -> Result<(Vec<Uuid>, Option<String>, Option<usize>), ApiError> {
+    // Reject ill-defined comparisons upfront, before choosing an engine, so the
+    // rejection never depends on the index→SQL fallback path (spec-query).
+    query_exec::validate_query(&body.query)?;
+
     let sort_by: Vec<crate::index::SortBy> = body
         .sort
         .iter()

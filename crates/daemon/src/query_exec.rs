@@ -90,6 +90,60 @@ fn check_query_size(q: &Query) -> Result<(), ApiError> {
     Ok(())
 }
 
+/// Validates a query's comparison nodes *upfront* — independent of which engine
+/// (bitmap index or SQL) runs it — and rejects the ones with no well-defined,
+/// useful meaning (spec-query "Comparison validity"):
+///
+/// - a comparison against `Nothing` (use `is_absent` / `is_unknown` instead);
+/// - an *ordered* comparison (`<` `<=` `>` `>=`) on a value type that has no
+///   meaningful order: `bool` and the reference types. Equality (`eq`/`neq`)
+///   stays allowed on them, and ordered comparison stays allowed on strings,
+///   numbers and datetimes.
+///
+/// This is the single source of truth: the SQL engine's per-row checks and the
+/// index's `Unsupported` branches for these shapes are now defensive backstops.
+/// Callers run this before touching either engine so the rejection never has to
+/// emerge from an engine-selection fallback.
+pub fn validate_query(q: &Query) -> Result<(), ApiError> {
+    match q {
+        Query::Eq { value, .. } | Query::Neq { value, .. } => validate_comparison(value, false),
+        Query::Lt { value, .. }
+        | Query::Lte { value, .. }
+        | Query::Gt { value, .. }
+        | Query::Gte { value, .. } => validate_comparison(value, true),
+        Query::And { operands } | Query::Or { operands } => {
+            operands.iter().try_for_each(validate_query)
+        }
+        Query::Not { operand } => validate_query(operand),
+        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
+            FollowTarget::Condition(c) => validate_query(c),
+            FollowTarget::Path(_) => Ok(()),
+        },
+        _ => Ok(()),
+    }
+}
+
+fn validate_comparison(value: &Value, ordered: bool) -> Result<(), ApiError> {
+    match value {
+        Value::Nothing => Err(ApiError::bad_request(
+            "comparisons with 'nothing' are not allowed; use is_absent / is_unknown",
+        )),
+        Value::Bool(_)
+        | Value::Ref(_)
+        | Value::RefBase(_)
+        | Value::TreeRef { .. }
+        | Value::ExternalRef { .. }
+            if ordered =>
+        {
+            Err(ApiError::bad_request(format!(
+                "ordered comparison is not supported on {} values",
+                db::encode_value(value).value_type
+            )))
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
 pub fn count(
@@ -99,6 +153,7 @@ pub fn count(
     query: &Query,
 ) -> Result<usize, ApiError> {
     check_query_size(query)?;
+    validate_query(query)?;
     let mut compiler = Compiler::new(conn, cache, db_id);
     let last = compiler.compile_node(query)?;
     let Compiler { ctes, params, .. } = compiler;
@@ -129,6 +184,7 @@ pub fn execute(
         return Err(ApiError::bad_request("'cursor' requires 'limit'"));
     }
     check_query_size(query)?;
+    validate_query(query)?;
 
     // The cursor is bound to the exact (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[

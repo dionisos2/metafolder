@@ -267,6 +267,33 @@ async fn test_query_path_target_sort_and_count() {
 }
 
 #[tokio::test]
+async fn test_query_rejects_meaningless_comparisons_with_400() {
+    // The route rejects ill-defined comparisons upfront (before choosing an
+    // engine), so a bad query never silently runs O(n) or returns confusing
+    // rows — it is a clean 400.
+    let (app, repo, root) = setup("badcmp").await;
+    for bad in [
+        // ordered comparison on a bool
+        json!({"type": "lt", "field": "flag", "value": {"type": "bool", "value": true}}),
+        // ordered comparison on a tree_ref
+        json!({"type": "gt", "field": "cat",
+               "value": {"type": "tree_ref", "value": {"parent": null, "name": "x"}}}),
+        // comparison against nothing
+        json!({"type": "eq", "field": "k", "value": {"type": "nothing"}}),
+    ] {
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query"),
+            Some(json!({"query": bad, "limit": 10})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "should reject {bad}: {body}");
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_query_correct_after_async_load() {
     // After a load (whose warmup runs in the background), a query must return
     // correct results — whether served by the freshly built index or the SQL

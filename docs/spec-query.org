@@ -95,6 +95,23 @@ Unix-ms value. A =Nothing= row never matches a value comparison (use
 one apparent exception — a string operand compares against =value_name=, not a
 different type.
 
+*** Comparison validity
+
+Two comparison shapes have no well-defined, useful meaning and are rejected with
+=400= *upfront*, before any engine runs, so the rejection never depends on which
+engine (bitmap index or SQL) would have handled the query:
+
+- A comparison whose operand is =Nothing= (=eq=/=neq= or ordered). Absence is
+  expressed with =IsAbsent= / =IsUnknown=, not =eq nothing=.
+- An *ordered* comparison (=lt= / =lte= / =gt= / =gte=) on a value type with no
+  meaningful order: =Bool= and the reference types (=Ref=, =RefBase=, =TreeRef=,
+  =ExternalRef=). Equality (=eq=/=neq=) on these is allowed; ordered comparison
+  on =String= (lexicographic), the numeric domain and =DateTime= is allowed.
+
+The validation is a single pure pass over the query IR
+(=query_exec::validate_query=); the per-row checks in the SQL engine and the
+index's =Unsupported= branches for these shapes are defensive backstops.
+
 ** Indexing & scaling
 
 Filtered + sorted + paginated query performance at large scale (the EAV
