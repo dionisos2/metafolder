@@ -204,6 +204,9 @@ pub fn unload(ctx: &Ctx) -> Result<i32, CliError> {
 
 pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
+    // "All metarecords" is a match-all query (is_unknown on a never-used field
+    // matches the whole universe) — there is no list endpoint.
+    let all = json!({"type": "is_unknown", "field": "__never__"});
     let mut remaining = limit;
     let mut cursor: Option<String> = None;
     loop {
@@ -211,11 +214,11 @@ pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
         if page == 0 {
             break;
         }
-        let mut params = vec![("limit", page.to_string())];
+        let mut body = json!({"query": all, "limit": page});
         if let Some(c) = &cursor {
-            params.push(("cursor", c.clone()));
+            body["cursor"] = json!(c);
         }
-        let resp = ctx.client.get(&format!("{base}/metarecords"), &params)?;
+        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
         let results = resp["results"].as_array().cloned().unwrap_or_default();
         for uuid in &results {
             println!("{}", uuid.as_str().unwrap_or_default());
@@ -303,31 +306,9 @@ pub fn create(ctx: &Ctx, specs: &[String], force: bool) -> Result<i32, CliError>
     Ok(0)
 }
 
-pub fn set(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let (name, value) = parse_spec(spec)?;
-    match parse_target(target)? {
-        Target::Entry(uuid) => {
-            let body = json!({"name": name, "value": value, "force": force});
-            ctx.client.request(
-                "PATCH",
-                &format!("{base}/metarecords/{}", uuid.as_simple()),
-                &[],
-                Some(&body),
-            )?;
-        }
-        Target::Predicate(query) => {
-            let body = json!({"query": query, "name": name, "value": value, "force": force});
-            let resp = ctx.client.post(&format!("{base}/set"), &body)?;
-            println!("{}", resp["updated"].as_u64().unwrap_or(0));
-        }
-    }
-    Ok(0)
-}
-
 pub fn retype(ctx: &Ctx, name: &str, to: &str) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let resp = ctx.client.post(&format!("{base}/fields/{name}/retype"), &json!({"to": to}))?;
+    let resp = ctx.client.post(&format!("{base}/retype"), &json!({"name": name, "to": to}))?;
     let converted = resp["converted"].as_u64().unwrap_or(0);
     let fallbacks = resp["fallback_count"].as_u64().unwrap_or(0);
     println!("retyped {name} to {to}: {converted} value(s) converted, {fallbacks} fell back to the default");
@@ -344,7 +325,7 @@ pub fn add(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, CliE
         }
         Target::Predicate(query) => {
             let body = json!({"query": query, "name": name, "value": value, "force": force});
-            let resp = ctx.client.post(&format!("{base}/append"), &body)?;
+            let resp = ctx.client.post(&format!("{base}/query/fields/append"), &body)?;
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
@@ -371,7 +352,7 @@ pub fn remove(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, C
             for id in &ids {
                 ctx.client.request(
                     "DELETE",
-                    &format!("{base}/metarecords/{}/fields/{id}", uuid.as_simple()),
+                    &format!("{base}/fields/{id}"),
                     &[],
                     Some(&json!({"force": force})),
                 )?;
@@ -380,23 +361,10 @@ pub fn remove(ctx: &Ctx, target: &str, spec: &str, force: bool) -> Result<i32, C
         }
         Target::Predicate(query) => {
             let body = json!({"query": query, "name": name, "value": value, "force": force});
-            let resp = ctx.client.post(&format!("{base}/remove"), &body)?;
+            let resp = ctx.client.post(&format!("{base}/query/fields/remove"), &body)?;
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
-    Ok(0)
-}
-
-pub fn unset(ctx: &Ctx, uuid: &str, field_id: i64, force: bool) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    let uuid = Uuid::parse_str(uuid)
-        .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
-    ctx.client.request(
-        "DELETE",
-        &format!("{base}/metarecords/{}/fields/{field_id}", uuid.as_simple()),
-        &[],
-        Some(&json!({"force": force})),
-    )?;
     Ok(0)
 }
 
@@ -432,7 +400,7 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
             }
             // One atomic request: the daemon selects and deletes in a single
             // revision (no client-side TOCTOU, no partial deletion).
-            let resp = ctx.client.post(&format!("{base}/delete"), &json!({"query": query}))?;
+            let resp = ctx.client.post(&format!("{base}/query/delete"), &json!({"query": query}))?;
             println!("{}", resp["deleted"].as_u64().unwrap_or(0));
         }
     }
@@ -669,11 +637,11 @@ pub fn field_set(ctx: &Ctx, selector: &str, specs: &[String], force: bool) -> Re
     };
     match parse_target(selector)? {
         Target::Entry(uuid) => {
-            let mut body = json!({"name": name, "force": force});
+            let mut body = json!({"force": force});
             value_field(&mut body);
             ctx.client.request(
-                "PATCH",
-                &format!("{base}/metarecords/{}", uuid.as_simple()),
+                "PUT",
+                &format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()),
                 &[],
                 Some(&body),
             )?;
@@ -681,7 +649,7 @@ pub fn field_set(ctx: &Ctx, selector: &str, specs: &[String], force: bool) -> Re
         Target::Predicate(query) => {
             let mut body = json!({"query": query, "name": name, "force": force});
             value_field(&mut body);
-            let resp = ctx.client.post(&format!("{base}/set"), &body)?;
+            let resp = ctx.client.post(&format!("{base}/query/fields/set"), &body)?;
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
@@ -693,13 +661,12 @@ pub fn field_get(ctx: &Ctx, selector: &str, name: &str) -> Result<i32, CliError>
     let base = ctx.repo_base()?;
     match parse_target(selector)? {
         Target::Entry(uuid) => {
-            let entry =
-                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
-            for field in entry["fields"].as_array().into_iter().flatten() {
-                if field["name"].as_str() == Some(name) {
-                    if let Some(line) = raw_value_line(&field["value"]) {
-                        println!("{line}");
-                    }
+            let got = ctx
+                .client
+                .get(&format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()), &[])?;
+            for value in got["values"].as_array().into_iter().flatten() {
+                if let Some(line) = raw_value_line(value) {
+                    println!("{line}");
                 }
             }
             Ok(0)
@@ -723,29 +690,17 @@ pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result
     let base = ctx.repo_base()?;
     match parse_target(selector)? {
         Target::Entry(uuid) => {
-            // No per-uuid unset endpoint: delete each row of the name by id.
-            let entry =
-                ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
-            let ids: Vec<i64> = entry["fields"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|f| f["name"].as_str() == Some(name))
-                .filter_map(|f| f["id"].as_i64())
-                .collect();
-            for id in &ids {
-                ctx.client.request(
-                    "DELETE",
-                    &format!("{base}/fields/{id}"),
-                    &[],
-                    Some(&json!({"force": force})),
-                )?;
-            }
-            println!("{}", if ids.is_empty() { 0 } else { 1 });
+            ctx.client.request(
+                "DELETE",
+                &format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()),
+                &[],
+                Some(&json!({"force": force})),
+            )?;
+            println!("1");
         }
         Target::Predicate(query) => {
             let body = json!({"query": query, "name": name, "force": force});
-            let resp = ctx.client.post(&format!("{base}/unset"), &body)?;
+            let resp = ctx.client.post(&format!("{base}/query/fields/unset"), &body)?;
             println!("{}", resp["updated"].as_u64().unwrap_or(0));
         }
     }
@@ -796,7 +751,10 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
         .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?
         .as_simple()
         .to_string();
-    let resp = ctx.client.post(&format!("{base}/tree/resolve"), &json!({ "uuids": [key] }))?;
+    let resp = ctx.client.post(
+        &format!("{base}/query/fields/resolve-tree"),
+        &json!({ "query": {"type": "uuid_in", "uuids": [key]} }),
+    )?;
     let rel = resp[&key]
         .as_array()
         .and_then(|paths| paths.first())
