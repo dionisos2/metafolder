@@ -120,42 +120,62 @@ adaptive planner) is analysed in its own design document,
 [[file:spec-indexing.org][spec-indexing.org]]. The two baseline indexes
 described there are implemented; the rest is forward-looking.
 
-** MATCHES performance
+** MATCHES acceleration via FTS5 (implemented)
 
-In v1, =MATCHES= performs a full scan of the candidate rows with the =REGEXP=
-UDF. Benchmarks measured ~650 ms for 50 k metarecords; this is accepted for v1.
-
-** MATCHES acceleration via FTS5                                          :v2:
-
-To accelerate =MATCHES= on large repositories, an FTS5 virtual table with the
-trigram tokenizer indexes the textual columns:
+=MATCHES= runs a regex with the =REGEXP= UDF; a full scan of the candidate rows
+costs ~650 ms at 50 k. To accelerate it, an FTS5 trigram virtual table indexes
+the textual field columns and pre-filters the scan to the rows that can match.
 
 #+BEGIN_SRC sql
 CREATE VIRTUAL TABLE field_text USING fts5(
-    text,                       -- value_text or value_name
-    content = '',               -- contentless: text is not stored twice
-    tokenize = 'trigram'
+    text, content='', contentless_delete=1, tokenize='trigram'
 );
 #+END_SRC
 
-One =field_text= row is maintained per =field= row of type =string=,
-=datetime= or =tree_ref= (for =tree_ref=, the indexed text is =value_name=),
-with =rowid= equal to =field.id=. The daemon keeps it in sync inside the same
-transaction as every write to the =field= table (no triggers, so that the
-event log remains the only side-channel).
+One =field_text= row is maintained per =field= row that =MATCHES= scans —
+=string= (=value_text=) and =tree_ref= (=value_name=) — with =rowid= equal to
+=field.id=. (=datetime= is named in the original design but =MATCHES= does not
+scan it, so it is not indexed.) The daemon keeps the index in sync inside the
+same transaction as every field write (no triggers; the event log stays the only
+side-channel):
 
-Query plan for =MATCHES=:
+- *Inserts* go through the single chokepoint =db::insert_field_row=, which
+  *upserts* (delete-by-rowid then insert) the indexed text. This is the only
+  maintenance required for *correctness*: because =field.id= is
+  =AUTOINCREMENT= (never reused), a =field_text= that is a *superset* of the
+  live rows is always correct — a stale rowid points at a deleted =field= row,
+  so the =REGEXP= re-check on the live rows excludes it. Missing entries (false
+  negatives) are the only error, and the chokepoint prevents them.
+- *Deletes* drop the matching =field_text= entries at the =Writer='s delete
+  sites (=db::delete_field_text_by_id= / =_by_name= / =_by_metarecord=). This is
+  *best-effort* — only to bound the index size; a missed delete (e.g. on the
+  rarer log-navigation paths) leaves a harmless stale entry.
+- =db::ensure_field_text= builds the index for repositories created before it
+  existed, and doubles as a rebuild/compaction entry point.
 
-1. Extract the literal substrings of length ≥ 3 that any match of the regex
-   must contain (using the =regex-syntax= crate on the parsed pattern).
-2. If at least one such literal exists, pre-filter via
-   =SELECT rowid FROM field_text WHERE text MATCH '"<literal>"'= (trigram
-   index lookup), then apply =REGEXP= only to the surviving rows.
-3. If no literal can be extracted (e.g. pattern =^.*$=), fall back to the v1
-   full scan.
+Query plan for =MATCHES= (=query_exec=):
 
-The pre-filter is purely an optimisation: results are identical to the full
-scan in all cases.
+1. Extract, from the parsed regex HIR (=regex-syntax=, in =fts.rs=), the longest
+   literal substring of ≥ 3 characters that *every* match must contain. The
+   extraction is *conservative*: alternations, optional/zero-min repetitions and
+   character classes break a literal run, and anything uncertain yields *no*
+   literal. The soundness obligation (the literal is contained in every match)
+   is cross-checked against the full scan by =tests/fts_oracle.rs=.
+2. If a literal exists, restrict the scan:
+   =… AND id IN (SELECT rowid FROM field_text WHERE text MATCH '"<literal>"')=
+   (the literal bound as a quoted phrase), then apply =REGEXP= only to the
+   survivors. (A membership test, not a join: driving from the FTS rowids was
+   measured slower once wrapped in the repository-isolation CTE.)
+3. If no literal can be extracted (e.g. =^.*$=, =cat|dog=, =(?i)…=), fall back to
+   the v1 full scan.
+
+The pre-filter is purely an optimisation — the trigram tokenizer is
+case-insensitive and the match is a sound over-approximation, so =REGEXP= always
+re-checks and results are identical to the full scan. Measured at 50 k: a
+selective literal drops from ~650 ms to tens of ms; a literal whose trigrams are
+common in the corpus still beats the full scan by ~3×; a no-literal pattern is
+unchanged. FTS5 is also the planned acceleration for high-cardinality string
+equality if needed.
 
 ** HTTP API
 

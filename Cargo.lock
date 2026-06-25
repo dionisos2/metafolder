@@ -2218,6 +2218,7 @@ dependencies = [
  "metafolder-core",
  "notify",
  "regex",
+ "regex-syntax",
  "roaring",
  "rusqlite",
  "serde",

@@ -159,9 +159,14 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   `value_uuid`/`value_ref_repo`/`value_name`; UNIQUE tree index on
   `(field_name, value_uuid, value_name)` for `tree_ref` rows) and the event
   log tables (`revision`, `operation`, `op_snapshot`, `log_head`,
-  `pending_operation`). UUIDs are 16-byte BLOBs; the zero UUID is the
+  `pending_operation`) plus `field_text`, an FTS5 trigram virtual table
+  (contentless, `rowid = field.id`) that pre-filters `Matches` (spec-query). It
+  is maintained in the write transaction — upsert at the `insert_field_row`
+  chokepoint (correct because `field.id` is AUTOINCREMENT, so a superset is
+  always re-checked by REGEXP), best-effort deletes, `ensure_field_text`
+  back-fill/rebuild on open. UUIDs are 16-byte BLOBs; the zero UUID is the
   TreeRef root sentinel. Connections: WAL (DELETE fallback for network FS),
-  `locking_mode = EXCLUSIVE` (one daemon per repo), `REGEXP` UDF.
+  `locking_mode = EXCLUSIVE` (one daemon per repo), pattern-caching `REGEXP` UDF.
 - `log.rs`: **all writes go through `Writer`** — one revision per Writer, one
   `operation` row + before/after `op_snapshot` rows per change, running HEAD
   chain, `metarecord.version` bump per field write. Also: history reading,
@@ -194,6 +199,10 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   fingerprint search of orphans on arrivals). The buffer is replayed at repo
   load. Both hold `Weak<RepoState>` (an Arc would leak the repo and its
   exclusive lock).
+- `fts.rs`: `required_fts_literal` — the sound, conservative regex→literal
+  extraction (longest mandatory ≥3-char run from the parsed HIR) backing the
+  `Matches` FTS5 trigram pre-filter; soundness cross-checked by
+  `tests/fts_oracle.rs`.
 - `fingerprint.rs`: xxHash3 partial (first+last 4 KiB) and full hashes.
 - `fs_meta.rs`: stat-derived `mfr_*` fields (ISO-8601 via `core::date`).
 - `reconcile.rs`: full reconcile (fs walk with eligibility pruning, the

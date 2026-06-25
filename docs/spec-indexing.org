@@ -124,7 +124,7 @@ recorded per row):
 | =Int= / =Float= / =DateTime=   | bit-sliced index (BSI), range     | [[*Bit-sliced index (BSI) for ordered/range fields][BSI]]               |
 | =Bool= / low-cardinality =String= | one bitmap per value           | [[*Bitmaps for categorical predicates][categorical bitmaps]]            |
 | =Ref= / =TreeRef=              | reverse (inverted) bitmaps        | [[*Reverse bitmaps for Ref / TreeRef][reverse bitmaps]]                 |
-| high-cardinality =String=      | inverted bitmaps for equality; =Matches= stays the REGEXP scan (FTS5 is the v2 acceleration, see [[file:spec-query.org][spec-query.org]]) | |
+| high-cardinality =String=      | inverted bitmaps for equality; =Matches= uses the REGEXP scan, pre-filtered by an FTS5 trigram index (implemented, see [[file:spec-query.org][spec-query.org]]) | |
 
 A field name has exactly one non-=Nothing= value type repository-wide (see
 [[file:spec-data-model.org][spec-data-model.org]] → "One value type per field

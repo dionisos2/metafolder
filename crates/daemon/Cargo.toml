@@ -19,6 +19,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 regex = "1"
+# Companion to `regex`: parse a pattern to HIR to extract a required literal
+# substring for the FTS5 trigram pre-filter (spec-query "MATCHES via FTS5").
+regex-syntax = "0.8"
 base64 = "0.22"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # Pure-Rust, magic-byte MIME detection for mfr_mime (no system libmagic).

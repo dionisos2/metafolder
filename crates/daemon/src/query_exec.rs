@@ -665,16 +665,30 @@ impl<'a> Compiler<'a> {
                 crate::regexp::compile(pattern).map_err(|e| {
                     ApiError::bad_request(format!("invalid regex pattern: {e}"))
                 })?;
+                // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
+                // match must contain a literal substring (≥ 3 chars), restrict
+                // the REGEXP scan to the rows the FTS index reports containing it
+                // (`id IN (… field_text … MATCH …)`). A sound over-approximation
+                // — REGEXP still re-checks every surviving row, so the result is
+                // identical to the full scan. (Driving from the FTS via a JOIN
+                // was measured *slower* once wrapped in the repo-isolation CTE,
+                // so the membership test is kept as the spec describes.)
                 self.push_text(field);
+                let prefilter = match crate::fts::required_fts_literal(pattern) {
+                    Some(literal) => {
+                        self.push_text(&crate::fts::match_phrase(&literal));
+                        "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
+                    }
+                    None => "",
+                };
                 self.push_text(pattern);
                 self.push_text(pattern);
-                Ok(self.add(
+                Ok(self.add(format!(
                     "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND \
+                     WHERE field_name = ? AND {prefilter}\
                        ((value_type = 'string' AND value_text REGEXP ?) OR \
                         (value_type = 'tree_ref' AND value_name REGEXP ?))"
-                        .to_string(),
-                ))
+                )))
             }
 
             Query::Follows { field, target } => match target {
