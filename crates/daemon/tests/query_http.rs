@@ -641,6 +641,48 @@ async fn test_remove_by_query() {
 }
 
 #[tokio::test]
+async fn test_set_record_reflected_in_index_query() {
+    let (app, repo, root) = setup("setrecord_idx").await;
+    let uuid = create(
+        &app,
+        &repo,
+        json!([{"name": "a", "value": {"type": "int", "value": 1}}]),
+    )
+    .await;
+
+    // Whole-record set: drop `a`, add `b`.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}"),
+        Some(json!({"fields": [{"name": "b", "value": {"type": "int", "value": 2}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The incremental index refresh must reflect the replacement: `a` is gone,
+    // `b` is present (this query routes through the in-memory index).
+    let (_, gone) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "a"}})),
+    )
+    .await;
+    assert_eq!(gone.as_array().unwrap().len(), 0, "old field cleared from the index");
+    let (_, present) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "b", "value": {"type": "int", "value": 2}}})),
+    )
+    .await;
+    assert_eq!(present.as_array().unwrap().len(), 1, "new field indexed");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_batch_unset_removes_the_whole_field() {
     let (app, repo, root) = setup("unset").await;
     // Two metarecords, each with two tag rows.

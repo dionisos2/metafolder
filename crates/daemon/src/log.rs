@@ -24,6 +24,7 @@ pub const MAX_TREE_DEPTH: usize = 1000;
 pub enum OpType {
     CreateRecord,
     DeleteRecord,
+    SetRecord,
     SetField,
     AppendField,
     DeleteField,
@@ -38,6 +39,7 @@ impl OpType {
         match self {
             OpType::CreateRecord => "create_metarecord",
             OpType::DeleteRecord => "delete_metarecord",
+            OpType::SetRecord => "set_metarecord",
             OpType::SetField => "set_field",
             OpType::AppendField => "append_field",
             OpType::DeleteField => "delete_field",
@@ -52,6 +54,7 @@ impl OpType {
         Some(match s {
             "create_metarecord" => OpType::CreateRecord,
             "delete_metarecord" => OpType::DeleteRecord,
+            "set_metarecord" => OpType::SetRecord,
             "set_field" => OpType::SetField,
             "append_field" => OpType::AppendField,
             "delete_field" => OpType::DeleteField,
@@ -647,6 +650,17 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
         }
+        // Whole-record set: replace the entire field set (all names).
+        "set_metarecord" => {
+            tx.execute(
+                "DELETE FROM field WHERE metarecord_uuid = ?1",
+                params![db::uuid_to_bytes(entity)],
+            )?;
+            for row in snapshots(tx, op.id, 0)? {
+                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            }
+            restore_version(tx, entity, op.entity_version_before)?;
+        }
         // All set-field-shaped operations (one field name, full replacement).
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
@@ -697,6 +711,16 @@ fn apply_forward(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
                 "DELETE FROM metarecord WHERE uuid = ?1",
                 params![db::uuid_to_bytes(entity)],
             )?;
+        }
+        "set_metarecord" => {
+            tx.execute(
+                "DELETE FROM field WHERE metarecord_uuid = ?1",
+                params![db::uuid_to_bytes(entity)],
+            )?;
+            for row in snapshots(tx, op.id, 1)? {
+                db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
+            }
+            restore_version(tx, entity, op.entity_version_before.map(|v| v + 1))?;
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
@@ -1006,6 +1030,40 @@ impl<'c> Writer<'c> {
             .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
         self.log_op(OpType::DeleteRecord, uuid, None, Some(version), before, vec![])?;
         Ok(())
+    }
+
+    /// Replaces the *entire* field set of an existing metarecord, keeping its
+    /// UUID, in one `SetRecord` operation (before = all old fields, after = the
+    /// new set) — the whole-record analogue of create/delete. Literal overwrite:
+    /// every old row is dropped, including reserved ones not in `fields`.
+    pub fn set_record(&mut self, uuid: Uuid, fields: Vec<Field>) -> Result<MetaRecord> {
+        let version_before = self.bump_version(uuid)?; // errors NotFound if absent
+        let before = db::get_field_rows(&self.tx, uuid)?;
+        db::delete_field_text_by_metarecord(&self.tx, uuid)?;
+        self.tx
+            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1")?
+            .execute(params![db::uuid_to_bytes(uuid)])?;
+        // The whole record's types are reset; drop cached locks so the new set
+        // re-probes from a clean slate (validated against the post-delete state).
+        for row in &before {
+            self.field_types.remove(&row.name);
+        }
+        let mut after = Vec::with_capacity(fields.len());
+        let mut out_fields = Vec::with_capacity(fields.len());
+        for f in fields {
+            self.validate_tree_ref(uuid, &f.name, &f.value)?;
+            self.validate_value_type(&f.name, &f.value)?;
+            let id = db::insert_field_row(&self.tx, uuid, &f.name, &f.value, None)?;
+            after.push(FieldRow { id, name: f.name.clone(), value: f.value.clone() });
+            out_fields.push(Field { id: Some(id), ..f });
+        }
+        self.log_op(OpType::SetRecord, uuid, None, Some(version_before), before, after)?;
+        Ok(MetaRecord {
+            uuid,
+            db_ids: vec![self.db_id],
+            version: version_before + 1,
+            fields: out_fields,
+        })
     }
 
     /// Replaces all rows for `(uuid, name)` with a single value.

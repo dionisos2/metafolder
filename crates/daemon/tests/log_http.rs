@@ -367,6 +367,69 @@ async fn test_rollback_restores_deleted_record_with_field_ids() {
 }
 
 #[tokio::test]
+async fn test_set_record_is_one_op_and_rolls_back_exactly() {
+    let (app, repo, root) = setup("setrecord").await;
+    let entry = create(
+        &app,
+        &repo,
+        json!([
+            {"name": "a", "value": {"type": "int", "value": 1}},
+            {"name": "b", "value": {"type": "string", "value": "keep"}}
+        ]),
+    )
+    .await;
+    let uuid = entry["uuid"].as_str().unwrap().to_string();
+    let original_ids: Vec<i64> =
+        entry["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
+    let version_before = entry["version"].as_u64().unwrap();
+
+    let revisions = |body: &Value| body["revisions"].as_array().unwrap().len();
+    let (_, log_before) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    let revs_before = revisions(&log_before);
+
+    // Whole-record set: a totally different field set, one revision.
+    let (status, after) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}"),
+        Some(json!({"fields": [{"name": "c", "value": {"type": "string", "value": "new"}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "set_record failed: {after}");
+    let new_fields = after["fields"].as_array().unwrap();
+    assert_eq!(new_fields.len(), 1);
+    assert_eq!(new_fields[0]["name"].as_str().unwrap(), "c");
+    assert_eq!(after["version"].as_u64().unwrap(), version_before + 1);
+
+    // Exactly one new revision, whose single operation is set_metarecord.
+    let (_, log_after) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(revisions(&log_after) - revs_before, 1, "set_record must be one revision");
+    let ops = log_after["operations"].as_array().unwrap();
+    assert_eq!(ops.last().unwrap()["op_type"].as_str().unwrap(), "set_metarecord");
+
+    // Rollback restores the prior field set, with the original ids and version.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback"),
+        Some(json!({"target": {"prev_revision": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+    let (_, restored) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let restored_ids: Vec<i64> =
+        restored["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
+    assert_eq!(restored_ids, original_ids, "field ids restored exactly");
+    assert_eq!(restored["version"].as_u64().unwrap(), version_before);
+    let names: Vec<&str> =
+        restored["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["a", "b"]);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_rollback_by_label_and_branching() {
     let (app, repo, root) = setup("label").await;
     let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}]))

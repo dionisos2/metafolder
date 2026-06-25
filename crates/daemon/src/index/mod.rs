@@ -274,6 +274,16 @@ impl RepoIndex {
                         touched.entry((op.entity_uuid, row.name)).or_default().push(row.value);
                     }
                 }
+                "set_metarecord" => {
+                    // Whole-record replacement: every old field name (clear its
+                    // old values) and every new field name (recompute) is touched.
+                    for row in before {
+                        touched.entry((op.entity_uuid, row.name)).or_default().push(row.value);
+                    }
+                    for row in crate::log::snapshots(conn, op.id, 1)? {
+                        touched.entry((op.entity_uuid, row.name)).or_default();
+                    }
+                }
                 _ => {
                     // A field-scoped op (set/append/delete_field/file_*): the
                     // before-rows are this field's pre-change values.

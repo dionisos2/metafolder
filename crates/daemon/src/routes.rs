@@ -42,7 +42,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/metarecords/batch", post(batch_get_records))
         .route(
             "/repos/:repo/metarecords/:uuid",
-            get(get_record_endpoint).delete(delete_record_endpoint).patch(patch_metarecord),
+            get(get_record_endpoint)
+                .put(put_metarecord)
+                .delete(delete_record_endpoint)
+                .patch(patch_metarecord),
         )
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/tree/resolve", post(tree_resolve))
@@ -1920,6 +1923,37 @@ async fn patch_metarecord(
         ensure_exists(writer.connection(), uuid)?;
         writer.set_field_multi(uuid, &body.name, rows)?;
         Ok(vec![body.name])
+    })
+    .await
+    .map(Json)
+}
+
+#[derive(Deserialize)]
+struct SetRecordBody {
+    fields: Vec<Field>,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `PUT /repos/:repo/metarecords/:uuid` — whole-record set: replaces the entire
+/// field set, keeping the UUID, as one `SetRecord` op (spec-query). Literal
+/// overwrite; reserved field names still need `force` to be written.
+async fn put_metarecord(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid)): Path<(String, String)>,
+    payload: Result<Json<SetRecordBody>, JsonRejection>,
+) -> Result<Json<MetaRecord>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    write_record(&state, repo_uuid, uuid, move |writer| {
+        for field in &body.fields {
+            check_writable(&field.name, body.force)?;
+        }
+        ensure_exists(writer.connection(), uuid)?;
+        let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
+        writer.set_record(uuid, body.fields)?;
+        Ok(touched)
     })
     .await
     .map(Json)
