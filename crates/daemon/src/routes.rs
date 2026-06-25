@@ -1553,13 +1553,39 @@ fn run_query_inner(
 struct BatchSetBody {
     query: MetaQuery,
     name: String,
-    value: Value,
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    values: Option<Vec<Value>>,
     #[serde(default)]
     force: bool,
 }
 
+/// Resolves a `{value | values}` field-write body to its row set; exactly one of
+/// the two must be present (set accepts several, the single-value ops one).
+fn resolved_values(value: Option<Value>, values: Option<Vec<Value>>) -> Result<Vec<Value>, ApiError> {
+    match (value, values) {
+        (Some(_), Some(_)) => {
+            Err(ApiError::bad_request("provide either 'value' or 'values', not both"))
+        }
+        (Some(v), None) => Ok(vec![v]),
+        (None, Some(vs)) => Ok(vs),
+        (None, None) => Err(ApiError::bad_request("missing 'value' (or 'values')")),
+    }
+}
+
+/// Like [`resolved_values`] but for operations that take exactly one value
+/// (append, remove).
+fn single_value(value: Option<Value>, values: Option<Vec<Value>>) -> Result<Value, ApiError> {
+    match (value, values) {
+        (Some(v), None) => Ok(v),
+        _ => Err(ApiError::bad_request("this operation takes a single 'value'")),
+    }
+}
+
 /// Runs the query server-side and sets the field on every match in a single
-/// transaction (one revision).
+/// transaction (one revision). `value` sets one row; `values` a multi-map set —
+/// either way one `SetField` op per metarecord.
 async fn batch_set(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -1567,6 +1593,7 @@ async fn batch_set(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    let rows = resolved_values(body.value, body.values)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
@@ -1578,7 +1605,7 @@ async fn batch_set(
 
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         for uuid in &uuids {
-            writer.set_field(*uuid, &body.name, body.value.clone())?;
+            writer.set_field_multi(*uuid, &body.name, rows.clone())?;
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
         }
         let tree_touched = writer.touched_tree();
@@ -1601,6 +1628,7 @@ async fn batch_append(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    let value = single_value(body.value, body.values)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
@@ -1612,7 +1640,7 @@ async fn batch_append(
 
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         for uuid in &uuids {
-            writer.append_field(*uuid, &body.name, body.value.clone())?;
+            writer.append_field(*uuid, &body.name, value.clone())?;
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
         }
         let tree_touched = writer.touched_tree();
@@ -1636,6 +1664,7 @@ async fn batch_remove(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    let value = single_value(body.value, body.values)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
@@ -1648,7 +1677,7 @@ async fn batch_remove(
         let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
         let mut changed = 0usize;
         for uuid in &uuids {
-            if writer.delete_fields_valued(*uuid, &body.name, &body.value)? > 0 {
+            if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
                 changed += 1;
                 validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
             }
@@ -1822,7 +1851,10 @@ async fn delete_record_endpoint(
 #[derive(Deserialize)]
 struct SetFieldBody {
     name: String,
-    value: Value,
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    values: Option<Vec<Value>>,
     #[serde(default)]
     force: bool,
 }
@@ -1835,10 +1867,11 @@ async fn patch_metarecord(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
+    let rows = resolved_values(body.value, body.values)?;
     write_record(&state, repo_uuid, uuid, move |writer| {
         check_writable(&body.name, body.force)?;
         ensure_exists(writer.connection(), uuid)?;
-        writer.set_field(uuid, &body.name, body.value)?;
+        writer.set_field_multi(uuid, &body.name, rows)?;
         Ok(vec![body.name])
     })
     .await
@@ -1853,10 +1886,11 @@ async fn append_field(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
+    let value = single_value(body.value, body.values)?;
     write_record(&state, repo_uuid, uuid, move |writer| {
         check_writable(&body.name, body.force)?;
         ensure_exists(writer.connection(), uuid)?;
-        writer.append_field(uuid, &body.name, body.value)?;
+        writer.append_field(uuid, &body.name, value)?;
         Ok(vec![body.name])
     })
     .await

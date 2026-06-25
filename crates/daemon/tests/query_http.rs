@@ -435,6 +435,87 @@ async fn test_batch_set() {
 }
 
 #[tokio::test]
+async fn test_batch_set_multi_value() {
+    let (app, repo, root) = setup("set_multi").await;
+    for genre in ["jazz", "jazz", "rock"] {
+        create(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": genre}}]),
+        )
+        .await;
+    }
+
+    // `values` replaces all rows of the name with a multi-map set, in one op.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/set"),
+        Some(json!({
+            "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
+            "name": "tag",
+            "values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "multi set failed: {body}");
+    assert_eq!(body, json!({"updated": 2}));
+
+    // Both rows present on each jazz metarecord.
+    for tag in ["a", "b"] {
+        let (_, hits) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query"),
+            Some(json!({"query": {"type": "eq", "field": "tag",
+                                  "value": {"type": "string", "value": tag}}})),
+        )
+        .await;
+        assert_eq!(hits.as_array().unwrap().len(), 2, "tag={tag}");
+    }
+
+    // A second multi-set replaces the previous rows (set semantics).
+    let (_, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/set"),
+        Some(json!({
+            "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
+            "name": "tag",
+            "values": [{"type": "string", "value": "c"}]
+        })),
+    )
+    .await;
+    assert_eq!(body, json!({"updated": 2}));
+    let (_, gone) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "tag",
+                              "value": {"type": "string", "value": "a"}}})),
+    )
+    .await;
+    assert_eq!(gone.as_array().unwrap().len(), 0, "old rows replaced");
+
+    // Providing both value and values is a 400.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/set"),
+        Some(json!({
+            "query": {"type": "is_present", "field": "genre"},
+            "name": "tag",
+            "value": {"type": "string", "value": "x"},
+            "values": [{"type": "string", "value": "y"}]
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_batch_append() {
     let (app, repo, root) = setup("append").await;
     for genre in ["jazz", "jazz", "rock"] {

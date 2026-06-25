@@ -1041,6 +1041,35 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
+    /// Replaces all rows for `(uuid, name)` with the given set of values
+    /// (multi-map), in a single `SetField` operation. The existing `set_field`
+    /// inverse/forward arms already restore *all* snapshot rows, so this needs
+    /// no navigation change.
+    pub fn set_field_multi(&mut self, uuid: Uuid, name: &str, values: Vec<Value>) -> Result<()> {
+        for value in &values {
+            self.validate_tree_ref(uuid, name, value)?;
+            self.validate_value_type(name, value)?;
+        }
+        let version_before = self.bump_version(uuid)?;
+        let before = db::get_field_rows_named(&self.tx, uuid, name)?;
+        db::delete_field_text_by_name(&self.tx, uuid, name)?;
+        self.tx
+            .prepare_cached("DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2")?
+            .execute(params![db::uuid_to_bytes(uuid), name])?;
+        let cleared_to_nothing = values.iter().all(|v| matches!(v, Value::Nothing));
+        let mut after = Vec::with_capacity(values.len());
+        for value in values {
+            let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
+            after.push(FieldRow { id, name: name.to_string(), value });
+        }
+        self.log_op(OpType::SetField, uuid, Some(name), Some(version_before), before, after)?;
+        if cleared_to_nothing {
+            // No non-Nothing row remains: the type may have unlocked.
+            self.field_types.remove(name);
+        }
+        Ok(())
+    }
+
     /// Appends one row without touching existing rows of that name.
     /// Returns the new field row id.
     pub fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) -> Result<i64> {
