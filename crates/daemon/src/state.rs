@@ -241,6 +241,8 @@ impl AppState {
     ///   to stop it first (`POST …/tasks/:id/cancel`), so the repository is
     ///   never pulled out from under running work. Transient `flush` tasks do
     ///   not block the unload.
+    /// - a `load` warmup is in flight: it holds the connection, so the unload
+    ///   waits for it to finish (warmup is not cancellable).
     pub fn unload_repo(&self, repo_uuid: Uuid) -> Result<(), ApiError> {
         let removed = {
             let mut repos = self.repos.lock_recover();
@@ -255,6 +257,13 @@ impl AppState {
             if repo_state.tasks.has_active_cancellable() {
                 return Err(ApiError::conflict(
                     "a task is in progress; stop it first, then unload",
+                ));
+            }
+            if repo_state.tasks.has_active_load() {
+                // The warmup holds the connection; removing the repo now would
+                // leave its database locked with no reachable task to wait on.
+                return Err(ApiError::conflict(
+                    "repository is warming up; wait for the load to finish, then unload",
                 ));
             }
             repos.remove(&repo_uuid)

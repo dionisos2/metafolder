@@ -260,6 +260,17 @@ impl TaskRegistry {
         tasks.values().any(|t| t.status.is_active() && t.kind.is_cancellable())
     }
 
+    /// Whether a `load` warmup task is currently active. Used to refuse an
+    /// unload while the repository is still warming (the warmup holds the
+    /// connection, so removing the repo would leave its database locked with
+    /// nothing reachable to wait on). `load` is not cancellable, so it is not
+    /// covered by [`Self::has_active_cancellable`].
+    pub fn has_active_load(&self) -> bool {
+        let mut tasks = self.tasks.lock_recover();
+        Self::evict_locked(&mut tasks, Instant::now());
+        tasks.values().any(|t| t.status.is_active() && t.kind == TaskKind::Load)
+    }
+
     /// Registers an `on_cancel` side effect for a task (e.g. a closure capturing
     /// a query's SQLite interrupt handle). No-op if unknown.
     pub fn set_canceller(&self, id: Uuid, on_cancel: Box<dyn Fn() + Send + Sync>) {

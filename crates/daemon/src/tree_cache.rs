@@ -455,10 +455,13 @@ impl TreeCache {
 
     /// In-memory reconstruction of a node's path by walking parent links up to
     /// a root, used while complete. Mirrors [`Self::path_of`]'s DB walk (the
-    /// repo root's empty name yields a leading "/").
+    /// repo root's empty name yields a leading "/"). The walk is bounded by
+    /// `MAX_TREE_DEPTH` like its DB counterpart: the forest invariant forbids
+    /// cycles, but a corrupted in-memory forest must degrade (return the partial
+    /// path) rather than spin forever.
     fn path_of_at(&self, mut idx: usize) -> String {
         let mut components = Vec::new();
-        loop {
+        for _ in 0..MAX_TREE_DEPTH {
             let node = self.node(idx);
             components.push(node.name.clone());
             match node.parent {
@@ -469,6 +472,9 @@ impl TreeCache {
                 }
             }
         }
+        eprintln!("BUG: tree cache parent chain exceeds {MAX_TREE_DEPTH}; returning partial path");
+        components.reverse();
+        components.join("/")
     }
 
     fn path_of_in_cache(&self, field: &str, uuid: Uuid) -> Option<String> {

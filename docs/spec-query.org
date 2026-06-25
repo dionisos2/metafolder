@@ -42,6 +42,12 @@ operation — the daemon first collects the descendant UUID set iteratively via
 the tree cache, then injects it as an =IN= clause into the surrounding SQL query
 rather than emitting a CTE.
 
+This describes the *SQL engine*, which is the fallback. The common queries —
+including =Path=-target =Follows=/=FollowsTransitive= such as
+=mfr_path ->* "/dir"= with a sort — are served entirely in memory by the bitmap
+index (the path is resolved to a root through the tree cache, the descendants
+by bitmap expansion); see [[file:spec-indexing.org][spec-indexing.org]].
+
 =Follows= takes either a condition (sub-query) or a path string as right-hand
 side. With a condition, it matches metarecords whose =value_uuid= (the =Ref=
 referent, or the =TreeRef= direct parent) points to a metarecord satisfying

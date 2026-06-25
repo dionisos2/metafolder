@@ -215,6 +215,101 @@ async fn test_query_count_reports_the_full_total() {
 }
 
 #[tokio::test]
+async fn test_query_path_target_sort_and_count() {
+    // The GUI's core query (`mfr_path ->* "/dir"` + sort + count) end to end over
+    // HTTP. Building the tree through the API also proves manual TreeRef writes
+    // keep the (complete) tree cache in sync: if they did not, the path would
+    // fail to resolve and the result would be wrong/empty.
+    let (app, repo, root) = setup("pathsort").await;
+    let node = |parent: Option<&str>, name: &str, rate: Option<i64>| {
+        let mut fields = vec![json!({"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}})];
+        if let Some(r) = rate {
+            fields.push(json!({"name": "rate", "value": {"type": "int", "value": r}}));
+        }
+        json!(fields)
+    };
+    let docs = create(&app, &repo, node(None, "docs", None)).await;
+    let a = create(&app, &repo, node(Some(&docs), "a", Some(5))).await;
+    let _b = create(&app, &repo, node(Some(&docs), "b", Some(2))).await;
+    let _c = create(&app, &repo, node(Some(&docs), "c", None)).await; // no rate → sorts last
+    let d = create(&app, &repo, node(Some(&docs), "d", Some(8))).await;
+
+    let q = json!({"type": "follows_transitive", "field": "cat", "target": "docs"});
+    let (status, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": q, "sort": [{"field": "rate", "order": "desc"}],
+                    "limit": 2, "count": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], json!(4), "exact descendant count (a,b,c,d)");
+    let results: Vec<&str> =
+        page["results"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(results, vec![d.as_str(), a.as_str()], "rate desc: d(8), a(5)");
+
+    // A path that resolves to nothing → empty result, count 0 (not an error).
+    let qn = json!({"type": "follows_transitive", "field": "cat", "target": "nope"});
+    let (status, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": qn, "limit": 2, "count": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], json!(0));
+    assert_eq!(page["results"].as_array().unwrap().len(), 0);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
+async fn test_query_correct_after_async_load() {
+    // After a load (whose warmup runs in the background), a query must return
+    // correct results — whether served by the freshly built index or the SQL
+    // fallback, the load→warmup→query path must not break or mis-answer.
+    let (app, repo, root) = setup("afterload").await;
+    let node = |parent: Option<&str>, name: &str, rate: i64| {
+        json!([
+            {"name": "cat", "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}},
+            {"name": "rate", "value": {"type": "int", "value": rate}}
+        ])
+    };
+    let docs = create(&app, &repo, json!([{"name": "cat",
+        "value": {"type": "tree_ref", "value": {"parent": null, "name": "docs"}}}]))
+    .await;
+    let hi = create(&app, &repo, node(Some(&docs), "hi", 9)).await;
+    let lo = create(&app, &repo, node(Some(&docs), "lo", 1)).await;
+
+    // Unload then reload: the reload warms in the background.
+    let (st, _) = request(&app, "POST", &format!("/repos/{repo}/unload"), None).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) =
+        request(&app, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let q = json!({"type": "follows_transitive", "field": "cat", "target": "docs"});
+    let (status, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": q, "sort": [{"field": "rate", "order": "desc"}],
+                    "limit": 10, "count": true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["total"], json!(2));
+    let results: Vec<&str> =
+        page["results"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(results, vec![hi.as_str(), lo.as_str()], "rate desc: hi(9), lo(1)");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_delete_by_query() {
     let (app, repo, _root) = setup("delete_query").await;
     for genre in ["jazz", "jazz", "rock"] {

@@ -65,10 +65,13 @@ that produced this document):
    (scan =/A= testing the date, or scan =date ≥ T= which includes all of =/B=
    testing membership). O(n/2) for 100 results.
 
-4. *Exact COUNT of a large filtered set is O(m), irreducible.* A B-tree does not
-   store sub-tree cardinalities, so counting a range means enumerating it. A
-   top-k can stop early; a COUNT cannot. Treat exact counts as O(n) and avoid
-   them on the hot path (approximate / "k+" instead).
+4. *Exact COUNT of a large filtered set is O(m), irreducible in SQL.* A B-tree
+   does not store sub-tree cardinalities, so counting a range means enumerating
+   it. A top-k can stop early; a COUNT cannot. (Implemented choice: counts are
+   *exact*, served O(1) from the result bitmap when the index accelerates the
+   query, and only fall back to the O(n) SQL =COUNT(*)= otherwise — see
+   [[*Counts are exact (implemented)]]. The "approximate / k+" route below is
+   the theoretical escape hatch, not what is built.)
 
 True O(log n + k) for an *independent* conjunction exists only with an index on
 the *pair* (a composite). We cannot have one per pair (combinatorial blow-up).
@@ -244,34 +247,6 @@ renumbering, or floating nested-set intervals) is unresolved; until then,
 optimisation to prototype and measure later. See [[*Open questions][Open
 questions]].
 
-** Adaptive query planner
-
-No single plan is always right; the planner estimates and picks, always under a
-work budget so a wrong estimate costs O(budget), never an accidental O(n):
-
-1. *Estimate m* (the filtered-set size): O(1) from a maintained per-node
-   sub-tree count for a tree filter; from field statistics (histograms) for a
-   field filter. An *upper bound* on m is enough to decide.
-
-2. *m small (≤ budget)* → *filter-first + top-k heap*: enumerate =X ∩ Y= (cheap
-   via bitmaps), keep the best k in a size-k heap, O(m·log k), memory bounded by
-   k. This is the *default robust plan* — O(m) regardless of correlation.
-
-3. *m large* → consider *sort-index scan*: sample E rows of the filtered set,
-   build a histogram of the sort value, derive a threshold T for ~k·margin
-   results, then *check the cost before committing*: =R = count(value ≥ T)=
-   globally in O(log n) via a counted sort-index.
-   - =R= small → *threshold-jump*: scan =value ≥ T= (O(R)), filter, sort,
-     return; widen/narrow T if the result over/undershoots.
-   - =R= large (and m large) → intrinsically hard query → degrade *knowingly*
-     (approximate top-k from the sample, or best-effort under budget) instead
-     of scanning n by surprise.
-
-The sample-based estimate replaces the O(m) exact COUNT: a histogram of a sample
-gives both selectivity and the cut threshold, and respects the spec sort
-semantics (buckets ordered by the type-group precedence, Nothing/unknown a
-terminal bucket).
-
 ** Sort semantics in one orderable key
 
 The spec sort is not a plain =ORDER BY column=: multi-map (a field with several
@@ -297,13 +272,17 @@ extrapolating to ~1 GB at 2 M — over budget. Folding the sort key into the BSI
 instead of a standalone store is the pending compaction before 2 M. Cursor
 pagination over the sort key is also deferred.
 
-** Counts are approximate by default
+** Counts are exact (implemented)
 
-Given the COUNT wall, the listing/pagination envelope reports an *approximate*
-or "k+" total derived from the cursor (a sub-tree filter can still give an exact
-O(1) descendant count from the maintained node counters; an =AND= with another
-predicate breaks that). Exact counts are a lazy / on-demand operation, never on
-the hot path (mirrors PostgreSQL/SQLite "estimated count").
+The original design proposed *approximate* / "k+" counts to dodge the COUNT wall.
+That option was **not** adopted: =count= is always **exact**. The bitmap index
+returns it in *O(1)* from the result bitmap (=RoaringBitmap::len()=,
+=RepoIndex::count_with_roots=) — the COUNT wall does not apply because the result
+set is already materialised as a bitmap; the SQL fallback returns an exact
+=COUNT(*)= which is O(n) (the wall, for shapes the index does not accelerate).
+Counts are opt-in per request (=count: true=, requires =limit=) but never
+approximate. The "estimated count" idea is retained below only as the theoretical
+escape hatch if a future shape is both unindexable and count-heavy.
 
 ** What we explicitly do NOT build
 
@@ -367,8 +346,12 @@ cursors included. =Path=-target =Follows=/=FollowsTransitive= are *supported*:
 =run_query_filter= resolves each path to its root metarecord through the
 (eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
 bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
-served fully in memory. The index is built at repository load (best-effort) so
-the first query pays no build cost. Freshness is maintained by
+served fully in memory. The index is built at repository load (best-effort) by
+the background warmup — an observable =load= task (phases =tree cache= then
+=index=) so the GUI shows a load progress bar (see
+[[file:spec-tasks.org][spec-tasks.org]]) — so the first query pays no build cost;
+queries arriving before it completes are answered by the SQL fallback meanwhile.
+Freshness is maintained by
 =RepoIndex::refresh=: when the new HEAD is a *forward extension* of the built
 HEAD (the common case — writes appended), it replays that forward delta
 incrementally, recomputing only the touched =(metarecord, field)= cells from
@@ -456,5 +439,7 @@ The design rests on assumptions that must be validated with =crates/bench=
   rarely queried — confirm it is worth keeping vs. opt-out by heuristic.
 - Whether the tree-scoped composite sort index is worth its write cost, or
   whether filter-first + BSI is fast enough for folder browsing at 2 M.
-- Exact-count UX: when, if ever, a precise total is offered, and how it is
-  surfaced as a background/lazy result.
+- (Resolved) Exact-count UX: counts are exact and opt-in (=count: true=),
+  served O(1) from the result bitmap when the query is index-accelerated and by
+  the O(n) SQL =COUNT(*)= otherwise. The approximate/background-count idea was
+  not adopted.

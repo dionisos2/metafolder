@@ -157,8 +157,8 @@ pub fn execute(
     // `present = 0`), so it carries exactly the `_res` uuids — one per uuid.
     // The window is therefore computed only over the filtered rows, and the
     // final query drives straight from `_s0` (no `_res LEFT JOIN _s{i}` against
-    // an unindexed window output, which is the O(filtered × total) trap that
-    // made `FollowsTransitive` + sort pathological on large repos).
+    // an unindexed window output, which was the O(filtered × total) trap that
+    // used to make `FollowsTransitive` + sort pathological on large repos).
     let driver = if sort.is_empty() { "_res" } else { "_s0" };
     let mut joins = String::new();
     let mut select_cols = format!("{driver}.uuid AS uuid");

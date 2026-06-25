@@ -726,6 +726,48 @@ fn test_sort_over_follows_transitive_subset() {
 }
 
 #[test]
+fn test_multi_key_sort_with_missing_secondary_over_subset() {
+    // Multi-key sort over a FollowsTransitive subset where some rows lack the
+    // secondary key: within a primary tie, present rows order by the secondary
+    // and the missing-secondary row still sorts last (independent of direction).
+    let mut f = Fixture::new();
+    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let docs = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "documents".into() },
+    )]);
+    let mk = |f: &mut Fixture, name: &str, grp: &str, n: Option<i64>| {
+        let mut fields = vec![
+            Field::new("mfr_path", Value::TreeRef { parent: Some(docs), name: name.into() }),
+            Field::new("grp", s(grp)),
+        ];
+        if let Some(n) = n {
+            fields.push(Field::new("n", Value::Int(n)));
+        }
+        f.create(fields)
+    };
+    let a = mk(&mut f, "a", "x", Some(2));
+    let b = mk(&mut f, "b", "x", Some(1));
+    let c = mk(&mut f, "c", "x", None); // missing secondary → last within the x group
+    let e = mk(&mut f, "e", "y", Some(5));
+
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/documents".into()),
+    };
+    assert_eq!(
+        f.run_sorted(&q, &[sort_asc("grp"), sort_asc("n")]),
+        vec![b, a, c, e],
+        "grp asc, n asc: x{{b(1),a(2),c-missing}}, then y(e)"
+    );
+    assert_eq!(
+        f.run_sorted(&q, &[sort_asc("grp"), sort_desc("n")]),
+        vec![a, b, c, e],
+        "grp asc, n desc: x{{a(2),b(1),c-missing}}, then y(e)"
+    );
+}
+
+#[test]
 fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
     let mut f = Fixture::new();
     // a: {1, 9}, b: {5}

@@ -10,7 +10,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{FollowTarget, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::{RepoIndex, SortBy};
+use metafolder_daemon::index::{collect_path_targets, PathRoots, RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
@@ -148,6 +148,69 @@ impl Oracle {
         }
 
         assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
+    }
+
+    /// Like [`Self::check_paginated`] but for a query carrying `Path`-target
+    /// follows: the path roots are resolved through the tree cache and supplied
+    /// to the index exactly as `run_query_filter` does, so this exercises the
+    /// GUI's real scenario (browse a subtree, paginate by a sort key). The SQL
+    /// engine resolves paths itself, so it takes the query unchanged.
+    fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let mut targets = Vec::new();
+        collect_path_targets(q, &mut targets);
+        let mut roots = PathRoots::new();
+        for (field, path) in targets {
+            if let Some(uuid) = self.cache.resolve_path(&self.conn, &field, &path).unwrap() {
+                roots.insert((field, path), uuid);
+            }
+        }
+        let sql_keys: Vec<SortKey> = by
+            .iter()
+            .map(|(f, asc)| SortKey {
+                field: f.to_string(),
+                order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
+            })
+            .collect();
+        let idx_keys: Vec<SortBy> =
+            by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
+
+        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let (page, next) = index
+                .evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor.as_deref(), &roots)
+                .unwrap();
+            ipages.push(page);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+            assert!(ipages.len() < 10_000, "runaway index pagination");
+        }
+
+        let mut spages: Vec<Vec<Uuid>> = Vec::new();
+        let mut scursor: Option<String> = None;
+        loop {
+            let (page, next) = query_exec::execute(
+                &self.conn,
+                &mut self.cache,
+                self.db_id,
+                q,
+                &sql_keys,
+                Some(limit),
+                scursor.as_deref(),
+            )
+            .unwrap();
+            spages.push(page);
+            match next {
+                Some(c) => scursor = Some(c),
+                None => break,
+            }
+            assert!(spages.len() < 10_000, "runaway sql pagination");
+        }
+
+        assert_eq!(ipages, spages, "path-target pagination divergence on {q:?} by {by:?}");
     }
 }
 
@@ -537,6 +600,35 @@ fn reverse_tree_follows_path_target_matches_sql() {
             assert!(index.evaluate(&q).is_err(), "path target needs roots: {q:?}");
         }
     }
+}
+
+#[test]
+fn keyset_pagination_over_path_target_with_sort() {
+    // The GUI's real scenario: browse a subtree and paginate by a sort key, with
+    // some descendants lacking the key (sort last). The index (path resolved via
+    // the tree cache → PathRoots) must page identically to the SQL engine.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    // Children of root with varied rate; `c` lacks rate (must sort last).
+    o.create(vec![tref("loc", Some(root), "a"), Field::new("rate", i(5))]);
+    o.create(vec![tref("loc", Some(root), "b"), Field::new("rate", i(2))]);
+    o.create(vec![tref("loc", Some(root), "c")]); // no rate
+    o.create(vec![tref("loc", Some(root), "d"), Field::new("rate", i(8))]);
+    // A grandchild, so the transitive set is more than the direct children.
+    let a_uuid = o.cache.resolve_path(&o.conn, "loc", "root/a").unwrap().unwrap();
+    o.create(vec![tref("loc", Some(a_uuid), "deep"), Field::new("rate", i(9))]);
+
+    let q = Query::FollowsTransitive {
+        field: "loc".into(),
+        target: FollowTarget::Path("root".into()),
+    };
+    for &asc in &[true, false] {
+        for &limit in &[1usize, 2, 3] {
+            o.check_paginated_with_roots(&q, &[("rate", asc)], limit);
+        }
+    }
+    // Multi-key: rate then loc-name, still over the filtered subtree.
+    o.check_paginated_with_roots(&q, &[("rate", false), ("loc", true)], 2);
 }
 
 #[test]

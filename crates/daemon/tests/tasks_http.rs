@@ -232,6 +232,26 @@ async fn load_runs_an_observable_warmup_task() {
 }
 
 #[tokio::test]
+async fn unload_is_refused_while_a_load_warmup_is_active() {
+    // A `load` warmup holds the connection; unloading mid-warmup would leave the
+    // database locked with no reachable task to wait on, so it is refused (409)
+    // until the warmup finishes. Seed an active load task directly (a real
+    // warmup of a tiny repo finishes too fast to observe).
+    let (app, state, repo) = app_with_repo("loadunload");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Load);
+    state.repo(repo_uuid).unwrap().tasks.mark_running(id);
+
+    let (status, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(status, StatusCode::CONFLICT, "unload must wait for the warmup");
+
+    // Once the warmup completes, the unload succeeds.
+    state.repo(repo_uuid).unwrap().tasks.finish(id, None);
+    let (status, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(status, StatusCode::OK, "unload succeeds after the warmup finishes");
+}
+
+#[tokio::test]
 async fn global_tasks_lists_across_repos() {
     let (app, state, repo) = app_with_repo("global");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
