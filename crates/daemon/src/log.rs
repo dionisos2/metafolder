@@ -1146,16 +1146,40 @@ impl<'c> Writer<'c> {
     /// of the name, which would clobber untouched sibling rows on rollback).
     pub fn replace_field(&mut self, uuid: Uuid, field_id: i64, value: Value) -> Result<()> {
         let old = self.get_owned_row(uuid, field_id)?;
-        self.validate_tree_ref(uuid, &old.name, &value)?;
-        self.validate_value_type(&old.name, &value)?;
-        self.replace_owned_row(uuid, old, value)
+        let name = old.name.clone();
+        self.validate_tree_ref(uuid, &name, &value)?;
+        self.validate_value_type(&name, &value)?;
+        self.replace_owned_row(uuid, old, &name, value)
+    }
+
+    /// Changes a field row's *name and/or value* in place, keeping its id — the
+    /// by-id edit behind `mf field set`. The value type is validated against the
+    /// *target* field name (a rename moves the row into that name's type group).
+    pub fn rename_field(
+        &mut self,
+        uuid: Uuid,
+        field_id: i64,
+        new_name: &str,
+        value: Value,
+    ) -> Result<()> {
+        let old = self.get_owned_row(uuid, field_id)?;
+        self.validate_tree_ref(uuid, new_name, &value)?;
+        self.validate_value_type(new_name, &value)?;
+        self.replace_owned_row(uuid, old, new_name, value)
     }
 
     /// The logged delete+append core of [`Self::replace_field`], without the
     /// invariant checks. Shared with [`Self::retype_field`], which is itself the
     /// authority that changes a field's established type (so it must not be
     /// rejected by the per-write type check while converting row by row).
-    fn replace_owned_row(&mut self, uuid: Uuid, old: FieldRow, value: Value) -> Result<()> {
+    /// `new_name` may differ from `old.name` (a by-id rename).
+    fn replace_owned_row(
+        &mut self,
+        uuid: Uuid,
+        old: FieldRow,
+        new_name: &str,
+        value: Value,
+    ) -> Result<()> {
         let field_id = old.id;
         let v1 = self.bump_version(uuid)?;
         db::delete_field_text_by_id(&self.tx, field_id)?;
@@ -1170,9 +1194,14 @@ impl<'c> Writer<'c> {
         )?;
 
         let v2 = self.bump_version(uuid)?;
-        db::insert_field_row(&self.tx, uuid, &old.name, &value, Some(field_id))?;
-        let after = vec![FieldRow { id: field_id, name: old.name.clone(), value }];
-        self.log_op(OpType::AppendField, uuid, Some(&old.name), Some(v2), vec![], after)?;
+        db::insert_field_row(&self.tx, uuid, new_name, &value, Some(field_id))?;
+        let after = vec![FieldRow { id: field_id, name: new_name.to_string(), value }];
+        self.log_op(OpType::AppendField, uuid, Some(new_name), Some(v2), vec![], after)?;
+        if new_name != old.name {
+            // A rename can unlock the old name's type and lock the new one.
+            self.field_types.remove(&old.name);
+            self.field_types.remove(new_name);
+        }
         Ok(())
     }
 
@@ -1200,7 +1229,8 @@ impl<'c> Writer<'c> {
                 if fell_back {
                     fallback.insert(uuid);
                 }
-                self.replace_owned_row(uuid, row, new_value)?;
+                let name = row.name.clone();
+                self.replace_owned_row(uuid, row, &name, new_value)?;
                 converted += 1;
             }
         }

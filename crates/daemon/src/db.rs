@@ -408,6 +408,23 @@ pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
     collect_field_rows(rows)
 }
 
+/// A single field row by its (repository-unique) id, or `None` if absent.
+pub fn get_field_row_by_id(conn: &Connection, id: i64) -> Result<Option<FieldRow>> {
+    let mut stmt =
+        conn.prepare_cached(&format!("SELECT {FIELD_COLUMNS} FROM field WHERE id = ?1"))?;
+    let rows = stmt.query_map(params![id], row_to_field_row)?;
+    Ok(collect_field_rows(rows)?.into_iter().next())
+}
+
+/// The metarecord that owns a field row id, or `None` if the id is unknown.
+pub fn metarecord_of_field(conn: &Connection, id: i64) -> Result<Option<Uuid>> {
+    conn.prepare_cached("SELECT metarecord_uuid FROM field WHERE id = ?1")?
+        .query_row(params![id], |r| r.get::<_, Vec<u8>>(0))
+        .optional()?
+        .map(bytes_to_uuid)
+        .transpose()
+}
+
 /// Field rows of a metarecord restricted to one field name.
 pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<FieldRow>> {
     let mut stmt = conn.prepare_cached(&format!(

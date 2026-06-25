@@ -53,6 +53,10 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/append", post(batch_append))
         .route("/repos/:repo/remove", post(batch_remove))
         .route("/repos/:repo/unset", post(batch_unset))
+        .route(
+            "/repos/:repo/fields/:id",
+            get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),
+        )
         .route("/repos/:repo/fields/:name/retype", post(retype_field))
         .route("/repos/:repo/delete", post(delete_by_query))
         .route("/repos/:repo/log", get(get_log))
@@ -2040,4 +2044,104 @@ async fn delete_field(
     })
     .await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ── By-id field access (repo-level: the row id is unique per repo) ────────────
+
+/// 404 unless field row `id` exists in this repo; returns its owning metarecord.
+fn field_owner(conn: &rusqlite::Connection, id: i64) -> Result<Uuid, ApiError> {
+    db::metarecord_of_field(conn, id)?
+        .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))
+}
+
+/// `GET /repos/:repo/fields/:id` — read one field row by its id (`mf field get`).
+async fn get_field_by_id(
+    State(state): State<Arc<AppState>>,
+    Path((repo, id)): Path<(String, i64)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let row = db::get_field_row_by_id(&conn, id)?
+            .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
+        Ok(Json(json!({"id": row.id, "name": row.name, "value": row.value})))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct PatchFieldByIdBody {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    value: Option<Value>,
+    #[serde(default)]
+    force: bool,
+}
+
+/// `PATCH /repos/:repo/fields/:id` — change a row's name and/or value in place,
+/// keeping its id (`mf field set`). The value type is validated against the
+/// target name; reserved names (old or new) need `force`.
+async fn patch_field_by_id(
+    State(state): State<Arc<AppState>>,
+    Path((repo, id)): Path<(String, i64)>,
+    payload: Result<Json<PatchFieldByIdBody>, JsonRejection>,
+) -> Result<Json<MetaRecord>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = repo_state.conn.lock_recover();
+        let uuid = field_owner(&conn, id)?;
+        let old = db::get_field_row_by_id(&conn, id)?
+            .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
+        let new_name = body.name.clone().unwrap_or_else(|| old.name.clone());
+        let new_value = body.value.clone().unwrap_or_else(|| old.value.clone());
+        check_writable(&old.name, body.force)?;
+        check_writable(&new_name, body.force)?;
+
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        writer.rename_field(uuid, id, &new_name, new_value)?;
+        validate_schema(
+            repo_state,
+            writer.connection(),
+            uuid,
+            &[old.name.clone(), new_name.clone()],
+        )?;
+        let tree_touched = writer.touched_tree();
+        writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
+        metarecord_response(&conn, uuid).map(Json)
+    })
+    .await
+}
+
+/// `DELETE /repos/:repo/fields/:id` — remove one row by id (`mf field delete`).
+async fn delete_field_by_id(
+    State(state): State<Arc<AppState>>,
+    Path((repo, id)): Path<(String, i64)>,
+    payload: Option<Json<ForceBody>>,
+) -> Result<StatusCode, ApiError> {
+    let force = payload.map(|Json(b)| b.force).unwrap_or(false);
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = repo_state.conn.lock_recover();
+        let uuid = field_owner(&conn, id)?;
+        let row = db::get_field_row_by_id(&conn, id)?
+            .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
+        check_writable(&row.name, force)?;
+        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        writer.delete_field(uuid, id)?;
+        validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
+        let tree_touched = writer.touched_tree();
+        writer.commit()?;
+        if tree_touched {
+            repo_state.lock_cache().populate(&conn)?;
+        }
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
 }

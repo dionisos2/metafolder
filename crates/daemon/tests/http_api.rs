@@ -199,6 +199,61 @@ async fn test_unknown_repo_is_not_found() {
 // ── MetaRecord CRUD ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
+async fn test_field_by_id_get_rename_and_delete() {
+    let (app, repo, root) = app_with_repo("field_by_id").await;
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "rating", "value": {"type": "int", "value": 5}}]),
+    )
+    .await;
+    let id = created["fields"][0]["id"].as_i64().unwrap();
+
+    // GET one row by its id.
+    let (status, row) = request(&app, "GET", &format!("/repos/{repo}/fields/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(row["name"].as_str().unwrap(), "rating");
+    assert_eq!(row["value"]["value"].as_i64().unwrap(), 5);
+
+    // PATCH renames and revalues in place, keeping the id.
+    let (status, updated) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/fields/{id}"),
+        Some(json!({"name": "score", "value": {"type": "int", "value": 9}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rename failed: {updated}");
+    let fields = updated["fields"].as_array().unwrap();
+    assert_eq!(fields.len(), 1);
+    assert_eq!(fields[0]["id"].as_i64().unwrap(), id, "row id preserved on rename");
+    assert_eq!(fields[0]["name"].as_str().unwrap(), "score");
+    assert_eq!(fields[0]["value"]["value"].as_i64().unwrap(), 9);
+
+    // A value whose type clashes with the new name's type is rejected.
+    let (status, _) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/fields/{id}"),
+        Some(json!({"value": {"type": "string", "value": "nope"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "type must be validated against the name");
+
+    // DELETE by id.
+    let (status, _) = request(&app, "DELETE", &format!("/repos/{repo}/fields/{id}"), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/fields/{id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // An unknown id is 404.
+    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/fields/999999"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_create_get_delete_metarecord() {
     let (app, repo, root) = app_with_repo("crud").await;
 
