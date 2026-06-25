@@ -124,7 +124,8 @@
       form.hidden {
         display: none;
       }
-      input {
+      input,
+      form select {
         font: inherit;
         font-family: var(--mf-font-mono, monospace);
         background: var(--mf-bg, #1e1e24);
@@ -132,6 +133,11 @@
         border: 1px solid var(--mf-fg-dim, #8a8a96);
         border-radius: 3px;
         padding: 3px 6px;
+      }
+      .form-caption {
+        grid-column: 1 / -1;
+        margin: 0;
+        color: var(--mf-fg-dim, #8a8a96);
       }
       .form-actions {
         grid-column: 2;
@@ -233,6 +239,25 @@
         <button type="button" class="cancel">Cancel</button>
       </div>
       <p class="error" id="load-error"></p>
+    </form>
+
+    <form id="retype-form" class="hidden">
+      <p class="form-caption" id="retype-target"></p>
+      <label for="retype-name">Field name</label>
+      <input id="retype-name" placeholder="e.g. rating" required />
+      <label for="retype-type">New type</label>
+      <select id="retype-type">
+        <option value="string">string</option>
+        <option value="int">int</option>
+        <option value="float">float</option>
+        <option value="bool">bool</option>
+        <option value="datetime">datetime</option>
+      </select>
+      <div class="form-actions">
+        <button type="submit">Convert…</button>
+        <button type="button" class="cancel">Cancel</button>
+      </div>
+      <p class="error" id="retype-error"></p>
     </form>
 
     <div id="browser" class="browser hidden">

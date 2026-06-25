@@ -10,6 +10,8 @@ export async function mount(root, metafolder) {
   const empty = root.getElementById('empty');
   const initForm = root.getElementById('init-form');
   const loadForm = root.getElementById('load-form');
+  const retypeForm = root.getElementById('retype-form');
+  let retypeTarget = null; // repo uuid the retype form acts on
 
   // ── Folder picker ─────────────────────────────────────────────────────────
   // An in-panel directory browser (no native dialog).
@@ -125,6 +127,19 @@ export async function mount(root, metafolder) {
             el('strong', {}, repo.name),
             el('span', { class: 'root' }, repo.root),
             el('span', { class: 'uuid' }, repo.repo_uuid.slice(0, 8)),
+            el(
+              'button',
+              {
+                class: 'repo-unload',
+                type: 'button',
+                title: 'Convert a field type across this repository',
+                onclick: (event) => {
+                  event.stopPropagation();
+                  openRetype(repo.repo_uuid, repo.name);
+                },
+              },
+              'Retype…',
+            ),
             el(
               'button',
               {
@@ -253,6 +268,58 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // ── Retype a field across a whole repository (spec-data-model) ─────────────
+
+  function openRetype(repoUuid, repoName) {
+    retypeTarget = repoUuid;
+    root.getElementById('retype-target').textContent = `Repository: ${repoName}`;
+    root.getElementById('retype-error').textContent = '';
+    root.getElementById('retype-name').value = '';
+    toggleForm(retypeForm, true);
+  }
+
+  retypeForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const errorElement = root.getElementById('retype-error');
+    errorElement.textContent = '';
+    const name = root.getElementById('retype-name').value.trim();
+    const to = root.getElementById('retype-type').value;
+    if (!name || !retypeTarget) return;
+    try {
+      // Count the metarecords carrying the field, to describe the change.
+      const count = await daemon.call('POST', `/repos/${retypeTarget}/query`, {
+        query: { type: 'is_present', field: name },
+        select: '*',
+        limit: 1,
+        count: true,
+      });
+      const n = count.total ?? 0;
+      const ok = confirm(
+        `Convert field "${name}" to ${to} on ${n} metarecord${n === 1 ? '' : 's'} ` +
+          `across this repository?\n\nValues that cannot be converted fall back to ` +
+          `the type's default (and Nothing rows are left untouched).`,
+      );
+      if (!ok) return;
+      const resp = await daemon.call(
+        'POST',
+        `/repos/${retypeTarget}/fields/${encodeURIComponent(name)}/retype`,
+        { to },
+      );
+      toggleForm(retypeForm, false);
+      const converted = resp.converted ?? 0;
+      const fell = resp.fallback_count ?? 0;
+      statusBar.message(
+        `Retyped "${name}" to ${to}: ${converted} value(s) converted` +
+          (fell > 0 ? `, ${fell} fell back to the default` : '') + '.',
+        7000,
+      );
+      // Other panels reading this repo should refresh.
+      await workspace.set('metarecords:dirty', Date.now());
+    } catch (error) {
+      errorElement.textContent = String(error.message ?? error);
+    }
+  });
+
   initForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const root_ = root.getElementById('init-root').value.trim();
@@ -291,6 +358,20 @@ export async function mount(root, metafolder) {
   commands.register('repos:refresh', {
     label: 'Repos: refresh the repository list',
     handler: refresh,
+  });
+  commands.register('repos:retype', {
+    label: 'Repos: convert a field type across the active repository',
+    reveal: true,
+    handler: async () => {
+      const repoUuid = await workspace.get('active_repo');
+      if (!repoUuid) {
+        statusBar.message('no active repository', 4000);
+        return;
+      }
+      const repos = (await daemon.call('GET', '/repos')) ?? [];
+      const repo = repos.find((r) => r.repo_uuid === repoUuid);
+      openRetype(repoUuid, repo?.name ?? repoUuid.slice(0, 8));
+    },
   });
   await refresh();
 
