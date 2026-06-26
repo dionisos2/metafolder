@@ -241,7 +241,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   addressed thing — `…/metarecords/:uuid`, per-record fields by name
   `…/metarecords/:uuid/fields/:name` (+ `/resolve-tree`), rows by id
   `…/fields/:id`, `…/retype`, `GET …/fields` (distinct field names + types,
-  optional `?type=`), `GET`/`PATCH /repos/:repo` (info/rename) — and the
+  optional `?type=`), `GET …/tree/roots` (TreeRef forest roots, optional
+  `?field=`), `GET`/`PATCH /repos/:repo` (info/rename) — and the
   *set layer* `POST …/query/*` (query, query/delete,
   query/fields/{set,append,remove,unset,resolve-tree}) where every body carries a
   `query`; a `uuid_in` predicate (core) targets an explicit set, so the two

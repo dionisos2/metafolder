@@ -1,20 +1,13 @@
 // treeref panel query builders (tree-explorer): navigation is by parent UUID
-// (robust to names containing "/"), with the forest root addressed by the
-// empty path the daemon resolves to the root sentinel.
+// (robust to names containing "/"). The forest roots are not reachable through
+// Follows (their parent is the root sentinel, not a real metarecord) — the
+// panel fetches them from GET …/tree/roots instead.
 
 import { describe, expect, test } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
 import { childrenQuery, treeNameOf } from '../../default-config/panel-types/treeref/queries.js';
 
 describe('childrenQuery', () => {
-  test('root level uses the empty-path Follows target', () => {
-    expect(childrenQuery('mfr_path', null)).toEqual({
-      type: 'follows',
-      field: 'mfr_path',
-      target: '',
-    });
-  });
-
   test('a node uses a uuid_in sub-query (direct parent = node)', () => {
     expect(childrenQuery('tag_path', 'abc123')).toEqual({
       type: 'follows',

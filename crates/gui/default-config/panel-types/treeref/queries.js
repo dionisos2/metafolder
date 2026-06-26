@@ -1,17 +1,13 @@
 // Query builders for the treeref (tree-explorer) panel. Pure functions, no
 // daemon access — unit-tested in frontend/tests/treeref-queries.test.js.
 
-// The Query IR matching the direct children of a node in `field`'s forest.
-// `parentUuid === null` addresses the forest roots: the daemon resolves the
-// empty path to the root sentinel, so `Follows{field, target: ""}` yields the
-// metarecords whose TreeRef parent is the root. A real node is addressed by a
-// `uuid_in` sub-query (Follows matches metarecords whose direct parent is in
-// the set), which avoids building path strings and so is robust to names
-// containing "/".
+// The Query IR matching the direct children of a node in `field`'s forest. The
+// node is addressed by a `uuid_in` sub-query (Follows matches metarecords whose
+// TreeRef direct parent is in the set), which avoids building path strings and
+// so is robust to names containing "/". The forest *roots* are not reachable
+// this way (their parent is the root sentinel, not a real metarecord) — they
+// come from `GET …/tree/roots` instead.
 export function childrenQuery(field, parentUuid) {
-  if (parentUuid === null || parentUuid === undefined) {
-    return { type: 'follows', field, target: '' };
-  }
   return { type: 'follows', field, target: { type: 'uuid_in', uuids: [parentUuid] } };
 }
 

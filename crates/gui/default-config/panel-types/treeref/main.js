@@ -55,6 +55,8 @@ export async function mount(root, metafolder) {
 
   // ── Navigation ──────────────────────────────────────────────────────────
 
+  // `children` holds normalized {uuid, name} nodes (from the roots endpoint at
+  // the top level, or from a Follows page below it).
   async function fetchChildren(reset) {
     if (!repo || loading) return;
     loading = true;
@@ -65,21 +67,36 @@ export async function mount(root, metafolder) {
         nextCursor = null;
         cursorIndex = -1;
       }
-      let result;
       try {
-        result = await cache.query(repo, {
-          query: childrenQuery(field, currentUuid()),
-          select: '*',
-          limit: PAGE,
-          ...(nextCursor && { cursor: nextCursor }),
-        });
+        if (currentUuid() === null) {
+          // Forest roots: their parent is the root sentinel, not reachable via
+          // Follows — fetch them from the dedicated endpoint (unpaginated; a
+          // forest has few roots). Only on a reset (no cursor at the top level).
+          if (reset) {
+            const roots =
+              (await daemon.call('GET', `/repos/${repo}/tree/roots?field=${encodeURIComponent(field)}`)) ??
+              [];
+            children = roots.map((r) => ({ uuid: r.uuid, name: r.name }));
+            nextCursor = null;
+          }
+        } else {
+          const result = await cache.query(repo, {
+            query: childrenQuery(field, currentUuid()),
+            select: '*',
+            limit: PAGE,
+            ...(nextCursor && { cursor: nextCursor }),
+          });
+          const fetched = result.uuids
+            .map((u) => cache.readMetarecord(repo, u))
+            .filter((m) => m !== REFRESH)
+            .map((m) => ({ uuid: m.uuid, name: treeNameOf(m, field) ?? '?' }));
+          children = children.concat(fetched);
+          nextCursor = result.nextCursor;
+        }
       } catch (error) {
         await statusBar.error(error);
         return;
       }
-      const fetched = result.uuids.map((u) => cache.readMetarecord(repo, u)).filter((m) => m !== REFRESH);
-      children = children.concat(fetched);
-      nextCursor = result.nextCursor;
       render();
     } finally {
       loading = false;
@@ -89,7 +106,7 @@ export async function mount(root, metafolder) {
   function descend(index) {
     const child = children[index];
     if (!child) return;
-    stack = [...stack, { uuid: child.uuid, name: treeNameOf(child, field) ?? '?' }];
+    stack = [...stack, { uuid: child.uuid, name: child.name }];
     void fetchChildren(true);
   }
 
@@ -118,23 +135,30 @@ export async function mount(root, metafolder) {
     const child = children[cursorIndex];
     if (!child) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    const name = treeNameOf(child, field) ?? '';
-    const path = [...stack.map((c) => c.name), name].filter((s) => s !== '').join('/');
+    const path = [...stack.map((c) => c.name), child.name].filter((s) => s !== '').join('/');
     await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
     await workspace.set('selected_treeref', { repo, field, uuid: child.uuid, path });
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
 
+  // Display label of a node: the root metarecord's empty name shows as "/";
+  // an otherwise-empty name falls back to a short uuid.
+  const nodeLabel = (node) => (node.name === '' ? '/' : node.name || node.uuid.slice(0, 8));
+
   function render() {
     placeholderElement.hidden = children.length > 0 || loading;
-    placeholderElement.textContent = loading ? 'Loading…' : 'No children (leaf node).';
+    placeholderElement.textContent = loading
+      ? 'Loading…'
+      : stack.length === 0
+        ? 'No roots in this forest.'
+        : 'No children (leaf node).';
 
     breadcrumb.replaceChildren(
       el('span', { class: 'crumb', onclick: () => gotoRoot() }, `${field}:/`),
       ...stack.flatMap((crumb, depth) => [
         el('span', {}, depth === 0 ? '' : '/'),
-        el('span', { class: 'crumb', onclick: () => gotoDepth(depth + 1) }, crumb.name),
+        el('span', { class: 'crumb', onclick: () => gotoDepth(depth + 1) }, nodeLabel(crumb)),
       ]),
     );
 
@@ -148,7 +172,7 @@ export async function mount(root, metafolder) {
             ondblclick: () => descend(index),
           },
           el('span', { class: 'icon' }, '🏷️'),
-          el('span', { class: 'name' }, treeNameOf(child, field) ?? child.uuid.slice(0, 8)),
+          el('span', { class: 'name' }, nodeLabel(child)),
         ),
       ),
     );

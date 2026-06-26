@@ -871,6 +871,39 @@ fn field_pairs(body: &Value) -> std::collections::HashSet<String> {
 }
 
 #[tokio::test]
+async fn test_tree_roots_lists_forest_roots() {
+    let (app, repo, root) = app_with_repo("treeroots").await;
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let id = |m: Value| m["uuid"].as_str().unwrap().to_string();
+
+    let music = id(create_metarecord(&app, &repo, treeref(None, "music")).await);
+    let _books = id(create_metarecord(&app, &repo, treeref(None, "books")).await);
+    // A child of `music` — must NOT be reported as a root.
+    create_metarecord(&app, &repo, treeref(Some(&music), "rock")).await;
+
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=cat"), None).await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    let names: Vec<&str> = body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["books", "music"], "roots, sorted by name; no children");
+    // The reported root carries its uuid.
+    let music_entry = body.as_array().unwrap().iter().find(|e| e["name"] == "music").unwrap();
+    assert_eq!(music_entry["uuid"].as_str().unwrap(), music);
+
+    // mfr_path: the single init-time root metarecord, named "".
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(body.as_array().unwrap().len(), 1, "one mfr_path root: {body}");
+    assert_eq!(body[0]["name"], "");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_list_fields_distinct_names_and_types() {
     let (app, repo, root) = app_with_repo("listfields").await;
 

@@ -200,6 +200,7 @@ for the full request/response formats.
 | `GET .../metarecords/:uuid/fields/:name/resolve-tree` | Resolve a `tree_ref` field to its path |
 | `GET\|PATCH\|DELETE .../fields/:id` | Direct field-row access by DB id |
 | `GET /repos/:repo/fields[?type=]` | Distinct field names + value types (optionally filtered) |
+| `GET /repos/:repo/tree/roots[?field=]` | TreeRef forest roots (uuid + name) for top-down navigation |
 | `POST /repos/:repo/retype` | Convert a field's value type repository-wide |
 | `POST /repos/:repo/query` | Query engine (`select`, `sort`, keyset pagination) |
 | `POST .../query/delete` | Delete every match (one transaction) |

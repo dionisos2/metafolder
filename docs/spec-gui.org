@@ -1112,15 +1112,18 @@ by the daemon. The primary use is observing a tag hierarchy.
 default. Changing the field resets navigation to the roots.
 
 *Navigation*: by *parent UUID*, not by path string, so a name containing =/=
-is handled correctly. The forest roots are the children of the root sentinel,
-fetched with =Follows{field, target: ""}= (the empty path the daemon resolves
-to the sentinel). A node =U='s direct children are fetched with
-=Follows{field, target: \{uuid_in: [U]\}\}=. Each child row shows the single
-name component it contributes (read directly from its =tree_ref= value — no
-=resolve-tree= round-trip). A breadcrumb shows the current path; clicking a
-crumb jumps there. Branch-vs-leaf is *not* predicted up front: descending into
-a leaf simply shows an empty list. The list is fetched page by page
-(=[page-size].treeref=, default 200) with more on scroll.
+is handled correctly. The view *starts at the forest roots*, fetched from
+=GET /repos/:repo/tree/roots?field=<field>= ([[file:spec-data-model.org][spec-data-model.org]]) — the roots' parent
+is the root sentinel, which =Follows= cannot address (the empty path resolves
+to the sentinel's *children*, and only when a root is literally named =""=, as
+=mfr_path='s repo-root metarecord is). A node =U='s direct children are then
+fetched with =Follows{field, target: \{uuid_in: [U]\}\}=, each row showing the
+single name component it contributes (read directly from its =tree_ref= value —
+no =resolve-tree= round-trip). The empty-named =mfr_path= root displays as =/=.
+A breadcrumb shows the current path; clicking a crumb jumps there.
+Branch-vs-leaf is *not* predicted up front: descending into a leaf simply shows
+an empty list. Children are fetched page by page (=[page-size].treeref=,
+default 200) with more on scroll; the (few) roots are fetched in one call.
 
 *Selection*: highlighting a node sets =selected_metarecord= (=\{uuid, repo\}=,
 so =metarecord-detail= follows) and =selected_treeref=

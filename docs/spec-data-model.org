@@ -395,6 +395,7 @@ PATCH  /repos/:repo_uuid/fields/:id                                    rename an
 DELETE /repos/:repo_uuid/fields/:id                                    delete a row by id
 POST   /repos/:repo_uuid/retype                                        retype a field repo-wide
 GET    /repos/:repo_uuid/fields[?type=<value_type>]                    distinct field names + types
+GET    /repos/:repo_uuid/tree/roots[?field=<field>]                    TreeRef forest roots (uuid + name)
 #+END_SRC
 
 *** =POST /repos/:repo_uuid/metarecords=
@@ -485,6 +486,18 @@ parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
 exclusively by this repository. The GUI uses it to populate field pickers (e.g.
 the TreeRef-field selector of the tree-explorer panel and the Ref-field
 selector of the ref-list panel, see [[file:spec-gui.org][spec-gui.org]]).
+
+*** =GET /repos/:repo_uuid/tree/roots=
+
+Lists the *forest roots* of a TreeRef field — the nodes whose direct parent is
+the root sentinel (no parent). =?field=<field>= selects the forest (defaults to
+=mfr_path=). Response =[{"uuid": "<hex>", "name": "<name>"}, ...]= ordered by
+name. This is the top-down entry point a query cannot express: =Follows= with
+the empty path resolves to the sentinel's *children*, and only when a root is
+literally named =""= (as =mfr_path='s repo-root metarecord is); the roots
+themselves — e.g. the top-level nodes of a tag tree — are otherwise
+unreachable. The tree-explorer panel ([[file:spec-gui.org][spec-gui.org]]) starts here, then descends
+with =Follows{field, target: \{uuid_in: [node]\}\}=.
 
 * CLI
 

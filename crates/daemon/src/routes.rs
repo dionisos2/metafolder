@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
@@ -60,6 +60,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         )
         .route("/repos/:repo/retype", post(retype_field))
         .route("/repos/:repo/fields", get(list_fields))
+        .route("/repos/:repo/tree/roots", get(tree_roots))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/query/delete", post(delete_by_query))
@@ -221,6 +222,37 @@ async fn list_fields(
         let names = db::distinct_field_names(&conn, repo_uuid, params.type_filter.as_deref())?;
         let out: Vec<serde_json::Value> =
             names.into_iter().map(|(name, ty)| json!({"name": name, "type": ty})).collect();
+        Ok(Json(serde_json::Value::Array(out)))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct TreeRootsParams {
+    #[serde(default = "default_tree_field")]
+    field: String,
+}
+
+/// `GET /repos/:repo/tree/roots?field=<field>`: the forest roots of a TreeRef
+/// field — the nodes whose direct parent is the root sentinel (no parent).
+/// Response `[{"uuid": "<hex>", "name": "<name>"}, ...]`, ordered by name. This
+/// is the entry point for navigating a forest top-down (the empty path the
+/// query DSL resolves to the sentinel matches the *children* of the named root,
+/// not the roots themselves, and only when a root is literally named ""). The
+/// tree-explorer panel starts here.
+async fn tree_roots(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<TreeRootsParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        // Roots are stored with `value_uuid = ZERO_UUID` (the sentinel).
+        let mut roots = db::tree_children(&conn, &params.field, ZERO_UUID)?;
+        roots.sort_by(|a, b| a.1.cmp(&b.1));
+        let out: Vec<serde_json::Value> =
+            roots.into_iter().map(|(uuid, name)| json!({"uuid": hex(uuid), "name": name})).collect();
         Ok(Json(serde_json::Value::Array(out)))
     })
     .await
