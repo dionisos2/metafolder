@@ -4,17 +4,41 @@ Metafolder is a decentralized file metadata management system. It attaches arbit
 
 File identity is hash-based, so metadata follows files when they are moved or renamed.
 
+> **Status: v0.1 — nothing is stable yet.** This is early development:
+> APIs, the CLI command tree, the on-disk database layout and the config
+> format all change without migrations or deprecation. Do not rely on it for
+> anything you cannot afford to lose. This project has been built
+> predominantly with [Claude Code](https://claude.com/claude-code).
+
 ## Architecture
 
 The project is a Cargo workspace:
 
-- **`core`** — shared data model (`Metadata`, `Field`, `Value`, `Query`), its JSON serialization, and the query DSL parser.
-- **`daemon`** — single background process managing one or more repositories: SQLite storage with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, query engine, user schema validation, and an HTTP API.
-- **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, entry CRUD, query DSL, reconcile/track, schema commands).
-- **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories rendered in iframes and can be customized or added by the user.
-- **`bench`** — benchmarking harness (targets the old POC API; to be updated with the CLI).
+- **`core`** — shared data model (`MetaRecord`, `Field`, `Value`, `Query`), its JSON serialization, the query DSL parser, and the simplified-query language (a user-editable grammar that expands client-side into the normal DSL).
+- **`daemon`** — single background process managing one or more repositories: SQLite storage (EAV schema + FTS5 trigram index) with a full event log, filesystem watcher (inotify), on-demand reconcile with fingerprint matching, an in-memory tree cache and bitmap/BSI query accelerator, user schema validation, and an HTTP API.
+- **`cli`** — the `mf` command-line client: a thin client over the daemon's HTTP API (repository management, metarecord CRUD, query DSL, reconcile/track, log/rollback/prune, schema, and GUI scripting).
+- **`gui`** — the `metafolder-gui` desktop app (Tauri v2 + Svelte 5): workspaces (tabs) with two panel slots, a keybinding system, a command input with autocomplete, and a local scripting HTTP API (`/gui/*`). Panel types are plain HTML/JS directories mounted in Shadow DOM roots (no iframes) and can be customized or added by the user.
+- **`bench`** — benchmarking harness running against two persistent data folders (`data`, `gui`, `attach` modes).
 
 The full specification lives under `docs/` (`spec-*.org`).
+
+## Configuration
+
+The daemon and GUI read their configuration from `~/.config/metafolder/<crate>/`
+(`core/`, `daemon/`, `gui/`, `cli/`). There is **no runtime fallback to embedded
+defaults**: a missing or invalid config file is a hard startup error, so the
+config repository must be installed first:
+
+```bash
+# Install/update the user config repo at ~/.config/metafolder/ (git-backed)
+cargo run -p metafolder-core --features sync-config --bin metafolder-sync-config
+```
+
+`metafolder-sync-config` is the only git actor: it gathers each crate's
+`default-config/`, keeps them on a `default` branch (shipped defaults), and
+3-way-merges them into `main` (your edits) without clobbering your changes.
+Re-run it after pulling new built-in panels or default keybindings. See
+`docs/spec-config.org`.
 
 ## Build and test
 
@@ -34,6 +58,8 @@ cargo run -p metafolder-daemon -- --port 8080
 ```
 
 The daemon is local-only and unauthenticated; access control is left to the OS.
+Repositories listed in `~/.config/metafolder/daemon/config.toml` are auto-loaded
+at startup.
 
 ## Running the GUI
 
@@ -45,16 +71,16 @@ Building the gui crate needs the Tauri system libraries (Arch:
 npm --prefix crates/gui/frontend install   # once
 npm --prefix crates/gui/frontend run build
 
-cargo run -p metafolder-gui                # GUI API on 127.0.0.1:7524
-cargo run -p metafolder-gui -- --gui-port 7524 --daemon-url http://127.0.0.1:7523
+cargo run -p metafolder-gui                              # GUI API on 127.0.0.1:7524
+cargo run -p metafolder-gui -- --gui-port 7524 --daemon-port 7523
 ```
 
-On first run the GUI installs its editable configuration under
-`~/.config/metafolder-gui/` (`keybindings.toml`, `style.css`, and the
-built-in panel types as user-copyable HTML/JS); user edits are never
-overwritten. The local HTTP API on port 7524 lets external scripts drive the
-GUI (workspaces, layout, panel views, messages, input prompts). See
-`docs/spec-gui.org`.
+Ports come from `~/.config/metafolder/gui/config.toml` (`gui-port` default 7524,
+`daemon-port` default 7523); the CLI flags above override them. The GUI never
+installs or upgrades anything at startup — its keybindings, stylesheet and panel
+types come from the config repo (run `metafolder-sync-config` first). The local
+HTTP API on the GUI port lets external scripts drive the GUI (workspaces,
+layout, panel views, messages, input prompts). See `docs/spec-gui.org`.
 
 ## Quick tour (mf)
 
@@ -62,37 +88,60 @@ With the daemon running:
 
 ```bash
 # Initialise a repository (creates .metafolder/ inside the directory)
-REPO=$(cargo run -p metafolder-cli -- init /path/to/folder)
-export METAFOLDER_REPO=$REPO          # or pass --repo $REPO to each command
+REPO=$(mf repo init /path/to/folder)
+export METAFOLDER_REPO=$REPO          # or pass -u $REPO to each command
 
-# Nothing is tracked by default (opt-in). Enable tracking on the root entry:
-ROOT=$(mf query 'mf_watch IS PRESENT')
-mf set $ROOT mf_watch:bool=true
+# Nothing is tracked by default (opt-in). Enable tracking on the root metarecord:
+ROOT=$(mf metarecord -q 'mf_watch IS PRESENT' get)
+mf metarecord -i $ROOT field set mf_watch:bool=true
 
 # Index the files already present (the watcher tracks new changes live):
 mf reconcile
 
 # Query: every file under /music, with sizes
-mf query 'mfr_path ->* "/music"' --select mfr_size
+mf metarecord -q 'mfr_path ->* "/music"' get --select mfr_size
 
-# Tag a file, then find it back
-mf set $(mf query 'mfr_path ->* "/music"' --limit 1) genre:string=jazz
-mf query 'genre = "jazz"'
+# Tag one file, then find it back
+FILE=$(mf metarecord -q 'mfr_path ->* "/music"' get --limit 1)
+mf metarecord -i $FILE field set genre:string=jazz
+mf metarecord -q 'genre = "jazz"' get
 ```
 
-`mf --help` lists all commands (`init`, `load`, `repos`, `list`, `get`,
-`create`, `set`, `add`, `unset`, `delete`, `query`, `reconcile`, `track`,
-`path`, `schema check|reload|show`, and the `gui` subcommands below).
-Global options: `--daemon-url` (`METAFOLDER_DAEMON_URL`) and `--repo`
-(`METAFOLDER_REPO`). Exit codes: 0 success, 1 operation failed, 2 usage
-error.
+### CLI command tree
 
-`mf gui …` drives a running GUI through its scripting API (`status`,
-`repo`, `workspace new|rm`, `layout`, `view`, `message`, `input`,
-`prompt`); see `scripts/gui-tag-pair.sh` for a complete interactive
-example (per-file yes/no tagging with prompt autocompletion).
+Repository and daemon are selected once by **global flags that precede the
+command**: `-n <name>` / `-u <uuid>` (repository, mutually exclusive) and
+`-p <port>` (daemon, default 7523). Env fallbacks: `METAFOLDER_REPO_NAME`,
+`METAFOLDER_REPO`, `METAFOLDER_DAEMON_PORT`. Exit codes: 0 success, 1 operation
+failed, 2 usage error.
+
+The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
+
+- `mf repo {list,init,load,unload}` — repository lifecycle.
+- `mf metarecord [selector] <verb>` — the selector is an **option before the
+  verb**: `-q "<DSL>"` (query; add `-s` to write it in the simplified
+  language), `-i <uuid>` (one metarecord), or none (all). Verbs: `get`,
+  `add <specs>`, `set <specs>`, `delete`, and `field <get|set|add|delete|unset>
+  <name|spec>`.
+- `mf field {get,set,delete} <id>` — direct field-row access by DB id.
+- `mf retype <name> <type>` — convert a field's value type repository-wide.
+- `mf reconcile`, `mf track <path>`, `mf path <uuid>` — filesystem sync.
+- `mf log {list,show,rollback,prune}` — event log, atomic navigation, pruning.
+- `mf task {list,show}` — background tasks.
+- `mf schema {check,reload,show}` — user schema.
+- `mf gui …` — drive a running GUI through its scripting API (`status`, `repo`,
+  `workspace new|rm`, `layout`, `view`, `message`, `input`, `prompt`); see
+  `scripts/gui-tag-pair.sh` for a complete interactive example.
+
+Field specs are `name:type[=value]` (e.g. `genre:string=jazz`, `rating:int=5`).
+Run `mf --help` (and `mf <command> --help`) for the full set of options.
 
 ## Quick tour (curl)
+
+The HTTP API has two layers (see `docs/spec-data-model.org` /
+`docs/spec-query.org`): a **resource layer** for a single directly-addressed
+thing (`…/metarecords/:uuid`, `…/fields/:name`, `…/fields/:id`) and a **set
+layer** (`POST …/query/*`) where every body carries a `query`.
 
 ```bash
 B=localhost:7523
@@ -101,12 +150,12 @@ B=localhost:7523
 REPO=$(curl -s -X POST $B/repos/init -d '{"root": "/path/to/folder"}' \
        -H 'content-type: application/json' | jq -r .repo_uuid)
 
-# Nothing is tracked by default (opt-in). Enable tracking on the root entry:
+# Nothing is tracked by default (opt-in). Enable tracking on the root metarecord:
 ROOT=$(curl -s -X POST $B/repos/$REPO/query \
        -d '{"query": {"type": "is_present", "field": "mf_watch"}}' \
        -H 'content-type: application/json' | jq -r '.[0]')
-curl -s -X PATCH $B/repos/$REPO/metadata/$ROOT \
-     -d '{"name": "mf_watch", "value": {"type": "bool", "value": true}}' \
+curl -s -X PUT $B/repos/$REPO/metarecords/$ROOT/fields/mf_watch \
+     -d '{"value": {"type": "bool", "value": true}}' \
      -H 'content-type: application/json'
 
 # Index the files already present (the watcher tracks new changes live):
@@ -116,6 +165,13 @@ curl -s -X POST $B/repos/$REPO/reconcile
 curl -s -X POST $B/repos/$REPO/query -H 'content-type: application/json' -d '{
   "query": {"type": "follows_transitive", "field": "mfr_path", "path": "/music"},
   "select": ["mfr_size"]
+}'
+
+# Set a field on every match of a query (one transaction)
+curl -s -X POST $B/repos/$REPO/query/fields/set -H 'content-type: application/json' -d '{
+  "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
+  "name": "reviewed",
+  "value": {"type": "bool", "value": true}
 }'
 
 # Undo the last revision (metadata only)
@@ -131,23 +187,30 @@ for the full request/response formats.
 
 | Route | Description |
 |---|---|
-| `GET /health` | Liveness check |
+| `GET /health`, `GET /tasks` | Liveness check / all background tasks |
 | `GET /repos`, `POST /repos/init`, `POST /repos/load` | Repository management (`init`/`load` accept an external `metafolder` location) |
-| `GET\|POST /repos/:repo/metadata` | List (paginated with `?limit&cursor`) / create entries |
-| `GET\|PATCH\|DELETE /repos/:repo/metadata/:uuid` | Read / set-field / delete one entry |
-| `POST .../metadata/:uuid/fields`, `PUT\|DELETE .../fields/:field_id` | Multi-map field operations |
+| `GET\|PATCH /repos/:repo`, `POST .../unload` | Repo info / rename / unload |
+| `POST /repos/:repo/metarecords` | Create a metarecord |
+| `GET\|PUT\|DELETE .../metarecords/:uuid` | Read / overwrite / delete one metarecord |
+| `POST .../metarecords/:uuid/fields` | Append a field (multi-map) |
+| `GET\|PUT\|DELETE .../metarecords/:uuid/fields/:name` | Read / set / unset a field by name |
+| `GET .../metarecords/:uuid/fields/:name/resolve-tree` | Resolve a `tree_ref` field to its path |
+| `GET\|PATCH\|DELETE .../fields/:id` | Direct field-row access by DB id |
+| `POST /repos/:repo/retype` | Convert a field's value type repository-wide |
 | `POST /repos/:repo/query` | Query engine (`select`, `sort`, keyset pagination) |
-| `POST /repos/:repo/set` | Batch set on every query match (one transaction) |
-| `POST /repos/:repo/reconcile` | Full reconcile (fingerprint phase, candidates) |
-| `POST /repos/:repo/track` | Track a single path without activating the watch scope |
-| `POST .../metadata/:uuid/reconcile` | Reconcile one subtree |
-| `GET /repos/:repo/schema`, `POST .../schema/reload`, `POST .../schema/check` | User schema (spec-schema) |
-| `GET /repos/:repo/log`, `GET\|PATCH .../log/revisions/:rev_id` | Event log reading, labels |
-| `POST /repos/:repo/rollback`, `POST /repos/:repo/log/prune` | Atomic navigation, pruning |
+| `POST .../query/delete` | Delete every match (one transaction) |
+| `POST .../query/fields/{set,append,remove,unset}` | Batch field ops over every match |
+| `POST .../query/fields/resolve-tree` | Resolve a `tree_ref` field for a query's matches |
+| `POST /repos/:repo/reconcile`, `POST .../track` | Full reconcile / track a single path |
+| `GET /repos/:repo/log`, `GET .../log/since` | Event-log reading / change feed |
+| `GET\|PATCH .../log/revisions/:rev_id`, `POST .../log/prune` | Revision labels / pruning |
+| `POST /repos/:repo/rollback` (+ `/plan`, `/start`, `/step`, `/abort`) | Atomic & coordinated navigation |
+| `GET /repos/:repo/schema`, `POST .../schema/{reload,check}` | User schema (spec-schema) |
+| `GET /repos/:repo/tasks`, `GET\|POST .../tasks/:task[/cancel]` | Background tasks |
 
 Key concepts (see `docs/spec-data-model.org`):
 
-- Everything is a metadata entry: a multi-map of `(name, value)` fields with
+- Everything is a **metarecord**: a multi-map of `(name, value)` fields with
   ten value types, including `tree_ref` (a position in a named tree — the
   filesystem tree uses the reserved `mfr_path` field).
 - Three-valued logic: a field can be *present*, explicitly *absent*
