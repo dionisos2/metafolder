@@ -78,6 +78,8 @@ Built-in panel types:
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
 | =log=            | Event log (revisions and operations)                         |
 | =repos=          | Repository list, init, load, unload, per-repo running tasks   |
+| =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
+| =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
 
 Users can add custom panel types by creating a new directory under
 =~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside
@@ -142,6 +144,7 @@ Standard variables:
 | =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
 | =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
+| =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel (consumed by =ref-list=) |
 
 Panel types may define their own variables using namespaced keys (e.g.
 =my-panel:current-node=).
@@ -1097,6 +1100,72 @@ outside the repo root).
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
+
+*** =treeref= panel type
+
+A navigator for a *TreeRef forest*, the way =file-manager= navigates the disk
+— but over any TreeRef field (=mfr_path=, or a user tag tree), driven entirely
+by the daemon. The primary use is observing a tag hierarchy.
+
+*Field picker*: a dropdown of the repo's TreeRef field names
+(=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
+default. Changing the field resets navigation to the roots.
+
+*Navigation*: by *parent UUID*, not by path string, so a name containing =/=
+is handled correctly. The forest roots are the children of the root sentinel,
+fetched with =Follows{field, target: ""}= (the empty path the daemon resolves
+to the sentinel). A node =U='s direct children are fetched with
+=Follows{field, target: \{uuid_in: [U]\}\}=. Each child row shows the single
+name component it contributes (read directly from its =tree_ref= value — no
+=resolve-tree= round-trip). A breadcrumb shows the current path; clicking a
+crumb jumps there. Branch-vs-leaf is *not* predicted up front: descending into
+a leaf simply shows an empty list. The list is fetched page by page
+(=[page-size].treeref=, default 200) with more on scroll.
+
+*Selection*: highlighting a node sets =selected_metarecord= (=\{uuid, repo\}=,
+so =metarecord-detail= follows) and =selected_treeref=
+(=\{repo, field, uuid, path\}=, consumed by =ref-list=).
+
+*Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
+=Backspace=/=Left= go up; =r= refreshes.
+
+| Command            | Description                                  |
+|--------------------+----------------------------------------------|
+| =treeref:descend=  | Descend into the selected node               |
+| =treeref:parent=   | Go up one level                              |
+| =treeref:root=     | Jump to the forest roots                     |
+| =treeref:refresh=  | Reload the field list and current children   |
+
+*** =ref-list= panel type
+
+Lists the metarecords whose chosen *Ref field* points to the TreeRef node
+currently selected in a =treeref= panel — the companion view that answers "what
+is tagged with this?". It reacts to =selected_treeref=.
+
+*Field picker*: a dropdown of the repo's Ref field names
+(=GET /repos/:repo/fields?type=ref=). A *scope* selector chooses how the
+selected node is matched:
+
+- =exact= — the Ref referent is the node itself:
+  =Follows\{refField, target: \{uuid_in: [node]\}\}=.
+- =+ descendants= — the referent is the node *or any descendant* of it in the
+  TreeRef field's forest (classic tag inheritance — selecting =music= also
+  surfaces things tagged =music/rock=). The target is
+  =Or(uuid_in[node], FollowsTransitive\{treeField, uuid_in[node]\})= (the tree
+  field comes from =selected_treeref.field=; =FollowsTransitive= excludes its
+  own roots, so the node itself is OR-ed back in).
+
+*Display*: one row per referencing metarecord, labelled by its =mfr_path=
+basename (resolved from the cache) or a short UUID when it has no path.
+Selecting a row sets =selected_metarecord= / =selected_paths=; =Enter= reveals
+it in the other slot (=file= when it has a path, else =metarecord-detail=).
+Paged on scroll (=[page-size].ref-list=, default 100).
+
+| Command               | Description                                   |
+|-----------------------+-----------------------------------------------|
+| =ref-list:open=       | Reveal the selection in the other slot        |
+| =ref-list:toggle-scope= | Toggle between =exact= and =+ descendants=  |
+| =ref-list:refresh=    | Reload the field list and results             |
 
 *** =workspace-info= panel type
 

@@ -59,6 +59,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),
         )
         .route("/repos/:repo/retype", post(retype_field))
+        .route("/repos/:repo/fields", get(list_fields))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/query/delete", post(delete_by_query))
@@ -193,6 +194,34 @@ async fn resolve_record_field_tree(
         let mut cache = repo_state.lock_cache();
         let paths = cache.paths_of(&conn, &name, uuid)?;
         Ok(Json(json!({ "paths": paths })))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ListFieldsParams {
+    /// Optional value-type filter (e.g. `tree_ref`, `ref`); absent = all types.
+    #[serde(rename = "type")]
+    type_filter: Option<String>,
+}
+
+/// `GET /repos/:repo/fields[?type=<value_type>]`: the distinct field names
+/// present on the repository's metarecords, each with its value type. With
+/// `?type=`, only that value type is returned (e.g. `tree_ref` to populate a
+/// TreeRef-field picker). `Nothing` rows are excluded. Response is a JSON array
+/// `[{"name": ..., "type": ...}, ...]` ordered by name.
+async fn list_fields(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<ListFieldsParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let names = db::distinct_field_names(&conn, repo_uuid, params.type_filter.as_deref())?;
+        let out: Vec<serde_json::Value> =
+            names.into_iter().map(|(name, ty)| json!({"name": name, "type": ty})).collect();
+        Ok(Json(serde_json::Value::Array(out)))
     })
     .await
 }

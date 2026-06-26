@@ -858,6 +858,89 @@ async fn test_record_field_by_name_get_set_unset() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// ── Field-name enumeration (GET /repos/:repo/fields) ──────────────────────────
+
+/// Collects the response into a set of "name:type" strings for order-free
+/// membership assertions.
+fn field_pairs(body: &Value) -> std::collections::HashSet<String> {
+    body.as_array()
+        .unwrap()
+        .iter()
+        .map(|e| format!("{}:{}", e["name"].as_str().unwrap(), e["type"].as_str().unwrap()))
+        .collect()
+}
+
+#[tokio::test]
+async fn test_list_fields_distinct_names_and_types() {
+    let (app, repo, root) = app_with_repo("listfields").await;
+
+    // A few metarecords with assorted field types. `tag` (ref) appears on two
+    // metarecords — it must be reported once. `note` is set to Nothing — an
+    // explicit absence, which must be excluded from the enumeration.
+    let target = create_metarecord(&app, &repo, json!([])).await["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    create_metarecord(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": {"type": "ref", "value": target}},
+            {"name": "rating", "value": {"type": "int", "value": 5}},
+            {"name": "genre", "value": {"type": "string", "value": "jazz"}},
+        ]),
+    )
+    .await;
+    create_metarecord(
+        &app,
+        &repo,
+        json!([
+            {"name": "tag", "value": {"type": "ref", "value": target}},
+            {"name": "category", "value": {"type": "tree_ref", "value": {"parent": null, "name": "music"}}},
+            {"name": "note", "value": {"type": "nothing"}},
+        ]),
+    )
+    .await;
+
+    // Unfiltered: every distinct (name, type) of the repo's metarecords.
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    let pairs = field_pairs(&body);
+    for expected in [
+        "tag:ref",
+        "rating:int",
+        "genre:string",
+        "category:tree_ref",
+        // The init-time root metarecord contributes these.
+        "mfr_path:tree_ref",
+        "mfr_type:string",
+        "mf_watch:bool",
+        "mf_ignore:string",
+    ] {
+        assert!(pairs.contains(expected), "missing {expected} in {pairs:?}");
+    }
+    // `tag` reported exactly once despite two rows; Nothing rows excluded.
+    assert_eq!(body.as_array().unwrap().iter().filter(|e| e["name"] == "tag").count(), 1);
+    assert!(!pairs.iter().any(|p| p.starts_with("note:")), "Nothing field must be excluded");
+
+    // Filtered by type: only TreeRef field names.
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/fields?type=tree_ref"), None).await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    let pairs = field_pairs(&body);
+    assert!(pairs.contains("category:tree_ref"));
+    assert!(pairs.contains("mfr_path:tree_ref"));
+    assert!(body.as_array().unwrap().iter().all(|e| e["type"] == "tree_ref"), "got: {body}");
+
+    // Filtered by type: only Ref field names.
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/fields?type=ref"), None).await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(field_pairs(&body), std::collections::HashSet::from(["tag:ref".to_string()]));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn test_direct_resolve_tree_one_record() {
     let (app, repo, root) = app_with_repo("resolveone").await;

@@ -394,6 +394,7 @@ GET    /repos/:repo_uuid/fields/:id                                    read a fi
 PATCH  /repos/:repo_uuid/fields/:id                                    rename and/or revalue a row
 DELETE /repos/:repo_uuid/fields/:id                                    delete a row by id
 POST   /repos/:repo_uuid/retype                                        retype a field repo-wide
+GET    /repos/:repo_uuid/fields[?type=<value_type>]                    distinct field names + types
 #+END_SRC
 
 *** =POST /repos/:repo_uuid/metarecords=
@@ -466,6 +467,24 @@ Converts a field's value type repository-wide (=string|int|float|bool|datetime=)
 — see [[*Changing a field's type (retype)]]. Body ={"name": "<field>", "to": "<type>"}= →
 ={"converted": <n>, "fallback_count": <n>, "fallback_uuids": [...]}=. Reserved
 =mfr_*=/=mf_*= names are rejected (the system owns their types).
+
+*** =GET /repos/:repo_uuid/fields=
+
+Lists the distinct field names present on the repository's metarecords, each
+with its value type, ordered by name:
+
+#+BEGIN_SRC json
+[{"name": "category", "type": "tree_ref"}, {"name": "tag", "type": "ref"}, ...]
+#+END_SRC
+
+Since a field name has a single non-=Nothing= value type repository-wide ([[*One value type per field name]]),
+each name appears at most once. =Nothing= rows are excluded (an explicit
+absence is not a usable value). An optional =?type=<value_type>= query
+parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
+…). The isolation matches a query's universe — only metarecords owned
+exclusively by this repository. The GUI uses it to populate field pickers (e.g.
+the TreeRef-field selector of the tree-explorer panel and the Ref-field
+selector of the ref-list panel, see [[file:spec-gui.org][spec-gui.org]]).
 
 * CLI
 

@@ -628,6 +628,42 @@ pub fn tree_children(
     Ok(children)
 }
 
+/// The distinct `(field_name, value_type)` pairs present on the metarecords
+/// owned exclusively by `db_id`, optionally restricted to a single value type
+/// (e.g. `"tree_ref"`, `"ref"`). `Nothing` rows are excluded — they record an
+/// explicit absence, not a usable field value. A field name has a single
+/// non-`Nothing` value type repository-wide, so it appears at most once.
+/// Ordered by name then type for a stable response.
+///
+/// The repository-isolation sub-select mirrors the `_repo` universe CTE of the
+/// query engine (`query_exec::Compiler::new`): only metarecords whose sole
+/// owner is this repository.
+pub fn distinct_field_names(
+    conn: &Connection,
+    db_id: Uuid,
+    type_filter: Option<&str>,
+) -> Result<Vec<(String, String)>> {
+    let type_clause = if type_filter.is_some() { "AND f.value_type = ?2" } else { "" };
+    let sql = format!(
+        "SELECT DISTINCT f.field_name, f.value_type FROM field f
+         WHERE f.value_type != 'nothing' {type_clause}
+           AND f.metarecord_uuid IN (
+             SELECT m1.metarecord_uuid FROM metarecord_db m1
+             WHERE m1.db_id = ?1
+               AND (SELECT COUNT(*) FROM metarecord_db m2
+                    WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1)
+         ORDER BY f.field_name, f.value_type"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let db_bytes = uuid_to_bytes(db_id);
+    let map = |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?));
+    let rows = match type_filter {
+        Some(t) => stmt.query_map(params![db_bytes, t], map)?.collect::<rusqlite::Result<Vec<_>>>(),
+        None => stmt.query_map(params![db_bytes], map)?.collect::<rusqlite::Result<Vec<_>>>(),
+    }?;
+    Ok(rows)
+}
+
 /// One TreeRef position: the metarecord, the field name whose forest it belongs
 /// to, its parent (`None` = a forest root) and the name component it contributes.
 pub struct TreeRow {

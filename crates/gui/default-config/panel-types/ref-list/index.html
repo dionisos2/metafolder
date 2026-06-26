@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- Built-in panel type: lists the metarecords whose chosen Ref field points to
+     the tree node currently selected in the treeref panel (spec-gui "ref-list
+     panel type"). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>ref-list</title>
+    <style>
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        font-size: 13px;
+      }
+      #toolbar {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        flex-wrap: wrap;
+      }
+      select,
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.4;
+      }
+      label {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.9em;
+      }
+      #target {
+        padding: 3px 10px;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+        border-bottom: 1px solid var(--mf-bg-raised, #26262e);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #listing {
+        flex: 1;
+        overflow-y: auto;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 4px 0;
+      }
+      li {
+        display: flex;
+        gap: 8px;
+        padding: 2px 10px;
+        cursor: pointer;
+        align-items: baseline;
+      }
+      li:hover {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      li.cursor {
+        outline: 1px solid var(--mf-accent, #4c56c4);
+      }
+      .name {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .placeholder {
+        padding: 20px;
+        text-align: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #status-line {
+        padding: 2px 10px;
+        border-top: 1px solid var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.85em;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <label>ref field <select id="field"></select></label>
+      <label
+        >scope
+        <select id="mode">
+          <option value="exact">exact</option>
+          <option value="descendants">+ descendants</option>
+        </select></label
+      >
+      <button id="refresh">⟳ refresh</button>
+    </div>
+    <div id="target">No tree node selected.</div>
+    <div id="listing">
+      <p class="placeholder" id="placeholder"></p>
+      <ul id="entries"></ul>
+    </div>
+    <div id="status-line"></div>
+  </body>
+</html>
