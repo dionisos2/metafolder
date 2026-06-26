@@ -323,6 +323,36 @@ fn test_retype_converts_field_type() {
 }
 
 #[test]
+fn test_field_list_enumerates_names_and_types() {
+    let (repo, _root) = init_repo("field_list");
+    create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
+    create_metarecord(&repo, &["rating:int=3"]);
+
+    // Unfiltered: one "name\ttype" line per distinct field name, deduplicated.
+    let out = mf(&["-u", &repo, "field", "list"]);
+    assert_ok(&out);
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert!(lines.contains(&"rating\tint"), "got: {}", out.stdout);
+    assert!(lines.contains(&"genre\tstring"), "got: {}", out.stdout);
+    // The init-time root metarecord contributes these.
+    assert!(lines.contains(&"mfr_path\ttree_ref"), "got: {}", out.stdout);
+    // `rating` appears once despite two metarecords carrying it.
+    assert_eq!(lines.iter().filter(|l| l.starts_with("rating\t")).count(), 1);
+
+    // `list` is the group's default: bare `mf field` lists too.
+    let bare = mf(&["-u", &repo, "field"]);
+    assert_ok(&bare);
+    assert_eq!(bare.stdout, out.stdout, "bare `field` must equal `field list`");
+
+    // Filtered by type.
+    let out = mf(&["-u", &repo, "field", "list", "--type", "tree_ref"]);
+    assert_ok(&out);
+    assert!(out.stdout.lines().all(|l| l.ends_with("\ttree_ref")), "got: {}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "mfr_path\ttree_ref"), "got: {}", out.stdout);
+    assert!(!out.stdout.contains("rating"), "type filter must exclude int fields: {}", out.stdout);
+}
+
+#[test]
 fn test_create_reserved_field_requires_force() {
     let (repo, _) = init_repo("create_force");
     let out = mf(&["-u", &repo, "metarecord", "add", "mfr_path:tree_ref=/created_name"]);

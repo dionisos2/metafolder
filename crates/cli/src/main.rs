@@ -74,10 +74,10 @@ enum Command {
         #[command(subcommand)]
         verb: Option<MetarecordVerb>,
     },
-    /// Field operations by row id (direct access)
+    /// Field operations: list the repo's field names, or access a row by id
     Field {
         #[command(subcommand)]
-        command: FieldCommand,
+        command: Option<FieldCommand>,
     },
     /// Convert a field's value type repository-wide (string|int|float|bool|datetime)
     Retype {
@@ -327,6 +327,12 @@ enum FieldVerb {
 
 #[derive(Subcommand)]
 enum FieldCommand {
+    /// List the distinct field names of the repository (with their value type)
+    List {
+        /// Restrict to one value type (e.g. tree_ref, ref, string, int)
+        #[arg(long = "type")]
+        type_filter: Option<String>,
+    },
     /// Print a field row by its id
     Get { id: i64 },
     /// Change a row's name and/or value in place, keeping its id
@@ -615,11 +621,14 @@ fn dispatch_metarecord(
     }
 }
 
-fn dispatch_field(ctx: &Ctx, command: FieldCommand) -> CmdResult {
+fn dispatch_field(ctx: &Ctx, command: Option<FieldCommand>) -> CmdResult {
     match command {
-        FieldCommand::Get { id } => commands::field_by_id_get(ctx, id),
-        FieldCommand::Set { id, spec, force } => commands::field_by_id_set(ctx, id, &spec, force),
-        FieldCommand::Delete { id, force } => commands::field_by_id_delete(ctx, id, force),
+        // `list` is the group's default (mf field ≡ mf field list).
+        None => commands::field_list(ctx, None),
+        Some(FieldCommand::List { type_filter }) => commands::field_list(ctx, type_filter.as_deref()),
+        Some(FieldCommand::Get { id }) => commands::field_by_id_get(ctx, id),
+        Some(FieldCommand::Set { id, spec, force }) => commands::field_by_id_set(ctx, id, &spec, force),
+        Some(FieldCommand::Delete { id, force }) => commands::field_by_id_delete(ctx, id, force),
     }
 }
 

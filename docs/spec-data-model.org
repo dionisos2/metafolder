@@ -655,6 +655,11 @@ affected metarecord). =-f=/=--force= is required for reserved =mfr_*= fields.
 
 Operates on a single field row by its DB id (as shown by =mf metarecord get=):
 
+- =list [--type <value_type>]= — lists the repository's *distinct field names*
+  with their value type (=GET …/fields=), one =name<TAB>type= per line, ordered
+  by name; =--type= restricts to one value type (=tree_ref=, =ref=, =string=,
+  …). This is the group's default verb (=mf field= ≡ =mf field list=). Unlike
+  the other field verbs it is repo-wide and takes no id;
 - =get <id>= — prints the row (JSON);
 - =set <id> <spec>= — sets the row to the field spec's name and value in place,
   *keeping its id*; a differing name renames the row, and the value type is

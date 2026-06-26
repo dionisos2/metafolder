@@ -123,7 +123,10 @@ The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
   language), `-i <uuid>` (one metarecord), or none (all). Verbs: `get`,
   `add <specs>`, `set <specs>`, `delete`, and `field <get|set|add|delete|unset>
   <name|spec>`.
-- `mf field {get,set,delete} <id>` — direct field-row access by DB id.
+- `mf field {list,get,set,delete}` — `list [--type <value_type>]` enumerates the
+  repository's distinct field names with their value type (`list` is the
+  default, so `mf field` ≡ `mf field list`); `get`/`set`/`delete <id>` give
+  direct field-row access by DB id.
 - `mf retype <name> <type>` — convert a field's value type repository-wide.
 - `mf reconcile`, `mf track <path>`, `mf path <uuid>` — filesystem sync.
 - `mf log {list,show,rollback,prune}` — event log, atomic navigation, pruning.
@@ -196,6 +199,7 @@ for the full request/response formats.
 | `GET\|PUT\|DELETE .../metarecords/:uuid/fields/:name` | Read / set / unset a field by name |
 | `GET .../metarecords/:uuid/fields/:name/resolve-tree` | Resolve a `tree_ref` field to its path |
 | `GET\|PATCH\|DELETE .../fields/:id` | Direct field-row access by DB id |
+| `GET /repos/:repo/fields[?type=]` | Distinct field names + value types (optionally filtered) |
 | `POST /repos/:repo/retype` | Convert a field's value type repository-wide |
 | `POST /repos/:repo/query` | Query engine (`select`, `sort`, keyset pagination) |
 | `POST .../query/delete` | Delete every match (one transaction) |

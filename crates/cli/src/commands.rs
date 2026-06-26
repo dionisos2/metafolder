@@ -708,6 +708,22 @@ pub fn field_unset(ctx: &Ctx, selector: &str, name: &str, force: bool) -> Result
 }
 
 /// `mf field get <id>` — print one field row (JSON) by its id.
+/// `mf field list [--type <value_type>]` — the repository's distinct field
+/// names with their value type (`GET …/fields`), one `name<TAB>type` per line,
+/// ordered by name. Optionally restricted to a single value type.
+pub fn field_list(ctx: &Ctx, type_filter: Option<&str>) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let query: Vec<(&str, String)> =
+        type_filter.map(|t| vec![("type", t.to_string())]).unwrap_or_default();
+    let resp = ctx.client.get(&format!("{base}/fields"), &query)?;
+    for field in resp.as_array().into_iter().flatten() {
+        let name = field["name"].as_str().unwrap_or_default();
+        let ty = field["type"].as_str().unwrap_or_default();
+        println!("{name}\t{ty}");
+    }
+    Ok(0)
+}
+
 pub fn field_by_id_get(ctx: &Ctx, id: i64) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let row = ctx.client.get(&format!("{base}/fields/{id}"), &[])?;

@@ -240,7 +240,8 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   layers (spec-data-model/spec-query): *resources* for a single directly-
   addressed thing — `…/metarecords/:uuid`, per-record fields by name
   `…/metarecords/:uuid/fields/:name` (+ `/resolve-tree`), rows by id
-  `…/fields/:id`, `…/retype`, `GET`/`PATCH /repos/:repo` (info/rename) — and the
+  `…/fields/:id`, `…/retype`, `GET …/fields` (distinct field names + types,
+  optional `?type=`), `GET`/`PATCH /repos/:repo` (info/rename) — and the
   *set layer* `POST …/query/*` (query, query/delete,
   query/fields/{set,append,remove,unset,resolve-tree}) where every body carries a
   `query`; a `uuid_in` predicate (core) targets an explicit set, so the two
@@ -271,7 +272,10 @@ follow one pattern at every level — `get`⁻¹`set`, `add`⁻¹`delete`:
   needs `-i` and mandatory `-f`), `delete` (needs a selector), and
   `field <verb> <name|spec>` (`get/set/add/delete/unset`, scoped by the
   selector). Example: `mf -n music metarecord -q 'rating>3' field set tag:string=x`.
-- `mf field {get,set,delete} <id>` — direct field-row access by DB id.
+- `mf field {list,get,set,delete}` — `list [--type <value_type>]` enumerates the
+  repo's distinct field names + types (`GET …/fields`; the group default, so
+  `mf field` ≡ `mf field list`); `get/set/delete <id>` are direct field-row
+  access by DB id.
 - `mf retype <name> <type>` (top-level; name-scoped, repo-wide).
 
 main.rs holds only clap structs + `dispatch_*`; the work is in:
