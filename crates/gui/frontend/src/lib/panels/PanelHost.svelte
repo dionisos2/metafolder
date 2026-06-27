@@ -5,6 +5,7 @@
   import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
+  import { helpCursorSheet } from '../cursor';
   import type { CommandDef, SlotId } from '../types';
   // @ts-expect-error plain-JS module shared with the (former) panel shim
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
@@ -109,7 +110,9 @@
       } catch {
         /* malformed panel CSS: skip it rather than break the mount */
       }
-      shadow.adoptedStyleSheets = [baseSheet, userSheet, panelSheet];
+      // helpCursorSheet is last so its `!important` `?` cursor wins while the
+      // help-cursor mode is armed (empty otherwise).
+      shadow.adoptedStyleSheets = [baseSheet, userSheet, panelSheet, helpCursorSheet];
       const body = document.createElement('div');
       body.className = 'mf-panel-body';
       for (const child of [...doc.body.childNodes]) {

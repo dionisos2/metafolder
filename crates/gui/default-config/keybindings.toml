@@ -58,6 +58,11 @@
 "s g" = { command = "panel:set-type message" }
 "s w" = { command = "panel:set-type workspace-info" }
 
+# Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
+"h h" = { command = "help:help" }
+"h c" = { command = "help:help-cursor" }
+"f1" = { command = "help:help-cursor" }
+
 # Panel types suggest their own keybindings (metafolder.addKeybinding);
 # they are the weakest layer, so an entry here overrides them. Scope it
 # to the panel type with `when`, e.g. to rebind metarecord-list's "open in

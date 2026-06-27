@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { initStore, store } from './lib/store.svelte';
   import { installKeys } from './lib/keys';
+  import { installHelpCursorSheet } from './lib/cursor';
   import TabBar from './components/TabBar.svelte';
   import Slot from './components/Slot.svelte';
   import CommandInput from './components/CommandInput.svelte';
@@ -17,6 +18,7 @@
   onMount(async () => {
     try {
       await initStore();
+      installHelpCursorSheet();
       installKeys();
     } catch (error) {
       failure = String(error);
@@ -93,12 +95,6 @@
   :global(html, body, #app) {
     height: 100%;
     margin: 0;
-  }
-  /* Help-cursor mode (help:help-cursor): a `?` pointer everywhere until the
-     next click resolves to a help topic (or escape cancels). */
-  :global(html.mf-help-cursor),
-  :global(html.mf-help-cursor *) {
-    cursor: help !important;
   }
   .app {
     display: flex;

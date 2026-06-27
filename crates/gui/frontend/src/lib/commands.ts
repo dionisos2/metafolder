@@ -2,6 +2,7 @@
 // (spec-gui "Command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel iframes.
 
+import { setHelpCursor } from './cursor';
 import { invoke } from './ipc';
 import { focusedWs, store } from './store.svelte';
 import type { CommandDef } from './types';
@@ -344,7 +345,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'help:help-cursor':
       // Arm the `?` cursor: the next click (or escape) is intercepted in keys.ts.
       store.ui.helpCursorActive = true;
-      document.documentElement.classList.add('mf-help-cursor');
+      setHelpCursor(true);
       return true;
     case 'daemon:set-url':
       if (args[0]) {

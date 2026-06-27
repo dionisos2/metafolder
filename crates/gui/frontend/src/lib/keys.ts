@@ -13,6 +13,7 @@ import {
 // @ts-expect-error plain-JS module shared with the panel shim
 import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { dispatch, hasEditingTarget, setFullscreen } from './commands';
+import { setHelpCursor } from './cursor';
 import { flashStatus, focusedPanelType, slotPayload, store } from './store.svelte';
 import type { SlotId } from './types';
 
@@ -42,7 +43,7 @@ export function isTextInput(element: Element | null): boolean {
 /** Ends the help-cursor mode and restores the normal pointer. */
 function deactivateHelpCursor() {
   store.ui.helpCursorActive = false;
-  document.documentElement.classList.remove('mf-help-cursor');
+  setHelpCursor(false);
 }
 
 export function installKeys() {
