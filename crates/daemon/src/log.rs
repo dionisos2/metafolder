@@ -11,7 +11,7 @@ use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
 pub use metafolder_core::date::now_ms;
-use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value};
+use metafolder_core::metarecord::{Field, MetaRecord, FieldType, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
@@ -1205,13 +1205,17 @@ impl<'c> Writer<'c> {
         Ok(())
     }
 
-    /// Converts every non-`Nothing` row of field `name` to the scalar type `to`,
+    /// Converts every non-`Nothing` row of field `name` to the type `to`,
     /// repository-wide, in this one revision (spec-data-model "Changing a field's
-    /// type"). Row-scoped (each row keeps its id, so rollback restores it exactly)
-    /// and bypasses the per-write type check (it *is* the type change). `Nothing`
-    /// rows are left untouched (explicit absence is preserved). Returns how many
-    /// rows changed and the metarecords whose values fell back to the sentinel.
-    pub fn retype_field(&mut self, name: &str, to: ScalarType) -> Result<RetypeSummary> {
+    /// type"). The target may be any type, including the reference variants.
+    /// Row-scoped (each row keeps its id, so rollback restores it exactly) and
+    /// bypasses the per-write type check (it *is* the type change). `Nothing`
+    /// rows are left untouched (explicit absence is preserved). A `String →
+    /// TreeRef` result that would violate the forest (missing parent, cycle,
+    /// depth) is demoted to `Nothing` rather than aborting the whole retype, so
+    /// one bad path never blocks the rest. Returns how many rows changed and the
+    /// metarecords whose values fell back to the sentinel.
+    pub fn retype_field(&mut self, name: &str, to: FieldType) -> Result<RetypeSummary> {
         // The field's established type changes here; drop any cached entry so a
         // later checked write in this revision re-probes.
         self.field_types.remove(name);
@@ -1222,7 +1226,20 @@ impl<'c> Writer<'c> {
                 if matches!(row.value, Value::Nothing) {
                     continue;
                 }
-                let (new_value, fell_back) = row.value.convert_to(to);
+                let (mut new_value, mut fell_back) = row.value.convert_to(to);
+                // A converted TreeRef must satisfy the forest invariants like any
+                // other write; a violating value is demoted to the Nothing
+                // sentinel (and reported) so the retype as a whole still succeeds.
+                if matches!(new_value, Value::TreeRef { .. }) {
+                    if let Err(e) = self.validate_tree_ref(uuid, &row.name, &new_value) {
+                        if e.downcast_ref::<DomainError>().is_some() {
+                            new_value = Value::Nothing;
+                            fell_back = true;
+                        } else {
+                            return Err(e); // a genuine DB error, not a forest violation
+                        }
+                    }
+                }
                 if new_value == row.value {
                     continue; // already the target type
                 }

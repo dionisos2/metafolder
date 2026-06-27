@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, ScalarType, Value, ZERO_UUID};
+use metafolder_core::metarecord::{Field, MetaRecord, FieldType, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
@@ -1801,9 +1801,10 @@ async fn retype_field(
             "field '{name}' is reserved; its type is owned by the system and cannot be retyped"
         )));
     }
-    let to = ScalarType::parse(&body.to).ok_or_else(|| {
+    let to = FieldType::parse(&body.to).ok_or_else(|| {
         ApiError::bad_request(format!(
-            "invalid target type '{}': retype targets one of string/int/float/bool/datetime",
+            "invalid target type '{}': retype targets one of \
+             string/int/float/bool/datetime/ref/tree_ref/externalref/refbase",
             body.to
         ))
     })?;

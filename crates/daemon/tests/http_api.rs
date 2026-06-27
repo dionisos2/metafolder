@@ -695,6 +695,37 @@ async fn test_retype_endpoint_converts_and_relocks() {
 }
 
 #[tokio::test]
+async fn test_retype_endpoint_to_tree_ref() {
+    let (app, repo, root) = app_with_repo("retypetree").await;
+    // A string field holding a root path "/tags" becomes a TreeRef root node.
+    let m = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "cat", "value": {"type": "string", "value": "/tags"}}]),
+    )
+    .await;
+    let uuid = m["uuid"].as_str().unwrap().to_string();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/retype"),
+        Some(json!({"name": "cat", "to": "tree_ref"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "body: {body}");
+    assert_eq!(body["converted"], 1);
+    assert_eq!(body["fallback_count"], 0);
+
+    let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let cat = got["fields"].as_array().unwrap().iter().find(|f| f["name"] == "cat").unwrap();
+    assert_eq!(cat["value"]["type"], "tree_ref");
+    assert_eq!(cat["value"]["value"]["name"], "tags");
+    assert_eq!(cat["value"]["value"]["parent"], serde_json::Value::Null);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_retype_rejects_reserved_and_unknown_type() {
     let (app, repo, root) = app_with_repo("retyperej").await;
     // Reserved field: rejected unconditionally.
@@ -706,12 +737,13 @@ async fn test_retype_rejects_reserved_and_unknown_type() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    // Unknown / non-scalar target type: rejected.
+    // Unknown target type: rejected (the reference types are now valid targets,
+    // so an unknown name must be one that maps to no value type at all).
     let (status, _) = request(
         &app,
         "POST",
         &format!("/repos/{repo}/retype"),
-        Some(json!({"name": "anything", "to": "ref"})),
+        Some(json!({"name": "anything", "to": "bogus"})),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

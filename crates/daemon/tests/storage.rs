@@ -130,7 +130,7 @@ fn test_field_type_unlocks_within_one_revision() {
 
 #[test]
 fn test_retype_field_converts_rolls_back_and_relocks() {
-    use metafolder_core::metarecord::ScalarType;
+    use metafolder_core::metarecord::FieldType;
     let mut conn = test_conn();
     let db_id = repo_id();
     let m1 = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(3))]);
@@ -144,7 +144,7 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
     let head_before = metafolder_daemon::log::get_head(&conn).unwrap();
 
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    let summary = w.retype_field("rating", ScalarType::String).unwrap();
+    let summary = w.retype_field("rating", FieldType::String).unwrap();
     w.commit().unwrap();
     assert_eq!(summary.converted, 2, "both Int rows convert; the Nothing row is skipped");
     assert!(summary.fallback_uuids.is_empty(), "Int→String never falls back");
@@ -168,14 +168,14 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
 
 #[test]
 fn test_retype_field_records_fallbacks() {
-    use metafolder_core::metarecord::ScalarType;
+    use metafolder_core::metarecord::FieldType;
     let mut conn = test_conn();
     let db_id = repo_id();
     let good = create(&mut conn, db_id, vec![Field::new("code", Value::String("42".into()))]);
     let bad = create(&mut conn, db_id, vec![Field::new("code", Value::String("oops".into()))]);
 
     let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
-    let summary = w.retype_field("code", ScalarType::Int).unwrap();
+    let summary = w.retype_field("code", FieldType::Int).unwrap();
     w.commit().unwrap();
 
     assert_eq!(summary.converted, 2);
@@ -184,6 +184,54 @@ fn test_retype_field_records_fallbacks() {
     assert_eq!(g.get("code"), Some(&Value::Int(42)));
     let b = db::get_metarecord(&conn, bad.uuid).unwrap().unwrap();
     assert_eq!(b.get("code"), Some(&Value::Int(0)), "un-parsable → sentinel 0");
+}
+
+#[test]
+fn test_retype_string_to_reference_types() {
+    use metafolder_core::metarecord::FieldType;
+    use uuid::Uuid;
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    let target = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+    let hex = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+
+    // String → Ref: a valid hex uuid parses; junk falls back to Nothing.
+    let good = create(&mut conn, db_id, vec![Field::new("link", Value::String(hex.into()))]);
+    let bad = create(&mut conn, db_id, vec![Field::new("link", Value::String("nope".into()))]);
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let summary = w.retype_field("link", FieldType::Ref).unwrap();
+    w.commit().unwrap();
+    assert_eq!(summary.converted, 2);
+    assert_eq!(summary.fallback_uuids, vec![bad.uuid]);
+    assert_eq!(db::get_metarecord(&conn, good.uuid).unwrap().unwrap().get("link"), Some(&Value::Ref(target)));
+    assert_eq!(db::get_metarecord(&conn, bad.uuid).unwrap().unwrap().get("link"), Some(&Value::Nothing));
+}
+
+#[test]
+fn test_retype_string_to_tree_ref_validates_forest() {
+    use metafolder_core::metarecord::FieldType;
+    let mut conn = test_conn();
+    let db_id = repo_id();
+    // A root form "/tags" is always valid; a parented form whose parent does not
+    // exist violates the forest and is demoted to Nothing (not an abort).
+    let root = create(&mut conn, db_id, vec![Field::new("cat", Value::String("/tags".into()))]);
+    let orphan = create(
+        &mut conn,
+        db_id,
+        vec![Field::new("cat", Value::String("8f3a2b1c4d5e6f708192a3b4c5d6e7f8/leaf".into()))],
+    );
+
+    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let summary = w.retype_field("cat", FieldType::TreeRef).unwrap();
+    w.commit().unwrap();
+
+    assert_eq!(summary.converted, 2);
+    assert_eq!(summary.fallback_uuids, vec![orphan.uuid], "the orphan parent falls back to Nothing");
+    assert_eq!(
+        db::get_metarecord(&conn, root.uuid).unwrap().unwrap().get("cat"),
+        Some(&Value::TreeRef { parent: None, name: "tags".into() })
+    );
+    assert_eq!(db::get_metarecord(&conn, orphan.uuid).unwrap().unwrap().get("cat"), Some(&Value::Nothing));
 }
 
 #[test]

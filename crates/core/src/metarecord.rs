@@ -122,36 +122,49 @@ pub enum Value {
     },
 }
 
-/// The scalar value types a field can be retyped to (spec-data-model "Changing
-/// a field's type"). Reference variants are never retype targets — you cannot
-/// fabricate a reference from a scalar — so they are not represented here.
+/// The value types a field can be retyped to (spec-data-model "Changing a
+/// field's type"). The target may be *any* type, including the reference
+/// variants: a mis-typed field must always be escapable. The string names match
+/// the JSON `type` tags of [`Value`] and the DB `value_type` column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ScalarType {
+pub enum FieldType {
     String,
     Int,
     Float,
     Bool,
     DateTime,
+    Ref,
+    TreeRef,
+    RefBase,
+    ExternalRef,
 }
 
-impl ScalarType {
+impl FieldType {
     pub fn as_str(self) -> &'static str {
         match self {
-            ScalarType::String => "string",
-            ScalarType::Int => "int",
-            ScalarType::Float => "float",
-            ScalarType::Bool => "bool",
-            ScalarType::DateTime => "datetime",
+            FieldType::String => "string",
+            FieldType::Int => "int",
+            FieldType::Float => "float",
+            FieldType::Bool => "bool",
+            FieldType::DateTime => "datetime",
+            FieldType::Ref => "ref",
+            FieldType::TreeRef => "tree_ref",
+            FieldType::RefBase => "refbase",
+            FieldType::ExternalRef => "externalref",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "string" => Some(ScalarType::String),
-            "int" => Some(ScalarType::Int),
-            "float" => Some(ScalarType::Float),
-            "bool" => Some(ScalarType::Bool),
-            "datetime" => Some(ScalarType::DateTime),
+            "string" => Some(FieldType::String),
+            "int" => Some(FieldType::Int),
+            "float" => Some(FieldType::Float),
+            "bool" => Some(FieldType::Bool),
+            "datetime" => Some(FieldType::DateTime),
+            "ref" => Some(FieldType::Ref),
+            "tree_ref" => Some(FieldType::TreeRef),
+            "refbase" => Some(FieldType::RefBase),
+            "externalref" => Some(FieldType::ExternalRef),
             _ => None,
         }
     }
@@ -161,20 +174,28 @@ impl Value {
     /// Converts this value to `target`, for the `retype` operation. Returns the
     /// converted value and whether it fell back to the target's *sentinel*
     /// (because the source could not be meaningfully converted) — the sentinels
-    /// are chosen to be easily found afterwards (`""`, `0`, `0.0`, `false`, the
-    /// Unix epoch). Lossless where possible (`Int↔Float`, `Bool→Int` as `0/1`,
-    /// `DateTime↔Int` as Unix-ms, any → `String`); parsing for `String →`
-    /// scalar. The reference variants have no scalar form and always fall back.
-    /// `Nothing` is preserved (the caller skips it; never converted).
-    pub fn convert_to(&self, target: ScalarType) -> (Value, bool) {
-        use ScalarType as T;
-        // Sentinel for an impossible conversion.
+    /// are chosen to be easily found afterwards: scalars `""`/`0`/`0.0`/`false`/
+    /// the Unix epoch, the reference types `Nothing` (findable via IS ABSENT).
+    ///
+    /// `String` is the universal hub: every type ↔ `String` is lossless and
+    /// reversible (display form ⇄ parse). Other lossless scalar coercions are
+    /// kept (`Int↔Float`, `Bool→Int` as `0/1`, `DateTime↔Int` as Unix-ms).
+    /// Same-type is identity. Every other cross-type pair (a reference to a
+    /// non-`String` scalar, a scalar to a reference, or one reference type to a
+    /// different one) has no meaningful coercion and falls back to the sentinel;
+    /// route through `String` explicitly to reinterpret. `Nothing` is preserved
+    /// (the caller skips it; never converted).
+    pub fn convert_to(&self, target: FieldType) -> (Value, bool) {
+        use FieldType as T;
+        // Sentinel for an impossible conversion: the reference types collapse to
+        // Nothing (no fabricated uuid), the scalars to their neutral element.
         let sentinel = || match target {
             T::String => Value::String(String::new()),
             T::Int => Value::Int(0),
             T::Float => Value::Float(0.0),
             T::Bool => Value::Bool(false),
             T::DateTime => Value::DateTime(0),
+            T::Ref | T::TreeRef | T::RefBase | T::ExternalRef => Value::Nothing,
         };
         let ok = |v: Value| (v, false);
         let fallback = || (sentinel(), true);
@@ -182,12 +203,9 @@ impl Value {
         match (self, target) {
             (Value::Nothing, _) => (Value::Nothing, false),
 
-            // → String: every scalar has a display form.
-            (Value::String(s), T::String) => ok(Value::String(s.clone())),
-            (Value::Int(n), T::String) => ok(Value::String(n.to_string())),
-            (Value::Float(f), T::String) => ok(Value::String(f.to_string())),
-            (Value::Bool(b), T::String) => ok(Value::String(b.to_string())),
-            (Value::DateTime(ms), T::String) => ok(Value::String(crate::date::iso8601_from_ms(*ms))),
+            // → String: every value has a canonical display form (the inverse of
+            // the `String →` parses below), so the round trip is lossless.
+            (_, T::String) => ok(Value::String(self.display_form())),
 
             // → Int.
             (Value::Int(n), T::Int) => ok(Value::Int(*n)),
@@ -221,14 +239,73 @@ impl Value {
             (Value::String(s), T::DateTime) => {
                 crate::date::iso_to_ms(s.trim()).map(Value::DateTime).map_or_else(fallback, ok)
             }
-            (Value::Bool(_), T::DateTime) => fallback(),
 
-            // Reference variants have no scalar form.
-            (Value::Ref(_) | Value::TreeRef { .. } | Value::RefBase(_) | Value::ExternalRef { .. }, _) => {
-                fallback()
+            // → reference types: same type is identity; a String parses from its
+            // display form; everything else has no coercion.
+            (Value::Ref(u), T::Ref) => ok(Value::Ref(*u)),
+            (Value::String(s), T::Ref) => parse_hex_uuid(s).map(Value::Ref).map_or_else(fallback, ok),
+            (Value::RefBase(u), T::RefBase) => ok(Value::RefBase(*u)),
+            (Value::String(s), T::RefBase) => {
+                parse_hex_uuid(s).map(Value::RefBase).map_or_else(fallback, ok)
+            }
+            (Value::TreeRef { parent, name }, T::TreeRef) => {
+                ok(Value::TreeRef { parent: *parent, name: name.clone() })
+            }
+            (Value::String(s), T::TreeRef) => parse_tree_ref(s).map_or_else(fallback, ok),
+            (Value::ExternalRef { repo, metarecord }, T::ExternalRef) => {
+                ok(Value::ExternalRef { repo: *repo, metarecord: *metarecord })
+            }
+            (Value::String(s), T::ExternalRef) => parse_external_ref(s).map_or_else(fallback, ok),
+
+            // Any remaining cross-type pair has no meaningful coercion.
+            _ => fallback(),
+        }
+    }
+
+    /// The canonical, reversible textual form used by `→ String` retype (and
+    /// parsed back by `String →`). For UUIDs this is the 32-char hex encoding.
+    fn display_form(&self) -> String {
+        match self {
+            Value::Nothing => String::new(),
+            Value::String(s) => s.clone(),
+            Value::Int(n) => n.to_string(),
+            Value::Float(f) => f.to_string(),
+            Value::Bool(b) => b.to_string(),
+            Value::DateTime(ms) => crate::date::iso8601_from_ms(*ms),
+            Value::Ref(u) => u.as_simple().to_string(),
+            Value::RefBase(u) => u.as_simple().to_string(),
+            Value::TreeRef { parent, name } => match parent {
+                Some(p) => format!("{}/{name}", p.as_simple()),
+                None => format!("/{name}"),
+            },
+            Value::ExternalRef { repo, metarecord } => {
+                format!("{}:{}", repo.as_simple(), metarecord.as_simple())
             }
         }
     }
+}
+
+/// Parses a 32-char (or hyphenated) hex UUID, trimming surrounding whitespace.
+fn parse_hex_uuid(s: &str) -> Option<Uuid> {
+    Uuid::parse_str(s.trim()).ok()
+}
+
+/// Parses the `String → TreeRef` form (the same grammar the CLI field-spec and
+/// the GUI widget use): `<parent_hex>/<name>` for a child, `/<name>` for a root.
+/// `name` must be a single non-empty path component.
+fn parse_tree_ref(s: &str) -> Option<Value> {
+    let (parent, name) = s.trim().split_once('/')?;
+    if name.is_empty() || name.contains('/') {
+        return None;
+    }
+    let parent = if parent.is_empty() { None } else { Some(parse_hex_uuid(parent)?) };
+    Some(Value::TreeRef { parent, name: name.to_string() })
+}
+
+/// Parses the `String → ExternalRef` form `<repo_hex>:<metarecord_hex>`.
+fn parse_external_ref(s: &str) -> Option<Value> {
+    let (repo, metarecord) = s.trim().split_once(':')?;
+    Some(Value::ExternalRef { repo: parse_hex_uuid(repo)?, metarecord: parse_hex_uuid(metarecord)? })
 }
 
 /// A field: name + value. Multiple fields can share the same name (multi-map).
@@ -301,7 +378,7 @@ mod tests {
 
     #[test]
     fn test_convert_lossless_and_display() {
-        use ScalarType as T;
+        use FieldType as T;
         assert_eq!(Value::Int(5).convert_to(T::String), (Value::String("5".into()), false));
         assert_eq!(Value::Int(5).convert_to(T::Float), (Value::Float(5.0), false));
         assert_eq!(Value::Bool(true).convert_to(T::Int), (Value::Int(1), false));
@@ -312,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_convert_datetime_roundtrip() {
-        use ScalarType as T;
+        use FieldType as T;
         let ms = crate::date::iso_to_ms("2024-03-15T10:30:00Z").unwrap();
         let (as_str, fell) = Value::DateTime(ms).convert_to(T::String);
         assert_eq!((as_str.clone(), fell), (Value::String("2024-03-15T10:30:00Z".into()), false));
@@ -324,18 +401,88 @@ mod tests {
 
     #[test]
     fn test_convert_impossible_falls_back_to_sentinel() {
-        use ScalarType as T;
+        use FieldType as T;
         assert_eq!(Value::String("x".into()).convert_to(T::Int), (Value::Int(0), true));
         assert_eq!(Value::String("x".into()).convert_to(T::Float), (Value::Float(0.0), true));
         assert_eq!(Value::String("x".into()).convert_to(T::Bool), (Value::Bool(false), true));
         assert_eq!(Value::String("x".into()).convert_to(T::DateTime), (Value::DateTime(0), true));
-        // References have no scalar form.
-        assert_eq!(Value::Ref(Uuid::nil()).convert_to(T::String), (Value::String(String::new()), true));
+        // A reference to a non-String scalar has no coercion → scalar sentinel.
+        assert_eq!(Value::Ref(Uuid::nil()).convert_to(T::Int), (Value::Int(0), true));
     }
 
     #[test]
     fn test_convert_nothing_is_preserved() {
-        assert_eq!(Value::Nothing.convert_to(ScalarType::Int), (Value::Nothing, false));
+        assert_eq!(Value::Nothing.convert_to(FieldType::Int), (Value::Nothing, false));
+    }
+
+    // ── Value: any-to-any retype via the reference types ─────────────────────
+
+    #[test]
+    fn test_convert_reference_to_string_is_lossless_display() {
+        use FieldType as T;
+        let u = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+        let hex = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+        assert_eq!(Value::Ref(u).convert_to(T::String), (Value::String(hex.into()), false));
+        assert_eq!(Value::RefBase(u).convert_to(T::String), (Value::String(hex.into()), false));
+        assert_eq!(
+            Value::TreeRef { parent: Some(u), name: "félins".into() }.convert_to(T::String),
+            (Value::String(format!("{hex}/félins")), false)
+        );
+        assert_eq!(
+            Value::TreeRef { parent: None, name: "tags".into() }.convert_to(T::String),
+            (Value::String("/tags".into()), false)
+        );
+        assert_eq!(
+            Value::ExternalRef { repo: u, metarecord: u }.convert_to(T::String),
+            (Value::String(format!("{hex}:{hex}")), false)
+        );
+    }
+
+    #[test]
+    fn test_convert_string_to_reference_parses_or_falls_back() {
+        use FieldType as T;
+        let u = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+        let hex = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+        // String → Ref / RefBase: a valid hex uuid parses; junk → Nothing.
+        assert_eq!(Value::String(hex.into()).convert_to(T::Ref), (Value::Ref(u), false));
+        assert_eq!(Value::String(hex.into()).convert_to(T::RefBase), (Value::RefBase(u), false));
+        assert_eq!(Value::String("nope".into()).convert_to(T::Ref), (Value::Nothing, true));
+        // String → TreeRef: root and parented grammar.
+        assert_eq!(
+            Value::String("/tags".into()).convert_to(T::TreeRef),
+            (Value::TreeRef { parent: None, name: "tags".into() }, false)
+        );
+        assert_eq!(
+            Value::String(format!("{hex}/félins")).convert_to(T::TreeRef),
+            (Value::TreeRef { parent: Some(u), name: "félins".into() }, false)
+        );
+        // A name with an interior slash or no slash at all is not a TreeRef.
+        assert_eq!(Value::String("/a/b".into()).convert_to(T::TreeRef), (Value::Nothing, true));
+        assert_eq!(Value::String("plain".into()).convert_to(T::TreeRef), (Value::Nothing, true));
+        // String → ExternalRef: "repo:metarecord".
+        assert_eq!(
+            Value::String(format!("{hex}:{hex}")).convert_to(T::ExternalRef),
+            (Value::ExternalRef { repo: u, metarecord: u }, false)
+        );
+        assert_eq!(Value::String("nope".into()).convert_to(T::ExternalRef), (Value::Nothing, true));
+    }
+
+    #[test]
+    fn test_convert_reference_identity_and_cross_fallback() {
+        use FieldType as T;
+        let u = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
+        // Same type → unchanged (no fallback).
+        assert_eq!(Value::Ref(u).convert_to(T::Ref), (Value::Ref(u), false));
+        // A reference to a *different* reference type, or to a non-String scalar,
+        // has no coercion → Nothing sentinel (findable via IS ABSENT).
+        assert_eq!(Value::Ref(u).convert_to(T::RefBase), (Value::Nothing, true));
+        assert_eq!(Value::Ref(u).convert_to(T::Int), (Value::Int(0), true));
+        assert_eq!(
+            Value::TreeRef { parent: None, name: "x".into() }.convert_to(T::Ref),
+            (Value::Nothing, true)
+        );
+        // A non-String scalar to a reference type: no coercion.
+        assert_eq!(Value::Int(5).convert_to(T::Ref), (Value::Nothing, true));
     }
 
     // ── Value: JSON format (spec-data-model) ─────────────────────────────────
