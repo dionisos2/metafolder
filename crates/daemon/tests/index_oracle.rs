@@ -99,6 +99,19 @@ impl Oracle {
         assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
     }
 
+    /// Asserts the in-memory field catalog agrees with the SQL
+    /// `distinct_field_names` — unfiltered and for each value type present.
+    fn check_catalog(&mut self) {
+        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let sql = db::distinct_field_names(&self.conn, self.db_id, None).unwrap();
+        assert_eq!(index.field_catalog(None), sql, "catalog divergence (unfiltered)");
+        let types: std::collections::BTreeSet<&str> = sql.iter().map(|(_, t)| t.as_str()).collect();
+        for ty in types {
+            let sql = db::distinct_field_names(&self.conn, self.db_id, Some(ty)).unwrap();
+            assert_eq!(index.field_catalog(Some(ty)), sql, "catalog divergence (?type={ty})");
+        }
+    }
+
     /// Walks both engines page by page through the whole sorted result and
     /// asserts every page (and thus the partitioning) is identical.
     fn check_paginated(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
@@ -312,6 +325,53 @@ fn universe_excludes_link_metarecords() {
     o.check(&absent("rating"));
     o.check(&unknown("rating"));
     o.check(&unknown("never_used"));
+}
+
+// ── Field catalog (GET /repos/:repo/fields) ─────────────────────────────────
+
+#[test]
+fn field_catalog_matches_sql() {
+    let mut o = Oracle::new();
+    // One field of every value type, plus a multi-map name and a name that only
+    // ever holds Nothing (must be excluded — it has no usable value type).
+    o.create(vec![
+        Field::new("tag", s("jazz")),
+        Field::new("tag", s("live")),
+        Field::new("rating", Value::Int(5)),
+        Field::new("weight", Value::Float(1.5)),
+        Field::new("fresh", Value::Bool(true)),
+        Field::new("seen", Value::DateTime(0)),
+        Field::new("author", Value::Ref(Uuid::new_v4())),
+        Field::new("base", Value::RefBase(Uuid::new_v4())),
+        tref("loc", None, "root"),
+        Field::new("note", Value::Nothing),
+    ]);
+    // A link metarecord introducing a field name absent from the owned set: it
+    // must not leak into the catalog (universe isolation).
+    let link = o.create(vec![Field::new("link_only", s("x"))]);
+    o.add_owner(link, Uuid::new_v4());
+
+    o.check_catalog();
+}
+
+#[test]
+fn field_catalog_drops_field_when_last_value_removed() {
+    // After *incremental* maintenance empties a field's `present` bitmap, the
+    // name must disappear from the catalog (recompute_field empties the bitmap
+    // but keeps the key, so the catalog must gate on non-emptiness).
+    let mut o = Oracle::new();
+    let m = o.create(vec![Field::new("rating", Value::Int(5))]);
+    let mut index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    assert_eq!(index.field_catalog(None), vec![("rating".to_string(), "int".to_string())]);
+
+    let mut w = Writer::begin(&mut o.conn, o.db_id, None).unwrap();
+    w.set_field(m, "rating", Value::Nothing).unwrap();
+    w.commit().unwrap();
+    index.refresh(&o.conn, o.db_id).unwrap();
+
+    let sql = db::distinct_field_names(&o.conn, o.db_id, None).unwrap();
+    assert!(sql.is_empty(), "SQL reference no longer lists the field");
+    assert_eq!(index.field_catalog(None), sql, "catalog must drop the emptied field");
 }
 
 // ── Categorical: string ─────────────────────────────────────────────────────

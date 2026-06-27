@@ -171,6 +171,24 @@ impl FieldType {
 }
 
 impl Value {
+    /// The DB `value_type` tag (also the JSON `type` tag) of this value —
+    /// the canonical name of its variant, matching [`FieldType::as_str`] for
+    /// every non-`Nothing` value and `"nothing"` for [`Value::Nothing`].
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            Value::Nothing => "nothing",
+            Value::String(_) => "string",
+            Value::Int(_) => "int",
+            Value::Float(_) => "float",
+            Value::Bool(_) => "bool",
+            Value::DateTime(_) => "datetime",
+            Value::Ref(_) => "ref",
+            Value::TreeRef { .. } => "tree_ref",
+            Value::RefBase(_) => "refbase",
+            Value::ExternalRef { .. } => "externalref",
+        }
+    }
+
     /// Converts this value to `target`, for the `retype` operation. Returns the
     /// converted value and whether it fell back to the target's *sentinel*
     /// (because the source could not be meaningfully converted) — the sentinels
@@ -372,6 +390,25 @@ mod tests {
     fn roundtrip(v: &Value) -> Value {
         let json = serde_json::to_string(v).expect("serialization failed");
         serde_json::from_str(&json).expect("deserialization failed")
+    }
+
+    #[test]
+    fn test_value_type_str() {
+        // Every variant maps to its DB/JSON `value_type` tag, matching
+        // `FieldType::as_str`, with `Nothing` reporting "nothing".
+        assert_eq!(Value::Nothing.type_str(), "nothing");
+        assert_eq!(Value::String(String::new()).type_str(), "string");
+        assert_eq!(Value::Int(0).type_str(), "int");
+        assert_eq!(Value::Float(0.0).type_str(), "float");
+        assert_eq!(Value::Bool(false).type_str(), "bool");
+        assert_eq!(Value::DateTime(0).type_str(), "datetime");
+        assert_eq!(Value::Ref(Uuid::nil()).type_str(), "ref");
+        assert_eq!(Value::TreeRef { parent: None, name: String::new() }.type_str(), "tree_ref");
+        assert_eq!(Value::RefBase(Uuid::nil()).type_str(), "refbase");
+        assert_eq!(
+            Value::ExternalRef { repo: Uuid::nil(), metarecord: Uuid::nil() }.type_str(),
+            "externalref"
+        );
     }
 
     // ── Value: retype conversions ────────────────────────────────────────────

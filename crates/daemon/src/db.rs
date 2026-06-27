@@ -635,6 +635,10 @@ pub fn tree_children(
 /// non-`Nothing` value type repository-wide, so it appears at most once.
 /// Ordered by name then type for a stable response.
 ///
+/// `GET /repos/:repo/fields` is served from the in-memory index
+/// (`RepoIndex::field_catalog`) instead — this SQL form is the equivalence
+/// oracle (`tests/index_oracle.rs`) and the scan-based fallback definition.
+///
 /// The repository-isolation sub-select mirrors the `_repo` universe CTE of the
 /// query engine (`query_exec::Compiler::new`): only metarecords whose sole
 /// owner is this repository.

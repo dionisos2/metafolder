@@ -218,8 +218,18 @@ async fn list_fields(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
+        // Served from the in-memory index (built at load, refreshed to HEAD) —
+        // the `present`/`types` maps already hold every distinct field name and
+        // its value type, so this needs no DB scan. Mirrors `run_query_filter`'s
+        // index acquisition (conn locked first, then the index).
         let conn = repo_state.conn.lock_recover();
-        let names = db::distinct_field_names(&conn, repo_uuid, params.type_filter.as_deref())?;
+        let mut index_guard = repo_state.index.lock_recover();
+        match index_guard.as_mut() {
+            Some(index) => index.refresh(&conn, repo_uuid)?,
+            None => *index_guard = Some(crate::index::RepoIndex::build(&conn, repo_uuid)?),
+        }
+        let index = index_guard.as_ref().expect("index built above");
+        let names = index.field_catalog(params.type_filter.as_deref());
         let out: Vec<serde_json::Value> =
             names.into_iter().map(|(name, ty)| json!({"name": name, "type": ty})).collect();
         Ok(Json(serde_json::Value::Array(out)))

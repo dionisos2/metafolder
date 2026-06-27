@@ -95,6 +95,12 @@ pub struct RepoIndex {
     absent: HashMap<String, RoaringBitmap>,
     /// Per field name: the value encoding answering comparisons / traversal.
     fields: HashMap<String, FieldIndex>,
+    /// Per field name: the exact `value_type` of its values (e.g. `"string"`
+    /// vs `"bool"`, `"int"` vs `"datetime"` — a distinction `fields` collapses).
+    /// Backs the field catalog (`GET /repos/:repo/fields`). The repo-wide
+    /// single-type invariant keeps this a function of the name; stale entries for
+    /// emptied names are harmless (the catalog gates on `present` non-emptiness).
+    types: HashMap<String, &'static str>,
     /// Per field name: min/max sort representatives, for `ORDER BY`.
     sort: HashMap<String, SortReps>,
     /// The log HEAD (`log_head.op_id`) this index reflects. The caller only
@@ -129,6 +135,7 @@ impl RepoIndex {
         let mut absent: HashMap<String, RoaringBitmap> = HashMap::new();
         let mut fields: HashMap<String, FieldIndex> = HashMap::new();
         let mut sort: HashMap<String, SortReps> = HashMap::new();
+        let mut types: HashMap<String, &'static str> = HashMap::new();
         let total = registry.len() as u64;
         for id in 0..registry.len() as u32 {
             if id % 2048 == 0 {
@@ -142,6 +149,7 @@ impl RepoIndex {
                     }
                     value => {
                         present.entry(row.name.clone()).or_default().insert(id);
+                        types.entry(row.name.clone()).or_insert_with(|| value.type_str());
                         // BSI fields derive their sort representative from the
                         // bit-slices, so they skip the separate sort store.
                         if !is_bsi_value(&value) {
@@ -160,7 +168,7 @@ impl RepoIndex {
         }
         progress(total, total);
 
-        Ok(RepoIndex { registry, universe, present, absent, fields, sort, built_at_head })
+        Ok(RepoIndex { registry, universe, present, absent, fields, sort, types, built_at_head })
     }
 
     /// The log HEAD this index reflects (see [`Self::build`]).
@@ -341,6 +349,7 @@ impl RepoIndex {
         }
         if let Some(&first) = non_nothing.first() {
             self.present.entry(field.to_string()).or_default().insert(id);
+            self.types.insert(field.to_string(), first.type_str());
             let is_bsi = {
                 let enc = self
                     .fields
@@ -670,6 +679,29 @@ impl RepoIndex {
     /// Number of distinct field names indexed.
     pub fn field_count(&self) -> usize {
         self.fields.len()
+    }
+
+    /// The distinct `(field_name, value_type)` pairs of the exclusively-owned
+    /// universe, optionally restricted to a single value type — the in-memory
+    /// equivalent of `db::distinct_field_names` (backs `GET /repos/:repo/fields`).
+    /// A name is reported iff it has ≥1 non-`Nothing` row (`present` non-empty),
+    /// so emptied names drop out; ordered by name (each name has one type, so the
+    /// secondary key is moot). Served from memory, no DB scan.
+    pub fn field_catalog(&self, type_filter: Option<&str>) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .present
+            .iter()
+            .filter(|(_, ids)| !ids.is_empty())
+            .filter_map(|(name, _)| {
+                let ty = *self.types.get(name)?;
+                match type_filter {
+                    Some(want) if want != ty => None,
+                    _ => Some((name.clone(), ty.to_string())),
+                }
+            })
+            .collect();
+        out.sort();
+        out
     }
 
     /// Total number of sort representatives held (min + max per metarecord per

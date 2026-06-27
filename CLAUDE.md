@@ -223,7 +223,9 @@ tests live in `crates/daemon/tests/` and drive the Axum router directly with
   see below) and refreshed to HEAD per query; `run_query_filter` (routes) tries it first and
   falls back to `query_exec` only on `Unsupported`. Serves predicates as
   RoaringBitmaps, `FollowsTransitive` by iterative bitmap expansion, sort from
-  BSI representatives, `count` in O(1). `Path`-target follows are resolved to a
+  BSI representatives, `count` in O(1). Also backs `GET /repos/:repo/fields`
+  (`field_catalog`: distinct field names + value types from the `present`/`types`
+  maps, no DB scan). `Path`-target follows are resolved to a
   root metarecord through the (eager) tree cache by the caller and passed in as
   `PathRoots` (`evaluate_page_with_roots`/`count_with_roots`), so
   `mfr_path ->* "/dir"` + sort is fully in-memory; validated against the SQL
