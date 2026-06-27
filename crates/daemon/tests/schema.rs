@@ -113,8 +113,7 @@ async fn test_schema_with_default_loads_and_is_returned() {
         "groups": [
             {"targets": ["tag"], "constraints": [
                 {"field": "name", "type": "string", "min": 1, "max": 1},
-                {"field": "color", "type": "string",
-                 "default": {"type": "string", "value": "#888888"}}
+                {"field": "color", "type": "string", "default": "#888888"}
             ]}
         ]
     });
@@ -167,11 +166,17 @@ async fn test_invalid_schema_makes_load_fail() {
             "targets",
         ),
         (
-            "default type mismatch",
+            "default kind mismatch",
             json!({"version": 1, "groups": [
                 {"targets": "*", "constraints": [
-                    {"field": "x", "type": "int",
-                     "default": {"type": "string", "value": "nope"}}]}]}),
+                    {"field": "x", "type": "int", "default": "nope"}]}]}),
+            "default",
+        ),
+        (
+            "default without a type",
+            json!({"version": 1, "groups": [
+                {"targets": "*", "constraints": [
+                    {"field": "x", "default": "v"}]}]}),
             "default",
         ),
     ] {

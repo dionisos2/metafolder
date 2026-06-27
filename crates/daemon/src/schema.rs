@@ -58,12 +58,13 @@ struct RawConstraint {
     #[serde(default)]
     #[allow(dead_code)]
     description: Option<String>,
-    /// Optional default value for client templates (returned verbatim by
-    /// `GET /schema`; type-checked against `type` at parse time). Not used by
-    /// validation, so it is not kept in the compiled form.
+    /// Optional default value for client templates: a bare JSON value
+    /// interpreted via this constraint's `type` (so `type` is required and the
+    /// value's kind must match). Returned verbatim by `GET /schema`; not used
+    /// by validation, so it is not kept in the compiled form.
     #[serde(default)]
     #[allow(dead_code)]
-    default: Option<Value>,
+    default: Option<serde_json::Value>,
 }
 
 /// A parsed and validated schema, indexed by field name so that validation
@@ -130,14 +131,18 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
                 if !VALUE_TYPES.contains(&t.as_str()) {
                     return Err(format!("{at}: unknown value type '{t}'"));
                 }
-                // A default value (when not the explicit Nothing absence) must
-                // match the declared type.
-                if let Some(default) = &constraint.default {
-                    let dt = value_type_name(default);
-                    if default != &Value::Nothing && dt != t {
-                        return Err(format!(
-                            "{at}: default value type '{dt}' does not match declared type '{t}'"
-                        ));
+            }
+            // A default is a bare JSON value interpreted via the declared type;
+            // the type is therefore required and the value's kind must match it.
+            if let Some(default) = &constraint.default {
+                match &constraint.value_type {
+                    None => {
+                        return Err(format!("{at}: a default value requires an explicit type"))
+                    }
+                    Some(t) => {
+                        if let Err(msg) = check_default_kind(t, default) {
+                            return Err(format!("{at}: {msg}"));
+                        }
                     }
                 }
             }
@@ -194,6 +199,26 @@ pub struct Violation {
     /// `type`, `min_cardinality` or `max_cardinality`.
     pub kind: &'static str,
     pub message: String,
+}
+
+/// Checks that a bare `default` JSON value matches a constraint's declared
+/// type (the value's JSON kind, not a full `{type, value}` form).
+fn check_default_kind(value_type: &str, v: &serde_json::Value) -> Result<(), String> {
+    let ok = match value_type {
+        "string" | "datetime" | "ref" | "refbase" => v.is_string(),
+        "int" => v.is_i64() || v.is_u64(),
+        "float" => v.is_number(),
+        "bool" => v.is_boolean(),
+        "tree_ref" => v.get("name").is_some_and(serde_json::Value::is_string),
+        "externalref" => v.is_object(),
+        // `nothing` is an absence, not a value: omit `default` to template it.
+        _ => false,
+    };
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("default value {v} is not a valid {value_type}"))
+    }
 }
 
 fn value_type_name(v: &Value) -> &'static str {

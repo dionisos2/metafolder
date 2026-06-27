@@ -4,15 +4,16 @@
     {
       "targets": ["tag"],
       "constraints": [
-        { "field": "name", "type": "string", "min": 1, "max": 1, "description": "Tag label (the displayed text)." },
-        { "field": "color", "type": "string", "default": { "type": "string", "value": "#888888" }, "description": "Optional CSS color used to render the tag." }
+        { "field": "path", "type": "tree_ref", "min": 1, "max": 1, "description": "Position of the tag in the tag hierarchy; its name is the last path segment." },
+        { "field": "label", "type": "string", "max": 1, "description": "Optional display label, distinct from the hierarchical name." },
+        { "field": "color", "type": "string", "default": "#888888", "description": "CSS color used to render the tag." }
       ]
     },
     {
       "targets": ["note"],
       "constraints": [
         { "field": "title", "type": "string", "min": 1, "max": 1, "description": "Short note title." },
-        { "field": "body", "type": "string", "default": { "type": "string", "value": "" }, "description": "Note contents." },
+        { "field": "body", "type": "string", "default": "", "description": "Note contents." },
         { "field": "tag", "type": "ref", "description": "Reference to a 'tag' metarecord (repeatable)." }
       ]
     },

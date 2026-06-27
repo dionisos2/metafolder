@@ -14,11 +14,8 @@ const schema = {
       targets: ['tag'],
       constraints: [
         { field: 'name', type: 'string', min: 1, max: 1 },
-        {
-          field: 'color',
-          type: 'string',
-          default: { type: 'string', value: '#888888' },
-        },
+        { field: 'color', type: 'string', default: '#888888' },
+        { field: 'weight', type: 'int', default: 0 },
       ],
     },
     {
@@ -55,8 +52,10 @@ describe('templateFields', () => {
     expect(byName.rating).toEqual({ type: 'nothing' });
     // type-specific, no default -> Nothing
     expect(byName.name).toEqual({ type: 'nothing' });
-    // type-specific, default -> the default value
+    // type-specific, bare default -> built into a {type, value}
     expect(byName.color).toEqual({ type: 'string', value: '#888888' });
+    // a falsy bare default (0) must not be treated as absent
+    expect(byName.weight).toEqual({ type: 'int', value: 0 });
     // a group targeting several types still applies to this one
     expect(byName.shared).toEqual({ type: 'nothing' });
   });
@@ -77,13 +76,7 @@ describe('templateFields', () => {
         { targets: '*', constraints: [{ field: 'x', type: 'string' }] },
         {
           targets: ['t'],
-          constraints: [
-            {
-              field: 'x',
-              type: 'string',
-              default: { type: 'string', value: 'd' },
-            },
-          ],
+          constraints: [{ field: 'x', type: 'string', default: 'd' }],
         },
       ],
     };

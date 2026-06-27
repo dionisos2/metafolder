@@ -24,24 +24,29 @@ function groupApplies(group, type) {
 /**
  * Staged fields for a new metarecord of `type`: first `mf_schema = type`, then
  * every constrained field applicable to the type (global "*" groups + the
- * type's groups). Each field takes its constraint's `default` value when given,
- * otherwise `Nothing`. A field appearing in several applicable groups is staged
- * once, preferring the occurrence that carries a default.
+ * type's groups). A constraint's `default` is a bare value interpreted via its
+ * `type`, built here into a `{type, value}`; a field with no `default` is
+ * templated as `Nothing`. A field appearing in several applicable groups is
+ * staged once, preferring the occurrence that carries a default.
  */
+function constraintValue(c) {
+  // `'default' in c` (not truthiness) so a falsy default (0, '', false) counts.
+  return 'default' in c ? { type: c.type ?? 'string', value: c.default } : { type: 'nothing' };
+}
+
 export function templateFields(schema, type) {
   const fields = [{ name: 'mf_schema', value: { type: 'string', value: type } }];
   const seen = new Map(); // field name -> index in `fields`
   for (const group of schema?.groups ?? []) {
     if (!groupApplies(group, type)) continue;
     for (const c of group.constraints ?? []) {
-      const value = c.default ?? { type: 'nothing' };
       const existing = seen.get(c.field);
       if (existing === undefined) {
         seen.set(c.field, fields.length);
-        fields.push({ name: c.field, value });
-      } else if (c.default) {
+        fields.push({ name: c.field, value: constraintValue(c) });
+      } else if ('default' in c) {
         // A later occurrence with a default wins over an earlier defaultless one.
-        fields[existing].value = value;
+        fields[existing].value = constraintValue(c);
       }
     }
   }

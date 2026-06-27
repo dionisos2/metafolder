@@ -95,20 +95,23 @@ Each constraint object:
 | =min=         | int    | 0         | Minimum number of rows for the field            |
 | =max=         | int    | unlimited | Maximum number of rows for the field            |
 | =description= | string | —         | Free text (informational, e.g. for GUI display) |
-| =default=     | value  | —         | Default value for client templates (see below)  |
+| =default=     | bare value | —      | Default value for client templates (see below)  |
 
 =type= is a single value type name of the data model: =nothing=, =string=,
 =int=, =float=, =bool=, =datetime=, =ref=, =tree_ref=, =refbase=,
 =externalref=.
 
-=default= is an optional value in the data model's JSON form
-(={"type": ..., "value": ...}=), used by clients that pre-fill a new
-metarecord from its type (the GUI's type-aware "New metarecord" flow). It is
-/informational/ like =description=: the daemon never writes it and never uses
-it in validation. When both =default= and =type= are present, the default's
-type must match =type= (unless it is the explicit =nothing= absence), or the
-schema is rejected at load. It is returned verbatim by =GET /schema=, so a
-client reads templates straight from the schema.
+=default= is an optional /bare/ JSON value (not the ={"type", "value"}= form)
+interpreted through the constraint's =type=, used by clients that pre-fill a
+new metarecord from its type (the GUI's type-aware "New metarecord" flow). For
+example =int= takes a number (={"default": 0}=), =string= a string, =tree_ref=
+an object =({"parent": ..., "name": ...})=. Because the value is interpreted
+via =type=, a constraint carrying a =default= must also declare a =type=, and
+the value's JSON kind must match it, or the schema is rejected at load. To
+template a field as =Nothing=, simply omit =default= (its absence is the
+Nothing default). =default= is /informational/ like =description=: the daemon
+never writes it and never uses it in validation; it is returned verbatim by
+=GET /schema=, so a client reads templates straight from the schema.
 
 The example above expresses: globally, wherever the field =rating= exists on
 any metarecord, it must be an Int; the type ="film"= additionally bounds =rating=
@@ -141,7 +144,7 @@ The daemon parses the schema file when the repository is loaded. A schema
 file that is unreadable or invalid (malformed JSON, unknown value type name,
 =min > max=, =min < 0=, =targets= neither ="*"= nor a non-empty list of
 strings, constrained field with a reserved =mfr_*= / =mf_*= name, =default=
-value whose type contradicts =type=) causes
+with no =type= or whose JSON kind does not match =type=) causes
 =POST /repos/load= to fail with =400= and a message identifying the
 offending constraint. Rationale: silently loading the repository without
 validation could let violating writes through; a broken schema file is a
