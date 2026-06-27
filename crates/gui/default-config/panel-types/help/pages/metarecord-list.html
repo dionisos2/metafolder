@@ -1,0 +1,34 @@
+<h1>Metarecord list panel</h1>
+<p>
+  Lists the metarecords matching a query, as a table or a grid. It is the main
+  way to browse and bulk-edit a repository.
+</p>
+
+<h2>Query box</h2>
+<p>
+  Type a <a data-help-page="queries">simplified query</a> and press
+  <strong>Enter</strong> (or <em>Apply</em>) to run it; an empty query lists
+  everything. <em>Show normal DSL</em> reveals the expanded query, which you can
+  freeze to edit by hand.
+</p>
+
+<h2>Columns</h2>
+<p>
+  The columns box chooses what each row shows: space- or comma-separated field
+  names. Suffixes change how a value is displayed:
+</p>
+<ul>
+  <li><code>field</code> — the raw value.</li>
+  <li><code>field~</code> — resolved (a TreeRef shows its path from the root).</li>
+  <li><code>field~name</code> — for a Ref, the target's <code>name</code> field.</li>
+  <li><code>&amp;uuid</code> / <code>&amp;version</code> — metarecord metadata.</li>
+</ul>
+<p>An empty columns box restores the defaults.</p>
+
+<h2>Working with results</h2>
+<p>
+  Move the cursor with the arrow keys (or <code>j</code>/<code>k</code>); results
+  load progressively as you scroll. Bulk field edits apply to the whole result
+  set through the daemon's set/append/remove operations. Pair this panel with the
+  <a data-help-page="metarecord-detail">detail panel</a> to inspect one record.
+</p>

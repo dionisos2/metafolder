@@ -1,0 +1,29 @@
+<h1>File manager panel</h1>
+<p>
+  Browses the filesystem and distinguishes tracked files (those with a
+  metarecord) from untracked ones, so you can bring files under management.
+</p>
+
+<h2>Navigating</h2>
+<ul>
+  <li><strong>↑ up</strong> / <strong>repo root</strong> — move through directories.</li>
+  <li>Arrow keys (or <code>j</code>/<code>k</code>) move the cursor; double-click or Enter opens a directory.</li>
+  <li><strong>⟳ refresh</strong> re-reads the current directory.</li>
+  <li>
+    <strong>constrain to repo root</strong> keeps browsing inside the active
+    repository.
+  </li>
+</ul>
+
+<h2>Tracking files</h2>
+<p>
+  Tracking is opt-in: nothing is watched until <code>mf_watch</code> is enabled
+  for a directory (inherited down the tree, filtered by <code>mf_ignore</code>).
+  Use <strong>Add to DB</strong> to create metarecords for the selected files.
+  Once tracked, files appear in the
+  <a data-help-page="metarecord-list">metarecord list</a>, and the daemon keeps
+  their <code>mfr_path</code> in sync as they move. To bulk-import existing
+  files, run <code>reconcile:run</code>.
+</p>
+
+<p>See also: the <a data-help-page="file">file panel</a> for previewing a single file.</p>

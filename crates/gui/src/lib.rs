@@ -94,6 +94,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
         ("answer:send", "Resolve the pending script input wait", true),
+        // Help (spec-gui "Help"). `log=false`: the help-cursor drives these on
+        // every click, which would otherwise flood the message log.
+        ("help", "Open the help panel (optional topic)", false),
+        ("help:help", "Open help for a topic", false),
+        ("help:help-cursor", "Click an element to open its help", false),
     ] {
         registry.register_builtin(name, label, log);
     }
@@ -118,8 +123,8 @@ pub fn run(options: Options) {
     };
     // The simplified-query grammar (shared, in core): expansion is done locally
     // by the GUI backend, never proxied to the daemon (spec-query).
-    let grammar = match metafolder_core::simplified::load::load() {
-        Ok(grammar) => grammar,
+    let (grammar, grammar_source) = match metafolder_core::simplified::load::load_source() {
+        Ok(pair) => pair,
         Err(error) => {
             eprintln!("metafolder-gui: {error}");
             std::process::exit(1);
@@ -174,6 +179,7 @@ pub fn run(options: Options) {
                 config: config.clone(),
                 keybindings: keybindings.clone(),
                 grammar,
+                grammar_source,
                 gui_port,
                 page_sizes: page_sizes.clone(),
                 daemon: daemon.clone(),
@@ -313,6 +319,7 @@ pub fn run(options: Options) {
             commands::daemon_health,
             commands::parse_query,
             commands::expand_query,
+            commands::grammar_source,
             reconcile::reconcile_run,
             undo::log_navigate,
             commands::answer_send,
@@ -360,5 +367,17 @@ mod tests {
         }
         // The parameter-in-name form is gone.
         assert!(registry.get("tab:goto-N").is_none());
+    }
+
+    #[test]
+    fn test_help_commands_are_builtins() {
+        // The help commands must exist before the help panel is ever mounted
+        // (panel commands only register at mount), so they are shell builtins.
+        let registry = CommandRegistry::new();
+        register_builtins(&registry);
+        for name in ["help", "help:help", "help:help-cursor"] {
+            let def = registry.get(name).unwrap_or_else(|| panic!("{name} registered"));
+            assert_eq!(def.owner, None, "{name} is a builtin");
+        }
     }
 }

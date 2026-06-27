@@ -49,7 +49,7 @@
   }
 </script>
 
-<nav class="tab-bar">
+<nav class="tab-bar" data-help-topic="tab-bar">
   {#each store.workspaces as ws (ws.id)}
     {@const ind = indicator(ws.id)}
     <button

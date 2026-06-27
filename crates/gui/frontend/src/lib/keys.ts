@@ -10,8 +10,11 @@ import {
   installContextMenuSuppression,
   installDefaultContextMenu,
 } from '../../../panel-shim/menu.js';
+// @ts-expect-error plain-JS module shared with the panel shim
+import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { dispatch, hasEditingTarget, setFullscreen } from './commands';
-import { flashStatus, focusedPanelType, store } from './store.svelte';
+import { flashStatus, focusedPanelType, slotPayload, store } from './store.svelte';
+import type { SlotId } from './types';
 
 // The shell owns the single default context menu now (panels no longer run in
 // iframes with their own copy). Panels add provider items through this; calls
@@ -36,6 +39,12 @@ export function isTextInput(element: Element | null): boolean {
   );
 }
 
+/** Ends the help-cursor mode and restores the normal pointer. */
+function deactivateHelpCursor() {
+  store.ui.helpCursorActive = false;
+  document.documentElement.classList.remove('mf-help-cursor');
+}
+
 export function installKeys() {
   // The native context menu is suppressed everywhere (spec-gui "Context
   // menus"); the default menu (Copy + layout commands) replaces it in the
@@ -50,6 +59,13 @@ export function installKeys() {
     'keydown',
     (event) => {
       if (hasOpenMenu()) return; // the menu's own navigation handles the keys
+      // Escape cancels the help-cursor mode (before anything else).
+      if (store.ui.helpCursorActive && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        deactivateHelpCursor();
+        return;
+      }
       // Escape always leaves fullscreen first (even from inside a panel
       // text input), before any other key handling.
       if (store.ui.fullscreen && event.key === 'Escape') {
@@ -100,6 +116,31 @@ export function installKeys() {
       event.preventDefault();
       event.stopPropagation();
       if (result.invocation) void dispatch(result.invocation);
+    },
+    { capture: true },
+  );
+
+  // Help-cursor (spec-gui "Help"): while armed, the next click anywhere is
+  // swallowed and resolved to a help topic instead of reaching the target.
+  // composedPath() pierces panel Shadow DOM, so a click inside a panel is
+  // resolved against that panel's tagged zones (data-help-topic) and, as a
+  // fallback, the slot's panel type (data-slot-body).
+  window.addEventListener(
+    'click',
+    (event) => {
+      if (!store.ui.helpCursorActive) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const descriptors = event.composedPath().map((node) => {
+        const el = node as HTMLElement;
+        return { helpTopic: el?.dataset?.helpTopic, slotBody: el?.dataset?.slotBody };
+      });
+      const topic = resolveClickTopic(
+        descriptors,
+        (slot: string) => slotPayload(slot as SlotId).panel_type,
+      );
+      deactivateHelpCursor();
+      if (topic) void dispatch(`help:help "${topic}"`);
     },
     { capture: true },
   );

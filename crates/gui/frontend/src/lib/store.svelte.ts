@@ -41,6 +41,9 @@ export const store = $state({
     /// Immersive mode: only the focused panel shows (chrome hidden, OS
     /// window fullscreen). Toggled by panel:fullscreen, exited with escape.
     fullscreen: false,
+    /// Active while `help:help-cursor` waits for a click to resolve to a help
+    /// topic; the next click (or escape) ends it. Drives the `?` cursor.
+    helpCursorActive: false,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
     /// Non-null while a script's POST /gui/prompt waits for the input.

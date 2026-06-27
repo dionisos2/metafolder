@@ -1,0 +1,43 @@
+<h1>Queries</h1>
+<p>
+  Most panels that list metarecords are driven by a query. There are two
+  languages: the <strong>simplified query</strong> you usually type, and the
+  <strong>normal DSL</strong> it expands into.
+</p>
+
+<h2>Simplified queries</h2>
+<p>
+  The query box (for example in the <a data-help-page="metarecord-list">metarecord
+  list</a> panel) accepts the simplified language. A few examples:
+</p>
+<pre>genre=jazz
+rating&gt;3
+fav genre=jazz
+size&gt;=100MB
+modified younger 3d</pre>
+<p>
+  Words separated by spaces mean <em>AND</em>; use <code>OR</code> (or
+  <code>+</code>) for alternatives, <code>!</code> for negation, and parentheses
+  to group. Comparison operators mirror the normal DSL
+  (<code>= != &lt; &lt;= &gt; &gt;=</code>); <code>~</code> is a regular-expression
+  match. An empty query matches everything.
+</p>
+
+<h2>The normal DSL</h2>
+<p>
+  Expansion is a pure, client-side transformation — the simplified text is
+  rewritten into the normal DSL before it is sent. Some panels can show and even
+  freeze the expanded DSL so you can edit it by hand. The normal DSL adds
+  three-valued predicates (present / absent / unknown) and traversal
+  (<code>follows</code> a reference, <code>-&gt;*</code> over a TreeRef path).
+</p>
+
+<h2>The current simplified grammar</h2>
+<p>
+  The simplified language is configurable: this is the grammar in effect (loaded
+  at startup from <code>~/.config/metafolder/core/query-grammar</code>). Edit
+  that file and re-run <code>metafolder-sync-config</code> to change it.
+</p>
+<pre id="grammar-source">(loading…)</pre>
+
+<p>See also: <a data-help-page="metarecord-list">the metarecord list panel</a>.</p>

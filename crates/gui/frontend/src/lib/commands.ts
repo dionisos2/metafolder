@@ -330,6 +330,22 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'repos:open':
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
       return true;
+    case 'help':
+    case 'help:help': {
+      // Open the help panel for an optional topic. The topic (raw arg text) is
+      // handed to the panel through a workspace var; the `nonce` makes an
+      // identical repeated topic still re-trigger the panel's onChange.
+      if (!ws) return true;
+      const topic = args.join(' ');
+      await invoke('ws_set_var', { wsId: ws, key: 'help.request', value: { topic, nonce: Date.now() } });
+      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'help' });
+      return true;
+    }
+    case 'help:help-cursor':
+      // Arm the `?` cursor: the next click (or escape) is intercepted in keys.ts.
+      store.ui.helpCursorActive = true;
+      document.documentElement.classList.add('mf-help-cursor');
+      return true;
     case 'daemon:set-url':
       if (args[0]) {
         const connected = await invoke<boolean>('daemon_set_url', { url: args[0] });

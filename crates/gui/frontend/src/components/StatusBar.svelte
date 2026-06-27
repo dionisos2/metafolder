@@ -27,7 +27,7 @@
 </script>
 
 {#if keyHints}
-  <div class="key-hints">
+  <div class="key-hints" data-help-topic="keybindings">
     <span class="prefix">{keyHints.prefix}</span>
     {#each keyHints.hints as hint (hint.keys + hint.invocation)}
       <span class="hint"><span class="keys">{hint.keys}</span> {hint.invocation}</span>
@@ -36,7 +36,7 @@
   </div>
 {/if}
 
-<footer class="status-bars">
+<footer class="status-bars" data-help-topic="status-bar">
   {#each barWorkspaces as wsId (wsId)}
     {@const status = store.status[wsId]}
     <div class="status-bar" class:error={status?.kind === 'error'}>

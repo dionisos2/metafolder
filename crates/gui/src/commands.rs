@@ -23,6 +23,9 @@ pub struct App {
     pub keybindings: Arc<Mutex<KeybindingSet>>,
     /// The simplified-query grammar (read-only), for local query expansion.
     pub grammar: metafolder_core::simplified::grammar::Grammar,
+    /// The raw grammar source as loaded at startup, for display in the help
+    /// panel's query page (spec-gui "Help").
+    pub grammar_source: String,
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes (config.toml `[page-size]`).
     pub page_sizes: crate::config::PageSizes,
@@ -376,6 +379,14 @@ pub async fn daemon_health(app: AppHandle<'_>) -> Result<bool, String> {
 pub fn parse_query(dsl: String) -> Result<Value, String> {
     let query = metafolder_core::dsl::parse_query(&dsl)?;
     serde_json::to_value(query).map_err(|e| format!("cannot serialize the query: {e}"))
+}
+
+/// Returns the simplified-query grammar source as loaded at startup, for the
+/// help panel's query page (spec-gui "Help"). A snapshot: it does not re-read
+/// the file (the grammar in effect is the one loaded at startup).
+#[tauri::command]
+pub fn grammar_source(app: AppHandle) -> String {
+    app.grammar_source.clone()
 }
 
 /// Expands simplified-language text to normal DSL text locally, via the shared

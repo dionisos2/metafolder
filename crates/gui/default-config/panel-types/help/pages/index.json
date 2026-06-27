@@ -1,0 +1,85 @@
+[
+  {
+    "id": "getting-started",
+    "title": "Getting started",
+    "file": "getting-started.html",
+    "aliases": [
+      "help", "start", "interface", "tab-bar", "tab", "panel", "panel-type",
+      "layout", "connection", "daemon", "command-input", "keybindings",
+      "status-bar", "task-bar", "config", "reconcile", "editing", "answer",
+      "devtools", "quit"
+    ]
+  },
+  {
+    "id": "queries",
+    "title": "Queries",
+    "file": "queries.html",
+    "aliases": ["query", "edit-query", "simplified-query", "grammar", "dsl"]
+  },
+  {
+    "id": "metarecord-list",
+    "title": "Metarecord list panel",
+    "file": "metarecord-list.html",
+    "aliases": ["columns", "metarecords"]
+  },
+  {
+    "id": "file-manager",
+    "title": "File manager panel",
+    "file": "file-manager.html",
+    "aliases": ["files"]
+  },
+  {
+    "id": "file",
+    "title": "File panel",
+    "file": "file.html",
+    "aliases": ["viewer", "media"]
+  },
+  {
+    "id": "metarecord-detail",
+    "title": "Metarecord detail panel",
+    "file": "metarecord-detail.html",
+    "aliases": ["detail"]
+  },
+  {
+    "id": "repos",
+    "title": "Repositories panel",
+    "file": "repos.html",
+    "aliases": ["repositories", "repo"]
+  },
+  {
+    "id": "log",
+    "title": "Log panel",
+    "file": "log.html",
+    "aliases": ["history"]
+  },
+  {
+    "id": "message",
+    "title": "Message panel",
+    "file": "message.html",
+    "aliases": ["messages"]
+  },
+  {
+    "id": "treeref",
+    "title": "Tree reference panel",
+    "file": "treeref.html",
+    "aliases": ["tree"]
+  },
+  {
+    "id": "ref-list",
+    "title": "Reference list panel",
+    "file": "ref-list.html",
+    "aliases": ["refs"]
+  },
+  {
+    "id": "workspace-info",
+    "title": "Workspace info panel",
+    "file": "workspace-info.html",
+    "aliases": ["workspace"]
+  },
+  {
+    "id": "hello",
+    "title": "Hello example panel",
+    "file": "hello.html",
+    "aliases": ["example"]
+  }
+]

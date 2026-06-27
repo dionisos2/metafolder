@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- Help panel (spec-gui "Help"): a set of static HTML pages with a grep search
+     box on top. Logic in main.js; pages under pages/ (manifest pages/index.json).
+     Markup only — styles below, behaviour in main.js (export mount). -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>help</title>
+    <style>
+      .mf-panel-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        box-sizing: border-box;
+      }
+      #help-search-row {
+        flex: none;
+        padding: 6px;
+        border-bottom: 1px solid var(--mf-border, #34343e);
+        background: var(--mf-bg-raised, #26262e);
+      }
+      #help-search {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 5px 7px;
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg, #d8d8e0);
+        background: var(--mf-bg, #1e1e24);
+        border: 1px solid var(--mf-border, #34343e);
+        border-radius: 3px;
+      }
+      #help-hint {
+        margin-top: 4px;
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #help-scroll {
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        padding: 10px 14px;
+      }
+      #help-results {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #help-results li {
+        padding: 6px 8px;
+        border-radius: 3px;
+        cursor: pointer;
+      }
+      #help-results li:hover {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      #help-results .result-title {
+        font-weight: bold;
+      }
+      #help-results .result-snippet {
+        display: block;
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #help-content h1 {
+        font-size: 1.4em;
+        margin-top: 0;
+      }
+      #help-content h2 {
+        font-size: 1.1em;
+        margin-top: 1.2em;
+      }
+      #help-content code {
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg-raised, #26262e);
+        padding: 1px 4px;
+        border-radius: 3px;
+      }
+      #help-content pre {
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg-raised, #26262e);
+        padding: 8px 10px;
+        border-radius: 3px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+      }
+      #help-content a {
+        color: var(--mf-accent, #6ea8fe);
+        cursor: pointer;
+      }
+      #help-content .help-nav {
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+        margin-bottom: 1em;
+      }
+    </style>
+  </head>
+  <body data-help-topic="help">
+    <div id="help-search-row">
+      <input id="help-search" type="text" placeholder="search help (or a topic name; #text forces search)" />
+      <div id="help-hint"></div>
+    </div>
+    <div id="help-scroll">
+      <ul id="help-results" hidden></ul>
+      <div id="help-content"></div>
+    </div>
+  </body>
+</html>

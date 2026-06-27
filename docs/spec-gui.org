@@ -80,6 +80,7 @@ Built-in panel types:
 | =repos=          | Repository list, init, load, unload, per-repo running tasks   |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
+| =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
 
 Users can add custom panel types by creating a new directory under
 =~/.config/metafolder-gui/panel-types/<name>/=. Custom types appear alongside
@@ -511,6 +512,9 @@ Behaviours:
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
+| =help=               | Open the =help= panel (alias of =help:help=)   |
+| =help:help [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
+| =help:help-cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
@@ -552,6 +556,37 @@ Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
 The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.
+
+** Help
+
+In-app help is a dedicated =help= panel type plus three shell builtins. The
+builtins are *builtins* (not panel commands) so they work before the help panel
+has ever been mounted.
+
+- =help= / =help:help [text]= open the =help= panel in the focused slot. The
+  optional =text= is handed to the panel through the =help.request= workspace
+  variable (with a nonce so an identical repeated topic still re-triggers). If
+  =text= is an *exact name* — a page id, an alias, or a =panel:command= (the
+  command's verb is tried first, then its panel-type prefix, so e.g.
+  =metarecord-list:edit-query= and =edit-query= both reach the queries page) —
+  that page opens directly; otherwise the text greps across all pages. Prefixing
+  =text= with =#= forces grep even on an exact name.
+- =help:help-cursor= arms a "click-to-help" mode: a =?= pointer (a
+  =mf-help-cursor= class on the document element) until the next click, which is
+  swallowed and resolved to a help topic instead of reaching its target. Escape
+  cancels. Resolution walks the click's =composedPath()= (piercing panel Shadow
+  DOM) for the nearest =data-help-topic= attribute; failing that, the nearest
+  =data-slot-body= gives the clicked slot's panel type. Shell chrome and panels
+  tag their zones with =data-help-topic= (e.g. the metarecord-list query box →
+  =edit-query=); everything else falls back to its panel type's page.
+
+The =help= panel renders a set of static HTML pages (=panel-types/help/pages/=,
+described by =pages/index.json= as ={id, title, file, aliases[]}=) with a grep
+search box on top. There is at least one page per panel type. The queries page
+embeds the *current* simplified-query grammar (read at startup via the
+=grammar_source= command, =metafolder.query.grammarSource()=). The exact-name
+resolution and the grep filter are the pure functions in =/__help.js=
+(=resolvePage=, =filterPages=, =resolveClickTopic=), unit-tested in the frontend.
 
 ** Context menus
 

@@ -53,7 +53,7 @@
       </div>
     {:else}
       {#if !store.daemonConnected}
-        <div class="daemon-banner">
+        <div class="daemon-banner" data-help-topic="connection">
           Daemon unreachable at {store.daemonUrl} — daemon-dependent commands are disabled.
         </div>
       {/if}
@@ -66,6 +66,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div
             class="divider"
+            data-help-topic="layout"
             onpointerdown={onDividerDown}
             onpointermove={onDividerMove}
             onpointerup={() => (dragging = false)}
@@ -92,6 +93,12 @@
   :global(html, body, #app) {
     height: 100%;
     margin: 0;
+  }
+  /* Help-cursor mode (help:help-cursor): a `?` pointer everywhere until the
+     next click resolves to a help topic (or escape cancels). */
+  :global(html.mf-help-cursor),
+  :global(html.mf-help-cursor *) {
+    cursor: help !important;
   }
   .app {
     display: flex;

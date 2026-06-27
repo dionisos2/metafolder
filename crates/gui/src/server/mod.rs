@@ -30,6 +30,7 @@ const MENU_JS: &str = include_str!("../../panel-shim/menu.js");
 const ORPHAN_JS: &str = include_str!("../../panel-shim/orphan.js");
 const PAGED_LIST_JS: &str = include_str!("../../panel-shim/paged-list.js");
 const VALUE_WIDGET_JS: &str = include_str!("../../panel-shim/value-widget.js");
+const HELP_JS: &str = include_str!("../../panel-shim/help.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -49,6 +50,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))
         .route("/__paged-list.js", get(|| async { javascript(PAGED_LIST_JS) }))
         .route("/__value-widget.js", get(|| async { javascript(VALUE_WIDGET_JS) }))
+        .route("/__help.js", get(|| async { javascript(HELP_JS) }))
         .route(
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {

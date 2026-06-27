@@ -49,7 +49,7 @@
 </script>
 
 {#if tasks.length > 0}
-  <div class="task-bar">
+  <div class="task-bar" data-help-topic="task-bar">
     {#each tasks as t (t.id)}
       <div class="task">
         <span class="label">{label(t)}</span>

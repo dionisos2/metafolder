@@ -1,0 +1,63 @@
+<h1>Getting started</h1>
+<p>
+  metafolder organises your files as <strong>metarecords</strong> — records with
+  named fields — kept in sync with a directory tree. This GUI is a set of
+  <strong>panels</strong> arranged in <strong>workspaces</strong>, driven by a
+  command input and keyboard shortcuts.
+</p>
+
+<h2>Using help</h2>
+<ul>
+  <li>Run <code>help</code> (or <code>help:help</code>) to open this panel.</li>
+  <li>
+    <code>help:help "topic"</code> jumps straight to a page when the text is an
+    exact name (a panel type, a command, an alias); otherwise it searches.
+  </li>
+  <li>Prefix the search box with <code>#</code> to force a text search.</li>
+  <li>
+    <code>help:help-cursor</code> turns the pointer into a <code>?</code>; click
+    any part of the window to open the matching help page, or press
+    <strong>Escape</strong> to cancel.
+  </li>
+</ul>
+
+<h2>The interface</h2>
+<ul>
+  <li>
+    <strong>Tab bar</strong> — one tab per workspace; the <code>tab:*</code> and
+    <code>workspace:*</code> commands create and move between them.
+  </li>
+  <li>
+    <strong>Panel slots</strong> — one or two side-by-side panels. Pick a panel
+    type from the header selector, or use <code>panel:set-type</code>,
+    <code>panel:split</code> and <code>panel:focus-next</code>. Drag the divider
+    to resize.
+  </li>
+  <li>
+    <strong>Command input</strong> — always visible; type a command (with
+    autocomplete) or <code>!</code> to run a shell command.
+  </li>
+  <li>
+    <strong>Status bar</strong> — per-workspace messages and the active key
+    hints; the <strong>task bar</strong> shows background progress.
+  </li>
+  <li>
+    <strong>Settings</strong> — <code>config:open</code> shows config paths and
+    the keybinding editor.
+  </li>
+</ul>
+
+<h2>Panels</h2>
+<p>Each panel type has its own help page:</p>
+<ul>
+  <li><a data-help-page="repos">Repositories</a> — load and manage repositories.</li>
+  <li><a data-help-page="metarecord-list">Metarecord list</a> — query and list metarecords.</li>
+  <li><a data-help-page="metarecord-detail">Metarecord detail</a> — view and edit one metarecord.</li>
+  <li><a data-help-page="file-manager">File manager</a> — browse the filesystem and track files.</li>
+  <li><a data-help-page="file">File</a> — preview a file and its fields.</li>
+  <li><a data-help-page="treeref">Tree reference</a> — navigate a TreeRef forest.</li>
+  <li><a data-help-page="ref-list">Reference list</a> — metarecords referencing a node.</li>
+  <li><a data-help-page="log">Log</a> — the event log; undo/redo.</li>
+  <li><a data-help-page="message">Message</a>, <a data-help-page="workspace-info">Workspace info</a>, <a data-help-page="hello">Hello example</a>.</li>
+</ul>
+<p>See also: <a data-help-page="queries">writing queries</a>.</p>

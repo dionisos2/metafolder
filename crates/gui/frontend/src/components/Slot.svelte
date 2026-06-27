@@ -41,9 +41,10 @@
 <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
 <section class="slot" class:focused={isFocused} onclick={focusMe} data-slot={id}>
   {#if chrome}
-    <header class="slot-header">
+    <header class="slot-header" data-help-topic="layout">
     <select
       class="panel-type"
+      data-help-topic="panel-type"
       value={payload.panel_type ?? ''}
       onchange={setType}
       disabled={payload.workspace_id === null}

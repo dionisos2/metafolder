@@ -16,19 +16,32 @@ pub fn grammar_path() -> Option<PathBuf> {
     config::crate_config_dir("core").map(|dir| dir.join("query-grammar"))
 }
 
-/// Reads, parses and validates the grammar at `path`. A missing or malformed
-/// file is an error; there is no fall back to a shipped default (spec-config).
-pub fn load_grammar(path: &Path) -> Result<Grammar, String> {
+/// Reads, parses and validates the grammar at `path`, returning both the
+/// parsed grammar and its raw source text (for display, e.g. the GUI help
+/// page). A missing or malformed file is an error; there is no fall back to a
+/// shipped default (spec-config).
+pub fn load_grammar_with_source(path: &Path) -> Result<(Grammar, String), String> {
     let src = config::read_required(path)?;
     let grammar = parse_grammar(&src)?;
     validate(&grammar)?;
-    Ok(grammar)
+    Ok((grammar, src))
+}
+
+/// Reads, parses and validates the grammar at `path`. A missing or malformed
+/// file is an error; there is no fall back to a shipped default (spec-config).
+pub fn load_grammar(path: &Path) -> Result<Grammar, String> {
+    load_grammar_with_source(path).map(|(grammar, _)| grammar)
 }
 
 /// Resolves the configured path and loads the grammar.
 pub fn load() -> Result<Grammar, String> {
+    load_source().map(|(grammar, _)| grammar)
+}
+
+/// Resolves the configured path and loads the grammar with its raw source text.
+pub fn load_source() -> Result<(Grammar, String), String> {
     let path = grammar_path().ok_or("cannot determine the configuration directory")?;
-    load_grammar(&path)
+    load_grammar_with_source(&path)
 }
 
 #[cfg(test)]
@@ -122,6 +135,24 @@ mod tests {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let dsl = expand(&g, "modified since \"2024-01-01\"").unwrap();
         crate::dsl::parse_query(&dsl).expect("expanded date macro is valid DSL");
+    }
+
+    #[test]
+    fn load_grammar_with_source_returns_raw_text_and_a_valid_grammar() {
+        let dir = std::env::temp_dir().join(format!("mf-core-grammar-src-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("query-grammar");
+        std::fs::write(&path, DEFAULT_GRAMMAR).unwrap();
+
+        let (grammar, source) = load_grammar_with_source(&path).expect("loads");
+        // The source is the file content verbatim, as loaded.
+        assert_eq!(source, DEFAULT_GRAMMAR);
+        assert!(source.contains("predicate"), "raw grammar source is returned");
+        // The grammar is the same one `load_grammar` parses and validates.
+        validate(&grammar).expect("returned grammar validates");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

@@ -195,7 +195,7 @@
   }
 </script>
 
-<div class="command-input" class:focused>
+<div class="command-input" class:focused data-help-topic="command-input">
   {#if suggestions.length > 0}
     <ul class="suggestions">
       {#each suggestions as suggestion, index (suggestion.name)}

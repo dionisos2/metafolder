@@ -255,6 +255,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     query: {
       parse: (dsl: string) => invoke('parse_query', { dsl }),
       expand: (text: string) => invoke('expand_query', { text }),
+      // The simplified-query grammar source as loaded at startup (help page).
+      grammarSource: () => invoke('grammar_source') as Promise<string>,
     },
 
     workspace: {
