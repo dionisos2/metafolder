@@ -37,6 +37,14 @@ class FakeDaemon {
     this.records.set(uuid, rec);
     this.ops.push({ id: ++this.nextOp, entity_uuid: uuid });
   }
+  setFieldTyped(uuid: string, name: string, type: string, value: unknown) {
+    const rec = this.records.get(uuid) ?? { uuid, version: 0, fields: [] };
+    rec.fields = rec.fields.filter((f) => f.name !== name);
+    rec.fields.push({ name, value: type === 'nothing' ? { type, value: null } : { type, value } });
+    rec.version += 1;
+    this.records.set(uuid, rec);
+    this.ops.push({ id: ++this.nextOp, entity_uuid: uuid });
+  }
   setPath(field: string, uuid: string, paths: string[]) {
     this.paths.set(`${field}|${uuid}`, paths);
     this.ops.push({ id: ++this.nextOp, entity_uuid: uuid });
@@ -100,6 +108,18 @@ class FakeDaemon {
       const field = b.field ?? 'mfr_path';
       const out: Record<string, string[]> = {};
       for (const u of b.query.uuids) out[u] = this.paths.get(`${field}|${u}`) ?? [];
+      return ok(out);
+    }
+    // The field catalog: distinct (name, type), Nothing excluded, ordered by
+    // name (matching the daemon's index-backed `field_catalog`).
+    if (method === 'GET' && /\/repos\/[^/]+\/fields$/.test(path)) {
+      const want = new URLSearchParams(rawPath.split('?')[1] ?? '').get('type');
+      const seen = new Map<string, string>();
+      for (const rec of this.records.values())
+        for (const f of rec.fields) if (f.value.type !== 'nothing') seen.set(f.name, f.value.type);
+      let out = [...seen.entries()].map(([name, type]) => ({ name, type }));
+      if (want) out = out.filter((e) => e.type === want);
+      out.sort((a, z) => (a.name < z.name ? -1 : a.name > z.name ? 1 : 0));
       return ok(out);
     }
     if (method === 'GET' && /\/log\/since$/.test(path)) {
@@ -246,5 +266,59 @@ describe('cache oracle — randomized soundness', () => {
         await cache.sync(REPO, fake.raw); // idle poll
       }
     }
+  });
+});
+
+describe('cache — field catalog (names + types)', () => {
+  test('fetchFields populates; readFields matches the daemon; fieldType resolves', async () => {
+    const fake = new FakeDaemon();
+    fake.setFieldTyped('a1', 'rating', 'int', 5);
+    fake.setFieldTyped('a1', 'tag', 'string', 'jazz');
+    fake.setFieldTyped('a1', 'note', 'nothing', null); // Nothing ⇒ excluded
+    const cache = createCache();
+
+    expect(cache.readFields(REPO)).toBe(cache.REFRESH); // not loaded yet
+    await cache.fetchFields(REPO, fake.raw);
+
+    expect(cache.readFields(REPO)).toEqual(fake.compute('GET', `${qp(REPO)}/fields`, null).body);
+    expect(cache.fieldType(REPO, 'rating')).toBe('int');
+    expect(cache.fieldType(REPO, 'tag')).toBe('string');
+    expect(cache.fieldType(REPO, 'note')).toBeNull(); // Nothing-only: not a usable field
+    expect(cache.fieldType(REPO, 'absent')).toBeNull(); // unknown name, catalog loaded
+  });
+
+  test('fieldType returns REFRESH until the catalog is loaded', () => {
+    const cache = createCache();
+    expect(cache.fieldType(REPO, 'x')).toBe(cache.REFRESH);
+  });
+
+  test('a change drops the catalog, and sync re-warms a previously-loaded one', async () => {
+    const fake = new FakeDaemon();
+    fake.setFieldTyped('a1', 'rating', 'int', 5);
+    const cache = createCache();
+    await cache.fetchFields(REPO, fake.raw);
+    await cache.sync(REPO, fake.raw); // baseline head
+    expect(cache.fieldType(REPO, 'genre')).toBeNull();
+
+    fake.setFieldTyped('b2', 'genre', 'string', 'jazz'); // a new field name appears
+    await cache.sync(REPO, fake.raw);
+
+    // The catalog was warm, so sync refetched it: 'genre' is now known.
+    expect(cache.readFields(REPO)).toEqual(fake.compute('GET', `${qp(REPO)}/fields`, null).body);
+    expect(cache.fieldType(REPO, 'genre')).toBe('string');
+  });
+
+  test('sync does not fetch the catalog for a repo that never loaded it', async () => {
+    const fake = new FakeDaemon();
+    fake.setFieldTyped('a1', 'rating', 'int', 5);
+    const cache = createCache();
+    // Track the repo via a query but never fetch its catalog.
+    await cache.request('POST', `${qp(REPO)}/query`, { query: {}, select: '*' }, fake.raw);
+    await cache.sync(REPO, fake.raw);
+
+    fake.setFieldTyped('a1', 'rating', 'int', 6);
+    await cache.sync(REPO, fake.raw);
+
+    expect(cache.readFields(REPO)).toBe(cache.REFRESH); // still cold — never warmed
   });
 });

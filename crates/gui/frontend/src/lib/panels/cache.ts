@@ -69,6 +69,11 @@ export function createCache(opts: CacheOptions = {}) {
   const entities = new Map<string, Metarecord>(); // `${repo}|${uuid}` → metarecord
   const treeRefs = new Map<string, string[]>(); // `${repo}|${field}|${uuid}` → [paths]
   const queries = new Map<string, DaemonResponse>(); // `${repo}|${queryKey}` → response
+  // Per-repo field catalog (GET /repos/:repo/fields): field name → value type.
+  // A field name has one value type repo-wide (the daemon rejects a conflicting
+  // one), so this is a function, not a multimap. Shares the queries' coarse
+  // invalidation lifecycle (any structural change can add/remove/retype a name).
+  const fields = new Map<string, Map<string, string>>();
   const lastHead = new Map<string, number | null>(); // repo → last-synced head op id
   // Per-repo invalidation epoch: bumped on every clear/invalidate. A fetch
   // captures it before its `await` and only writes to the cache if it is
@@ -129,6 +134,7 @@ export function createCache(opts: CacheOptions = {}) {
   function clearQueries(repo: string) {
     bumpEpoch(repo);
     for (const key of queries.keys()) if (key.startsWith(`${repo}|`)) queries.delete(key);
+    fields.delete(repo); // the field catalog shares this coarse invalidation
   }
 
   // ── Transparent interception ────────────────────────────────────────────
@@ -263,6 +269,10 @@ export function createCache(opts: CacheOptions = {}) {
     const { head, operations } = res.body as { head: number | null; operations: Op[] };
     if (since !== undefined && head === since) return; // unchanged
 
+    // Re-warm the field catalog after this refresh if a panel had already loaded
+    // it (so a name added/removed/retyped daemon-side is reflected without the
+    // panel re-fetching). Uninterested repos are left cold — never fetched here.
+    const hadFields = fields.has(repo);
     if (operations.length > 0) {
       for (const op of operations) invalidateMetarecord(repo, op.entity_uuid);
       clearQueries(repo);
@@ -274,6 +284,7 @@ export function createCache(opts: CacheOptions = {}) {
       clearRepo(repo);
     }
     lastHead.set(repo, head);
+    if (hadFields && !fields.has(repo)) await fetchFields(repo, raw);
   }
 
   // ── Explicit fetch/read API (panels use this; reads are synchronous) ─────
@@ -318,10 +329,45 @@ export function createCache(opts: CacheOptions = {}) {
     return touch(treeRefs, tKey(repo, field, uuid)) ?? REFRESH;
   }
 
+  /** Fetches the repo's field catalog (distinct names + value types) and caches
+   *  it. Cheap (small payload) and served from the daemon's in-memory index. */
+  async function fetchFields(repo: string, raw: RawFetcher): Promise<void> {
+    const epoch = epochOf(repo);
+    const res = await raw('GET', `/repos/${repo}/fields`, null);
+    if (res.status !== 200 || epochOf(repo) !== epoch) return;
+    const list = Array.isArray(res.body) ? (res.body as { name?: unknown; type?: unknown }[]) : [];
+    const map = new Map<string, string>();
+    for (const f of list) {
+      if (typeof f?.name === 'string' && typeof f?.type === 'string') map.set(f.name, f.type);
+    }
+    fields.set(repo, map);
+  }
+
+  /** Synchronous read of the catalog as `{name, type}[]` ordered by name;
+   *  REFRESH when not loaded yet (the panel should `fetchFields` then re-read). */
+  function readFields(repo: string): { name: string; type: string }[] | typeof REFRESH {
+    const map = fields.get(repo);
+    if (!map) return REFRESH;
+    return [...map.entries()]
+      .map(([name, type]) => ({ name, type }))
+      .sort((a, z) => (a.name < z.name ? -1 : a.name > z.name ? 1 : 0));
+  }
+
+  /** Synchronous lookup of one field name's value type: the type string when
+   *  the name exists, `null` when the (loaded) catalog has no such name, and
+   *  REFRESH when the catalog is not loaded yet. Lets a field-entry form lock
+   *  the type picker to an existing field's only valid type. */
+  function fieldType(repo: string, name: string): string | null | typeof REFRESH {
+    const map = fields.get(repo);
+    if (!map) return REFRESH;
+    return map.get(name) ?? null;
+  }
+
   /** Every repo the cache holds data for (drives the background sync). */
   function trackedRepos(): string[] {
     const repos = new Set<string>();
     for (const key of entities.keys()) repos.add(key.split('|')[0]);
+    for (const repo of fields.keys()) repos.add(repo);
     for (const repo of lastHead.keys()) repos.add(repo);
     return [...repos];
   }
@@ -334,11 +380,19 @@ export function createCache(opts: CacheOptions = {}) {
     query,
     fetchMetarecords,
     fetchTreeRefs,
+    fetchFields,
     readMetarecord,
     readTreeRef,
+    readFields,
+    fieldType,
     REFRESH,
     /** Test/introspection helpers. */
-    _stats: () => ({ entities: entities.size, treeRefs: treeRefs.size, queries: queries.size }),
+    _stats: () => ({
+      entities: entities.size,
+      treeRefs: treeRefs.size,
+      queries: queries.size,
+      fields: fields.size,
+    }),
     _lastHead: (repo: string) => lastHead.get(repo),
   };
 }

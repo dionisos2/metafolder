@@ -359,9 +359,12 @@ shared data cache). `index.html` is markup only; `main.js` is the entry.
   fs/statusBar/messages + `addKeybinding` + `cache`), calling Tauri commands
   directly; per-instance var/message/visibility push registries.
 - `frontend/src/lib/panels/cache.ts`: the single in-realm daemon-data cache
-  (`createCache`, a shared singleton) — entity / TreeRef-path / query stores,
-  `metafolder.cache.*` fetch+read API (sync `readMetarecord`/`readTreeRef`
-  return `REFRESH` when absent), transparent interception under `daemon.call`,
+  (`createCache`, a shared singleton) — entity / TreeRef-path / query /
+  field-catalog stores (the last: distinct field names + types from
+  `GET /repos/:repo/fields`, re-warmed on sync, `fieldType` lets a form lock the
+  type picker to an existing field's only valid type),
+  `metafolder.cache.*` fetch+read API (sync `readMetarecord`/`readTreeRef`/
+  `readFields`/`fieldType` return `REFRESH` when absent), transparent interception under `daemon.call`,
   invalidation from the `GET /log/since` change feed (polled in `initStore` +
   at query/refresh/display), write-invalidation, and LRU pruning. Validated by
   oracle/equivalence tests (`tests/cache-oracle.test.ts`).

@@ -35,9 +35,41 @@ export async function mount(root, metafolder) {
     addWidget = widgetFor(type, undefined);
     addValueSlot.replaceChildren(addWidget.element);
   }
-  const typePicker = createTypePicker(root.getElementById('add-type'), 'string', setAddWidget);
+  const addTypeButton = root.getElementById('add-type');
+  const typePicker = createTypePicker(addTypeButton, 'string', setAddWidget);
   setAddWidget(typePicker.get());
   const forceBox = root.getElementById('force');
+
+  // A field name carries a single value type repo-wide (the daemon rejects a
+  // conflicting one), so when the typed add-name already exists we lock the type
+  // picker to its only valid type — read from the cached field catalog.
+  async function repoForAdd() {
+    return current?.repo ?? (await workspace.get('active_repo')) ?? null;
+  }
+  function setTypeLock(type) {
+    if (type) {
+      if (typePicker.get() !== type) typePicker.set(type); // also swaps the widget
+      addTypeButton.disabled = true;
+      addTypeButton.title = `type fixed to "${type}" — field "${root.getElementById('add-name').value.trim()}" already exists`;
+    } else {
+      addTypeButton.disabled = false;
+      addTypeButton.title = '';
+    }
+  }
+  async function syncTypeToName() {
+    const repo = await repoForAdd();
+    const name = root.getElementById('add-name').value.trim();
+    if (!repo || !name) return setTypeLock(null);
+    let type = cache.fieldType(repo, name);
+    if (type === cache.REFRESH) {
+      await cache.fetchFields(repo);
+      // The name may have changed while awaiting; re-read the current value.
+      if (root.getElementById('add-name').value.trim() !== name) return;
+      type = cache.fieldType(repo, name);
+    }
+    setTypeLock(typeof type === 'string' ? type : null);
+  }
+  root.getElementById('add-name').addEventListener('input', () => void syncTypeToName());
 
   const isReserved = (name) => name.startsWith('mfr_');
   const dirty = () => workspace.set('metarecords:dirty', Date.now());
@@ -472,9 +504,12 @@ export async function mount(root, metafolder) {
   commands.register('metarecord:add-field', {
     label: 'Add a field to the selected metarecord (detail form)',
     reveal: true,
-    handler: () => {
+    handler: async () => {
       addForm.classList.add('open');
       root.getElementById('add-name').focus();
+      const repo = await repoForAdd();
+      if (repo) await cache.fetchFields(repo); // warm the catalog for the type lock
+      void syncTypeToName();
     },
   });
   commands.register('metarecord:batch-set', {

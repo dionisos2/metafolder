@@ -242,9 +242,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         sharedCache.fetchMetarecords(repo, uuids, rawFetch),
       fetchTreeRefs: (repo: string, field: string, uuids: string[]) =>
         sharedCache.fetchTreeRefs(repo, field, uuids, rawFetch),
+      fetchFields: (repo: string) => sharedCache.fetchFields(repo, rawFetch),
       readMetarecord: (repo: string, uuid: string) => sharedCache.readMetarecord(repo, uuid),
       readTreeRef: (repo: string, field: string, uuid: string) =>
         sharedCache.readTreeRef(repo, field, uuid),
+      readFields: (repo: string) => sharedCache.readFields(repo),
+      fieldType: (repo: string, name: string) => sharedCache.fieldType(repo, name),
       // Poll the change feed now (a deliberate freshness point: a query, a
       // refresh, a panel becoming visible) — on top of the background timer.
       sync: (repo: string) => sharedCache.sync(repo, rawFetch),
