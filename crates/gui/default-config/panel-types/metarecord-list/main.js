@@ -5,7 +5,16 @@ import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL } from '/__value-widget.js';
-import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRefFields, refTargetUuids } from './columns.js';
+import {
+  parseColumns,
+  isSortable,
+  cellQuickText,
+  cellText,
+  fillColumns,
+  treeRefFields,
+  refTargetUuids,
+  followedTreeFields,
+} from './columns.js';
 
 // Smallest page of the three list panels: each row needs several daemon
 // round-trips (TreeRef path resolution, ref-target metarecords) and parsing,
@@ -14,8 +23,8 @@ import { parseColumns, isSortable, cellQuickText, cellText, fillColumns, treeRef
 // this is only the fallback, and the per-workspace page-size variable still
 // overrides it.
 const DEFAULT_PAGE_SIZE_FALLBACK = 100;
-const DEFAULT_COLUMNS = 'mfr_path~ mfr_type &version';
-const GRID_NAME_COLUMN = parseColumns('mfr_path~')[0];
+const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
+const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
@@ -84,10 +93,29 @@ export async function mount(root, metafolder) {
     if (repoRoot === null) repoRoot = await daemon.repoRoot(repo);
     await Promise.all(
       [...treeFieldsOf()].map((field) =>
-        cache.fetchTreeRefs(repo, field, subset.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid)),
+        cache.fetchTreeRefs(
+          repo,
+          field,
+          subset.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid),
+        ),
       ),
     );
-    await cache.fetchMetarecords(repo, refTargetUuids(columns, subset));
+    const targetUuids = refTargetUuids(columns, subset);
+    await cache.fetchMetarecords(repo, targetUuids);
+    // Phase 2: `tag>path:path` columns also need the followed targets' own tree
+    // paths resolved (same machinery, on the target uuids).
+    await Promise.all(
+      followedTreeFields(columns).map((field) =>
+        cache.fetchTreeRefs(
+          repo,
+          field,
+          targetUuids.filter((u) => {
+            const t = cache.readMetarecord(repo, u);
+            return t !== REFRESH && hasTreeRef(t, field);
+          }),
+        ),
+      ),
+    );
     fillFromCache(subset);
   }
 
@@ -100,12 +128,21 @@ export async function mount(root, metafolder) {
         if (paths !== REFRESH) pathsByField[field][m.uuid] = paths;
       }
     }
+    const targetUuids = refTargetUuids(columns, subset);
     const targets = new Map();
-    for (const uuid of refTargetUuids(columns, subset)) {
+    for (const uuid of targetUuids) {
       const target = cache.readMetarecord(repo, uuid);
       targets.set(uuid, target === REFRESH ? null : target);
     }
-    fillColumns(columns, subset, { pathsByField, targets });
+    const followedPathsByField = {};
+    for (const field of followedTreeFields(columns)) {
+      followedPathsByField[field] = {};
+      for (const uuid of targetUuids) {
+        const paths = cache.readTreeRef(repo, field, uuid);
+        if (paths !== REFRESH) followedPathsByField[field][uuid] = paths;
+      }
+    }
+    fillColumns(columns, subset, { pathsByField, targets, followedPathsByField });
   }
 
   // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
@@ -133,7 +170,9 @@ export async function mount(root, metafolder) {
         // A refresh must not steal the selection: remember the highlighted
         // metarecord and restore it.
         keepUuid =
-          metarecords[cursorIndex]?.uuid ?? (await workspace.get('selected_metarecord'))?.uuid ?? null;
+          metarecords[cursorIndex]?.uuid ??
+          (await workspace.get('selected_metarecord'))?.uuid ??
+          null;
         metarecords = [];
         nextCursor = null;
         orphanCache = new Map();
@@ -153,7 +192,9 @@ export async function mount(root, metafolder) {
         return;
       }
       // The page's metarecords are read from the cache the query just populated.
-      const fetched = result.uuids.map((u) => cache.readMetarecord(repo, u)).filter((m) => m !== REFRESH);
+      const fetched = result.uuids
+        .map((u) => cache.readMetarecord(repo, u))
+        .filter((m) => m !== REFRESH);
       metarecords = metarecords.concat(fetched);
       nextCursor = result.nextCursor;
       await prepare(fetched); // pre-resolve display data; rendering stays sync
@@ -165,7 +206,8 @@ export async function mount(root, metafolder) {
           checked = new Set([...checked].filter((uuid) => alive.has(uuid)));
           await workspace.set('selected_metarecords', [...checked]);
         }
-        const keepIndex = keepUuid === null ? -1 : metarecords.findIndex((e) => e.uuid === keepUuid);
+        const keepIndex =
+          keepUuid === null ? -1 : metarecords.findIndex((e) => e.uuid === keepUuid);
         if (keepIndex >= 0) {
           cursorIndex = keepIndex;
         } else if (metarecords.length > 0) {
@@ -201,7 +243,10 @@ export async function mount(root, metafolder) {
   const onMouseMove = (event) => {
     if (!resizing) return;
     resizing.moved = true;
-    widths[resizing.column.spec] = Math.max(40, resizing.startWidth + event.clientX - resizing.startX);
+    widths[resizing.column.spec] = Math.max(
+      40,
+      resizing.startWidth + event.clientX - resizing.startX,
+    );
     renderHeader();
   };
   const onMouseUp = () => {
@@ -247,7 +292,10 @@ export async function mount(root, metafolder) {
   /** Marks the row/card when the metarecord's tracked file is gone (async). */
   function fillOrphan(node, metarecord) {
     if (!orphanCache.has(metarecord.uuid)) {
-      orphanCache.set(metarecord.uuid, orphanState(metarecord, orphanCtx).catch(() => null));
+      orphanCache.set(
+        metarecord.uuid,
+        orphanState(metarecord, orphanCtx).catch(() => null),
+      );
     }
     void orphanCache.get(metarecord.uuid).then((state) => {
       if (state === null) return;
@@ -267,7 +315,11 @@ export async function mount(root, metafolder) {
         const tr = el(
           'tr',
           {
-            class: ['row', index === cursorIndex && 'cursor', checked.has(metarecord.uuid) && 'checked'],
+            class: [
+              'row',
+              index === cursorIndex && 'cursor',
+              checked.has(metarecord.uuid) && 'checked',
+            ],
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
           },
@@ -448,7 +500,10 @@ export async function mount(root, metafolder) {
     columnsInput.value = columns.map((c) => c.spec).join(' ');
     await reresolveColumns();
     render();
-    await workspace.set('metarecord-list:columns', columns.map((c) => c.spec));
+    await workspace.set(
+      'metarecord-list:columns',
+      columns.map((c) => c.spec),
+    );
   }
 
   /** A stored/typed page size; anything invalid falls back to the default. */
@@ -486,7 +541,11 @@ export async function mount(root, metafolder) {
     bulkWidget = widgetFor(type, undefined);
     bulkValueSlot.replaceChildren(bulkWidget.element);
   }
-  const bulkTypePicker = createTypePicker(root.getElementById('bulk-type'), 'string', setBulkWidget);
+  const bulkTypePicker = createTypePicker(
+    root.getElementById('bulk-type'),
+    'string',
+    setBulkWidget,
+  );
   setBulkWidget(bulkTypePicker.get());
 
   // Hide the type picker + value row for value-less ops (unset).
@@ -579,7 +638,9 @@ export async function mount(root, metafolder) {
     .getElementById('bulk-open')
     .addEventListener('click', () => void commands.invoke('metarecord-list:bulk-edit'));
   root.getElementById('bulk-apply').addEventListener('click', () => void applyBulkEdit());
-  root.getElementById('bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
+  root
+    .getElementById('bulk-cancel')
+    .addEventListener('click', () => bulkForm.classList.remove('open'));
   bulkName.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyBulkEdit();
   });

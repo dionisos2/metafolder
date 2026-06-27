@@ -19,8 +19,19 @@
 </p>
 <ul>
   <li><code>field</code> — the raw value.</li>
-  <li><code>field~</code> — resolved (a TreeRef shows its path from the root).</li>
-  <li><code>field~name</code> — for a Ref, the target's <code>name</code> field.</li>
+  <li>
+    <code>field:mode</code> — project a TreeRef value: <code>:name</code> (leaf),
+    <code>:uuid</code> (parent), <code>:path</code> (full path from the root),
+    <code>:raw</code> (the default parent/name couple).
+  </li>
+  <li>
+    <code>field&gt;sub</code> — follow a Ref to the target's <code>sub</code> field
+    (e.g. <code>tag&gt;label</code>, or <code>tag&gt;path:name</code> to project it).
+  </li>
+  <li>
+    <code>a | b</code> — fallback: show the first alternative that has a value
+    (e.g. <code>tag&gt;label | tag&gt;path:name</code>).
+  </li>
   <li><code>&amp;uuid</code> / <code>&amp;version</code> — metarecord metadata.</li>
 </ul>
 <p>An empty columns box restores the defaults.</p>

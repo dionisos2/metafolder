@@ -236,8 +236,8 @@
         <input
           id="columns-input"
           data-help-topic="columns"
-          placeholder="columns, e.g. mfr_path~ rating &amp;version"
-          title="space- or comma-separated columns: field (raw value), field~ (resolved: TreeRef shows the path from the root), field~name (Ref shows the target's field), &amp;uuid / &amp;version (metarecord metadata); empty restores the defaults"
+          placeholder="columns, e.g. mfr_path:path rating &amp;version"
+          title="space- or comma-separated columns: field (raw value); field:mode projects a TreeRef (:name leaf, :uuid parent, :path full path); field&gt;sub follows a Ref to the target's field (e.g. tag&gt;label, tag&gt;path:name); a | b is a fallback (first with a value); &amp;uuid / &amp;version (metadata); empty restores the defaults"
         />
         <button id="columns-apply">Apply</button>
       </div>

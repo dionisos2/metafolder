@@ -899,7 +899,7 @@ filtered by an embedded query written in the two-zone query editor at the top
 of the panel (see [[*Query editor (two zones)]]). An empty query matches all
 metarecords.
 
-Default display mode: =table= with columns =mfr_path~= (resolved path),
+Default display mode: =table= with columns =mfr_path:path= (resolved path),
 =mfr_type=, =&version=. The =metarecord-list:set-mode= command switches between
 display modes.
 
@@ -908,26 +908,35 @@ The columns input is a separate row below the query editor, with its own
 queries with =select: '*'=, so applying new columns is a pure re-render — no
 request.
 
-Each column is one token of the columns input (space- or comma-separated;
-an empty input restores the defaults; invalid tokens are reported under
-the input and the previous columns are kept):
+Each column is one token of the columns input (space- or comma-separated,
+with spaces around =|= tolerated; an empty input restores the defaults;
+invalid tokens are reported under the input and the previous columns are
+kept). A token combines two orthogonal operators — a /projection/ (=:mode=)
+and a /follow/ (=>=) — plus a fallback (=|=):
 
 - =name= — the raw field value(s). A multi-map field shows every row in
   the cell, comma-joined. =version= is an ordinary field name here.
-- =name~= — the resolved display: a =tree_ref= value shows the path from
-  the repository root (the root itself shows =/=; a stale =tree_ref=
-  falls back to its name component). Other value types fall back to the
-  raw display.
-- =name~target= — the dereferenced display: a =ref=/=refbase= value is
-  followed and the cell shows the target metarecord's =target= field rows
-  (comma-joined; e.g. =tags~name=). A missing target metarecord or field
-  falls back to the raw uuid; non-reference values to the raw display.
+- =name:mode= — projects a =tree_ref= value: =:name= (leaf name), =:uuid=
+  (parent uuid), =:path= (the path from the repository root — the root
+  shows =/=; a stale/unresolved =tree_ref= falls back to its leaf name),
+  =:raw= (the parent/name couple, the default). A mode that does not apply
+  to the value's type falls back to the raw display.
+- =name>sub= — follows a =ref=/=refbase= value to the target metarecord and
+  shows its =sub= field rows (comma-joined; e.g. =tag>label=). =sub= may
+  itself be projected (=tag>path:name=, or =tag>path:path= to resolve the
+  target's tree path). One =>= only — no deep chains. A missing target
+  metarecord falls back to the raw uuid; a present target whose =sub= field
+  is absent yields no value (so a fallback can take over).
+- =a | b= — fallback: the cell shows the first alternative that yields a
+  value (e.g. =tag>label | tag>path:name= — the label if any, else the
+  tag's leaf name).
 - =&uuid= / =&version= — the metarecord's own uuid and version. These are
   metarecord metadata, not fields (=&= cannot appear in a field name), so a
   user field named =version= never collides with them.
 
 Sorting always uses the underlying raw field (the daemon sorts raw
-values): clicking a =tags~name= header sorts by the =tags= uuids. Meta
+values): clicking a =tag>label= header sorts by the =tag= uuids (a
+fallback sorts by its first alternative's field). Meta
 (=&=) columns are not sortable. Column widths are adjustable by dragging
 the right edge of a header. The column list and the widths are persisted
 in the =metarecord-list:columns= and =metarecord-list:column-widths= workspace
