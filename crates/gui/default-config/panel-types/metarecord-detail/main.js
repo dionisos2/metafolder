@@ -41,18 +41,20 @@ export async function mount(root, metafolder) {
   const forceBox = root.getElementById('force');
 
   // A field name carries a single value type repo-wide (the daemon rejects a
-  // conflicting one), so when the typed add-name already exists we lock the type
-  // picker to its only valid type — read from the cached field catalog.
+  // conflicting one, and the schema may force one), so when the typed add-name
+  // already has a type we restrict the picker to it — plus `nothing`, which is
+  // always offerable (clearing a field to explicit absence keeps no type). The
+  // type comes from the cached field catalog (which merges in schema types).
   async function repoForAdd() {
     return current?.repo ?? (await workspace.get('active_repo')) ?? null;
   }
   function setTypeLock(type) {
     if (type) {
-      if (typePicker.get() !== type) typePicker.set(type); // also swaps the widget
-      addTypeButton.disabled = true;
-      addTypeButton.title = `type fixed to "${type}" — field "${root.getElementById('add-name').value.trim()}" already exists`;
+      typePicker.setAllowed([type, 'nothing']);
+      if (typePicker.get() !== type && typePicker.get() !== 'nothing') typePicker.set(type);
+      addTypeButton.title = `field "${root.getElementById('add-name').value.trim()}" is ${type} — only ${type} or nothing`;
     } else {
-      addTypeButton.disabled = false;
+      typePicker.setAllowed(null); // a new field name: every type is offered
       addTypeButton.title = '';
     }
   }

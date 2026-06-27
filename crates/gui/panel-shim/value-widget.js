@@ -22,9 +22,14 @@ export const TYPES = [
   'tree_ref',
 ];
 
-/** Wires `button` as a type drop-down; returns {get, set}. */
+/** Wires `button` as a type drop-down; returns {get, set, setAllowed}. The menu
+ *  offers `setAllowed`'s list (default: every type). `nothing` is a special type
+ *  that stays offerable even when a field's type is otherwise fixed — callers
+ *  restricting the list (e.g. to an existing field's only valid type) should
+ *  keep `nothing` in it so a value can always be cleared to explicit absence. */
 export function createTypePicker(button, initial = 'string', onChange = () => {}) {
   let current = initial;
+  let allowed = TYPES;
   const render = () => {
     button.textContent = `${current} ▾`;
   };
@@ -33,7 +38,7 @@ export function createTypePicker(button, initial = 'string', onChange = () => {}
   button.addEventListener('click', () => {
     const rect = button.getBoundingClientRect();
     void showMenu(
-      TYPES.map((type) => ({
+      allowed.map((type) => ({
         label: type,
         action: () => {
           current = type;
@@ -52,6 +57,10 @@ export function createTypePicker(button, initial = 'string', onChange = () => {}
       current = type;
       render();
       onChange(type);
+    },
+    /** Restricts the offered types; pass a falsy/empty list to offer them all. */
+    setAllowed: (list) => {
+      allowed = list && list.length ? list.filter((t) => TYPES.includes(t)) : TYPES;
     },
   };
 }

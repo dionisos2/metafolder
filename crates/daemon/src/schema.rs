@@ -98,6 +98,39 @@ impl CompiledSchema {
     pub fn constrained_fields(&self) -> Vec<String> {
         self.by_field.keys().cloned().collect()
     }
+
+    /// Field names the schema declares with an explicit value type (the first
+    /// such constraint per field), as `(field, value_type)`. Feeds the field
+    /// catalog so a schema-declared field (e.g. `path: tree_ref`) is listed and
+    /// given priority even before any data carries it. `targets` are ignored:
+    /// the declared type is a repo-wide property of the field name.
+    pub fn declared_types(&self) -> Vec<(String, String)> {
+        self.by_field
+            .iter()
+            .filter_map(|(field, constraints)| {
+                constraints.iter().find_map(|c| c.value_type.clone()).map(|t| (field.clone(), t))
+            })
+            .collect()
+    }
+}
+
+/// Merges the data-derived field catalog (the index's `field_catalog`) with the
+/// schema's declared field types. The schema takes priority on a type conflict
+/// (a field whose existing data type differs from its declared type — possible
+/// for data predating the constraint, which the daemon never blocks; spec-schema
+/// "delta validation"), and schema-only fields (declared but not yet present in
+/// data) are added. The `type_filter` is applied *after* the merge, so a
+/// schema-only field of that type is included. Result ordered by name.
+pub fn merge_field_catalog(
+    data: Vec<(String, String)>,
+    schema_decls: Vec<(String, String)>,
+    type_filter: Option<&str>,
+) -> Vec<(String, String)> {
+    let mut map: std::collections::BTreeMap<String, String> = data.into_iter().collect();
+    for (field, ty) in schema_decls {
+        map.insert(field, ty); // schema wins on conflict
+    }
+    map.into_iter().filter(|(_, ty)| type_filter.map_or(true, |w| w == ty)).collect()
 }
 
 /// Parses and validates a schema document. Error messages identify the
@@ -319,4 +352,63 @@ pub fn violation_error(violations: Vec<Violation>) -> ApiError {
     let serialized =
         violations.iter().map(|v| serde_json::to_value(v).expect("violation")).collect();
     ApiError::bad_request("schema constraint violation").with_violations(serialized)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
+        items.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn merge_adds_schema_only_fields_and_gives_schema_priority() {
+        let data = pairs(&[("a", "string"), ("shared", "string")]);
+        let schema = pairs(&[("shared", "int"), ("b", "tree_ref")]);
+        // `b` is added (schema-only), `shared` takes the schema type (priority),
+        // `a` is kept; ordered by name.
+        assert_eq!(
+            merge_field_catalog(data, schema, None),
+            pairs(&[("a", "string"), ("b", "tree_ref"), ("shared", "int")])
+        );
+    }
+
+    #[test]
+    fn merge_filters_by_type_after_the_merge() {
+        // A schema-only field of the wanted type survives the filter; a data
+        // field whose type the schema overrode is filtered on the *schema* type.
+        let data = pairs(&[("a", "string"), ("shared", "string")]);
+        let schema = pairs(&[("shared", "int"), ("b", "int")]);
+        assert_eq!(
+            merge_field_catalog(data, schema, Some("int")),
+            pairs(&[("b", "int"), ("shared", "int")])
+        );
+        assert_eq!(
+            merge_field_catalog(pairs(&[("a", "string")]), pairs(&[("shared", "int")]), Some("string")),
+            pairs(&[("a", "string")])
+        );
+    }
+
+    #[test]
+    fn declared_types_picks_the_first_typed_constraint_per_field() {
+        let schema = parse(
+            &serde_json::json!({
+                "version": 1,
+                "groups": [
+                    {"targets": "*", "constraints": [{"field": "rating", "type": "int"}]},
+                    {"targets": ["film"], "constraints": [
+                        {"field": "name", "type": "string", "min": 1},
+                        {"field": "untyped"}
+                    ]}
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let mut got = schema.declared_types();
+        got.sort();
+        // `untyped` (no `type`) contributes nothing.
+        assert_eq!(got, pairs(&[("name", "string"), ("rating", "int")]));
+    }
 }

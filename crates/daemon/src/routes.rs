@@ -207,9 +207,12 @@ struct ListFieldsParams {
 }
 
 /// `GET /repos/:repo/fields[?type=<value_type>]`: the distinct field names
-/// present on the repository's metarecords, each with its value type. With
-/// `?type=`, only that value type is returned (e.g. `tree_ref` to populate a
-/// TreeRef-field picker). `Nothing` rows are excluded. Response is a JSON array
+/// known to the repository, each with its value type — the data-derived catalog
+/// (field names present on metarecords, `Nothing` excluded) merged with the
+/// schema's declared field types (schema-priority on conflict; schema-only
+/// fields, e.g. `path: tree_ref` declared but not yet carried, are included).
+/// With `?type=`, only that value type is returned (e.g. `tree_ref` to populate
+/// a picker), applied after the merge. Response is a JSON array
 /// `[{"name": ..., "type": ...}, ...]` ordered by name.
 async fn list_fields(
     State(state): State<Arc<AppState>>,
@@ -218,18 +221,30 @@ async fn list_fields(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        // Served from the in-memory index (built at load, refreshed to HEAD) —
-        // the `present`/`types` maps already hold every distinct field name and
-        // its value type, so this needs no DB scan. Mirrors `run_query_filter`'s
-        // index acquisition (conn locked first, then the index).
+        // The data-derived catalog comes from the in-memory index (built at
+        // load, refreshed to HEAD) — its `present`/`types` maps already hold
+        // every distinct field name and value type, no DB scan. Mirrors
+        // `run_query_filter`'s index acquisition (conn first, then the index).
         let conn = repo_state.conn.lock_recover();
+        // Extract the schema's declared types into an owned Vec, releasing the
+        // schema lock before taking the index lock (never hold both).
+        let schema_decls = repo_state
+            .schema
+            .lock_recover()
+            .as_ref()
+            .map(|s| s.declared_types())
+            .unwrap_or_default();
         let mut index_guard = repo_state.index.lock_recover();
         match index_guard.as_mut() {
             Some(index) => index.refresh(&conn, repo_uuid)?,
             None => *index_guard = Some(crate::index::RepoIndex::build(&conn, repo_uuid)?),
         }
-        let index = index_guard.as_ref().expect("index built above");
-        let names = index.field_catalog(params.type_filter.as_deref());
+        let data = index_guard.as_ref().expect("index built above").field_catalog(None);
+        drop(index_guard);
+        // Merge in the schema (schema-priority, schema-only fields added), then
+        // apply the `?type=` filter (so a schema-only field of that type shows).
+        let names =
+            crate::schema::merge_field_catalog(data, schema_decls, params.type_filter.as_deref());
         let out: Vec<serde_json::Value> =
             names.into_iter().map(|(name, ty)| json!({"name": name, "type": ty})).collect();
         Ok(Json(serde_json::Value::Array(out)))

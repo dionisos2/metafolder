@@ -105,6 +105,45 @@ async fn test_schema_loads_and_is_returned() {
 }
 
 #[tokio::test]
+async fn test_field_catalog_includes_schema_declared_fields() {
+    // The schema declares `rating: int` and `name: string`; no metarecord carries
+    // them yet. They must still appear in GET /fields (schema-priority merge),
+    // alongside a purely data-derived field.
+    let (app, repo, root) = setup_with_schema("catalog", film_schema()).await;
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": [{"name": "tag", "value": {"type": "string", "value": "x"}}]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let pairs: Vec<(String, String)> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| (e["name"].as_str().unwrap().to_string(), e["type"].as_str().unwrap().to_string()))
+        .collect();
+    assert!(pairs.contains(&("rating".into(), "int".into())), "schema-only int field: {pairs:?}");
+    assert!(pairs.contains(&("name".into(), "string".into())), "schema-only string field: {pairs:?}");
+    assert!(pairs.contains(&("tag".into(), "string".into())), "data field: {pairs:?}");
+
+    // The `?type=` filter is applied after the merge, so a schema-only field of
+    // that type survives it.
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/fields?type=int"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> = body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"rating"), "schema-only int after filter: {names:?}");
+    assert!(body.as_array().unwrap().iter().all(|e| e["type"] == "int"), "{body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_schema_with_default_loads_and_is_returned() {
     // A constraint may carry a `default` value (used by client templates); it
     // must load and be returned verbatim by GET /schema.
