@@ -58,6 +58,12 @@ struct RawConstraint {
     #[serde(default)]
     #[allow(dead_code)]
     description: Option<String>,
+    /// Optional default value for client templates (returned verbatim by
+    /// `GET /schema`; type-checked against `type` at parse time). Not used by
+    /// validation, so it is not kept in the compiled form.
+    #[serde(default)]
+    #[allow(dead_code)]
+    default: Option<Value>,
 }
 
 /// A parsed and validated schema, indexed by field name so that validation
@@ -123,6 +129,16 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
             if let Some(t) = &constraint.value_type {
                 if !VALUE_TYPES.contains(&t.as_str()) {
                     return Err(format!("{at}: unknown value type '{t}'"));
+                }
+                // A default value (when not the explicit Nothing absence) must
+                // match the declared type.
+                if let Some(default) = &constraint.default {
+                    let dt = value_type_name(default);
+                    if default != &Value::Nothing && dt != t {
+                        return Err(format!(
+                            "{at}: default value type '{dt}' does not match declared type '{t}'"
+                        ));
+                    }
                 }
             }
             if let Some(max) = constraint.max {

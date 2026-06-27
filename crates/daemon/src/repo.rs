@@ -124,6 +124,20 @@ pub fn init_repository(
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 
+/// Copies the shipped default schema `source` into `<metafolder_dir>/schema.json`
+/// when it exists. Best-effort convenience seeding (spec-schema): a missing
+/// source is silently ignored (schemas are optional) and a copy failure is
+/// logged but never fails repo init.
+pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
+    if !source.exists() {
+        return;
+    }
+    let dest = metafolder_dir.join("schema.json");
+    if let Err(e) = std::fs::copy(source, &dest) {
+        eprintln!("warning: failed to seed default schema from {source:?} into {dest:?}: {e}");
+    }
+}
+
 /// Creates the filesystem root metarecord: `mfr_path` root TreeRef, directory
 /// type, tracking disabled (opt-in), default ignore patterns.
 fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {

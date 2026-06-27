@@ -105,6 +105,27 @@ async fn test_schema_loads_and_is_returned() {
 }
 
 #[tokio::test]
+async fn test_schema_with_default_loads_and_is_returned() {
+    // A constraint may carry a `default` value (used by client templates); it
+    // must load and be returned verbatim by GET /schema.
+    let schema = json!({
+        "version": 1,
+        "groups": [
+            {"targets": ["tag"], "constraints": [
+                {"field": "name", "type": "string", "min": 1, "max": 1},
+                {"field": "color", "type": "string",
+                 "default": {"type": "string", "value": "#888888"}}
+            ]}
+        ]
+    });
+    let (app, repo, root) = setup_with_schema("default", schema.clone()).await;
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/schema"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, schema);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_repo_without_schema_returns_empty_schema() {
     let app = app();
     let root = std::env::temp_dir().join(format!("metafolder_sch_none_{}", Uuid::new_v4()));
@@ -144,6 +165,14 @@ async fn test_invalid_schema_makes_load_fail() {
             json!({"version": 1, "groups": [
                 {"targets": [], "constraints": [{"field": "x"}]}]}),
             "targets",
+        ),
+        (
+            "default type mismatch",
+            json!({"version": 1, "groups": [
+                {"targets": "*", "constraints": [
+                    {"field": "x", "type": "int",
+                     "default": {"type": "string", "value": "nope"}}]}]}),
+            "default",
         ),
     ] {
         let root = std::env::temp_dir().join(format!("metafolder_sch_bad_{}", Uuid::new_v4()));

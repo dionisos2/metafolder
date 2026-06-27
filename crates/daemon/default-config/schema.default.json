@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "groups": [
+    {
+      "targets": ["tag"],
+      "constraints": [
+        { "field": "name", "type": "string", "min": 1, "max": 1, "description": "Tag label (the displayed text)." },
+        { "field": "color", "type": "string", "default": { "type": "string", "value": "#888888" }, "description": "Optional CSS color used to render the tag." }
+      ]
+    },
+    {
+      "targets": ["note"],
+      "constraints": [
+        { "field": "title", "type": "string", "min": 1, "max": 1, "description": "Short note title." },
+        { "field": "body", "type": "string", "default": { "type": "string", "value": "" }, "description": "Note contents." },
+        { "field": "tag", "type": "ref", "description": "Reference to a 'tag' metarecord (repeatable)." }
+      ]
+    },
+    {
+      "targets": ["bookmark"],
+      "constraints": [
+        { "field": "title", "type": "string", "min": 1, "max": 1, "description": "Bookmark title." },
+        { "field": "url", "type": "string", "min": 1, "max": 1, "description": "Bookmarked URL." },
+        { "field": "tag", "type": "ref", "description": "Reference to a 'tag' metarecord (repeatable)." }
+      ]
+    }
+  ]
+}

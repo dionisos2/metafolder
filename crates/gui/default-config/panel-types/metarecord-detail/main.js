@@ -2,8 +2,10 @@
 // (spec-gui "metarecord-detail panel type").
 
 import { el, formatValue, valueEl } from '/__ui.js';
+import { showMenu } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createTypePicker, parseRawValue, widgetFor } from '/__value-widget.js';
+import { schemaTypes, templateFields } from '/__schema-template.js';
 import { createAnnotator } from './annotations.js';
 
 export async function mount(root, metafolder) {
@@ -14,6 +16,8 @@ export async function mount(root, metafolder) {
   let editingField = null; // field id being edited, or null
   let newMetarecordMode = false;
   let stagedFields = []; // new-metarecord mode: [{name, value}]
+  let editingStaged = null; // staged-field index being edited, or null
+  let schemaCache = { repo: null, schema: null }; // memoized GET /schema
 
   const placeholder = root.getElementById('placeholder');
   const content = root.getElementById('content');
@@ -149,26 +153,73 @@ export async function mount(root, metafolder) {
   }
 
   function stagedRow(staged, index) {
-    return el(
-      'tr',
-      {},
-      nameCell(staged.name, staged.value.type),
-      el('td', { class: 'value' }, formatValue(staged.value)),
-      el(
-        'td',
-        { class: 'ops' },
+    const value = el('td', { class: 'value' });
+    const ops = el('td', { class: 'ops' });
+
+    if (editingStaged === index) {
+      // Inline editor: a type picker drives the value widget (the staged value
+      // lives only in memory until "Save new metarecord").
+      let widget = widgetFor(staged.value.type, staged.value.value);
+      const slot = el('span', {}, widget.element);
+      const typeButton = el('button', {});
+      createTypePicker(typeButton, staged.value.type, (type) => {
+        widget = widgetFor(type, undefined);
+        slot.replaceChildren(widget.element);
+      });
+      value.append(typeButton, ' ', slot);
+      ops.append(
+        el(
+          'button',
+          {
+            onclick: () => {
+              stagedFields[index] = { name: staged.name, value: widget.read() };
+              editingStaged = null;
+              render();
+            },
+          },
+          'OK',
+        ),
+        el(
+          'button',
+          {
+            onclick: () => {
+              editingStaged = null;
+              render();
+            },
+          },
+          'Cancel',
+        ),
+      );
+      queueMicrotask(
+        () => widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.(),
+      );
+    } else {
+      value.append(formatValue(staged.value));
+      ops.append(
+        el(
+          'button',
+          {
+            onclick: () => {
+              editingStaged = index;
+              render();
+            },
+          },
+          'Edit',
+        ),
         el(
           'button',
           {
             onclick: () => {
               stagedFields.splice(index, 1);
+              if (editingStaged === index) editingStaged = null;
               render();
             },
           },
           'Remove',
         ),
-      ),
-    );
+      );
+    }
+    return el('tr', {}, nameCell(staged.name, staged.value.type), value, ops);
   }
 
   // ── Operations ────────────────────────────────────────────────────────
@@ -278,11 +329,47 @@ export async function mount(root, metafolder) {
     }
   }
 
-  function startNewMetarecord() {
+  /** GET /schema for `repo`, memoized (null on error: treated as no schema). */
+  async function loadSchema(repo) {
+    if (schemaCache.repo === repo) return schemaCache.schema;
+    const schema = await daemon.call('GET', `/repos/${repo}/schema`).catch(() => null);
+    schemaCache = { repo, schema };
+    return schema;
+  }
+
+  /**
+   * Entry point for "New metarecord": when the schema declares types, offer a
+   * picker (each type + an empty option); picking a type pre-stages its fields.
+   * With no schema/types, falls straight through to a blank record.
+   */
+  async function createMetarecord() {
+    const repo = current?.repo ?? (await workspace.get('active_repo'));
+    if (!repo) {
+      startNewMetarecord(null);
+      return;
+    }
+    const schema = await loadSchema(repo);
+    const types = schemaTypes(schema);
+    if (types.length === 0) {
+      startNewMetarecord(null);
+      return;
+    }
+    const rect = root.getElementById('new-metarecord').getBoundingClientRect();
+    void showMenu(
+      [
+        { label: '(empty metarecord)', action: () => startNewMetarecord(null) },
+        ...types.map((type) => ({ label: type, action: () => startNewMetarecord(type, schema) })),
+      ],
+      { x: rect.left, y: rect.bottom },
+    );
+  }
+
+  function startNewMetarecord(type = null, schema = schemaCache.schema) {
     newMetarecordMode = true;
-    stagedFields = [];
+    stagedFields = type ? templateFields(schema, type) : [];
     metarecord = null;
     editingField = null;
+    editingStaged = null;
     render();
   }
 
@@ -296,6 +383,7 @@ export async function mount(root, metafolder) {
         ...force,
       });
       newMetarecordMode = false;
+      editingStaged = null;
       statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, 5000);
       await workspace.set('selected_metarecord', { uuid: created.uuid, repo });
       await dirty();
@@ -371,7 +459,7 @@ export async function mount(root, metafolder) {
   commands.register('metarecord:create', {
     label: 'Create a new metarecord (metarecord-detail form)',
     reveal: true,
-    handler: startNewMetarecord,
+    handler: createMetarecord,
   });
   commands.register('metarecord:delete', {
     label: 'Delete the selected metarecord',
@@ -422,6 +510,7 @@ export async function mount(root, metafolder) {
     if (!confirmDiscardIfEditing()) return;
     newMetarecordMode = false;
     editingField = null;
+    editingStaged = null;
     current = value;
     void load();
   });

@@ -14,6 +14,9 @@ export default defineConfig({
       '/__value-widget.js': fileURLToPath(
         new URL('../panel-shim/value-widget.js', import.meta.url),
       ),
+      '/__schema-template.js': fileURLToPath(
+        new URL('../panel-shim/schema-template.js', import.meta.url),
+      ),
     },
   },
   clearScreen: false,

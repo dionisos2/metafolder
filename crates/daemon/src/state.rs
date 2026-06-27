@@ -181,6 +181,9 @@ pub struct RepoHandles {
 #[derive(Default)]
 pub struct AppState {
     repos: Mutex<HashMap<Uuid, Arc<RepoState>>>,
+    /// Shipped default schema copied into each new repo at init (spec-schema).
+    /// `None` (the default, used by tests) disables seeding.
+    seed_schema_path: Option<PathBuf>,
 }
 
 /// Public description of a loaded repository (`GET /repos`).
@@ -201,6 +204,13 @@ impl AppState {
         Self::default()
     }
 
+    /// Configures the shipped default schema seeded into each new repo at init
+    /// (`<config>/daemon/schema.default.json`). `None` disables seeding.
+    pub fn with_seed_schema(mut self, path: Option<PathBuf>) -> Self {
+        self.seed_schema_path = path;
+        self
+    }
+
     /// Initialises a new repository and registers it as loaded.
     pub fn init_repo(
         &self,
@@ -211,6 +221,11 @@ impl AppState {
         let opened = repo::init_repository(root, metafolder, name)?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
+        // Seed the per-repo schema from the shipped default (best-effort),
+        // before activate() reads it.
+        if let Some(src) = self.seed_schema_path.as_deref() {
+            repo::seed_schema_file(&opened.metafolder_dir, src);
+        }
         let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
         // A fresh repository is tiny, so warm it synchronously (no progress bar).
         repo_state.warmup(&|_, _, _| {});

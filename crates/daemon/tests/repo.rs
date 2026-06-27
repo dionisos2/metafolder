@@ -6,12 +6,44 @@ use metafolder_core::metarecord::Value;
 use metafolder_daemon::config::RepoConfig;
 use metafolder_daemon::db;
 use metafolder_daemon::repo::{self, RepoLocator};
+use metafolder_daemon::state::AppState;
 use uuid::Uuid;
 
 fn temp_dir(prefix: &str) -> PathBuf {
     let path = std::env::temp_dir().join(format!("metafolder_{prefix}_{}", Uuid::new_v4()));
     std::fs::create_dir_all(&path).unwrap();
     path
+}
+
+#[test]
+fn test_init_seeds_default_schema_when_configured() {
+    // With a shipped default schema configured, init copies it into the new
+    // repo's .metafolder/schema.json so the repo starts with a live schema.
+    let root = temp_dir("seed");
+    let cfg = temp_dir("seed_cfg");
+    let src = cfg.join("schema.default.json");
+    let schema = r#"{"version":1,"groups":[{"targets":["tag"],"constraints":[{"field":"name","type":"string","min":1,"max":1}]}]}"#;
+    std::fs::write(&src, schema).unwrap();
+
+    let state = AppState::new().with_seed_schema(Some(src));
+    state.init_repo(&root, None, None).unwrap();
+
+    let copied = root.join(".metafolder/schema.json");
+    assert!(copied.exists(), "schema.json must be seeded");
+    assert_eq!(std::fs::read_to_string(&copied).unwrap(), schema);
+
+    std::fs::remove_dir_all(&root).unwrap();
+    std::fs::remove_dir_all(&cfg).unwrap();
+}
+
+#[test]
+fn test_init_without_seed_has_no_schema() {
+    // Without a configured default schema, init leaves the repo schema-less.
+    let root = temp_dir("noseed");
+    let state = AppState::new();
+    state.init_repo(&root, None, None).unwrap();
+    assert!(!root.join(".metafolder/schema.json").exists());
+    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

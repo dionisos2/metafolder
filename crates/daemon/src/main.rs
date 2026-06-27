@@ -36,7 +36,11 @@ async fn main() {
         None => Default::default(),
     };
 
-    let state = Arc::new(AppState::new());
+    // The shipped default schema seeded into each new repo at init. Resolved
+    // unconditionally; the copy is skipped at init time if the file is absent.
+    let seed_schema =
+        metafolder_core::config::crate_config_dir("daemon").map(|d| d.join("schema.default.json"));
+    let state = Arc::new(AppState::new().with_seed_schema(seed_schema));
 
     let startup_state = state.clone();
     let warnings = tokio::task::spawn_blocking(move || {
