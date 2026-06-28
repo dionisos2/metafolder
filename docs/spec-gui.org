@@ -288,7 +288,32 @@ Accepts:
   arguments stop matching any command name.
 - A shell command prefixed with =!= — executed as a subprocess; stdout/stderr
   goes to the =message= panel type and to the terminal from which the GUI was
-  launched.
+  launched. Running a =!= command switches the focused slot to the =message=
+  panel type so the output is visible, unless a =message= panel is already
+  visible in the workspace.
+
+*** Placeholders in =!= commands
+
+A =!= command line may reference the *selected metarecord*
+(=workspace.selected_metarecord=) through =%=-tokens, expanded *client-side*
+just before the command runs — so the GUI can pass a metarecord's identity to
+user scripts:
+
+| Token            | Expands to                                              |
+|------------------+---------------------------------------------------------|
+| =%u=             | the selected metarecord's UUID                          |
+| =%v=             | its =version=                                            |
+| =%<field>=       | the value of a single-valued scalar field               |
+| =%<field>:path=  | a =TreeRef= field resolved to its absolute path         |
+| =%%=             | a literal =%=                                            |
+
+=<field>= is a field name (=[A-Za-z_][A-Za-z0-9_]*=). A =%= not followed by
+=%= or a field name is left literal (e.g. =50% off=). Each substituted value
+is shell-quoted, so paths with spaces are safe. Substitution is *strict*: if a
+token cannot be resolved — nothing is selected, the field is absent,
+multi-valued, or empty, or a bare =%<field>= names a =TreeRef= (use
+=:path=) — the command is *not* run and the reason is posted to the status
+bar. Only =!= commands are expanded; named commands are not.
 
 ** Field editor
 
@@ -473,7 +498,9 @@ Behaviours:
   shell-style; =Up=/=Down= browse the suggestions, see [[*Command input]]).
 - Parameters follow the command name, separated by spaces.
 - =!shell-command= + =Enter= → runs in background; output goes to the
-  =message= panel type and the launching terminal.
+  =message= panel type and the launching terminal. The focused slot switches
+  to the =message= panel (unless already visible), and =%=-placeholders are
+  expanded from the selected metarecord first (see [[*Command input]]).
 - When a script calls =POST /gui/prompt=, the command input grabs the focus
   and shows the script-supplied prompt text.
 

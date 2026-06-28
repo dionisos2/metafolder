@@ -4,8 +4,9 @@
 
 import { setHelpCursor } from './cursor';
 import { invoke } from './ipc';
+import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
 import { focusedWs, store } from './store.svelte';
-import type { CommandDef } from './types';
+import type { CommandDef, LayoutView } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
 
@@ -162,6 +163,44 @@ export async function runShell(commandLine: string): Promise<void> {
   }
 }
 
+/** Whether running a `!` command should switch the focused slot to the
+ *  `message` panel: true unless some visible slot of `ws` already shows it
+ *  (which also avoids the "two visible slots, same type" rejection). */
+export function needsMessagePanel(layout: LayoutView, ws: string | null): boolean {
+  if (!ws) return false;
+  const showsMessage = (slot: LayoutView['left']) =>
+    slot.visible && slot.workspace_id === ws && slot.panel_type === 'message';
+  return !(showsMessage(layout.left) || showsMessage(layout.right));
+}
+
+/** Data sources for `%`-placeholder expansion, reading the selection from the
+ *  workspace var store and the metarecord/tree data through the daemon proxy. */
+function shellExpandDeps(ws: string | null): ExpandDeps {
+  const daemon = async (path: string) => {
+    const res = (await invoke('daemon_request', { method: 'GET', path, body: null })) as {
+      status: number;
+      body: unknown;
+    };
+    if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
+    return res.body;
+  };
+  return {
+    async selected() {
+      if (!ws) return null;
+      const value = await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' });
+      return value && typeof value === 'object' ? (value as { uuid: string; repo: string }) : null;
+    },
+    metarecord: (repo, uuid) =>
+      daemon(`/repos/${repo}/metarecords/${uuid}`) as Promise<{ version?: number; fields?: never[] }>,
+    async treePaths(repo, uuid, field) {
+      const body = (await daemon(
+        `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
+      )) as { paths?: string[] };
+      return body.paths ?? [];
+    },
+  };
+}
+
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
 export type DispatchResult = { ok: true } | { ok: false; error: string };
 
@@ -174,7 +213,18 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
   const parsed = parseInvocation(invocation);
   if (parsed === null) return { ok: true };
   if ('shell' in parsed) {
-    await runShell(parsed.shell);
+    const ws = focusedWs();
+    const expanded = await expandShellPlaceholders(parsed.shell, shellExpandDeps(ws));
+    if (!expanded.ok) {
+      await status(expanded.error);
+      return { ok: false, error: expanded.error };
+    }
+    // Surface the output: switch the focused slot to the message panel unless
+    // one is already visible in this workspace.
+    if (needsMessagePanel(store.layout, ws)) {
+      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+    }
+    await runShell(expanded.value);
     return { ok: true };
   }
 

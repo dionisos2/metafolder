@@ -6,11 +6,13 @@ import { describe, expect, test } from 'vitest';
 import {
   filterCommands,
   filterCompletions,
+  needsMessagePanel,
   parseInvocation,
   resolveSubmission,
   shortcutsFor,
   shouldLogCommand,
 } from '../src/lib/commands';
+import type { LayoutView } from '../src/lib/types';
 
 describe('parseInvocation', () => {
   test('plain command name', () => {
@@ -48,6 +50,46 @@ describe('parseInvocation', () => {
 
   test('extra whitespace is tolerated', () => {
     expect(parseInvocation('  tab:goto 3  ')).toEqual({ name: 'tab:goto', args: ['3'] });
+  });
+});
+
+describe('needsMessagePanel', () => {
+  const slot = (visible: boolean, workspace_id: string | null, panel_type: string | null) => ({
+    visible,
+    workspace_id,
+    panel_type,
+  });
+  const layout = (left: ReturnType<typeof slot>, right: ReturnType<typeof slot>): LayoutView =>
+    ({ left, right, focused: 'left' }) as LayoutView;
+
+  test('needed when no slot of the workspace shows message', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(false, null, null));
+    expect(needsMessagePanel(l, 'ws1')).toBe(true);
+  });
+
+  test('not needed when the focused slot already shows message', () => {
+    const l = layout(slot(true, 'ws1', 'message'), slot(false, null, null));
+    expect(needsMessagePanel(l, 'ws1')).toBe(false);
+  });
+
+  test('not needed when the other slot already shows message', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws1', 'message'));
+    expect(needsMessagePanel(l, 'ws1')).toBe(false);
+  });
+
+  test('a hidden message slot does not count', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(false, 'ws1', 'message'));
+    expect(needsMessagePanel(l, 'ws1')).toBe(true);
+  });
+
+  test('a message slot of another workspace does not count', () => {
+    const l = layout(slot(true, 'ws1', 'file'), slot(true, 'ws2', 'message'));
+    expect(needsMessagePanel(l, 'ws1')).toBe(true);
+  });
+
+  test('no focused workspace: never needed', () => {
+    const l = layout(slot(false, null, null), slot(false, null, null));
+    expect(needsMessagePanel(l, null)).toBe(false);
   });
 });
 
