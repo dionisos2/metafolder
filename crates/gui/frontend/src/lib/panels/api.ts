@@ -262,6 +262,22 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       grammarSource: () => invoke('grammar_source') as Promise<string>,
     },
 
+    // Value picker (spec-gui "Value picker"): open a linked picker workspace
+    // whose confirmed selection (a metarecord uuid) comes back as the
+    // `pick_result` workspace variable, matched by `token`. `callerWs` is
+    // injected so the result returns to this panel's own workspace.
+    pick: {
+      start: (spec: Record<string, unknown>) =>
+        invoke('pick_start', { spec: { ...spec, callerWs: ctx.wsId } }),
+    },
+
+    // Read-only GUI configuration a panel may need.
+    config: {
+      // Configured `ref` picker seed query for a field name, or null
+      // (config.toml `[picker-seeds]`).
+      pickerSeed: (field: string) => invoke('picker_seed', { field }) as Promise<string | null>,
+    },
+
     workspace: {
       get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
       set: (key: string, value: unknown) => invoke('ws_set_var', { wsId: ctx.wsId, key, value }),

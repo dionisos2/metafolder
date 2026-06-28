@@ -29,6 +29,8 @@ pub struct App {
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes (config.toml `[page-size]`).
     pub page_sizes: crate::config::PageSizes,
+    /// Per-field `ref` picker seed queries (config.toml `[picker-seeds]`).
+    pub picker_seeds: std::collections::HashMap<String, String>,
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
     pub input: Arc<crate::server::input_wait::InputWait>,
@@ -399,6 +401,30 @@ pub fn expand_query(app: AppHandle, text: String) -> Result<String, String> {
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
     metafolder_core::simplified::engine::expand_at(&app.grammar, &text, now_ms)
+}
+
+// ── Value picker (spec-gui "Value picker") ─────────────────────────────────
+
+#[tauri::command]
+pub fn pick_start(app: AppHandle, spec: crate::state::PickSpec) -> Result<String, String> {
+    app.gui.pick_start(spec)
+}
+
+#[tauri::command]
+pub fn pick_confirm(app: AppHandle) -> Result<(), String> {
+    app.gui.pick_confirm()
+}
+
+#[tauri::command]
+pub fn pick_cancel(app: AppHandle) -> Result<(), String> {
+    app.gui.pick_cancel()
+}
+
+/// The configured `ref` picker seed query for a field name (config.toml
+/// `[picker-seeds]`), or null when none is set (spec-gui "Picker seeds").
+#[tauri::command]
+pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
+    app.picker_seeds.get(&field).cloned()
 }
 
 // ── Scripting waits ──────────────────────────────────────────────────────

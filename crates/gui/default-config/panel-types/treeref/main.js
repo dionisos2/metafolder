@@ -261,6 +261,9 @@ export async function mount(root, metafolder) {
       return;
     }
     fieldSelect.disabled = false;
+    // A value picker (spec-gui "Value picker") can seed the field to explore.
+    const seedField = await workspace.get('treeref:field');
+    if (typeof seedField === 'string' && seedField) field = seedField;
     await loadFields();
     stack = [];
     await fetchChildren(true);

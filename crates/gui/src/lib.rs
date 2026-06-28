@@ -94,6 +94,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
         ("answer:send", "Resolve the pending script input wait", true),
+        ("pick:confirm", "Confirm the value picker's selection", true),
+        ("pick:cancel", "Cancel the value picker", true),
         // Help (spec-gui "Help"). `log=false`: the help-cursor drives these on
         // every click, which would otherwise flood the message log.
         ("help", "Open the help panel (optional topic)", false),
@@ -142,6 +144,7 @@ pub fn run(options: Options) {
     };
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
+    let picker_seeds = gui_config.picker_seeds.clone();
     let daemon_url = match options.daemon_port {
         Some(port) => format!("http://127.0.0.1:{port}"),
         None => gui_config.daemon_base_url(),
@@ -182,6 +185,7 @@ pub fn run(options: Options) {
                 grammar_source,
                 gui_port,
                 page_sizes: page_sizes.clone(),
+                picker_seeds: picker_seeds.clone(),
                 daemon: daemon.clone(),
                 input: input.clone(),
                 commands: command_wait.clone(),
@@ -323,6 +327,10 @@ pub fn run(options: Options) {
             reconcile::reconcile_run,
             undo::log_navigate,
             commands::answer_send,
+            commands::pick_start,
+            commands::pick_confirm,
+            commands::pick_cancel,
+            commands::picker_seed,
             commands::command_done,
             commands::bench_record,
             commands::prompt_resolve,

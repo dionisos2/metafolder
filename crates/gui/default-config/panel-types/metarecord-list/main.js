@@ -4,7 +4,7 @@
 import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
-import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL } from '/__value-widget.js';
+import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import {
   parseColumns,
   isSortable,
@@ -536,9 +536,15 @@ export async function mount(root, metafolder) {
     unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
   };
 
+  // Value picker (spec-gui "Value picker") for the bulk-set value widget.
+  const pickRunner = createPickRunner(metafolder);
+  const bulkPickOpts = {
+    pick: (valueType) => pickRunner.run({ field: bulkName.value.trim(), valueType }),
+  };
+
   /** The form's value widget follows the picked type. */
   function setBulkWidget(type) {
-    bulkWidget = widgetFor(type, undefined);
+    bulkWidget = widgetFor(type, undefined, bulkPickOpts);
     bulkValueSlot.replaceChildren(bulkWidget.element);
   }
   const bulkTypePicker = createTypePicker(

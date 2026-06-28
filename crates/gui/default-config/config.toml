@@ -20,3 +20,12 @@ gui-port = 7524
 metarecord-list = 100
 file = 150
 file-manager = 200
+
+# Value picker seeds (spec-gui "Value picker" / "Picker seeds"). When a form
+# opens a picker to fill a `ref` field, it can pre-filter the metarecord list
+# with a query seeded by the field's name (the daemon does not record what a
+# ref points to, so this cannot be inferred). Each value is written in the
+# metarecord-list query box's syntax. Example:
+# [picker-seeds]
+# tag    = 'type = "tag"'
+# author = 'type = "person"'

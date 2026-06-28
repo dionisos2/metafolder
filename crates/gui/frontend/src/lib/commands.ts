@@ -422,6 +422,17 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // Resolves a script's POST /gui/input wait.
       await invoke('answer_send', { value: args.join(' ') });
       return true;
+    case 'pick:confirm':
+    case 'pick:cancel':
+      // Hands the focused picker's selection back to the calling form (confirm)
+      // or abandons it (cancel). Best-effort: a stray press outside a picker is
+      // a silent no-op rather than an error toast.
+      try {
+        await invoke(name === 'pick:confirm' ? 'pick_confirm' : 'pick_cancel');
+      } catch {
+        /* no active value picker */
+      }
+      return true;
     case 'devtools:open':
       await invoke('open_devtools');
       return true;

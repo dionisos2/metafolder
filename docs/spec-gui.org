@@ -146,9 +146,54 @@ Standard variables:
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
 | =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
 | =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel (consumed by =ref-list=) |
+| =pick_request=     | =\{caller_ws, token\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws= (see [[*Value picker]]) |
+| =pick_result=      | =\{token, uuid\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid=) or cancels; the requesting form matches =token= and consumes it |
 
 Panel types may define their own variables using namespaced keys (e.g.
 =my-panel:current-node=).
+
+** Value picker
+
+Filling a =ref= or =tree_ref= field with a metarecord UUID by hand is
+impractical. Instead, a field-editing form opens a *picker*: a normal,
+throwaway workspace the user drives with the existing panels (lists, the
+=treeref= explorer, …), then confirms a selection that is handed back to the
+form. No new selection UI is duplicated into the forms; the picker reuses every
+panel, keybinding and future navigation improvement.
+
+The mechanism is a thin protocol over [[*Workspace variables][workspace
+variables]], with the only cross-workspace step performed in the GUI backend
+(panels can read/write only their own workspace's variables):
+
+1. *Start* — the calling panel invokes the =metafolder.pick.start(spec)= API
+   (structured arguments; not a string command). =spec= fully describes the
+   picker's initial state — the caller decides everything, because only it
+   knows what its picker is for: the active repo, a per-slot panel type with
+   seed variables, a workspace =name=, and a =prompt= shown in the picker's
+   status bar. The backend creates a workspace, stores
+   =pick_request = \{caller_ws, token\}= on it, seeds the requested panels into
+   *both* slots (the picker takes the whole window), focuses it, and posts the
+   prompt. The =token= is an opaque value the caller mints to match the result
+   to the exact widget that requested it.
+
+2. *Navigate* — the picker behaves like any workspace; highlighting an entry
+   publishes =selected_metarecord= as usual.
+
+3. *Confirm / cancel* — =pick:confirm= reads the focused picker's
+   =pick_request= and its current =selected_metarecord=, closes the picker,
+   refocuses =caller_ws=, and writes =pick_result = \{token, uuid\}= into it
+   (the single cross-workspace write). =pick:cancel= writes
+   =\{token, cancelled: true\}= instead. Closing a picker by hand is a cancel.
+
+The result is *always a metarecord UUID*. The form decides where it lands: for
+=ref= it is the value; for =tree_ref= it fills the =parent= slot, leaving the
+=name= for the user to type (e.g. picking =/document/test= (uuid =123=) for a
+new field =plop= yields =\{123, ""\}=, then the user types =plop= →
+=\{123, "plop"\}= → path =/document/test/plop=).
+
+Seeding is configurable per field name, see [[*Picker seeds]]. The calling
+panel reads the mapping through the API and folds it into =spec=, so the seed
+policy stays the caller's decision.
 
 ** Command
 
@@ -384,6 +429,27 @@ GUI API) remains functional.
 
 No authentication: the daemon is local-only and requires none.
 
+** Picker seeds
+
+=ref= value pickers (see [[*Value picker]]) benefit from a sensible starting
+query, but the daemon does not record what a =ref= field points to, so the seed
+cannot be derived automatically. It is configured per field name in
+=~/.config/metafolder/gui/config.toml=, in a =[picker-seeds]= table mapping a
+field name to a query string — written in the same syntax as the
+=metarecord-list= query box (simplified query text), since that is where the
+seed is injected:
+
+#+BEGIN_SRC toml
+[picker-seeds]
+tag    = 'type = "tag"'
+author = 'type = "person"'
+#+END_SRC
+
+The map is exposed to panels through =metafolder.config.pickerSeed(field)= so a
+calling form can fold the seed into its =pick.start= spec. A field with no
+entry yields =null= (the picker opens unfiltered). =tree_ref= pickers do not
+need a seed: the natural starting point is the field's own forest.
+
 ** Tab bar
 
 A row of tabs at the top of the window. Each tab represents one workspace.
@@ -564,6 +630,8 @@ Behaviours:
 | =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
+| =pick:confirm=            | Confirm the focused picker's selection, hand its UUID back to the calling form (see [[*Value picker]]) |
+| =pick:cancel=             | Cancel the focused picker, returning to the calling form with no value |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =metarecord:batch-set=         | Set a field on all =selected_metarecords=                         |
 | =file-manager:add=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
@@ -780,6 +848,43 @@ metafolder.workspace.onChange('selected_metarecord', ({ uuid, repo }) => { ... }
 Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
 =selected_metarecords=. Panel types may use namespaced custom keys (e.g.
 =my-panel:state=).
+
+**** =metafolder.pick=
+
+Opens a value picker (see [[*Value picker]]). =start(spec)= creates a linked
+picker workspace in the state =spec= describes and returns its id; the result
+arrives later as the =pick_result= workspace variable, which the caller matches
+by =token=.
+
+#+BEGIN_SRC js
+const token = String(++pickSeq)
+metafolder.workspace.onChange('pick_result', (result) => {
+  if (!result || result.token !== token) return
+  if (!result.cancelled) parentInput.value = result.uuid  // a metarecord uuid
+})
+await metafolder.pick.start({
+  token,
+  repo,
+  name: 'Pick: tag',
+  prompt: 'Select a value for “tag” — Enter to confirm, Esc to cancel',
+  panels: {
+    left:  { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } },
+    right: { type: 'metarecord-detail' },          // optional second slot
+  },
+})
+#+END_SRC
+
+**** =metafolder.config=
+
+Read-only access to GUI configuration the panel may need. =pickerSeed(field)=
+returns the configured seed query for a =ref= field name (=metarecord-list=
+query syntax), or =null= when none is set (see [[*Picker seeds]]). The caller
+folds it into the =pick.start= spec, keeping the seed policy on the calling
+side.
+
+#+BEGIN_SRC js
+const seed = (await metafolder.config.pickerSeed('tag')) ?? undefined
+#+END_SRC
 
 **** =metafolder.commands= and =metafolder.addKeybinding=
 

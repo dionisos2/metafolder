@@ -46,6 +46,10 @@ pub struct GuiConfig {
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes.
     pub page_size: PageSizes,
+    /// Per-field-name seed queries for `ref` value pickers (spec-gui "Picker
+    /// seeds"), read from the `[picker-seeds]` table: field name → query text
+    /// (in the `metarecord-list` query box's syntax, where the seed is injected).
+    pub picker_seeds: std::collections::HashMap<String, String>,
 }
 
 impl GuiConfig {
@@ -57,7 +61,12 @@ impl GuiConfig {
 
 impl Default for GuiConfig {
     fn default() -> Self {
-        GuiConfig { daemon_port: 7523, gui_port: 7524, page_size: PageSizes::default() }
+        GuiConfig {
+            daemon_port: 7523,
+            gui_port: 7524,
+            page_size: PageSizes::default(),
+            picker_seeds: std::collections::HashMap::new(),
+        }
     }
 }
 
@@ -272,6 +281,20 @@ mod tests {
         assert_eq!(json["metarecord-list"], 100);
         assert_eq!(json["file"], 150);
         assert_eq!(json["file-manager"], 200);
+    }
+
+    #[test]
+    fn test_picker_seeds_default_empty_and_parse() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert!(empty.picker_seeds.is_empty());
+
+        let parsed: GuiConfig = toml::from_str(
+            "[picker-seeds]\ntag = 'type = \"tag\"'\nauthor = 'type = \"person\"'\n",
+        )
+        .unwrap();
+        assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("type = \"tag\""));
+        assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("type = \"person\""));
+        assert_eq!(parsed.picker_seeds.get("missing"), None);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 import { el, formatValue, valueEl } from '/__ui.js';
 import { showMenu } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { createTypePicker, parseRawValue, widgetFor } from '/__value-widget.js';
+import { createTypePicker, parseRawValue, widgetFor, createPickRunner } from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
 import { createAnnotator } from './annotations.js';
 
@@ -30,9 +30,18 @@ export async function mount(root, metafolder) {
   let addWidget = null; // {element, read()} for the picked type
   let annotator = null; // rebuilt per load (metarecords change under us)
 
+  // Value picker (spec-gui "Value picker"): one runner per panel, shared by the
+  // add-field form and the inline editors. `pickOpts(nameOf)` builds the
+  // widget option that opens a picker seeded for the field being edited.
+  const pickRunner = createPickRunner(metafolder);
+  const pickOpts = (nameOf) => ({
+    pick: (valueType) => pickRunner.run({ field: nameOf(), valueType }),
+  });
+  const addPickOpts = pickOpts(() => root.getElementById('add-name').value.trim());
+
   /** The form's value widget follows the picked type. */
   function setAddWidget(type) {
-    addWidget = widgetFor(type, undefined);
+    addWidget = widgetFor(type, undefined, addPickOpts);
     addValueSlot.replaceChildren(addWidget.element);
   }
   const addTypeButton = root.getElementById('add-type');
@@ -163,11 +172,12 @@ export async function mount(root, metafolder) {
       // field can be given a type+value and a typed field cleared back to
       // `nothing`. The picker is restricted to the field's established type
       // (+ `nothing`) — the only types the daemon accepts for this name.
-      let widget = widgetFor(field.value.type, field.value.value);
+      const editPick = pickOpts(() => field.name);
+      let widget = widgetFor(field.value.type, field.value.value, editPick);
       const slot = el('span', {}, widget.element);
       const typeButton = el('button', {});
       const picker = createTypePicker(typeButton, field.value.type, (type) => {
-        widget = widgetFor(type, undefined);
+        widget = widgetFor(type, undefined, editPick);
         slot.replaceChildren(widget.element);
         focusWidget(widget);
       });
@@ -232,11 +242,12 @@ export async function mount(root, metafolder) {
     if (editingStaged === index) {
       // Inline editor: a type picker drives the value widget (the staged value
       // lives only in memory until "Save new metarecord").
-      let widget = widgetFor(staged.value.type, staged.value.value);
+      const stagedPick = pickOpts(() => staged.name);
+      let widget = widgetFor(staged.value.type, staged.value.value, stagedPick);
       const slot = el('span', {}, widget.element);
       const typeButton = el('button', {});
       createTypePicker(typeButton, staged.value.type, (type) => {
-        widget = widgetFor(type, undefined);
+        widget = widgetFor(type, undefined, stagedPick);
         slot.replaceChildren(widget.element);
       });
       value.append(typeButton, ' ', slot);

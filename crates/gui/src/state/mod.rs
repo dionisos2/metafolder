@@ -10,7 +10,8 @@ use metafolder_core::sync::MutexExt;
 use crate::events;
 use crate::notifier::FrontendNotifier;
 use layout::{LayoutView, Slot, SlotId, SlotPayload};
-use serde_json::{json, Value};
+use serde::Deserialize;
+use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{MessageEntry, Workspace, WorkspaceInfo};
@@ -182,6 +183,46 @@ impl Emit {
     const WORKSPACES: Emit = Emit { workspaces: true, layout: false };
     const LAYOUT: Emit = Emit { workspaces: false, layout: true };
     const BOTH: Emit = Emit { workspaces: true, layout: true };
+}
+
+/// One slot of a value picker's initial layout (spec-gui "Value picker"):
+/// a panel type plus the workspace variables to seed it with.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PickPanel {
+    #[serde(rename = "type")]
+    pub panel_type: String,
+    #[serde(default)]
+    pub vars: Map<String, Value>,
+}
+
+/// The picker's two-slot layout; the right slot is optional (a single-panel
+/// picker takes the focused slot alone, the other is hidden).
+#[derive(Debug, Clone, Deserialize)]
+pub struct PickPanels {
+    pub left: PickPanel,
+    #[serde(default)]
+    pub right: Option<PickPanel>,
+}
+
+/// Everything the calling form decides about its picker. The caller owns the
+/// whole initial state — only it knows what the picker is for (spec-gui
+/// "Value picker"). `caller_ws` and `token` form the return contract.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PickSpec {
+    /// Workspace the result is delivered back to (the form's own workspace).
+    pub caller_ws: String,
+    /// Opaque value echoed back in `pick_result`, matching the result to the
+    /// exact widget that requested it.
+    pub token: Value,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Status-bar prompt posted in the picker.
+    #[serde(default)]
+    pub prompt: Option<String>,
+    pub panels: PickPanels,
 }
 
 impl GuiState {
@@ -657,6 +698,141 @@ impl GuiState {
             json!({ "workspace_id": ws_id, "key": key, "value": value }),
         );
         Ok(())
+    }
+
+    // ── Value picker (spec-gui "Value picker") ───────────────────────────
+
+    /// `metafolder.pick.start` — creates a picker workspace in the state the
+    /// caller describes, marks it with `pick_request`, takes both slots,
+    /// focuses it and posts the prompt. Returns the picker workspace id.
+    pub fn pick_start(&self, spec: PickSpec) -> Result<String, String> {
+        let prompt = spec.prompt.clone();
+        let ws_id = self.mutate(|inner| {
+            // The caller must exist: the result has nowhere to go otherwise.
+            inner.workspace(&spec.caller_ws)?;
+            let ws_id = inner.new_workspace(spec.repo.clone());
+            {
+                let ws = inner.workspace_mut(&ws_id)?;
+                if let Some(name) = &spec.name {
+                    ws.name = name.clone();
+                }
+                ws.vars.insert(
+                    "pick_request".into(),
+                    json!({ "caller_ws": spec.caller_ws, "token": spec.token }),
+                );
+                // Seed each panel's variables and remember its slot panel type
+                // so `assign` restores them.
+                ws.last_panel.insert(SlotId::Left, spec.panels.left.panel_type.clone());
+                for (key, value) in &spec.panels.left.vars {
+                    ws.vars.insert(key.clone(), value.clone());
+                }
+                if let Some(right) = &spec.panels.right {
+                    ws.last_panel.insert(SlotId::Right, right.panel_type.clone());
+                    for (key, value) in &right.vars {
+                        ws.vars.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            // The picker takes the whole window, focused on the left slot.
+            inner.focused = SlotId::Left;
+            inner.assign(&ws_id, SlotId::Left)?;
+            inner.slot_mut(SlotId::Left).visible = true;
+            if spec.panels.right.is_some() {
+                inner.assign(&ws_id, SlotId::Right)?;
+                inner.slot_mut(SlotId::Right).visible = true;
+            } else {
+                // Single-panel picker: the other slot is hidden so the chosen
+                // panel is shown alone.
+                inner.slot_mut(SlotId::Right).visible = false;
+            }
+            Ok((ws_id, Emit::BOTH))
+        })?;
+
+        if let Some(prompt) = prompt {
+            // Best-effort: a missing prompt must not fail the pick.
+            let _ = self.post_status(&ws_id, &prompt, "info", None);
+        }
+        Ok(ws_id)
+    }
+
+    /// `pick:confirm` — hands the focused picker's `selected_metarecord` uuid
+    /// back to the calling workspace as `pick_result`, then closes the picker.
+    pub fn pick_confirm(&self) -> Result<(), String> {
+        self.finish_pick(true)
+    }
+
+    /// `pick:cancel` — closes the focused picker, returning to the caller with
+    /// `pick_result = {token, cancelled: true}` and no value.
+    pub fn pick_cancel(&self) -> Result<(), String> {
+        self.finish_pick(false)
+    }
+
+    /// Shared body of [`pick_confirm`](Self::pick_confirm) /
+    /// [`pick_cancel`](Self::pick_cancel): reads the focused picker's request
+    /// and selection, builds the result, closes the picker, refocuses the
+    /// caller, then delivers `pick_result`.
+    fn finish_pick(&self, confirm: bool) -> Result<(), String> {
+        // Read the picker's link + current selection before mutating.
+        let (picker_ws, caller_ws, token, selected) = {
+            let inner = self.lock();
+            let picker_ws = inner
+                .slot(inner.focused)
+                .workspace
+                .clone()
+                .ok_or("no focused workspace")?;
+            let ws = inner.workspace(&picker_ws)?;
+            let request = ws
+                .vars
+                .get("pick_request")
+                .filter(|v| !v.is_null())
+                .ok_or("the focused workspace is not a value picker")?;
+            let caller_ws = request["caller_ws"]
+                .as_str()
+                .ok_or("malformed pick_request")?
+                .to_string();
+            let token = request["token"].clone();
+            let selected = ws.vars.get("selected_metarecord").cloned().unwrap_or(Value::Null);
+            (picker_ws, caller_ws, token, selected)
+        };
+
+        // Build the result (a confirm needs a selected uuid).
+        let result = if confirm {
+            let uuid = selected
+                .get("uuid")
+                .and_then(Value::as_str)
+                .ok_or("no metarecord selected in the picker")?;
+            json!({ "token": token, "uuid": uuid })
+        } else {
+            json!({ "token": token, "cancelled": true })
+        };
+
+        // Close the picker and bring the caller back into focus.
+        self.mutate(|inner| {
+            // The caller may have been closed while picking: nowhere to deliver.
+            inner.workspace(&caller_ws)?;
+            if let Some(index) = inner.workspaces.iter().position(|w| w.id == picker_ws) {
+                inner.workspaces.remove(index);
+            }
+            inner.focused = SlotId::Left;
+            // Restore the caller wherever the picker was shown; the focused
+            // slot is always made visible.
+            for slot_id in [SlotId::Right, SlotId::Left] {
+                let shows_picker =
+                    inner.slot(slot_id).workspace.as_deref() == Some(picker_ws.as_str());
+                if slot_id == SlotId::Left {
+                    inner.assign(&caller_ws, slot_id)?;
+                    inner.slot_mut(slot_id).visible = true;
+                } else if shows_picker {
+                    let was_visible = inner.slot(slot_id).visible;
+                    inner.assign(&caller_ws, slot_id)?;
+                    inner.slot_mut(slot_id).visible = was_visible;
+                }
+            }
+            Ok(((), Emit::BOTH))
+        })?;
+
+        // Deliver the result (emits WORKSPACE_VAR_CHANGED for the caller).
+        self.set_var(&caller_ws, "pick_result", result)
     }
 
     // ── Status bar / message log ─────────────────────────────────────────
@@ -1199,6 +1375,127 @@ mod tests {
         let (_, state) = state();
         assert!(state.set_var("ws-99", "k", json!(1)).is_err());
         assert!(state.get_var("ws-99", "k").is_err());
+    }
+
+    // ── Value picker ─────────────────────────────────────────────────────
+
+    fn pick_spec(caller_ws: &str, with_right: bool) -> PickSpec {
+        let mut left_vars = Map::new();
+        left_vars.insert("metarecord-list:query".into(), json!("type = \"tag\""));
+        PickSpec {
+            caller_ws: caller_ws.to_string(),
+            token: json!(7),
+            repo: Some("repo-1".into()),
+            name: Some("Pick: tag".into()),
+            prompt: Some("Select a value".into()),
+            panels: PickPanels {
+                left: PickPanel { panel_type: "metarecord-list".into(), vars: left_vars },
+                right: with_right
+                    .then(|| PickPanel { panel_type: "metarecord-detail".into(), vars: Map::new() }),
+            },
+        }
+    }
+
+    #[test]
+    fn test_pick_start_creates_linked_picker_taking_both_slots() {
+        let (_, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1", true)).unwrap();
+        assert_eq!(picker, "ws-2");
+
+        // The picker is marked, linked back to the caller, and seeded.
+        assert_eq!(
+            state.get_var(&picker, "pick_request").unwrap(),
+            json!({ "caller_ws": "ws-1", "token": 7 })
+        );
+        assert_eq!(
+            state.get_var(&picker, "metarecord-list:query").unwrap(),
+            json!("type = \"tag\"")
+        );
+        assert_eq!(state.workspaces().iter().find(|w| w.id == picker).unwrap().name, "Pick: tag");
+
+        // It takes both slots, focused left, with the requested panel types.
+        let layout = state.layout();
+        assert_eq!(layout.focused, SlotId::Left);
+        assert!(layout.left.visible && layout.right.visible);
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(picker.as_str()));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(picker.as_str()));
+        assert_eq!(layout.left.panel_type.as_deref(), Some("metarecord-list"));
+        assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
+    }
+
+    #[test]
+    fn test_pick_start_single_panel_hides_the_other_slot() {
+        let (_, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1", false)).unwrap();
+        let layout = state.layout();
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(picker.as_str()));
+        assert!(layout.left.visible);
+        assert!(!layout.right.visible);
+    }
+
+    #[test]
+    fn test_pick_start_errors_when_caller_is_unknown() {
+        let (_, state) = state();
+        assert!(state.pick_start(pick_spec("ws-99", true)).is_err());
+        // No stray workspace created.
+        assert_eq!(state.workspaces().len(), 1);
+    }
+
+    #[test]
+    fn test_pick_confirm_delivers_uuid_and_closes_picker() {
+        let (notifier, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1", true)).unwrap();
+        state
+            .set_var(&picker, "selected_metarecord", json!({ "uuid": "abc", "repo": "repo-1" }))
+            .unwrap();
+        notifier.clear();
+
+        state.pick_confirm().unwrap();
+
+        // The picker is gone and the caller is focused again.
+        assert!(state.workspaces().iter().all(|w| w.id != picker));
+        assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
+        // The uuid is delivered to the caller, tagged with the token.
+        assert_eq!(
+            state.get_var("ws-1", "pick_result").unwrap(),
+            json!({ "token": 7, "uuid": "abc" })
+        );
+        let vars = notifier.payloads(events::WORKSPACE_VAR_CHANGED);
+        assert!(vars.iter().any(|p| p["workspace_id"] == "ws-1" && p["key"] == "pick_result"));
+    }
+
+    #[test]
+    fn test_pick_confirm_errors_without_a_selection() {
+        let (_, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1", true)).unwrap();
+        assert!(state.pick_confirm().is_err());
+        // The picker is preserved so the user can still choose.
+        assert!(state.workspaces().iter().any(|w| w.id == picker));
+    }
+
+    #[test]
+    fn test_pick_confirm_errors_when_focused_is_not_a_picker() {
+        let (_, state) = state();
+        // ws-1 has no pick_request.
+        assert!(state.pick_confirm().is_err());
+    }
+
+    #[test]
+    fn test_pick_cancel_delivers_cancelled_and_closes_picker() {
+        let (_, state) = state();
+        let picker = state.pick_start(pick_spec("ws-1", true)).unwrap();
+        state
+            .set_var(&picker, "selected_metarecord", json!({ "uuid": "abc", "repo": "repo-1" }))
+            .unwrap();
+
+        state.pick_cancel().unwrap();
+
+        assert!(state.workspaces().iter().all(|w| w.id != picker));
+        assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
+        assert_eq!(
+            state.get_var("ws-1", "pick_result").unwrap(),
+            json!({ "token": 7, "cancelled": true })
+        );
     }
 
     // ── Status bar and message log ───────────────────────────────────────

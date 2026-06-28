@@ -41,6 +41,12 @@
 "ctrl+z" = { command = "log:undo" }
 "ctrl+shift+z" = { command = "log:redo" }
 
+# Value picker (spec-gui "Value picker"): confirm/cancel the current pick.
+# Dedicated combos so normal Enter/Escape keep working in the picker's panels;
+# a stray press outside a picker is a silent no-op.
+"ctrl+enter" = { command = "pick:confirm" }
+"ctrl+escape" = { command = "pick:cancel" }
+
 # Panel slots. panel:split is available via the command input.
 "v" = { command = "panel:split-toggle" }
 "c" = { command = "panel:unsplit" }

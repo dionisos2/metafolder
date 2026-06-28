@@ -91,8 +91,77 @@ export function parseRawValue(type, raw) {
   return parser();
 }
 
-/** Builds an interactive input widget for a value; returns {element, read()}. */
-export function widgetFor(type, initial) {
+/**
+ * Drives the value picker (spec-gui "Value picker") for the field forms. One
+ * instance per panel; `run({field, valueType})` opens a linked picker workspace
+ * and resolves to the chosen metarecord uuid (or null on cancel). The picker
+ * reuses existing panels — `metarecord-list` (seeded with the field's
+ * configured query) for a `ref`, the `treeref` explorer for a `tree_ref` — so
+ * no selection UI is duplicated into the forms.
+ */
+export function createPickRunner(metafolder) {
+  const { workspace, config, pick } = metafolder;
+  const pending = new Map(); // token -> resolve
+  let seq = 0;
+  let wired = false;
+
+  function ensureWired() {
+    if (wired) return;
+    wired = true;
+    // A single listener fans every result out to the matching pending request.
+    workspace.onChange('pick_result', (result) => {
+      if (!result || result.token == null) return;
+      const resolve = pending.get(result.token);
+      if (!resolve) return;
+      pending.delete(result.token);
+      resolve(result.cancelled ? null : (result.uuid ?? null));
+    });
+  }
+
+  return {
+    async run({ field, valueType }) {
+      ensureWired();
+      const repo = (await workspace.get('active_repo')) ?? null;
+      const token = `pick-${++seq}`;
+      let panels;
+      if (valueType === 'tree_ref') {
+        // The parent is any forest node; open the explorer on the edited
+        // field's own forest as the natural starting point.
+        panels = { left: { type: 'treeref', vars: field ? { 'treeref:field': field } : {} } };
+      } else {
+        const seed = (field && (await config.pickerSeed(field))) || '';
+        panels = { left: { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } } };
+      }
+      const promise = new Promise((resolve) => pending.set(token, resolve));
+      await pick.start({
+        token,
+        repo,
+        name: `Pick: ${field || valueType}`,
+        prompt: `Select a metarecord for ${field ? `“${field}”` : `a ${valueType}`}` +
+          ' — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
+        panels,
+      });
+      return promise;
+    },
+  };
+}
+
+/** A "🔍 pick" button that fills `input` with the picked metarecord uuid. */
+function pickButton(input, pick, valueType, title) {
+  const button = el('button', { type: 'button', class: 'pick-btn', title }, '🔍');
+  button.addEventListener('click', async () => {
+    const uuid = await pick(valueType);
+    if (uuid) input.value = uuid;
+  });
+  return button;
+}
+
+/**
+ * Builds an interactive input widget for a value; returns {element, read()}.
+ * `opts.pick(valueType) -> Promise<uuid|null>` enables the value picker on
+ * `ref`/`refbase`/`tree_ref` widgets (fills the uuid / the tree parent).
+ */
+export function widgetFor(type, initial, opts = {}) {
   switch (type) {
     case 'int': {
       const input = el('input', { type: 'number', step: '1', value: initial ?? '' });
@@ -115,7 +184,10 @@ export function widgetFor(type, initial) {
     case 'ref':
     case 'refbase': {
       const input = el('input', { placeholder: '32-char hex uuid', value: initial ?? '' });
-      return { element: input, read: () => ({ type, value: input.value.trim() }) };
+      const read = () => ({ type, value: input.value.trim() });
+      if (!opts.pick) return { element: input, read };
+      const button = pickButton(input, opts.pick, type, 'Pick a metarecord');
+      return { element: el('span', {}, input, ' ', button), read };
     }
     case 'tree_ref': {
       const parent = el('input', {
@@ -123,13 +195,15 @@ export function widgetFor(type, initial) {
         value: initial?.parent ?? '',
       });
       const name = el('input', { placeholder: 'name', value: initial?.name ?? '' });
-      return {
-        element: el('span', {}, parent, ' / ', name),
-        read: () => ({
-          type,
-          value: { parent: parent.value.trim() || null, name: name.value.trim() },
-        }),
-      };
+      const read = () => ({
+        type,
+        value: { parent: parent.value.trim() || null, name: name.value.trim() },
+      });
+      // The picker fills the parent uuid; the user types the leaf name.
+      const parentSlot = opts.pick
+        ? el('span', {}, parent, ' ', pickButton(parent, opts.pick, type, 'Pick the parent metarecord'))
+        : parent;
+      return { element: el('span', {}, parentSlot, ' / ', name), read };
     }
     case 'externalref': {
       const repo = el('input', { placeholder: 'repo uuid', value: initial?.repo ?? '' });
