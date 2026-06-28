@@ -302,17 +302,24 @@ the GUI can pass their identity to user scripts:
 |------------------+------------------------------------------------------------------|
 | =%u=             | the selected metarecord's UUID (=workspace.selected_metarecord=) |
 | =%v=             | its =version=                                                    |
-| =%p=             | the selected absolute path (=workspace.selected_paths=)          |
+| =%p=             | the selected file's OS-absolute path (=workspace.selected_paths=) |
 | =%r=             | the active repository's UUID (=workspace.active_repo=; =%r:uuid=) |
 | =%r:name=        | the active repository's name                                     |
 | =%<field>=       | the value of a single-valued scalar field                        |
-| =%<field>:path=  | a =TreeRef= field resolved to its absolute path                  |
+| =%<field>:path=  | a =TreeRef= field resolved to its path *within that forest*       |
 | =%%=             | a literal =%=                                                    |
 
 =<field>= is a field name (=[A-Za-z_][A-Za-z0-9_]*=); =u=, =v=, =p=, =r= are
 reserved shorthands. A =%= not followed by =%= or a name is left literal
 (e.g. =50% off=). =%p= and =%r= read their workspace var directly, so they do
 not need a selected *metarecord* (=%p= works for an untracked file).
+
+=%p= and =%<field>:path= are *not* the same path. =%p= is the selected file's
+absolute path on disk (the panel's resolved =selected_paths=). =%<field>:path=
+is the position of a =TreeRef= field in *its own* forest, resolved through
+=…/resolve-tree= — for =mfr_path= that is the repository-relative tree path, not
+the on-disk path. To hand a script the file on disk, use =%p=; use
+=%<field>:path= to follow an arbitrary tree field.
 
 Each substituted value is shell-quoted, so paths with spaces are safe.
 Substitution is *strict*: if a token cannot be resolved — nothing is selected,

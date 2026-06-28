@@ -97,11 +97,11 @@
   <tbody>
     <tr><td><code>%u</code></td><td>the selected metarecord's UUID</td></tr>
     <tr><td><code>%v</code></td><td>its <code>version</code> number</td></tr>
-    <tr><td><code>%p</code></td><td>the selected absolute path (<code>selected_paths</code>)</td></tr>
+    <tr><td><code>%p</code></td><td>the selected file's OS-absolute path (<code>selected_paths</code>)</td></tr>
     <tr><td><code>%r</code></td><td>the active repository's UUID (also <code>%r:uuid</code>)</td></tr>
     <tr><td><code>%r:name</code></td><td>the active repository's name</td></tr>
     <tr><td><code>%&lt;field&gt;</code></td><td>the value of a single-valued scalar field</td></tr>
-    <tr><td><code>%&lt;field&gt;:path</code></td><td>a <code>TreeRef</code> field resolved to its absolute path</td></tr>
+    <tr><td><code>%&lt;field&gt;:path</code></td><td>a <code>TreeRef</code> field resolved to its path within that forest</td></tr>
     <tr><td><code>%%</code></td><td>a literal <code>%</code></td></tr>
   </tbody>
 </table>
@@ -149,6 +149,19 @@
     through verbatim, so a literal <code>%</code> in a command parameter is safe.
   </li>
 </ul>
+
+<h3><code>%p</code> vs <code>%mfr_path:path</code></h3>
+<p>
+  These are <strong>not</strong> the same path. <code>%p</code> is the selected
+  file's absolute path <em>on disk</em> (the panel's resolved
+  <code>selected_paths</code>) — this is what you usually want to hand a script.
+  <code>%&lt;field&gt;:path</code> is the position of a <code>TreeRef</code>
+  field in <em>its own</em> forest, resolved through the daemon's
+  <code>resolve-tree</code>; for <code>mfr_path</code> that is the
+  <strong>repository-relative</strong> tree path, not the on-disk path. Use
+  <code>%p</code> for the file, and <code>%&lt;field&gt;:path</code> to follow an
+  arbitrary tree field.
+</p>
 
 <h2>The message log</h2>
 <p>
