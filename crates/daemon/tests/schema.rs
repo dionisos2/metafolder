@@ -144,6 +144,67 @@ async fn test_field_catalog_includes_schema_declared_fields() {
 }
 
 #[tokio::test]
+async fn test_edit_nothing_field_in_place_under_min_max_one() {
+    // The GUI's in-place field edit: a `path` constrained to exactly one row
+    // (min=1, max=1) and currently `Nothing` must be settable to a real value by
+    // editing the row in place (PATCH /fields/:id) — delete+add is impossible
+    // here (delete would drop below min, add would exceed max). A `Nothing` row
+    // counts toward cardinality, so the row count never changes.
+    let schema = json!({
+        "version": 1,
+        "groups": [{"targets": ["tag"], "constraints": [
+            {"field": "path", "type": "tree_ref", "min": 1, "max": 1}
+        ]}]
+    });
+    let (app, repo, root) = setup_with_schema("editnothing", schema).await;
+
+    let (status, m) = create(
+        &app,
+        &repo,
+        json!([{"name": "mf_schema", "value": {"type": "string", "value": "tag"}},
+               {"name": "path", "value": {"type": "nothing"}}]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create with path=nothing must be valid: {m}");
+    let uuid = m["uuid"].as_str().unwrap();
+    let path_id = m["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "path")
+        .and_then(|f| f["id"].as_i64())
+        .expect("path row id");
+
+    // nothing → tree_ref, in place (id kept, still one row).
+    let (status, body) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/fields/{path_id}"),
+        Some(json!({"value": {"type": "tree_ref", "value": {"parent": null, "name": "music"}}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "edit nothing→tree_ref must be accepted: {body}");
+    let path = body["fields"].as_array().unwrap().iter().find(|f| f["name"] == "path").unwrap();
+    assert_eq!(path["value"]["type"], "tree_ref");
+    assert_eq!(path["id"].as_i64().unwrap(), path_id, "row id preserved");
+
+    // tree_ref → nothing, in place (still one row, min/max satisfied).
+    let (status, body) = request(
+        &app,
+        "PATCH",
+        &format!("/repos/{repo}/fields/{path_id}"),
+        Some(json!({"value": {"type": "nothing"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "edit tree_ref→nothing must be accepted: {body}");
+    let path = body["fields"].as_array().unwrap().iter().find(|f| f["name"] == "path").unwrap();
+    assert_eq!(path["value"]["type"], "nothing");
+
+    let _ = uuid;
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_schema_with_default_loads_and_is_returned() {
     // A constraint may carry a `default` value (used by client templates); it
     // must load and be returned verbatim by GET /schema.

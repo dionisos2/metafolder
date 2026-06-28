@@ -73,6 +73,35 @@ export async function mount(root, metafolder) {
   }
   root.getElementById('add-name').addEventListener('input', () => void syncTypeToName());
 
+  /** Focuses an editor widget's first input (or the element itself). */
+  function focusWidget(widget) {
+    widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.();
+  }
+
+  /**
+   * Restricts an in-place edit's type picker to the field's only acceptable
+   * types: its established type (from the schema-aware catalog) plus `nothing`,
+   * which is always allowed (clearing a field to explicit absence). With no
+   * established type (a `nothing`-only field without a schema constraint), every
+   * type is offered. When editing a `nothing` field that does have a known type,
+   * pre-selects it so its value inputs show immediately.
+   */
+  async function applyEditTypeLock(picker, name, currentType) {
+    const repo = current?.repo;
+    if (!repo) return;
+    let type = cache.fieldType(repo, name);
+    if (type === cache.REFRESH) {
+      await cache.fetchFields(repo);
+      type = cache.fieldType(repo, name);
+    }
+    if (typeof type === 'string') {
+      picker.setAllowed([type, 'nothing']);
+      if (currentType === 'nothing') picker.set(type); // swaps in the typed widget
+    } else {
+      picker.setAllowed(null);
+    }
+  }
+
   const isReserved = (name) => name.startsWith('mfr_');
   const dirty = () => workspace.set('metarecords:dirty', Date.now());
 
@@ -130,8 +159,20 @@ export async function mount(root, metafolder) {
     const ops = el('td', { class: 'ops' });
 
     if (editingField === field.id) {
-      const widget = widgetFor(field.value.type, field.value.value);
-      value.appendChild(widget.element);
+      // Inline editor: a type picker drives the value widget, so a `nothing`
+      // field can be given a type+value and a typed field cleared back to
+      // `nothing`. The picker is restricted to the field's established type
+      // (+ `nothing`) — the only types the daemon accepts for this name.
+      let widget = widgetFor(field.value.type, field.value.value);
+      const slot = el('span', {}, widget.element);
+      const typeButton = el('button', {});
+      const picker = createTypePicker(typeButton, field.value.type, (type) => {
+        widget = widgetFor(type, undefined);
+        slot.replaceChildren(widget.element);
+        focusWidget(widget);
+      });
+      void applyEditTypeLock(picker, field.name, field.value.type);
+      value.append(typeButton, ' ', slot);
       ops.append(
         el('button', { onclick: () => saveField(field, widget.read()) }, 'OK'),
         el(
@@ -145,9 +186,7 @@ export async function mount(root, metafolder) {
           'Cancel',
         ),
       );
-      queueMicrotask(
-        () => widget.element.querySelector?.('input')?.focus?.() ?? widget.element.focus?.(),
-      );
+      queueMicrotask(() => focusWidget(widget));
     } else {
       value.replaceChildren(valueEl(field.value, openRef));
       appendAnnotation(value, field);
@@ -155,7 +194,7 @@ export async function mount(root, metafolder) {
         el(
           'button',
           {
-            disabled: readonly || field.value.type === 'nothing',
+            disabled: readonly,
             onclick: () => {
               editingField = field.id;
               render();
