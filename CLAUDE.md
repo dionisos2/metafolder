@@ -404,6 +404,10 @@ GUI dev gotchas (learned the hard way):
   it by Tauri. Editing either of those needs `npm --prefix crates/gui/frontend
   run build` (for the shell) and a **GUI binary rebuild + restart**
   (`cargo build -p metafolder-gui`) to take effect — sync-config alone won't.
+  **Claude may run both `npm --prefix crates/gui/frontend run build` and
+  `cargo build -p metafolder-gui` itself** after editing the shell or
+  panel-shim sources (durable authorization — the user confirmed this); don't
+  hesitate to rebuild rather than just reporting that a rebuild is needed.
 - Panels run in the shell's realm: a panel exports `mount(root, metafolder)`
   where `root` is its Shadow DOM root — use `root.getElementById(...)`, not
   `document` (which is the shell). `body`-level CSS must target
