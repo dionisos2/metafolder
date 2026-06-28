@@ -4,7 +4,32 @@
 import { el } from '/__ui.js';
 
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, fs } = metafolder;
+  const { daemon, workspace, commands, statusBar, fs, messages } = metafolder;
+
+  // Schema↔data inconsistencies are surfaced once, when a repo is opened (the
+  // schema is read at repo load). Best-effort and capped: the daemon stops the
+  // scan at the cap, so a repo with hundreds of thousands of violations stays
+  // cheap, and we only show a heads-up — the schema takes priority either way.
+  const SCHEMA_CHECK_CAP = 20;
+  const announcedRepos = new Set();
+  async function announceSchemaConflicts(repoUuid) {
+    if (announcedRepos.has(repoUuid)) return;
+    announcedRepos.add(repoUuid);
+    try {
+      const res = await daemon.call('POST', `/repos/${repoUuid}/schema/check`, {
+        limit: SCHEMA_CHECK_CAP,
+      });
+      const n = res?.violations?.length ?? 0;
+      if (n === 0) return;
+      const count = res.truncated ? `${n}+` : `${n}`;
+      const noun = n === 1 && !res.truncated ? 'inconsistency' : 'inconsistencies';
+      messages.append(
+        `schema: ${count} ${noun} with existing data (schema takes priority; run a schema check for details)`,
+      );
+    } catch {
+      // best-effort: a missing/!schema or transient error is not worth surfacing
+    }
+  }
 
   const list = root.getElementById('repo-list');
   const empty = root.getElementById('empty');
@@ -242,6 +267,7 @@ export async function mount(root, metafolder) {
       } else {
         await commands.invoke(`tab:new ${repoUuid}`);
       }
+      void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {
       statusBar.message(`cannot open the repository: ${error.message ?? error}`, 8000);
     }

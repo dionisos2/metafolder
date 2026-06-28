@@ -1217,10 +1217,16 @@ async fn reload_schema(
 struct CheckBody {
     #[serde(default)]
     query: Option<MetaQuery>,
+    /// Cap on the number of violations returned. The scan stops once it is
+    /// exceeded (so a huge repo never builds an unusable response); the response
+    /// then carries `truncated: true`. `None` returns every violation.
+    #[serde(default)]
+    limit: Option<usize>,
 }
 
-/// Scans metarecords and reports every constraint violation (the schema file is
-/// never validated retroactively on edit).
+/// Scans metarecords and reports constraint violations (the schema file is never
+/// validated retroactively on edit). With `limit`, stops after that many and
+/// flags `truncated`.
 async fn check_schema(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -1239,18 +1245,31 @@ async fn check_schema(
         };
         let guard = repo_state.schema.lock_recover();
         let mut violations: Vec<serde_json::Value> = Vec::new();
+        let mut checked = 0usize;
         if let Some(schema) = guard.as_ref() {
             let fields = schema.constrained_fields();
-            for uuid in &uuids {
+            // Collect up to `limit + 1` so truncation is exact, then stop the
+            // scan — a repo with hundreds of thousands of violations stays cheap.
+            'scan: for uuid in &uuids {
+                checked += 1;
                 for violation in
                     crate::schema::validate_entry_fields(schema, &conn, *uuid, &fields)?
                 {
                     violations
                         .push(serde_json::to_value(&violation).expect("violation serialization"));
+                    if body.limit.is_some_and(|l| violations.len() > l) {
+                        break 'scan;
+                    }
                 }
             }
         }
-        Ok(Json(json!({"checked": uuids.len(), "violations": violations})))
+        let truncated = body.limit.is_some_and(|l| violations.len() > l);
+        if let Some(l) = body.limit {
+            violations.truncate(l);
+        }
+        // `checked` is the number of metarecords actually examined — fewer than
+        // the total when the scan stopped early at the cap.
+        Ok(Json(json!({"checked": checked, "violations": violations, "truncated": truncated})))
     })
     .await
 }

@@ -330,6 +330,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
     messages: {
       list: () => invoke('get_messages', { wsId: ctx.wsId }),
+      /** Appends a line to this workspace's persistent message log. */
+      append: (text: string) => invoke('append_message', { wsId: ctx.wsId, text }),
       onAppend(listener: (entry: unknown) => void) {
         messageListeners.add(listener);
       },

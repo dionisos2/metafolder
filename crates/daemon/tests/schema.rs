@@ -460,6 +460,50 @@ async fn test_schema_check_reports_existing_violations() {
 }
 
 #[tokio::test]
+async fn test_schema_check_limit_caps_violations() {
+    let (app, repo, root) = setup_with_schema("checklimit", film_schema()).await;
+    // Three films, each violating twice (two ratings → max_cardinality; no name
+    // → min_cardinality), so well over a small cap.
+    for _ in 0..3 {
+        let (_, m) = create(
+            &app,
+            &repo,
+            json!([{"name": "rating", "value": {"type": "int", "value": 1}},
+                   {"name": "rating", "value": {"type": "int", "value": 2}}]),
+        )
+        .await;
+        let uuid = m["uuid"].as_str().unwrap();
+        request(
+            &app,
+            "PUT",
+            &format!("/repos/{repo}/metarecords/{uuid}/fields/mf_schema"),
+            Some(json!({"value": {"type": "string", "value": "film"}})),
+        )
+        .await;
+    }
+
+    // Unbounded (no limit): every violation, not truncated.
+    let (_, full) =
+        request(&app, "POST", &format!("/repos/{repo}/schema/check"), Some(json!({}))).await;
+    assert!(full["violations"].as_array().unwrap().len() > 2, "expected several: {full}");
+    assert_eq!(full["truncated"], json!(false));
+
+    // Capped: at most `limit` violations returned, flagged truncated.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/schema/check"),
+        Some(json!({"limit": 2})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(body["violations"].as_array().unwrap().len(), 2, "capped: {body}");
+    assert_eq!(body["truncated"], json!(true));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_schema_reload() {
     let (app, repo, root) = setup_with_schema("reload", json!({"version": 1, "groups": []})).await;
 

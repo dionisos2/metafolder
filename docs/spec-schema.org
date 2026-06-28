@@ -271,16 +271,24 @@ never validates retroactively).
 
 Request body (optional):
 #+BEGIN_SRC json
-{"query": <Query>}
+{"query": <Query>, "limit": 20}
 #+END_SRC
 
 When =query= is given, only matching metarecords are checked; otherwise the whole
-repository (link metarecords excluded, as with normal queries).
+repository (link metarecords excluded, as with normal queries). =limit= caps the
+number of violations returned: the scan stops once it is exceeded (so a repo
+with hundreds of thousands of violations never builds an unusable response), and
+the response carries =truncated: true=; =checked= is then the number of
+metarecords actually examined, not the total. Omit =limit= to return every
+violation (=truncated= is then =false=). A capped check is the basis of the
+client's "schema↔data inconsistencies" heads-up (the schema takes priority in
+the field catalog; see [[*Field catalog and schema priority]] below).
 
 Response body:
 #+BEGIN_SRC json
 {
   "checked": 1542,
+  "truncated": false,
   "violations": [
     {
       "metarecord_uuid": "abc...",
@@ -306,6 +314,23 @@ constraint, =null= for a global constraint. =kind= is one of =type=,
 
 The check is read-only and runs on a consistent snapshot (single read
 transaction). It does not block writers.
+
+** Field catalog and schema priority
+
+=GET /repos/:repo_uuid/fields= (the distinct field names with their value type)
+merges two sources: the /data-derived/ catalog (field names actually present on
+metarecords) and the schema's /declared/ field types (every constraint carrying
+a =type=). A field the schema declares but no metarecord carries yet (e.g.
+=path: tree_ref=) is therefore listed, and on a type disagreement with
+pre-constraint data the /schema type wins/ — consistent with the non-blocking,
+schema-priority stance of delta validation (the data is never rewritten; the
+mismatch is a violation surfaced by the check endpoint, of =kind: type=).
+
+This priority is silent in the catalog itself. Clients surface the
+disagreements separately and non-blockingly via a /capped/ schema check (see
+=limit= above) — once, when a repository is opened (its schema is read at load)
+— rather than listing every inconsistency, which would be unusable on a large
+repository.
 
 * CLI
 
