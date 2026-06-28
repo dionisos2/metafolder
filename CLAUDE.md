@@ -394,6 +394,16 @@ GUI dev gotchas (learned the hard way):
   source, re-run `metafolder-sync-config`: it merges the shipped `default`
   branch into `main` (a real git 3-way merge, conflicts restore `main`
   untouched). The GUI itself never installs or upgrades anything at startup.
+  **Claude may run `metafolder-sync-config` itself** after editing
+  `crates/gui/default-config/` sources (durable authorization — it is the safe,
+  idempotent config-apply step; the user confirmed this).
+- What `metafolder-sync-config` does NOT cover: it only applies the
+  `default-config/` panel-type directories. The `panel-shim/*.js` helpers
+  (`value-widget.js`, `ui.js`, … served as `/__*.js`) are `include_str!`'d into
+  the GUI binary (`server/mod.rs`), and the Svelte `frontend/` is bundled into
+  it by Tauri. Editing either of those needs `npm --prefix crates/gui/frontend
+  run build` (for the shell) and a **GUI binary rebuild + restart**
+  (`cargo build -p metafolder-gui`) to take effect — sync-config alone won't.
 - Panels run in the shell's realm: a panel exports `mount(root, metafolder)`
   where `root` is its Shadow DOM root — use `root.getElementById(...)`, not
   `document` (which is the shell). `body`-level CSS must target
