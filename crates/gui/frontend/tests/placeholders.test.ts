@@ -1,7 +1,7 @@
 // Placeholder substitution for `!` shell commands (lib/placeholders.ts):
-// `%u`/`%v`/`%<field>`/`%<field>:path` expand to data from the selected
-// metarecord. Parsing and substitution are pure; the async orchestrator is
-// driven with stub deps. spec-gui "Command input".
+// `%u`/`%v`/`%p`/`%r`/`%<field>`/`%<field>:path` expand to data from the
+// selection and the active workspace. Parsing and substitution are pure; the
+// async orchestrator is driven with stub deps. spec-gui "Command input".
 
 import { describe, expect, test, vi } from 'vitest';
 import {
@@ -19,18 +19,27 @@ describe('parsePlaceholders', () => {
   test('uuid and version shorthands', () => {
     expect(parsePlaceholders('echo %u %v')).toEqual([
       { lit: 'echo ' },
-      { ph: { name: 'u', path: false } },
+      { ph: { name: 'u', mod: null } },
       { lit: ' ' },
-      { ph: { name: 'v', path: false } },
+      { ph: { name: 'v', mod: null } },
     ]);
   });
 
   test('field value and field path', () => {
     expect(parsePlaceholders('open %mfr_path:path then %tag')).toEqual([
       { lit: 'open ' },
-      { ph: { name: 'mfr_path', path: true } },
+      { ph: { name: 'mfr_path', mod: 'path' } },
       { lit: ' then ' },
-      { ph: { name: 'tag', path: false } },
+      { ph: { name: 'tag', mod: null } },
+    ]);
+  });
+
+  test('repo name modifier', () => {
+    expect(parsePlaceholders('cd %p in %r:name')).toEqual([
+      { lit: 'cd ' },
+      { ph: { name: 'p', mod: null } },
+      { lit: ' in ' },
+      { ph: { name: 'r', mod: 'name' } },
     ]);
   });
 
@@ -39,7 +48,7 @@ describe('parsePlaceholders', () => {
       { lit: '100' },
       { lit: '%' },
       { lit: ' done ' },
-      { ph: { name: 'u', path: false } },
+      { ph: { name: 'u', mod: null } },
     ]);
   });
 
@@ -97,6 +106,9 @@ function deps(over: Partial<ExpandDeps> = {}): ExpandDeps {
       ],
     }),
     treePaths: async () => ['/music/a.txt'],
+    selectedPaths: async () => ['/music/a.txt'],
+    activeRepo: async () => 'repo-1',
+    repoName: async () => 'music',
     ...over,
   };
 }
@@ -167,5 +179,67 @@ describe('expandShellPlaceholders', () => {
     const out = await expandShellPlaceholders('echo %mfr_path', deps());
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.error).toMatch(/:path/);
+  });
+
+  // ── %p (selected path) ───────────────────────────────────────────────
+
+  test('expands %p from selected_paths', async () => {
+    const out = await expandShellPlaceholders('cat %p', deps());
+    expect(out).toEqual({ ok: true, value: "cat '/music/a.txt'" });
+  });
+
+  test('%p works without a selected metarecord (untracked file)', async () => {
+    const out = await expandShellPlaceholders(
+      'cat %p',
+      deps({ selected: async () => null, selectedPaths: async () => ['/a b.txt'] }),
+    );
+    expect(out).toEqual({ ok: true, value: "cat '/a b.txt'" });
+  });
+
+  test('%p aborts when there is no selected path', async () => {
+    const out = await expandShellPlaceholders('cat %p', deps({ selectedPaths: async () => [] }));
+    expect(out.ok).toBe(false);
+  });
+
+  test('%p aborts when several paths are selected', async () => {
+    const out = await expandShellPlaceholders(
+      'cat %p',
+      deps({ selectedPaths: async () => ['/a', '/b'] }),
+    );
+    expect(out.ok).toBe(false);
+  });
+
+  // ── %r (active repo) ─────────────────────────────────────────────────
+
+  test('expands %r to the active repo uuid', async () => {
+    const out = await expandShellPlaceholders('echo %r', deps());
+    expect(out).toEqual({ ok: true, value: "echo 'repo-1'" });
+  });
+
+  test('expands %r:name to the active repo name', async () => {
+    const repoName = vi.fn(async () => 'music');
+    const out = await expandShellPlaceholders('echo %r:name', deps({ repoName }));
+    expect(out).toEqual({ ok: true, value: "echo 'music'" });
+    expect(repoName).toHaveBeenCalledWith('repo-1');
+  });
+
+  test('%r:uuid is the explicit uuid form', async () => {
+    const out = await expandShellPlaceholders('echo %r:uuid', deps());
+    expect(out).toEqual({ ok: true, value: "echo 'repo-1'" });
+  });
+
+  test('%r works without a selected metarecord', async () => {
+    const out = await expandShellPlaceholders('echo %r', deps({ selected: async () => null }));
+    expect(out).toEqual({ ok: true, value: "echo 'repo-1'" });
+  });
+
+  test('%r aborts when there is no active repo', async () => {
+    const out = await expandShellPlaceholders('echo %r', deps({ activeRepo: async () => null }));
+    expect(out.ok).toBe(false);
+  });
+
+  test('an unknown modifier aborts', async () => {
+    const out = await expandShellPlaceholders('echo %r:bogus', deps());
+    expect(out.ok).toBe(false);
   });
 });

@@ -294,26 +294,32 @@ Accepts:
 
 *** Placeholders in =!= commands
 
-A =!= command line may reference the *selected metarecord*
-(=workspace.selected_metarecord=) through =%=-tokens, expanded *client-side*
-just before the command runs — so the GUI can pass a metarecord's identity to
-user scripts:
+A =!= command line may reference the *selection* and the *active workspace*
+through =%=-tokens, expanded *client-side* just before the command runs — so
+the GUI can pass their identity to user scripts:
 
-| Token            | Expands to                                              |
-|------------------+---------------------------------------------------------|
-| =%u=             | the selected metarecord's UUID                          |
-| =%v=             | its =version=                                            |
-| =%<field>=       | the value of a single-valued scalar field               |
-| =%<field>:path=  | a =TreeRef= field resolved to its absolute path         |
-| =%%=             | a literal =%=                                            |
+| Token            | Expands to                                                       |
+|------------------+------------------------------------------------------------------|
+| =%u=             | the selected metarecord's UUID (=workspace.selected_metarecord=) |
+| =%v=             | its =version=                                                    |
+| =%p=             | the selected absolute path (=workspace.selected_paths=)          |
+| =%r=             | the active repository's UUID (=workspace.active_repo=; =%r:uuid=) |
+| =%r:name=        | the active repository's name                                     |
+| =%<field>=       | the value of a single-valued scalar field                        |
+| =%<field>:path=  | a =TreeRef= field resolved to its absolute path                  |
+| =%%=             | a literal =%=                                                    |
 
-=<field>= is a field name (=[A-Za-z_][A-Za-z0-9_]*=). A =%= not followed by
-=%= or a field name is left literal (e.g. =50% off=). Each substituted value
-is shell-quoted, so paths with spaces are safe. Substitution is *strict*: if a
-token cannot be resolved — nothing is selected, the field is absent,
-multi-valued, or empty, or a bare =%<field>= names a =TreeRef= (use
-=:path=) — the command is *not* run and the reason is posted to the status
-bar. Only =!= commands are expanded; named commands are not.
+=<field>= is a field name (=[A-Za-z_][A-Za-z0-9_]*=); =u=, =v=, =p=, =r= are
+reserved shorthands. A =%= not followed by =%= or a name is left literal
+(e.g. =50% off=). =%p= and =%r= read their workspace var directly, so they do
+not need a selected *metarecord* (=%p= works for an untracked file).
+
+Each substituted value is shell-quoted, so paths with spaces are safe.
+Substitution is *strict*: if a token cannot be resolved — nothing is selected,
+no active repository, no/several selected paths, the field is absent,
+multi-valued, or empty, or a bare =%<field>= names a =TreeRef= (use =:path=) —
+the command is *not* run and the reason is posted to the status bar. Only =!=
+commands are expanded; named commands are not.
 
 ** Field editor
 

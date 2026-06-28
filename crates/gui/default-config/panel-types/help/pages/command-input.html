@@ -97,6 +97,9 @@
   <tbody>
     <tr><td><code>%u</code></td><td>the selected metarecord's UUID</td></tr>
     <tr><td><code>%v</code></td><td>its <code>version</code> number</td></tr>
+    <tr><td><code>%p</code></td><td>the selected absolute path (<code>selected_paths</code>)</td></tr>
+    <tr><td><code>%r</code></td><td>the active repository's UUID (also <code>%r:uuid</code>)</td></tr>
+    <tr><td><code>%r:name</code></td><td>the active repository's name</td></tr>
     <tr><td><code>%&lt;field&gt;</code></td><td>the value of a single-valued scalar field</td></tr>
     <tr><td><code>%&lt;field&gt;:path</code></td><td>a <code>TreeRef</code> field resolved to its absolute path</td></tr>
     <tr><td><code>%%</code></td><td>a literal <code>%</code></td></tr>
@@ -104,7 +107,8 @@
 </table>
 <p>Examples (← is what actually runs):</p>
 <pre>!echo %u %v           ←  echo '8f3…a1' '7'
-!vlc %mfr_path:path   ←  vlc '/music/My Track.flac'
+!vlc %p               ←  vlc '/music/My Track.flac'
+!mf -u %r metarecord  ←  mf -u 'a1b2…' metarecord
 !grep %artist notes   ←  grep 'Miles Davis' notes
 !printf '100%%done'   ←  printf '100%done'</pre>
 
@@ -112,9 +116,15 @@
 <ul>
   <li>
     <code>&lt;field&gt;</code> is a field name: a letter or <code>_</code>
-    followed by letters, digits or <code>_</code>. A <code>%</code> that is
-    <em>not</em> followed by <code>%</code> or a field name is left untouched, so
+    followed by letters, digits or <code>_</code> (<code>u</code>, <code>v</code>,
+    <code>p</code>, <code>r</code> are reserved shorthands). A <code>%</code> that
+    is <em>not</em> followed by <code>%</code> or a name is left untouched, so
     <code>50% off</code> stays literal.
+  </li>
+  <li>
+    <code>%p</code> and <code>%r</code> read their workspace variable directly,
+    so they do not need a selected <em>metarecord</em> — <code>%p</code> works
+    for an untracked file picked in the file manager.
   </li>
   <li>
     <code>%&lt;field&gt;</code> works for <strong>scalar</strong> values only:
@@ -129,7 +139,8 @@
   <li>
     Substitution is <strong>strict</strong>: if a token cannot be resolved the
     command is <em>not run</em> and the reason is shown in the status bar. This
-    happens when nothing is selected, the field is absent, the field is
+    happens when nothing is selected, there is no active repository, there is no
+    (or more than one) selected path, the field is absent, the field is
     multi-valued, the field is empty (<code>Nothing</code>), or a bare
     <code>%&lt;field&gt;</code> names a <code>TreeRef</code> (use <code>:path</code>).
   </li>

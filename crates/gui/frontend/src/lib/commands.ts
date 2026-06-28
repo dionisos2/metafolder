@@ -184,10 +184,11 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
     return res.body;
   };
+  const wsVar = async (key: string) =>
+    ws ? await invoke('ws_get_var', { wsId: ws, key }) : null;
   return {
     async selected() {
-      if (!ws) return null;
-      const value = await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' });
+      const value = await wsVar('selected_metarecord');
       return value && typeof value === 'object' ? (value as { uuid: string; repo: string }) : null;
     },
     metarecord: (repo, uuid) =>
@@ -197,6 +198,19 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
         `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
       )) as { paths?: string[] };
       return body.paths ?? [];
+    },
+    async selectedPaths() {
+      const value = await wsVar('selected_paths');
+      return Array.isArray(value) ? value.filter((p): p is string => typeof p === 'string') : [];
+    },
+    async activeRepo() {
+      const value = await wsVar('active_repo');
+      return typeof value === 'string' ? value : null;
+    },
+    async repoName(repo) {
+      const body = (await daemon(`/repos/${repo}`)) as { name?: string };
+      if (!body.name) throw new Error(`repository ${repo} has no name`);
+      return body.name;
     },
   };
 }
