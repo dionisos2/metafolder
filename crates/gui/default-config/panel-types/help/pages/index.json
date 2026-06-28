@@ -5,9 +5,18 @@
     "file": "getting-started.html",
     "aliases": [
       "help", "start", "interface", "tab-bar", "tab", "panel", "panel-type",
-      "layout", "connection", "daemon", "command-input", "keybindings",
-      "status-bar", "task-bar", "config", "reconcile", "editing", "answer",
+      "layout", "connection", "daemon", "keybindings",
+      "status-bar", "task-bar", "config", "reconcile",
       "devtools", "quit"
+    ]
+  },
+  {
+    "id": "command-input",
+    "title": "Command input",
+    "file": "command-input.html",
+    "aliases": [
+      "command-input", "commands", "command", "shell", "bang", "placeholder",
+      "placeholders", "substitution", "substitutions", "editing", "answer"
     ]
   },
   {

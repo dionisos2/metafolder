@@ -1,0 +1,162 @@
+<h1>Command input</h1>
+<p>
+  A single-line text input, always visible just above the status bar. It is how
+  you run commands, type shell commands, and answer scripts. Press the configured
+  key (by default <code>:</code>, bound to <code>command-input:activate</code>) to
+  give it the keyboard focus; <strong>Escape</strong> removes the focus while
+  keeping whatever you had typed.
+</p>
+<p>
+  There is one command input; it targets the <strong>focused slot's
+  workspace</strong>. Its content (text and cursor position) is
+  <strong>per-workspace</strong>: switching the focused slot to another workspace
+  restores that workspace's own draft, so a half-typed command is never lost.
+</p>
+
+<h2>Two kinds of input</h2>
+<ul>
+  <li>
+    A <strong>command</strong> — a command name optionally followed by
+    space-separated parameters (for example <code>panel:set-type file</code>).
+  </li>
+  <li>
+    A <strong>shell command</strong> — anything prefixed with <code>!</code>
+    (for example <code>!ls -la</code>). See <em>Running shell commands</em> below.
+  </li>
+</ul>
+
+<h2>Commands and autocomplete</h2>
+<p>
+  As you type a command name a suggestion list appears, filtered
+  <strong>fuzzily</strong> and case-insensitively: the draft is split on
+  whitespace and the terms must appear in the command name in order — so
+  <code>con def</code> matches like the regular expression
+  <code>.*con.*def.*</code>. Names that start with the first term rank first.
+</p>
+<ul>
+  <li>The first (best) suggestion is always highlighted; <code>Up</code>/<code>Down</code> move the highlight.</li>
+  <li><code>Tab</code> writes the highlighted suggestion into the input <em>without</em> running it — handy before adding parameters.</li>
+  <li>
+    <code>Enter</code> always runs <em>exactly what is typed</em>, never the
+    highlighted suggestion (one is always highlighted, so running the selection
+    would be surprising).
+  </li>
+  <li>
+    Parameters follow the name, separated by spaces. Because spaces are also the
+    fuzzy term separators, the suggestion list simply empties once your typed
+    parameters stop matching any command name — that is expected. Wrap a
+    parameter in double quotes to keep its spaces, e.g.
+    <code>tab:rename "My music"</code>.
+  </li>
+</ul>
+
+<h2>Editing keys</h2>
+<p>While the input has focus, the <code>editing:*</code> commands act on it (default bindings shown):</p>
+<ul>
+  <li><code>Enter</code> — <code>editing:confirm</code> (run the command).</li>
+  <li><code>Escape</code> — <code>editing:unfocus</code> (keep the draft, drop focus).</li>
+  <li><code>Ctrl+q</code> — <code>editing:discard</code> (clear the draft and unfocus).</li>
+  <li><code>Ctrl+a</code> / <code>Ctrl+e</code> — <code>editing:goto-line-start</code> / <code>editing:goto-line-end</code>.</li>
+</ul>
+<p>
+  These same keys also drive a focused text field inside a panel (a query box, an
+  inline editor), not only the command input.
+</p>
+
+<h2 id="shell">Running shell commands with <code>!</code></h2>
+<p>
+  A line starting with <code>!</code> is run as a subprocess (via
+  <code>sh -c</code>) in the background. Its <code>stdout</code>/<code>stderr</code>
+  go to two places:
+</p>
+<ul>
+  <li>the <a data-help-page="message">message</a> panel (the command is echoed as <code>$ command</code>, each output line timestamped), and</li>
+  <li>the terminal from which the GUI was launched.</li>
+</ul>
+<p>
+  So that you see the output immediately, running a <code>!</code> command
+  <strong>switches the focused slot to the message panel</strong> — unless a
+  message panel is already visible in the workspace, in which case nothing moves.
+</p>
+
+<h3>Placeholders: passing the selection to scripts</h3>
+<p>
+  A <code>!</code> command line may reference the <strong>selected
+  metarecord</strong> (the cursor metarecord in the
+  <a data-help-page="metarecord-list">metarecord list</a>,
+  <a data-help-page="file-manager">file manager</a> or
+  <a data-help-page="metarecord-detail">detail</a> panel —
+  <code>workspace.selected_metarecord</code>) through <code>%</code>-tokens. They
+  are expanded <strong>just before the command runs</strong>, so you can hand a
+  metarecord's identity straight to your own scripts:
+</p>
+<table>
+  <thead>
+    <tr><th>Token</th><th>Expands to</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><code>%u</code></td><td>the selected metarecord's UUID</td></tr>
+    <tr><td><code>%v</code></td><td>its <code>version</code> number</td></tr>
+    <tr><td><code>%&lt;field&gt;</code></td><td>the value of a single-valued scalar field</td></tr>
+    <tr><td><code>%&lt;field&gt;:path</code></td><td>a <code>TreeRef</code> field resolved to its absolute path</td></tr>
+    <tr><td><code>%%</code></td><td>a literal <code>%</code></td></tr>
+  </tbody>
+</table>
+<p>Examples (← is what actually runs):</p>
+<pre>!echo %u %v           ←  echo '8f3…a1' '7'
+!vlc %mfr_path:path   ←  vlc '/music/My Track.flac'
+!grep %artist notes   ←  grep 'Miles Davis' notes
+!printf '100%%done'   ←  printf '100%done'</pre>
+
+<h3>Placeholder rules</h3>
+<ul>
+  <li>
+    <code>&lt;field&gt;</code> is a field name: a letter or <code>_</code>
+    followed by letters, digits or <code>_</code>. A <code>%</code> that is
+    <em>not</em> followed by <code>%</code> or a field name is left untouched, so
+    <code>50% off</code> stays literal.
+  </li>
+  <li>
+    <code>%&lt;field&gt;</code> works for <strong>scalar</strong> values only:
+    string, integer, float, datetime (its ISO-8601 text) and boolean
+    (<code>true</code>/<code>false</code>). For a <code>TreeRef</code> field such
+    as <code>mfr_path</code> use the <code>:path</code> form.
+  </li>
+  <li>
+    Every substituted value is <strong>shell-quoted</strong>, so paths and values
+    with spaces or quotes are passed safely as a single argument.
+  </li>
+  <li>
+    Substitution is <strong>strict</strong>: if a token cannot be resolved the
+    command is <em>not run</em> and the reason is shown in the status bar. This
+    happens when nothing is selected, the field is absent, the field is
+    multi-valued, the field is empty (<code>Nothing</code>), or a bare
+    <code>%&lt;field&gt;</code> names a <code>TreeRef</code> (use <code>:path</code>).
+  </li>
+  <li>
+    Only <code>!</code> shell commands are expanded — named commands are passed
+    through verbatim, so a literal <code>%</code> in a command parameter is safe.
+  </li>
+</ul>
+
+<h2>The message log</h2>
+<p>
+  Every command you dispatch is echoed to the <a data-help-page="message">message</a>
+  panel as <code>&gt; name args</code> before it runs (basic editing primitives
+  opt out, to avoid noise), and shell output as <code>$ command</code> followed by
+  its lines. Clear the log with <code>message:clear</code>.
+</p>
+
+<h2>Answering scripts</h2>
+<p>
+  A script driving the GUI can ask a question (<code>POST /gui/prompt</code>): the
+  command input grabs the focus and shows the script's prompt, optionally with
+  autocomplete. Type your answer and press <code>Enter</code>, or send it
+  explicitly with <code>answer:send</code>.
+</p>
+
+<p>
+  See also: <a data-help-page="message">the message panel</a>,
+  <a data-help-page="getting-started">getting started</a>,
+  <a data-help-page="queries">writing queries</a>.
+</p>
