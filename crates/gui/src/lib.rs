@@ -85,6 +85,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("panel:swap", "Exchange the two slots' panel types", true),
         ("panel:fullscreen", "Show only the focused panel fullscreen (escape exits)", true),
         ("message:clear", "Clear the workspace message log", true),
+        ("status:clear", "Clear the status bar message", false),
         ("config:open", "Open the settings view", true),
         ("devtools:open", "Open the WebKit web inspector", true),
         ("quit", "Exit the GUI", true),

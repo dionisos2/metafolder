@@ -17,6 +17,7 @@ export async function mount(root, metafolder) {
   let newMetarecordMode = false;
   let stagedFields = []; // new-metarecord mode: [{name, value}]
   let editingStaged = null; // staged-field index being edited, or null
+  let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
   let schemaCache = { repo: null, schema: null }; // memoized GET /schema
 
   const placeholder = root.getElementById('placeholder');
@@ -164,7 +165,7 @@ export async function mount(root, metafolder) {
     return el('td', { class: 'name' }, name, ' ', el('span', { class: 'type' }, type));
   }
 
-  function fieldRow(field) {
+  function fieldRow(field, index) {
     const readonly = isReserved(field.name) && !forceBox.checked;
     const value = el('td', { class: 'value' });
     const ops = el('td', { class: 'ops' });
@@ -184,6 +185,11 @@ export async function mount(root, metafolder) {
         focusWidget(widget);
       });
       void applyEditTypeLock(picker, field.name, field.value.type);
+      // Keyboard: Enter confirms the edit, Escape cancels it.
+      editKeys(value, () => saveField(field, widget.read()), () => {
+        editingField = null;
+        render();
+      });
       value.append(typeButton, ' ', slot);
       ops.append(
         el('button', { onclick: () => saveField(field, widget.read()) }, 'OK'),
@@ -219,11 +225,26 @@ export async function mount(root, metafolder) {
     }
     return el(
       'tr',
-      { class: [readonly && 'readonly'] },
+      { class: [readonly && 'readonly', index === cursorIndex && 'cursor'] },
       nameCell(field.name, field.value.type),
       value,
       ops,
     );
+  }
+
+  /** Confirm/cancel an inline edit from the keyboard (Enter / Escape). */
+  function editKeys(element, confirm, cancel) {
+    element.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        confirm();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        cancel();
+      }
+    });
   }
 
   /** Fills in, asynchronously, the dim line under a reference value. */
@@ -254,6 +275,15 @@ export async function mount(root, metafolder) {
       });
       // Restrict to the field's established type (+ nothing), like field edits.
       void applyEditTypeLock(picker, staged.name, staged.value.type);
+      const commitStaged = () => {
+        stagedFields[index] = { name: staged.name, value: widget.read() };
+        editingStaged = null;
+        render();
+      };
+      editKeys(value, commitStaged, () => {
+        editingStaged = null;
+        render();
+      });
       value.append(typeButton, ' ', slot);
       ops.append(
         el(
@@ -307,7 +337,55 @@ export async function mount(root, metafolder) {
         ),
       );
     }
-    return el('tr', {}, nameCell(staged.name, staged.value.type), value, ops);
+    return el(
+      'tr',
+      { class: [index === cursorIndex && 'cursor'] },
+      nameCell(staged.name, staged.value.type),
+      value,
+      ops,
+    );
+  }
+
+  // ── Keyboard cursor over the field rows ───────────────────────────────
+
+  // The list the cursor walks: staged fields while creating, else the loaded
+  // metarecord's fields.
+  function rowItems() {
+    return newMetarecordMode ? stagedFields : (metarecord?.fields ?? []);
+  }
+  function moveCursor(delta) {
+    const n = rowItems().length;
+    if (n === 0) {
+      cursorIndex = -1;
+      return;
+    }
+    const base = cursorIndex < 0 ? (delta < 0 ? 0 : -1) : cursorIndex;
+    cursorIndex = Math.max(0, Math.min(base + delta, n - 1));
+    render();
+    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
+  }
+  function isRowReadonly(item) {
+    return !newMetarecordMode && isReserved(item.name) && !forceBox.checked;
+  }
+  function editCursorRow() {
+    const item = rowItems()[cursorIndex];
+    if (!item || isRowReadonly(item)) return;
+    if (newMetarecordMode) editingStaged = cursorIndex;
+    else editingField = item.id;
+    render();
+  }
+  function deleteCursorRow() {
+    const list = rowItems();
+    const item = list[cursorIndex];
+    if (!item || isRowReadonly(item)) return;
+    if (newMetarecordMode) {
+      list.splice(cursorIndex, 1);
+      if (editingStaged === cursorIndex) editingStaged = null;
+      cursorIndex = Math.min(cursorIndex, list.length - 1);
+      render();
+    } else {
+      void deleteField(item);
+    }
   }
 
   // ── Operations ────────────────────────────────────────────────────────
@@ -318,6 +396,7 @@ export async function mount(root, metafolder) {
 
   async function loadNow() {
     showError('');
+    cursorIndex = -1;
     if (!current) {
       metarecord = null;
       render();
@@ -458,6 +537,7 @@ export async function mount(root, metafolder) {
     metarecord = null;
     editingField = null;
     editingStaged = null;
+    cursorIndex = -1;
     render();
   }
 
@@ -517,10 +597,24 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Edit guard (spec-gui "Cross-panel selection").
+  // Edit guard (spec-gui "Cross-panel selection"). An add in progress (form
+  // open with a field name typed) counts, so switching metarecord asks before
+  // discarding it — the add is bound to the metarecord being edited.
+  function addFieldInProgress() {
+    return (
+      addForm.classList.contains('open') &&
+      root.getElementById('add-name').value.trim() !== ''
+    );
+  }
+  function isEditing() {
+    return (
+      editingField !== null ||
+      addFieldInProgress() ||
+      (newMetarecordMode && stagedFields.length > 0)
+    );
+  }
   function confirmDiscardIfEditing() {
-    const editing = editingField !== null || (newMetarecordMode && stagedFields.length > 0);
-    if (!editing) return true;
+    if (!isEditing()) return true;
     return confirm('Unsaved changes — discard and switch metarecord?');
   }
 
@@ -597,8 +691,57 @@ export async function mount(root, metafolder) {
     },
   });
 
+  // Keyboard editing (spec-gui): every field/metarecord operation is a command,
+  // so the panel is fully drivable without the mouse.
+  commands.register('metarecord:field-next', {
+    label: 'Move the field cursor down',
+    log: false,
+    handler: () => moveCursor(1),
+  });
+  commands.register('metarecord:field-prev', {
+    label: 'Move the field cursor up',
+    log: false,
+    handler: () => moveCursor(-1),
+  });
+  commands.register('metarecord:field-edit', {
+    label: 'Edit the field under the cursor',
+    handler: editCursorRow,
+  });
+  commands.register('metarecord:field-delete', {
+    label: 'Delete the field under the cursor',
+    handler: deleteCursorRow,
+  });
+  commands.register('metarecord:save', {
+    label: 'Save the new metarecord',
+    handler: saveNewEntry,
+  });
+  commands.register('metarecord:edit-cancel', {
+    label: 'Cancel the current field edit or add form',
+    log: false,
+    handler: () => {
+      editingField = null;
+      editingStaged = null;
+      addForm.classList.remove('open');
+      render();
+    },
+  });
+
+  // Default keybindings (when = metarecord-detail; suggestions, weakest layer).
+  metafolder.addKeybinding('metarecord:field-next', 'down');
+  metafolder.addKeybinding('metarecord:field-next', 'j');
+  metafolder.addKeybinding('metarecord:field-prev', 'up');
+  metafolder.addKeybinding('metarecord:field-prev', 'k');
+  metafolder.addKeybinding('metarecord:field-edit', 'enter');
+  metafolder.addKeybinding('metarecord:field-delete', 'd');
+  metafolder.addKeybinding('metarecord:add-field', 'a');
+  metafolder.addKeybinding('metarecord:create', 'ctrl+n');
+  metafolder.addKeybinding('metarecord:save', 'ctrl+s');
+
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) return;
+    // The discard was confirmed (or nothing was in progress): drop any add in
+    // progress along with the rest of the edit state.
+    addForm.classList.remove('open');
     newMetarecordMode = false;
     editingField = null;
     editingStaged = null;
@@ -611,7 +754,7 @@ export async function mount(root, metafolder) {
   // reads fresh data even when the change came from a non-metarecord write
   // (e.g. a rollback, which the per-write invalidation can't pinpoint).
   workspace.onChange('metarecords:dirty', async () => {
-    if (editingField !== null || newMetarecordMode) return;
+    if (editingField !== null || newMetarecordMode || addFieldInProgress()) return;
     if (current?.repo) await cache.sync(current.repo);
     void load();
   });

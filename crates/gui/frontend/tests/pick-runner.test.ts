@@ -41,8 +41,8 @@ describe('createPickRunner', () => {
     expect(stub.start).toHaveBeenCalledTimes(1);
     const spec = stub.start.mock.calls[0][0] as Record<string, any>;
     expect(spec.repo).toBe('repo-1');
-    expect(spec.panels.left.type).toBe('metarecord-list');
-    expect(spec.panels.left.vars['metarecord-list:query']).toBe('type = "tag"');
+    expect(spec.panel.type).toBe('metarecord-list');
+    expect(spec.panel.vars['metarecord-list:query']).toBe('type = "tag"');
     const token = spec.token;
 
     stub.deliver({ token, uuid: 'abc' });
@@ -58,8 +58,8 @@ describe('createPickRunner', () => {
     await tick();
 
     const spec = stub.start.mock.calls[0][0] as Record<string, any>;
-    expect(spec.panels.left.type).toBe('treeref');
-    expect(spec.panels.left.vars['treeref:field']).toBe('plop');
+    expect(spec.panel.type).toBe('treeref');
+    expect(spec.panel.vars['treeref:field']).toBe('plop');
   });
 
   it('resolves to null when the pick is cancelled', async () => {

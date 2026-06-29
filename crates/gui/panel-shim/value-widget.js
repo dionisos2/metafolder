@@ -95,9 +95,9 @@ export function parseRawValue(type, raw) {
  * Drives the value picker (spec-gui "Value picker") for the field forms. One
  * instance per panel; `run({field, valueType})` opens a linked picker workspace
  * and resolves to the chosen metarecord uuid (or null on cancel). The picker
- * reuses existing panels — `metarecord-list` (seeded with the field's
- * configured query) for a `ref`, the `treeref` explorer for a `tree_ref` — so
- * no selection UI is duplicated into the forms.
+ * opens in the other panel slot and reuses existing panels — `metarecord-list`
+ * (seeded with the field's configured query) for a `ref`, the `treeref`
+ * explorer for a `tree_ref` — so no selection UI is duplicated into the forms.
  */
 export function createPickRunner(metafolder) {
   const { workspace, config, pick } = metafolder;
@@ -123,14 +123,14 @@ export function createPickRunner(metafolder) {
       ensureWired();
       const repo = (await workspace.get('active_repo')) ?? null;
       const token = `pick-${++seq}`;
-      let panels;
+      let panel;
       if (valueType === 'tree_ref') {
         // The parent is any forest node; open the explorer on the edited
         // field's own forest as the natural starting point.
-        panels = { left: { type: 'treeref', vars: field ? { 'treeref:field': field } : {} } };
+        panel = { type: 'treeref', vars: field ? { 'treeref:field': field } : {} };
       } else {
         const seed = (field && (await config.pickerSeed(field))) || '';
-        panels = { left: { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } } };
+        panel = { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } };
       }
       const promise = new Promise((resolve) => pending.set(token, resolve));
       await pick.start({
@@ -139,7 +139,7 @@ export function createPickRunner(metafolder) {
         name: `Pick: ${field || valueType}`,
         prompt: `Select a metarecord for ${field ? `“${field}”` : `a ${valueType}`}` +
           ' — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
-        panels,
+        panel,
       });
       return promise;
     },

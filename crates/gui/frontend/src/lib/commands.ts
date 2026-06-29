@@ -422,6 +422,15 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // Resolves a script's POST /gui/input wait.
       await invoke('answer_send', { value: args.join(' ') });
       return true;
+    case 'status:clear': {
+      // Dismiss the transient status-bar message (and the last-command echo).
+      const ws = focusedWs();
+      if (ws) {
+        store.status[ws] = { text: '', kind: 'info', timeout_ms: null };
+        store.lastCommand[ws] = '';
+      }
+      return true;
+    }
     case 'pick:confirm':
     case 'pick:cancel':
       // Hands the focused picker's selection back to the calling form (confirm)

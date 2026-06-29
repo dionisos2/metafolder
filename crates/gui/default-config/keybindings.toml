@@ -13,6 +13,9 @@
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }
 
+# Dismiss the transient status-bar message (works while typing too).
+"ctrl+l" = { command = "status:clear", text-input = true }
+
 # Tabs (spec default suggestions: t, w, 1..9). n/p and the digits move
 # BOTH panels together so the two slots never drift onto different
 # workspaces unnoticed; splitting across workspaces needs an explicit tab
@@ -63,6 +66,9 @@
 "s r" = { command = "panel:set-type repos" }
 "s g" = { command = "panel:set-type message" }
 "s w" = { command = "panel:set-type workspace-info" }
+"s t" = { command = "panel:set-type treeref" }
+"s e" = { command = "panel:set-type ref-list" }
+"s p" = { command = "panel:set-type help" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:help" }
