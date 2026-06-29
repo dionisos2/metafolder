@@ -147,7 +147,7 @@ Standard variables:
 | =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
 | =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel (consumed by =ref-list=) |
 | =pick_request=     | =\{caller_ws, token, picker_slot, restore\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws=, with the slot to restore on close (see [[*Value picker]]) |
-| =pick_result=      | =\{token, uuid\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid=) or cancels; the requesting form matches =token= and consumes it |
+| =pick_result=      | =\{token, uuid\} \vert \{token, path\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid= or =path=, per the request's =result= kind) or cancels; the requesting form matches =token= and consumes it |
 
 Panel types may define their own variables using namespaced keys (e.g.
 =my-panel:current-node=).
@@ -182,17 +182,22 @@ variables]], with the only cross-workspace step performed in the GUI backend
    publishes =selected_metarecord= as usual.
 
 3. *Confirm / cancel* — =pick:confirm= reads the focused picker's
-   =pick_request= and its current =selected_metarecord=, closes the picker,
-   restores the slot it occupied, refocuses the caller, and writes
-   =pick_result = \{token, uuid\}= into =caller_ws= (the single cross-workspace
-   write). =pick:cancel= writes =\{token, cancelled: true\}= instead. Closing a
-   picker by hand is a cancel.
+   =pick_request= and the requested selection, closes the picker, restores the
+   slot it occupied, refocuses the caller, and writes =pick_result= into
+   =caller_ws= (the single cross-workspace write). =pick:cancel= writes
+   =\{token, cancelled: true\}= instead. Closing a picker by hand is a cancel.
 
-The result is *always a metarecord UUID*. The form decides where it lands: for
-=ref= it is the value; for =tree_ref= it fills the =parent= slot, leaving the
-=name= for the user to type (e.g. picking =/document/test= (uuid =123=) for a
-new field =plop= yields =\{123, ""\}=, then the user types =plop= →
-=\{123, "plop"\}= → path =/document/test/plop=).
+The =result= kind in the spec chooses what is returned:
+- =uuid= (default) — the picker's =selected_metarecord=; =pick_result= is
+  =\{token, uuid\}=. The form decides where it lands: for =ref= it is the
+  value; for =tree_ref= it fills the =parent= slot, leaving the =name= for the
+  user to type (e.g. picking =/document/test= (uuid =123=) for a new field
+  =plop= yields =\{123, ""\}=, then the user types =plop= →
+  =\{123, "plop"\}= → path =/document/test/plop=).
+- =path= — the picker's first =selected_paths= entry; =pick_result= is
+  =\{token, path\}=. Used to choose a folder with the =file-manager= panel
+  (e.g. the repos panel's *Browse…* button — the picker opens =file-manager=
+  on the disk, the user highlights a folder, =.= being the current directory).
 
 Seeding is configurable per field name, see [[*Picker seeds]]. The calling
 panel reads the mapping through the API and folds it into =spec=, so the seed
@@ -872,9 +877,13 @@ Standard keys: =active_repo=, =selected_paths=, =selected_metarecord=,
 **** =metafolder.pick=
 
 Opens a value picker (see [[*Value picker]]). =start(spec)= creates a linked
-picker workspace in the state =spec= describes and returns its id; the result
-arrives later as the =pick_result= workspace variable, which the caller matches
-by =token=.
+picker workspace in the state =spec= describes (including the =result= kind —
+=uuid= or =path=) and returns its id; the result arrives later as the
+=pick_result= workspace variable, which the caller matches by =token=. The
+panel-shim =createPickRunner(metafolder)= wraps this: =run(\{field, valueType\})=
+for =ref=/=tree_ref= uuid picks, and =request(spec)= as a low-level form (used
+by the repos panel to pick a folder with =result: 'path'= and the =file-manager=
+panel).
 
 #+BEGIN_SRC js
 const token = String(++pickSeq)
@@ -1031,8 +1040,10 @@ Repo indicator and the =repos= panel type.
 =repos= panel to show an inline form with an optional =name= input and a
 =root= input (the daemon API also accepts an external =metafolder= location,
 but the GUI does not expose it). The =root= input is paired with a *Browse…*
-button opening an in-panel folder picker (a =metafolder.fs.readDir= navigator,
-no native dialog) whose chosen folder fills the input — and prefills the name
+button that opens a folder picker through the value-picker system (see
+[[*Value picker]]): the =file-manager= panel opens in the other slot (started
+at the typed path or the home directory, with no active repo so it browses the
+raw disk), and the confirmed folder path fills the input — prefilling the name
 with the folder name when blank. Submitting calls =POST /repos/init=. On
 success the new repo is adopted in place when the current workspace has no
 =active_repo= yet (the focused panel switches to =metarecord-list=); when the

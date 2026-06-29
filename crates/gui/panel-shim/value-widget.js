@@ -109,39 +109,54 @@ export function createPickRunner(metafolder) {
     if (wired) return;
     wired = true;
     // A single listener fans every result out to the matching pending request.
+    // The result carries `uuid` (a metarecord) or `path` (a folder), per the
+    // request's `result` kind.
     workspace.onChange('pick_result', (result) => {
       if (!result || result.token == null) return;
       const resolve = pending.get(result.token);
       if (!resolve) return;
       pending.delete(result.token);
-      resolve(result.cancelled ? null : (result.uuid ?? null));
+      resolve(result.cancelled ? null : (result.uuid ?? result.path ?? null));
     });
   }
 
+  // Low-level: opens a picker described by `spec` in the other slot and
+  // resolves to the chosen value (a metarecord uuid, or a path when
+  // result === 'path') or null on cancel. `repo` defaults to the active repo;
+  // pass it explicitly (e.g. null) to override.
+  async function request({ panel, vars = {}, result = 'uuid', name, prompt, repo }) {
+    ensureWired();
+    const activeRepo = repo !== undefined ? repo : ((await workspace.get('active_repo')) ?? null);
+    const token = `pick-${++seq}`;
+    const promise = new Promise((resolve) => pending.set(token, resolve));
+    await pick.start({ token, repo: activeRepo, name, prompt, result, panel: { type: panel, vars } });
+    return promise;
+  }
+
   return {
+    request,
+    // Convenience for the ref/tree_ref field widgets: a uuid picker reusing the
+    // metarecord-list / treeref panels (spec-gui "Value picker").
     async run({ field, valueType }) {
-      ensureWired();
-      const repo = (await workspace.get('active_repo')) ?? null;
-      const token = `pick-${++seq}`;
       let panel;
+      let vars = {};
       if (valueType === 'tree_ref') {
         // The parent is any forest node; open the explorer on the edited
         // field's own forest as the natural starting point.
-        panel = { type: 'treeref', vars: field ? { 'treeref:field': field } : {} };
+        panel = 'treeref';
+        if (field) vars = { 'treeref:field': field };
       } else {
+        panel = 'metarecord-list';
         const seed = (field && (await config.pickerSeed(field))) || '';
-        panel = { type: 'metarecord-list', vars: { 'metarecord-list:query': seed } };
+        vars = { 'metarecord-list:query': seed };
       }
-      const promise = new Promise((resolve) => pending.set(token, resolve));
-      await pick.start({
-        token,
-        repo,
+      return request({
+        panel,
+        vars,
         name: `Pick: ${field || valueType}`,
         prompt: `Select a metarecord for ${field ? `“${field}”` : `a ${valueType}`}` +
           ' — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
-        panel,
       });
-      return promise;
     },
   };
 }

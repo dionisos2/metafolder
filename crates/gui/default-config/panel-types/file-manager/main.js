@@ -335,17 +335,21 @@ export async function mount(root, metafolder) {
   async function start() {
     repo = await workspace.get('active_repo');
     constrainBox.disabled = repo === null;
+    // A value picker (spec-gui "Value picker") can seed the directory to open
+    // at — e.g. the repos panel's folder picker starts from the typed path.
+    const seedDir = await workspace.get('file-manager:start-dir');
+    const start = typeof seedDir === 'string' && seedDir ? seedDir : null;
     if (repo !== null) {
       await cache.sync(repo); // fresh tracked status on display
       repoRoot = await daemon.repoRoot(repo);
       internalDir = await daemon.repoInternalDir(repo);
-      await open(repoRoot);
+      await open(start ?? repoRoot);
     } else {
-      // No repo: browse from the root, everything untracked.
+      // No repo: browse from the seed (or the root), everything untracked.
       repoRoot = null;
       internalDir = null;
       placeholderElement.textContent = 'No active repository — browsing the disk.';
-      await open('/');
+      await open(start ?? '/');
     }
   }
 

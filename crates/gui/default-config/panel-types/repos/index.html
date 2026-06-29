@@ -155,48 +155,6 @@
         grid-column: 1 / -1;
         color: var(--mf-error, #c44c56);
       }
-      /* Folder picker shared by the init/load forms. */
-      .browser {
-        margin: 12px 0;
-        padding: 10px;
-        background: var(--mf-bg-raised, #26262e);
-        border: 1px solid var(--mf-fg-dim, #8a8a96);
-        border-radius: 6px;
-      }
-      .browser.hidden {
-        display: none;
-      }
-      .browser-bar {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 6px;
-      }
-      #browser-path {
-        flex: 1;
-        font-family: var(--mf-font-mono, monospace);
-        font-size: 0.85em;
-        color: var(--mf-fg-dim, #8a8a96);
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
-      }
-      #browser-list {
-        max-height: 220px;
-        overflow-y: auto;
-        margin: 0 0 8px;
-      }
-      #browser-list li {
-        gap: 8px;
-        padding: 3px 6px;
-      }
-      #browser-list .icon {
-        width: 1.2em;
-      }
-      .browser-empty {
-        padding: 8px 6px;
-        color: var(--mf-fg-dim, #8a8a96);
-      }
       .empty {
         color: var(--mf-fg-dim, #8a8a96);
       }
@@ -263,18 +221,6 @@
       </div>
       <p class="error" id="retype-error"></p>
     </form>
-
-    <div id="browser" class="browser hidden">
-      <div class="browser-bar">
-        <button type="button" id="browser-up">↑ up</button>
-        <span id="browser-path"></span>
-      </div>
-      <ul id="browser-list"></ul>
-      <div class="form-actions" style="grid-column: auto">
-        <button type="button" id="browser-pick">Use this folder</button>
-        <button type="button" id="browser-cancel">Cancel</button>
-      </div>
-    </div>
 
   </body>
 </html>

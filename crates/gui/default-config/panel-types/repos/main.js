@@ -2,6 +2,7 @@
 // repository in a workspace (spec-gui "Repository management").
 
 import { el } from '/__ui.js';
+import { createPickRunner } from '/__value-widget.js';
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, fs, messages } = metafolder;
@@ -39,18 +40,10 @@ export async function mount(root, metafolder) {
   let retypeTarget = null; // repo uuid the retype form acts on
 
   // ── Folder picker ─────────────────────────────────────────────────────────
-  // An in-panel directory browser (no native dialog).
-  const browser = root.getElementById('browser');
-  const browserList = root.getElementById('browser-list');
-  const browserPath = root.getElementById('browser-path');
-  let browserDir = '/';
-  let browserTarget = null; // the <input> to fill on "Use this folder"
-  let homeDir = null; // the user's home directory, the picker's default start
-
-  function parentDir(path) {
-    const index = path.lastIndexOf('/');
-    return index <= 0 ? '/' : path.slice(0, index);
-  }
+  // Reuses the value-picker system (spec-gui "Value picker"): "Browse…" opens
+  // the file-manager in the other slot and returns the chosen folder path.
+  const pickRunner = createPickRunner(metafolder);
+  let homeDir = null; // cached, the default start when the input is empty
 
   function basename(path) {
     return path.split('/').filter(Boolean).pop() ?? path;
@@ -58,51 +51,10 @@ export async function mount(root, metafolder) {
 
   function toggleForm(form, show) {
     form.classList.toggle('hidden', !show);
-    if (!show) closeBrowser();
     if (show) form.querySelector('input').focus();
   }
 
-  async function browseTo(dir) {
-    let entries;
-    try {
-      entries = await fs.readDir(dir);
-    } catch (error) {
-      // Unreadable target (e.g. a stale input value): fall back to the root.
-      if (dir !== '/') {
-        await browseTo('/');
-        return;
-      }
-      await statusBar.error(error);
-      return;
-    }
-    browserDir = dir;
-    browserPath.textContent = dir;
-    const dirs = entries.filter((entry) => entry.is_dir);
-    if (dirs.length === 0) {
-      browserList.replaceChildren(el('li', { class: 'browser-empty' }, '(no subfolders)'));
-      return;
-    }
-    browserList.replaceChildren(
-      ...dirs.map((entry) =>
-        el(
-          'li',
-          { onclick: () => void browseTo(entry.path) },
-          el('span', { class: 'icon' }, '📁'),
-          el('span', { class: 'name' }, entry.name),
-        ),
-      ),
-    );
-  }
-
-  async function openBrowser(targetInput) {
-    browserTarget = targetInput;
-    browser.classList.remove('hidden');
-    const start = targetInput.value.trim();
-    if (start) {
-      await browseTo(start);
-      return;
-    }
-    // Default to the user's home directory rather than the filesystem root.
+  async function homeDirCached() {
     if (homeDir === null) {
       try {
         homeDir = await fs.homeDir();
@@ -110,24 +62,27 @@ export async function mount(root, metafolder) {
         homeDir = '/';
       }
     }
-    await browseTo(homeDir);
+    return homeDir;
   }
 
-  function closeBrowser() {
-    browser.classList.add('hidden');
-    browserTarget = null;
-  }
-
-  function pickFolder() {
-    if (browserTarget) {
-      browserTarget.value = browserDir;
-      // Prefill the init name with the folder name when left blank.
-      if (browserTarget.id === 'init-root') {
-        const nameInput = root.getElementById('init-name');
-        if (!nameInput.value.trim()) nameInput.value = basename(browserDir);
-      }
+  async function browseFolder(targetInput) {
+    const start = targetInput.value.trim() || (await homeDirCached());
+    const path = await pickRunner.request({
+      panel: 'file-manager',
+      vars: { 'file-manager:start-dir': start },
+      result: 'path',
+      repo: null, // browse the raw disk: the folder is not a repo yet
+      name: 'Pick a folder',
+      prompt:
+        'Highlight a folder (“.” = current directory) — Ctrl+Enter to confirm, Ctrl+Esc to cancel',
+    });
+    if (!path) return; // cancelled
+    targetInput.value = path;
+    // Prefill the init name with the folder name when left blank.
+    if (targetInput.id === 'init-root') {
+      const nameInput = root.getElementById('init-name');
+      if (!nameInput.value.trim()) nameInput.value = basename(path);
     }
-    closeBrowser();
   }
 
   async function refresh() {
@@ -363,11 +318,10 @@ export async function mount(root, metafolder) {
     button.addEventListener('click', () => toggleForm(button.closest('form'), false));
   }
   for (const button of root.querySelectorAll('.browse')) {
-    button.addEventListener('click', () => void openBrowser(root.getElementById(button.dataset.target)));
+    button.addEventListener('click', () =>
+      void browseFolder(root.getElementById(button.dataset.target)),
+    );
   }
-  root.getElementById('browser-up').addEventListener('click', () => void browseTo(parentDir(browserDir)));
-  root.getElementById('browser-pick').addEventListener('click', pickFolder);
-  root.getElementById('browser-cancel').addEventListener('click', closeBrowser);
 
   commands.register('repos:init', {
     label: 'Repos: open the init form',

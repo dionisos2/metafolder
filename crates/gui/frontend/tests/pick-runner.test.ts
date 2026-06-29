@@ -62,6 +62,30 @@ describe('createPickRunner', () => {
     expect(spec.panel.vars['treeref:field']).toBe('plop');
   });
 
+  it('request() opens an arbitrary panel and resolves a path result', async () => {
+    const stub = stubMetafolder();
+    stub.metafolder.pick.start = stub.start;
+    const runner = createPickRunner(stub.metafolder);
+
+    const promise = runner.request({
+      panel: 'file-manager',
+      vars: { 'file-manager:start-dir': '/home/user' },
+      result: 'path',
+      repo: null,
+      name: 'Pick a folder',
+    });
+    await tick();
+
+    const spec = stub.start.mock.calls[0][0] as Record<string, any>;
+    expect(spec.panel.type).toBe('file-manager');
+    expect(spec.result).toBe('path');
+    expect(spec.repo).toBeNull();
+    const token = spec.token;
+
+    stub.deliver({ token, path: '/home/user/music' });
+    expect(await promise).toBe('/home/user/music');
+  });
+
   it('resolves to null when the pick is cancelled', async () => {
     const stub = stubMetafolder();
     stub.metafolder.pick.start = stub.start;

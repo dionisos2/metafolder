@@ -214,6 +214,11 @@ pub struct PickSpec {
     /// Status-bar prompt posted in the picker.
     #[serde(default)]
     pub prompt: Option<String>,
+    /// What `pick:confirm` returns: `"uuid"` (the selected metarecord, default)
+    /// or `"path"` (the first `selected_paths` entry, e.g. a folder chosen in
+    /// `file-manager`).
+    #[serde(default)]
+    pub result: Option<String>,
     pub panel: PickPanel,
 }
 
@@ -749,6 +754,7 @@ impl GuiState {
                         "token": spec.token,
                         "picker_slot": slot_name(picker_slot),
                         "restore": restore,
+                        "result": spec.result.clone().unwrap_or_else(|| "uuid".into()),
                     }),
                 );
                 ws.last_panel.insert(picker_slot, spec.panel.panel_type.clone());
@@ -789,7 +795,7 @@ impl GuiState {
     /// caller, then delivers `pick_result`.
     fn finish_pick(&self, confirm: bool) -> Result<(), String> {
         // Read the picker's link + slot-restore info + current selection.
-        let (picker_ws, caller_ws, token, picker_slot, restore, selected) = {
+        let (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths) = {
             let inner = self.lock();
             let picker_ws = inner
                 .slot(inner.focused)
@@ -812,19 +818,29 @@ impl GuiState {
                 .and_then(slot_from_name)
                 .ok_or("malformed pick_request")?;
             let restore = request["restore"].clone();
+            let result_kind =
+                request["result"].as_str().unwrap_or("uuid").to_string();
             let selected = ws.vars.get("selected_metarecord").cloned().unwrap_or(Value::Null);
-            (picker_ws, caller_ws, token, picker_slot, restore, selected)
+            let paths = ws.vars.get("selected_paths").cloned().unwrap_or(Value::Null);
+            (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths)
         };
 
-        // Build the result (a confirm needs a selected uuid).
-        let result = if confirm {
+        // Build the result (a confirm needs the kind of selection requested).
+        let result = if !confirm {
+            json!({ "token": token, "cancelled": true })
+        } else if result_kind == "path" {
+            let path = paths
+                .as_array()
+                .and_then(|a| a.first())
+                .and_then(Value::as_str)
+                .ok_or("no path selected in the picker")?;
+            json!({ "token": token, "path": path })
+        } else {
             let uuid = selected
                 .get("uuid")
                 .and_then(Value::as_str)
                 .ok_or("no metarecord selected in the picker")?;
             json!({ "token": token, "uuid": uuid })
-        } else {
-            json!({ "token": token, "cancelled": true })
         };
 
         // Close the picker, restore the slot it occupied and refocus the caller.
@@ -1449,6 +1465,7 @@ mod tests {
             repo: Some("repo-1".into()),
             name: Some("Pick: tag".into()),
             prompt: Some("Select a value".into()),
+            result: None,
             panel: PickPanel { panel_type: "metarecord-list".into(), vars },
         }
     }
@@ -1533,6 +1550,36 @@ mod tests {
         assert_eq!(layout.right.panel_type.as_deref(), Some("metarecord-detail"));
         assert!(layout.right.visible);
         assert_eq!(layout.focused, SlotId::Left);
+    }
+
+    #[test]
+    fn test_pick_confirm_returns_a_path_when_requested() {
+        let (_, state) = state();
+        let mut spec = pick_spec("ws-1");
+        spec.result = Some("path".into());
+        spec.panel = PickPanel { panel_type: "file-manager".into(), vars: Map::new() };
+        let picker = state.pick_start(spec).unwrap();
+        // file-manager publishes selected_paths, not a metarecord.
+        state
+            .set_var(&picker, "selected_paths", json!(["/home/user/music"]))
+            .unwrap();
+
+        state.pick_confirm().unwrap();
+
+        assert_eq!(
+            state.get_var("ws-1", "pick_result").unwrap(),
+            json!({ "token": 7, "path": "/home/user/music" })
+        );
+    }
+
+    #[test]
+    fn test_pick_confirm_path_errors_without_a_selected_path() {
+        let (_, state) = state();
+        let mut spec = pick_spec("ws-1");
+        spec.result = Some("path".into());
+        let picker = state.pick_start(spec).unwrap();
+        assert!(state.pick_confirm().is_err());
+        assert!(state.workspaces().iter().any(|w| w.id == picker));
     }
 
     #[test]
