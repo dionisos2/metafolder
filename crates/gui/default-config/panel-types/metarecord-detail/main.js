@@ -96,7 +96,9 @@ export async function mount(root, metafolder) {
    * pre-selects it so its value inputs show immediately.
    */
   async function applyEditTypeLock(picker, name, currentType) {
-    const repo = current?.repo;
+    // Falls back to the active repo so the lock also applies while staging a
+    // new metarecord's fields (when `current` is still null).
+    const repo = await repoForAdd();
     if (!repo) return;
     let type = cache.fieldType(repo, name);
     if (type === cache.REFRESH) {
@@ -246,10 +248,12 @@ export async function mount(root, metafolder) {
       let widget = widgetFor(staged.value.type, staged.value.value, stagedPick);
       const slot = el('span', {}, widget.element);
       const typeButton = el('button', {});
-      createTypePicker(typeButton, staged.value.type, (type) => {
+      const picker = createTypePicker(typeButton, staged.value.type, (type) => {
         widget = widgetFor(type, undefined, stagedPick);
         slot.replaceChildren(widget.element);
       });
+      // Restrict to the field's established type (+ nothing), like field edits.
+      void applyEditTypeLock(picker, staged.name, staged.value.type);
       value.append(typeButton, ' ', slot);
       ops.append(
         el(

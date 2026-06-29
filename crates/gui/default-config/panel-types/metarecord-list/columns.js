@@ -10,6 +10,7 @@
 //   field>sub           follow a Ref/RefBase to the target metarecord's `sub`
 //   field>sub:mode      ...then project (e.g. tag>path:name)
 //   a | b               fallback: the first alternative that yields a value
+//   (a | b)             optional parentheses group a fallback into one column
 // A single `>` only (no deep chains). Modes that don't apply to a value's type
 // (e.g. :name on a string) fall back to the raw display. Projections never
 // change the sort field (the daemon sorts raw values; sort uses the first
@@ -51,14 +52,18 @@ export function parseColumns(text) {
     .split(/[\s,]+/)
     .filter(Boolean)
     .map((spec) => {
-      if (spec.startsWith('&')) {
-        const name = spec.slice(1);
+      // Optional parentheses may group a fallback (`(a | b)`) into one column;
+      // strip a single balanced pair, keeping `spec` for headers/error messages.
+      const body =
+        spec.startsWith('(') && spec.endsWith(')') ? spec.slice(1, -1) : spec;
+      if (body.startsWith('&')) {
+        const name = body.slice(1);
         if (!META_COLUMNS.includes(name)) {
           throw new Error(`unknown metadata column "${spec}" (expected &uuid or &version)`);
         }
         return { spec, kind: 'meta', name };
       }
-      const alternatives = spec.split('|').map((part) => parseAlternative(part, spec));
+      const alternatives = body.split('|').map((part) => parseAlternative(part, spec));
       return { spec, kind: 'field', name: alternatives[0].field, alternatives };
     });
 }

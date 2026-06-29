@@ -82,6 +82,20 @@ describe('parseColumns', () => {
     ]);
   });
 
+  test('parentheses around a fallback group are optional and stripped', () => {
+    const col = parseColumns('(label | path:name)')[0];
+    expect(col.kind).toBe('field');
+    expect(col.name).toBe('label');
+    expect(col.alternatives).toEqual([
+      { field: 'label', follow: null, mode: 'raw' },
+      { field: 'path', follow: null, mode: 'name' },
+    ]);
+    // A grouped column stays a single token among space-separated columns.
+    expect(parseColumns('(label | path:name) rating').map((c: { name: string }) => c.name)).toEqual(
+      ['label', 'rating'],
+    );
+  });
+
   test('&uuid and &version are metadata columns', () => {
     expect(parseColumns('&uuid &version')).toEqual([
       { spec: '&uuid', kind: 'meta', name: 'uuid' },

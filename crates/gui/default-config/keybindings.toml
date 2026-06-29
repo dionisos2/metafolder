@@ -67,7 +67,7 @@
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:help" }
 "h c" = { command = "help:help-cursor" }
-"f1" = { command = "help:help-cursor" }
+"f1" = { command = "help:help-cursor", text-input = true }
 
 # Panel types suggest their own keybindings (metafolder.addKeybinding);
 # they are the weakest layer, so an entry here overrides them. Scope it
