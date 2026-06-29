@@ -52,8 +52,8 @@
 
   // While a script prompt is active, the list offers the prompt's
   // completions (values, not commands) instead of the command registry.
-  // The filter is fuzzy, so spaces in the draft are term separators
-  // ("con def" matches like .*con.*def.*), not an argument boundary.
+  // The filter is ordered-substring, so spaces in the draft are term
+  // separators ("con def" matches like .*con.*def.*), not an argument boundary.
   const matches = $derived(
     !focused
       ? []
