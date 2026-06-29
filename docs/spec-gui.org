@@ -261,7 +261,10 @@ Each keybinding has two independent scope dimensions:
 - =text-input= (boolean, default =false=) — whether the binding also fires
   when a text input is focused (command input or field editor). =false= means
   the binding is suppressed while the user is typing; =true= means it fires
-  regardless.
+  regardless. A focused form control — =input=, =textarea=, =select= (so its
+  arrow keys drive the options, not panel shortcuts), or a contenteditable —
+  counts as a text input; the check consults both the event target and the
+  focused element (an open native =select= popup may target neither).
 
 The two dimensions combine independently:
 

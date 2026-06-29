@@ -12,7 +12,7 @@ import {
 } from '../../../panel-shim/menu.js';
 // @ts-expect-error plain-JS module shared with the panel shim
 import { resolveClickTopic } from '../../../panel-shim/help.js';
-import { dispatch, hasEditingTarget, setFullscreen } from './commands';
+import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen } from './commands';
 import { setHelpCursor } from './cursor';
 import { flashStatus, focusedPanelType, slotPayload, store } from './store.svelte';
 import type { SlotId } from './types';
@@ -36,8 +36,20 @@ export function isTextInput(element: Element | null): boolean {
     tag === 'INPUT' ||
     tag === 'TEXTAREA' ||
     tag === 'SELECT' ||
-    (element as HTMLElement).isContentEditable
+    (element as HTMLElement).isContentEditable === true
   );
+}
+
+/**
+ * Whether key handling should defer to a focused form control (input,
+ * textarea, select, contenteditable) and so suppress text-input=false
+ * bindings. Checked on both the event's deepest target and the deep active
+ * element: an open native `<select>` popup on WebKitGTK can dispatch keydowns
+ * whose `composedPath()[0]` is not the select, but it still holds focus, so
+ * arrow keys must drive the select rather than panel shortcuts.
+ */
+export function inTextInputContext(eventTarget: Element | null): boolean {
+  return isTextInput(eventTarget) || isTextInput(deepActiveElement());
 }
 
 /** Ends the help-cursor mode and restores the normal pointer. */
@@ -85,9 +97,10 @@ export function installKeys() {
       // composedPath()[0] is the real focused element even inside a panel's
       // Shadow DOM (document.activeElement would be the shadow host).
       const target = (event.composedPath()[0] as Element | undefined) ?? document.activeElement;
+      const textInput = inTextInputContext(target);
       const result = matcher.feed(combo, {
         panelType: focusedPanelType(),
-        textInput: isTextInput(target),
+        textInput,
       });
       // Continuation hint: shown while a sequence is pending, cleared by
       // any other outcome (fired, cancelled with escape, aborted).
@@ -109,7 +122,7 @@ export function installKeys() {
       // unfocus/goto-line-*, but Enter/Escape stay native so panel forms keep
       // their own keydown handlers (e.g. the metarecord-list query input).
       if (result.invocation?.startsWith('editing:') && !hasEditingTarget()) {
-        if (!isTextInput(target)) return;
+        if (!textInput) return;
         if (result.invocation === 'editing:confirm' || result.invocation === 'editing:discard') {
           return;
         }
