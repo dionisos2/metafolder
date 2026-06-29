@@ -626,6 +626,20 @@ impl GuiState {
         })
     }
 
+    /// Focuses a specific slot if it is visible. Idempotent (unlike
+    /// `focus_next`'s toggle), so the click-to-focus handler can fire it more
+    /// than once for one click — a focusable target raises both `pointerdown`
+    /// and `focusin` — without the two cancelling out.
+    pub fn focus_slot(&self, slot_id: SlotId) {
+        self.update(|inner| {
+            let changed = inner.slot(slot_id).visible && inner.focused != slot_id;
+            if changed {
+                inner.focused = slot_id;
+            }
+            ((), Emit { workspaces: false, layout: changed })
+        })
+    }
+
     /// `panel:set-type` — switches the panel type displayed in a slot.
     /// Rejected when the other slot already shows the same panel type of
     /// the same workspace (one iframe per (workspace, panel type)).
@@ -1269,6 +1283,22 @@ mod tests {
         state.focus_next();
         assert_eq!(state.layout().focused, SlotId::Right);
         state.focus_next();
+        assert_eq!(state.layout().focused, SlotId::Left);
+    }
+
+    #[test]
+    fn test_focus_slot_is_idempotent_and_visible_only() {
+        let (_, state) = state();
+        // Hidden slot: focusing it is a no-op.
+        state.focus_slot(SlotId::Right);
+        assert_eq!(state.layout().focused, SlotId::Left);
+        state.panel_split().unwrap();
+        // Focusing the same slot twice lands on it (unlike focus_next's toggle),
+        // so a click firing the handler twice does not cancel out.
+        state.focus_slot(SlotId::Right);
+        state.focus_slot(SlotId::Right);
+        assert_eq!(state.layout().focused, SlotId::Right);
+        state.focus_slot(SlotId::Left);
         assert_eq!(state.layout().focused, SlotId::Left);
     }
 

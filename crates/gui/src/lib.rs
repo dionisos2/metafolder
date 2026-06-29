@@ -300,6 +300,7 @@ pub fn run(options: Options) {
             commands::panel_split_toggle,
             commands::slot_hide,
             commands::panel_focus_next,
+            commands::focus_slot,
             commands::panel_set_type,
             commands::panel_swap,
             commands::ws_get_var,

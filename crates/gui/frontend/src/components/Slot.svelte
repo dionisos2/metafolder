@@ -9,7 +9,7 @@
 
   async function fullscreenMe(event: Event) {
     event.stopPropagation();
-    if (!isFocused) await invoke('panel_focus_next');
+    if (!isFocused) await invoke('focus_slot', { slot: id });
     await dispatch('panel:fullscreen');
   }
 
@@ -19,7 +19,7 @@
   const otherVisible = $derived(store.layout[id === 'left' ? 'right' : 'left'].visible);
 
   async function focusMe() {
-    if (!isFocused) await invoke('panel_focus_next');
+    if (!isFocused) await invoke('focus_slot', { slot: id });
   }
 
   async function setType(event: Event) {

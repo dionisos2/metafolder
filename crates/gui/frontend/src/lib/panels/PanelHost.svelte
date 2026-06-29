@@ -81,10 +81,13 @@
     // on plain content (text, an image, a bare div) would never focus the slot;
     // pointerdown covers every click whatever it lands on. Hosts are overlaid
     // in a separate layer, not children of the <section class="slot">, so the
-    // slot's own onclick never sees these clicks.
+    // slot's own onclick never sees these clicks. A focusable target raises
+    // BOTH events, so focus_slot must be idempotent (focusing a fixed slot) —
+    // the toggling panel_focus_next would cancel itself out and leave focus on
+    // the original panel (the "clicking a button doesn't focus the panel" bug).
     const focusSlot = () => {
       const slot = visibleSlots.get(key);
-      if (slot && slot !== store.layout.focused) void invoke('panel_focus_next');
+      if (slot && slot !== store.layout.focused) void invoke('focus_slot', { slot });
     };
     host.addEventListener('focusin', focusSlot);
     host.addEventListener('pointerdown', focusSlot);

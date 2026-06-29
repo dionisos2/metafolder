@@ -167,6 +167,12 @@ pub fn panel_focus_next(app: AppHandle) {
     app.gui.focus_next()
 }
 
+/// Click-to-focus: focuses the slot the click landed in (idempotent).
+#[tauri::command]
+pub fn focus_slot(app: AppHandle, slot: SlotId) {
+    app.gui.focus_slot(slot)
+}
+
 #[tauri::command]
 pub fn panel_set_type(app: AppHandle, slot: SlotId, panel_type: String) -> Result<(), String> {
     app.gui.set_panel_type(slot, &panel_type)
