@@ -28,6 +28,7 @@ CLI provides a DSL that compiles to this representation.
 | Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
 | FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition) |
 | Matches             | =matches=             | String field matches a regex pattern                           |
+| Osm                 | =osm=                 | Ordered-substring match over a field's text (=direct=) or its =TreeRef= path (=path=) |
 | UuidIn              | =uuid_in=             | Metarecord UUID is in an explicit list (=uuids=, 32-hex)        |
 
 =UuidIn= is the bridge between the resource layer (a single thing at its URL)
@@ -185,6 +186,49 @@ common in the corpus still beats the full scan by ~3×; a no-literal pattern is
 unchanged. FTS5 is also the planned acceleration for high-cardinality string
 equality if needed.
 
+** Ordered substring matching (OSM, implemented)
+
+=Osm= is the /finder/ predicate: each whitespace-separated term must appear as a
+*substring*, the terms *in order* and *non-overlapping* — =osm(f, "con def")= ≈
+=f MATCHES ".*con.*def.*"=. It is always *case-insensitive*. JSON:
+={"type": "osm", "field": ..., "terms": ["con", "def"], "mode": "direct"|"path"}=.
+The term list is the query string split on whitespace (=core::query::split_terms=,
+the single shared rule); empty runs are dropped, and *empty =terms=* matches
+every metarecord with a non-=Nothing= value in the field.
+
+Two modes, chosen by the caller (see the DSL functions =osm= / =osmd=):
+
+- =direct= — match the field row's *own text*: =value_text= for a =string=
+  field, =value_name= (the leaf name = last path segment) for a =tree_ref=.
+  Available on any field; a non-textual value type simply never matches. As a
+  multi-map predicate it matches if *any* occurrence of the field matches.
+- =path= — =tree_ref= fields only. Match the *assembled path* =seg1/…/segN=
+  (root-relative, the metarecord's own name is the last segment) with =/= a hard
+  barrier no single term may cross; consecutive terms may fall in the *same*
+  segment (so =osm(mfr_path, "scien fic")= matches =…/science-fiction/…=).
+  Applied to a field that demonstrably holds a non-=tree_ref= value it is
+  *rejected with 400* (use =osmd=); a field with no data yields an empty result.
+
+*Execution* (=query_exec=, the SQL engine; the bitmap index reports =Osm=
+=Unsupported= and falls back, as it already does for =Matches=):
+
+- =direct= compiles like =Matches= — the =REGEXP= scan (an unanchored
+  =(?i)t1.*t2.*…= built from the regex-escaped terms) pre-filtered by the FTS5
+  trigram index on the ≥ 3-char terms (all bound as one =AND= phrase query). A
+  sound over-approximation; =REGEXP= re-checks order, so the result is identical
+  to a full scan.
+- =path= is *hybrid*, like =FollowsTransitive=: the matching metarecords are
+  computed through the tree cache and inlined as literals. Candidate pruning
+  uses the same trigram index — for each ≥ 3-char term, the nodes whose *name*
+  contains it, expanded to descendants-or-self via the cache; the intersection
+  over those terms is a superset of the matches (a term always lies within one
+  segment), and each candidate's real path is then verified by the ordered check
+  (=osm_ordered_match=). Terms shorter than 3 chars cannot use the trigram index
+  and are enforced only by that final check (with no ≥ 3-char term at all, every
+  path-bearing metarecord of the field is verified). This adds *no persistent
+  state* — no denormalised path text, and a rename/move costs nothing beyond the
+  existing tree-cache upkeep.
+
 ** HTTP API
 
 *** =POST /repos/:repo_uuid/query=
@@ -320,13 +364,15 @@ query     := or_expr
 or_expr   := and_expr ( "OR" and_expr )*
 and_expr  := unary ( "AND" unary )*
 unary     := "NOT" unary | atom
-atom      := "(" query ")" | predicate
+atom      := "(" query ")" | osm_call | predicate
 
 predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field cmp_op literal
            | field "MATCHES" string
            | field "->"  ( string | "(" query ")" )
            | field "->*" ( string | "(" query ")" )
+
+osm_call  := ( "osm" | "osmd" ) "(" field "," string ")"
 
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
 literal   := int | float | string | "true" | "false" | datetime
@@ -347,6 +393,12 @@ string    := '"' ... '"'
 - =field ->* "path"= / =field ->* (predicate)= compiles to
   =FollowsTransitive= (TreeRef only), with the same two right-hand-side
   forms as =->=.
+- =osm(field, "terms")= / =osmd(field, "terms")= compile to =Osm= with
+  =mode = path= / =direct= (see [[*Ordered substring matching (OSM, implemented)]]);
+  the term string is split on whitespace. =osm=/=osmd= are function-call
+  operators recognised only when immediately followed by =(=, so a field literally
+  named =osm= stays usable as a predicate (=osm = "x"=). =osm= on a non-=TreeRef=
+  field is rejected with =400= — use =osmd=.
 - A *datetime literal* is =@= followed by either a quoted ISO-8601 string
   (=@"2024-01-01"=, =@"2024-01-01 12:30:00"=; any form =core::date::iso_to_ms=
   accepts, UTC) or a bare integer of Unix milliseconds (=@1704067200000=). It
@@ -363,6 +415,7 @@ NOT (seen = true OR rating IS UNKNOWN)
 mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
 author -> (name = "Coltrane")
 mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
+mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "sf"))
 #+END_SRC
 
 ** =mf query <predicate>=

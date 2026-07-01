@@ -7,12 +7,12 @@
 
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Value, ZERO_UUID};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{FollowTarget, OsmMode, Query};
 
 use crate::db;
 use crate::error::ApiError;
@@ -415,6 +415,31 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The case-insensitive ordered-substring regex for OSM `Direct` mode:
+/// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
+/// yields `(?i)`, which matches any string ("present" semantics). Unanchored
+/// (`REGEXP` searches), so this is exactly "con then def, non-overlapping".
+fn osm_regex(terms: &[String]) -> String {
+    let body = terms.iter().map(|t| regex::escape(t)).collect::<Vec<_>>().join(".*");
+    format!("(?i){body}")
+}
+
+/// Whether `terms` occur in `haystack` as ordered, non-overlapping substrings.
+/// `haystack` must already be lower-cased; the terms are lower-cased here. This
+/// is the OSM `Path` verifier: since a term never contains `/`, a term match
+/// can never straddle a path separator, so the `/` barrier holds automatically.
+fn osm_ordered_match(haystack_lower: &str, terms: &[String]) -> bool {
+    let mut from = 0;
+    for term in terms {
+        let needle = term.to_lowercase();
+        match haystack_lower[from..].find(&needle) {
+            Some(at) => from += at + needle.len(),
+            None => return false,
+        }
+    }
+    true
+}
+
 fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
     if !s.len().is_multiple_of(2) {
         return Err(ApiError::bad_request("invalid cursor"));
@@ -691,6 +716,11 @@ impl<'a> Compiler<'a> {
                 )))
             }
 
+            Query::Osm { field, terms, mode } => match mode {
+                OsmMode::Direct => self.osm_direct(field, terms),
+                OsmMode::Path => self.osm_path(field, terms),
+            },
+
             Query::Follows { field, target } => match target {
                 FollowTarget::Condition(cond) => {
                     let sub = self.compile_node(cond)?;
@@ -775,6 +805,167 @@ impl<'a> Compiler<'a> {
                 )))
             }
         }
+    }
+
+    /// OSM `Direct` mode: an ordered-substring match over the field row's own
+    /// text (`value_text` / `value_name`). Like `Matches`, the `REGEXP` scan is
+    /// pre-filtered by the FTS5 trigram index on the ≥ 3-char terms (a sound
+    /// over-approximation; `REGEXP` re-checks order).
+    fn osm_direct(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
+        let pattern = osm_regex(terms);
+        self.push_text(field);
+        let long: Vec<String> = terms
+            .iter()
+            .filter(|t| t.chars().count() >= 3)
+            .map(|t| crate::fts::match_phrase(t))
+            .collect();
+        let prefilter = if long.is_empty() {
+            ""
+        } else {
+            self.push_text(&long.join(" "));
+            "id IN (SELECT rowid FROM field_text WHERE text MATCH ?) AND "
+        };
+        self.push_text(&pattern);
+        self.push_text(&pattern);
+        Ok(self.add(format!(
+            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+             WHERE field_name = ? AND {prefilter}\
+               ((value_type = 'string' AND value_text REGEXP ?) OR \
+                (value_type = 'tree_ref' AND value_name REGEXP ?))"
+        )))
+    }
+
+    /// OSM `Path` mode (TreeRef only): an ordered-substring match over the
+    /// assembled path `seg1/…/segN`. Hybrid, like `FollowsTransitive` — the
+    /// matching metarecords are computed through the tree cache and inlined as
+    /// literals. Candidate pruning: for each ≥ 3-char term, the nodes whose
+    /// *name* contains it (trigram-indexed) expanded to descendants-or-self;
+    /// their intersection is a superset of the matches (each term lies within
+    /// one segment), verified by the final ordered check on the real path.
+    fn osm_path(&mut self, field: &str, terms: &[String]) -> Result<String, ApiError> {
+        if let Some(other) = self.osm_non_tree_ref_type(field)? {
+            return Err(ApiError::bad_request(format!(
+                "osm path mode requires a tree_ref field, but '{field}' holds {other} values; \
+                 use osmd for direct string matching"
+            )));
+        }
+        if terms.is_empty() {
+            // A blank query matches every metarecord with a path in this forest.
+            self.push_text(field);
+            return Ok(self.add(
+                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+                 WHERE field_name = ? AND value_type = 'tree_ref'"
+                    .to_string(),
+            ));
+        }
+        let conn = self.conn;
+        let mut candidates: Option<std::collections::HashSet<Uuid>> = None;
+        for term in terms.iter().filter(|t| t.chars().count() >= 3) {
+            let mut reachable = std::collections::HashSet::new();
+            for node in self.osm_name_nodes(field, term)? {
+                reachable.insert(node);
+                for desc in self.cache.descendants(conn, field, node)? {
+                    reachable.insert(desc);
+                }
+            }
+            candidates = Some(match candidates.take() {
+                None => reachable,
+                Some(prev) => &prev & &reachable,
+            });
+            if candidates.as_ref().is_some_and(|c| c.is_empty()) {
+                return Ok(self.empty());
+            }
+        }
+        // With no ≥ 3-char term the trigram index cannot prune; verify every
+        // path-bearing metarecord of the field.
+        let candidates: Vec<Uuid> = match candidates {
+            Some(set) => set.into_iter().collect(),
+            None => self.osm_all_tree_ref_nodes(field)?,
+        };
+        let mut matched = Vec::new();
+        for uuid in candidates {
+            for path in self.cache.paths_of(conn, field, uuid)? {
+                if osm_ordered_match(&path.to_lowercase(), terms) {
+                    matched.push(uuid);
+                    break;
+                }
+            }
+        }
+        if matched.is_empty() {
+            return Ok(self.empty());
+        }
+        let literals: Vec<String> =
+            matched.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
+        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+    }
+
+    /// The metarecord uuids whose `field` `tree_ref` name contains `term`
+    /// (case-insensitive), trigram-pre-filtered when `term` is ≥ 3 chars.
+    fn osm_name_nodes(&self, field: &str, term: &str) -> Result<Vec<Uuid>, ApiError> {
+        let pattern = format!("(?i){}", regex::escape(term));
+        let collect = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Vec<Uuid>, ApiError> {
+            let mut stmt = self.conn.prepare(sql).map_err(anyhow::Error::from)?;
+            let rows = stmt
+                .query_map(params, |row| row.get::<_, Vec<u8>>(0))
+                .map_err(anyhow::Error::from)?;
+            let mut out = Vec::new();
+            for bytes in rows {
+                out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
+            }
+            Ok(out)
+        };
+        if term.chars().count() >= 3 {
+            let phrase = crate::fts::match_phrase(term);
+            collect(
+                "SELECT DISTINCT metarecord_uuid FROM field \
+                 WHERE field_name = ?1 AND value_type = 'tree_ref' \
+                   AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?2) \
+                   AND value_name REGEXP ?3",
+                &[&field, &phrase, &pattern],
+            )
+        } else {
+            collect(
+                "SELECT DISTINCT metarecord_uuid FROM field \
+                 WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
+                &[&field, &pattern],
+            )
+        }
+    }
+
+    /// Every metarecord with a `tree_ref` value in `field` (the unpruned
+    /// candidate set for an all-short-terms OSM path query).
+    fn osm_all_tree_ref_nodes(&self, field: &str) -> Result<Vec<Uuid>, ApiError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT DISTINCT metarecord_uuid FROM field \
+                 WHERE field_name = ?1 AND value_type = 'tree_ref'",
+            )
+            .map_err(anyhow::Error::from)?;
+        let rows = stmt
+            .query_map([field], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(anyhow::Error::from)?;
+        let mut out = Vec::new();
+        for bytes in rows {
+            out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
+        }
+        Ok(out)
+    }
+
+    /// The value type of `field` when it demonstrably holds a non-`Nothing`,
+    /// non-`tree_ref` value — the case `osm` path mode rejects (400). `None`
+    /// when the field is a `tree_ref` or has no data (vacuously empty result).
+    fn osm_non_tree_ref_type(&self, field: &str) -> Result<Option<String>, ApiError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT value_type FROM field \
+                 WHERE field_name = ?1 AND value_type NOT IN ('nothing', 'tree_ref') LIMIT 1",
+                [field],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(anyhow::Error::from)?)
     }
 
     fn comparison(&mut self, field: &str, value: &Value, op: CmpOp) -> Result<String, ApiError> {

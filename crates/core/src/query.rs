@@ -47,6 +47,23 @@ pub enum Query {
     /// field, the regex applies to the name component.
     Matches { field: String, pattern: String },
 
+    // --- Ordered substring matching (OSM) ---
+    /// Ordered Substring Matching: each whitespace-separated term must appear
+    /// as a substring, the terms in order and non-overlapping
+    /// (`"con def"` ≈ `.*con.*def.*`). Case-insensitive.
+    ///
+    /// - `mode = Direct`: matches against the field row's own text — `value_text`
+    ///   for a `String` field, `value_name` (the leaf name) for a `TreeRef`.
+    ///   Available on any field; a non-textual value type simply never matches.
+    /// - `mode = Path`: `TreeRef` fields only. Matches against the assembled path
+    ///   string `seg1/.../segN`, with `/` as a hard barrier no single term may
+    ///   cross (consecutive terms may fall in the same segment). Applied to a
+    ///   non-`TreeRef` field it is rejected with `400`.
+    ///
+    /// Empty `terms` (e.g. a blank query) matches every metarecord with a
+    /// non-`Nothing` value in `field`.
+    Osm { field: String, terms: Vec<String>, mode: OsmMode },
+
     // --- Explicit set ---
     /// The metarecord's UUID is one of `uuids` (32-hex in JSON). Bridges the
     /// resource layer and the `/query/*` set layer: it lets set operations
@@ -56,6 +73,22 @@ pub enum Query {
         #[serde(with = "crate::metarecord::hex_uuid_vec")]
         uuids: Vec<uuid::Uuid>,
     },
+}
+
+/// Matching target of an [`Query::Osm`] node (JSON: snake_case string).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OsmMode {
+    /// Match the field row's own text (`value_text` / `value_name`).
+    Direct,
+    /// Match the assembled `TreeRef` path, `/` a barrier between terms.
+    Path,
+}
+
+/// Splits an OSM query string into terms on whitespace, dropping empty runs.
+/// The single, shared term-splitting rule (used by the DSL and any client).
+pub fn split_terms(input: &str) -> Vec<String> {
+    input.split_whitespace().map(str::to_string).collect()
 }
 
 /// Right-hand side of `Follows` and `FollowsTransitive`: either a path string
@@ -158,6 +191,37 @@ mod tests {
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"follows","field":"author","target":{"type":"eq","field":"name","value":{"type":"string","value":"Coltrane"}}}"#
         );
+    }
+
+    #[test]
+    fn test_osm_path_json_format() {
+        let q = Query::Osm {
+            field: "mfr_path".into(),
+            terms: vec!["scien".into(), "fic".into()],
+            mode: OsmMode::Path,
+        };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"osm","field":"mfr_path","terms":["scien","fic"],"mode":"path"}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_osm_direct_json_format() {
+        let q = Query::Osm { field: "label".into(), terms: vec!["sf".into()], mode: OsmMode::Direct };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"osm","field":"label","terms":["sf"],"mode":"direct"}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_split_terms() {
+        assert_eq!(split_terms("  scien   fic "), vec!["scien".to_string(), "fic".to_string()]);
+        assert!(split_terms("   ").is_empty());
+        assert!(split_terms("").is_empty());
     }
 
     #[test]

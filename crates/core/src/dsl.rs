@@ -3,7 +3,7 @@
 //! "* CLI", "Query DSL").
 
 use crate::metarecord::Value;
-use crate::query::{FollowTarget, Query};
+use crate::query::{split_terms, FollowTarget, OsmMode, Query};
 
 /// Parses a DSL predicate string into a `Query`.
 pub fn parse_query(input: &str) -> Result<Query, String> {
@@ -22,6 +22,7 @@ pub fn parse_query(input: &str) -> Result<Query, String> {
 enum Tok {
     LParen,
     RParen,
+    Comma,
     Arrow,     // ->
     ArrowStar, // ->*
     Eq,
@@ -52,6 +53,7 @@ fn describe(tok: &Tok) -> String {
     match tok {
         Tok::LParen => "'('".into(),
         Tok::RParen => "')'".into(),
+        Tok::Comma => "','".into(),
         Tok::Arrow => "'->'".into(),
         Tok::ArrowStar => "'->*'".into(),
         Tok::Eq => "'='".into(),
@@ -91,6 +93,10 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
             }
             ')' => {
                 tokens.push(Tok::RParen);
+                i += 1;
+            }
+            ',' => {
+                tokens.push(Tok::Comma);
                 i += 1;
             }
             '=' => {
@@ -315,9 +321,51 @@ impl Parser {
             let query = self.or_expr()?;
             self.expect(Tok::RParen)?;
             Ok(query)
+        } else if let Some(mode) = self.peek_osm_call() {
+            self.osm_call(mode)
         } else {
             self.predicate()
         }
+    }
+
+    /// `osm`/`osmd` are function-call operators, recognised only when the
+    /// identifier is immediately followed by `(` — so a field literally named
+    /// `osm` stays usable as an ordinary predicate.
+    fn peek_osm_call(&self) -> Option<OsmMode> {
+        let mode = match self.peek() {
+            Some(Tok::Ident(name)) if name == "osm" => OsmMode::Path,
+            Some(Tok::Ident(name)) if name == "osmd" => OsmMode::Direct,
+            _ => return None,
+        };
+        (self.tokens.get(self.pos + 1) == Some(&Tok::LParen)).then_some(mode)
+    }
+
+    /// `("osm" | "osmd") "(" field "," string ")"` — the term string is split
+    /// on whitespace into the OSM terms.
+    fn osm_call(&mut self, mode: OsmMode) -> Result<Query, String> {
+        let kw = if mode == OsmMode::Path { "osm" } else { "osmd" };
+        self.next(); // the osm/osmd identifier
+        self.expect(Tok::LParen)?;
+        let field = match self.next() {
+            Some(Tok::Ident(name)) => name,
+            Some(tok) => {
+                return Err(format!("expected a field name in {kw}(...), got {}", describe(&tok)))
+            }
+            None => return Err(format!("expected a field name in {kw}(...)")),
+        };
+        self.expect(Tok::Comma)?;
+        let terms = match self.next() {
+            Some(Tok::Str(s)) => split_terms(&s),
+            Some(tok) => {
+                return Err(format!(
+                    "expected a quoted string of terms in {kw}(...), got {}",
+                    describe(&tok)
+                ))
+            }
+            None => return Err(format!("expected a quoted string of terms in {kw}(...)")),
+        };
+        self.expect(Tok::RParen)?;
+        Ok(Query::Osm { field, terms, mode })
     }
 
     fn predicate(&mut self) -> Result<Query, String> {
@@ -592,6 +640,68 @@ mod tests {
     #[test]
     fn test_follows_transitive_requires_string_or_query() {
         err("mfr_path ->* 5");
+    }
+
+    // ── ordered substring matching (osm / osmd) ──────────────────────────────
+
+    #[test]
+    fn test_osm_path_call() {
+        assert_eq!(
+            ok(r#"osm(mfr_path, "scien fic")"#),
+            Query::Osm {
+                field: "mfr_path".into(),
+                terms: vec!["scien".into(), "fic".into()],
+                mode: crate::query::OsmMode::Path,
+            }
+        );
+    }
+
+    #[test]
+    fn test_osmd_direct_call() {
+        assert_eq!(
+            ok(r#"osmd(label, "sf")"#),
+            Query::Osm {
+                field: "label".into(),
+                terms: vec!["sf".into()],
+                mode: crate::query::OsmMode::Direct,
+            }
+        );
+    }
+
+    #[test]
+    fn test_osm_composes_under_or_and() {
+        // The finder shape: mf_schema="tag" AND (osm(path) OR osmd(label)).
+        let q = ok(r#"mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "scien fic"))"#);
+        let Query::And { operands } = q else { panic!("expected And, got {q:?}") };
+        assert_eq!(operands.len(), 2);
+        assert!(matches!(&operands[1], Query::Or { operands } if operands.len() == 2));
+    }
+
+    #[test]
+    fn test_osm_empty_terms() {
+        assert_eq!(
+            ok(r#"osm(mfr_path, "")"#),
+            Query::Osm { field: "mfr_path".into(), terms: vec![], mode: crate::query::OsmMode::Path }
+        );
+    }
+
+    #[test]
+    fn test_osm_rejects_bad_shapes() {
+        err("osm mfr_path"); // missing parens
+        err(r#"osm(mfr_path)"#); // missing terms argument
+        err(r#"osm(mfr_path "x")"#); // missing comma
+        err(r#"osm("x", "y")"#); // first argument must be a field identifier
+        err(r#"osm(mfr_path, x)"#); // terms must be a string literal
+    }
+
+    #[test]
+    fn test_field_named_osm_still_usable() {
+        // `osm`/`osmd` are only special when immediately followed by '(':
+        // a field literally named `osm` remains usable as a predicate.
+        assert_eq!(
+            ok(r#"osm = "x""#),
+            Query::Eq { field: "osm".into(), value: Value::String("x".into()) }
+        );
     }
 
     // ── combinators and precedence ───────────────────────────────────────────
