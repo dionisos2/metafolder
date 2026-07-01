@@ -4,12 +4,28 @@
   way to browse and bulk-edit a repository.
 </p>
 
+<h2>Finder (quick filter)</h2>
+<p>
+  The search box at the top is the <strong>finder</strong>: a fast, incremental
+  filter that narrows the list as you type. Press <code>/</code> to focus it.
+  Each whitespace-separated word must appear <em>as a substring, in order</em>
+  (&ldquo;ordered substring&rdquo;): <code>scien fic</code> matches
+  <code>science-fiction</code>, and <code>conf gui</code> matches a path
+  <code>&hellip;/config/&hellip;/gui/&hellip;</code>. It searches several fields
+  at once (shown at the right of the box): a TreeRef field like
+  <code>mfr_path</code> is matched over its whole path, other fields over their
+  text. The finder is <em>combined with</em> (AND-ed onto) the query box below,
+  so you keep a structural query (e.g. <code>type=tag</code>) while typing to
+  find within it. Change the searched fields with the
+  <code>metarecord-list:finder-fields</code> workspace variable.
+</p>
+
 <h2>Query box</h2>
 <p>
   Type a <a data-help-page="queries">simplified query</a> and press
   <strong>Enter</strong> (or <em>Apply</em>) to run it; an empty query lists
   everything. <em>Show normal DSL</em> reveals the expanded query, which you can
-  freeze to edit by hand.
+  freeze to edit by hand. Focus it with <code>Ctrl+/</code>.
 </p>
 
 <h2>Columns</h2>

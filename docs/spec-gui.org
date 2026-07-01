@@ -627,6 +627,7 @@ Behaviours:
 | =metarecord:edit-cancel=  | Cancel the current field edit or add form           |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
+| =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
 | =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
@@ -665,6 +666,8 @@ Behaviours:
 Every command is reachable from the keyboard. No command requires the mouse.
 
 Within =metarecord-list=:
+- =/= focuses the finder (=metarecord-list:find=); =Ctrl+/= the structural query
+  editor (=metarecord-list:edit-query=).
 - =Up= / =Down= move the selection (updates =selected_metarecord=).
 - =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
   =selected_paths= is non-empty), opening the slot if hidden. See
@@ -1123,6 +1126,30 @@ to =workspace.selected_metarecord= and sets =workspace.selected_paths= to the li
 of resolved absolute paths from all =mfr_path= field rows of that metarecord
 (empty list if the metarecord has no valid =mfr_path=). Other panels update
 reactively (see [[*Cross-panel selection]]).
+
+**** Finder (quick filter)
+
+A search box at the top of the panel — the /finder/ — is an incremental
+[[file:spec-query.org][OSM]] (ordered-substring) filter, the ergonomic way to
+find a metarecord by a fragment of its name/label and/or path. As the user
+types (debounced), it re-runs the query; the terms are the input split on
+whitespace. =metarecord-list:find= focuses it (default keybinding =/=; the
+structural query editor moves to =Ctrl+/=).
+
+The finder builds an OSM sub-query *OR-combined across a set of target fields*
+and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a
+structural query (e.g. =type = "tag"=) and a typed fragment compose. The mode of
+each target is auto-detected from the field catalog: a =tree_ref= field is
+matched over its assembled path (=osm=, path mode), every other field over its
+value (=osmd=, direct mode) — an unknown field defaults to direct and simply
+contributes nothing, so a target list is always safe. The bulk-edit and the
+result count operate on this *effective* (finder-filtered) query.
+
+The searched fields default to =mfr_path label name= and are overridable per
+workspace via the =metarecord-list:finder-fields= variable (a list of field
+names); a value picker may seed it. The finder text itself persists in
+=metarecord-list:finder=. When the panel is opened as a value picker (its
+workspace has a =pick_request=), the finder is focused on first display.
 
 **** Query editor (two zones)
 

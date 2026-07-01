@@ -29,7 +29,7 @@
     "id": "metarecord-list",
     "title": "Metarecord list panel",
     "file": "metarecord-list.html",
-    "aliases": ["columns", "metarecords"]
+    "aliases": ["columns", "metarecords", "finder", "find", "quick-filter"]
   },
   {
     "id": "file-manager",

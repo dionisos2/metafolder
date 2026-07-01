@@ -5,6 +5,7 @@ import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
+import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 import {
   parseColumns,
   isSortable,
@@ -24,6 +25,11 @@ import {
 // overrides it.
 const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
+// Fields the finder (quick OSM filter) searches by default: the file path
+// (tree_ref → osm path mode) plus common textual identifiers (osmd direct).
+// Auto-mode from the catalog; missing fields contribute nothing. Overridable
+// per workspace via `metarecord-list:finder-fields`.
+const DEFAULT_FINDER_FIELDS = ['mfr_path', 'label', 'name'];
 const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
 
 export async function mount(root, metafolder) {
@@ -39,7 +45,10 @@ export async function mount(root, metafolder) {
   let total = null; // full result count (daemon-side COUNT, first page only)
   let pageSize = defaultPageSize; // persisted per workspace
   let loading = false;
-  let queryIR = null; // null = match all
+  let queryIR = null; // null = match all (the structural base query)
+  let finderText = ''; // quick OSM filter, AND-ed onto the base query
+  let finderFields = DEFAULT_FINDER_FIELDS.slice();
+  let finderTimer = null;
   let normalShown = false; // zone B (normal DSL) revealed?
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
@@ -55,6 +64,8 @@ export async function mount(root, metafolder) {
   const grid = root.getElementById('grid');
   const scroll = root.getElementById('scroll');
   const statusLine = root.getElementById('status-line');
+  const finderInput = root.getElementById('finder-input');
+  const finderFieldsLabel = root.getElementById('finder-fields');
   const queryInput = root.getElementById('query-input');
   const columnsInput = root.getElementById('columns-input');
   const queryError = root.getElementById('query-error');
@@ -158,6 +169,13 @@ export async function mount(root, metafolder) {
     await prepareNow(metarecords);
   }
 
+  // The query actually run: the structural base query AND the finder's OSM
+  // clause (mode auto-detected per field from the catalog). null = match all.
+  function effectiveQuery() {
+    const targets = finderTargets(finderFields, (f) => cache.fieldType(repo, f));
+    return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
+  }
+
   async function fetchPage(reset) {
     if (!repo || loading) return;
     loading = true;
@@ -180,7 +198,7 @@ export async function mount(root, metafolder) {
       let result;
       try {
         result = await cache.query(repo, {
-          query: queryIR ?? MATCH_ALL,
+          query: effectiveQuery() ?? MATCH_ALL,
           select: '*',
           limit: pageSize,
           ...(reset && { count: true }), // daemon-side COUNT, no extra pages
@@ -574,7 +592,7 @@ export async function mount(root, metafolder) {
   /** Counts the metarecords the current query matches (for the confirmation). */
   async function countMatches() {
     const result = await daemon.call('POST', `/repos/${repo}/query`, {
-      query: queryIR ?? MATCH_ALL,
+      query: effectiveQuery() ?? MATCH_ALL,
       select: '*',
       limit: 1,
       count: true,
@@ -592,10 +610,12 @@ export async function mount(root, metafolder) {
       const force = name.startsWith('mfr_') || bulkForce.checked;
       const n = await countMatches();
       if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
-      // Value-less ops (unset) act on the name alone.
+      // Value-less ops (unset) act on the name alone. Bulk edits target the
+      // effective (finder-filtered) set — you act on what you see.
+      const effQ = effectiveQuery();
       const body = op.valueless
-        ? { query: queryIR ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
-        : bulkSetBody(queryIR, name, bulkWidget.read(), force);
+        ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
+        : bulkSetBody(effQ, name, bulkWidget.read(), force);
       const resp = await daemon.call('POST', `/repos/${repo}/${op.path}`, body);
       const updated = resp.updated ?? 0;
       bulkForm.classList.remove('open');
@@ -632,6 +652,32 @@ export async function mount(root, metafolder) {
     if (event.key === 'Enter') void applyQuery();
   });
   queryInput.addEventListener('input', scheduleLivePreview);
+
+  // ── Finder (quick OSM filter) ─────────────────────────────────────────────
+
+  function updateFinderFieldsLabel() {
+    finderFieldsLabel.textContent = finderFields.join(' ');
+    finderFieldsLabel.title = `finder searches: ${finderFields.join(', ')} (path for tree_ref, direct otherwise)`;
+  }
+
+  /** Re-runs the query for the current finder text (debounced on input). */
+  async function applyFinder() {
+    clearTimeout(finderTimer);
+    finderText = finderInput.value;
+    await workspace.set('metarecord-list:finder', finderText);
+    await fetchPage(true);
+  }
+
+  function scheduleFinder() {
+    clearTimeout(finderTimer);
+    finderTimer = setTimeout(() => void applyFinder(), 130);
+  }
+
+  finderInput.addEventListener('input', scheduleFinder);
+  finderInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') void applyFinder();
+    else if (event.key === 'Escape') finderInput.blur();
+  });
   normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
   normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
   normalInput.addEventListener('keydown', (event) => {
@@ -688,6 +734,10 @@ export async function mount(root, metafolder) {
       bodyEl.classList.toggle('grid', mode === 'grid');
     },
   });
+  commands.register('metarecord-list:find', {
+    label: 'Metarecord list: focus the finder (quick ordered-substring filter)',
+    handler: () => finderInput.focus(),
+  });
   commands.register('metarecord-list:edit-query', {
     label: 'Metarecord list: focus the query input',
     handler: () => queryInput.focus(),
@@ -735,7 +785,10 @@ export async function mount(root, metafolder) {
   metafolder.addKeybinding('metarecord-list:select-toggle', 'space');
   metafolder.addKeybinding('metarecord-list:open', 'enter');
   metafolder.addKeybinding('metarecord-list:open', 'right');
-  metafolder.addKeybinding('metarecord-list:edit-query', '/');
+  metafolder.addKeybinding('metarecord-list:find', '/');
+  metafolder.addKeybinding('metarecord-list:edit-query', 'ctrl+/');
+
+  let pickFocused = false; // focus the finder once when opened as a picker
 
   async function start() {
     repo = await workspace.get('active_repo');
@@ -744,7 +797,15 @@ export async function mount(root, metafolder) {
       queryInitialized = true;
       await recomputeQuery();
     }
-    if (repo !== null) await fetchPage(true);
+    if (repo !== null) {
+      // Warm the field catalog so the finder can auto-detect osm/osmd per field.
+      await cache.fetchFields(repo).catch(() => {});
+      if (!pickFocused && (await workspace.get('pick_request'))) {
+        pickFocused = true;
+        finderInput.focus();
+      }
+      await fetchPage(true);
+    }
   }
 
   // The first query waits for the first actual display.
@@ -762,10 +823,25 @@ export async function mount(root, metafolder) {
     pageSize = next;
     void fetchPage(true);
   });
+  workspace.onChange('metarecord-list:finder-fields', (value) => {
+    finderFields = Array.isArray(value) && value.length ? value : DEFAULT_FINDER_FIELDS.slice();
+    updateFinderFieldsLabel();
+    void fetchPage(true);
+  });
 
   setColumns(await workspace.get('metarecord-list:columns'));
   widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
   pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
+
+  // Restore the finder (quick filter) state.
+  finderText = (await workspace.get('metarecord-list:finder')) ?? '';
+  finderInput.value = finderText;
+  const storedFinderFields = await workspace.get('metarecord-list:finder-fields');
+  finderFields =
+    Array.isArray(storedFinderFields) && storedFinderFields.length
+      ? storedFinderFields
+      : DEFAULT_FINDER_FIELDS.slice();
+  updateFinderFieldsLabel();
 
   // Restore the two-zone query editor (values only — no daemon call here).
   queryInput.value = (await workspace.get('metarecord-list:query')) ?? '';
@@ -780,6 +856,7 @@ export async function mount(root, metafolder) {
   metafolder.whenVisible(deferredStart);
 
   return () => {
+    clearTimeout(finderTimer);
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();

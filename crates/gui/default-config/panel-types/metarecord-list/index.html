@@ -13,6 +13,35 @@
         height: 100%;
         font-size: 13px;
       }
+      #finder-bar {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        border-bottom: 1px solid var(--mf-bg, #1e1e24);
+      }
+      .finder-icon {
+        font-size: 0.9em;
+        opacity: 0.75;
+      }
+      #finder-input {
+        flex: 1;
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-accent, #4c56c4);
+        border-radius: 3px;
+        padding: 3px 6px;
+      }
+      .finder-fields {
+        font-size: 0.8em;
+        color: var(--mf-fg-dim, #8a8a96);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 40%;
+      }
       #query-editor {
         display: flex;
         flex-direction: column;
@@ -216,6 +245,17 @@
     </style>
   </head>
   <body>
+    <div id="finder-bar" data-help-topic="finder">
+      <span class="finder-icon" aria-hidden="true">🔎</span>
+      <input
+        id="finder-input"
+        placeholder="find… (ordered substring, e.g. scien fic)"
+        spellcheck="false"
+        autocomplete="off"
+        title="Quick filter: each word must appear in order (osm over tree_ref paths, osmd over text). AND-ed with the query below."
+      />
+      <span id="finder-fields" class="finder-fields" title="fields the finder searches"></span>
+    </div>
     <div id="query-editor" data-help-topic="edit-query">
       <div class="editor-row">
         <input id="query-input" placeholder='simplified query, e.g. fav genre=jazz (empty = all)' />
