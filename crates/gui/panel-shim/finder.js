@@ -9,16 +9,24 @@ export function splitTerms(text) {
   return text.trim().split(/\s+/).filter(Boolean);
 }
 
-/** Resolves finder field names to `{field, mode}` targets: a `tree_ref` field
- *  searches its assembled path (`osm`, mode `path`), everything else — including
- *  an unknown/not-yet-loaded field — searches the value directly (`osmd`, mode
- *  `direct`), which never errors. `typeOf(field)` returns the catalog value type
- *  (or null / REFRESH when unknown). */
-export function finderTargets(fields, typeOf) {
-  return fields.map((field) => ({
-    field,
-    mode: typeOf(field) === 'tree_ref' ? 'path' : 'direct',
-  }));
+/** Resolves finder field entries to `{field, mode}` targets. An entry may carry
+ *  an *explicit* mode as `field:path` / `field:direct` (the robust form — it
+ *  never depends on the async field catalog, so `mfr_path:path` is path mode
+ *  even before the catalog loads). Without an explicit mode the type is
+ *  auto-detected from the catalog: a `tree_ref` field searches its assembled
+ *  path (`osm`, mode `path`), everything else — including an unknown/not-yet-
+ *  loaded field — searches the value directly (`osmd`, mode `direct`), which
+ *  never errors. `typeOf(field)` returns the catalog value type (or
+ *  null / REFRESH when unknown). */
+export function finderTargets(entries, typeOf) {
+  return entries.map((entry) => {
+    const cut = entry.lastIndexOf(':');
+    if (cut > 0) {
+      const mode = entry.slice(cut + 1);
+      if (mode === 'path' || mode === 'direct') return { field: entry.slice(0, cut), mode };
+    }
+    return { field: entry, mode: typeOf(entry) === 'tree_ref' ? 'path' : 'direct' };
+  });
 }
 
 /** Builds the OSM filter for `terms` across `targets`, or null when there are no

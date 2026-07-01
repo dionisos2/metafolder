@@ -1138,18 +1138,21 @@ structural query editor moves to =Ctrl+/=).
 
 The finder builds an OSM sub-query *OR-combined across a set of target fields*
 and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a
-structural query (e.g. =type = "tag"=) and a typed fragment compose. The mode of
-each target is auto-detected from the field catalog: a =tree_ref= field is
-matched over its assembled path (=osm=, path mode), every other field over its
-value (=osmd=, direct mode) — an unknown field defaults to direct and simply
-contributes nothing, so a target list is always safe. The bulk-edit and the
-result count operate on this *effective* (finder-filtered) query.
+structural query (e.g. =type = "tag"=) and a typed fragment compose. Each target
+carries its OSM mode: =osm= (path — a =tree_ref= field's assembled path) or
+=osmd= (direct — the field's own value). The mode is *explicit* in the default
+config (=field:path= / =field:direct=), so it never depends on the async field
+catalog; a bare =field= (no mode) auto-detects from the catalog (=tree_ref= →
+path, else direct). An unknown field just contributes nothing, so a target list
+is always safe. The bulk-edit and the result count operate on this *effective*
+(finder-filtered) query.
 
-The searched fields default to =mfr_path label name= and are overridable per
-workspace via the =metarecord-list:finder-fields= variable (a list of field
-names); a value picker may seed it. The finder text itself persists in
-=metarecord-list:finder=. When the panel is opened as a value picker (its
-workspace has a =pick_request=), the finder is focused on first display.
+The searched fields default to =mfr_path:path label:direct name:direct= and are
+overridable per workspace via the =metarecord-list:finder-fields= variable (a
+list of =field= or =field:mode= entries); a value picker may seed it. The finder
+text itself persists in =metarecord-list:finder=. When the panel is opened as a
+value picker (its workspace has a =pick_request=), the finder is focused on
+first display.
 
 **** Query editor (two zones)
 

@@ -168,6 +168,57 @@ fn test_osmd_ordered_and_case_insensitive() {
     assert_same_set(f.run(&osmd("title", "con def")), vec![a]);
 }
 
+// ── complete tree cache (production path) ────────────────────────────────────
+
+/// Builds a deep chain of directories, returning the leaf's uuid.
+fn chain(f: &mut Fixture, root: Uuid, segments: &[&str]) -> Uuid {
+    let mut parent = root;
+    for seg in segments {
+        parent = f.node(Some(parent), seg, vec![]);
+    }
+    parent
+}
+
+#[test]
+fn test_osm_path_with_complete_cache() {
+    // Mirrors production: the tree cache is eagerly populated (is_complete()),
+    // so descendants/paths come from memory, not the DB walk the other tests use.
+    let mut f = Fixture::new();
+    let root = f.node(None, "", vec![]);
+    // A deep random-looking path that contains neither "documents" nor "art".
+    let deep = chain(
+        &mut f,
+        root,
+        &["books", "2021", "raw", "trips", "drafts", "2022", "2023", "albums"],
+    );
+    let mp3 = f.node(Some(deep), "doc_18710.mp3", vec![]);
+    // A real "art" directory with a file whose own name has no "art".
+    let art = f.node(Some(root), "art", vec![]);
+    let art_file = f.node(Some(art), "song.mp3", vec![]);
+    // A real "documents" directory with a file under it.
+    let docs = f.node(Some(root), "documents", vec![]);
+    let docs_file = f.node(Some(docs), "report.pdf", vec![]);
+
+    f.cache.populate(&f.conn).unwrap();
+    assert!(f.cache.is_complete());
+
+    // "art" must find everything on a path through the art/ directory, and must
+    // NOT be empty just because no leaf filename contains "art".
+    let art_hits = f.run(&osm("mfr_path", "art"));
+    assert!(art_hits.contains(&art), "the art directory itself should match");
+    assert!(art_hits.contains(&art_file), "a file under art/ should match");
+    assert!(!art_hits.contains(&mp3), "doc_18710.mp3 is not under art/");
+
+    // "documents" must NOT return the deep mp3 (its path has no "documents").
+    let doc_hits = f.run(&osm("mfr_path", "documents"));
+    assert!(doc_hits.contains(&docs), "the documents directory should match");
+    assert!(doc_hits.contains(&docs_file), "a file under documents/ should match");
+    assert!(
+        !doc_hits.contains(&mp3),
+        "doc_18710.mp3 must NOT match 'documents' (path has no such substring)"
+    );
+}
+
 // ── composition ─────────────────────────────────────────────────────────────
 
 #[test]

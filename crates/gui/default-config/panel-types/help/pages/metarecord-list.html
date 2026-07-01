@@ -17,7 +17,10 @@
   text. The finder is <em>combined with</em> (AND-ed onto) the query box below,
   so you keep a structural query (e.g. <code>type=tag</code>) while typing to
   find within it. Change the searched fields with the
-  <code>metarecord-list:finder-fields</code> workspace variable.
+  <code>metarecord-list:finder-fields</code> workspace variable — a list of
+  <code>field:path</code> / <code>field:direct</code> entries (a bare
+  <code>field</code> auto-detects its mode); the default is
+  <code>mfr_path:path label:direct name:direct</code>.
 </p>
 
 <h2>Query box</h2>

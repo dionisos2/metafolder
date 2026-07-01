@@ -25,11 +25,12 @@ import {
 // overrides it.
 const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
-// Fields the finder (quick OSM filter) searches by default: the file path
-// (tree_ref → osm path mode) plus common textual identifiers (osmd direct).
-// Auto-mode from the catalog; missing fields contribute nothing. Overridable
-// per workspace via `metarecord-list:finder-fields`.
-const DEFAULT_FINDER_FIELDS = ['mfr_path', 'label', 'name'];
+// Fields the finder (quick OSM filter) searches by default, each with an
+// explicit mode (`field:path` for the tree_ref path, `field:direct` for a plain
+// value) so it never depends on the async field catalog. A bare `field` (no
+// mode) auto-detects from the catalog. Missing fields contribute nothing.
+// Overridable per workspace via `metarecord-list:finder-fields`.
+const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:direct', 'name:direct'];
 const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
 
 export async function mount(root, metafolder) {
@@ -656,8 +657,9 @@ export async function mount(root, metafolder) {
   // ── Finder (quick OSM filter) ─────────────────────────────────────────────
 
   function updateFinderFieldsLabel() {
-    finderFieldsLabel.textContent = finderFields.join(' ');
-    finderFieldsLabel.title = `finder searches: ${finderFields.join(', ')} (path for tree_ref, direct otherwise)`;
+    const names = finderFields.map((e) => e.split(':')[0]);
+    finderFieldsLabel.textContent = names.join(' ');
+    finderFieldsLabel.title = `finder searches: ${finderFields.join(', ')} (osm path / osmd direct)`;
   }
 
   /** Re-runs the query for the current finder text (debounced on input). */

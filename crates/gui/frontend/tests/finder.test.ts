@@ -13,13 +13,29 @@ describe('splitTerms', () => {
 });
 
 describe('finderTargets', () => {
-  it('maps tree_ref fields to path mode and everything else to direct', () => {
+  it('honours an explicit `field:mode`, ignoring the catalog', () => {
+    // Explicit modes never depend on the (async) field catalog — the robust
+    // default so mfr_path is always path mode even before the catalog loads.
+    const typeOf = () => 'string'; // would say "direct" for mfr_path
+    expect(finderTargets(['mfr_path:path', 'label:direct'], typeOf)).toEqual([
+      { field: 'mfr_path', mode: 'path' },
+      { field: 'label', mode: 'direct' },
+    ]);
+  });
+
+  it('auto-detects the mode from the catalog when none is given', () => {
     const typeOf = (f: string) =>
       ({ mfr_path: 'tree_ref', label: 'string' })[f] ?? null; // unknown → null
     expect(finderTargets(['mfr_path', 'label', 'nope'], typeOf)).toEqual([
       { field: 'mfr_path', mode: 'path' },
       { field: 'label', mode: 'direct' },
       { field: 'nope', mode: 'direct' },
+    ]);
+  });
+
+  it('falls back to direct for an unknown explicit mode', () => {
+    expect(finderTargets(['label:weird'], () => null)).toEqual([
+      { field: 'label:weird', mode: 'direct' },
     ]);
   });
 });
