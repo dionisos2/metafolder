@@ -177,8 +177,11 @@ export async function mount(root, metafolder) {
     return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
   }
 
+  // Returns false when the call is dropped (no repo, or another fetch is in
+  // flight — fetches are serialized on `loading`), so the finder can re-run the
+  // latest query instead of leaving the list stale.
   async function fetchPage(reset) {
-    if (!repo || loading) return;
+    if (!repo || loading) return false;
     loading = true;
     try {
       // A reset fetch is a deliberate freshness point (query, refresh, display):
@@ -662,12 +665,19 @@ export async function mount(root, metafolder) {
     finderFieldsLabel.title = `finder searches: ${finderFields.join(', ')} (osm path / osmd direct)`;
   }
 
-  /** Re-runs the query for the current finder text (debounced on input). */
+  /** Re-runs the query for the current finder text (debounced on input).
+   *  Fetches are serialized (the `loading` guard drops concurrent calls), so a
+   *  fast typist can outrun an in-flight fetch and leave the list showing an
+   *  earlier term. Re-run when our fetch was dropped, or the input moved on
+   *  while we were fetching, until the shown list matches the current input. */
   async function applyFinder() {
     clearTimeout(finderTimer);
     finderText = finderInput.value;
     await workspace.set('metarecord-list:finder', finderText);
-    await fetchPage(true);
+    const ran = await fetchPage(true);
+    if (repo && (ran === false || finderInput.value !== finderText)) {
+      finderTimer = setTimeout(() => void applyFinder(), 80);
+    }
   }
 
   function scheduleFinder() {
