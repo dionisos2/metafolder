@@ -31,6 +31,9 @@ const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
 // mode) auto-detects from the catalog. Missing fields contribute nothing.
 // Overridable per workspace via `metarecord-list:finder-fields`.
 const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:direct', 'name:direct'];
+// Idle delay before the finder re-runs the query, so a burst of typing sends
+// one request rather than one per keystroke.
+const FINDER_DEBOUNCE_MS = 500;
 const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
 
 export async function mount(root, metafolder) {
@@ -682,7 +685,7 @@ export async function mount(root, metafolder) {
 
   function scheduleFinder() {
     clearTimeout(finderTimer);
-    finderTimer = setTimeout(() => void applyFinder(), 130);
+    finderTimer = setTimeout(() => void applyFinder(), FINDER_DEBOUNCE_MS);
   }
 
   finderInput.addEventListener('input', scheduleFinder);
