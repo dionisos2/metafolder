@@ -255,6 +255,63 @@ fn test_unreachable_daemon_is_operation_error() {
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
 }
 
+// ── CLI config file (spec-config "cli/config.toml") ───────────────────────────
+
+/// A fresh `XDG_CONFIG_HOME` holding `metafolder/cli/config.toml` = `contents`.
+fn xdg_with_cli_config(contents: &str) -> String {
+    let dir = temp_dir("cli_cfg");
+    let cli = dir.join("metafolder").join("cli");
+    std::fs::create_dir_all(&cli).unwrap();
+    std::fs::write(cli.join("config.toml"), contents).unwrap();
+    dir.to_str().unwrap().to_string()
+}
+
+#[test]
+fn test_config_default_repo_used_when_no_selector() {
+    let (uuid, _root) = init_repo("cfgrepo");
+    let xdg = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
+    // No -u/-n: the selector comes from the config's default [repo].
+    let out = mf_full(&["metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
+    assert_ok(&out);
+}
+
+#[test]
+fn test_no_config_ignores_the_default_repo() {
+    let (uuid, _root) = init_repo("cfgrepo_noconf");
+    let xdg = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
+    // --no-config skips the file, so there is no selector → usage error (exit 2).
+    let out = mf_full(
+        &["--no-config", "metarecord", "get"],
+        None,
+        &[("XDG_CONFIG_HOME", &xdg)],
+        true,
+    );
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_explicit_selector_overrides_the_config_default_repo() {
+    let (uuid, _root) = init_repo("cfgrepo_override");
+    // The config points at a bogus repo; an explicit -u must still win.
+    let xdg = xdg_with_cli_config("[repo]\nname = \"does-not-exist\"\n");
+    let out = mf_full(
+        &["-u", &uuid, "metarecord", "get"],
+        None,
+        &[("XDG_CONFIG_HOME", &xdg)],
+        true,
+    );
+    assert_ok(&out);
+}
+
+#[test]
+fn test_malformed_config_is_usage_error_without_contacting_daemon() {
+    let xdg = xdg_with_cli_config("this is = not = valid toml");
+    // Exit 2 before any round-trip, even against an unreachable daemon.
+    let out = mf_full(&["-p", "1", "repo", "list"], None, &[("XDG_CONFIG_HOME", &xdg)], false);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("config.toml"), "stderr: {}", out.stderr);
+}
+
 #[test]
 fn test_env_variables_are_honoured() {
     let (repo, _) = init_repo("env");

@@ -13,24 +13,32 @@ use metafolder_core::query::Query;
 use crate::client::{Client, CliError};
 use crate::{dsl, fieldspec};
 
-/// Internal pagination page size for `mf list` and `mf query` (the CLI
-/// follows `next_cursor` and streams the output).
-const PAGE_SIZE: usize = 500;
-
 pub struct Ctx {
     pub client: Client,
     name: Option<String>,
     uuid: Option<String>,
+    /// Internal pagination page size for `list`/`get`/`query`: the CLI follows
+    /// `next_cursor` and streams the output (from the config `[settings]`).
+    pub page_size: usize,
+    /// Default poll interval (ms) for `mf reconcile` waits (config `[settings]`).
+    pub reconcile_poll_interval_ms: u64,
     /// Cached `/repos/<uuid>` prefix (resolving `-n` costs one daemon round-trip).
     base: std::cell::OnceCell<String>,
 }
 
 impl Ctx {
-    pub fn new(port: u16, name: Option<String>, uuid: Option<String>) -> Self {
+    pub fn new(
+        port: u16,
+        name: Option<String>,
+        uuid: Option<String>,
+        settings: &crate::config::CliSettings,
+    ) -> Self {
         Self {
             client: Client::new(&format!("http://127.0.0.1:{port}")),
             name,
             uuid,
+            page_size: settings.page_size,
+            reconcile_poll_interval_ms: settings.reconcile_poll_interval_ms,
             base: std::cell::OnceCell::new(),
         }
     }
@@ -210,7 +218,7 @@ pub fn list(ctx: &Ctx, limit: Option<usize>) -> Result<i32, CliError> {
     let mut remaining = limit;
     let mut cursor: Option<String> = None;
     loop {
-        let page = remaining.map_or(PAGE_SIZE, |r| r.min(PAGE_SIZE));
+        let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
         if page == 0 {
             break;
         }
@@ -267,7 +275,7 @@ pub fn get(
             let mut remaining = limit;
             let mut cursor: Option<String> = None;
             loop {
-                let page = remaining.map_or(PAGE_SIZE, |r| r.min(PAGE_SIZE));
+                let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
                 if page == 0 {
                     break;
                 }
@@ -484,7 +492,7 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let mut remaining = args.limit;
     let mut cursor: Option<String> = None;
     loop {
-        let page = remaining.map_or(PAGE_SIZE, |r| r.min(PAGE_SIZE));
+        let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
         if page == 0 {
             break;
         }

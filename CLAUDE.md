@@ -313,6 +313,16 @@ help. Env fallbacks: `METAFOLDER_REPO_NAME`, `METAFOLDER_REPO`,
 `METAFOLDER_DAEMON_PORT`. A repo-scoped command with no selector fails with a
 usage error (exit 2) before any HTTP round-trip.
 
+- `config.rs`: optional CLI config `~/.config/metafolder/cli/config.toml` (same
+  optional-with-defaults model as the daemon: missing file/key → default,
+  malformed → exit 2). `[settings]` = `daemon-port` (500→ 7523), `page-size`
+  (`Ctx::page_size`, was the `PAGE_SIZE` const), `reconcile-poll-interval-ms`
+  (the `mf reconcile --poll-interval` default); `[repo]` = a default repo
+  (`name`/`uuid`) used when no `-n`/`-u`/env selector is given. Precedence:
+  flag/env > config > built-in default. The `--no-config` global flag skips the
+  file (built-in defaults only) for scripts. Shipped default:
+  `crates/cli/default-config/config.toml`.
+
 ### `crates/gui`
 
 The `metafolder-gui` binary (package `metafolder-gui`): a Tauri v2 desktop app over

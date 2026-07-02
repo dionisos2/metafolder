@@ -1,0 +1,32 @@
+# Metafolder CLI (`mf`) settings (spec-config; spec-main "* CLI").
+# Installed into ~/.config/metafolder/cli/ by metafolder-sync-config.
+#
+# Every key is optional: omit a whole table (or any key) to keep the default
+# shown below. Precedence for each knob is: an explicit command-line flag (or
+# its environment variable) > this file > the built-in default. Run `mf` with
+# `--no-config` to ignore this file entirely and fall back to the built-in
+# defaults — handy in scripts that must not depend on your personal tweaks.
+
+# Tunable UX/performance settings.
+[settings]
+
+# Daemon port on 127.0.0.1, used when neither `-p/--port` nor the
+# METAFOLDER_DAEMON_PORT environment variable is given. Default: 7523.
+daemon-port = 7523
+
+# Internal pagination page size. `mf` follows the daemon's `next_cursor` and
+# streams results, requesting this many rows per round-trip. Larger values mean
+# fewer round-trips but bigger responses. Default: 500.
+page-size = 500
+
+# Poll interval, in milliseconds, while `mf reconcile` waits for its background
+# task to finish (used when `--poll-interval` is omitted). Default: 200.
+reconcile-poll-interval-ms = 200
+
+# Default repository, used when no selector (`-n/--name`, `-u/--uuid`, or the
+# METAFOLDER_REPO_NAME / METAFOLDER_REPO environment variables) is given. Set at
+# most one of the two keys; with none (the default), a repo-scoped command
+# without a selector still fails with a usage error. `-n`/`-u`/env always win.
+[repo]
+# name = "music"
+# uuid = "3f7c1e2a4b5d6e7f8a9b0c1d2e3f4a5b"

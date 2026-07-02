@@ -26,9 +26,13 @@ struct Cli {
     #[arg(short = 'u', long = "uuid", env = "METAFOLDER_REPO")]
     repo_uuid: Option<String>,
 
-    /// Daemon port on 127.0.0.1
-    #[arg(short = 'p', long = "port", env = "METAFOLDER_DAEMON_PORT", default_value_t = 7523)]
-    port: u16,
+    /// Daemon port on 127.0.0.1 (default: `daemon-port` from the config, else 7523)
+    #[arg(short = 'p', long = "port", env = "METAFOLDER_DAEMON_PORT")]
+    port: Option<u16>,
+
+    /// Ignore the config file entirely (use built-in defaults) — for scripts
+    #[arg(long = "no-config")]
+    no_config: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -106,9 +110,9 @@ enum Command {
         /// Start the (full) reconcile and print its task id without waiting
         #[arg(long = "no-wait")]
         no_wait: bool,
-        /// Poll interval in milliseconds while waiting for the task
-        #[arg(long = "poll-interval", default_value_t = 200)]
-        poll_interval: u64,
+        /// Poll interval in ms while waiting (default: reconcile-poll-interval-ms from config, else 200)
+        #[arg(long = "poll-interval")]
+        poll_interval: Option<u64>,
     },
     /// Create the metarecord for a single path and print its UUID
     Track { path: PathBuf },
@@ -504,7 +508,25 @@ enum SchemaCommand {
 
 fn main() {
     let cli = Cli::parse();
-    let ctx = Ctx::new(cli.port, cli.repo_name, cli.repo_uuid);
+    // Load the config first (unless --no-config); a malformed file aborts before
+    // any daemon round-trip. Precedence: an explicit flag/env wins over config.
+    let config = match metafolder_cli::config::load(cli.no_config) {
+        Ok(config) => config,
+        Err(message) => {
+            eprintln!("error: {message}");
+            std::process::exit(2);
+        }
+    };
+    let port = cli.port.unwrap_or(config.settings.daemon_port);
+    // The default [repo] applies as a whole and only when the user named
+    // neither -n nor -u (nor their env vars); an explicit selector of either
+    // kind fully overrides it (so the config never fills the *other* field and
+    // trips the "-n and -u are mutually exclusive" check).
+    let (repo_name, repo_uuid) = match (cli.repo_name, cli.repo_uuid) {
+        (None, None) => (config.repo.name, config.repo.uuid),
+        explicit => explicit,
+    };
+    let ctx = Ctx::new(port, repo_name, repo_uuid, &config.settings);
     let result = dispatch(&ctx, cli.command);
     match result {
         Ok(code) => std::process::exit(code),
@@ -557,7 +579,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             !no_refresh,
             json,
             no_wait,
-            poll_interval,
+            poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms),
         ),
         Command::Track { path } => commands::track(ctx, &path),
         Command::Path { uuid, relative } => commands::path(ctx, &uuid, relative),

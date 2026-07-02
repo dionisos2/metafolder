@@ -45,7 +45,8 @@ A single git repository at =~/.config/metafolder/= (respecting
     style.css
     panel-types/
       <name>/index.html ...
-  cli/                           ← (no config yet; reserved)
+  cli/
+    config.toml                  ← [settings] + default [repo]
 #+END_SRC
 
 The GUI reads =gui/config.toml= for the daemon port it connects to on
@@ -56,6 +57,20 @@ port its own HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI read
 (=metarecord-list= 100, =file= 150, =file-manager= 200 by default); each key is
 a panel-type name. =.gitignore= is part
 of the shipped defaults (committed on =default=).
+
+The =mf= CLI reads =cli/config.toml= at startup, the same optional-with-defaults
+model as the daemon: a missing file (or key) keeps the built-in default, a
+malformed file is an error. Two tables. =[settings]= holds UX/perf knobs —
+=daemon-port= (default 7523, used when neither =-p/--port= nor
+=METAFOLDER_DAEMON_PORT= is given), =page-size= (default 500, the internal
+pagination size while streaming =list=/=get=/=query=) and
+=reconcile-poll-interval-ms= (default 200, the =mf reconcile= wait poll used when
+=--poll-interval= is omitted). =[repo]= names a *default repository*
+(=name= or =uuid=) used when no selector (=-n=/=-u= or their env vars) is given;
+with none, a repo-scoped command without a selector still fails with a usage
+error. Precedence for every knob is: an explicit flag/env > the config file >
+the built-in default. The global =--no-config= flag ignores the file entirely
+(built-in defaults only), so scripts are immune to the user's personal tweaks.
 
 The obsolete =panel-types-defaults/= mirror does not exist in this model: the
 =default= branch *is* the mirror, done correctly and extended to every
@@ -71,7 +86,7 @@ on-disk subdirectory it targets:
 crates/core/default-config/query-grammar
 crates/daemon/default-config/config.toml
 crates/gui/default-config/keybindings.toml, style.css, panel-types/...
-crates/cli/default-config/...            ← may be empty
+crates/cli/default-config/config.toml
 #+END_SRC
 
 =crates/<name>/default-config/= maps to =~/.config/metafolder/<name>/=.
@@ -152,6 +167,10 @@ file kind:
 - =gui/keybindings.toml=: see below.
 - =daemon/config.toml=: an error when malformed; absence
   means "no repos to auto-load", which stays valid.
+- =cli/config.toml=: an error when malformed (the =mf= process stops with
+  exit 2 before any daemon round-trip); absence means "all built-in defaults",
+  which stays valid. =--no-config= skips the read entirely, likewise yielding
+  the built-in defaults.
 
 * Keybindings: single-file model
 
