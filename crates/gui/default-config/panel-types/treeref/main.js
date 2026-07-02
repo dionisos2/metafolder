@@ -240,17 +240,7 @@ export async function mount(root, metafolder) {
     handler: () => refresh(),
   });
 
-  metafolder.addKeybinding('treeref:next', 'down');
-  metafolder.addKeybinding('treeref:next', 'j');
-  metafolder.addKeybinding('treeref:prev', 'up');
-  metafolder.addKeybinding('treeref:prev', 'k');
-  metafolder.addKeybinding('treeref:first', 'home');
-  metafolder.addKeybinding('treeref:last', 'end');
-  metafolder.addKeybinding('treeref:descend', 'enter');
-  metafolder.addKeybinding('treeref:descend', 'right');
-  metafolder.addKeybinding('treeref:parent', 'backspace');
-  metafolder.addKeybinding('treeref:parent', 'left');
-  metafolder.addKeybinding('treeref:refresh', 'r');
+  // Keybindings for this panel live in keybindings.toml (when = "treeref").
 
   async function start() {
     repo = await workspace.get('active_repo');

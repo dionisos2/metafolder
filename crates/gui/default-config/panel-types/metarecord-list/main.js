@@ -796,17 +796,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  metafolder.addKeybinding('metarecord-list:next', 'down');
-  metafolder.addKeybinding('metarecord-list:next', 'j');
-  metafolder.addKeybinding('metarecord-list:prev', 'up');
-  metafolder.addKeybinding('metarecord-list:prev', 'k');
-  metafolder.addKeybinding('metarecord-list:first', 'home');
-  metafolder.addKeybinding('metarecord-list:last', 'end');
-  metafolder.addKeybinding('metarecord-list:select-toggle', 'space');
-  metafolder.addKeybinding('metarecord-list:open', 'enter');
-  metafolder.addKeybinding('metarecord-list:open', 'right');
-  metafolder.addKeybinding('metarecord-list:find', '/');
-  metafolder.addKeybinding('metarecord-list:edit-query', 'ctrl+/');
+  // Keybindings for this panel live in keybindings.toml (when = "metarecord-list").
 
   let pickFocused = false; // focus the finder once when opened as a picker
 

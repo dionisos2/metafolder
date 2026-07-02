@@ -240,11 +240,10 @@ impl ConfigDir {
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;
-        table.retain(|key, _| {
-            crate::keybindings::parse_combo(key)
-                .map(|keys| keys.join(" ") != normalized)
-                .unwrap_or(true)
-        });
+        // A combo may already hold several `when`-scoped bindings (as an array):
+        // collect them, drop the one for this exact scope, then add the new one.
+        let mut elements = take_combo_elements(&mut table, &normalized);
+        elements.retain(|e| binding_when(e) != when);
         let mut entry = toml::Table::new();
         entry.insert("command".into(), toml::Value::String(command.to_string()));
         if let Some(when) = when {
@@ -253,22 +252,29 @@ impl ConfigDir {
         if text_input {
             entry.insert("text-input".into(), toml::Value::Boolean(true));
         }
-        table.insert(normalized, toml::Value::Table(entry));
+        elements.push(entry);
+        table.insert(normalized, collapse_elements(elements));
         self.write_user_keybindings_table(&table)?;
         self.load_keybindings()
     }
 
-    /// Removes (unbinds) one combo from `keybindings.toml`; a missing combo is
-    /// a no-op. Reverting to a shipped default is a git operation on the config
-    /// repo, not handled here (spec-config). Returns the recompiled set.
-    pub fn remove_user_keybinding(&self, combo: &str) -> Result<KeybindingSet, String> {
+    /// Removes (unbinds) one `when`-scoped binding of `combo` from
+    /// `keybindings.toml` (other scopes of the same combo are kept); a missing
+    /// binding is a no-op. Reverting to a shipped default is a git operation on
+    /// the config repo, not handled here (spec-config). Returns the recompiled
+    /// set.
+    pub fn remove_user_keybinding(
+        &self,
+        combo: &str,
+        when: Option<&str>,
+    ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;
-        table.retain(|key, _| {
-            crate::keybindings::parse_combo(key)
-                .map(|keys| keys.join(" ") != normalized)
-                .unwrap_or(true)
-        });
+        let mut elements = take_combo_elements(&mut table, &normalized);
+        elements.retain(|e| binding_when(e) != when);
+        if !elements.is_empty() {
+            table.insert(normalized, collapse_elements(elements));
+        }
         self.write_user_keybindings_table(&table)?;
         self.load_keybindings()
     }
@@ -338,6 +344,51 @@ impl ConfigDir {
         } else {
             None
         }
+    }
+}
+
+/// The `when` scope of one binding element (`None` = global).
+fn binding_when(element: &toml::Table) -> Option<&str> {
+    element.get("when").and_then(toml::Value::as_str)
+}
+
+/// Removes every user-file entry whose key normalizes to `normalized` (a combo
+/// may be spelled differently, and its value may be a single table or an array)
+/// and returns their binding elements as a flat list.
+fn take_combo_elements(table: &mut toml::Table, normalized: &str) -> Vec<toml::Table> {
+    let keys: Vec<String> = table
+        .keys()
+        .filter(|k| {
+            crate::keybindings::parse_combo(k)
+                .map(|ks| ks.join(" ") == normalized)
+                .unwrap_or(false)
+        })
+        .cloned()
+        .collect();
+    let mut elements = Vec::new();
+    for key in keys {
+        match table.remove(&key) {
+            Some(toml::Value::Table(t)) => elements.push(t),
+            Some(toml::Value::Array(arr)) => {
+                for v in arr {
+                    if let toml::Value::Table(t) = v {
+                        elements.push(t);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    elements
+}
+
+/// A combo's TOML value: a single table when there is one binding, an array of
+/// tables when there are several `when`-scoped ones.
+fn collapse_elements(mut elements: Vec<toml::Table>) -> toml::Value {
+    if elements.len() == 1 {
+        toml::Value::Table(elements.pop().unwrap())
+    } else {
+        toml::Value::Array(elements.into_iter().map(toml::Value::Table).collect())
     }
 }
 
@@ -458,6 +509,100 @@ mod tests {
         assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("type = \"tag\""));
         assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("type = \"person\""));
         assert_eq!(parsed.picker_seeds.get("missing"), None);
+    }
+
+    fn kb_dir() -> ConfigDir {
+        let dir = std::env::temp_dir().join(format!("mf_gui_kb_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        ConfigDir::at(dir)
+    }
+
+    fn scopes_of<'a>(set: &'a KeybindingSet, combo: &[&str]) -> Vec<Option<String>> {
+        let mut v: Vec<Option<String>> = set
+            .compiled()
+            .into_iter()
+            .filter(|b| b.keys.iter().map(String::as_str).collect::<Vec<_>>() == combo)
+            .map(|b| b.when)
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn test_set_keybinding_grows_a_shared_combo_into_an_array() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"j\" = { command = \"file-manager:next\", when = \"file-manager\" }\n",
+        )
+        .unwrap();
+
+        let set = config
+            .set_user_keybinding("j", "metarecord-list:next", Some("metarecord-list"), false)
+            .unwrap();
+        // Both scopes now coexist under `j`.
+        assert_eq!(
+            scopes_of(&set, &["j"]),
+            vec![Some("file-manager".into()), Some("metarecord-list".into())]
+        );
+        // Persisted as an array, so a re-read keeps both.
+        let reread = config.load_keybindings().unwrap();
+        assert_eq!(scopes_of(&reread, &["j"]).len(), 2);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_set_keybinding_replaces_only_the_same_scope() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"j\" = [\n  { command = \"metarecord-list:next\", when = \"metarecord-list\" },\n  { command = \"file-manager:next\", when = \"file-manager\" },\n]\n",
+        )
+        .unwrap();
+
+        let set = config
+            .set_user_keybinding("j", "metarecord-list:custom", Some("metarecord-list"), false)
+            .unwrap();
+        let js: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["j"]).collect();
+        assert_eq!(js.len(), 2);
+        let mlist = js.iter().find(|b| b.when.as_deref() == Some("metarecord-list")).unwrap();
+        assert_eq!(mlist.invocation, "metarecord-list:custom");
+        let fm = js.iter().find(|b| b.when.as_deref() == Some("file-manager")).unwrap();
+        assert_eq!(fm.invocation, "file-manager:next");
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_remove_keybinding_drops_one_scope_and_keeps_the_rest() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"j\" = [\n  { command = \"metarecord-list:next\", when = \"metarecord-list\" },\n  { command = \"file-manager:next\", when = \"file-manager\" },\n]\n",
+        )
+        .unwrap();
+
+        let set = config.remove_user_keybinding("j", Some("metarecord-list")).unwrap();
+        assert_eq!(scopes_of(&set, &["j"]), vec![Some("file-manager".into())]);
+        // The single remaining binding is persisted (as a table or 1-array).
+        let reread = config.load_keybindings().unwrap();
+        assert_eq!(scopes_of(&reread, &["j"]), vec![Some("file-manager".into())]);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_remove_keybinding_last_scope_removes_the_key() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"j\" = { command = \"metarecord-list:next\", when = \"metarecord-list\" }\n\"t\" = { command = \"tab:new\" }\n",
+        )
+        .unwrap();
+
+        let set = config.remove_user_keybinding("j", Some("metarecord-list")).unwrap();
+        assert!(scopes_of(&set, &["j"]).is_empty());
+        // A different combo is untouched.
+        assert_eq!(scopes_of(&set, &["t"]), vec![None]);
+        std::fs::remove_dir_all(config.root()).unwrap();
     }
 
     #[test]

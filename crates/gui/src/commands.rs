@@ -316,8 +316,9 @@ pub fn set_user_keybinding(
 pub fn remove_user_keybinding(
     app: AppHandle,
     combo: String,
+    when: Option<String>,
 ) -> Result<Vec<CompiledBinding>, String> {
-    let set = app.config.remove_user_keybinding(&combo)?;
+    let set = app.config.remove_user_keybinding(&combo, when.as_deref())?;
     let compiled = set.compiled();
     *app.keybindings.lock_recover() = set;
     crate::push_keybindings(&app.gui, &compiled);

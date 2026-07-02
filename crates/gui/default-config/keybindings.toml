@@ -1,7 +1,15 @@
 # Default keybindings shipped with the metafolder GUI.
 # Copy entries you want to change into your own
-# ~/.config/metafolder-gui/keybindings.toml — the user file only needs the
-# overrides, it is merged over these defaults at startup.
+# ~/.config/metafolder/gui/keybindings.toml — this file IS the complete set
+# (the git-backed config model already merges the shipped defaults with your
+# edits), so edit it in place.
+#
+# Format: each key is a combo (or a whitespace-separated sequence like "s l").
+# Its value is either a single binding table, or — when the same combo maps to
+# a different command depending on the focused panel — an ARRAY of bindings,
+# each scoped with `when = "<panel-type>"`. `text-input = true` lets a binding
+# fire even while a text input is focused (e.g. editing commands). A binding
+# with no `when` is global.
 
 # Command input (spec default suggestion).
 ":" = { command = "command-input:activate" }
@@ -9,7 +17,6 @@
 # Text editing (fire even while a text input is focused).
 "escape" = { command = "editing:unfocus", text-input = true }
 "ctrl+q" = { command = "editing:discard", text-input = true }
-"enter" = { command = "editing:confirm", text-input = true }
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }
 
@@ -33,12 +40,6 @@
 "7" = { command = "tab:goto 7" }
 "8" = { command = "tab:goto 8" }
 "9" = { command = "tab:goto 9" }
-
-# In the file panel the arrows drive the metarecord-list selection of the
-# same workspace (commands are dispatched to their owning panel type,
-# focused or not); the file panel follows through selected_paths.
-"down" = { command = "metarecord-list:next", when = "file" }
-"up" = { command = "metarecord-list:prev", when = "file" }
 
 # Event log navigation (one revision per step, on the active repo).
 "ctrl+z" = { command = "log:undo" }
@@ -75,8 +76,116 @@
 "h c" = { command = "help:help-cursor" }
 "f1" = { command = "help:help-cursor", text-input = true }
 
-# Panel types suggest their own keybindings (metafolder.addKeybinding);
-# they are the weakest layer, so an entry here overrides them. Scope it
-# to the panel type with `when`, e.g. to rebind metarecord-list's "open in
-# the other panel" from enter to l:
-# "l" = { command = "metarecord-list:open", when = "metarecord-list" }
+# ── Panel navigation and actions ─────────────────────────────────────────────
+# The list panels share the same navigation combos, each dispatched to its own
+# panel type via `when`. Commands are routed to their owning panel type whether
+# focused or not, so e.g. in the `file` panel the arrows still drive the
+# metarecord-list selection (the file panel follows through selected_paths).
+
+# Move down / up one row.
+"down" = [
+  { command = "metarecord-list:next", when = "file" },
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next", when = "file-manager" },
+  { command = "treeref:next", when = "treeref" },
+  { command = "ref-list:next", when = "ref-list" },
+  { command = "log:next", when = "log" },
+  { command = "metarecord:field-next", when = "metarecord-detail" },
+]
+"up" = [
+  { command = "metarecord-list:prev", when = "file" },
+  { command = "metarecord-list:prev", when = "metarecord-list" },
+  { command = "file-manager:prev", when = "file-manager" },
+  { command = "treeref:prev", when = "treeref" },
+  { command = "ref-list:prev", when = "ref-list" },
+  { command = "log:prev", when = "log" },
+  { command = "metarecord:field-prev", when = "metarecord-detail" },
+]
+
+# Vim-style down / up.
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next", when = "file-manager" },
+  { command = "treeref:next", when = "treeref" },
+  { command = "ref-list:next", when = "ref-list" },
+  { command = "log:next", when = "log" },
+  { command = "metarecord:field-next", when = "metarecord-detail" },
+]
+"k" = [
+  { command = "metarecord-list:prev", when = "metarecord-list" },
+  { command = "file-manager:prev", when = "file-manager" },
+  { command = "treeref:prev", when = "treeref" },
+  { command = "ref-list:prev", when = "ref-list" },
+  { command = "log:prev", when = "log" },
+  { command = "metarecord:field-prev", when = "metarecord-detail" },
+]
+
+# Jump to first / last row.
+"home" = [
+  { command = "metarecord-list:first", when = "metarecord-list" },
+  { command = "file-manager:first", when = "file-manager" },
+  { command = "treeref:first", when = "treeref" },
+  { command = "ref-list:first", when = "ref-list" },
+  { command = "log:first", when = "log" },
+]
+"end" = [
+  { command = "metarecord-list:last", when = "metarecord-list" },
+  { command = "file-manager:last", when = "file-manager" },
+  { command = "treeref:last", when = "treeref" },
+  { command = "ref-list:last", when = "ref-list" },
+  { command = "log:last", when = "log" },
+]
+
+# Enter: confirm while typing (global), otherwise the focused panel's primary
+# action (open / descend / activate / edit / expand).
+"enter" = [
+  { command = "editing:confirm", text-input = true },
+  { command = "metarecord-list:open", when = "metarecord-list" },
+  { command = "file-manager:activate", when = "file-manager" },
+  { command = "treeref:descend", when = "treeref" },
+  { command = "ref-list:open", when = "ref-list" },
+  { command = "log:toggle-ops", when = "log" },
+  { command = "metarecord:field-edit", when = "metarecord-detail" },
+]
+
+# Right / left: descend into / go up (open in the other panel for lists).
+"right" = [
+  { command = "metarecord-list:open", when = "metarecord-list" },
+  { command = "treeref:descend", when = "treeref" },
+  { command = "ref-list:open", when = "ref-list" },
+]
+"left" = { command = "treeref:parent", when = "treeref" }
+"backspace" = [
+  { command = "treeref:parent", when = "treeref" },
+  { command = "file-manager:parent", when = "file-manager" },
+]
+
+# Refresh the current view.
+"r" = [
+  { command = "treeref:refresh", when = "treeref" },
+  { command = "ref-list:refresh", when = "ref-list" },
+  { command = "file-manager:refresh", when = "file-manager" },
+]
+
+# metarecord-list: selection, finder, query editing.
+"space" = { command = "metarecord-list:select-toggle", when = "metarecord-list" }
+"/" = { command = "metarecord-list:find", when = "metarecord-list" }
+"ctrl+/" = { command = "metarecord-list:edit-query", when = "metarecord-list" }
+
+# metarecord-detail: field actions and record create/save.
+"d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
+"a" = { command = "metarecord:add-field", when = "metarecord-detail" }
+"ctrl+n" = { command = "metarecord:create", when = "metarecord-detail" }
+"ctrl+s" = { command = "metarecord:save", when = "metarecord-detail" }
+
+# file: image zoom controls.
+"plus" = { command = "file:zoom-in", when = "file" }
+"-" = { command = "file:zoom-out", when = "file" }
+"=" = { command = "file:zoom-fit", when = "file" }
+"0" = { command = "file:zoom-reset", when = "file" }
+
+# Panel types can still suggest their own keybindings at runtime
+# (metafolder.addKeybinding) — useful for third-party panels. Those are the
+# weakest layer: any entry here with the same combo and the same `when`
+# overrides them. The built-in panels declare all of their bindings above
+# rather than suggesting them, so they are all editable in this one file.

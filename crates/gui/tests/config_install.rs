@@ -78,8 +78,10 @@ fn test_set_user_keybinding_upserts_and_persists() {
 #[test]
 fn test_set_user_keybinding_replaces_differently_spelled_combo() {
     let (_guard, config) = temp_config();
+    // Same combo and same scope, spelled differently: the second upsert
+    // replaces the first (override is keyed by the normalized combo AND scope).
     config
-        .set_user_keybinding("shift+ctrl+a", "first", None, false)
+        .set_user_keybinding("shift+ctrl+a", "first", Some("metarecord-list"), false)
         .unwrap();
     let set = config
         .set_user_keybinding("ctrl+shift+A", "second", Some("metarecord-list"), true)
@@ -105,10 +107,10 @@ fn test_remove_user_keybinding_unbinds_the_combo() {
 
     // In the single-file model, removing unbinds the combo entirely (there is
     // no separate default layer to fall back to).
-    let set = config.remove_user_keybinding("t").unwrap();
+    let set = config.remove_user_keybinding("t", None).unwrap();
     assert!(set.compiled().iter().all(|b| b.keys != ["t"]));
     // Removing a missing combo is a no-op, not an error.
-    config.remove_user_keybinding("t").unwrap();
+    config.remove_user_keybinding("t", None).unwrap();
 }
 
 #[test]

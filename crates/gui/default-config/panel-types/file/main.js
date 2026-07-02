@@ -451,10 +451,7 @@ export async function mount(root, metafolder) {
     handler: zoomReset,
   });
 
-  metafolder.addKeybinding('file:zoom-in', 'plus');
-  metafolder.addKeybinding('file:zoom-out', '-');
-  metafolder.addKeybinding('file:zoom-fit', '=');
-  metafolder.addKeybinding('file:zoom-reset', '0');
+  // Keybindings for this panel live in keybindings.toml (when = "file").
 
   root.getElementById('zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
   root.getElementById('zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));

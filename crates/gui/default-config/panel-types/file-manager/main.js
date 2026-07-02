@@ -325,15 +325,7 @@ export async function mount(root, metafolder) {
     handler: goUp,
   });
 
-  metafolder.addKeybinding('file-manager:next', 'down');
-  metafolder.addKeybinding('file-manager:next', 'j');
-  metafolder.addKeybinding('file-manager:prev', 'up');
-  metafolder.addKeybinding('file-manager:prev', 'k');
-  metafolder.addKeybinding('file-manager:first', 'home');
-  metafolder.addKeybinding('file-manager:last', 'end');
-  metafolder.addKeybinding('file-manager:activate', 'enter');
-  metafolder.addKeybinding('file-manager:parent', 'backspace');
-  metafolder.addKeybinding('file-manager:refresh', 'r');
+  // Keybindings for this panel live in keybindings.toml (when = "file-manager").
 
   async function start() {
     repo = await workspace.get('active_repo');

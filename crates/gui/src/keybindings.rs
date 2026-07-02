@@ -78,36 +78,67 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// Parses a keybindings TOML file into (normalized combo, spec) pairs.
+/// A combo's TOML value: either a single binding or, when the same combo needs
+/// several `when`-scoped bindings (e.g. `down` in every list panel), an array
+/// of them.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum SpecOrList {
+    One(BindingSpec),
+    Many(Vec<BindingSpec>),
+}
+
+impl SpecOrList {
+    fn into_vec(self) -> Vec<BindingSpec> {
+        match self {
+            SpecOrList::One(spec) => vec![spec],
+            SpecOrList::Many(specs) => specs,
+        }
+    }
+}
+
+/// Parses a keybindings TOML file into (normalized combo, spec) pairs. A combo
+/// key may map to one binding or an array of them; each element becomes its own
+/// pair, so the same combo can appear more than once (different `when` scopes).
 pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, String> {
-    let table: HashMap<String, BindingSpec> =
+    let table: HashMap<String, SpecOrList> =
         toml::from_str(source).map_err(|e| format!("invalid keybindings file: {e}"))?;
     let mut entries: Vec<(Vec<String>, BindingSpec)> = Vec::new();
-    for (combo, spec) in table {
-        entries.push((parse_combo(&combo)?, spec));
+    for (combo, value) in table {
+        let keys = parse_combo(&combo)?;
+        for spec in value.into_vec() {
+            entries.push((keys.clone(), spec));
+        }
     }
-    // HashMap order is arbitrary: sort for determinism.
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
+    // HashMap order is arbitrary: sort for determinism (by combo, then scope).
+    entries.sort_by(|a, b| (&a.0, &a.1.when).cmp(&(&b.0, &b.1.when)));
     Ok(entries)
 }
 
+/// A binding's identity for override purposes: the same key sequence in the
+/// same `when` scope. So `down` in `metarecord-list` and `down` in
+/// `file-manager` are distinct, and a user file overrides each independently.
+type BindingKey = (Vec<String>, Option<String>);
+
 /// The merged binding set.
 pub struct KeybindingSet {
-    /// Keyed by normalized combo sequence; defaults overridden by user.
-    config: HashMap<Vec<String>, BindingSpec>,
+    /// Keyed by (combo, scope); defaults overridden by the user per (combo,
+    /// scope), so rebinding one panel's `down` leaves the others intact.
+    config: HashMap<BindingKey, BindingSpec>,
     /// Panel suggestions that survived conflict checking.
     suggestions: Vec<CompiledBinding>,
 }
 
 impl KeybindingSet {
-    /// Merges the engine defaults with the user file (user wins per combo).
+    /// Merges the engine defaults with the user file (user wins per (combo,
+    /// scope)).
     pub fn from_sources(defaults: &str, user: &str) -> Result<Self, String> {
-        let mut config: HashMap<Vec<String>, BindingSpec> = HashMap::new();
+        let mut config: HashMap<BindingKey, BindingSpec> = HashMap::new();
         for (keys, spec) in parse_toml(defaults)? {
-            config.insert(keys, spec);
+            config.insert((keys, spec.when.clone()), spec);
         }
         for (keys, spec) in parse_toml(user)? {
-            config.insert(keys, spec);
+            config.insert((keys, spec.when.clone()), spec);
         }
         Ok(KeybindingSet { config, suggestions: Vec::new() })
     }
@@ -130,11 +161,7 @@ impl KeybindingSet {
     ) -> Result<(), String> {
         let keys = parse_combo(combo)?;
         let conflicts = |w: &Option<String>| w.as_deref() == when;
-        if self
-            .config
-            .get(&keys)
-            .map(|spec| conflicts(&spec.when))
-            .unwrap_or(false)
+        if self.config.contains_key(&(keys.clone(), when.map(str::to_string)))
             || self
                 .suggestions
                 .iter()
@@ -156,7 +183,7 @@ impl KeybindingSet {
         let mut table: Vec<CompiledBinding> = self
             .config
             .iter()
-            .map(|(keys, spec)| CompiledBinding {
+            .map(|((keys, _when), spec)| CompiledBinding {
                 keys: keys.clone(),
                 invocation: spec.command.clone(),
                 when: spec.when.clone(),
@@ -249,6 +276,77 @@ mod tests {
         assert!(parse_toml(r#""ctrl+" = { command = "x" }"#).is_err());
     }
 
+    #[test]
+    fn test_parse_toml_accepts_an_array_of_bindings_for_one_combo() {
+        // The same combo can carry several scoped bindings (different `when`),
+        // which a single table cannot express.
+        let source = r#"
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next",    when = "file-manager" },
+]
+"enter" = [
+  { command = "editing:confirm", text-input = true },
+  { command = "metarecord-list:open", when = "metarecord-list" },
+]
+"t" = { command = "tab:new" }
+"#;
+        let entries = parse_toml(source).unwrap();
+        // 2 (j) + 2 (enter) + 1 (t)
+        assert_eq!(entries.len(), 5);
+
+        let js: Vec<&BindingSpec> = entries
+            .iter()
+            .filter(|(k, _)| k == &vec!["j".to_string()])
+            .map(|(_, s)| s)
+            .collect();
+        assert_eq!(js.len(), 2);
+        assert!(js.iter().any(|s| s.command == "metarecord-list:next"
+            && s.when.as_deref() == Some("metarecord-list")));
+        assert!(js.iter().any(|s| s.command == "file-manager:next"
+            && s.when.as_deref() == Some("file-manager")));
+
+        // The single-table form still works alongside arrays.
+        assert!(entries
+            .iter()
+            .any(|(k, s)| k == &vec!["t".to_string()] && s.command == "tab:new"));
+    }
+
+    #[test]
+    fn test_array_bindings_survive_into_the_compiled_table() {
+        let source = r#"
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next",    when = "file-manager" },
+]
+"#;
+        let set = KeybindingSet::from_source(source).unwrap();
+        let table = set.compiled();
+        let js: Vec<_> = table.iter().filter(|b| b.keys == ["j"]).collect();
+        assert_eq!(js.len(), 2);
+    }
+
+    #[test]
+    fn test_user_override_targets_one_scope_of_a_shared_combo() {
+        // A user rebinds `j` only for metarecord-list; the file-manager `j`
+        // default is untouched (override is keyed by combo AND scope).
+        let defaults = r#"
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next",    when = "file-manager" },
+]
+"#;
+        let user = r#""j" = { command = "metarecord-list:custom", when = "metarecord-list" }"#;
+        let set = KeybindingSet::from_sources(defaults, user).unwrap();
+        let table = set.compiled();
+        let js: Vec<_> = table.iter().filter(|b| b.keys == ["j"]).collect();
+        assert_eq!(js.len(), 2);
+        let mlist = js.iter().find(|b| b.when.as_deref() == Some("metarecord-list")).unwrap();
+        assert_eq!(mlist.invocation, "metarecord-list:custom");
+        let fm = js.iter().find(|b| b.when.as_deref() == Some("file-manager")).unwrap();
+        assert_eq!(fm.invocation, "file-manager:next");
+    }
+
     // ── Merge ────────────────────────────────────────────────────────────
 
     #[test]
@@ -328,12 +426,27 @@ mod tests {
     fn test_shipped_defaults_parse() {
         let defaults = include_str!("../default-config/keybindings.toml");
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
-        assert!(set.compiled().iter().any(|b| b.invocation == "tab:new"));
-        assert!(set.compiled().iter().any(|b| b.keys == [":"]));
-        assert!(set
-            .compiled()
+        let table = set.compiled();
+        assert!(table.iter().any(|b| b.invocation == "tab:new"));
+        assert!(table.iter().any(|b| b.keys == [":"]));
+        assert!(table.iter().any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
+
+        // The panel bindings now live in the shipped file (not addKeybinding):
+        // the same combo carries several scoped bindings.
+        let down: Vec<_> = table.iter().filter(|b| b.keys == ["down"]).collect();
+        assert!(down.len() >= 6, "expected per-panel `down` bindings, got {}", down.len());
+        assert!(down
             .iter()
-            .any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
+            .any(|b| b.when.as_deref() == Some("metarecord-list") && b.invocation == "metarecord-list:next"));
+        assert!(down
+            .iter()
+            .any(|b| b.when.as_deref() == Some("file-manager") && b.invocation == "file-manager:next"));
+        // `enter` mixes a global text-input binding with per-panel actions.
+        let enter: Vec<_> = table.iter().filter(|b| b.keys == ["enter"]).collect();
+        assert!(enter.iter().any(|b| b.when.is_none() && b.text_input));
+        assert!(enter
+            .iter()
+            .any(|b| b.when.as_deref() == Some("treeref") && b.invocation == "treeref:descend"));
     }
 
     // ── Compilation ──────────────────────────────────────────────────────

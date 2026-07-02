@@ -284,13 +284,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  metafolder.addKeybinding('log:next', 'down');
-  metafolder.addKeybinding('log:next', 'j');
-  metafolder.addKeybinding('log:prev', 'up');
-  metafolder.addKeybinding('log:prev', 'k');
-  metafolder.addKeybinding('log:first', 'home');
-  metafolder.addKeybinding('log:last', 'end');
-  metafolder.addKeybinding('log:toggle-ops', 'enter');
+  // Keybindings for this panel live in keybindings.toml (when = "log").
 
   // The log fetch (the whole tree) waits for the first actual display.
   const deferredRefresh = () => void refresh();

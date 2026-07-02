@@ -53,6 +53,7 @@
     try {
       store.keytable = await invoke<Binding[]>('remove_user_keybinding', {
         combo: binding.keys.join(' '),
+        when: binding.when ?? null,
       });
     } catch (error) {
       bindingError = String(error);

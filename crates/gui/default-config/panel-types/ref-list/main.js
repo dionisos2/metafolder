@@ -236,15 +236,7 @@ export async function mount(root, metafolder) {
     handler: () => refresh(),
   });
 
-  metafolder.addKeybinding('ref-list:next', 'down');
-  metafolder.addKeybinding('ref-list:next', 'j');
-  metafolder.addKeybinding('ref-list:prev', 'up');
-  metafolder.addKeybinding('ref-list:prev', 'k');
-  metafolder.addKeybinding('ref-list:first', 'home');
-  metafolder.addKeybinding('ref-list:last', 'end');
-  metafolder.addKeybinding('ref-list:open', 'enter');
-  metafolder.addKeybinding('ref-list:open', 'right');
-  metafolder.addKeybinding('ref-list:refresh', 'r');
+  // Keybindings for this panel live in keybindings.toml (when = "ref-list").
 
   async function start() {
     repo = await workspace.get('active_repo');

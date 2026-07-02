@@ -298,18 +298,34 @@ followed by one letter (=s l= metarecord-list, =s d= metarecord-detail, =s f=
 file, =s m= file-manager, =s o= log, =s r= repos, =s g= message, =s w=
 workspace-info).
 
-Config file examples:
+Config file examples. A combo's value is either a single binding table, or —
+when the same combo maps to a different command depending on the focused panel
+— an array of tables, each scoped with its own =when=:
 
 #+BEGIN_SRC toml
 "escape"  = { command = "editing:unfocus",         text-input = true              }
 "ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
-"j"       = { command = "metarecord-list:next",         when = "metarecord-list"            }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
 "ctrl+t"  = { command = "tab:new"                                                  }
+
+# The same combo, several scopes: one array, one entry per `when`.
+"j" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "file-manager:next",    when = "file-manager" },
+]
 #+END_SRC
 
+Override granularity is per =(combo, when)=: a user entry for =j= /
+=when = "metarecord-list"= replaces only that scope, leaving the other =j=
+bindings intact. Removing a binding at runtime (settings view) likewise targets
+one =(combo, when)=.
+
 Panel types may suggest default keybindings via =metafolder.addKeybinding=;
-these are applied only when the user has no conflicting binding configured.
+these are the weakest layer, applied only when no configured binding has the
+same combo and =when=. The built-in panels declare all of their bindings in the
+shipped =keybindings.toml= (as =when=-scoped arrays) rather than suggesting
+them, so every shortcut is visible and editable in that one file;
+=addKeybinding= remains for third-party panels.
 
 ** Status bar
 

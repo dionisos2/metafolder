@@ -731,16 +731,7 @@ export async function mount(root, metafolder) {
     },
   });
 
-  // Default keybindings (when = metarecord-detail; suggestions, weakest layer).
-  metafolder.addKeybinding('metarecord:field-next', 'down');
-  metafolder.addKeybinding('metarecord:field-next', 'j');
-  metafolder.addKeybinding('metarecord:field-prev', 'up');
-  metafolder.addKeybinding('metarecord:field-prev', 'k');
-  metafolder.addKeybinding('metarecord:field-edit', 'enter');
-  metafolder.addKeybinding('metarecord:field-delete', 'd');
-  metafolder.addKeybinding('metarecord:add-field', 'a');
-  metafolder.addKeybinding('metarecord:create', 'ctrl+n');
-  metafolder.addKeybinding('metarecord:save', 'ctrl+s');
+  // Keybindings for this panel live in keybindings.toml (when = "metarecord-detail").
 
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) return;
