@@ -73,6 +73,10 @@
         font-family: var(--mf-font-mono, monospace);
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #media-toolbar label {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.9em;
+      }
       #viewer {
         flex: 1;
         display: flex;
@@ -185,6 +189,9 @@
       <span id="zoom-label"></span>
       <button id="zoom-fit" title="Fit to available space (=)">⤢ Fit</button>
       <button id="zoom-reset" title="Original size (0)">1:1</button>
+      <label id="gif-animate-wrap" hidden title="Play the GIF animation (off: first frame only)">
+        <input type="checkbox" id="gif-animate" /> animate
+      </label>
     </div>
     <div id="viewer" data-help-topic="file"><p class="placeholder">No file selected</p></div>
     <div id="dir-footer" hidden></div>

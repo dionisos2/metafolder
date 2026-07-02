@@ -12,6 +12,13 @@ export function entriesFooter(shown, total) {
   return `${n}/${total} ${word}${n < total ? ' (more — scroll down)' : ''}`;
 }
 
+// Directory entries to display: dot-entries (Unix hidden files) are dropped
+// unless the "hidden files" checkbox is on. Applied to the real entries only —
+// the synthetic "." / ".." rows are added afterwards and always shown.
+export function filterHidden(items, showHidden) {
+  return showHidden ? items : items.filter((item) => !item.name.startsWith('.'));
+}
+
 // Parent directory of an absolute path; the filesystem root is its own
 // parent (as on Linux, where /.. is /).
 export function parentDir(path) {

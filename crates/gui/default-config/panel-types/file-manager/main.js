@@ -10,6 +10,7 @@ import {
   parentDir,
   isWithin,
   entriesFooter,
+  filterHidden,
 } from './tracked.js';
 
 // Render the directory in windows of this many rows (plus more on scroll), so
@@ -34,6 +35,7 @@ export async function mount(root, metafolder) {
   let rendered = 0; // number of `listing` rows currently in the DOM (windowed)
   let cursorIndex = -1;
   let constrainToRoot = true;
+  let showHidden = false;
   let trackedPaths = new Map(); // absolute path -> metarecord uuid (children of currentDir only)
 
   const entriesList = root.getElementById('entries');
@@ -41,6 +43,7 @@ export async function mount(root, metafolder) {
   const pathElement = root.getElementById('current-path');
   const addButton = root.getElementById('add');
   const constrainBox = root.getElementById('constrain');
+  const showHiddenBox = root.getElementById('show-hidden');
   const statusLine = root.getElementById('status-line');
   const listingElement = root.getElementById('listing');
 
@@ -111,7 +114,7 @@ export async function mount(root, metafolder) {
     listing = [
       { name: '.', path: dir, is_dir: true },
       { name: '..', path: parentDir(dir), is_dir: true },
-      ...items,
+      ...filterHidden(items, showHidden),
     ];
     currentDir = dir;
     trackedPaths = new Map();
@@ -275,6 +278,13 @@ export async function mount(root, metafolder) {
   constrainBox.addEventListener('change', () => {
     constrainToRoot = constrainBox.checked;
   });
+  // Re-list the current directory so the dot-entries (dis)appear immediately.
+  async function setShowHidden(shown) {
+    showHidden = shown;
+    showHiddenBox.checked = shown;
+    if (currentDir !== null) await open(currentDir);
+  }
+  showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
   const detachScroll = pager.attach(listingElement);
   root.getElementById('up').addEventListener('click', goUp);
   root.getElementById('goto-root').addEventListener('click', gotoRoot);
@@ -299,6 +309,10 @@ export async function mount(root, metafolder) {
       constrainBox.checked = !constrainBox.checked;
       constrainToRoot = constrainBox.checked;
     },
+  });
+  commands.register('file-manager:toggle-hidden', {
+    label: 'File manager: show/hide hidden files (dot-entries)',
+    handler: () => setShowHidden(!showHidden),
   });
   commands.register('file-manager:next', {
     label: 'File manager: move down',

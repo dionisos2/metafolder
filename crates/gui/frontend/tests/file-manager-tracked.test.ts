@@ -5,7 +5,7 @@
 
 import { describe, expect, test, vi } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panel
-import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter, filterHidden } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -72,6 +72,23 @@ describe('entriesFooter', () => {
 
   test('the shown count is clamped to the total', () => {
     expect(entriesFooter(250, 3)).toBe('3/3 entries');
+  });
+});
+
+describe('filterHidden', () => {
+  const items = [
+    { name: 'music', path: '/r/music', is_dir: true },
+    { name: '.metafolder', path: '/r/.metafolder', is_dir: true },
+    { name: 'a.mp3', path: '/r/a.mp3', is_dir: false },
+    { name: '.hidden.txt', path: '/r/.hidden.txt', is_dir: false },
+  ];
+
+  test('hides dot-entries by default (showHidden = false)', () => {
+    expect(filterHidden(items, false).map((i) => i.name)).toEqual(['music', 'a.mp3']);
+  });
+
+  test('keeps everything when showHidden = true', () => {
+    expect(filterHidden(items, true)).toEqual(items);
   });
 });
 

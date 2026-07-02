@@ -495,6 +495,8 @@ impl Gui {
         self.bench_clear().await?;
         self.layout_set("left", &ws).await?;
         self.view_set("left", "metarecord-list").await?;
+        // The list no longer runs its query on display: refresh loads it.
+        self.command("metarecord-list:refresh").await;
         settle().await;
         report("open metarecord-list", &self.bench_read_settled().await?);
         self.http_baseline(repo).await?;
@@ -509,6 +511,7 @@ impl Gui {
         let ws = self.workspace_new(repo).await?;
         self.layout_set("left", &ws).await?;
         self.view_set("left", "metarecord-list").await?;
+        self.command("metarecord-list:refresh").await; // no auto-load on display
         settle().await;
         self.command("metarecord-list:first").await;
         settle().await;
@@ -540,6 +543,7 @@ impl Gui {
         self.layout_set("right", &ws).await?;
         self.view_set("left", "metarecord-list").await?;
         self.view_set("right", "metarecord-detail").await?;
+        self.command("metarecord-list:refresh").await; // no auto-load on display
         settle().await;
         self.command("metarecord-list:first").await;
         settle().await;
@@ -580,6 +584,7 @@ impl Gui {
         let ws = self.workspace_new(repo).await?;
         self.layout_set("left", &ws).await?;
         self.view_set("left", "metarecord-list").await?;
+        self.command("metarecord-list:refresh").await; // no auto-load on display
         settle().await;
         self.bench_clear().await?;
         for _ in 0..STEPS {

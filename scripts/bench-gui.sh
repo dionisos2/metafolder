@@ -102,6 +102,8 @@ scenario_open_list() {
     clear_bench
     mfg layout left "$ws" >/dev/null
     mfg view left metarecord-list >/dev/null
+    # The list no longer runs its query on display: refresh loads it.
+    mfg command metarecord-list:refresh >/dev/null 2>&1 || true
     settle
     report "open metarecord-list"
     drop_ws "$ws"
@@ -113,6 +115,7 @@ scenario_open_detail() {
     local ws; ws=$(new_ws)
     mfg layout left "$ws" >/dev/null
     mfg view left metarecord-list >/dev/null
+    mfg command metarecord-list:refresh >/dev/null 2>&1 || true # no auto-load on display
     settle
     mfg command metarecord-list:first >/dev/null 2>&1 || true # sets selected_metarecord
     settle
@@ -140,6 +143,7 @@ scenario_list_detail_nav() {
     mfg layout right "$ws" >/dev/null
     mfg view left metarecord-list >/dev/null
     mfg view right metarecord-detail >/dev/null
+    mfg command metarecord-list:refresh >/dev/null 2>&1 || true # no auto-load on display
     settle
     mfg command metarecord-list:first >/dev/null 2>&1 || true
     settle
@@ -176,6 +180,7 @@ scenario_paging() {
     local ws; ws=$(new_ws)
     mfg layout left "$ws" >/dev/null
     mfg view left metarecord-list >/dev/null
+    mfg command metarecord-list:refresh >/dev/null 2>&1 || true # no auto-load on display
     settle
     clear_bench
     for ((i = 0; i < STEPS; i++)); do

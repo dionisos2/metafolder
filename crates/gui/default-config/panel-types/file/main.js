@@ -48,6 +48,36 @@ export async function mount(root, metafolder) {
   const dirFooter = root.getElementById('dir-footer');
   const mediaToolbar = root.getElementById('media-toolbar');
   const zoomLabel = root.getElementById('zoom-label');
+  const gifAnimateWrap = root.getElementById('gif-animate-wrap');
+  const gifAnimateBox = root.getElementById('gif-animate');
+
+  // GIFs are shown as a still of their first frame unless this is on (the
+  // toolbar checkbox, visible only while a GIF is previewed).
+  let animateGifs = false;
+  // Blob URL of the current still frame, revoked when the view moves on.
+  let staticGifUrl = null;
+
+  function revokeStaticGif() {
+    if (staticGifUrl !== null) URL.revokeObjectURL(staticGifUrl);
+    staticGifUrl = null;
+  }
+
+  // Still copy of an animated image: createImageBitmap uses the format's
+  // default (first) frame, drawn onto a canvas and served as a blob URL — an
+  // ordinary <img> for the zoom machinery, minus the animation.
+  async function staticFirstFrame(url) {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const bitmap = await createImageBitmap(await response.blob());
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve));
+    if (!blob) throw new Error('cannot rasterize the image');
+    return URL.createObjectURL(blob);
+  }
 
   // Zoom state, kept across files so a chosen level persists while browsing.
   // 'fit' fills the available box (aspect preserved); 'manual' shows the media
@@ -371,8 +401,11 @@ export async function mount(root, metafolder) {
     }
     dirFooter.hidden = true;
     // Any zoomable media from the previous view is gone; the image/video
-    // branches below re-arm it.
+    // branches below re-arm it. The GIF checkbox only applies to the GIF
+    // branch, which un-hides it.
     clearZoomTarget();
+    gifAnimateWrap.hidden = true;
+    revokeStaticGif();
     const path = viewedPath();
     if (!path) {
       placeholder('No file selected');
@@ -393,7 +426,24 @@ export async function mount(root, metafolder) {
     const url = rawUrl(path);
 
     if (IMAGE.has(extension)) {
-      const img = el('img', { src: url, onerror: () => placeholder('cannot load the file') });
+      const gif = extension === 'gif';
+      gifAnimateWrap.hidden = !gif;
+      const img = el('img', { onerror: () => placeholder('cannot load the file') });
+      if (gif && !animateGifs) {
+        try {
+          const still = await staticFirstFrame(url);
+          if (generation !== renderGeneration) {
+            URL.revokeObjectURL(still);
+            return;
+          }
+          staticGifUrl = still;
+          img.src = still;
+        } catch {
+          img.src = url; // cannot rasterize: fall back to the animated original
+        }
+      } else {
+        img.src = url;
+      }
       viewer.replaceChildren(img);
       setZoomTarget(img);
     } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
@@ -451,6 +501,17 @@ export async function mount(root, metafolder) {
     handler: zoomReset,
   });
 
+  function setAnimateGifs(on) {
+    animateGifs = on;
+    gifAnimateBox.checked = on;
+    void renderViewer();
+  }
+  commands.register('file:toggle-gif-animation', {
+    label: 'File: play/freeze GIF animations',
+    handler: () => setAnimateGifs(!animateGifs),
+  });
+  gifAnimateBox.addEventListener('change', () => setAnimateGifs(gifAnimateBox.checked));
+
   // Keybindings for this panel live in keybindings.toml (when = "file").
 
   root.getElementById('zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
@@ -465,6 +526,7 @@ export async function mount(root, metafolder) {
   // panel type switched) so it cannot keep decoding in the background.
   return () => {
     teardownMedia();
+    revokeStaticGif();
     if (detachDirScroll) detachDirScroll();
   };
 }

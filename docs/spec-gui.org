@@ -92,9 +92,9 @@ previous state unchanged.
 
 Panel *construction* is separate from the *first display*: loading the
 iframe registers commands, keybinding suggestions and listeners, but a
-panel's expensive work — the initial query of =metarecord-list=, the directory
-listing of =file-manager=, the log fetch, streaming the previewed file —
-is deferred to the first actual display via =metafolder.whenVisible(fn)=
+panel's expensive work — the directory listing of =file-manager=, the log
+fetch, streaming the previewed file — is deferred to the first actual
+display via =metafolder.whenVisible(fn)=
 (=metafolder.visible= exposes the current state; while hidden, repeated
 triggers re-arming the same callback coalesce into one run on show). The
 shell pre-instantiates every installed panel type once at startup, hidden,
@@ -109,6 +109,15 @@ layouts. Stored as part of the panel type's state in the workspace.
 The =metarecord-list= panel type supports at minimum:
 - =table= — tabular list with configurable columns.
 - =grid= — thumbnail grid, useful for image collections.
+
+=metarecord-list= goes one step further than the deferred first display: it
+never runs its query automatically. Opening or switching a repo leaves the
+list empty (the footer says so) until an explicit user action runs it —
+applying the query or the finder (=Enter=), sorting on a column header, or
+=metarecord-list:refresh= — since a freshly opened repo often needs nothing
+from this panel. The one exception is opening as a value picker
+(=pick_request=), where rows are needed to pick from. The bench harnesses
+issue =metarecord-list:refresh= after showing the panel for this reason.
 
 For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of
@@ -687,10 +696,12 @@ Behaviours:
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
+| =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager=       |
 | =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
 | =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
+| =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
 
 ** Keyboard navigation
 
@@ -1279,6 +1290,13 @@ depending on the file type; falls back to a plain-text view for text files;
 shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
+GIFs are shown as a still of their first frame by default (an animation
+looping in a preview is more often a distraction than wanted). While a GIF is
+previewed, the media toolbar shows an *animate* checkbox (unchecked by
+default, mirrored by the =file:toggle-gif-animation= command) that plays the
+real animation; the state persists while browsing other files. If the still
+frame cannot be produced, the animated original is shown as a fallback.
+
 When the active path is a directory, the panel instead lists its contents as
 a thumbnail grid (images as thumbnails via =/fsraw=, videos as poster-frame
 thumbnails via =/thumbnail=, other entries as a type glyph). The grid is
@@ -1337,6 +1355,12 @@ as in a Unix directory listing; this makes the directory's own metarecord —
 including the repo root — selectable. The tracked distinction is resolved
 per displayed directory (the direct children plus the =.= / =..= rows),
 never by scanning the whole repository.
+
+Hidden files (dot-entries) are not listed by default; a *hidden files*
+checkbox in the toolbar (unchecked by default, mirrored by the
+=file-manager:toggle-hidden= command) reveals them. The synthetic =.= / =..=
+rows are always shown, and navigating directly into a hidden directory
+(e.g. via a seeded start path) still works.
 
 The active repo's =.metafolder/internal/= directory and its contents are
 shown in red (=--mf-error=) with an =internal= badge: they are hard-excluded

@@ -61,6 +61,11 @@ export async function mount(root, metafolder) {
   let normalShown = false; // zone B (normal DSL) revealed?
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
+  // Opening a repo does not run the query automatically (often nothing is
+  // wanted from this panel yet): the list stays empty until the user runs it
+  // — apply the query, type in the finder, sort, or refresh. Reset on repo
+  // change; a value-picker opening (pick_request) arms it, rows are needed.
+  let queryRan = false;
   let livePreviewTimer = null;
   let sort = []; // [{field, order}]
   let cursorIndex = -1;
@@ -382,12 +387,15 @@ export async function mount(root, metafolder) {
         return card;
       }),
     );
-    statusLine.textContent =
-      `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
-        (total ?? metarecords.length) === 1 ? '' : 's'
-      }` +
-      (nextCursor ? ' (more available — scroll down)' : '') +
-      (checked.size > 0 ? ` — ${checked.size} selected` : '');
+    statusLine.textContent = !queryRan
+      ? repo === null
+        ? ''
+        : 'query not run — apply the query/finder (Enter) or refresh to load the list'
+      : `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
+          (total ?? metarecords.length) === 1 ? '' : 's'
+        }` +
+        (nextCursor ? ' (more available — scroll down)' : '') +
+        (checked.size > 0 ? ` — ${checked.size} selected` : '');
   }
 
   // ── Selection (workspace variables) ─────────────────────────────────────
@@ -455,6 +463,7 @@ export async function mount(root, metafolder) {
   }
 
   async function applyQuery() {
+    queryRan = true;
     const ok = await recomputeQuery();
     await persistQueryState();
     if (ok) await fetchPage(true);
@@ -550,6 +559,7 @@ export async function mount(root, metafolder) {
         ? [{ field: column.name, order: 'desc' }]
         : []
       : [{ field: column.name, order: 'asc' }];
+    queryRan = true;
     void fetchPage(true);
   }
 
@@ -680,6 +690,7 @@ export async function mount(root, metafolder) {
    *  while we were fetching, until the shown list matches the current input. */
   async function applyFinder() {
     clearTimeout(finderTimer);
+    queryRan = true;
     finderText = finderInput.value;
     await workspace.set('metarecord-list:finder', finderText);
     const ran = await fetchPage(true);
@@ -785,7 +796,10 @@ export async function mount(root, metafolder) {
   });
   commands.register('metarecord-list:refresh', {
     label: 'Metarecord list: reload from the daemon',
-    handler: () => fetchPage(true),
+    handler: () => {
+      queryRan = true; // refresh is also how the deferred initial load is run
+      return fetchPage(true);
+    },
   });
   commands.register('metarecord-list:bulk-edit', {
     label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
@@ -806,7 +820,23 @@ export async function mount(root, metafolder) {
   let pickFocused = false; // focus the finder once when opened as a picker
 
   async function start() {
-    repo = await workspace.get('active_repo');
+    const activeRepo = await workspace.get('active_repo');
+    if (activeRepo !== repo) {
+      // A new repo: empty the list and disarm the query — it only runs again
+      // on an explicit user action (see `queryRan`).
+      repo = activeRepo;
+      repoRoot = null;
+      queryRan = false;
+      metarecords = [];
+      nextCursor = null;
+      total = null;
+      cursorIndex = -1;
+      orphanCache = new Map();
+      if (checked.size > 0) {
+        checked = new Set();
+        await workspace.set('selected_metarecords', []);
+      }
+    }
     root.getElementById('no-repo').hidden = repo !== null;
     if (!queryInitialized) {
       queryInitialized = true;
@@ -818,9 +848,11 @@ export async function mount(root, metafolder) {
       if (!pickFocused && (await workspace.get('pick_request'))) {
         pickFocused = true;
         finderInput.focus();
+        queryRan = true; // a value picker needs rows to pick from
       }
-      await fetchPage(true);
     }
+    if (queryRan) await fetchPage(true);
+    else render(); // empty list + the "query not run" hint
   }
 
   // The first query waits for the first actual display.
@@ -836,12 +868,12 @@ export async function mount(root, metafolder) {
     const next = sanitizePageSize(value);
     if (next === pageSize) return;
     pageSize = next;
-    void fetchPage(true);
+    if (queryRan) void fetchPage(true);
   });
   workspace.onChange('metarecord-list:finder-fields', (value) => {
     finderFields = Array.isArray(value) && value.length ? value : DEFAULT_FINDER_FIELDS.slice();
     updateFinderFieldsLabel();
-    void fetchPage(true);
+    if (queryRan) void fetchPage(true);
   });
 
   setColumns(await workspace.get('metarecord-list:columns'));
