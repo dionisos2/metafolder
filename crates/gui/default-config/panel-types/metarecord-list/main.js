@@ -5,7 +5,13 @@ import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
-import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
+import {
+  splitTerms,
+  finderTargets,
+  finderClause,
+  composeQuery,
+  finderKeyAction,
+} from '/__finder.js';
 import {
   parseColumns,
   isSortable,
@@ -695,8 +701,20 @@ export async function mount(root, metafolder) {
 
   finderInput.addEventListener('input', scheduleFinder);
   finderInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyFinder();
-    else if (event.key === 'Escape') finderInput.blur();
+    // OSM-style: keep typing to filter, but the arrows still move the selection
+    // and Ctrl+Enter confirms a pending value pick — the finder auto-focuses in
+    // picker mode, so this makes it usable without leaving the input. These keys
+    // are `text-input = false` globally, so the shell matcher never sees them
+    // while a text input is focused; the finder drives them directly.
+    const action = finderKeyAction(event);
+    if (action === null) return;
+    // Arrows and Ctrl+Enter would otherwise move the caret / insert a newline.
+    if (action !== 'apply') event.preventDefault();
+    if (action === 'next') void setCursor(cursorIndex + 1);
+    else if (action === 'prev') void setCursor(cursorIndex - 1);
+    else if (action === 'confirm-pick') void commands.invoke('pick:confirm'); // no-op outside a pick
+    else if (action === 'apply') void applyFinder();
+    else if (action === 'blur') finderInput.blur();
   });
   normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
   normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
