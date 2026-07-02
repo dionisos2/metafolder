@@ -43,6 +43,9 @@ pub struct ServerState {
     pub input: Arc<InputWait>,
     pub commands: Arc<CommandWait>,
     pub bench: Arc<BenchBuffer>,
+    /// How long the thumbnail server reuses the fetched repository list before
+    /// re-querying the daemon (config.toml `[settings]`).
+    pub repo_list_cache_ttl: std::time::Duration,
 }
 
 pub fn build_router(state: ServerState) -> Router {

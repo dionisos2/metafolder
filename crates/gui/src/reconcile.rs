@@ -22,10 +22,27 @@ pub fn format_summary(result: &Value) -> String {
     )
 }
 
-/// Interval between task polls while a reconcile runs.
-const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+/// Timings for a reconcile run (config.toml `[settings]`/`[panels]`): the
+/// interval between task polls and how long error status messages stay.
+#[derive(Clone, Copy)]
+pub struct Timings {
+    pub poll: std::time::Duration,
+    pub error_ms: u64,
+    pub done_ms: u64,
+}
 
-pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) -> Result<(), String> {
+impl Default for Timings {
+    fn default() -> Self {
+        Timings { poll: std::time::Duration::from_millis(200), error_ms: 8000, done_ms: 8000 }
+    }
+}
+
+pub async fn run(
+    gui: Arc<GuiState>,
+    daemon: Arc<DaemonProxy>,
+    ws_id: String,
+    timings: Timings,
+) -> Result<(), String> {
     let repo = match gui.get_var(&ws_id, "active_repo")? {
         Value::String(repo) => repo,
         _ => return Err("no active repository in this workspace".into()),
@@ -39,7 +56,7 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
         .request("POST", &format!("/repos/{repo}/reconcile"), None)
         .await
         .map_err(|error| {
-            let _ = gui.post_status(&ws_id, &error, "error", Some(8000));
+            let _ = gui.post_status(&ws_id, &error, "error", Some(timings.error_ms));
             error
         })?;
     if started.status != 202 {
@@ -47,7 +64,7 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| format!("reconcile failed ({})", started.status));
-        gui.post_status(&ws_id, &message, "error", Some(8000))?;
+        gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
         return Err(message);
     }
     let task_id = started.body["task_id"]
@@ -60,14 +77,14 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
             .request("GET", &format!("/repos/{repo}/tasks/{task_id}"), None)
             .await
             .map_err(|error| {
-                let _ = gui.post_status(&ws_id, &error, "error", Some(8000));
+                let _ = gui.post_status(&ws_id, &error, "error", Some(timings.error_ms));
                 error
             })?;
         let task = &response.body;
         match task["status"].as_str() {
             Some("done") => {
                 let result = &task["result"];
-                gui.post_status(&ws_id, &format_summary(result), "info", Some(8000))?;
+                gui.post_status(&ws_id, &format_summary(result), "info", Some(timings.done_ms))?;
                 let detail = serde_json::to_string_pretty(result)
                     .unwrap_or_else(|_| result.to_string());
                 gui.append_message(&ws_id, &detail)?;
@@ -78,14 +95,14 @@ pub async fn run(gui: Arc<GuiState>, daemon: Arc<DaemonProxy>, ws_id: String) ->
                     .as_str()
                     .map(str::to_string)
                     .unwrap_or_else(|| "reconcile failed".to_string());
-                gui.post_status(&ws_id, &message, "error", Some(8000))?;
+                gui.post_status(&ws_id, &message, "error", Some(timings.error_ms))?;
                 return Err(message);
             }
             _ => {
                 // Live progress is shown by the dedicated task bar (it polls
                 // GET /tasks), so the reconcile flow itself posts nothing per
                 // poll — only the initial "Reconciling…" and the final summary.
-                tokio::time::sleep(POLL_INTERVAL).await;
+                tokio::time::sleep(timings.poll).await;
             }
         }
     }
@@ -96,7 +113,12 @@ pub async fn reconcile_run(
     app: tauri::State<'_, Arc<crate::commands::App>>,
     ws_id: String,
 ) -> Result<(), String> {
-    run(app.gui.clone(), app.daemon.clone(), ws_id).await
+    let timings = Timings {
+        poll: app.settings.reconcile_poll(),
+        error_ms: app.panel_settings.status_error_ms as u64,
+        done_ms: app.panel_settings.status_error_ms as u64,
+    };
+    run(app.gui.clone(), app.daemon.clone(), ws_id, timings).await
 }
 
 #[cfg(test)]

@@ -57,6 +57,8 @@ export interface PanelApiCtx {
   sessionToken: string;
   /** Progressive-loading page size configured for this panel type, if any. */
   pageSize?: number;
+  /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
+  panelSettings?: Record<string, number>;
   root: ShadowRoot;
   visibilityGate: VisibilityGate;
 }
@@ -164,6 +166,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     return resolvers.get(repo)!;
   }
 
+  // Shared panel timing knobs (config.toml `[panels]`), exposed as a frozen
+  // camelCase object. Undefined keys fall through to each panel's own fallback.
+  const raw = ctx.panelSettings ?? {};
+  const panelSettings = Object.freeze({
+    statusMessageMs: raw['status-message-ms'],
+    statusErrorMs: raw['status-error-ms'],
+    finderDebounceMs: raw['finder-debounce-ms'],
+    livePreviewDebounceMs: raw['live-preview-debounce-ms'],
+    taskPollMs: raw['task-poll-ms'],
+  });
+
   const api: Record<string, unknown> = {
     // `mount` runs after init, so nothing to wait for; kept for compatibility.
     ready: Promise.resolve(),
@@ -187,6 +200,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     // `[page-size]`); undefined for panels without an entry.
     get pageSize() {
       return ctx.pageSize;
+    },
+    // Shared panel UX timing knobs (config.toml `[panels]`), as a frozen object
+    // with camelCase keys. Each value may be undefined if the config is minimal,
+    // so panels should read them as `metafolder.settings.xxx ?? <fallback>`.
+    get settings() {
+      return panelSettings;
     },
 
     onVisibility(listener: (visible: boolean, slot: string | null) => void) {

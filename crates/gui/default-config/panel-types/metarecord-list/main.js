@@ -40,6 +40,11 @@ export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
   const REFRESH = cache.REFRESH;
   const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
+  // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
+  const settings = metafolder.settings ?? {};
+  const finderDebounceMs = settings.finderDebounceMs ?? FINDER_DEBOUNCE_MS;
+  const livePreviewMs = settings.livePreviewDebounceMs ?? 130;
+  const statusMessageMs = settings.statusMessageMs ?? 5000;
 
   let repo = null;
   let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
@@ -464,7 +469,7 @@ export async function mount(root, metafolder) {
   function scheduleLivePreview() {
     if (!normalShown || normalFrozen) return;
     clearTimeout(livePreviewTimer);
-    livePreviewTimer = setTimeout(() => void refreshPreview(), 130);
+    livePreviewTimer = setTimeout(() => void refreshPreview(), livePreviewMs);
   }
 
   async function refreshPreview() {
@@ -628,7 +633,7 @@ export async function mount(root, metafolder) {
       bulkForm.classList.remove('open');
       statusBar.message(
         `${op.verb} "${name}": ${updated} metarecord${updated === 1 ? '' : 's'} changed.`,
-        5000,
+        statusMessageMs,
       );
       // Refresh this list and any metarecord-detail mirror (the cache picks the
       // write up via the change feed on the next reset fetch).
@@ -685,7 +690,7 @@ export async function mount(root, metafolder) {
 
   function scheduleFinder() {
     clearTimeout(finderTimer);
-    finderTimer = setTimeout(() => void applyFinder(), FINDER_DEBOUNCE_MS);
+    finderTimer = setTimeout(() => void applyFinder(), finderDebounceMs);
   }
 
   finderInput.addEventListener('input', scheduleFinder);

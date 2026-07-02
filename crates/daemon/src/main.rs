@@ -40,7 +40,9 @@ async fn main() {
     // unconditionally; the copy is skipped at init time if the file is absent.
     let seed_schema =
         metafolder_core::config::crate_config_dir("daemon").map(|d| d.join("schema.default.json"));
-    let state = Arc::new(AppState::new().with_seed_schema(seed_schema));
+    let state = Arc::new(
+        AppState::new().with_seed_schema(seed_schema).with_settings(config.settings.clone()),
+    );
 
     let startup_state = state.clone();
     let warnings = tokio::task::spawn_blocking(move || {

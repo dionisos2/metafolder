@@ -10,6 +10,11 @@ import { createAnnotator } from './annotations.js';
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, bench, cache } = metafolder;
+  // Status-message durations (config.toml `[panels]`), with the fallbacks used
+  // before they were configurable.
+  const settings = metafolder.settings ?? {};
+  const statusMessageMs = settings.statusMessageMs ?? 5000;
+  const statusErrorMs = settings.statusErrorMs ?? 8000;
 
   let current = null; // {uuid, repo} | null
   let metarecord = null; // full metarecord JSON
@@ -552,7 +557,7 @@ export async function mount(root, metafolder) {
       });
       newMetarecordMode = false;
       editingStaged = null;
-      statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, 5000);
+      statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, statusMessageMs);
       await workspace.set('selected_metarecord', { uuid: created.uuid, repo });
       await dirty();
     } catch (error) {
@@ -564,7 +569,7 @@ export async function mount(root, metafolder) {
     if (!current || !confirm('Delete this metarecord (the file itself is kept)?')) return;
     try {
       await daemon.call('DELETE', api(''));
-      statusBar.message('Metarecord deleted.', 5000);
+      statusBar.message('Metarecord deleted.', statusMessageMs);
       await workspace.set('selected_metarecord', null);
       await dirty();
     } catch (error) {
@@ -589,7 +594,7 @@ export async function mount(root, metafolder) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
       if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
-      statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, 8000);
+      statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusErrorMs);
       await load();
       await dirty();
     } catch (error) {
@@ -686,7 +691,7 @@ export async function mount(root, metafolder) {
         name,
         value,
       });
-      statusBar.message(`Field "${name}" set on ${selected.length} metarecords.`, 5000);
+      statusBar.message(`Field "${name}" set on ${selected.length} metarecords.`, statusMessageMs);
       await dirty();
     },
   });

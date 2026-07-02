@@ -6,6 +6,10 @@ import { createPickRunner } from '/__value-widget.js';
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, fs, messages } = metafolder;
+  // Timing knobs (config.toml `[panels]`), with the former hard-coded fallbacks.
+  const settings = metafolder.settings ?? {};
+  const statusErrorMs = settings.statusErrorMs ?? 8000;
+  const taskPollMs = settings.taskPollMs ?? 1500;
 
   // Schema↔data inconsistencies are surfaced once, when a repo is opened (the
   // schema is read at repo load). Best-effort and capped: the daemon stops the
@@ -224,7 +228,7 @@ export async function mount(root, metafolder) {
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {
-      statusBar.message(`cannot open the repository: ${error.message ?? error}`, 8000);
+      statusBar.message(`cannot open the repository: ${error.message ?? error}`, statusErrorMs);
     }
   }
 
@@ -352,6 +356,6 @@ export async function mount(root, metafolder) {
   await refresh();
 
   // Keep the per-repo task blocks live while the panel is mounted.
-  const taskTimer = setInterval(() => void pollTasks(), 1500);
+  const taskTimer = setInterval(() => void pollTasks(), taskPollMs);
   return () => clearInterval(taskTimer);
 }

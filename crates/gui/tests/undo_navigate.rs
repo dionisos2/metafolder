@@ -77,7 +77,7 @@ async fn test_undo_posts_prev_revision_and_marks_dirty() {
     let (url, stub) = spawn_stub(linear_log(json!(4))).await;
     let (gui, daemon, ws) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), false).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), false, Default::default()).await.unwrap();
 
     let rollbacks = stub.rollbacks.lock().unwrap();
     assert_eq!(rollbacks.as_slice(), [json!({"target": {"prev_revision": true}})]);
@@ -91,7 +91,7 @@ async fn test_redo_targets_the_last_op_of_heads_child_revision() {
     let (url, stub) = spawn_stub(linear_log(json!(2))).await;
     let (gui, daemon, ws) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws.clone(), true).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws.clone(), true, Default::default()).await.unwrap();
 
     let rollbacks = stub.rollbacks.lock().unwrap();
     assert_eq!(rollbacks.as_slice(), [json!({"target": {"id": 4}})]);
@@ -103,7 +103,7 @@ async fn test_redo_at_the_tip_does_nothing() {
     let (url, stub) = spawn_stub(linear_log(json!(4))).await;
     let (gui, daemon, ws) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws, true).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws, true, Default::default()).await.unwrap();
 
     assert!(stub.rollbacks.lock().unwrap().is_empty());
 }
@@ -124,7 +124,7 @@ async fn test_redo_follows_the_most_recent_branch() {
     let (url, stub) = spawn_stub(log).await;
     let (gui, daemon, ws) = setup(&url);
 
-    undo::navigate(gui.clone(), daemon, ws, true).await.unwrap();
+    undo::navigate(gui.clone(), daemon, ws, true, Default::default()).await.unwrap();
 
     let rollbacks = stub.rollbacks.lock().unwrap();
     assert_eq!(rollbacks.as_slice(), [json!({"target": {"id": 6}})]);
@@ -137,5 +137,5 @@ async fn test_no_active_repo_is_an_error() {
     let ws = gui.create_workspace(None);
     let daemon = Arc::new(DaemonProxy::new(url));
 
-    assert!(undo::navigate(gui, daemon, ws, false).await.is_err());
+    assert!(undo::navigate(gui, daemon, ws, false, Default::default()).await.is_err());
 }

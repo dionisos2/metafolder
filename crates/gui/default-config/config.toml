@@ -16,10 +16,63 @@ gui-port = 7524
 # "loaded/total"). Smallest for metarecord-list (each row needs several daemon
 # round-trips and parsing), largest for file-manager (a plain text row is the
 # cheapest to build); file sits in between (each tile is a lazy <img>).
+# treeref/ref-list are keyed by their panel-type name too.
 [page-size]
 metarecord-list = 100
 file = 150
 file-manager = 200
+treeref = 200
+ref-list = 100
+
+# Miscellaneous runtime settings. Every key is optional: omit the table (or any
+# key) to keep the default shown below.
+[settings]
+
+# How often (seconds) the GUI polls the daemon's health endpoint (drives the
+# connection indicator). Default: 5.
+daemon-health-poll-secs = 5
+
+# How often (milliseconds) a running reconcile polls its task for completion.
+# Default: 200.
+reconcile-poll-ms = 200
+
+# How long (seconds) the thumbnail server reuses the fetched repository list
+# before re-querying the daemon — keeps a thumbnail grid from hitting GET /repos
+# once per tile. Default: 3.
+repo-list-cache-ttl-secs = 3
+
+# In-realm daemon-data cache budgets (LRU eviction beyond each cap). Larger caps
+# trade memory for fewer daemon round-trips. Every key optional.
+[cache]
+
+# Max cached metarecords. Default: 20000.
+max-entities = 20000
+
+# Max cached TreeRef paths. Default: 20000.
+max-tree-refs = 20000
+
+# Max cached query results. Default: 256.
+max-queries = 256
+
+# Shared panel UX timing knobs, handed to every panel. Every key optional.
+[panels]
+
+# Standard status-message duration (ms) before it auto-clears. Default: 5000.
+status-message-ms = 5000
+
+# Longer status duration (ms) for errors and important notices. Default: 8000.
+status-error-ms = 8000
+
+# Debounce (ms) of the incremental finder filter in metarecord-list: a burst of
+# typing sends one query rather than one per keystroke. Default: 500.
+finder-debounce-ms = 500
+
+# Debounce (ms) of the live edit preview in metarecord-list. Default: 130.
+live-preview-debounce-ms = 130
+
+# Interval (ms) at which the repos panel polls running task status. Default:
+# 1500.
+task-poll-ms = 1500
 
 # Value picker seeds (spec-gui "Value picker" / "Picker seeds"). When a form
 # opens a picker to fill a `ref` field, it can pre-filter the metarecord list

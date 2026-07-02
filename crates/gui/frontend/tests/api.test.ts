@@ -51,6 +51,35 @@ describe('panel api — identity', () => {
     const { api } = setup();
     await expect(api.ready).resolves.toBeUndefined();
   });
+
+  test('settings maps kebab config keys to a frozen camelCase object', () => {
+    const noop = vi.fn();
+    const gate = { get visible() { return false; }, set() {}, whenVisible: vi.fn() };
+    const instance = createPanelApi(
+      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
+      {
+        wsId: 'ws-1',
+        panelType: 'metarecord-list',
+        guiServer: 'http://127.0.0.1:7524',
+        sessionToken: 't',
+        panelSettings: { 'finder-debounce-ms': 900, 'status-error-ms': 4000 },
+        root: {} as ShadowRoot,
+        visibilityGate: gate,
+      },
+    );
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const settings = (instance.api as any).settings;
+    expect(settings.finderDebounceMs).toBe(900);
+    expect(settings.statusErrorMs).toBe(4000);
+    // Unspecified keys are undefined (panels fall back to their own default).
+    expect(settings.taskPollMs).toBeUndefined();
+    expect(Object.isFrozen(settings)).toBe(true);
+  });
+
+  test('settings is defined even without a panelSettings context', () => {
+    const { api } = setup();
+    expect(api.settings.finderDebounceMs).toBeUndefined();
+  });
 });
 
 describe('panel api — daemon', () => {

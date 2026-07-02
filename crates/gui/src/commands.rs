@@ -29,6 +29,12 @@ pub struct App {
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes (config.toml `[page-size]`).
     pub page_sizes: crate::config::PageSizes,
+    /// Rust-side runtime settings (config.toml `[settings]`).
+    pub settings: crate::config::Settings,
+    /// Frontend daemon-data cache budgets (config.toml `[cache]`).
+    pub cache_sizes: crate::config::CacheSizes,
+    /// Shared panel UX timing knobs (config.toml `[panels]`).
+    pub panel_settings: crate::config::PanelSettings,
     /// Per-field `ref` picker seed queries (config.toml `[picker-seeds]`).
     pub picker_seeds: std::collections::HashMap<String, String>,
     pub daemon: Arc<DaemonProxy>,
@@ -46,6 +52,31 @@ pub struct App {
 
 type AppHandle<'a> = tauri::State<'a, Arc<App>>;
 
+/// How long Rust-posted status messages stay before auto-clearing (config.toml
+/// `[panels]`), shared by the reconcile / undo / shell flows so their durations
+/// track the same knobs as the panels' own status messages.
+#[derive(Clone, Copy)]
+pub struct StatusTimeouts {
+    pub message_ms: u64,
+    pub error_ms: u64,
+}
+
+impl Default for StatusTimeouts {
+    fn default() -> Self {
+        StatusTimeouts { message_ms: 5000, error_ms: 8000 }
+    }
+}
+
+impl App {
+    /// The status-message durations from the `[panels]` config.
+    pub fn status_timeouts(&self) -> StatusTimeouts {
+        StatusTimeouts {
+            message_ms: self.panel_settings.status_message_ms as u64,
+            error_ms: self.panel_settings.status_error_ms as u64,
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct InitialState {
     pub workspaces: Vec<WorkspaceInfo>,
@@ -58,6 +89,10 @@ pub struct InitialState {
     pub daemon_url: String,
     /// Per-panel page sizes, keyed by panel-type name (kebab-case).
     pub page_sizes: crate::config::PageSizes,
+    /// Frontend daemon-data cache budgets (config.toml `[cache]`).
+    pub cache_sizes: crate::config::CacheSizes,
+    /// Shared panel UX timing knobs, exposed to panels as `metafolder.settings`.
+    pub panel_settings: crate::config::PanelSettings,
     /// Session token (spec-auth): the shell attaches it to requests to the GUI
     /// server's protected routes (`/fsraw`, `/thumbnail`, `/__media-probe`).
     pub session_token: String,
@@ -75,6 +110,8 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         gui_port: app.gui_port,
         daemon_url: app.daemon.base_url(),
         page_sizes: app.page_sizes.clone(),
+        cache_sizes: app.cache_sizes.clone(),
+        panel_settings: app.panel_settings.clone(),
         session_token: app.gui_token.to_string(),
     })
 }

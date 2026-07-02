@@ -32,7 +32,9 @@ pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params
     // Resolve the file's repository (its cache directory). A file outside any
     // repo gets no thumbnail — no ffmpeg, nothing written; the panel shows a
     // glyph.
-    let Some(cache_dir) = resolve_cache_dir(&state.daemon, &path).await else {
+    let Some(cache_dir) =
+        resolve_cache_dir(&state.daemon, &path, state.repo_list_cache_ttl).await
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
@@ -60,15 +62,14 @@ pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params
 }
 
 /// The thumbnail cache directory for `path`, or `None` when it is in no repo.
-async fn resolve_cache_dir(daemon: &DaemonProxy, path: &std::path::Path) -> Option<PathBuf> {
-    let repos = repo_dirs(daemon).await;
+async fn resolve_cache_dir(
+    daemon: &DaemonProxy,
+    path: &std::path::Path,
+    ttl: Duration,
+) -> Option<PathBuf> {
+    let repos = repo_dirs(daemon, ttl).await;
     thumbnails::match_internal_dir(&repos, path).map(|internal| internal.join("thumbnails"))
 }
-
-/// How long a fetched repository list is reused before re-querying the daemon.
-/// Repos change rarely; this keeps a thumbnail grid from hitting `GET /repos`
-/// once per tile.
-const REPO_TTL: Duration = Duration::from_secs(3);
 
 type RepoDirs = Vec<(PathBuf, PathBuf)>;
 
@@ -77,14 +78,15 @@ fn repo_cache() -> &'static Mutex<Option<(Instant, RepoDirs)>> {
     CACHE.get_or_init(|| Mutex::new(None))
 }
 
-/// The loaded repositories as `(root, internal_dir)` pairs, cached for
-/// [`REPO_TTL`]. A failed fetch is not cached (so a transient daemon outage
-/// does not blank thumbnails for the whole TTL), and returns an empty list.
-async fn repo_dirs(daemon: &DaemonProxy) -> RepoDirs {
+/// The loaded repositories as `(root, internal_dir)` pairs, cached for `ttl`
+/// (config.toml `[settings] repo-list-cache-ttl-secs`). A failed fetch is not
+/// cached (so a transient daemon outage does not blank thumbnails for the whole
+/// TTL), and returns an empty list.
+async fn repo_dirs(daemon: &DaemonProxy, ttl: Duration) -> RepoDirs {
     {
         let guard = repo_cache().lock_recover();
         if let Some((fetched, dirs)) = guard.as_ref() {
-            if fetched.elapsed() < REPO_TTL {
+            if fetched.elapsed() < ttl {
                 return dirs.clone();
             }
         }

@@ -24,11 +24,93 @@ pub struct PageSizes {
     pub metarecord_list: u32,
     pub file: u32,
     pub file_manager: u32,
+    pub treeref: u32,
+    pub ref_list: u32,
 }
 
 impl Default for PageSizes {
     fn default() -> Self {
-        PageSizes { metarecord_list: 100, file: 150, file_manager: 200 }
+        PageSizes {
+            metarecord_list: 100,
+            file: 150,
+            file_manager: 200,
+            treeref: 200,
+            ref_list: 100,
+        }
+    }
+}
+
+/// Miscellaneous GUI runtime settings (the `[settings]` table of `config.toml`).
+/// These stay Rust-side (they drive background loops and the GUI HTTP server),
+/// unlike `[page-size]`/`[panels]`/`[cache]` which are handed to the panels.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct Settings {
+    /// How often (seconds) the GUI polls the daemon's health endpoint.
+    pub daemon_health_poll_secs: u64,
+    /// How often (milliseconds) a running `reconcile:run` polls its task.
+    pub reconcile_poll_ms: u64,
+    /// How long (seconds) the thumbnail server reuses the fetched repository
+    /// list before re-querying the daemon (keeps a thumbnail grid from hitting
+    /// `GET /repos` once per tile).
+    pub repo_list_cache_ttl_secs: u64,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            daemon_health_poll_secs: 5,
+            reconcile_poll_ms: 200,
+            repo_list_cache_ttl_secs: 3,
+        }
+    }
+}
+
+/// In-realm daemon-data cache budgets (the `[cache]` table), handed to the
+/// frontend cache singleton (LRU eviction beyond each cap).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct CacheSizes {
+    /// Max cached metarecords.
+    pub max_entities: u32,
+    /// Max cached TreeRef paths.
+    pub max_tree_refs: u32,
+    /// Max cached query results.
+    pub max_queries: u32,
+}
+
+impl Default for CacheSizes {
+    fn default() -> Self {
+        CacheSizes { max_entities: 20000, max_tree_refs: 20000, max_queries: 256 }
+    }
+}
+
+/// UX timing knobs shared by the panels (the `[panels]` table), handed to each
+/// panel through the `metafolder` object (`metafolder.settings`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case", default)]
+pub struct PanelSettings {
+    /// Standard status-message duration (ms) before it auto-clears.
+    pub status_message_ms: u32,
+    /// Longer status duration (ms) used for errors and important notices.
+    pub status_error_ms: u32,
+    /// Debounce (ms) of the incremental finder filter in `metarecord-list`.
+    pub finder_debounce_ms: u32,
+    /// Debounce (ms) of the live edit preview in `metarecord-list`.
+    pub live_preview_debounce_ms: u32,
+    /// Interval (ms) at which the `repos` panel polls task status.
+    pub task_poll_ms: u32,
+}
+
+impl Default for PanelSettings {
+    fn default() -> Self {
+        PanelSettings {
+            status_message_ms: 5000,
+            status_error_ms: 8000,
+            finder_debounce_ms: 500,
+            live_preview_debounce_ms: 130,
+            task_poll_ms: 1500,
+        }
     }
 }
 
@@ -46,6 +128,12 @@ pub struct GuiConfig {
     pub gui_port: u16,
     /// Per-panel progressive-loading page sizes.
     pub page_size: PageSizes,
+    /// Miscellaneous Rust-side runtime settings (`[settings]`).
+    pub settings: Settings,
+    /// In-realm daemon-data cache budgets (`[cache]`).
+    pub cache: CacheSizes,
+    /// UX timing knobs shared by the panels (`[panels]`).
+    pub panels: PanelSettings,
     /// Per-field-name seed queries for `ref` value pickers (spec-gui "Picker
     /// seeds"), read from the `[picker-seeds]` table: field name → query text
     /// (in the `metarecord-list` query box's syntax, where the seed is injected).
@@ -59,12 +147,32 @@ impl GuiConfig {
     }
 }
 
+impl Settings {
+    /// The daemon health poll interval as a [`std::time::Duration`].
+    pub fn daemon_health_poll(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.daemon_health_poll_secs)
+    }
+
+    /// The reconcile task poll interval as a [`std::time::Duration`].
+    pub fn reconcile_poll(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.reconcile_poll_ms)
+    }
+
+    /// The thumbnail repo-list cache TTL as a [`std::time::Duration`].
+    pub fn repo_list_cache_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.repo_list_cache_ttl_secs)
+    }
+}
+
 impl Default for GuiConfig {
     fn default() -> Self {
         GuiConfig {
             daemon_port: 7523,
             gui_port: 7524,
             page_size: PageSizes::default(),
+            settings: Settings::default(),
+            cache: CacheSizes::default(),
+            panels: PanelSettings::default(),
             picker_seeds: std::collections::HashMap::new(),
         }
     }
@@ -281,6 +389,61 @@ mod tests {
         assert_eq!(json["metarecord-list"], 100);
         assert_eq!(json["file"], 150);
         assert_eq!(json["file-manager"], 200);
+        // The keys must match the panel directory names exactly.
+        assert_eq!(json["treeref"], 200);
+        assert_eq!(json["ref-list"], 100);
+    }
+
+    #[test]
+    fn test_settings_default_and_override() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.settings, Settings::default());
+        assert_eq!(empty.settings.daemon_health_poll_secs, 5);
+        assert_eq!(empty.settings.reconcile_poll_ms, 200);
+        assert_eq!(empty.settings.repo_list_cache_ttl_secs, 3);
+
+        let parsed: GuiConfig =
+            toml::from_str("[settings]\ndaemon-health-poll-secs = 12\n").unwrap();
+        assert_eq!(parsed.settings.daemon_health_poll_secs, 12);
+        // Unspecified keys keep their defaults.
+        assert_eq!(parsed.settings.reconcile_poll_ms, 200);
+    }
+
+    #[test]
+    fn test_cache_sizes_default_and_override() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.cache, CacheSizes::default());
+        assert_eq!(empty.cache.max_entities, 20000);
+        assert_eq!(empty.cache.max_queries, 256);
+
+        let parsed: GuiConfig =
+            toml::from_str("[cache]\nmax-queries = 1000\n").unwrap();
+        assert_eq!(parsed.cache.max_queries, 1000);
+        assert_eq!(parsed.cache.max_entities, 20000);
+    }
+
+    #[test]
+    fn test_panel_settings_default_and_override() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.panels, PanelSettings::default());
+        assert_eq!(empty.panels.finder_debounce_ms, 500);
+        assert_eq!(empty.panels.status_error_ms, 8000);
+
+        let parsed: GuiConfig =
+            toml::from_str("[panels]\nfinder-debounce-ms = 1000\n").unwrap();
+        assert_eq!(parsed.panels.finder_debounce_ms, 1000);
+        // Unspecified keys keep their defaults.
+        assert_eq!(parsed.panels.live_preview_debounce_ms, 130);
+    }
+
+    #[test]
+    fn test_panel_settings_serialize_with_kebab_keys() {
+        // The frontend reads these keys off `metafolder.settings`; they must be
+        // camelCase-friendly kebab keys that the JS maps to camelCase.
+        let json = serde_json::to_value(PanelSettings::default()).unwrap();
+        assert_eq!(json["finder-debounce-ms"], 500);
+        assert_eq!(json["status-error-ms"], 8000);
+        assert_eq!(json["task-poll-ms"], 1500);
     }
 
     #[test]

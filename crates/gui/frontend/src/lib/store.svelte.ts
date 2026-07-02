@@ -4,7 +4,7 @@
 
 import { dispatch } from './commands';
 import { invoke, listen } from './ipc';
-import { startCachePolling } from './panels/api';
+import { sharedCache, startCachePolling } from './panels/api';
 import type {
   Binding,
   CommandDef,
@@ -28,6 +28,8 @@ export const store = $state({
   guiPort: 7524,
   sessionToken: '',
   pageSizes: {} as Record<string, number>,
+  /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
+  panelSettings: {} as Record<string, number>,
   daemonUrl: '',
   daemonConnected: true,
   splitRatio: 0.5,
@@ -114,7 +116,18 @@ export async function initStore() {
   store.guiPort = initial.gui_port;
   store.sessionToken = initial.session_token;
   store.pageSizes = initial.page_sizes;
+  store.panelSettings = initial.panel_settings;
   store.daemonUrl = initial.daemon_url;
+  // Apply the configured daemon-data cache budgets to the shared singleton
+  // (created at import time, before the initial state was available).
+  const c = initial.cache_sizes;
+  if (c) {
+    sharedCache.configure({
+      maxEntities: c['max-entities'],
+      maxTreeRefs: c['max-tree-refs'],
+      maxQueries: c['max-queries'],
+    });
+  }
   applyStyle(initial.style_css);
 
   await listen<{ workspaces: WorkspaceInfo[] }>('workspaces-changed', (event) => {

@@ -108,7 +108,10 @@ fn test_apply_loads_listed_repos() {
     drop(opened); // release the exclusive lock
 
     let state = AppState::new();
-    let config = DaemonConfig { load: vec![RepoLocator::Root(root.clone())] };
+    let config = DaemonConfig {
+        load: vec![RepoLocator::Root(root.clone())],
+        ..Default::default()
+    };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     let repos = state.list_repos();
@@ -131,6 +134,7 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
             RepoLocator::Root(PathBuf::from("/nonexistent/metafolder/repo")),
             RepoLocator::Root(root.clone()),
         ],
+        ..Default::default()
     };
     let warnings = daemon_config::apply(&state, config);
     assert_eq!(warnings.len(), 1);

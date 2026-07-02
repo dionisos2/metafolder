@@ -14,3 +14,20 @@
 #
 # [[load]]
 # metafolder = "/ssd/meta/photos/.metafolder"
+
+# Tunable UX/performance settings. Every key is optional: omit the whole
+# [settings] table (or any key) to keep the default shown below.
+[settings]
+
+# Quiet period, in milliseconds, before the watcher's executor flushes the
+# buffered filesystem events (it waits until no new event has arrived for this
+# long, then compacts and applies them). Larger values batch more aggressively
+# — fewer revisions but more latency before changes show up; helpful on slow or
+# network filesystems that emit bursts of events. Default: 500.
+watch-quiet-period-ms = 500
+
+# Node budget of the in-memory TreeRef path cache (per repository). Beyond this
+# many nodes, leaves are evicted (LRU) and path navigation falls back to slower
+# database walks. Trades memory (~200 bytes per node, so ~100 MB at the default)
+# for read speed on very large folder trees. Default: 500000.
+tree-cache-max-nodes = 500000

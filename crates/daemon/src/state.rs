@@ -10,6 +10,7 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::config::RepoConfig;
+use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
 use crate::repo::{self, OpenedRepo, RepoLocator};
 use crate::tree_cache::TreeCache;
@@ -59,12 +60,23 @@ impl RepoState {
         self.metafolder_dir.join(repo::INTERNAL_DIR)
     }
 
+    /// Builds a `RepoState` with the default daemon settings (used by tests and
+    /// by [`Self::from_opened_with`]).
     pub fn from_opened(opened: OpenedRepo) -> Self {
+        Self::from_opened_with(opened, &DaemonSettings::default())
+    }
+
+    /// Builds a `RepoState`, applying the tunable daemon settings (here, the
+    /// tree-cache node budget).
+    pub fn from_opened_with(opened: OpenedRepo, settings: &DaemonSettings) -> Self {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
         Self {
             conn: Mutex::new(opened.conn),
-            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
+            cache: Mutex::new(TreeCache::with_limit(
+                opened.case_insensitive,
+                settings.tree_cache_max_nodes,
+            )),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
@@ -184,6 +196,10 @@ pub struct AppState {
     /// Shipped default schema copied into each new repo at init (spec-schema).
     /// `None` (the default, used by tests) disables seeding.
     seed_schema_path: Option<PathBuf>,
+    /// Tunable UX/performance settings from `config.toml`'s `[settings]`, applied
+    /// to every repository this state opens (tree-cache budget, watcher quiet
+    /// period). Defaults when unset (tests, no config file).
+    settings: DaemonSettings,
 }
 
 /// Public description of a loaded repository (`GET /repos`).
@@ -211,6 +227,13 @@ impl AppState {
         self
     }
 
+    /// Sets the tunable settings (`config.toml` `[settings]`) applied to every
+    /// repository this state opens.
+    pub fn with_settings(mut self, settings: DaemonSettings) -> Self {
+        self.settings = settings;
+        self
+    }
+
     /// Initialises a new repository and registers it as loaded.
     pub fn init_repo(
         &self,
@@ -226,7 +249,10 @@ impl AppState {
         if let Some(src) = self.seed_schema_path.as_deref() {
             repo::seed_schema_file(&opened.metafolder_dir, src);
         }
-        let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
+        let repo_state = self.activate(Arc::new(RepoState::from_opened_with(
+            opened,
+            &self.settings,
+        )))?;
         // A fresh repository is tiny, so warm it synchronously (no progress bar).
         repo_state.warmup(&|_, _, _| {});
         self.repos.lock_recover().insert(uuid, repo_state);
@@ -237,13 +263,13 @@ impl AppState {
     /// 400), replays any pending buffer left by a previous run, then starts
     /// the watcher and its executor (spec: the buffer is replayed before the
     /// repository serves requests).
-    fn activate(repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
+    fn activate(&self, repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
         let schema =
             crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
                 .map_err(ApiError::bad_request)?;
         *repo_state.schema.lock_recover() = schema;
         crate::executor::flush_pending(&repo_state)?;
-        let quiet = std::time::Duration::from_millis(500);
+        let quiet = self.settings.watch_quiet_period();
         let executor = crate::executor::spawn(&repo_state, quiet);
         let watcher = crate::watcher::start(&repo_state, executor.pinger())?;
         *repo_state.handles.lock_recover() = Some(RepoHandles { watcher, executor });
@@ -274,7 +300,10 @@ impl AppState {
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
-        let repo_state = Self::activate(Arc::new(RepoState::from_opened(opened)))?;
+        let repo_state = self.activate(Arc::new(RepoState::from_opened_with(
+            opened,
+            &self.settings,
+        )))?;
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }

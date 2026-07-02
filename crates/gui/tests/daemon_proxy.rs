@@ -171,14 +171,14 @@ async fn test_reconcile_run_posts_status_and_logs() {
 
     // No active repo: refused.
     assert!(
-        metafolder_gui::reconcile::run(gui.clone(), proxy.clone(), "ws-1".into())
+        metafolder_gui::reconcile::run(gui.clone(), proxy.clone(), "ws-1".into(), Default::default())
             .await
             .is_err()
     );
 
     let ws = gui.tab_new(Some("abc123".into()));
     notifier.clear();
-    metafolder_gui::reconcile::run(gui.clone(), proxy, ws.clone())
+    metafolder_gui::reconcile::run(gui.clone(), proxy, ws.clone(), Default::default())
         .await
         .unwrap();
 

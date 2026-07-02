@@ -71,6 +71,7 @@
         guiServer: base,
         sessionToken: store.sessionToken,
         pageSize: store.pageSizes[panelType],
+        panelSettings: store.panelSettings,
         root: shadow,
         visibilityGate,
       },

@@ -27,6 +27,7 @@ fn setup() -> (tempfile::TempDir, Arc<ConfigDir>, axum::Router) {
         input: Arc::new(server::input_wait::InputWait::new()),
         commands: Arc::new(server::command_wait::CommandWait::new()),
         bench: Arc::new(server::bench::BenchBuffer::new()),
+        repo_list_cache_ttl: std::time::Duration::from_secs(3),
     };
     let router = server::build_router(state);
     (dir, config, router)

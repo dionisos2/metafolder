@@ -29,6 +29,7 @@ pub async fn navigate(
     daemon: Arc<DaemonProxy>,
     ws_id: String,
     redo: bool,
+    timeouts: crate::commands::StatusTimeouts,
 ) -> Result<(), String> {
     let repo = match gui.get_var(&ws_id, "active_repo")? {
         Value::String(repo) => repo,
@@ -44,7 +45,7 @@ pub async fn navigate(
         match redo_target(&operations, log.body["head"].as_i64()) {
             Some(id) => json!({ "id": id }),
             None => {
-                gui.post_status(&ws_id, "Nothing to redo.", "info", Some(5000))?;
+                gui.post_status(&ws_id, "Nothing to redo.", "info", Some(timeouts.message_ms))?;
                 return Ok(());
             }
         }
@@ -64,7 +65,7 @@ pub async fn navigate(
             .as_str()
             .map(str::to_string)
             .unwrap_or_else(|| format!("rollback failed ({})", response.status));
-        gui.post_status(&ws_id, &message, "error", Some(8000))?;
+        gui.post_status(&ws_id, &message, "error", Some(timeouts.error_ms))?;
         return Err(message);
     }
 
@@ -74,7 +75,7 @@ pub async fn navigate(
     } else {
         format!("Undo: {} operations unapplied.", count("operations_unapplied"))
     };
-    gui.post_status(&ws_id, &summary, "info", Some(5000))?;
+    gui.post_status(&ws_id, &summary, "info", Some(timeouts.message_ms))?;
     // Refresh metarecord-list / metarecord-detail / log panels.
     gui.set_var(&ws_id, "metarecords:dirty", json!(now_ms()))?;
     Ok(())
@@ -93,7 +94,7 @@ pub async fn log_navigate(
     ws_id: String,
     redo: bool,
 ) -> Result<(), String> {
-    navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo).await
+    navigate(app.gui.clone(), app.daemon.clone(), ws_id, redo, app.status_timeouts()).await
 }
 
 #[cfg(test)]

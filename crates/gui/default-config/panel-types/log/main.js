@@ -7,6 +7,11 @@ import { graphLayout, revisionParents } from './graph.js';
 
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar } = metafolder;
+  // Status-message durations (config.toml `[panels]`), with the former
+  // hard-coded fallbacks.
+  const settings = metafolder.settings ?? {};
+  const statusMessageMs = settings.statusMessageMs ?? 5000;
+  const statusErrorMs = settings.statusErrorMs ?? 8000;
 
   let repo = null;
   let revisions = []; // [{id, timestamp, label, opCount, isHead}]
@@ -176,7 +181,7 @@ export async function mount(root, metafolder) {
       });
       statusBar.message(
         `Navigation done: ${result.operations_unapplied} unapplied, ${result.operations_applied} applied.`,
-        8000,
+        statusErrorMs,
       );
       await workspace.set('metarecords:dirty', Date.now()); // refresh metarecord-list
       await refresh();
@@ -195,7 +200,7 @@ export async function mount(root, metafolder) {
       });
       statusBar.message(
         `Pruned ${result.pruned_operations} operations (${result.pruned_revisions} revisions).`,
-        8000,
+        statusErrorMs,
       );
       selectedRev = null;
       expandedRev = null;
@@ -219,7 +224,7 @@ export async function mount(root, metafolder) {
         label === ''
           ? `Cleared the label on revision #${selectedRev}.`
           : `Marked revision #${selectedRev} as "${label}".`,
-        5000,
+        statusMessageMs,
       );
       await refresh();
     } catch (error) {

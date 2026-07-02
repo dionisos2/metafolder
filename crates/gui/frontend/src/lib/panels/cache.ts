@@ -62,9 +62,11 @@ export interface CacheOptions {
 export function createCache(opts: CacheOptions = {}) {
   // Budgets bound memory. Entities/treeRefs must comfortably exceed a panel's
   // working set (else a displayed metarecord gets evicted and reads REFRESH).
-  const maxEntities = opts.maxEntities ?? 20000;
-  const maxTreeRefs = opts.maxTreeRefs ?? 20000;
-  const maxQueries = opts.maxQueries ?? 256;
+  // Mutable so the singleton can be `configure()`d from config.toml after it is
+  // created at import time (before the initial state is available).
+  let maxEntities = opts.maxEntities ?? 20000;
+  let maxTreeRefs = opts.maxTreeRefs ?? 20000;
+  let maxQueries = opts.maxQueries ?? 256;
 
   const entities = new Map<string, Metarecord>(); // `${repo}|${uuid}` → metarecord
   const treeRefs = new Map<string, string[]>(); // `${repo}|${field}|${uuid}` → [paths]
@@ -372,9 +374,18 @@ export function createCache(opts: CacheOptions = {}) {
     return [...repos];
   }
 
+  /** Applies configured budgets (config.toml `[cache]`); called once at init.
+   *  Only positive numbers override; anything else keeps the current value. */
+  function configure(next: CacheOptions) {
+    if (typeof next.maxEntities === 'number' && next.maxEntities > 0) maxEntities = next.maxEntities;
+    if (typeof next.maxTreeRefs === 'number' && next.maxTreeRefs > 0) maxTreeRefs = next.maxTreeRefs;
+    if (typeof next.maxQueries === 'number' && next.maxQueries > 0) maxQueries = next.maxQueries;
+  }
+
   return {
     request,
     sync,
+    configure,
     clearRepo,
     trackedRepos,
     query,

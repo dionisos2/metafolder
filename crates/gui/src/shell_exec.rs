@@ -71,9 +71,10 @@ pub fn run_shell(
     command_line: String,
 ) -> Result<(), String> {
     let gui = app.gui.clone();
+    let message_ms = app.status_timeouts().message_ms;
     tauri::async_runtime::spawn(async move {
         if let Err(error) = run_to_completion(gui.clone(), ws_id.clone(), command_line).await {
-            let _ = gui.post_status(&ws_id, &error, "error", Some(5000));
+            let _ = gui.post_status(&ws_id, &error, "error", Some(message_ms));
         }
     });
     Ok(())

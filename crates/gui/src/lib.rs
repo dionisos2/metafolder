@@ -146,6 +146,10 @@ pub fn run(options: Options) {
     let gui_port = options.gui_port.unwrap_or(gui_config.gui_port);
     let page_sizes = gui_config.page_size.clone();
     let picker_seeds = gui_config.picker_seeds.clone();
+    let settings = gui_config.settings.clone();
+    let cache_sizes = gui_config.cache.clone();
+    let panel_settings = gui_config.panels.clone();
+    let health_poll_interval = settings.daemon_health_poll();
     let daemon_url = match options.daemon_port {
         Some(port) => format!("http://127.0.0.1:{port}"),
         None => gui_config.daemon_base_url(),
@@ -187,6 +191,9 @@ pub fn run(options: Options) {
                 gui_port,
                 page_sizes: page_sizes.clone(),
                 picker_seeds: picker_seeds.clone(),
+                settings: settings.clone(),
+                cache_sizes: cache_sizes.clone(),
+                panel_settings: panel_settings.clone(),
                 daemon: daemon.clone(),
                 input: input.clone(),
                 commands: command_wait.clone(),
@@ -238,7 +245,7 @@ pub fn run(options: Options) {
             tauri::async_runtime::spawn(async move {
                 loop {
                     poll_daemon.check_health(&poll_gui).await;
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    tokio::time::sleep(health_poll_interval).await;
                 }
             });
 
@@ -251,6 +258,7 @@ pub fn run(options: Options) {
                 input,
                 commands: command_wait,
                 bench,
+                repo_list_cache_ttl: settings.repo_list_cache_ttl(),
             };
             let server_token = gui_token.clone();
             tauri::async_runtime::spawn(async move {

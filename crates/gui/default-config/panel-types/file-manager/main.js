@@ -21,6 +21,9 @@ const PAGE_DEFAULT = 200;
 
 export async function mount(root, metafolder) {
   const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
+  // Standard status-message duration (config.toml `[panels]`), with the former
+  // hard-coded fallback.
+  const statusMessageMs = (metafolder.settings ?? {}).statusMessageMs ?? 5000;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
   let repo = null;
@@ -102,7 +105,7 @@ export async function mount(root, metafolder) {
     try {
       items = await fs.readDir(dir);
     } catch (error) {
-      await statusBar.error(error, 5000);
+      await statusBar.error(error, statusMessageMs);
       return;
     }
     listing = [
@@ -229,7 +232,7 @@ export async function mount(root, metafolder) {
       await statusBar.error(error, 6000);
       return;
     }
-    statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, 5000);
+    statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, statusMessageMs);
     await reenrichVisible();
     render();
     await select(cursorIndex);
