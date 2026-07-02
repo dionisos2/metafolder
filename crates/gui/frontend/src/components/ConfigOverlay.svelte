@@ -6,6 +6,7 @@
   let combo = $state('');
   let command = $state('');
   let when = $state('');
+  let focus = $state('');
   let textInput = $state(false);
   let bindingError = $state('');
 
@@ -29,6 +30,7 @@
     combo = binding.keys.join(' ');
     command = binding.invocation;
     when = binding.when ?? '';
+    focus = binding.focus ?? '';
     textInput = binding.text_input;
   }
 
@@ -39,6 +41,7 @@
         combo,
         command,
         when: when.trim() === '' ? null : when.trim(),
+        focus: focus.trim() === '' ? null : focus.trim(),
         textInput,
       });
       combo = '';
@@ -54,6 +57,7 @@
       store.keytable = await invoke<Binding[]>('remove_user_keybinding', {
         combo: binding.keys.join(' '),
         when: binding.when ?? null,
+        focus: binding.focus ?? null,
       });
     } catch (error) {
       bindingError = String(error);
@@ -93,6 +97,7 @@
         <input placeholder="combo (e.g. ctrl+k or g g)" bind:value={combo} />
         <input placeholder="command (e.g. tab:new)" bind:value={command} />
         <input placeholder="when (panel type, empty = global)" bind:value={when} />
+        <input placeholder="focus (widget, empty = none)" bind:value={focus} />
         <label><input type="checkbox" bind:checked={textInput} /> text-input</label>
         <button onclick={saveBinding} disabled={!combo.trim() || !command.trim()}>Save</button>
       </div>
@@ -100,11 +105,15 @@
       <div class="binding-table">
         <table>
           <tbody>
-            {#each store.keytable as binding (binding.keys.join(' ') + (binding.when ?? ''))}
+            {#each store.keytable as binding (binding.keys.join(' ') + '|' + (binding.when ?? '') + '|' + (binding.focus ?? ''))}
               <tr>
                 <td class="combo">{binding.keys.join(' ')}</td>
                 <td>{binding.invocation}</td>
-                <td class="scope">{binding.when ?? 'global'}{binding.text_input ? ' ⌨' : ''}</td>
+                <td class="scope"
+                  >{binding.focus ? `@${binding.focus}` : (binding.when ?? 'global')}{binding.text_input
+                    ? ' ⌨'
+                    : ''}</td
+                >
                 <td>
                   <button onclick={() => prefill(binding)}>Edit</button>
                   <button onclick={() => resetBinding(binding)}>Reset</button>

@@ -336,12 +336,17 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       invoke: (invocation: string) => deps.dispatch(invocation),
     },
 
-    addKeybinding(invocation: string, combo: string, options: { when?: string; textInput?: boolean } = {}) {
+    addKeybinding(
+      invocation: string,
+      combo: string,
+      options: { when?: string; textInput?: boolean; focus?: string } = {},
+    ) {
       return invoke('suggest_keybinding', {
         combo,
         invocation,
         when: options.when === undefined ? ctx.panelType : options.when,
         textInput: options.textInput ?? false,
+        focus: options.focus ?? null,
       });
     },
 

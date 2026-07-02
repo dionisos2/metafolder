@@ -5,13 +5,7 @@ import { el, fields, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
-import {
-  splitTerms,
-  finderTargets,
-  finderClause,
-  composeQuery,
-  finderKeyAction,
-} from '/__finder.js';
+import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 import {
   parseColumns,
   isSortable,
@@ -700,22 +694,11 @@ export async function mount(root, metafolder) {
   }
 
   finderInput.addEventListener('input', scheduleFinder);
-  finderInput.addEventListener('keydown', (event) => {
-    // OSM-style: keep typing to filter, but the arrows still move the selection
-    // and Ctrl+Enter confirms a pending value pick — the finder auto-focuses in
-    // picker mode, so this makes it usable without leaving the input. These keys
-    // are `text-input = false` globally, so the shell matcher never sees them
-    // while a text input is focused; the finder drives them directly.
-    const action = finderKeyAction(event);
-    if (action === null) return;
-    // Arrows and Ctrl+Enter would otherwise move the caret / insert a newline.
-    if (action !== 'apply') event.preventDefault();
-    if (action === 'next') void setCursor(cursorIndex + 1);
-    else if (action === 'prev') void setCursor(cursorIndex - 1);
-    else if (action === 'confirm-pick') void commands.invoke('pick:confirm'); // no-op outside a pick
-    else if (action === 'apply') void applyFinder();
-    else if (action === 'blur') finderInput.blur();
-  });
+  // The finder's in-input shortcuts (arrows move the selection, Ctrl+Enter
+  // confirms a pick, Enter re-runs the filter, Escape leaves it) are declared in
+  // keybindings.toml with `focus = "finder"` — the `data-mf-focus` tag below is
+  // what scopes them to this input. So they are all configurable, not hard-coded.
+  finderInput.dataset.mfFocus = 'finder';
   normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
   normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
   normalInput.addEventListener('keydown', (event) => {
@@ -775,6 +758,10 @@ export async function mount(root, metafolder) {
   commands.register('metarecord-list:find', {
     label: 'Metarecord list: focus the finder (quick ordered-substring filter)',
     handler: () => finderInput.focus(),
+  });
+  commands.register('metarecord-list:apply-finder', {
+    label: 'Metarecord list: re-run the finder filter now (bypass the debounce)',
+    handler: () => applyFinder(),
   });
   commands.register('metarecord-list:edit-query', {
     label: 'Metarecord list: focus the query input',

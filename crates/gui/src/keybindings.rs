@@ -20,6 +20,11 @@ pub struct BindingSpec {
     pub when: Option<String>,
     #[serde(default, rename = "text-input")]
     pub text_input: bool,
+    /// Named focus scope (spec-gui "Keybinding"): fires only while the widget
+    /// tagged `data-mf-focus="<focus>"` is focused, even inside a text input.
+    /// `None` = not focus-scoped. The most specific scope dimension.
+    #[serde(default)]
+    pub focus: Option<String>,
 }
 
 /// One binding of the compiled table sent to the frontend.
@@ -32,6 +37,8 @@ pub struct CompiledBinding {
     /// Panel type scope; `None` = global.
     pub when: Option<String>,
     pub text_input: bool,
+    /// Named focus scope; `None` = not focus-scoped.
+    pub focus: Option<String>,
 }
 
 /// Parses and normalizes a combo sequence string: lowercased keys,
@@ -111,14 +118,17 @@ pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, Strin
         }
     }
     // HashMap order is arbitrary: sort for determinism (by combo, then scope).
-    entries.sort_by(|a, b| (&a.0, &a.1.when).cmp(&(&b.0, &b.1.when)));
+    entries.sort_by(|a, b| {
+        (&a.0, &a.1.when, &a.1.focus).cmp(&(&b.0, &b.1.when, &b.1.focus))
+    });
     Ok(entries)
 }
 
 /// A binding's identity for override purposes: the same key sequence in the
-/// same `when` scope. So `down` in `metarecord-list` and `down` in
-/// `file-manager` are distinct, and a user file overrides each independently.
-type BindingKey = (Vec<String>, Option<String>);
+/// same `when` and `focus` scope. So `down` in `metarecord-list`, `down` in
+/// `file-manager` and `down` focus-scoped to the finder are all distinct, and a
+/// user file overrides each independently.
+type BindingKey = (Vec<String>, Option<String>, Option<String>);
 
 /// The merged binding set.
 pub struct KeybindingSet {
@@ -135,10 +145,10 @@ impl KeybindingSet {
     pub fn from_sources(defaults: &str, user: &str) -> Result<Self, String> {
         let mut config: HashMap<BindingKey, BindingSpec> = HashMap::new();
         for (keys, spec) in parse_toml(defaults)? {
-            config.insert((keys, spec.when.clone()), spec);
+            config.insert((keys, spec.when.clone(), spec.focus.clone()), spec);
         }
         for (keys, spec) in parse_toml(user)? {
-            config.insert((keys, spec.when.clone()), spec);
+            config.insert((keys, spec.when.clone(), spec.focus.clone()), spec);
         }
         Ok(KeybindingSet { config, suggestions: Vec::new() })
     }
@@ -158,14 +168,15 @@ impl KeybindingSet {
         invocation: &str,
         when: Option<&str>,
         text_input: bool,
+        focus: Option<&str>,
     ) -> Result<(), String> {
         let keys = parse_combo(combo)?;
-        let conflicts = |w: &Option<String>| w.as_deref() == when;
-        if self.config.contains_key(&(keys.clone(), when.map(str::to_string)))
-            || self
-                .suggestions
-                .iter()
-                .any(|s| s.keys == keys && conflicts(&s.when))
+        if self
+            .config
+            .contains_key(&(keys.clone(), when.map(str::to_string), focus.map(str::to_string)))
+            || self.suggestions.iter().any(|s| {
+                s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus
+            })
         {
             return Ok(()); // user/config binding wins; suggestion dropped
         }
@@ -174,6 +185,7 @@ impl KeybindingSet {
             invocation: invocation.to_string(),
             when: when.map(str::to_string),
             text_input,
+            focus: focus.map(str::to_string),
         });
         Ok(())
     }
@@ -183,15 +195,16 @@ impl KeybindingSet {
         let mut table: Vec<CompiledBinding> = self
             .config
             .iter()
-            .map(|((keys, _when), spec)| CompiledBinding {
+            .map(|((keys, _when, _focus), spec)| CompiledBinding {
                 keys: keys.clone(),
                 invocation: spec.command.clone(),
                 when: spec.when.clone(),
                 text_input: spec.text_input,
+                focus: spec.focus.clone(),
             })
             .chain(self.suggestions.iter().cloned())
             .collect();
-        table.sort_by(|a, b| (&a.keys, &a.when).cmp(&(&b.keys, &b.when)));
+        table.sort_by(|a, b| (&a.keys, &a.when, &a.focus).cmp(&(&b.keys, &b.when, &b.focus)));
         table
     }
 }
@@ -327,6 +340,52 @@ mod tests {
     }
 
     #[test]
+    fn test_focus_scope_parses_and_is_a_distinct_binding() {
+        // A focus-scoped binding coexists with a when-scoped one on the same
+        // combo (different identity), and the user overrides each independently.
+        let defaults = r#"
+"down" = [
+  { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "metarecord-list:next", focus = "finder" },
+]
+"#;
+        let set = KeybindingSet::from_source(defaults).unwrap();
+        let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
+        assert_eq!(downs.len(), 2);
+        let finder = downs.iter().find(|b| b.focus.as_deref() == Some("finder")).unwrap();
+        assert_eq!(finder.when, None);
+        assert_eq!(finder.invocation, "metarecord-list:next");
+
+        // Overriding the focus-scoped one leaves the when-scoped one intact.
+        let user = r#""down" = { command = "metarecord-list:apply-finder", focus = "finder" }"#;
+        let set = KeybindingSet::from_sources(defaults, user).unwrap();
+        let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
+        assert_eq!(downs.len(), 2);
+        assert_eq!(
+            downs.iter().find(|b| b.focus.as_deref() == Some("finder")).unwrap().invocation,
+            "metarecord-list:apply-finder"
+        );
+        assert_eq!(
+            downs.iter().find(|b| b.when.as_deref() == Some("metarecord-list")).unwrap().invocation,
+            "metarecord-list:next"
+        );
+    }
+
+    #[test]
+    fn test_suggestion_dropped_only_on_same_combo_when_and_focus() {
+        // A configured focus-scoped binding blocks a same-(combo,focus)
+        // suggestion but not one with a different focus.
+        let user = r#""down" = { command = "user:finder", focus = "finder" }"#;
+        let mut set = KeybindingSet::from_sources("", user).unwrap();
+        set.add_suggestion("down", "panel:finder", None, false, Some("finder")).unwrap();
+        set.add_suggestion("down", "panel:other", None, false, Some("other")).unwrap();
+        let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
+        assert_eq!(downs.len(), 2); // the "finder" suggestion was dropped
+        assert!(downs.iter().any(|b| b.invocation == "user:finder"));
+        assert!(downs.iter().any(|b| b.invocation == "panel:other"));
+    }
+
+    #[test]
     fn test_user_override_targets_one_scope_of_a_shared_combo() {
         // A user rebinds `j` only for metarecord-list; the file-manager `j`
         // default is untouched (override is keyed by combo AND scope).
@@ -381,7 +440,7 @@ mod tests {
     #[test]
     fn test_suggestion_applied_when_no_conflict() {
         let mut set = KeybindingSet::from_sources("", "").unwrap();
-        set.add_suggestion("ctrl+l", "my-panel:change-mode list", Some("my-panel"), false)
+        set.add_suggestion("ctrl+l", "my-panel:change-mode list", Some("my-panel"), false, None)
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 1);
@@ -393,7 +452,7 @@ mod tests {
     fn test_suggestion_dropped_on_same_combo_and_scope() {
         let user = r#""j" = { command = "user:thing", when = "metarecord-list" }"#;
         let mut set = KeybindingSet::from_sources("", user).unwrap();
-        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false)
+        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false, None)
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 1);
@@ -406,7 +465,7 @@ mod tests {
         // already gives the local binding precedence at match time.
         let user = r#""j" = { command = "user:global-j" }"#;
         let mut set = KeybindingSet::from_sources("", user).unwrap();
-        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false)
+        set.add_suggestion("j", "metarecord-list:next", Some("metarecord-list"), false, None)
             .unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 2);
@@ -415,8 +474,8 @@ mod tests {
     #[test]
     fn test_duplicate_suggestions_keep_first() {
         let mut set = KeybindingSet::from_sources("", "").unwrap();
-        set.add_suggestion("j", "panel:first", Some("p"), false).unwrap();
-        set.add_suggestion("j", "panel:second", Some("p"), false).unwrap();
+        set.add_suggestion("j", "panel:first", Some("p"), false, None).unwrap();
+        set.add_suggestion("j", "panel:second", Some("p"), false, None).unwrap();
         let table = set.compiled();
         assert_eq!(table.len(), 1);
         assert_eq!(table[0].invocation, "panel:first");
@@ -447,6 +506,13 @@ mod tests {
         assert!(enter
             .iter()
             .any(|b| b.when.as_deref() == Some("treeref") && b.invocation == "treeref:descend"));
+
+        // The finder's in-input shortcuts are focus-scoped (spec-gui "focus").
+        assert!(down.iter().any(|b| b.focus.as_deref() == Some("finder")));
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["ctrl+enter"] && b.focus.as_deref() == Some("finder")
+                && b.invocation == "pick:confirm"));
     }
 
     // ── Compilation ──────────────────────────────────────────────────────

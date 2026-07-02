@@ -236,18 +236,22 @@ impl ConfigDir {
         combo: &str,
         command: &str,
         when: Option<&str>,
+        focus: Option<&str>,
         text_input: bool,
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;
-        // A combo may already hold several `when`-scoped bindings (as an array):
-        // collect them, drop the one for this exact scope, then add the new one.
+        // A combo may already hold several scoped bindings (as an array): collect
+        // them, drop the one for this exact (when, focus) scope, then add it back.
         let mut elements = take_combo_elements(&mut table, &normalized);
-        elements.retain(|e| binding_when(e) != when);
+        elements.retain(|e| !(binding_when(e) == when && binding_focus(e) == focus));
         let mut entry = toml::Table::new();
         entry.insert("command".into(), toml::Value::String(command.to_string()));
         if let Some(when) = when {
             entry.insert("when".into(), toml::Value::String(when.to_string()));
+        }
+        if let Some(focus) = focus {
+            entry.insert("focus".into(), toml::Value::String(focus.to_string()));
         }
         if text_input {
             entry.insert("text-input".into(), toml::Value::Boolean(true));
@@ -258,7 +262,7 @@ impl ConfigDir {
         self.load_keybindings()
     }
 
-    /// Removes (unbinds) one `when`-scoped binding of `combo` from
+    /// Removes (unbinds) one `(when, focus)`-scoped binding of `combo` from
     /// `keybindings.toml` (other scopes of the same combo are kept); a missing
     /// binding is a no-op. Reverting to a shipped default is a git operation on
     /// the config repo, not handled here (spec-config). Returns the recompiled
@@ -267,11 +271,12 @@ impl ConfigDir {
         &self,
         combo: &str,
         when: Option<&str>,
+        focus: Option<&str>,
     ) -> Result<KeybindingSet, String> {
         let normalized = crate::keybindings::parse_combo(combo)?.join(" ");
         let mut table = self.read_user_keybindings_table()?;
         let mut elements = take_combo_elements(&mut table, &normalized);
-        elements.retain(|e| binding_when(e) != when);
+        elements.retain(|e| !(binding_when(e) == when && binding_focus(e) == focus));
         if !elements.is_empty() {
             table.insert(normalized, collapse_elements(elements));
         }
@@ -350,6 +355,11 @@ impl ConfigDir {
 /// The `when` scope of one binding element (`None` = global).
 fn binding_when(element: &toml::Table) -> Option<&str> {
     element.get("when").and_then(toml::Value::as_str)
+}
+
+/// The `focus` scope of one binding element (`None` = not focus-scoped).
+fn binding_focus(element: &toml::Table) -> Option<&str> {
+    element.get("focus").and_then(toml::Value::as_str)
 }
 
 /// Removes every user-file entry whose key normalizes to `normalized` (a combo
@@ -538,7 +548,7 @@ mod tests {
         .unwrap();
 
         let set = config
-            .set_user_keybinding("j", "metarecord-list:next", Some("metarecord-list"), false)
+            .set_user_keybinding("j", "metarecord-list:next", Some("metarecord-list"), None, false)
             .unwrap();
         // Both scopes now coexist under `j`.
         assert_eq!(
@@ -561,7 +571,7 @@ mod tests {
         .unwrap();
 
         let set = config
-            .set_user_keybinding("j", "metarecord-list:custom", Some("metarecord-list"), false)
+            .set_user_keybinding("j", "metarecord-list:custom", Some("metarecord-list"), None, false)
             .unwrap();
         let js: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["j"]).collect();
         assert_eq!(js.len(), 2);
@@ -581,7 +591,7 @@ mod tests {
         )
         .unwrap();
 
-        let set = config.remove_user_keybinding("j", Some("metarecord-list")).unwrap();
+        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None).unwrap();
         assert_eq!(scopes_of(&set, &["j"]), vec![Some("file-manager".into())]);
         // The single remaining binding is persisted (as a table or 1-array).
         let reread = config.load_keybindings().unwrap();
@@ -598,10 +608,36 @@ mod tests {
         )
         .unwrap();
 
-        let set = config.remove_user_keybinding("j", Some("metarecord-list")).unwrap();
+        let set = config.remove_user_keybinding("j", Some("metarecord-list"), None).unwrap();
         assert!(scopes_of(&set, &["j"]).is_empty());
         // A different combo is untouched.
         assert_eq!(scopes_of(&set, &["t"]), vec![None]);
+        std::fs::remove_dir_all(config.root()).unwrap();
+    }
+
+    #[test]
+    fn test_focus_scoped_binding_is_set_and_removed_independently() {
+        let config = kb_dir();
+        std::fs::write(
+            config.keybindings_path(),
+            "\"down\" = { command = \"metarecord-list:next\", when = \"metarecord-list\" }\n",
+        )
+        .unwrap();
+
+        // A focus-scoped binding on the same combo coexists with the when one.
+        let set = config
+            .set_user_keybinding("down", "metarecord-list:next", None, Some("finder"), false)
+            .unwrap();
+        let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
+        assert_eq!(downs.len(), 2);
+        assert!(downs.iter().any(|b| b.when.as_deref() == Some("metarecord-list") && b.focus.is_none()));
+        assert!(downs.iter().any(|b| b.focus.as_deref() == Some("finder") && b.when.is_none()));
+
+        // Removing by focus targets only the focus-scoped binding.
+        let set = config.remove_user_keybinding("down", None, Some("finder")).unwrap();
+        let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
+        assert_eq!(downs.len(), 1);
+        assert_eq!(downs[0].when.as_deref(), Some("metarecord-list"));
         std::fs::remove_dir_all(config.root()).unwrap();
     }
 

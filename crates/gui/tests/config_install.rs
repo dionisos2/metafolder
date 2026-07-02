@@ -62,7 +62,7 @@ fn test_set_user_keybinding_upserts_and_persists() {
     common::install_defaults(&config);
 
     let set = config
-        .set_user_keybinding("alt+t", "panel:split", None, false)
+        .set_user_keybinding("alt+t", "panel:split", None, None, false)
         .unwrap();
     let alt_t: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["alt+t"]).collect();
     assert_eq!(alt_t.len(), 1);
@@ -81,10 +81,10 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
     // Same combo and same scope, spelled differently: the second upsert
     // replaces the first (override is keyed by the normalized combo AND scope).
     config
-        .set_user_keybinding("shift+ctrl+a", "first", Some("metarecord-list"), false)
+        .set_user_keybinding("shift+ctrl+a", "first", Some("metarecord-list"), None, false)
         .unwrap();
     let set = config
-        .set_user_keybinding("ctrl+shift+A", "second", Some("metarecord-list"), true)
+        .set_user_keybinding("ctrl+shift+A", "second", Some("metarecord-list"), None, true)
         .unwrap();
     let bindings: Vec<_> = set
         .compiled()
@@ -102,15 +102,15 @@ fn test_remove_user_keybinding_unbinds_the_combo() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
     config
-        .set_user_keybinding("t", "panel:split", None, false)
+        .set_user_keybinding("t", "panel:split", None, None, false)
         .unwrap();
 
     // In the single-file model, removing unbinds the combo entirely (there is
     // no separate default layer to fall back to).
-    let set = config.remove_user_keybinding("t", None).unwrap();
+    let set = config.remove_user_keybinding("t", None, None).unwrap();
     assert!(set.compiled().iter().all(|b| b.keys != ["t"]));
     // Removing a missing combo is a no-op, not an error.
-    config.remove_user_keybinding("t", None).unwrap();
+    config.remove_user_keybinding("t", None, None).unwrap();
 }
 
 #[test]

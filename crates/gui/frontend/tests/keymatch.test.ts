@@ -11,6 +11,7 @@ type Binding = {
   invocation: string;
   when: string | null;
   text_input: boolean;
+  focus: string | null;
 };
 
 const b = (
@@ -18,7 +19,8 @@ const b = (
   invocation: string,
   when: string | null = null,
   textInput = false,
-): Binding => ({ keys, invocation, when, text_input: textInput });
+  focus: string | null = null,
+): Binding => ({ keys, invocation, when, text_input: textInput, focus });
 
 const noInput = { panelType: null as string | null, textInput: false };
 
@@ -106,6 +108,38 @@ describe('createMatcher', () => {
     const typing = { panelType: 'metarecord-list', textInput: true };
     expect(matcher.feed('j', typing)).toBeNull();
     expect(matcher.feed('escape', typing)).toEqual({ invocation: 'editing:unfocus' });
+  });
+
+  test('a focus-scoped binding fires in its widget even while typing', () => {
+    const matcher = createMatcher([
+      b(['down'], 'metarecord-list:next', 'metarecord-list'), // suppressed while typing
+      b(['down'], 'metarecord-list:next', null, false, 'finder'),
+    ]);
+    expect(
+      matcher.feed('down', { panelType: 'metarecord-list', textInput: true, focus: 'finder' }),
+    ).toEqual({ invocation: 'metarecord-list:next' });
+  });
+
+  test('a focus-scoped binding is inert when its widget is not focused', () => {
+    const matcher = createMatcher([b(['ctrl+enter'], 'pick:confirm', null, false, 'finder')]);
+    // No focus scope, or a different one: the binding does not fire.
+    expect(
+      matcher.feed('ctrl+enter', { panelType: 'metarecord-list', textInput: true }),
+    ).toBeNull();
+    expect(
+      matcher.feed('ctrl+enter', { panelType: 'metarecord-list', textInput: true, focus: 'other' }),
+    ).toBeNull();
+  });
+
+  test('focus-scoped wins over when/global for the same combo', () => {
+    const matcher = createMatcher([
+      b(['enter'], 'editing:confirm', null, true),
+      b(['enter'], 'metarecord-list:open', 'metarecord-list'),
+      b(['enter'], 'metarecord-list:apply-finder', null, false, 'finder'),
+    ]);
+    expect(
+      matcher.feed('enter', { panelType: 'metarecord-list', textInput: true, focus: 'finder' }),
+    ).toEqual({ invocation: 'metarecord-list:apply-finder' });
   });
 
   test('strict binding wins over text-input=true when both would fire', () => {

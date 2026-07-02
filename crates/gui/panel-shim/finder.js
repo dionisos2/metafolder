@@ -43,18 +43,3 @@ export function composeQuery(baseIR, clause) {
   if (!baseIR) return clause;
   return { type: 'and', operands: [baseIR, clause] };
 }
-
-/** Maps a keydown in the finder input to a list action, mirroring the OSM
- *  command input: you keep typing to filter, but the arrows still move the
- *  selection and Ctrl/Cmd+Enter confirms a pending value pick (the finder
- *  auto-focuses in picker mode, so it stays usable without leaving the input).
- *  Returns one of `'next' | 'prev' | 'confirm-pick' | 'apply' | 'blur'`, or
- *  `null` to let the input handle the key normally (typing, caret motion). */
-export function finderKeyAction(event) {
-  if (event.key === 'ArrowDown') return 'next';
-  if (event.key === 'ArrowUp') return 'prev';
-  if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) return 'confirm-pick';
-  if (event.key === 'Enter') return 'apply';
-  if (event.key === 'Escape') return 'blur';
-  return null;
-}

@@ -27,6 +27,7 @@ export interface Binding {
   invocation: string;
   when: string | null;
   text_input: boolean;
+  focus: string | null;
 }
 
 export interface CommandDef {

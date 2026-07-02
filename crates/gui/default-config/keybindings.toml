@@ -47,8 +47,13 @@
 
 # Value picker (spec-gui "Value picker"): confirm/cancel the current pick.
 # Dedicated combos so normal Enter/Escape keep working in the picker's panels;
-# a stray press outside a picker is a silent no-op.
-"ctrl+enter" = { command = "pick:confirm" }
+# a stray press outside a picker is a silent no-op. The `focus = "finder"`
+# entry lets Ctrl+Enter confirm a pick while typing in the metarecord-list
+# finder (the finder auto-focuses in picker mode).
+"ctrl+enter" = [
+  { command = "pick:confirm" },
+  { command = "pick:confirm", focus = "finder" },
+]
 "ctrl+escape" = { command = "pick:cancel" }
 
 # Panel slots. panel:split is available via the command input.
@@ -82,10 +87,12 @@
 # focused or not, so e.g. in the `file` panel the arrows still drive the
 # metarecord-list selection (the file panel follows through selected_paths).
 
-# Move down / up one row.
+# Move down / up one row. The `focus = "finder"` entries let the arrows drive
+# the metarecord-list selection while you type in its finder input.
 "down" = [
   { command = "metarecord-list:next", when = "file" },
   { command = "metarecord-list:next", when = "metarecord-list" },
+  { command = "metarecord-list:next", focus = "finder" },
   { command = "file-manager:next", when = "file-manager" },
   { command = "treeref:next", when = "treeref" },
   { command = "ref-list:next", when = "ref-list" },
@@ -95,6 +102,7 @@
 "up" = [
   { command = "metarecord-list:prev", when = "file" },
   { command = "metarecord-list:prev", when = "metarecord-list" },
+  { command = "metarecord-list:prev", focus = "finder" },
   { command = "file-manager:prev", when = "file-manager" },
   { command = "treeref:prev", when = "treeref" },
   { command = "ref-list:prev", when = "ref-list" },
@@ -137,9 +145,11 @@
 ]
 
 # Enter: confirm while typing (global), otherwise the focused panel's primary
-# action (open / descend / activate / edit / expand).
+# action (open / descend / activate / edit / expand). In the finder it re-runs
+# the filter immediately (bypassing the debounce).
 "enter" = [
   { command = "editing:confirm", text-input = true },
+  { command = "metarecord-list:apply-finder", focus = "finder" },
   { command = "metarecord-list:open", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },

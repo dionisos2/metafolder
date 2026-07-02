@@ -2,13 +2,7 @@
 // quick-filter → OSM query composition shared by the list panels.
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panels
-import {
-  splitTerms,
-  finderTargets,
-  finderClause,
-  composeQuery,
-  finderKeyAction,
-} from '/__finder.js';
+import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 
 describe('splitTerms', () => {
   it('splits on whitespace and drops empty runs', () => {
@@ -90,29 +84,5 @@ describe('composeQuery', () => {
   it('ANDs the base with the clause', () => {
     const base = { type: 'eq', field: 'x', value: { type: 'int', value: 1 } };
     expect(composeQuery(base, clause)).toEqual({ type: 'and', operands: [base, clause] });
-  });
-});
-
-describe('finderKeyAction', () => {
-  it('moves the selection with the arrows', () => {
-    expect(finderKeyAction({ key: 'ArrowDown' })).toBe('next');
-    expect(finderKeyAction({ key: 'ArrowUp' })).toBe('prev');
-  });
-
-  it('confirms a pending pick with Ctrl/Cmd+Enter', () => {
-    expect(finderKeyAction({ key: 'Enter', ctrlKey: true })).toBe('confirm-pick');
-    expect(finderKeyAction({ key: 'Enter', metaKey: true })).toBe('confirm-pick');
-  });
-
-  it('applies the filter on plain Enter and leaves the finder on Escape', () => {
-    expect(finderKeyAction({ key: 'Enter' })).toBe('apply');
-    expect(finderKeyAction({ key: 'Escape' })).toBe('blur');
-  });
-
-  it('leaves ordinary typing and caret motion to the input', () => {
-    expect(finderKeyAction({ key: 'a' })).toBeNull();
-    expect(finderKeyAction({ key: 'ArrowLeft' })).toBeNull();
-    expect(finderKeyAction({ key: 'ArrowRight' })).toBeNull();
-    expect(finderKeyAction({ key: ' ' })).toBeNull();
   });
 });

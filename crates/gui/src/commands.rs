@@ -270,6 +270,7 @@ pub fn suggest_keybinding(
     invocation: String,
     when: Option<String>,
     text_input: Option<bool>,
+    focus: Option<String>,
 ) -> Result<Vec<CompiledBinding>, String> {
     let mut keybindings = app.keybindings.lock_recover();
     keybindings.add_suggestion(
@@ -277,6 +278,7 @@ pub fn suggest_keybinding(
         &invocation,
         when.as_deref(),
         text_input.unwrap_or(false),
+        focus.as_deref(),
     )?;
     let compiled = keybindings.compiled();
     crate::push_keybindings(&app.gui, &compiled);
@@ -296,12 +298,14 @@ pub fn set_user_keybinding(
     combo: String,
     command: String,
     when: Option<String>,
+    focus: Option<String>,
     text_input: Option<bool>,
 ) -> Result<Vec<CompiledBinding>, String> {
     let set = app.config.set_user_keybinding(
         &combo,
         &command,
         when.as_deref(),
+        focus.as_deref(),
         text_input.unwrap_or(false),
     )?;
     let compiled = set.compiled();
@@ -317,8 +321,9 @@ pub fn remove_user_keybinding(
     app: AppHandle,
     combo: String,
     when: Option<String>,
+    focus: Option<String>,
 ) -> Result<Vec<CompiledBinding>, String> {
-    let set = app.config.remove_user_keybinding(&combo, when.as_deref())?;
+    let set = app.config.remove_user_keybinding(&combo, when.as_deref(), focus.as_deref())?;
     let compiled = set.compiled();
     *app.keybindings.lock_recover() = set;
     crate::push_keybindings(&app.gui, &compiled);

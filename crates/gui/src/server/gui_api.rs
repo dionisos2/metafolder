@@ -370,6 +370,7 @@ fn push_keytable(state: &ServerState, temp_keys: &[String]) {
                 invocation: format!("answer:send {key}"),
                 when: None,
                 text_input: false,
+                focus: None,
             });
         }
     }

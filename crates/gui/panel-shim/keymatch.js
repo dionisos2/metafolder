@@ -5,8 +5,8 @@
 // Bindings come from the Rust engine (keybindings.rs):
 //   { keys: ["ctrl+k"] | ["g","g"], invocation, when: string|null, text_input: bool }
 //
-// Precedence (spec-gui "Keybinding"): local over global, then
-// text-input=false over text-input=true.
+// Precedence (spec-gui "Keybinding"): focus-scoped over panel-local over
+// global, then text-input=false over text-input=true.
 
 const SPECIAL_KEYS = {
   ' ': 'space',
@@ -52,19 +52,29 @@ export function createMatcher(bindings) {
 
   let buffer = [];
 
+  const has = (value) => value !== null && value !== undefined;
+
   function eligible(binding, context) {
-    if (context.textInput && !binding.text_input) return false;
-    if (binding.when !== null && binding.when !== undefined) {
-      return binding.when === context.panelType;
+    // A focus-scoped binding targets one named widget (e.g. the finder input):
+    // it fires only while that widget is focused, and does so regardless of the
+    // text-input gate (the widget is usually an input itself). It may still
+    // narrow to a panel type via `when`.
+    if (has(binding.focus)) {
+      if (binding.focus !== (context.focus ?? null)) return false;
+      return !has(binding.when) || binding.when === context.panelType;
     }
+    if (context.textInput && !binding.text_input) return false;
+    if (has(binding.when)) return binding.when === context.panelType;
     return true;
   }
 
-  // Lower rank = higher precedence.
+  // Lower rank = higher precedence. Focus dominates panel-locality, which
+  // dominates global; text-input=false beats text-input=true within a tier.
   function rank(binding) {
-    const local = binding.when !== null && binding.when !== undefined ? 0 : 2;
+    const focus = has(binding.focus) ? 0 : 4;
+    const local = has(binding.when) ? 0 : 2;
     const strict = binding.text_input ? 1 : 0;
-    return local + strict;
+    return focus + local + strict;
   }
 
   function sameKeys(a, b) {

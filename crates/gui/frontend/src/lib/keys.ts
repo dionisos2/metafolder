@@ -52,6 +52,21 @@ export function inTextInputContext(eventTarget: Element | null): boolean {
   return isTextInput(eventTarget) || isTextInput(deepActiveElement());
 }
 
+/**
+ * The named focus scope of the focused widget, or null. A widget opts in by
+ * tagging its element (or an ancestor) with `data-mf-focus="<scope>"`; the
+ * nearest such ancestor along the event path wins. This is the third keybinding
+ * scope dimension (`focus`), letting a binding target one specific input (e.g.
+ * the metarecord-list finder) rather than a whole panel type.
+ */
+export function focusScope(path: EventTarget[]): string | null {
+  for (const node of path) {
+    const scope = (node as HTMLElement)?.dataset?.mfFocus;
+    if (scope) return scope;
+  }
+  return null;
+}
+
 /** Ends the help-cursor mode and restores the normal pointer. */
 function deactivateHelpCursor() {
   store.ui.helpCursorActive = false;
@@ -96,11 +111,13 @@ export function installKeys() {
       }
       // composedPath()[0] is the real focused element even inside a panel's
       // Shadow DOM (document.activeElement would be the shadow host).
-      const target = (event.composedPath()[0] as Element | undefined) ?? document.activeElement;
+      const path = event.composedPath();
+      const target = (path[0] as Element | undefined) ?? document.activeElement;
       const textInput = inTextInputContext(target);
       const result = matcher.feed(combo, {
         panelType: focusedPanelType(),
         textInput,
+        focus: focusScope(path),
       });
       // Continuation hint: shown while a sequence is pending, cleared by
       // any other outcome (fired, cancelled with escape, aborted).

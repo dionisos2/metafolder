@@ -257,7 +257,7 @@ overrides; it does not need to list every binding. The GUI engine supplies all
 defaults separately and merges them at startup, with the user file taking
 precedence.
 
-Each keybinding has two independent scope dimensions:
+Each keybinding has three independent scope dimensions:
 
 - =when= (optional) — restricts the binding to a specific panel type. Absent
   means the binding is *global* (fires regardless of which panel type is
@@ -270,19 +270,34 @@ Each keybinding has two independent scope dimensions:
   arrow keys drive the options, not panel shortcuts), or a contenteditable —
   counts as a text input; the check consults both the event target and the
   focused element (an open native =select= popup may target neither).
+- =focus= (optional) — restricts the binding to a specific focused *widget*
+  inside a panel, identified by a =data-mf-focus="<scope>"= attribute on (or
+  around) the focused element. This is finer-grained than =when=, which can
+  only name a whole panel type: a panel may hold several text inputs (the
+  metarecord-list has a finder, a query editor and a columns editor) and a
+  =focus= binding targets exactly one. A =focus=-scoped binding **fires even
+  while a text input is focused** (it bypasses the =text-input= gate — the
+  widget it targets is itself typically an input); an optional =when= may be
+  combined with it to also require a panel type. Absent means the binding is
+  not widget-scoped. The scope is read from the DOM =composedPath()= of the key
+  event, so it works across the panel Shadow DOM.
 
-The two dimensions combine independently:
+The dimensions combine independently:
 
-| =when=             | =text-input= | Fires when                                          |
-|--------------------+--------------+-----------------------------------------------------|
-| absent             | =false=      | Any panel focused; no text input active (default)   |
-| absent             | =true=       | Any panel focused; even inside a text input         |
-| =<panel-type>=     | =false=      | Named panel focused; no text input active           |
-| =<panel-type>=     | =true=       | Named panel focused; even inside a text input       |
+| =focus=      | =when=         | =text-input= | Fires when                                        |
+|--------------+----------------+--------------+---------------------------------------------------|
+| absent       | absent         | =false=      | Any panel focused; no text input active (default) |
+| absent       | absent         | =true=       | Any panel focused; even inside a text input       |
+| absent       | =<panel-type>= | =false=      | Named panel focused; no text input active         |
+| absent       | =<panel-type>= | =true=       | Named panel focused; even inside a text input     |
+| =<scope>=    | (either)       | (ignored)    | The =data-mf-focus="<scope>"= widget is focused   |
 
-When the same key matches several bindings, a more specific binding wins: local
-over global, =text-input = false= over =text-input = true= (the less permissive
-one takes precedence when both would fire).
+When the same key matches several bindings, a more specific binding wins:
+=focus= over =when= over global, and among non-=focus= bindings =text-input =
+false= over =text-input = true= (the less permissive one takes precedence when
+both would fire). A =focus= binding therefore always beats a non-=focus= one
+for the same combo, which is what lets e.g. the arrow keys and =ctrl+enter=
+drive the metarecord-list selection while the caret sits in its finder input.
 
 Multi-key sequences never expire: once a prefix is typed, the matcher
 waits indefinitely for the next key. While a sequence is pending, the

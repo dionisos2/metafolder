@@ -164,6 +164,7 @@ describe('panel api — commands & keybindings', () => {
       invocation: 'metarecord-list:next',
       when: 'metarecord-list',
       textInput: false,
+      focus: null,
     });
   });
 });
