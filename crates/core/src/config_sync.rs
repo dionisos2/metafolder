@@ -83,22 +83,49 @@ fn init(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOut
 fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOutcome, String> {
     let repo = git2::Repository::open(config_dir).map_err(gerr)?;
 
-    // Build the refreshed default tree; short-circuit when nothing changed.
     let new_default_tree = build_tree(&repo, files)?;
     let old_default = repo
         .find_reference("refs/heads/default")
         .map_err(gerr)?
         .peel_to_commit()
         .map_err(gerr)?;
-    if old_default.tree_id() == new_default_tree {
-        return Ok(SyncOutcome::default());
-    }
 
     repo.set_head("refs/heads/main").map_err(gerr)?;
     let sig = signature()?;
 
-    // Preserve dirty user edits as a commit first: a single conflict point and
-    // a trivial, exact restore.
+    // Advance the shipped-defaults branch only when the shipped tree actually
+    // changed; otherwise reuse the existing tip. `default` always records the
+    // latest shipped config, so a user can resolve a stuck merge with a manual
+    // `git merge default` even between runs.
+    let default_commit = if old_default.tree_id() == new_default_tree {
+        old_default.id()
+    } else {
+        let tree = repo.find_tree(new_default_tree).map_err(gerr)?;
+        repo.commit(
+            Some("refs/heads/default"),
+            &sig,
+            &sig,
+            "shipped defaults",
+            &tree,
+            &[&old_default],
+        )
+        .map_err(gerr)?
+    };
+
+    // "Nothing to do" is decided by whether `main` already contains `default`,
+    // not by whether the shipped tree changed. This still covers the common
+    // "defaults unchanged" case, but also the "a previous run advanced default
+    // yet its merge into main conflicted" case: `main` is behind `default`, so
+    // the merge is retried (and re-reports the conflict) instead of being
+    // silently skipped. Checked before committing dirty edits so a genuine noop
+    // leaves the user's working tree untouched.
+    let annotated = repo.find_annotated_commit(default_commit).map_err(gerr)?;
+    if repo.merge_analysis(&[&annotated]).map_err(gerr)?.0.is_up_to_date() {
+        return Ok(SyncOutcome::default());
+    }
+
+    // A merge is needed. Preserve dirty user edits as a commit first: a single
+    // conflict point and a trivial, exact restore.
     let mut user_edits_committed = false;
     if working_tree_dirty(&repo)? {
         commit_all(&repo, &sig, "user edits")?;
@@ -106,27 +133,14 @@ fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncO
     }
     let main_restore = repo.refname_to_id("refs/heads/main").map_err(gerr)?;
 
-    // Advance the shipped-defaults branch.
-    let tree = repo.find_tree(new_default_tree).map_err(gerr)?;
-    let new_default = repo
-        .commit(Some("refs/heads/default"), &sig, &sig, "shipped defaults", &tree, &[&old_default])
-        .map_err(gerr)?;
-
-    // Merge default -> main.
-    let annotated = repo.find_annotated_commit(new_default).map_err(gerr)?;
+    // Re-analyse against the (possibly advanced) main: committing user edits
+    // can turn a would-be fast-forward into a real merge.
     let (analysis, _) = repo.merge_analysis(&[&annotated]).map_err(gerr)?;
-
-    if analysis.is_up_to_date() {
-        return Ok(SyncOutcome {
-            user_edits_committed,
-            ..Default::default()
-        });
-    }
 
     if analysis.is_fast_forward() {
         repo.find_reference("refs/heads/main")
             .map_err(gerr)?
-            .set_target(new_default, "fast-forward to shipped defaults")
+            .set_target(default_commit, "fast-forward to shipped defaults")
             .map_err(gerr)?;
         repo.set_head("refs/heads/main").map_err(gerr)?;
         repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
@@ -165,14 +179,14 @@ fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncO
     let merged_tree = index.write_tree().map_err(gerr)?;
     let merged_tree = repo.find_tree(merged_tree).map_err(gerr)?;
     let main_commit = repo.find_commit(main_restore).map_err(gerr)?;
-    let default_commit = repo.find_commit(new_default).map_err(gerr)?;
+    let default_tip = repo.find_commit(default_commit).map_err(gerr)?;
     repo.commit(
         Some("refs/heads/main"),
         &sig,
         &sig,
         "merge shipped defaults",
         &merged_tree,
-        &[&main_commit, &default_commit],
+        &[&main_commit, &default_tip],
     )
     .map_err(gerr)?;
     index.write().map_err(gerr)?;
@@ -406,6 +420,31 @@ mod tests {
         let conflict = out.conflict.expect("expected a conflict");
         assert_eq!(conflict, vec![PathBuf::from("gui/style.css")]);
         // main restored to the user's committed edit, not a merged/marker state.
+        assert_eq!(read(&config, "gui/style.css").as_deref(), Some("user-line\n"));
+    }
+
+    #[test]
+    fn a_pending_conflict_is_reported_again_on_the_next_sync() {
+        // Regression: after a conflicting sync the `default` branch is advanced
+        // but `main` is restored, so the two diverge. A second run with the
+        // *same* shipped source must still see the pending merge (main is behind
+        // default) and report the conflict again — not short-circuit to a noop,
+        // which would silently hide it. `default` keeps the latest shipped
+        // config so the user can resolve it with a manual `git merge default`.
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "line1\n")]);
+        sync(&source, &config).unwrap();
+
+        fs::write(config.join("gui/style.css"), "user-line\n").unwrap();
+        make_source(&source, &[("gui/style.css", "ship-line\n")]);
+
+        let first = sync(&source, &config).unwrap();
+        assert_eq!(first.conflict, Some(vec![PathBuf::from("gui/style.css")]));
+
+        // Same source, run again: the merge is still pending.
+        let second = sync(&source, &config).unwrap();
+        assert_eq!(second.conflict, Some(vec![PathBuf::from("gui/style.css")]));
         assert_eq!(read(&config, "gui/style.css").as_deref(), Some("user-line\n"));
     }
 
