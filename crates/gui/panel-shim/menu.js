@@ -40,7 +40,12 @@ const MENU_CSS = `
 }
 `;
 
-let activeMenu = null; // { close(item|null) } — at most one menu per document
+// At most one menu per document — but this module is evaluated twice in the
+// same realm (bundled into the shell, and served as /__menu.js to panel
+// code), so the open-menu handle must live on globalThis: the shell's
+// hasOpenMenu() has to see a menu opened through the other instance, or its
+// key matcher keeps firing bindings over an open panel menu.
+const shared = (globalThis.__mfMenuState ??= { active: null }); // { close(item|null) }
 
 function installStyle() {
   if (document.getElementById('mf-menu-style')) return;
@@ -53,7 +58,7 @@ function installStyle() {
 /** Whether a menu is open: key handlers (shell and shim matchers) must
  *  stand down so the menu's own navigation receives the events. */
 export function hasOpenMenu() {
-  return activeMenu !== null;
+  return shared.active !== null;
 }
 
 /** Flips the menu to the other side of the anchor when it would overflow
@@ -72,10 +77,13 @@ export function clampPosition(x, y, menuWidth, menuHeight, viewportWidth, viewpo
  * `items` is an array of `{label, action?, disabled?}` objects and `'-'`
  * separators. Resolves with the chosen item (after calling its `action`)
  * or with null when dismissed (Escape, click outside, another menu).
- * Arrow keys navigate the enabled items (wrapping), Enter selects.
+ * Arrow keys navigate the enabled items (wrapping), Enter selects; typing
+ * jumps to the first enabled item whose label starts with the typed prefix
+ * (native-select typeahead: the buffer resets after a second's pause, and
+ * repeating one letter cycles through its matches).
  */
 export function showMenu(items, { x, y }) {
-  activeMenu?.close(null);
+  shared.active?.close(null);
   if (!items.some((item) => item !== '-')) return Promise.resolve(null);
   const enabled = items.filter((item) => item !== '-' && !item.disabled);
   installStyle();
@@ -114,12 +122,37 @@ export function showMenu(items, { x, y }) {
     }
 
     function close(item) {
-      activeMenu = null;
+      if (shared.active === handle) shared.active = null;
       menu.remove();
       window.removeEventListener('keydown', onKeydown, { capture: true });
       window.removeEventListener('mousedown', onMousedown, { capture: true });
       item?.action?.();
       resolve(item);
+    }
+    const handle = { close };
+
+    // Typeahead buffer: printable keys accumulate for a second, then reset.
+    let typed = '';
+    let typedAt = 0;
+
+    function typeahead(char) {
+      const now = Date.now();
+      if (now - typedAt > 1000) typed = '';
+      typedAt = now;
+      typed += char.toLowerCase();
+      // Repeating one letter cycles through its matches; otherwise the whole
+      // buffer is a prefix and the current item keeps the highlight while it
+      // still matches.
+      const cycling = typed.length > 1 && [...typed].every((c) => c === typed[0]);
+      const needle = cycling ? typed[0] : typed;
+      const from = activeIndex < 0 ? 0 : cycling ? activeIndex + 1 : activeIndex;
+      for (let step = 0; step < enabled.length; step++) {
+        const index = (from + step) % enabled.length;
+        if (String(enabled[index].label).toLowerCase().startsWith(needle)) {
+          setActive(index);
+          return;
+        }
+      }
     }
 
     function onKeydown(event) {
@@ -137,7 +170,11 @@ export function showMenu(items, { x, y }) {
           close(activeIndex >= 0 ? enabled[activeIndex] : null);
           break;
         default:
-          return;
+          // Printable keys feed the typeahead and are swallowed either way
+          // (an open menu is modal); modified keys pass through untouched.
+          if (event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey) return;
+          typeahead(event.key);
+          break;
       }
       event.preventDefault();
       event.stopPropagation();
@@ -149,7 +186,7 @@ export function showMenu(items, { x, y }) {
 
     window.addEventListener('keydown', onKeydown, { capture: true });
     window.addEventListener('mousedown', onMousedown, { capture: true });
-    activeMenu = { close };
+    shared.active = handle;
 
     document.body.append(menu);
     const position = clampPosition(

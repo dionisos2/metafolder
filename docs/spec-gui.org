@@ -781,9 +781,14 @@ shared implementation lives in =/__menu.js=. The menu is rendered in the
 document that opened it (a menu opened inside a panel iframe is clipped
 to that iframe), positioned at the pointer (flipped at the viewport
 edges), and dismissed by =Escape=, a click outside, or opening another
-menu. =Up= / =Down= / =Enter= navigate it; while a menu is open the
-keybinding matchers stand down so its navigation keys do not trigger
-panel commands. Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
+menu. =Up= / =Down= / =Enter= navigate it, and typing jumps to the first
+enabled item whose label starts with the typed prefix (native-select
+typeahead: the buffer resets after a second's pause, repeating one letter
+cycles through its matches). While a menu is open the keybinding matchers
+stand down — regardless of which copy of the menu module opened it, the
+shell's bundled one or the =/__menu.js= one panels import — so its
+navigation and typeahead keys never trigger panel commands.
+Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
 =disabled=) and =mf-menu-separator=, with built-in defaults that the user
 stylesheet overrides.
 

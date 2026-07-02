@@ -25,8 +25,10 @@ function itemElements(): HTMLElement[] {
   return [...document.querySelectorAll<HTMLElement>('.mf-menu-item')];
 }
 
-function press(key: string) {
-  window.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+function press(key: string, modifiers: KeyboardEventInit = {}) {
+  const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...modifiers });
+  window.dispatchEvent(event);
+  return event;
 }
 
 afterEach(() => {
@@ -119,6 +121,117 @@ describe('showMenu', () => {
     await expect(open([])).resolves.toBeNull();
     expect(menuElement()).toBeNull();
     expect(hasOpenMenu()).toBe(false);
+  });
+});
+
+// menu.js is evaluated twice in the same realm: once bundled into the shell
+// (the instance keys.ts consults through hasOpenMenu) and once served as
+// /__menu.js to panel code (the instance the type picker opens menus with).
+// The open-menu state must be shared, or the shell keeps firing keybindings
+// while a panel menu is open.
+describe('shared state across module instances', () => {
+  async function secondInstance() {
+    vi.resetModules();
+    // @ts-expect-error plain-JS module shared with the panel types
+    return await import('../../panel-shim/menu.js');
+  }
+
+  test('a menu opened by another instance is visible to hasOpenMenu', async () => {
+    const second = await secondInstance();
+    const promise = second.showMenu([{ label: 'A' }], { x: 0, y: 0 });
+    expect(second.hasOpenMenu()).toBe(true);
+    expect(hasOpenMenu()).toBe(true); // the statically imported first instance
+    press('Escape');
+    await promise;
+    expect(hasOpenMenu()).toBe(false);
+    expect(second.hasOpenMenu()).toBe(false);
+  });
+
+  test('opening from one instance closes the other instance’s menu', async () => {
+    const second = await secondInstance();
+    const first = open([{ label: 'A' }]);
+    const secondPromise = second.showMenu([{ label: 'B' }], { x: 0, y: 0 });
+    await expect(first).resolves.toBeNull();
+    expect(document.querySelectorAll('.mf-menu')).toHaveLength(1);
+    expect(itemElements()[0].textContent).toBe('B');
+    press('Escape');
+    await secondPromise;
+  });
+});
+
+describe('typeahead', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test('typing a prefix activates the first matching item and Enter selects it', async () => {
+    const items: Item[] = ['string', 'int', 'float', 'bool', 'datetime', 'nothing', 'ref'].map(
+      (label) => ({ label }),
+    );
+    const promise = open(items);
+    press('n');
+    press('o');
+    expect(itemElements()[5].classList.contains('active')).toBe(true); // nothing
+    press('Enter');
+    await expect(promise).resolves.toBe(items[5]);
+  });
+
+  test('printable keys are swallowed while the menu is open', async () => {
+    const promise = open([{ label: 'string' }]);
+    expect(press('z').defaultPrevented).toBe(true); // even without a match
+    expect(press('s').defaultPrevented).toBe(true);
+    press('Escape');
+    await promise;
+  });
+
+  test('keys with a modifier are left alone', async () => {
+    const promise = open([{ label: 'nothing' }]);
+    expect(press('n', { ctrlKey: true }).defaultPrevented).toBe(false);
+    expect(itemElements()[0].classList.contains('active')).toBe(false);
+    press('Escape');
+    await promise;
+  });
+
+  test('repeating the same letter cycles through its matches', async () => {
+    const promise = open([{ label: 'alpha' }, { label: 'apple' }, { label: 'banana' }]);
+    press('a');
+    expect(itemElements()[0].classList.contains('active')).toBe(true);
+    press('a');
+    expect(itemElements()[1].classList.contains('active')).toBe(true);
+    press('a'); // wraps
+    expect(itemElements()[0].classList.contains('active')).toBe(true);
+    press('Escape');
+    await promise;
+  });
+
+  test('disabled items never match', async () => {
+    const promise = open([{ label: 'nothing', disabled: true }, { label: 'no' }]);
+    press('n');
+    expect(itemElements()[1].classList.contains('active')).toBe(true);
+    press('Escape');
+    await promise;
+  });
+
+  test('the buffer resets after a pause', async () => {
+    vi.useFakeTimers();
+    const promise = open([{ label: 'string' }, { label: 'int' }]);
+    press('s');
+    expect(itemElements()[0].classList.contains('active')).toBe(true);
+    vi.advanceTimersByTime(1100);
+    press('i'); // a fresh buffer: "i" matches int ("si" would match nothing)
+    expect(itemElements()[1].classList.contains('active')).toBe(true);
+    press('Escape');
+    await promise;
+  });
+
+  test('without a pause the keys accumulate into one prefix', async () => {
+    const promise = open([{ label: 'string' }, { label: 'int' }]);
+    press('s');
+    press('i'); // "si" matches nothing: the highlight stays on string
+    expect(itemElements()[0].classList.contains('active')).toBe(true);
+    expect(itemElements()[1].classList.contains('active')).toBe(false);
+    press('Escape');
+    await promise;
   });
 });
 
