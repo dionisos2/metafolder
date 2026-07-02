@@ -1,8 +1,9 @@
-//! `GET /thumbnail?path=/absolute/path` — a poster-frame PNG for a video
-//! file, for the `file`/`metarecord-list` thumbnail grids. Videos must never
-//! be served to an `<img>` directly (WebKit would decode the whole file and
-//! crash); this returns a small PNG extracted with `ffmpeg`, cached inside the
-//! file's repository (`<repo>/.metafolder/internal/thumbnails`).
+//! `GET /thumbnail?path=/absolute/path` — a poster-frame PNG for a video or
+//! GIF file, for the `file`/`metarecord-list` thumbnail grids. Videos must
+//! never be served to an `<img>` directly (WebKit would decode the whole file
+//! and crash), and a GIF served raw would animate in the grid; this returns a
+//! small still PNG extracted with `ffmpeg`, cached inside the file's
+//! repository (`<repo>/.metafolder/internal/thumbnails`).
 //!
 //! The owning repository is resolved from the daemon's `GET /repos` (root +
 //! `internal_dir`), the authority on repository layout — no filesystem walk.
@@ -54,7 +55,7 @@ pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params
                 .into_response(),
             Err(_) => StatusCode::NOT_FOUND.into_response(),
         },
-        Ok(Err(ThumbError::NotVideo)) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
+        Ok(Err(ThumbError::Unsupported)) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
         Ok(Err(ThumbError::NotFound)) => StatusCode::NOT_FOUND.into_response(),
         Ok(Err(ThumbError::Failed)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),

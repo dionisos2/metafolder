@@ -38,6 +38,39 @@ describe('thumbnail', () => {
     );
   });
 
+  test('a GIF gets a still poster at /thumbnail (never the animated /fsraw first)', () => {
+    const node = thumbnail('http://gui', '/a/anim.gif', { token: 't' });
+    expect(node.tagName).toBe('IMG');
+    expect(node.getAttribute('src')).toBe(
+      `http://gui/thumbnail?path=${encodeURIComponent('/a/anim.gif')}&token=t`,
+    );
+  });
+
+  test('a GIF poster failure degrades to the animated /fsraw original, then a glyph', () => {
+    const node = thumbnail('http://gui', '/a/anim.gif', { token: 't' });
+    const host = document.createElement('div');
+    host.append(node);
+    // Poster unavailable (ffmpeg missing, or the file is outside any repo):
+    // the animated original still beats a glyph.
+    node.dispatchEvent(new Event('error'));
+    expect(node.getAttribute('src')).toBe(
+      `http://gui/fsraw?path=${encodeURIComponent('/a/anim.gif')}&token=t`,
+    );
+    // The original failed too: the usual type-glyph fallback.
+    node.dispatchEvent(new Event('error'));
+    expect(host.firstElementChild?.tagName).toBe('SPAN');
+    expect(host.textContent).toBe('🖼️');
+  });
+
+  test('a video poster failure falls straight back to the glyph', () => {
+    const node = thumbnail('http://gui', '/a/clip.mkv');
+    const host = document.createElement('div');
+    host.append(node);
+    node.dispatchEvent(new Event('error'));
+    expect(host.firstElementChild?.tagName).toBe('SPAN');
+    expect(host.textContent).toBe('🎬');
+  });
+
   test('NEVER builds an <img> for a non-image, non-video — type glyph span instead', () => {
     const audio = thumbnail('http://gui', '/a/song.mp3');
     expect(audio.tagName).toBe('SPAN');

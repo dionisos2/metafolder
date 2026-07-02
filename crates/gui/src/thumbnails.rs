@@ -1,4 +1,4 @@
-//! Video poster-frame thumbnails for the file panels.
+//! Poster-frame thumbnails (videos and GIFs) for the file panels.
 //!
 //! Image files are shown directly via `/fsraw` (an `<img>` straight at the
 //! file), but a video must never be handed to an `<img>` — WebKit would
@@ -6,7 +6,10 @@
 //! process to gigabytes and crashing it (see `panel-shim/ui.js`). So the
 //! panels point video tiles at `GET /thumbnail?path=…`, which extracts one
 //! frame with `ffmpeg` out of process, scales it down, and caches the PNG on
-//! disk. Non-video types get an emoji glyph in the panel, never this endpoint.
+//! disk. GIFs take the same route for a different reason: pointed at
+//! `/fsraw` they *animate*, and a grid of animated tiles is a distraction —
+//! the poster gives a still first frame. Every other type gets an emoji
+//! glyph in the panel, never this endpoint.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -20,30 +23,32 @@ const THUMB_VERSION: u32 = 1;
 /// ratio. Small enough that a grid of them stays cheap to fetch and decode.
 const THUMB_WIDTH: u32 = 320;
 
-/// Video file extensions we generate poster thumbnails for. Mirrors the
-/// `VIDEO` set in the `file` panel's `main.js`.
-const VIDEO_EXTENSIONS: &[&str] = &[
+/// File extensions we generate poster thumbnails for: the video types
+/// (mirrors the `VIDEO` set in the `file` panel's `main.js`) plus `gif`
+/// (animated image shown as a still — see the module doc).
+const POSTER_EXTENSIONS: &[&str] = &[
     "mp4", "webm", "mkv", "mov", "avi", "wmv", "m4v", "mpg", "mpeg", "flv", "3gp", "ts", "m2ts",
+    "gif",
 ];
 
 /// Why a thumbnail could not be produced (maps to the HTTP status; any
 /// non-2xx makes the panel's `<img>` `onerror` fall back to a glyph).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThumbError {
-    /// The path is not a recognised video type — no frame to extract.
-    NotVideo,
+    /// The path is not a type we extract poster frames from.
+    Unsupported,
     /// The path does not exist or is not a regular file.
     NotFound,
     /// `ffmpeg` could not produce a frame (missing decoder, corrupt file…).
     Failed,
 }
 
-/// Whether `path`'s extension is a video type we make thumbnails for.
-pub fn is_video(path: &Path) -> bool {
+/// Whether `path`'s extension is a type we make poster thumbnails for.
+pub fn is_posterable(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_ascii_lowercase())
-        .is_some_and(|ext| VIDEO_EXTENSIONS.contains(&ext.as_str()))
+        .is_some_and(|ext| POSTER_EXTENSIONS.contains(&ext.as_str()))
 }
 
 /// Among the loaded repositories — each a `(root, internal_dir)` pair from the
@@ -100,8 +105,8 @@ fn ffmpeg_args(input: &Path, output: &Path, seek: &str) -> Vec<OsString> {
 /// a file outside any repo never reaches here). Blocking (spawns a process and
 /// does file I/O): call from `spawn_blocking`, not the async runtime.
 pub fn generate(path: &Path, cache_dir: &Path) -> Result<PathBuf, ThumbError> {
-    if !is_video(path) {
-        return Err(ThumbError::NotVideo);
+    if !is_posterable(path) {
+        return Err(ThumbError::Unsupported);
     }
     let meta = std::fs::metadata(path).map_err(|_| ThumbError::NotFound)?;
     if !meta.is_file() {
@@ -160,14 +165,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_is_video_by_extension_case_insensitive() {
-        assert!(is_video(Path::new("/a/clip.mkv")));
-        assert!(is_video(Path::new("/a/CLIP.MP4")));
-        assert!(is_video(Path::new("movie.webm")));
-        assert!(!is_video(Path::new("/a/photo.png")));
-        assert!(!is_video(Path::new("/a/song.mp3")));
-        assert!(!is_video(Path::new("/a/doc.pdf")));
-        assert!(!is_video(Path::new("noextension")));
+    fn test_is_posterable_by_extension_case_insensitive() {
+        assert!(is_posterable(Path::new("/a/clip.mkv")));
+        assert!(is_posterable(Path::new("/a/CLIP.MP4")));
+        assert!(is_posterable(Path::new("movie.webm")));
+        // Animated images get a still poster too, so a thumbnail grid of
+        // GIFs does not animate.
+        assert!(is_posterable(Path::new("/a/anim.gif")));
+        assert!(is_posterable(Path::new("/a/ANIM.GIF")));
+        assert!(!is_posterable(Path::new("/a/photo.png")));
+        assert!(!is_posterable(Path::new("/a/song.mp3")));
+        assert!(!is_posterable(Path::new("/a/doc.pdf")));
+        assert!(!is_posterable(Path::new("noextension")));
     }
 
     #[test]
@@ -199,8 +208,9 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_rejects_non_video() {
-        assert_eq!(generate(Path::new("/tmp/note.txt"), Path::new("/tmp")), Err(ThumbError::NotVideo));
+    fn test_generate_rejects_unsupported_types() {
+        assert_eq!(generate(Path::new("/tmp/note.txt"), Path::new("/tmp")), Err(ThumbError::Unsupported));
+        assert_eq!(generate(Path::new("/tmp/photo.png"), Path::new("/tmp")), Err(ThumbError::Unsupported));
     }
 
     #[test]
@@ -282,6 +292,20 @@ mod tests {
 
         // Second call is a cache hit: same path, no regeneration needed.
         assert_eq!(generate(&video, &cache_dir).unwrap(), png);
+
+        // A GIF gets a still poster the same way (short clip: the retry at
+        // seek 0 must cover a duration under the first 1 s offset).
+        let gif = dir.join("anim.gif");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=duration=0.5:size=64x64:rate=10")
+            .arg(&gif)
+            .status()
+            .unwrap();
+        assert!(made.success(), "could not synthesize a test gif");
+        let gif_png = generate(&gif, &cache_dir).expect("gif poster generated");
+        let bytes = std::fs::read(&gif_png).unwrap();
+        assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n", "gif poster is a PNG");
 
         std::fs::remove_file(&png).ok();
         std::fs::remove_dir_all(&dir).ok();

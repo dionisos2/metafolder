@@ -847,8 +847,9 @@ default 7524): =GET /panel/<name>/<file>=, **verbatim** (permissive CORS, so
 the shell can fetch/=import()= them from its own origin). The shell mounts a
 panel into a Shadow DOM root and applies the user stylesheet itself (no
 serve-time injection). Raw local files for the =file= panel type are served by
-=GET /fsraw?path=...= with HTTP Range support (media seeking). Video poster
-thumbnails are served by =GET /thumbnail?path=...=: a small PNG of one frame
+=GET /fsraw?path=...= with HTTP Range support (media seeking). Poster
+thumbnails (videos and GIFs) are served by =GET /thumbnail?path=...=: a small
+still PNG of one frame
 extracted with =ffmpeg= and cached on disk inside the file's repository, under
 =<repo>/.metafolder/internal/thumbnails= (keyed by the source's
 path/mtime/size), so the cache is scoped to the repo and removed with it. The
@@ -860,8 +861,11 @@ repo. A file inside no repository is not cached and gets no thumbnail — the
 panel shows a glyph. A video must never be
 handed to an =<img src=/fsraw>= — WebKit would decode the whole file and crash
 the web process — so the panels point video tiles at =/thumbnail= instead; a
-non-2xx (not a video, not in a repo, missing decoder…) falls back to a type
-glyph.
+non-2xx (unsupported type, not in a repo, missing decoder…) falls back to a
+type glyph. GIF tiles also go through =/thumbnail= — served raw they would
+*animate*, and a grid of animated tiles is a distraction — but their non-2xx
+fallback is the animated =/fsraw= original first (safe for an =<img>=), then
+the glyph.
 
 *** The =metafolder= API
 
@@ -1069,9 +1073,11 @@ any panel type (=import { el, formatValue, field } from '/__ui.js'=):
   multi-map), or =undefined=.
 - =thumbnail(guiServer, path, options)= — a thumbnail node for a filesystem
   entry, so the "never put a non-image in an =<img>=" rule lives in one place:
-  an image becomes a lazy =<img>= at =/fsraw=, a video a lazy =<img>= at
-  =/thumbnail= (a server-extracted poster frame), and directories, every other
-  type and a failed load fall back to a type glyph =<span>= (=fileTypeGlyph=).
+  an image becomes a lazy =<img>= at =/fsraw=, a video or GIF a lazy =<img>=
+  at =/thumbnail= (a server-extracted still poster frame), and directories,
+  every other type and a failed load fall back to a type glyph =<span>=
+  (=fileTypeGlyph=) — a GIF poster failure retries the animated =/fsraw=
+  original before the glyph.
 - =fileTypeGlyph(path, fallback)= — an emoji icon for a file's type (🎬 video,
   🎵 music, 📕 PDF, 🖼️ image, 🗜️ archive…), or =fallback= (default 📄) for an
   unrecognised extension. Used for the =file-manager= list icons and as the
@@ -1298,7 +1304,8 @@ real animation; the state persists while browsing other files. If the still
 frame cannot be produced, the animated original is shown as a fallback.
 
 When the active path is a directory, the panel instead lists its contents as
-a thumbnail grid (images as thumbnails via =/fsraw=, videos as poster-frame
+a thumbnail grid (images as thumbnails via =/fsraw=, videos and GIFs as
+still poster-frame
 thumbnails via =/thumbnail=, other entries as a type glyph). The grid is
 rendered in windows (page size from =[page-size].file= in =config.toml=, default
 150 — larger than =metarecord-list='s since each tile is only a lazy =<img>=,

@@ -100,10 +100,14 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * Builds a thumbnail node for a filesystem entry, shared by every panel that
  * shows files (file, metarecord-list) so the "never put a non-image in an
  * <img>" rule lives in one place. Image files become a lazy <img> at /fsraw;
- * videos a lazy <img> at /thumbnail (a server-extracted poster frame — never
- * the raw file). Both are bare <img>s, so each panel's own `.thumb img` /
- * `.card img` CSS styles them. Directories, every other type, and a failed
- * image/poster load fall back to a type glyph <span> (see `fileTypeGlyph`).
+ * videos and GIFs a lazy <img> at /thumbnail (a server-extracted poster frame
+ * — never the raw video file, and a *still* first frame for a GIF, so a grid
+ * of GIFs does not turn into a wall of animations). Both are bare <img>s, so
+ * each panel's own `.thumb img` / `.card img` CSS styles them. Directories,
+ * every other type, and a failed image/poster load fall back to a type glyph
+ * <span> (see `fileTypeGlyph`) — except a GIF poster failure (ffmpeg missing,
+ * file outside any repo), which retries the animated original at /fsraw
+ * before the glyph: an animated thumbnail still beats no thumbnail.
  *
  * Options: `isDir`, `dirGlyph` (default 📁), `fileGlyph` (fallback for an
  * unknown type, default 📄), `glyphClass` (CSS class for the glyph span),
@@ -115,15 +119,23 @@ export function thumbnail(guiServer, path, options = {}) {
   const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
   if (isDir) return glyph(dirGlyph);
   if (!path) return glyph(fileGlyph);
+  const gif = extensionOf(path) === 'gif';
   const image = isThumbnailable(path);
   if (image || isVideoThumbnailable(path)) {
-    const endpoint = image ? 'fsraw' : 'thumbnail';
+    const endpoint = image && !gif ? 'fsraw' : 'thumbnail';
     const auth = token ? `&token=${encodeURIComponent(token)}` : '';
-    return el('img', {
+    const img = el('img', {
       loading: 'lazy',
       src: `${guiServer}/${endpoint}?path=${encodeURIComponent(path)}${auth}`,
-      onerror: (event) => event.target.replaceWith(glyph(fileTypeGlyph(path, fileGlyph))),
     });
+    const glyphFallback = () => img.replaceWith(glyph(fileTypeGlyph(path, fileGlyph)));
+    img.onerror = !gif
+      ? glyphFallback
+      : () => {
+          img.onerror = glyphFallback;
+          img.src = `${guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
+        };
+    return img;
   }
   return glyph(fileTypeGlyph(path, fileGlyph));
 }

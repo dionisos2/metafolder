@@ -64,8 +64,9 @@ without it. Arch package names in parentheses.
   and the `thumbnail()` type glyphs (📁 🎬 🎵 📕 🖼️ 🗜️…) are emoji. Without an
   emoji font WebKit renders them as blank "tofu" boxes, so the icons appear
   missing even though the code is correct.
-- **`ffmpeg`** — video poster thumbnails (`GET /thumbnail`). Absent ⇒ video
-  tiles fall back to the 🎬 glyph.
+- **`ffmpeg`** — video/GIF still poster thumbnails (`GET /thumbnail`).
+  Absent ⇒ video tiles fall back to the 🎬 glyph, GIF tiles to the animated
+  original.
 - **GStreamer playback plugins** (`gst-plugins-good` for the
   `autoaudiosink`/`autovideosink` WebKit needs; `gst-libav` /
   `gst-plugins-bad` / `gst-plugins-ugly` for the actual decoders, e.g. H.264).
