@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
+  import { commonPrefix, insertCandidate } from '../lib/bash';
   import { invoke } from '../lib/ipc';
   import {
     dispatch,
@@ -18,42 +19,76 @@
   /** Highlighted suggestion; the first match is selected by default, so
    *  Tab always has a target. Up/Down move it. */
   let selectedIndex = $state(0);
+  /** `command` (`:` prompt, registry autocomplete) or `bash` (`!` prompt,
+   *  the line runs as a shell command, Tab asks bash for completions). */
+  let mode = $state<'command' | 'bash'>('command');
+  /** Bash completion state, valid until the next edit: the candidates
+   *  offered by the last Tab, the word they replace and its end position. */
+  let bashCandidates = $state<string[]>([]);
+  let bashWord = $state('');
+  let bashPoint = $state(0);
 
-  // The draft is per-workspace (spec-gui "Command input"): switching the
-  // focused slot to another workspace restores that workspace's draft.
+  function draftsOf(which: 'command' | 'bash') {
+    return which === 'bash' ? store.bashDrafts : store.inputDrafts;
+  }
+
+  /** Moves the cursor once the DOM input has caught up with the draft. */
+  function setCursorSoon(position: number) {
+    void tick().then(() => element?.setSelectionRange(position, position));
+  }
+
+  // The draft is per-workspace and per-mode (spec-gui "Command input"):
+  // switching the focused slot to another workspace restores that
+  // workspace's draft for the current mode.
   $effect(() => {
     const ws = focusedWs();
     if (ws !== currentWs) {
-      if (currentWs !== null) store.inputDrafts[currentWs] = draft;
-      draft = (ws !== null && store.inputDrafts[ws]) || '';
+      if (currentWs !== null) draftsOf(mode)[currentWs] = draft;
+      draft = (ws !== null && draftsOf(mode)[ws]) || '';
       currentWs = ws;
+      bashCandidates = [];
     }
   });
 
   // Pick up drafts injected by commands (e.g. bare `tab:rename`).
   $effect(() => {
     const ws = currentWs;
-    if (ws !== null && store.inputDrafts[ws] !== undefined && !focused) {
+    if (ws !== null && store.inputDrafts[ws] !== undefined && !focused && mode === 'command') {
       draft = store.inputDrafts[ws];
     }
   });
 
-  // command-input:activate focuses the always-visible input. Only the
-  // tick is tracked: reading element/draft without untrack would re-run
-  // this (and steal the focus) on every draft swap, e.g. when
+  /** command-input:activate / bash-input:activate: focus the always-visible
+   *  input in the given mode, swapping the per-mode drafts. */
+  function activate(target: 'command' | 'bash') {
+    if (mode !== target) {
+      if (currentWs !== null) draftsOf(mode)[currentWs] = draft;
+      mode = target;
+      draft = (currentWs !== null && draftsOf(target)[currentWs]) || '';
+      bashCandidates = [];
+      selectedIndex = 0;
+    }
+    element?.focus();
+    setCursorSoon(draft.length);
+  }
+
+  // Only the ticks are tracked: reading element/draft without untrack would
+  // re-run these (and steal the focus) on every draft swap, e.g. when
   // panel:focus-next changes the focused workspace.
   $effect(() => {
     if (store.ui.commandInputFocusTick === 0) return;
-    untrack(() => {
-      element?.focus();
-      element?.setSelectionRange(draft.length, draft.length);
-    });
+    untrack(() => activate('command'));
+  });
+  $effect(() => {
+    if (store.ui.bashInputFocusTick === 0) return;
+    untrack(() => activate('bash'));
   });
 
   // While a script prompt is active, the list offers the prompt's
   // completions (values, not commands) instead of the command registry.
   // The filter is ordered-substring, so spaces in the draft are term
   // separators ("con def" matches like .*con.*def.*), not an argument boundary.
+  // In bash mode the list holds the candidates of the last Tab completion.
   const matches = $derived(
     !focused
       ? []
@@ -62,8 +97,8 @@
             name,
             label: '',
           }))
-        : draft.startsWith('!')
-          ? []
+        : mode === 'bash'
+          ? bashCandidates.map((name) => ({ name, label: '' }))
           : filterCommands(store.commands, draft),
   );
   // Every match is listed; the CSS max-height makes the list scroll, so
@@ -95,8 +130,18 @@
   }
 
   /** Writes the suggestion into the input (does not execute it). A prompt
-   *  completion is a final value: no trailing space. */
+   *  completion is a final value: no trailing space. A bash candidate
+   *  replaces only the completed word. */
   function acceptSuggestion(name: string) {
+    if (store.ui.promptText === null && mode === 'bash') {
+      const insertion = insertCandidate(draft, bashPoint, bashWord, name, true);
+      draft = insertion.text;
+      bashCandidates = [];
+      selectedIndex = 0;
+      element?.focus();
+      setCursorSoon(insertion.cursor);
+      return;
+    }
     draft = store.ui.promptText !== null ? name : name + ' ';
     selectedIndex = 0;
     element?.focus();
@@ -106,6 +151,48 @@
   function completeTab() {
     if (suggestions.length === 0) return;
     acceptSuggestion(suggestions[Math.min(selectedIndex, suggestions.length - 1)].name);
+  }
+
+  /** Tab in bash mode: ask bash to complete the word before the cursor.
+   *  One candidate is inserted directly; several first extend the word to
+   *  their common prefix (like bash) and are listed for Up/Down + Tab. */
+  async function completeBash() {
+    if (bashCandidates.length > 0) {
+      completeTab();
+      return;
+    }
+    const cursor = element?.selectionStart ?? draft.length;
+    let completion: { word: string; candidates: string[] };
+    try {
+      completion = await invoke<{ word: string; candidates: string[] }>('bash_complete', {
+        line: draft.slice(0, cursor),
+      });
+    } catch (error) {
+      const ws = focusedWs();
+      if (ws) await invoke('post_status', { wsId: ws, text: String(error), kind: 'error', timeoutMs: 5000 });
+      return;
+    }
+    if (completion.candidates.length === 0) return;
+    if (completion.candidates.length === 1) {
+      const insertion = insertCandidate(draft, cursor, completion.word, completion.candidates[0], true);
+      draft = insertion.text;
+      setCursorSoon(insertion.cursor);
+      return;
+    }
+    let word = completion.word;
+    let point = cursor;
+    const prefix = commonPrefix(completion.candidates);
+    if (prefix.length > word.length) {
+      const insertion = insertCandidate(draft, cursor, word, prefix, false);
+      draft = insertion.text;
+      word = prefix;
+      point = insertion.cursor;
+      setCursorSoon(insertion.cursor);
+    }
+    bashWord = word;
+    bashPoint = point;
+    bashCandidates = completion.candidates;
+    selectedIndex = 0;
   }
 
   function cancelPrompt() {
@@ -125,7 +212,8 @@
   function discard() {
     selectedIndex = 0;
     draft = '';
-    if (currentWs !== null) store.inputDrafts[currentWs] = '';
+    bashCandidates = [];
+    if (currentWs !== null) draftsOf(mode)[currentWs] = '';
     cancelPrompt();
     element?.blur();
   }
@@ -139,8 +227,9 @@
     const picked =
       store.ui.promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
     draft = '';
+    bashCandidates = [];
     const ws = currentWs;
-    if (ws !== null) store.inputDrafts[ws] = '';
+    if (ws !== null) draftsOf(mode)[ws] = '';
     if (store.ui.promptText !== null) {
       // Script prompt (POST /gui/prompt): confirm with the typed text.
       store.ui.promptText = null;
@@ -150,6 +239,13 @@
       return;
     }
     element?.blur();
+    if (mode === 'bash') {
+      // The bash line runs through the same dispatcher as a `!` invocation
+      // (%-placeholder expansion, message-panel switch, run_shell). Enter
+      // always runs the typed line, as in bash — candidates insert with Tab.
+      await dispatch('!' + input);
+      return;
+    }
     await dispatch(picked);
   }
 
@@ -162,7 +258,8 @@
       unfocus();
     } else if (event.key === 'Tab') {
       event.preventDefault();
-      completeTab();
+      if (mode === 'bash' && store.ui.promptText === null) void completeBash();
+      else completeTab();
     } else if (event.key === 'ArrowDown') {
       event.preventDefault();
       moveSelection(1);
@@ -191,7 +288,24 @@
 
   function onBlur() {
     focused = false;
+    bashCandidates = [];
     setEditingTarget(null);
+  }
+
+  /** User edits invalidate the last Tab's candidates; a leading `!` in
+   *  command mode switches to bash mode (continuity with the old
+   *  `!command` syntax of the single input). A bare `!` restores the
+   *  workspace's bash draft — like bash-input:activate — while a pasted
+   *  `!command` keeps the pasted line. */
+  function onInput() {
+    bashCandidates = [];
+    if (mode === 'command' && store.ui.promptText === null && draft.startsWith('!')) {
+      const rest = draft.slice(1);
+      mode = 'bash';
+      draft = rest !== '' ? rest : (currentWs !== null && store.bashDrafts[currentWs]) || '';
+      selectedIndex = 0;
+      setCursorSoon(draft.length);
+    }
   }
 </script>
 
@@ -212,14 +326,15 @@
     </ul>
   {/if}
   <div class="line">
-    <span class="prompt">{store.ui.promptText ?? ':'}</span>
+    <span class="prompt">{store.ui.promptText ?? (mode === 'bash' ? '!' : ':')}</span>
     <input
       bind:this={element}
       bind:value={draft}
       onkeydown={onKeydown}
+      oninput={onInput}
       onfocus={onFocus}
       onblur={onBlur}
-      placeholder={focused ? '' : 'command — press : to focus'}
+      placeholder={focused ? '' : mode === 'bash' ? 'shell — ! to focus, : for commands' : 'command — : to focus, ! for shell'}
       spellcheck="false"
       autocomplete="off"
     />

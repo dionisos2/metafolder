@@ -283,6 +283,10 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // The input is always visible: activation means focusing it.
       store.ui.commandInputFocusTick += 1;
       return true;
+    case 'bash-input:activate':
+      // Same input, bash mode: `!` prompt, the line runs as a shell command.
+      store.ui.bashInputFocusTick += 1;
+      return true;
     // editing:* acts on the shell command input (editingTarget) when set,
     // otherwise on the deep-focused panel input (replacing the old per-iframe
     // shim handlers). confirm/discard stay command-input-only — panel inputs

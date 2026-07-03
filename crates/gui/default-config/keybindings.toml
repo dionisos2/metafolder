@@ -11,8 +11,10 @@
 # fire even while a text input is focused (e.g. editing commands). A binding
 # with no `when` is global.
 
-# Command input (spec default suggestion).
+# Command input (spec default suggestions): `:` for commands, `!` for the
+# bash input (the same widget in shell mode, with Tab bash completion).
 ":" = { command = "command-input:activate" }
+"!" = { command = "bash-input:activate" }
 
 # Text editing (fire even while a text input is focused).
 "escape" = { command = "editing:unfocus", text-input = true }

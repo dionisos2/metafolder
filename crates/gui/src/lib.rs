@@ -5,6 +5,7 @@
 //! updated through Tauri events. An Axum server (default port 7524) serves
 //! panel-type directories and the scripting API.
 
+pub mod bash_complete;
 pub mod command_registry;
 pub mod commands;
 pub mod config;
@@ -63,6 +64,7 @@ fn register_builtins(registry: &CommandRegistry) {
     // keystroke) opt out to keep the log readable.
     for (name, label, log) in [
         ("command-input:activate", "Focus the command input", false),
+        ("bash-input:activate", "Focus the bash (shell) input", false),
         ("editing:unfocus", "Leave the focused text input", false),
         ("editing:discard", "Clear and leave the focused text input", false),
         ("editing:confirm", "Confirm the focused text input", false),
@@ -328,6 +330,7 @@ pub fn run(options: Options) {
             fs_commands::fs_stat,
             fs_commands::fs_home_dir,
             shell_exec::run_shell,
+            bash_complete::bash_complete,
             commands::daemon_request,
             commands::daemon_set_url,
             commands::daemon_health,

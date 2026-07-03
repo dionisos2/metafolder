@@ -363,30 +363,54 @@ shown (one per slot). Messages auto-clear after a configurable timeout
 
 ** Command input
 
-A single-line text input permanently visible just above the status bar. A
-configurable keybinding (default suggestion: =:=) gives it keyboard focus;
+A single-line text input permanently visible just above the status bar,
+with two modes distinguished by the prompt character. A configurable
+keybinding gives it keyboard focus in either mode (default suggestions:
+=:= for *command mode*, =!= for *bash mode* — =bash-input:activate=);
 =Escape= removes the focus (the draft is kept). There is one command input;
 it targets the focused slot's workspace. Content (text and cursor position)
-is per-workspace: switching the focused slot to a different workspace
-restores the command input state of that workspace, including any partial
-command being typed.
+is per-workspace *and per-mode*: switching the focused slot to a different
+workspace restores the command input state of that workspace, including any
+partial command being typed, and switching modes preserves both lines.
 
-Accepts:
-- A command name (with inline completion) optionally followed by
-  space-separated parameters. The suggestion list is filtered fuzzily and
-  case-insensitively: the draft is split on whitespace and the terms must
-  appear in the command name in order ("con def" matches like the regex
-  =.*con.*def.*=). The first (best) suggestion is always selected;
-  =Up=/=Down= move the selection. =Tab= writes the selected suggestion
-  into the input (without executing); =Enter= always runs exactly what is
-  typed — never the selection, since one is always highlighted. Because
-  spaces are fuzzy term separators, the list simply empties when typed
-  arguments stop matching any command name.
-- A shell command prefixed with =!= — executed as a subprocess; stdout/stderr
-  goes to the =message= panel type and to the terminal from which the GUI was
-  launched. Running a =!= command switches the focused slot to the =message=
-  panel type so the output is visible, unless a =message= panel is already
-  visible in the workspace.
+*Command mode* (=:= prompt) accepts a command name (with inline completion)
+optionally followed by space-separated parameters. The suggestion list is
+filtered fuzzily and case-insensitively: the draft is split on whitespace
+and the terms must appear in the command name in order ("con def" matches
+like the regex =.*con.*def.*=). The first (best) suggestion is always
+selected; =Up=/=Down= move the selection. =Tab= writes the selected
+suggestion into the input (without executing); =Enter= always runs exactly
+what is typed — never the selection, since one is always highlighted.
+Because spaces are fuzzy term separators, the list simply empties when
+typed arguments stop matching any command name. Typing =!= at the start of
+an empty command-mode draft switches to bash mode (continuity with the
+historical single-input =!command= syntax).
+
+*Bash mode* (=!= prompt) accepts a shell command — executed as a subprocess;
+stdout/stderr goes to the =message= panel type and to the terminal from
+which the GUI was launched. Running it switches the focused slot to the
+=message= panel type so the output is visible, unless a =message= panel is
+already visible in the workspace. In invocation strings (keybindings,
+=POST /gui/command=) a shell command is still written with the =!= prefix:
+the mode split is a UI affordance, not a wire-format change.
+
+*** Bash completion (bash mode)
+
+=Tab= in bash mode completes the word before the cursor by asking =bash=
+itself (never live while typing): when the =bash-completion= package is
+installed its programmable completions are used (e.g. =git= subcommands),
+otherwise a =compgen= fallback completes command names in command position
+and filenames elsewhere (directories decorated with a trailing =/=). A
+single candidate is inserted directly (with a trailing space, unless a
+directory); several candidates first extend the word to their longest
+common prefix, then are listed like command suggestions — =Up=/=Down=
+select, =Tab= inserts the selection. Unlike command mode, =Enter= always
+runs the typed line (as in bash); any edit invalidates the candidate list.
+The completion harness never expands or executes the typed line itself (no
+=eval=; tokenization is plain whitespace splitting, with the replaced word
+approximating readline's word breaks — quotes, =VAR==, =host:=). A missing
+=bash= disables completion with a status-bar error; candidates are capped
+at 500 and completion at 3 s.
 
 *** Placeholders in =!= commands
 
@@ -616,23 +640,27 @@ including reconciles started from the CLI or another client.
 ** Command input
 
 Always visible: a prompt character and a text field above the status
-bar(s). A configurable keybinding (default: =:=) gives it keyboard focus;
-=Escape= unfocuses it, keeping the draft. The autocomplete suggestions are
-shown only while the input is focused. There is one command input; it
-targets the focused slot's workspace. Content is per-workspace: switching
-the focused slot to a different workspace restores that workspace's command
-input state.
+bar(s). A configurable keybinding gives it keyboard focus — =:= (default)
+in command mode, =!= in bash mode, the prompt character showing the active
+mode; =Escape= unfocuses it, keeping the draft. The autocomplete
+suggestions are shown only while the input is focused. There is one command
+input; it targets the focused slot's workspace. Content is per-workspace
+and per-mode: switching the focused slot to a different workspace restores
+that workspace's command input state.
 
 Behaviours:
-- Typing a command name + =Enter= → invokes the command (=Tab= completes
-  shell-style; =Up=/=Down= browse the suggestions, see [[*Command input]]).
+- Command mode: typing a command name + =Enter= → invokes the command
+  (=Tab= completes shell-style; =Up=/=Down= browse the suggestions, see
+  [[*Command input]]).
 - Parameters follow the command name, separated by spaces.
-- =!shell-command= + =Enter= → runs in background; output goes to the
-  =message= panel type and the launching terminal. The focused slot switches
-  to the =message= panel (unless already visible), and =%=-placeholders are
-  expanded from the selected metarecord first (see [[*Command input]]).
+- Bash mode: a shell line + =Enter= → runs in background; output goes to
+  the =message= panel type and the launching terminal. The focused slot
+  switches to the =message= panel (unless already visible), and
+  =%=-placeholders are expanded from the selected metarecord first (see
+  [[*Command input]]). =Tab= completes via bash itself (see [[*Bash completion
+  (bash mode)]]). A leading =!= typed in command mode switches to bash mode.
 - When a script calls =POST /gui/prompt=, the command input grabs the focus
-  and shows the script-supplied prompt text.
+  (in command mode) and shows the script-supplied prompt text.
 
 *** Command names (non-exhaustive default set)
 
@@ -681,6 +709,8 @@ Behaviours:
 | =config:open=        | Open settings (keybindings, style, daemon URL) |
 | =devtools:open=      | Open the WebKit inspector (replaces the suppressed native menu's Inspect Element) |
 | =quit=               | Exit the GUI                                   |
+| =command-input:activate=  | Focus the command input in command mode (default =:=)         |
+| =bash-input:activate=     | Focus the command input in bash mode (default =!=)            |
 | =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
 | =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) |
 | =editing:confirm=         | Confirm the current text input (=text-input = true=)          |

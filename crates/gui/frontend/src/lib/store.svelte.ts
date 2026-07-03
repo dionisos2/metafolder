@@ -33,13 +33,19 @@ export const store = $state({
   daemonUrl: '',
   daemonConnected: true,
   splitRatio: 0.5,
-  status: {} as Metarecord<string, StatusMessage | null>,
-  lastCommand: {} as Metarecord<string, string>,
-  inputDrafts: {} as Metarecord<string, string>,
+  status: {} as Record<string, StatusMessage | null>,
+  lastCommand: {} as Record<string, string>,
+  inputDrafts: {} as Record<string, string>,
+  /** Per-workspace drafts of the bash input mode (`!`), kept separately so
+   *  switching between the two modes preserves both lines. */
+  bashDrafts: {} as Record<string, string>,
   ui: {
     /// Bumped on every command-input:activate; the always-visible input
     /// grabs the keyboard focus when it changes.
     commandInputFocusTick: 0,
+    /// Bumped on every bash-input:activate: the same input grabs the focus
+    /// in bash mode (`!` prompt, shell line, Tab bash completion).
+    bashInputFocusTick: 0,
     /// Immersive mode: only the focused panel shows (chrome hidden, OS
     /// window fullscreen). Toggled by panel:fullscreen, exited with escape.
     fullscreen: false,
