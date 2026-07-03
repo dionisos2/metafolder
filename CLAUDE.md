@@ -438,8 +438,11 @@ external location recorded in the config) contains:
 - `config.json` — `RepoConfig`
 - `schema.json` — optional user schema (spec-schema)
 - `internal/db.sqlite` — SQLite database (WAL, exclusive lock while loaded)
+- `internal/history/<zone>` — per-repo input histories (GUI text zones, one
+  entry per line; `GET`/`POST /repos/:repo/history/:zone`, spec-gui "Input
+  history")
 
-`internal/` (database + sidecars, case probe) is the only part of
+`internal/` (database + sidecars, case probe, input histories) is the only part of
 `.metafolder/` excluded from tracking — by absolute path, in both the watcher
 and the reconcile walk; the rest of `.metafolder/` is ordinary trackable
 content. A pre-`internal/` layout is migrated automatically at load

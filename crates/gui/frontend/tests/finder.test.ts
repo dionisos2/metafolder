@@ -2,7 +2,7 @@
 // quick-filter → OSM query composition shared by the list panels.
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error plain-JS module shared with the panels
-import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
+import { splitTerms, finderTargets, finderClause, composeQuery, osmMatch } from '/__finder.js';
 
 describe('splitTerms', () => {
   it('splits on whitespace and drops empty runs', () => {
@@ -84,5 +84,32 @@ describe('composeQuery', () => {
   it('ANDs the base with the clause', () => {
     const base = { type: 'eq', field: 'x', value: { type: 'int', value: 1 } };
     expect(composeQuery(base, clause)).toEqual({ type: 'and', operands: [base, clause] });
+  });
+});
+
+describe('osmMatch', () => {
+  it('matches terms in order as substrings', () => {
+    expect(osmMatch('condef', ['con', 'def'])).toBe(true);
+    expect(osmMatch('con x def', ['con', 'def'])).toBe(true);
+    expect(osmMatch('defcon', ['con', 'def'])).toBe(false);
+  });
+
+  it('terms are non-overlapping', () => {
+    expect(osmMatch('aa', ['a', 'a'])).toBe(true);
+    expect(osmMatch('a', ['a', 'a'])).toBe(false);
+  });
+
+  it('is case-insensitive on both sides', () => {
+    expect(osmMatch('Repo:List', ['repo', 'LIST'])).toBe(true);
+  });
+
+  it('empty terms match everything', () => {
+    expect(osmMatch('anything', [])).toBe(true);
+    expect(osmMatch('', [])).toBe(true);
+  });
+
+  it("has no '/' barrier (plain-text semantics, not path mode)", () => {
+    expect(osmMatch('a/b', ['a/b'])).toBe(true);
+    expect(osmMatch('dir/file', ['ir/fi'])).toBe(true);
   });
 });

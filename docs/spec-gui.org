@@ -661,6 +661,8 @@ Behaviours:
   (bash mode)]]). A leading =!= typed in command mode switches to bash mode.
 - When a script calls =POST /gui/prompt=, the command input grabs the focus
   (in command mode) and shows the script-supplied prompt text.
+- Both modes keep a per-repository input history — =ctrl+p=/=ctrl+n= walk,
+  =ctrl+r= searches (see [[*Input history]]).
 
 *** Command names (non-exhaustive default set)
 
@@ -732,6 +734,60 @@ Behaviours:
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
 | =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
 | =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
+
+** Input history
+
+Text zones keep a persistent input history, *per repository × per zone*.
+The shared helper (=/__history.js=, used by the shell command input and the
+panels — one implementation, injected dependencies) attaches three keys
+directly on the input (the same pattern as the panels' local =Enter=/=Escape=
+handling — *not* =keybindings.toml=; note that a user binding of =ctrl+p= /
+=ctrl+n= / =ctrl+r= with =text-input = true= would shadow them):
+
+- =ctrl+p= / =ctrl+n= — walk back / forward through the zone's entries,
+  readline-style: the in-progress draft is kept at the newest position and
+  restored when walking past it; any real edit resets the walk (the edited
+  text becomes the new draft). Entries are fetched at the start of each walk.
+- =ctrl+r= — an fzf-style search overlay anchored to the input, with its own
+  search field: entries are listed newest first, deduplicated, and filtered
+  by client-side ordered-substring matching (the [[file:spec-query.org][OSM]]
+  semantics, without the path-mode =/= barrier). =ctrl+p=/=ctrl+n= and the
+  arrows move the selection, =Enter= inserts the selection into the input,
+  =Escape= cancels; losing focus also cancels.
+
+The zones (v1): =shell:command= and =shell:bash= (the two command-input
+modes — separate histories; a script prompt records nothing), and
+=metarecord-list:finder= / =metarecord-list:query=. An entry is recorded on
+*explicit submission only* — =Enter= in the input or the corresponding
+apply command, never a debounced keystroke. The shell command mode records
+what actually ran (the resolved suggestion), the other zones the submitted
+text.
+
+The active repository is the workspace's =active_repo=. Without one, the
+history still works but is *session-only* (in memory, per attachment); it
+is not migrated into a repository's persisted history when one becomes
+active.
+
+*** Storage and daemon endpoints
+
+Histories are owned by the *daemon* (it owns =.metafolder/=; the GUI has no
+file-write path): plain-text files =.metafolder/internal/history/<zone>=,
+UTF-8, one entry per line, oldest first / newest last. =internal/= is the
+tracking-excluded part of =.metafolder/=, so appends never feed the watcher
+or the event log. Files are capped to the newest 1000 entries and rewritten
+atomically (temp file + rename).
+
+- =GET /repos/:repo/history/:zone[?limit=N]= → ={"entries": [...]}= —
+  oldest first; =limit= keeps only the newest N. A missing file is an empty
+  history.
+- =POST /repos/:repo/history/:zone= with ={"entry": "..."}= →
+  ={"appended": bool}= — appends one entry; =false= means it equalled the
+  newest entry (consecutive dedup, nothing written). An empty/whitespace or
+  multi-line entry is rejected with 400.
+
+Zone names match =[a-z0-9:_-]{1,64}= (rejected with 400 otherwise) — no
+=/=, =.= or uppercase, so a zone cannot traverse out of the history
+directory.
 
 ** Keyboard navigation
 
@@ -1217,7 +1273,10 @@ A search box at the top of the panel — the /finder/ — is an incremental
 find a metarecord by a fragment of its name/label and/or path. As the user
 types (debounced), it re-runs the query; the terms are the input split on
 whitespace. =metarecord-list:find= focuses it (default keybinding =/=; the
-structural query editor moves to =Ctrl+/=).
+structural query editor moves to =Ctrl+/=). The finder and the query input
+each keep a per-repository input history (see [[*Input history]]); an entry is
+recorded on explicit submission (=Enter= / the apply commands), not by the
+debounce.
 
 The finder builds an OSM sub-query *OR-combined across a set of target fields*
 and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a

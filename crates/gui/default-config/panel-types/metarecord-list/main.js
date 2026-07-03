@@ -6,6 +6,7 @@ import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
+import { attachHistory } from '/__history.js';
 import {
   parseColumns,
   isSortable,
@@ -95,6 +96,19 @@ export async function mount(root, metafolder) {
   const bulkValueSlot = root.getElementById('bulk-value');
   const bulkForce = root.getElementById('bulk-force');
   const bulkError = root.getElementById('bulk-error');
+
+  // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
+  // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
+  const historyDeps = {
+    request: (method, path, body) => daemon.call(method, path, body),
+    getRepo: async () => repo,
+    container: bodyEl,
+  };
+  const finderHistory = attachHistory(finderInput, {
+    zone: 'metarecord-list:finder',
+    ...historyDeps,
+  });
+  const queryHistory = attachHistory(queryInput, { zone: 'metarecord-list:query', ...historyDeps });
 
   // ── Data access (all daemon data comes from the shared cache) ─────────────
 
@@ -464,6 +478,7 @@ export async function mount(root, metafolder) {
 
   async function applyQuery() {
     queryRan = true;
+    queryHistory.push(queryInput.value.trim());
     const ok = await recomputeQuery();
     await persistQueryState();
     if (ok) await fetchPage(true);
@@ -688,9 +703,10 @@ export async function mount(root, metafolder) {
    *  fast typist can outrun an in-flight fetch and leave the list showing an
    *  earlier term. Re-run when our fetch was dropped, or the input moved on
    *  while we were fetching, until the shown list matches the current input. */
-  async function applyFinder() {
+  async function applyFinder({ record = false } = {}) {
     clearTimeout(finderTimer);
     queryRan = true;
+    if (record) finderHistory.push(finderInput.value.trim());
     finderText = finderInput.value;
     await workspace.set('metarecord-list:finder', finderText);
     const ran = await fetchPage(true);
@@ -772,7 +788,9 @@ export async function mount(root, metafolder) {
   });
   commands.register('metarecord-list:apply-finder', {
     label: 'Metarecord list: re-run the finder filter now (bypass the debounce)',
-    handler: () => applyFinder(),
+    // The explicit re-run (Enter in the finder) also records the text in the
+    // finder's input history; the debounced keystroke path does not.
+    handler: () => applyFinder({ record: true }),
   });
   commands.register('metarecord-list:edit-query', {
     label: 'Metarecord list: focus the query input',
@@ -904,6 +922,8 @@ export async function mount(root, metafolder) {
 
   return () => {
     clearTimeout(finderTimer);
+    finderHistory.detach();
+    queryHistory.detach();
     document.removeEventListener('mousemove', onMouseMove);
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();

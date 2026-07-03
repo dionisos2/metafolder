@@ -32,6 +32,7 @@ const PAGED_LIST_JS: &str = include_str!("../../panel-shim/paged-list.js");
 const VALUE_WIDGET_JS: &str = include_str!("../../panel-shim/value-widget.js");
 const SCHEMA_TEMPLATE_JS: &str = include_str!("../../panel-shim/schema-template.js");
 const FINDER_JS: &str = include_str!("../../panel-shim/finder.js");
+const HISTORY_JS: &str = include_str!("../../panel-shim/history.js");
 const HELP_JS: &str = include_str!("../../panel-shim/help.js");
 
 #[derive(Clone)]
@@ -57,6 +58,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__value-widget.js", get(|| async { javascript(VALUE_WIDGET_JS) }))
         .route("/__schema-template.js", get(|| async { javascript(SCHEMA_TEMPLATE_JS) }))
         .route("/__finder.js", get(|| async { javascript(FINDER_JS) }))
+        .route("/__history.js", get(|| async { javascript(HISTORY_JS) }))
         .route("/__help.js", get(|| async { javascript(HELP_JS) }))
         .route(
             "/__style.css",

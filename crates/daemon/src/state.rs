@@ -45,6 +45,10 @@ pub struct RepoState {
     /// consulted while fresh — so it never serves stale results. `None` until
     /// the first query builds it.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
+    /// Serializes read-modify-write cycles on the input-history files under
+    /// `internal/history/` (crate::history). In-process is sufficient: the
+    /// exclusive SQLite lock guarantees one daemon per repository.
+    pub history_lock: Mutex<()>,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -86,6 +90,7 @@ impl RepoState {
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
+            history_lock: Mutex::new(()),
         }
     }
 

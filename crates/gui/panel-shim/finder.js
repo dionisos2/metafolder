@@ -37,6 +37,23 @@ export function finderClause(terms, targets) {
   return ops.length === 1 ? ops[0] : { type: 'or', operands: ops };
 }
 
+/** Client mirror of the daemon's ordered-substring check (`osm_ordered_match`,
+ *  query_exec.rs): every term must appear as a substring, in order and
+ *  non-overlapping, case-insensitive on both sides; an empty term list matches
+ *  everything. No `/` barrier — that is a property of path-mode term
+ *  construction, not of this check. */
+export function osmMatch(haystack, terms) {
+  const lower = haystack.toLowerCase();
+  let from = 0;
+  for (const term of terms) {
+    const needle = term.toLowerCase();
+    const at = lower.indexOf(needle, from);
+    if (at === -1) return false;
+    from = at + needle.length;
+  }
+  return true;
+}
+
 /** Combines the base query IR (null = match all) with the finder clause. */
 export function composeQuery(baseIR, clause) {
   if (!clause) return baseIR;

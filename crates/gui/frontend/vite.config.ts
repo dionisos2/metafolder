@@ -18,6 +18,7 @@ export default defineConfig({
         new URL('../panel-shim/schema-template.js', import.meta.url),
       ),
       '/__finder.js': fileURLToPath(new URL('../panel-shim/finder.js', import.meta.url)),
+      '/__history.js': fileURLToPath(new URL('../panel-shim/history.js', import.meta.url)),
     },
   },
   clearScreen: false,

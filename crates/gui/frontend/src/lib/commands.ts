@@ -2,6 +2,8 @@
 // (spec-gui "Command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel iframes.
 
+// @ts-expect-error plain-JS module shared with the panel shim
+import { osmMatch } from '../../../panel-shim/finder.js';
 import { setHelpCursor } from './cursor';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
@@ -47,30 +49,16 @@ export function shouldLogCommand(commands: { name: string; log: boolean }[], nam
   return command ? command.log : true;
 }
 
-/**
- * Ordered-substring matching: every term must appear as a substring, in order,
- * without overlapping ("con def" matches like the regex `.*con.*def.*`). This
- * is the ordered, literal variant of fzf's extended search — NOT character-level
- * fuzzy (subsequence of characters); the unit is the term, not the character.
- */
-export function orderedSubstringMatch(text: string, terms: string[]): boolean {
-  let from = 0;
-  for (const term of terms) {
-    const at = text.indexOf(term, from);
-    if (at === -1) return false;
-    from = at + term.length;
-  }
-  return true;
-}
-
-/** Ordered-substring filter (case-insensitive): the query is split on
- *  whitespace and the terms must appear in order. Names starting with the
- *  first term are ranked first; alphabetical within each group. */
+/** Ordered-substring filter (case-insensitive, OSM — `osmMatch` from the
+ *  panel shim): the query is split on whitespace and the terms must appear in
+ *  order, without overlapping — the ordered, literal variant of fzf's
+ *  extended search, NOT character-level fuzzy. Names starting with the first
+ *  term are ranked first; alphabetical within each group. */
 export function filterCommands<C extends { name: string }>(commands: C[], query: string): C[] {
   const byName = (a: C, b: C) => a.name.localeCompare(b.name);
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [...commands].sort(byName);
-  const matching = commands.filter((c) => orderedSubstringMatch(c.name.toLowerCase(), terms));
+  const matching = commands.filter((c) => osmMatch(c.name, terms));
   const starts = matching.filter((c) => c.name.toLowerCase().startsWith(terms[0])).sort(byName);
   const rest = matching.filter((c) => !c.name.toLowerCase().startsWith(terms[0])).sort(byName);
   return [...starts, ...rest];

@@ -11,8 +11,11 @@
     shortcutsFor,
   } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
+  // @ts-expect-error plain-JS module shared with the panel shim
+  import { attachHistory } from '../../../panel-shim/history.js';
 
   let element = $state<HTMLInputElement | null>(null);
+  let containerEl = $state<HTMLDivElement | null>(null);
   let draft = $state('');
   let currentWs = $state<string | null>(null);
   let focused = $state(false);
@@ -31,6 +34,41 @@
   function draftsOf(which: 'command' | 'bash') {
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
   }
+
+  /** Daemon HTTP call for the history helper (the panel-side equivalent is
+   *  `metafolder.daemon.call`); throws on any error status. */
+  async function daemonCall(method: string, path: string, body?: unknown): Promise<unknown> {
+    const res = (await invoke('daemon_request', { method, path, body: body ?? null })) as {
+      status: number;
+      body: unknown;
+    };
+    if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
+    return res.body;
+  }
+
+  // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
+  // ctrl-r OSM search. The zone follows the mode (`:` vs `!` are separate
+  // histories) and turns off while a script prompt is active.
+  let history: { push: (text: string) => void; detach: () => void } | null = null;
+  $effect(() => {
+    if (!element || !containerEl) return;
+    const attached = attachHistory(element, {
+      zone: () =>
+        store.ui.promptText !== null ? null : mode === 'bash' ? 'shell:bash' : 'shell:command',
+      request: daemonCall,
+      getRepo: async () => {
+        if (currentWs === null) return null;
+        const value = await invoke('ws_get_var', { wsId: currentWs, key: 'active_repo' });
+        return typeof value === 'string' ? value : null;
+      },
+      container: containerEl,
+    });
+    history = attached;
+    return () => {
+      attached.detach();
+      history = null;
+    };
+  });
 
   /** Moves the cursor once the DOM input has caught up with the draft. */
   function setCursorSoon(position: number) {
@@ -243,9 +281,13 @@
       // The bash line runs through the same dispatcher as a `!` invocation
       // (%-placeholder expansion, message-panel switch, run_shell). Enter
       // always runs the typed line, as in bash — candidates insert with Tab.
+      history?.push(input);
       await dispatch('!' + input);
       return;
     }
+    // The history records what actually ran (the resolved suggestion), not
+    // the abbreviation that was typed.
+    history?.push(picked);
     await dispatch(picked);
   }
 
@@ -309,7 +351,7 @@
   }
 </script>
 
-<div class="command-input" class:focused data-help-topic="command-input">
+<div class="command-input" class:focused data-help-topic="command-input" bind:this={containerEl}>
   {#if suggestions.length > 0}
     <ul class="suggestions">
       {#each suggestions as suggestion, index (suggestion.name)}
