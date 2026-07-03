@@ -738,6 +738,7 @@ Behaviours:
 ** Input history
 
 Text zones keep a persistent input history, *per repository × per zone*.
+This is purely a GUI feature — the daemon plays no part in it (see [[*Storage]]).
 The shared helper (=/__history.js=, used by the shell command input and the
 panels — one implementation, injected dependencies) attaches three keys
 directly on the input (the same pattern as the panels' local =Enter=/=Escape=
@@ -768,26 +769,27 @@ history still works but is *session-only* (in memory, per attachment); it
 is not migrated into a repository's persisted history when one becomes
 active.
 
-*** Storage and daemon endpoints
+*** Storage
 
-Histories are owned by the *daemon* (it owns =.metafolder/=; the GUI has no
-file-write path): plain-text files =.metafolder/internal/history/<zone>=,
-UTF-8, one entry per line, oldest first / newest last. =internal/= is the
-tracking-excluded part of =.metafolder/=, so appends never feed the watcher
-or the event log. Files are capped to the newest 1000 entries and rewritten
-atomically (temp file + rename).
+Histories are owned by the *GUI*, not the daemon — they are a pure GUI
+concern, so there are no daemon endpoints for them even though the files
+live inside =.metafolder/=: plain-text files
+=.metafolder/gui/history/<zone>=, UTF-8, one entry per line, oldest first /
+newest last. The GUI resolves the repository's =.metafolder/= location from
+=GET /repos= (the parent of =internal_dir=, correct for external
+=.metafolder/= placements) and reads/writes the files itself, through the
+=history_read= / =history_append= Tauri commands (exposed to panels as
+=metafolder.history.read/append=). Files are capped to the newest 1000
+entries and rewritten atomically (temp file + rename); an append equal to
+the newest entry is a no-op (consecutive dedup); an empty/whitespace or
+multi-line entry is rejected.
 
-- =GET /repos/:repo/history/:zone[?limit=N]= → ={"entries": [...]}= —
-  oldest first; =limit= keeps only the newest N. A missing file is an empty
-  history.
-- =POST /repos/:repo/history/:zone= with ={"entry": "..."}= →
-  ={"appended": bool}= — appends one entry; =false= means it equalled the
-  newest entry (consecutive dedup, nothing written). An empty/whitespace or
-  multi-line entry is rejected with 400.
+Unlike =internal/=, =gui/history/= is ordinary trackable =.metafolder/=
+content — harmless to track, and in practice covered by the default
+=\.metafolder(/.*)?$= ignore pattern set at init.
 
-Zone names match =[a-z0-9:_-]{1,64}= (rejected with 400 otherwise) — no
-=/=, =.= or uppercase, so a zone cannot traverse out of the history
-directory.
+Zone names match =[a-z0-9:_-]{1,64}= (rejected otherwise) — no =/=, =.= or
+uppercase, so a zone cannot traverse out of the history directory.
 
 ** Keyboard navigation
 
@@ -1091,6 +1093,18 @@ const metarecords = await metafolder.fs.readDir('/path/to/dir')
 // Stat a single path
 const info = await metafolder.fs.stat('/path/to/file')
 // info: {path, is_dir, size, mtime}
+#+END_SRC
+
+**** =metafolder.history=
+
+The persistent store behind the input-history helper (see [[*Input history]]):
+GUI-side files under the repo's =.metafolder/gui/history/<zone>=, not
+routed through the daemon. Panels normally consume it through
+=attachHistory= (=/__history.js=) rather than directly.
+
+#+BEGIN_SRC js
+const entries = await metafolder.history.read(repo, 'my-panel:search')  // oldest first
+await metafolder.history.append(repo, 'my-panel:search', 'the submitted text')
 #+END_SRC
 
 **** =metafolder.contextMenu=

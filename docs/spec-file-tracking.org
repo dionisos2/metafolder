@@ -313,10 +313,8 @@ path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
 inside the repository's own =.metafolder/internal/= directory are always
 ignored — matched by absolute path, since =.metafolder/= may live anywhere
 (external database), including inside the watched root at an arbitrary depth.
-This directory holds the live database and its WAL/journal sidecars, plus the
-per-repo input histories (=internal/history/<zone>=, see spec-gui "Input
-history"): tracking it would feed the daemon's own writes back into the event
-stream. The same
+This directory holds the live database and its WAL/journal sidecars: tracking
+it would feed the daemon's own writes back into the event stream. The same
 exclusion applies to the reconcile walk. The rest of =.metafolder/=
 (=config.json=, =schema.json=) is ordinary trackable content, subject to the
 normal eligibility rules.

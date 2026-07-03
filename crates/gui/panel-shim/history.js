@@ -1,11 +1,12 @@
 // Input-history helper (spec-gui "Input history"), shared by the shell
 // command input and the panel text zones. One history per repository × zone,
-// served by the daemon (`GET`/`POST /repos/:repo/history/:zone`); without an
-// active repo the history is session-only, in memory. Ctrl-p/Ctrl-n walk the
-// entries readline-style (the in-progress draft is kept at the newest
-// position); Ctrl-r opens an fzf-style overlay filtered by client-side OSM
-// matching. Keys are attached directly on the input (the `editKeys` pattern),
-// not through keybindings.toml.
+// stored GUI-side under the repo's `.metafolder/gui/history/` (the Tauri
+// `history_read`/`history_append` commands — the daemon plays no part);
+// without an active repo the history is session-only, in memory. Ctrl-p/
+// Ctrl-n walk the entries readline-style (the in-progress draft is kept at
+// the newest position); Ctrl-r opens an fzf-style overlay filtered by
+// client-side OSM matching. Keys are attached directly on the input (the
+// `editKeys` pattern), not through keybindings.toml.
 
 import { splitTerms, osmMatch } from '/__finder.js';
 
@@ -98,8 +99,9 @@ function ensureStyle(container) {
  *
  * - `zone`: the zone name, or a function returning it per keypress (falsy
  *   disables handling — used by the shell during script prompts).
- * - `request(method, path, body)`: daemon HTTP call, throws on error (panels
- *   pass `metafolder.daemon.call`; the shell a wrapper over `daemon_request`).
+ * - `read(repo, zone)` / `append(repo, zone, entry)`: the persistent store,
+ *   async, throwing on error (panels pass `metafolder.history.*`; the shell
+ *   wrappers over the `history_read`/`history_append` Tauri commands).
  * - `getRepo()`: async, the active repo uuid or null (session-only mode).
  * - `container`: element the overlay is appended to — must live inside the
  *   panel's shadow root so the overlay (and its style) render there.
@@ -107,7 +109,7 @@ function ensureStyle(container) {
  * Returns `{push, detach}`: call `push(text)` on submit; `detach()` on
  * cleanup.
  */
-export function attachHistory(input, { zone, request, getRepo, container }) {
+export function attachHistory(input, { zone, read, append, getRepo, container }) {
   const sessionEntries = new Map(); // zone name → oldest-first entries
   let nav = null; // { list, index, draft } — index list.length = the draft
   let starting = null; // in-flight nav-session load (collapses rapid ctrl-p)
@@ -126,10 +128,10 @@ export function attachHistory(input, { zone, request, getRepo, container }) {
     }
     if (!repo) return [...(sessionEntries.get(zoneName) ?? [])];
     try {
-      const res = await request('GET', `/repos/${repo}/history/${zoneName}`, undefined);
-      return Array.isArray(res?.entries) ? res.entries : [];
+      const entries = await read(repo, zoneName);
+      return Array.isArray(entries) ? entries : [];
     } catch {
-      return []; // no daemon / endpoint error: the feature degrades silently
+      return []; // store error (repo unloaded, fs...): degrade silently
     }
   }
 
@@ -306,8 +308,8 @@ export function attachHistory(input, { zone, request, getRepo, container }) {
     void (async () => {
       const repo = await getRepo();
       if (repo) {
-        // Fire-and-forget: a dead daemon must not break submission.
-        await request('POST', `/repos/${repo}/history/${zoneName}`, { entry });
+        // Fire-and-forget: a store failure must not break submission.
+        await append(repo, zoneName, entry);
       } else {
         const list = sessionEntries.get(zoneName) ?? [];
         if (list[list.length - 1] !== entry) list.push(entry);

@@ -356,6 +356,15 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       homeDir: () => invoke('fs_home_dir'),
     },
 
+    /** Per-repo input history (spec-gui "Input history") — GUI-side files
+     *  under `.metafolder/gui/history/<zone>`; the store behind the shared
+     *  `attachHistory` helper (`/__history.js`). */
+    history: {
+      read: (repo: string, zone: string) => invoke('history_read', { repo, zone }),
+      append: (repo: string, zone: string, entry: string) =>
+        invoke('history_append', { repo, zone, entry }),
+    },
+
     statusBar: {
       message: (text: string, timeoutMs: number | null = null) =>
         invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }),

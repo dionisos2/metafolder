@@ -88,7 +88,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks", get(list_repo_tasks))
         .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
-        .route("/repos/:repo/history/:zone", get(get_history).post(append_history))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/track", post(track))
         .with_state(state)
@@ -249,49 +248,6 @@ async fn list_fields(
         let out: Vec<serde_json::Value> =
             names.into_iter().map(|(name, ty)| json!({"name": name, "type": ty})).collect();
         Ok(Json(serde_json::Value::Array(out)))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-struct HistoryParams {
-    /// Return only the newest N entries (still oldest first).
-    limit: Option<usize>,
-}
-
-/// `GET /repos/:repo/history/:zone[?limit=N]`: the zone's input history,
-/// oldest first / newest last (spec-gui "Input history").
-async fn get_history(
-    State(state): State<Arc<AppState>>,
-    Path((repo, zone)): Path<(String, String)>,
-    Query(params): Query<HistoryParams>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let repo_uuid = parse_uuid(&repo)?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        let entries = crate::history::read(repo_state, &zone, params.limit)?;
-        Ok(Json(json!({ "entries": entries })))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-struct HistoryAppendBody {
-    entry: String,
-}
-
-/// `POST /repos/:repo/history/:zone`: appends one entry to the zone's history.
-/// `appended` is `false` when the entry equals the newest one (consecutive
-/// dedup).
-async fn append_history(
-    State(state): State<Arc<AppState>>,
-    Path((repo, zone)): Path<(String, String)>,
-    payload: Result<Json<HistoryAppendBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let repo_uuid = parse_uuid(&repo)?;
-    let Json(body) = payload?;
-    with_repo(&state, repo_uuid, move |repo_state| {
-        let appended = crate::history::append(repo_state, &zone, &body.entry)?;
-        Ok(Json(json!({ "appended": appended })))
     })
     .await
 }

@@ -100,7 +100,8 @@ export async function mount(root, metafolder) {
   // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
   const historyDeps = {
-    request: (method, path, body) => daemon.call(method, path, body),
+    read: (histRepo, zone) => metafolder.history.read(histRepo, zone),
+    append: (histRepo, zone, entry) => metafolder.history.append(histRepo, zone, entry),
     getRepo: async () => repo,
     container: bodyEl,
   };

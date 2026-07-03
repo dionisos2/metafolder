@@ -7,7 +7,6 @@ pub mod executor;
 pub mod fingerprint;
 pub mod fs_meta;
 pub mod fts;
-pub mod history;
 pub mod index;
 pub mod log;
 pub mod pagination;

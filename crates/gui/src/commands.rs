@@ -543,3 +543,32 @@ pub fn set_fullscreen(window: tauri::WebviewWindow, on: bool) -> Result<(), Stri
 pub fn quit(window: tauri::Window) {
     let _ = window.close();
 }
+
+/// Input history (spec-gui "Input history") — a GUI-side concern: the files
+/// live under the repo's `.metafolder/gui/history/` but the daemon plays no
+/// part; the GUI reads/writes them directly (crate::history).
+#[tauri::command]
+pub async fn history_read(
+    app: AppHandle<'_>,
+    repo: String,
+    zone: String,
+    limit: Option<usize>,
+) -> Result<Vec<String>, String> {
+    let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
+    tauri::async_runtime::spawn_blocking(move || crate::history::read(&dir, &zone, limit))
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))?
+}
+
+#[tauri::command]
+pub async fn history_append(
+    app: AppHandle<'_>,
+    repo: String,
+    zone: String,
+    entry: String,
+) -> Result<bool, String> {
+    let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
+    tauri::async_runtime::spawn_blocking(move || crate::history::append(&dir, &zone, &entry))
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))?
+}

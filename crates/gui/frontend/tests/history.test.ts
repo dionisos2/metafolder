@@ -32,17 +32,15 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** A fake daemon whose GET returns `entries` and which records POSTs. */
-function fakeDaemon(entries: string[]) {
-  const posts: Array<{ path: string; body: unknown }> = [];
-  const request = vi.fn(async (method: string, path: string, body?: unknown) => {
-    if (method === 'POST') {
-      posts.push({ path, body });
-      return { appended: true };
-    }
-    return { entries };
+/** A fake history store (the Tauri `history_read`/`history_append` pair). */
+function fakeStore(entries: string[]) {
+  const appends: Array<{ repo: string; zone: string; entry: string }> = [];
+  const read = vi.fn(async (_repo: string, _zone: string) => entries);
+  const append = vi.fn(async (repo: string, zone: string, entry: string) => {
+    appends.push({ repo, zone, entry });
+    return true;
   });
-  return { request, posts };
+  return { read, append, appends };
 }
 
 function attach(
@@ -50,15 +48,16 @@ function attach(
   overrides: Record<string, unknown> = {},
   entries: string[] = ['one', 'two', 'three'],
 ) {
-  const daemon = fakeDaemon(entries);
+  const store = fakeStore(entries);
   const attached: Attached = attachHistory(input, {
     zone: 'shell:command',
-    request: daemon.request,
+    read: store.read,
+    append: store.append,
     getRepo: async () => REPO,
     container: document.body,
     ...overrides,
   });
-  return { attached, daemon };
+  return { attached, store };
 }
 
 afterEach(() => {
@@ -146,65 +145,55 @@ describe('ctrl-p / ctrl-n navigation', () => {
 
   test('a disabled zone (function returning null) leaves keys untouched', async () => {
     const input = makeInput();
-    const { daemon } = attach(input, { zone: () => null });
+    const { store } = attach(input, { zone: () => null });
     type(input, 'draft');
     const event = press(input, 'p', { ctrlKey: true });
     await flush();
     expect(input.value).toBe('draft');
     expect(event.defaultPrevented).toBe(false);
-    expect(daemon.request).not.toHaveBeenCalled();
+    expect(store.read).not.toHaveBeenCalled();
   });
 
   test('the zone function is evaluated at keypress time', async () => {
     const input = makeInput();
     let zone = 'shell:command';
-    const { daemon } = attach(input, { zone: () => zone });
+    const { store } = attach(input, { zone: () => zone });
     press(input, 'p', { ctrlKey: true });
     await flush();
-    expect(daemon.request).toHaveBeenLastCalledWith(
-      'GET',
-      `/repos/${REPO}/history/shell:command`,
-      undefined,
-    );
+    expect(store.read).toHaveBeenLastCalledWith(REPO, 'shell:command');
     type(input, ''); // reset navigation
     zone = 'shell:bash';
     press(input, 'p', { ctrlKey: true });
     await flush();
-    expect(daemon.request).toHaveBeenLastCalledWith(
-      'GET',
-      `/repos/${REPO}/history/shell:bash`,
-      undefined,
-    );
+    expect(store.read).toHaveBeenLastCalledWith(REPO, 'shell:bash');
   });
 });
 
 describe('push', () => {
-  test('POSTs the entry to the zone history', async () => {
+  test('appends the entry to the zone history', async () => {
     const input = makeInput();
-    const { attached, daemon } = attach(input);
+    const { attached, store } = attach(input);
     attached.push('repo:list');
     await flush();
-    expect(daemon.posts).toEqual([
-      { path: `/repos/${REPO}/history/shell:command`, body: { entry: 'repo:list' } },
-    ]);
+    expect(store.appends).toEqual([{ repo: REPO, zone: 'shell:command', entry: 'repo:list' }]);
   });
 
   test('skips blank entries', async () => {
     const input = makeInput();
-    const { attached, daemon } = attach(input);
+    const { attached, store } = attach(input);
     attached.push('   ');
     await flush();
-    expect(daemon.posts).toEqual([]);
+    expect(store.appends).toEqual([]);
   });
 
   test('without a repo, entries stay in session memory and are recallable', async () => {
     const input = makeInput();
-    const { attached, daemon } = attach(input, { getRepo: async () => null });
+    const { attached, store } = attach(input, { getRepo: async () => null });
     attached.push('local-only');
     attached.push('local-only'); // consecutive dedup
     attached.push('second');
     await flush();
-    expect(daemon.posts).toEqual([]);
+    expect(store.appends).toEqual([]);
     press(input, 'p', { ctrlKey: true });
     await flush();
     expect(input.value).toBe('second');
@@ -300,10 +289,11 @@ describe('shadow DOM', () => {
     const body = document.createElement('div');
     shadow.appendChild(body);
     const input = makeInput(body);
-    const daemon = fakeDaemon(['x']);
+    const store = fakeStore(['x']);
     attachHistory(input, {
       zone: 'metarecord-list:finder',
-      request: daemon.request,
+      read: store.read,
+      append: store.append,
       getRepo: async () => REPO,
       container: body,
     });

@@ -35,27 +35,20 @@
     return which === 'bash' ? store.bashDrafts : store.inputDrafts;
   }
 
-  /** Daemon HTTP call for the history helper (the panel-side equivalent is
-   *  `metafolder.daemon.call`); throws on any error status. */
-  async function daemonCall(method: string, path: string, body?: unknown): Promise<unknown> {
-    const res = (await invoke('daemon_request', { method, path, body: body ?? null })) as {
-      status: number;
-      body: unknown;
-    };
-    if (res.status >= 400) throw new Error(`HTTP ${res.status}`);
-    return res.body;
-  }
-
   // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. The zone follows the mode (`:` vs `!` are separate
-  // histories) and turns off while a script prompt is active.
+  // histories) and turns off while a script prompt is active. The store is
+  // GUI-side (the history_read/history_append Tauri commands — the panel
+  // equivalent is `metafolder.history.*`).
   let history: { push: (text: string) => void; detach: () => void } | null = null;
   $effect(() => {
     if (!element || !containerEl) return;
     const attached = attachHistory(element, {
       zone: () =>
         store.ui.promptText !== null ? null : mode === 'bash' ? 'shell:bash' : 'shell:command',
-      request: daemonCall,
+      read: (repo: string, zone: string) => invoke('history_read', { repo, zone }),
+      append: (repo: string, zone: string, entry: string) =>
+        invoke('history_append', { repo, zone, entry }),
       getRepo: async () => {
         if (currentWs === null) return null;
         const value = await invoke('ws_get_var', { wsId: currentWs, key: 'active_repo' });

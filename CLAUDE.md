@@ -364,7 +364,11 @@ shared data cache). `index.html` is markup only; `main.js` is the entry.
   it directly — CORS); health polling emits `daemon-health-changed`.
 - `commands.rs`: thin `#[tauri::command]` wrappers; `shell_exec.rs` (`!`
   commands), `style_watcher.rs` (style.css auto-reload), `fs_commands.rs`
-  (`metafolder.fs`), `reconcile.rs` (`reconcile:run` flow).
+  (`metafolder.fs`), `reconcile.rs` (`reconcile:run` flow), `history.rs`
+  (per-repo input history files `.metafolder/gui/history/<zone>` behind the
+  `history_read`/`history_append` commands — GUI-side, no daemon involvement;
+  the shared front helper is `panel-shim/history.js`, spec-gui "Input
+  history").
 - `frontend/src/lib/panels/api.ts`: `createPanelApi(deps, ctx)` builds the
   `metafolder` object passed to each panel's `mount` (daemon/workspace/commands/
   fs/statusBar/messages + `addKeybinding` + `cache`), calling Tauri commands
@@ -438,11 +442,12 @@ external location recorded in the config) contains:
 - `config.json` — `RepoConfig`
 - `schema.json` — optional user schema (spec-schema)
 - `internal/db.sqlite` — SQLite database (WAL, exclusive lock while loaded)
-- `internal/history/<zone>` — per-repo input histories (GUI text zones, one
-  entry per line; `GET`/`POST /repos/:repo/history/:zone`, spec-gui "Input
-  history")
+- `gui/history/<zone>` — per-repo input histories (GUI text zones, one entry
+  per line). Written by the **GUI**, not the daemon (`history_read`/
+  `history_append` Tauri commands; spec-gui "Input history") — trackable
+  content like the rest of non-`internal` `.metafolder/`.
 
-`internal/` (database + sidecars, case probe, input histories) is the only part of
+`internal/` (database + sidecars, case probe) is the only part of
 `.metafolder/` excluded from tracking — by absolute path, in both the watcher
 and the reconcile walk; the rest of `.metafolder/` is ordinary trackable
 content. A pre-`internal/` layout is migrated automatically at load
