@@ -149,12 +149,15 @@ enum RepoCommand {
         #[arg(long)]
         metafolder: Option<PathBuf>,
     },
-    /// Load an existing repository and print its UUID
+    /// Load an existing repository, wait for its warmup and print its UUID
     Load {
         root: Option<PathBuf>,
         /// Load from an external .metafolder directory
         #[arg(long)]
         metafolder: Option<PathBuf>,
+        /// Print the UUID immediately, without waiting for the warmup
+        #[arg(long = "no-wait")]
+        no_wait: bool,
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
@@ -546,8 +549,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             RepoCommand::Init { root, metafolder } => {
                 commands::init(ctx, &root, metafolder.as_deref())
             }
-            RepoCommand::Load { root, metafolder } => {
-                commands::load(ctx, root.as_deref(), metafolder.as_deref())
+            RepoCommand::Load { root, metafolder, no_wait } => {
+                commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
             }
             RepoCommand::Unload => commands::unload(ctx),
         },

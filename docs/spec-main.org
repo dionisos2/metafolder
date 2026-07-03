@@ -196,10 +196,13 @@ repositories, so the CLI's =-n <name>= selector resolves to exactly one UUID.
 The response returns the repository uuid *immediately*; the in-memory
 accelerators (tree cache + query index) are then warmed in the *background* as
 an observable =load= task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
-client can show a load progress bar. While warming, the repository already
-answers queries (via the SQL fallback); an =unload= is refused with =409= until
-the warmup finishes. (=POST /repos/init= and startup auto-load warm
-synchronously — no client is watching.)
+client can show a load progress bar. The response also carries the warmup's
+=task_id= (=null= when the repository is already warm, e.g. a redundant load;
+the id of the *running* warmup when one is already in flight), so a client can
+wait on the task without discovering it through the task list. While warming,
+the repository already answers queries (via the SQL fallback); an =unload= is
+refused with =409= until the warmup finishes. (=POST /repos/init= and startup
+auto-load warm synchronously — no client is watching.)
 
 Standard form (=.metafolder/= is inside =root=):
 #+BEGIN_SRC json
@@ -212,7 +215,7 @@ read from =config.json= inside it):
 {"metafolder": "/ssd/meta/music/.metafolder"}
 #+END_SRC
 
-Response body: ={"repo_uuid": "..."}=
+Response body: ={"repo_uuid": "...", "task_id": "...|null"}=
 
 *** =POST /repos/:repo_uuid/unload=
 
@@ -323,12 +326,23 @@ The default subcommand of =mf repo=.
 Calls =POST /repos/init= and prints the new repository UUID. =--metafolder=
 selects an external database location (see [[*=POST /repos/init=]]).
 
-*** =mf repo load <root | --metafolder <path>>=
+*** =mf repo load <root | --metafolder <path>> [--no-wait]=
 
 Calls =POST /repos/load= (standard form with a root path, or external
-database form with =--metafolder=) and prints the repository UUID. The daemon
-*rejects the load if the repository's name collides with an already-loaded one*
-(=409=), keeping names unique among loaded repos so =-n= resolves unambiguously.
+database form with =--metafolder=), *waits for the warmup* and prints the
+repository UUID. The daemon *rejects the load if the repository's name collides
+with an already-loaded one* (=409=), keeping names unique among loaded repos so
+=-n= resolves unambiguously.
+
+The command is synchronous by default: it polls the =task_id= returned by the
+load response until the =load= task is terminal, rendering a progress bar to
+stderr like the GUI's (a bar when =done= / =total= are known, a spinner
+otherwise) — only when stderr is a terminal, so pipes and scripts see nothing.
+The UUID is printed once the repository is warm. A =null= =task_id= (already
+warm) finishes immediately.
+
+- =--no-wait= restores the asynchronous behaviour: print the UUID immediately
+  and let the warmup proceed in the background (pollable with =mf task=).
 
 *** =mf repo unload=
 

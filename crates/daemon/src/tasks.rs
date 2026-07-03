@@ -266,9 +266,16 @@ impl TaskRegistry {
     /// nothing reachable to wait on). `load` is not cancellable, so it is not
     /// covered by [`Self::has_active_cancellable`].
     pub fn has_active_load(&self) -> bool {
+        self.active_id(TaskKind::Load).is_some()
+    }
+
+    /// The id of the active (pending/running) task of `kind`, if any. Together
+    /// with [`Self::start_unique`] there is at most one; used by the load route
+    /// to hand a redundant load the already-running warmup's task id.
+    pub fn active_id(&self, kind: TaskKind) -> Option<Uuid> {
         let mut tasks = self.tasks.lock_recover();
         Self::evict_locked(&mut tasks, Instant::now());
-        tasks.values().any(|t| t.status.is_active() && t.kind == TaskKind::Load)
+        tasks.values().find(|t| t.status.is_active() && t.kind == kind).map(|t| t.id)
     }
 
     /// Registers an `on_cancel` side effect for a task (e.g. a closure capturing
@@ -522,6 +529,19 @@ mod tests {
         // A pending query also counts (it is active).
         r.start(TaskKind::Query);
         assert!(r.has_active_cancellable(), "pending query counts");
+    }
+
+    #[test]
+    fn active_id_returns_the_active_task_of_kind_only() {
+        let r = reg();
+        assert_eq!(r.active_id(TaskKind::Load), None, "empty registry");
+        let id = r.start(TaskKind::Load);
+        assert_eq!(r.active_id(TaskKind::Load), Some(id), "pending counts");
+        assert_eq!(r.active_id(TaskKind::Reconcile), None, "other kinds unaffected");
+        r.mark_running(id);
+        assert_eq!(r.active_id(TaskKind::Load), Some(id), "running counts");
+        r.finish(id, None);
+        assert_eq!(r.active_id(TaskKind::Load), None, "terminal does not count");
     }
 
     #[test]

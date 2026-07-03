@@ -232,6 +232,45 @@ async fn load_runs_an_observable_warmup_task() {
 }
 
 #[tokio::test]
+async fn load_response_carries_the_warmup_task_id() {
+    // `mf repo load` waits for the warmup by polling its task; the load
+    // response hands the task id back directly so the client does not have to
+    // discover it through the task list (spec-main "POST /repos/load").
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("loadtaskid");
+    let repo = state.init_repo(&root, None, None).unwrap().as_simple().to_string();
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    let task_id = body["task_id"].as_str().expect("load returns the warmup task id");
+
+    // The id resolves to the observable `load` task (terminal tasks are
+    // retained for a while, so the fetch succeeds even when the warmup is
+    // already finished).
+    let (st, task) = request(&app, "GET", &format!("/repos/{repo}/tasks/{task_id}")).await;
+    assert_eq!(st, StatusCode::OK, "{task}");
+    assert_eq!(task["kind"], "load");
+}
+
+#[tokio::test]
+async fn redundant_load_of_a_warm_repo_returns_no_task_id() {
+    // Init warms synchronously, so re-loading an already-loaded warm repo
+    // spawns no warmup: the response carries no task id (nothing to wait on).
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("loadwarm");
+    let repo = state.init_repo(&root, None, None).unwrap().as_simple().to_string();
+
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["repo_uuid"], repo);
+    assert!(body["task_id"].is_null(), "warm repo: no warmup task, got {}", body["task_id"]);
+}
+
+#[tokio::test]
 async fn unload_is_refused_while_a_load_warmup_is_active() {
     // A `load` warmup holds the connection; unloading mid-warmup would leave the
     // database locked with no reachable task to wait on, so it is refused (409)

@@ -185,6 +185,30 @@ fn test_load_with_metafolder_flag() {
 }
 
 #[test]
+fn test_load_waits_for_warmup_silently_when_stderr_is_piped() {
+    // The default load waits for the warmup task; the progress bar is only
+    // drawn on a terminal, so a piped stderr stays clean (spec-main
+    // "mf repo load").
+    let (repo, root) = init_repo("load_wait");
+    let out = mf(&["-u", &repo, "repo", "unload"]);
+    assert_ok(&out);
+    let out = mf(&["repo", "load", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+    assert_eq!(out.stderr, "", "no progress noise when stderr is piped");
+}
+
+#[test]
+fn test_load_no_wait_prints_uuid_immediately() {
+    let (repo, root) = init_repo("load_nowait");
+    let out = mf(&["-u", &repo, "repo", "unload"]);
+    assert_ok(&out);
+    let out = mf(&["repo", "load", "--no-wait", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), repo);
+}
+
+#[test]
 fn test_load_requires_exactly_one_locator() {
     let out = mf(&["repo", "load"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);

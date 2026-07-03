@@ -377,9 +377,11 @@ kind (400), or unknown (404) is reported as an error on stderr with exit code 1.
 =mf reconcile= keeps its current blocking *user experience* but is now built on
 the async endpoint: it calls =POST …/reconcile=, takes the returned =task_id=,
 *polls* =GET …/tasks/:id= until the task is terminal (rendering progress to
-stderr — a bar when =done= / =total= are known, a spinner otherwise), then
+stderr — a bar when =done= / =total= are known, a spinner otherwise; drawn only
+when stderr is a terminal, so pipes and scripts see nothing), then
 prints the final summary from =result= to stdout (unchanged format). A =409=
-(reconcile already running) is reported as such.
+(reconcile already running) is reported as such. =mf repo load= waits on the
+=load= warmup task with the same rendering (spec-main "mf repo load").
 
 - =--no-wait= prints the =task_id= and returns immediately (exit 0) instead of
   polling.

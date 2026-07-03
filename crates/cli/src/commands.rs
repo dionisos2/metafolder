@@ -2,7 +2,7 @@
 //! success (0, or 1 for "operation completed but found problems", e.g.
 //! schema violations) and `CliError` on failure.
 
-use std::io::Write as _;
+use std::io::{IsTerminal as _, Write as _};
 use std::path::Path;
 
 use serde_json::{json, Value as Json};
@@ -177,7 +177,16 @@ pub fn init(ctx: &Ctx, root: &Path, metafolder: Option<&Path>) -> Result<i32, Cl
     Ok(0)
 }
 
-pub fn load(ctx: &Ctx, root: Option<&Path>, metafolder: Option<&Path>) -> Result<i32, CliError> {
+/// Poll interval (ms) for the `mf repo load` warmup wait: fast enough for a
+/// smooth progress bar, and the daemon-side read never touches the database.
+const LOAD_POLL_INTERVAL_MS: u64 = 100;
+
+pub fn load(
+    ctx: &Ctx,
+    root: Option<&Path>,
+    metafolder: Option<&Path>,
+    no_wait: bool,
+) -> Result<i32, CliError> {
     let body = match (root, metafolder) {
         (Some(root), None) => json!({"root": absolutize(root)?}),
         (None, Some(dir)) => json!({"metafolder": absolutize(dir)?}),
@@ -188,7 +197,17 @@ pub fn load(ctx: &Ctx, root: Option<&Path>, metafolder: Option<&Path>) -> Result
         }
     };
     let resp = ctx.client.post("/repos/load", &body)?;
-    println!("{}", resp["repo_uuid"].as_str().unwrap_or_default());
+    let uuid = resp["repo_uuid"].as_str().unwrap_or_default().to_string();
+    // The repository answers queries as soon as the POST returns, but stays on
+    // the slow DB fallback until the warmup task finishes: wait on it (with a
+    // progress bar, like the GUI) so the prompt returns on a warm repo.
+    // `--no-wait` skips the wait; a null task_id means already warm.
+    if !no_wait {
+        if let Some(task_id) = resp["task_id"].as_str() {
+            poll_task(ctx, &format!("/repos/{uuid}"), task_id, "load", LOAD_POLL_INTERVAL_MS)?;
+        }
+    }
+    println!("{uuid}");
     Ok(0)
 }
 
@@ -849,7 +868,7 @@ pub fn reconcile(
         println!("{task_id}");
         return Ok(0);
     }
-    let resp = poll_reconcile_task(ctx, &base, &task_id, poll_interval_ms)?;
+    let resp = poll_task(ctx, &base, &task_id, "reconcile", poll_interval_ms)?;
     if raw_json {
         println!("{resp}");
     } else {
@@ -858,32 +877,56 @@ pub fn reconcile(
     Ok(0)
 }
 
-/// Polls a reconcile task until terminal, rendering progress to stderr.
-/// Returns the task's `result` object on success.
-fn poll_reconcile_task(
+/// Polls a task until terminal, rendering a progress bar to stderr (only when
+/// stderr is a terminal — scripts and pipes see nothing). Returns the task's
+/// `result` object on success.
+fn poll_task(
     ctx: &Ctx,
     base: &str,
     task_id: &str,
+    label: &str,
     poll_interval_ms: u64,
 ) -> Result<Json, CliError> {
+    let interactive = std::io::stderr().is_terminal();
+    let clear = |drawn: bool| {
+        if drawn {
+            eprint!("\r\x1b[K"); // clear the progress line
+        }
+    };
+    let mut tick = 0usize;
+    let mut drawn = false;
     loop {
         let task = ctx.client.request("GET", &format!("{base}/tasks/{task_id}"), &[], None)?;
         match task["status"].as_str() {
             Some("done") => {
-                eprint!("\r\x1b[K"); // clear the progress line
+                clear(drawn);
                 return Ok(task["result"].clone());
             }
             Some("failed") => {
-                eprint!("\r\x1b[K");
-                let message = task["error"].as_str().unwrap_or("reconcile failed");
-                return Err(CliError::Op(message.to_string()));
+                clear(drawn);
+                let message = task["error"].as_str().map_or_else(
+                    || format!("{label} failed"),
+                    str::to_string,
+                );
+                return Err(CliError::Op(message));
+            }
+            Some("cancelled") => {
+                clear(drawn);
+                return Err(CliError::Op(format!("{label}: cancelled")));
             }
             _ => {
-                let phase = task["phase"].as_str().unwrap_or("");
-                match (task["done"].as_u64(), task["total"].as_u64()) {
-                    (Some(done), Some(total)) => eprint!("\rreconcile: {phase} {done}/{total}\x1b[K"),
-                    _ if !phase.is_empty() => eprint!("\rreconcile: {phase}\x1b[K"),
-                    _ => {}
+                if interactive {
+                    let phase = task["phase"].as_str().unwrap_or("");
+                    let line = crate::progress::render_progress(
+                        label,
+                        phase,
+                        task["done"].as_u64(),
+                        task["total"].as_u64(),
+                        tick,
+                    );
+                    eprint!("\r{line}\x1b[K");
+                    drawn = true;
+                    tick += 1;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
             }

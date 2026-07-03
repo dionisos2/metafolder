@@ -514,21 +514,27 @@ async fn load_repo(
     // Warm the repository (tree cache + query index) in the background, as an
     // observable `load` task so the GUI shows a progress bar (spec-tasks). The
     // repository is already loaded and answers queries meanwhile (via the DB
-    // fallback); the response returns its uuid immediately, unchanged.
-    spawn_load_warmup(state_for_warmup, uuid);
-    Ok(Json(json!({"repo_uuid": hex(uuid)})))
+    // fallback); the response returns its uuid immediately, plus the warmup's
+    // task id (null when already warm) so the CLI can wait on it.
+    let task_id = spawn_load_warmup(state_for_warmup, uuid);
+    Ok(Json(json!({
+        "repo_uuid": hex(uuid),
+        "task_id": task_id.map(|id| id.as_simple().to_string()),
+    })))
 }
 
-/// Spawns the background warmup task for a freshly loaded repository. A no-op
-/// when the repository is already warm (a redundant load) or a warmup is
-/// already running.
-fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) {
-    let Ok(repo_state) = state.repo(repo_uuid) else { return };
+/// Spawns the background warmup task for a freshly loaded repository and
+/// returns its task id. A no-op returning `None` when the repository is
+/// already warm (a redundant load); when a warmup is already running, returns
+/// the running task's id so the caller can wait on it.
+fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
+    let repo_state = state.repo(repo_uuid).ok()?;
     if repo_state.lock_cache().is_complete() {
-        return; // already warm (e.g. re-load of a loaded repo)
+        return None; // already warm (e.g. re-load of a loaded repo)
     }
     let Some(task_id) = repo_state.tasks.start_unique(TaskKind::Load) else {
-        return; // a warmup is already in progress
+        // A warmup is already in progress: hand back its id.
+        return repo_state.tasks.active_id(TaskKind::Load);
     };
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
@@ -537,6 +543,7 @@ fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) {
         });
         repo_state.tasks.finish(task_id, None);
     });
+    Some(task_id)
 }
 
 /// `POST /repos/:repo/unload`: stops the repository's watcher/executor and

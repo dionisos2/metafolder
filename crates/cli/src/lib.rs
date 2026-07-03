@@ -8,6 +8,7 @@ pub mod config;
 pub mod fieldspec;
 pub mod gui;
 pub mod log;
+pub mod progress;
 
 // The query DSL parser lives in core (shared with the GUI); re-exported so
 // `metafolder_cli::dsl::parse_query` keeps working.
