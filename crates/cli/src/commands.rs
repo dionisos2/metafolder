@@ -887,23 +887,19 @@ fn poll_task(
     label: &str,
     poll_interval_ms: u64,
 ) -> Result<Json, CliError> {
-    let interactive = std::io::stderr().is_terminal();
-    let clear = |drawn: bool| {
-        if drawn {
-            eprint!("\r\x1b[K"); // clear the progress line
-        }
-    };
-    let mut tick = 0usize;
-    let mut drawn = false;
+    let mut progress = crate::progress::ProgressLine::new(
+        std::io::stderr(),
+        std::io::stderr().is_terminal(),
+    );
     loop {
         let task = ctx.client.request("GET", &format!("{base}/tasks/{task_id}"), &[], None)?;
         match task["status"].as_str() {
             Some("done") => {
-                clear(drawn);
+                progress.clear();
                 return Ok(task["result"].clone());
             }
             Some("failed") => {
-                clear(drawn);
+                progress.clear();
                 let message = task["error"].as_str().map_or_else(
                     || format!("{label} failed"),
                     str::to_string,
@@ -911,23 +907,12 @@ fn poll_task(
                 return Err(CliError::Op(message));
             }
             Some("cancelled") => {
-                clear(drawn);
+                progress.clear();
                 return Err(CliError::Op(format!("{label}: cancelled")));
             }
             _ => {
-                if interactive {
-                    let phase = task["phase"].as_str().unwrap_or("");
-                    let line = crate::progress::render_progress(
-                        label,
-                        phase,
-                        task["done"].as_u64(),
-                        task["total"].as_u64(),
-                        tick,
-                    );
-                    eprint!("\r{line}\x1b[K");
-                    drawn = true;
-                    tick += 1;
-                }
+                let phase = task["phase"].as_str().unwrap_or("");
+                progress.update(label, phase, task["done"].as_u64(), task["total"].as_u64());
                 std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
             }
         }

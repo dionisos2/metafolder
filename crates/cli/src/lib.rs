@@ -8,8 +8,9 @@ pub mod config;
 pub mod fieldspec;
 pub mod gui;
 pub mod log;
-pub mod progress;
 
 // The query DSL parser lives in core (shared with the GUI); re-exported so
-// `metafolder_cli::dsl::parse_query` keeps working.
+// `metafolder_cli::dsl::parse_query` keeps working. The progress-bar renderer
+// also lives in core (shared with the daemon's startup auto-load).
 pub use metafolder_core::dsl;
+pub use metafolder_core::progress;

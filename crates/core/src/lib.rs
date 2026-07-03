@@ -5,6 +5,7 @@ pub mod config_sync;
 pub mod date;
 pub mod dsl;
 pub mod metarecord;
+pub mod progress;
 pub mod query;
 pub mod simplified;
 pub mod sync;

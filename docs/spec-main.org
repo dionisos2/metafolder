@@ -202,7 +202,10 @@ the id of the *running* warmup when one is already in flight), so a client can
 wait on the task without discovering it through the task list. While warming,
 the repository already answers queries (via the SQL fallback); an =unload= is
 refused with =409= until the warmup finishes. (=POST /repos/init= and startup
-auto-load warm synchronously — no client is watching.)
+auto-load warm synchronously — no client is watching. For each repository of
+its config's =load= list, the daemon renders the warmup itself on *its own
+stderr*: the same progress-bar format as the CLI, drawn only when stderr is a
+terminal, followed by a plain =[daemon] Loaded <name>= line.)
 
 Standard form (=.metafolder/= is inside =root=):
 #+BEGIN_SRC json

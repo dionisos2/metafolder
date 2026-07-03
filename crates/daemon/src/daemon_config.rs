@@ -109,20 +109,45 @@ pub fn read_config(path: &Path) -> Result<DaemonConfig> {
     Ok(DaemonConfig { load, settings: raw.settings })
 }
 
-/// Loads the configured repositories. A failing metarecord is turned into a
-/// warning and does not prevent the remaining metarecords from loading.
+/// Loads the configured repositories, rendering each warmup as a progress bar
+/// on stderr (when stderr is a terminal). A failing repository is turned into
+/// a warning and does not prevent the remaining repositories from loading.
 pub fn apply(state: &AppState, config: DaemonConfig) -> Vec<String> {
+    use std::io::IsTerminal as _;
+    let interactive = std::io::stderr().is_terminal();
+    apply_with_progress(state, config, std::io::stderr(), interactive)
+}
+
+/// [`apply`] with an explicit progress sink: each repository's synchronous
+/// warmup redraws one `load <name>: …` line in place on `out` (only when
+/// `interactive` — pipes and log files stay clean), replaced by a plain
+/// `[daemon] Loaded <name>` line once warm.
+pub fn apply_with_progress<W: std::io::Write>(
+    state: &AppState,
+    config: DaemonConfig,
+    mut out: W,
+    interactive: bool,
+) -> Vec<String> {
     let mut warnings = Vec::new();
     for locator in config.load {
         let path = match &locator {
             RepoLocator::Root(p) | RepoLocator::Metafolder(p) => p.display().to_string(),
         };
         match state.load_repo(locator) {
-            // Warm the freshly loaded repo synchronously at startup (no client
-            // is watching for a progress bar yet).
             Ok(uuid) => {
                 if let Ok(repo_state) = state.repo(uuid) {
-                    repo_state.warmup(&|_, _, _| {});
+                    let name = repo_state.name();
+                    let label = format!("load {name}");
+                    // The warmup callback is a `Fn`, hence the RefCell (the
+                    // warmup runs on this thread; there is no concurrency).
+                    let progress = std::cell::RefCell::new(
+                        metafolder_core::progress::ProgressLine::new(&mut out, interactive),
+                    );
+                    repo_state.warmup(&|phase, done, total| {
+                        progress.borrow_mut().update(&label, phase, done, total);
+                    });
+                    progress.into_inner().clear();
+                    let _ = writeln!(out, "[daemon] Loaded {name}");
                 }
             }
             Err(e) => warnings.push(format!("failed to load {path}: {}", e.message)),
@@ -179,5 +204,53 @@ mod tests {
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings, DaemonSettings::default());
         assert!(config.load.is_empty());
+    }
+
+    /// An on-disk repository ready to be auto-loaded (init then unload), plus
+    /// its name (the root directory's file name).
+    fn on_disk_repo(prefix: &str) -> (crate::state::AppState, PathBuf, String) {
+        let root = std::env::temp_dir()
+            .join(format!("mf_daemon_apply_{prefix}_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let state = crate::state::AppState::new();
+        let uuid = state.init_repo(&root, None, None).unwrap();
+        state.unload_repo(uuid).unwrap();
+        let name = root.file_name().unwrap().to_str().unwrap().to_string();
+        (state, root, name)
+    }
+
+    #[test]
+    fn test_apply_interactive_renders_a_progress_bar_and_a_loaded_line() {
+        let (state, root, name) = on_disk_repo("tty");
+        let config = DaemonConfig {
+            load: vec![RepoLocator::Root(root)],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let warnings = apply_with_progress(&state, config, &mut out, true);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let out = String::from_utf8(out).unwrap();
+        // At least one in-place frame (the warmup always reports "tree cache"),
+        // then the line is cleared before the plain completion line.
+        assert!(
+            out.contains(&format!("\rload {name}: tree cache")),
+            "no progress frame in {out:?}"
+        );
+        assert!(out.contains("\r\x1b[K[daemon] Loaded"), "no clear before the summary: {out:?}");
+        assert!(out.ends_with(&format!("[daemon] Loaded {name}\n")), "{out:?}");
+    }
+
+    #[test]
+    fn test_apply_non_interactive_prints_only_the_loaded_line() {
+        let (state, root, name) = on_disk_repo("pipe");
+        let config = DaemonConfig {
+            load: vec![RepoLocator::Root(root)],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let warnings = apply_with_progress(&state, config, &mut out, false);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(out, format!("[daemon] Loaded {name}\n"), "logs stay free of control chars");
     }
 }
