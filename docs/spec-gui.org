@@ -1451,6 +1451,33 @@ type), and the preview follows through =selected_paths= — flipping through
 files without leaving the preview. Pure keybindings, no coupling in
 either panel; rebindable like everything else.
 
+**** Video playback position
+
+A video resumes where it was last stopped. The position (in seconds) is stored
+on the *metarecord of the played file* as an ordinary user field,
+=playback_position= (=float=) — not an =mfr_*= one: it is user data, not a
+filesystem fact, and a reserved name would need =force=. Nothing is stored for
+an untracked file (no metarecord to hold it), nor for a file reached by
+drilling into a directory listing, where the panel holds a path but no
+metarecord: the position follows =selected_metarecord=, which every panel
+publishing =selected_paths= sets alongside them.
+
+On open, a stored position is seeked to and shown in the media toolbar
+(=↩ 12:34=). It is written back on pause, seek and end, when the preview is
+torn down (another file selected, panel or workspace closed), and periodically
+while the video plays — which bounds what an abruptly killed window can lose.
+Never on =timeupdate=: it fires several times a second, and *every write is an
+event-log revision*.
+
+Two positions are not worth resuming, and *clear* the stored one rather than
+overwrite it: the very beginning (under 5 s — nothing was watched) and the end
+(under 10 s left — the video was watched through, so the next open starts from
+scratch). That end margin is absolute, not a percentage: 5 % of a three-hour
+film is nine minutes, which is not "the end". A stored position past the end of
+the file (it changed underneath) is ignored, and when the duration is unknown
+nothing is written at all — a position that could never be recognized as stale
+is worse than none.
+
 *** =file-manager= panel type
 
 A filesystem tree navigator. The GUI backend (Tauri/Rust) reads the disk

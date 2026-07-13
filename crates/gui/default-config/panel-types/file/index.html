@@ -77,6 +77,12 @@
         color: var(--mf-fg-dim, #8a8a96);
         font-size: 0.9em;
       }
+      /* Shown when a video was resumed at its stored playback position. */
+      #media-toolbar #resume-hint {
+        margin-left: auto;
+        font-family: var(--mf-font-mono, monospace);
+        color: var(--mf-fg-dim, #8a8a96);
+      }
       #viewer {
         flex: 1;
         display: flex;
@@ -192,6 +198,7 @@
       <label id="gif-animate-wrap" hidden title="Play the GIF animation (off: first frame only)">
         <input type="checkbox" id="gif-animate" /> animate
       </label>
+      <span id="resume-hint" hidden></span>
     </div>
     <div id="viewer" data-help-topic="file"><p class="placeholder">No file selected</p></div>
     <div id="dir-footer" hidden></div>

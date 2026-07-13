@@ -6,6 +6,16 @@
 
 import { el, thumbnail } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import {
+  SAVE_INTERVAL_MS,
+  MIN_DELTA,
+  playbackAction,
+  resumeTarget,
+  formatPosition,
+  loadPosition,
+  savePosition,
+  clearPosition,
+} from './playback.js';
 
 // Directory grid: render this many thumbnails per window (more on scroll), so
 // opening a folder with thousands of files does not build/load them all at
@@ -30,11 +40,16 @@ const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 40;
 
 export async function mount(root, metafolder) {
-  const { workspace, fs, commands } = metafolder;
+  const { workspace, fs, commands, daemon } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
 
   let paths = [];
   let activeIndex = 0;
+  // The metarecord the selection points at ({ uuid, repo }), published by
+  // metarecord-list alongside selected_paths. It is what the playback position
+  // is stored on — so it only applies while the viewer follows the selection
+  // (a drill-in path has no metarecord in hand).
+  let selected = null;
   // Local drill-in path: set when the user clicks into a directory's listing,
   // overriding the selection until it changes. null = follow the selection.
   let localPath = null;
@@ -48,6 +63,7 @@ export async function mount(root, metafolder) {
   const dirFooter = root.getElementById('dir-footer');
   const mediaToolbar = root.getElementById('media-toolbar');
   const zoomLabel = root.getElementById('zoom-label');
+  const resumeHint = root.getElementById('resume-hint');
   const gifAnimateWrap = root.getElementById('gif-animate-wrap');
   const gifAnimateBox = root.getElementById('gif-animate');
 
@@ -192,7 +208,100 @@ export async function mount(root, metafolder) {
   // releases it immediately.
   let activeMedia = null;
 
+  // --- Playback position ------------------------------------------------
+  //
+  // Where the user stopped watching, kept on the metarecord of the played
+  // file so the next open resumes there (spec-gui "file panel type"). The
+  // state of the video currently mounted, or null when none is (or when it
+  // has no metarecord to store a position on): { media, repo, uuid, stored,
+  // timer }, with `stored` mirroring the field's value so a redundant write
+  // can be skipped.
+  let playback = null;
+  // A write in flight: pause/seek/interval can all fire while one is running,
+  // and each write is an event-log revision — never stack them.
+  let saving = false;
+
+  function showResumeHint(seconds) {
+    resumeHint.hidden = seconds === null;
+    resumeHint.textContent = seconds === null ? '' : `↩ ${formatPosition(seconds)}`;
+    resumeHint.title =
+      seconds === null ? '' : `Playback resumes at ${formatPosition(seconds)} (last stop)`;
+  }
+
+  // Persist the position of `state`'s video. Reads currentTime/duration
+  // synchronously, so it is safe to call from teardown (which drops the src
+  // right after); the write itself finishes in the background.
+  async function persistPlayback(state) {
+    if (!state || saving) return;
+    const { media, repo, uuid } = state;
+    const position = media.currentTime;
+    const action = playbackAction(position, media.duration);
+    if (action === 'none') return;
+    if (action === 'clear' && state.stored === null) return; // nothing stored: no revision to open
+    if (
+      action === 'save' &&
+      state.stored !== null &&
+      Math.abs(position - state.stored) < MIN_DELTA
+    ) {
+      return; // unmoved (the resume seek itself lands here): not worth a revision
+    }
+    saving = true;
+    try {
+      if (action === 'clear') {
+        state.stored = await clearPosition(daemon, repo, uuid);
+      } else {
+        const written = await savePosition(daemon, repo, uuid, position);
+        if (written !== null) state.stored = written;
+      }
+    } finally {
+      saving = false;
+    }
+  }
+
+  // Arm position tracking on a freshly mounted <video>: seek to the stored
+  // position, then keep it up to date. Writes happen on pause/seek/end, on
+  // teardown, and periodically while playing — never on `timeupdate` (which
+  // fires several times a second, and every write is an event-log revision).
+  async function attachPlayback(media, generation) {
+    if (localPath !== null || selected === null) return; // no metarecord to store it on
+    const { uuid, repo } = selected;
+    const stored = await loadPosition(daemon, repo, uuid);
+    if (generation !== renderGeneration) return; // the view moved on while we read
+    const state = { media, repo, uuid, stored, timer: null };
+    playback = state;
+
+    if (stored !== null) {
+      const seek = () => {
+        const target = resumeTarget(stored, media.duration);
+        if (target === null) return;
+        media.currentTime = target;
+        showResumeHint(target);
+      };
+      if (media.readyState >= 1) seek(); // metadata already in: seek now
+      else media.addEventListener('loadedmetadata', seek, { once: true });
+    }
+
+    const persist = () => void persistPlayback(state);
+    media.addEventListener('pause', persist);
+    media.addEventListener('seeked', persist);
+    media.addEventListener('ended', persist);
+    // Bounds what an abruptly killed window can lose; a paused video needs no
+    // periodic write (the `pause` handler already stored its position).
+    state.timer = setInterval(() => {
+      if (!media.paused) persist();
+    }, SAVE_INTERVAL_MS);
+  }
+
+  function teardownPlayback() {
+    if (!playback) return;
+    clearInterval(playback.timer);
+    void persistPlayback(playback); // fire and forget: the write outlives the element
+    playback = null;
+    showResumeHint(null);
+  }
+
   function teardownMedia() {
+    teardownPlayback();
     if (!activeMedia) return;
     try {
       activeMedia.pause();
@@ -331,7 +440,10 @@ export async function mount(root, metafolder) {
     });
     viewer.replaceChildren(media);
     // Only video is zoomable; audio has no visual frame.
-    if (kind === 'video') setZoomTarget(media);
+    if (kind === 'video') {
+      setZoomTarget(media);
+      await attachPlayback(media, generation);
+    }
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
@@ -475,10 +587,18 @@ export async function mount(root, metafolder) {
 
   // Loading the file (image/media/text fetch) waits for an actual display:
   // a hidden instance following selected_paths must not stream anything.
-  function update(newPaths) {
+  async function update(newPaths) {
     paths = Array.isArray(newPaths) ? newPaths : [];
     activeIndex = 0;
     localPath = null;
+    // Read the metarecord that goes with these paths: every panel that
+    // publishes selected_paths sets selected_metarecord first (null when the
+    // file is untracked), so the canonical state already holds the matching
+    // one. Reading it here — rather than watching it — keeps the pair
+    // together: a panel that later moves selected_metarecord alone (a ref
+    // click in metarecord-detail) must not re-target the played file's
+    // position onto another metarecord.
+    selected = (await workspace.get('selected_metarecord')) ?? null;
     metafolder.whenVisible(rerender);
   }
 
@@ -520,7 +640,7 @@ export async function mount(root, metafolder) {
   root.getElementById('zoom-reset').addEventListener('click', zoomReset);
 
   workspace.onChange('selected_paths', update);
-  update(await workspace.get('selected_paths'));
+  await update(await workspace.get('selected_paths'));
 
   // Release the media pipeline if the panel is unmounted (workspace closed or
   // panel type switched) so it cannot keep decoding in the background.
