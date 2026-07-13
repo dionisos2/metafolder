@@ -123,9 +123,51 @@ fn probe_cache() -> &'static std::sync::Mutex<ProbeCache> {
 /// fraction of a second; a hang (FIFO, malformed stream) is killed.
 const DISCOVERER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
+/// The GStreamer plugin registry of the *host* user, if it has one. Bound
+/// read-only into the sandbox: without it GStreamer finds no registry in the
+/// sandbox's empty `HOME` and rebuilds one from scratch on every probe, which
+/// costs ~1 s (measured) against ~80 ms when it is reused.
+fn host_gst_registry() -> Option<std::path::PathBuf> {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache")))?;
+    let entries = std::fs::read_dir(cache.join("gstreamer-1.0")).ok()?;
+    entries
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.is_file()
+                && path.file_name().is_some_and(|name| {
+                    let name = name.to_string_lossy();
+                    name.starts_with("registry.") && name.ends_with(".bin")
+                })
+        })
+}
+
+/// The sandbox spec for one probe: `gst-discoverer-1.0` demuxes an untrusted
+/// file, so it sees that file (read-only) and nothing else writable — no
+/// network, no other user file (`sandbox`).
+fn discoverer_spec(path: &std::path::Path) -> crate::sandbox::Spec {
+    let mut spec = crate::sandbox::Spec::new("gst-discoverer-1.0")
+        .arg(path.as_os_str().to_os_string())
+        .read_only(path);
+    if let Some(registry) = host_gst_registry() {
+        spec = spec
+            .read_only(&registry)
+            .env("GST_REGISTRY", registry.as_os_str().to_os_string())
+            // Read-only: GStreamer must use it as it stands, never rewrite it.
+            .env("GST_REGISTRY_UPDATE", "no");
+    }
+    spec
+}
+
+/// Runs the probe sandboxed. Without a working sandbox nothing is run: no
+/// codec info (the panel shows its generic message) rather than a demuxer
+/// parsing an untrusted file unconfined.
 fn run_discoverer(path: &std::path::Path) -> MediaProbe {
-    let mut cmd = std::process::Command::new("gst-discoverer-1.0");
-    cmd.arg(path);
+    let Some(cmd) = crate::sandbox::command(&discoverer_spec(path)) else {
+        return MediaProbe { missing: Vec::new() };
+    };
     match crate::proc::run_with_timeout(cmd, DISCOVERER_TIMEOUT) {
         Some(output) => {
             let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
@@ -173,6 +215,63 @@ fn autodetect_plugin_file_exists() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `gst-discoverer-1.0` demuxes an untrusted file: it must run under the
+    /// sandbox, with the probed file bound read-only and nothing writable.
+    #[test]
+    fn test_discoverer_runs_sandboxed_with_only_the_probed_file_bound() {
+        if !crate::sandbox::available() {
+            return;
+        }
+        let probed = std::path::PathBuf::from("/home/u/clip.mkv");
+        let spec = discoverer_spec(&probed);
+        assert_eq!(spec.program, "gst-discoverer-1.0");
+        assert!(spec.read_only.contains(&probed), "the probed file must be bound");
+        assert!(spec.read_write.is_empty(), "the probe never writes");
+        // The only other thing it may see is the GStreamer plugin registry.
+        for path in &spec.read_only {
+            assert!(
+                *path == probed || path.to_string_lossy().contains("gstreamer-1.0"),
+                "unexpected bind: {path:?}"
+            );
+        }
+
+        let command = crate::sandbox::command(&spec).expect("sandbox available");
+        assert_eq!(command.get_program(), "bwrap");
+    }
+
+    /// A real end-to-end probe through the sandbox: the codecs of a genuine
+    /// file must still be discovered (the sandbox must not break the feature).
+    /// Skipped when the GStreamer tools are absent.
+    #[test]
+    fn test_probe_real_file_through_the_sandbox() {
+        if !crate::sandbox::available() || gst_inspect("autoaudiosink").is_none() {
+            return;
+        }
+        let dir = std::env::temp_dir().join("mf-probe-sandbox");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let clip = dir.join("clip.mp4");
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-loglevel", "error", "-y", "-f", "lavfi", "-i"])
+            .arg("testsrc=size=64x64:rate=10")
+            .args(["-t", "1", "-pix_fmt", "yuv420p"])
+            .arg(&clip)
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !made {
+            return; // no ffmpeg: nothing to probe
+        }
+
+        // A decodable H.264 clip: the probe reaches the file (it is bound) and
+        // reports no missing decoder when the codecs are installed.
+        let probe = run_discoverer(&clip);
+        assert!(
+            probe.missing.iter().all(|codec| !codec.is_empty()),
+            "a sandboxed probe must still parse discoverer output"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn test_all_elements_present() {

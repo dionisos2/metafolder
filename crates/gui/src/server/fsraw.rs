@@ -4,6 +4,27 @@
 //!
 //! Unrestricted local read access is the documented panel-type trust
 //! model (spec-gui "Custom panel type trust model").
+//!
+//! # Invariant: a raw file is media, never a document
+//!
+//! What this endpoint serves is **untrusted content**, and it is only safe as
+//! long as it is loaded as *data*: an `<img>`, `<video>` or `<audio>` source.
+//! In that position even an SVG carrying a `<script>` does not execute, and a
+//! crafted file gets no further than the media decoder (itself confined — see
+//! `crate::sandbox` for the helper processes, and `WEBKIT_FORCE_SANDBOX` for
+//! the web process).
+//!
+//! Load the same URL as a **document** — an `<iframe>`, `<object>`, `<embed>`,
+//! or a navigation — and the file becomes *code* running in this server's
+//! origin. Because the session token travels in the URL here (`?token=…`: an
+//! `<img>` `src` cannot carry an `Authorization` header), such a document could
+//! read `location.search`, lift the token, and drive the whole `/gui/*`
+//! scripting API — `POST /gui/command`, hence the `!` shell commands. A file
+//! preview would be a full compromise.
+//!
+//! No panel may therefore load an `/fsraw` URL as a document; the shipped
+//! panels are checked by `tests/panel_invariants.rs`. Should one ever need to,
+//! the token must stop travelling in the query string first.
 
 use axum::body::Body;
 use axum::extract::Request;

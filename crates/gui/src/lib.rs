@@ -18,6 +18,7 @@ pub mod media_support;
 pub mod notifier;
 pub mod proc;
 pub mod reconcile;
+pub mod sandbox;
 pub mod server;
 pub mod shell_exec;
 pub mod state;
@@ -38,6 +39,10 @@ use tauri::Emitter;
 pub struct Options {
     pub gui_port: Option<u16>,
     pub daemon_port: Option<u16>,
+    /// Run with an unsandboxed WebView (development escape hatch — see the
+    /// flag's help in `main.rs`). The media helpers stay sandboxed regardless:
+    /// they fail closed on their own.
+    pub allow_unsandboxed_webview: bool,
 }
 
 /// Production notifier: forwards engine events to the WebView.
@@ -112,6 +117,25 @@ fn register_builtins(registry: &CommandRegistry) {
 
 /// Builds and runs the Tauri application; blocks until the window closes.
 pub fn run(options: Options) {
+    // Untrusted media (any image or video the panels display, thumbnail or
+    // probe) is decoded by C libraries with a long history of memory-safety
+    // bugs. Every decoder must run sandboxed — the WebView's web process and
+    // the ffmpeg/gst-discoverer helpers alike, all of which need a working
+    // bubblewrap. Verified *first*, and fatal: rendering a crafted file
+    // unconfined is not a degraded feature, it is a hole. This also sets
+    // WEBKIT_FORCE_SANDBOX, which must precede the WebView's creation.
+    if let Err(error) = sandbox::preflight(options.allow_unsandboxed_webview) {
+        eprintln!("metafolder-gui: {error}");
+        std::process::exit(1);
+    }
+    if options.allow_unsandboxed_webview {
+        eprintln!(
+            "metafolder-gui: WARNING --allow-unsandboxed-webview: images and video are \
+             decoded with your full privileges; a crafted file can take over the session. \
+             Development only."
+        );
+    }
+
     let config = Arc::new(
         ConfigDir::default_location().expect("cannot resolve the user config directory"),
     );
@@ -217,6 +241,14 @@ pub fn run(options: Options) {
             if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
                 let _ = window.with_webview(|webview| {
                     use webkit2gtk::WebViewExt;
+
+                    // The web process is confined by WEBKIT_FORCE_SANDBOX, set
+                    // in `sandbox::preflight`. Not by
+                    // `WebContext::set_sandbox_enabled`: by the time Tauri hands
+                    // us the webview the web process is already running, and
+                    // WebKit aborts the app ("sandboxing cannot be changed after
+                    // subprocesses were spawned"). The env var is read earlier,
+                    // when the process is spawned.
                     let last_crash = std::cell::Cell::new(None::<std::time::Instant>);
                     webview.inner().connect_web_process_terminated(
                         move |webview, reason| {
@@ -241,6 +273,31 @@ pub fn run(options: Options) {
                     );
                 });
             }
+
+            // Enabling the sandbox is one thing; being confined is another.
+            // Once WebKit has spawned its web process, check the process
+            // itself: if it shares our namespaces, a crafted image or video
+            // would be decoded with our privileges, so refuse to keep running
+            // rather than present a window that looks safe. An inconclusive
+            // probe (no web process found, unreadable namespace) says nothing
+            // and is ignored.
+            #[cfg(target_os = "linux")]
+            let allow_unsandboxed = options.allow_unsandboxed_webview;
+            #[cfg(target_os = "linux")]
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                if allow_unsandboxed {
+                    return;
+                }
+                if sandbox::web_process_status() == sandbox::WebProcess::Unconfined {
+                    eprintln!(
+                        "metafolder-gui: WebKit's web process is not sandboxed — it would \
+                         decode untrusted media (images, video) with your full privileges. \
+                         Refusing to run."
+                    );
+                    std::process::exit(1);
+                }
+            });
 
             // Daemon health polling (spec-gui "Connection to the daemon").
             let poll_daemon = daemon.clone();

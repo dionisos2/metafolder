@@ -58,7 +58,20 @@ window will be empty until `npm run build` has produced the real bundle.
 External tools/assets the GUI shells out to or relies on at runtime. None are
 needed to build or test; each degrades gracefully when absent (a missing one
 disables its feature, it never crashes), but the feature silently looks broken
-without it. Arch package names in parentheses.
+without it — **except `bubblewrap`, which is a hard dependency**. Arch package
+names in parentheses.
+
+- **`bwrap`** (`bubblewrap`) — **required; the GUI refuses to start without a
+  working one.** Every media decoder is untrusted-input-facing and must be
+  confined: `ffmpeg`/`gst-discoverer` run under `bwrap` (`sandbox.rs`, fail
+  closed), and the WebView's web process is confined by `WEBKIT_FORCE_SANDBOX=1`
+  (set in `sandbox::preflight` — `wry` never enables WebKit's sandbox, and it
+  cannot be turned on later: `set_sandbox_enabled` aborts the app once a web
+  process exists). Startup probes a real sandbox and then checks the web process
+  is in its own namespace; either failing is fatal (spec-gui "Untrusted media").
+  WebKit's sandbox mounts `/proc`, which **some containers forbid** — inside one,
+  use `--allow-unsandboxed-webview` (dev only, per-run flag, prints a warning;
+  the media helpers stay sandboxed regardless).
 
 - **An emoji-color font** (`noto-fonts-emoji`) — the `file-manager` row icons
   and the `thumbnail()` type glyphs (📁 🎬 🎵 📕 🖼️ 🗜️…) are emoji. Without an

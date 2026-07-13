@@ -13,6 +13,14 @@ struct Args {
     /// config.toml (default 7523, the daemon's default).
     #[arg(long)]
     daemon_port: Option<u16>,
+    /// Start even when the WebView cannot be sandboxed — images and video are
+    /// then decoded with your full privileges, so a crafted file can take over
+    /// the session. For development inside a container that forbids bubblewrap
+    /// (WebKit needs to mount /proc); never for a real repository. Deliberately
+    /// a per-run flag, with no config.toml equivalent: it must not rot into a
+    /// permanently disabled sandbox.
+    #[arg(long)]
+    allow_unsandboxed_webview: bool,
 }
 
 fn main() {
@@ -20,5 +28,6 @@ fn main() {
     metafolder_gui::run(metafolder_gui::Options {
         gui_port: args.gui_port,
         daemon_port: args.daemon_port,
+        allow_unsandboxed_webview: args.allow_unsandboxed_webview,
     });
 }

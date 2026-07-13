@@ -2108,6 +2108,67 @@ not the command's resolution, are the source of truth for render cost. The
 scriptable equivalent of scrolling to the bottom) so paging can be driven
 reproducibly.
 
+** Untrusted media (resolved: sandbox every decoder)
+
+Panel types are trusted code (see [[*Custom panel type trust model]]), but the
+*files they display are not*. Images and video are decoded by large C libraries
+with a long history of memory-safety bugs, and in metafolder that decoding
+happens **passively**: a thumbnail is generated and a codec probe is run for any
+file that merely appears in a panel, without the user opening it. A crafted file
+is therefore a plausible code-execution vector, reached just by browsing a
+directory. Three decoders exist, and all three are confined:
+
+- =ffmpeg= (=GET /thumbnail=) and =gst-discoverer-1.0= (=GET /__media-probe=)
+  run under =bwrap= (=crates/gui/src/sandbox.rs=): no network, no IPC/PID/user
+  namespace sharing, an empty environment, a read-only system, and *only the
+  examined file* bound read-only — plus, for =ffmpeg=, the thumbnail cache
+  directory bound read-write, the single thing it may write. The GStreamer
+  plugin registry is bound read-only (=GST_REGISTRY_UPDATE=no=): without it the
+  sandbox has no registry and rebuilds one per probe (~1 s against ~80 ms).
+  These helpers **fail closed** — no sandbox, no helper, and the panel falls
+  back to a glyph.
+- The WebView's own web process (=<img>= / =<video>= on =/fsraw=) is confined by
+  =WEBKIT_FORCE_SANDBOX=1=, set before the WebView is created. =wry= never
+  enables WebKit's sandbox, so without this the web process decodes untrusted
+  media unconfined. It cannot be enabled later:
+  =WebContext::set_sandbox_enabled= aborts the application once a web process
+  has been spawned, which Tauri has already done by =setup=.
+
+The GUI **verifies** this rather than assuming it: at startup a real =bwrap=
+sandbox is created as a probe, and five seconds in, WebKit's web process is
+checked for a user namespace of its own. Either failing is fatal —
+rendering a crafted file unconfined is a hole, not a degraded feature.
+=WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS= in the environment is likewise fatal.
+=--allow-unsandboxed-webview= is the one escape hatch (a loud warning, a per-run
+flag with no =config.toml= equivalent so it cannot rot into a permanently
+disabled sandbox): it exists for development inside containers that forbid
+bubblewrap — WebKit's sandbox mounts =/proc=, which some container policies
+refuse, while the media helpers avoid =/proc= and work there.
+
+Bubblewrap is thus a **hard runtime dependency** of the GUI, unlike ffmpeg and
+the GStreamer plugins (whose absence only disables a feature).
+
+Not sandboxed, deliberately: =!= shell commands (the user typed them) and
+=gst-inspect-1.0= (reads the plugin registry, never a user file).
+
+** =/fsraw=: media, never a document
+
+=/fsraw= serves arbitrary local files and carries the session token in the URL
+(=?token=…=), because an =<img>= =src= cannot send an =Authorization= header.
+This is safe only as long as the file is loaded as *data* — an =<img>=,
+=<video>= or =<audio>= source — where even an SVG carrying a =<script>= does not
+execute.
+
+Loaded as a *document* (=<iframe>=, =<object>=, =<embed>=, a navigation), the
+same file becomes *code* in the GUI server's origin: it could read
+=location.search=, lift the session token out of its own URL, and drive the whole
+=/gui/*= scripting API — including =POST /gui/command= and the =!= shell
+commands. Previewing a file would be a full compromise.
+
+No panel may load an =/fsraw= URL as a document. The shipped panels are checked
+by =crates/gui/tests/panel_invariants.rs=. A panel that genuinely needs a
+document view would first have to stop passing the token in the query string.
+
 * Open questions
 
 ** Custom panel type trust model (resolved: trusted)

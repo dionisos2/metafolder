@@ -150,11 +150,27 @@ fn temp_name() -> String {
 /// input) and is killed rather than pinning a `spawn_blocking` thread.
 const FFMPEG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// Runs `ffmpeg` (bounded by [`FFMPEG_TIMEOUT`]) and reports whether a
-/// non-empty frame was written.
+/// The sandbox spec for one extraction: `ffmpeg` sees the video (read-only)
+/// and the cache directory it renders into (read-write) — nothing else of the
+/// user's filesystem, and no network. It decodes an untrusted file, so a
+/// decoder exploit is confined to that view (`sandbox`).
+fn ffmpeg_spec(input: &Path, output: &Path, seek: &str) -> crate::sandbox::Spec {
+    let mut spec = crate::sandbox::Spec::new("ffmpeg")
+        .args(ffmpeg_args(input, output, seek))
+        .read_only(input);
+    if let Some(cache_dir) = output.parent() {
+        spec = spec.read_write(cache_dir);
+    }
+    spec
+}
+
+/// Runs `ffmpeg` sandboxed (bounded by [`FFMPEG_TIMEOUT`]) and reports whether
+/// a non-empty frame was written. Without a working sandbox nothing is run at
+/// all: no thumbnail is worth decoding an untrusted file unconfined.
 fn run_ffmpeg(input: &Path, output: &Path, seek: &str) -> bool {
-    let mut cmd = std::process::Command::new("ffmpeg");
-    cmd.args(ffmpeg_args(input, output, seek));
+    let Some(cmd) = crate::sandbox::command(&ffmpeg_spec(input, output, seek)) else {
+        return false;
+    };
     let succeeded = crate::proc::run_with_timeout(cmd, FFMPEG_TIMEOUT)
         .is_some_and(|out| out.status.success());
     succeeded && std::fs::metadata(output).map(|meta| meta.len() > 0).unwrap_or(false)
@@ -163,6 +179,24 @@ fn run_ffmpeg(input: &Path, output: &Path, seek: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `ffmpeg` parses an untrusted file: it must run under the sandbox, seeing
+    /// only the video (read-only) and the thumbnail cache (read-write).
+    #[test]
+    fn test_ffmpeg_runs_sandboxed_with_only_the_video_and_the_cache_bound() {
+        if !crate::sandbox::available() {
+            return;
+        }
+        let spec =
+            ffmpeg_spec(Path::new("/home/u/clip.mp4"), Path::new("/repo/thumbs/poster.png"), "1");
+        assert_eq!(spec.program, "ffmpeg");
+        assert_eq!(spec.read_only, vec![PathBuf::from("/home/u/clip.mp4")]);
+        // Writable: the cache directory it renders into, and nothing else.
+        assert_eq!(spec.read_write, vec![PathBuf::from("/repo/thumbs")]);
+
+        let command = crate::sandbox::command(&spec).expect("sandbox available");
+        assert_eq!(command.get_program(), "bwrap");
+    }
 
     #[test]
     fn test_is_posterable_by_extension_case_insensitive() {
