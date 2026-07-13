@@ -20,6 +20,10 @@ cargo test -p metafolder-cli
 cargo test -p metafolder-daemon --test storage
 cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
 
+# Dependency audit: vulnerabilities, licenses, sources (config: deny.toml).
+# Every ignored advisory is documented there; keep this green.
+cargo deny check
+
 # Run the daemon (default port 7523)
 cargo run -p metafolder-daemon
 cargo run -p metafolder-daemon -- --port 8080

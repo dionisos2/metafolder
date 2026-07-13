@@ -1,0 +1,69 @@
+# cargo-deny (`cargo deny check`): dependency vulnerabilities, licenses and
+# sources. Runs in CI; keep it green, and document every ignore below.
+
+[graph]
+# `sync-config` (git2/libgit2, the metafolder-sync-config binary) is off by
+# default but ships, so it belongs in the audited graph.
+all-features = true
+
+[advisories]
+ignore = [
+    # quick-xml < 0.41: two DoS bugs on hostile XML (unbounded namespace
+    # allocation, quadratic duplicate-attribute check). Reached only through
+    # plist <- tauri-utils, i.e. the Apple-bundle metadata path, which never
+    # sees untrusted input on Linux. Tauri 2.11 pins quick-xml 0.39, so this
+    # cannot be fixed from here — drop these two once Tauri bumps it.
+    { id = "RUSTSEC-2026-0194", reason = "unreachable: plist <- tauri-utils, pinned by Tauri" },
+    { id = "RUSTSEC-2026-0195", reason = "unreachable: plist <- tauri-utils, pinned by Tauri" },
+
+    # git2 unsoundness in Remote::list(), BlameHunk and Buf. We only use libgit2
+    # from metafolder-sync-config, which touches none of them; the fix needs
+    # git2 0.21 (a major bump). Revisit when moving off 0.19.
+    { id = "RUSTSEC-2026-0008", reason = "unused API (Buf); needs git2 0.21" },
+    { id = "RUSTSEC-2026-0183", reason = "unused API (Remote::list); needs git2 0.21" },
+    { id = "RUSTSEC-2026-0184", reason = "unused API (BlameHunk); needs git2 0.21" },
+]
+# Not listed above because cargo-deny does not raise it, but `cargo audit` does:
+# RUSTSEC-2024-0429, glib 0.18 VariantStrIter unsoundness. Same story — it comes
+# with the GTK3 stack Tauri v2 pins on Linux, is not callable from our code, and
+# needs glib 0.20 to go away.
+# The GTK3 stack (gtk/gdk/atk/...) is unmaintained upstream but is what Tauri v2
+# still builds on for Linux; flagging transitive crates we cannot act on would
+# make this check permanently red. Only workspace-level ones are errors.
+unmaintained = "workspace"
+
+[licenses]
+# Every dependency is permissive today. MPL-2.0 (cssparser, selectors, ...) is
+# file-level copyleft and does not affect our sources; CDLA-Permissive-2.0
+# (webpki-roots) covers a certificate data set, not code.
+allow = [
+    "MIT",
+    "MIT-0",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "BSL-1.0",
+    "CC0-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CDLA-Permissive-2.0",
+]
+
+[licenses.private]
+# The workspace crates carry no license field and are `publish = false`.
+ignore = true
+
+[bans]
+multiple-versions = "warn"
+# A `*` version is only acceptable on our own path dependencies (crates/*).
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
