@@ -2127,6 +2127,13 @@ directory. Three decoders exist, and all three are confined:
   sandbox has no registry and rebuilds one per probe (~1 s against ~80 ms).
   These helpers **fail closed** — no sandbox, no helper, and the panel falls
   back to a glyph.
+- The same helpers carry **rlimits** (=setrlimit= between fork and exec, so
+  =bwrap= and everything it spawns inherit them): 2 GiB of address space, 30 s
+  of CPU, 64 MiB per file written, no core dump. =bwrap= bounds what a decoder
+  can *reach*; these bound what it can *consume* — the wall-clock timeout in
+  =proc= only kills a process still *running*, and does nothing about a machine
+  already thrashing on a 30 GiB allocation, or a disk filling up. They are
+  generous: a 1080p poster extraction (~10 KiB PNG) is untouched by them.
 - The WebView's own web process (=<img>= / =<video>= on =/fsraw=) is confined by
   =WEBKIT_FORCE_SANDBOX=1=, set before the WebView is created. =wry= never
   enables WebKit's sandbox, so without this the web process decodes untrusted

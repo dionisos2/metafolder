@@ -53,6 +53,8 @@ pub struct Spec {
     pub read_write: Vec<PathBuf>,
     /// Extra environment; the sandbox otherwise starts from an empty one.
     pub env: Vec<(&'static str, OsString)>,
+    /// What it may consume (memory, CPU, bytes written).
+    pub limits: Limits,
 }
 
 impl Spec {
@@ -63,7 +65,13 @@ impl Spec {
             read_only: Vec::new(),
             read_write: Vec::new(),
             env: Vec::new(),
+            limits: Limits::default(),
         }
+    }
+
+    pub fn limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     pub fn arg(mut self, arg: impl Into<OsString>) -> Self {
@@ -164,6 +172,35 @@ fn bwrap_args(spec: &Spec) -> Vec<OsString> {
     args
 }
 
+/// Resource ceilings for a helper. `bwrap` bounds what a decoder can *reach*;
+/// these bound what it can *consume* — a crafted file whose decode balloons to
+/// gigabytes, spins forever, or writes without end must die on its own rather
+/// than take the machine with it. The wall-clock timeout in `proc` only kills a
+/// process that is still *running*; it does nothing about a machine already
+/// thrashing on a 30 GiB allocation.
+///
+/// Generous by design: an honest extraction must be untouched by them (a
+/// 320-px poster is ~40 KiB and a fraction of a second of CPU).
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// Address space (`RLIMIT_AS`), bytes.
+    pub address_space: u64,
+    /// CPU time (`RLIMIT_CPU`), seconds — a backstop under the wall clock.
+    pub cpu_seconds: u64,
+    /// Size of any file it writes (`RLIMIT_FSIZE`), bytes.
+    pub file_size: u64,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Limits {
+            address_space: 2 * 1024 * 1024 * 1024, // 2 GiB
+            cpu_seconds: 30,
+            file_size: 64 * 1024 * 1024, // 64 MiB
+        }
+    }
+}
+
 /// A [`Command`] running `spec` under `bwrap`, or `None` when the sandbox is
 /// unavailable — in which case the helper must **not** be run (fail closed).
 pub fn command(spec: &Spec) -> Option<Command> {
@@ -172,8 +209,41 @@ pub fn command(spec: &Spec) -> Option<Command> {
     }
     let mut cmd = Command::new(BWRAP);
     cmd.args(bwrap_args(spec));
+    apply_limits(&mut cmd, spec.limits);
     Some(cmd)
 }
+
+/// Sets the rlimits on the child. They are applied to `bwrap` itself, between
+/// `fork` and `exec`, and every process it goes on to spawn inherits them —
+/// the helper included.
+#[cfg(target_os = "linux")]
+fn apply_limits(cmd: &mut Command, limits: Limits) {
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: runs in the forked child before exec. `setrlimit` is
+    // async-signal-safe, allocates nothing, and touches no lock.
+    unsafe {
+        cmd.pre_exec(move || {
+            for (resource, value) in [
+                (libc::RLIMIT_AS, limits.address_space),
+                (libc::RLIMIT_CPU, limits.cpu_seconds),
+                (libc::RLIMIT_FSIZE, limits.file_size),
+                // No core dump: a decoder that crashes on a crafted file would
+                // otherwise drop a multi-gigabyte image of it on the disk.
+                (libc::RLIMIT_CORE, 0),
+            ] {
+                let limit = libc::rlimit { rlim_cur: value, rlim_max: value };
+                if libc::setrlimit(resource, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn apply_limits(_cmd: &mut Command, _limits: Limits) {}
 
 /// Whether a working `bwrap` is available: the binary exists *and* a real
 /// sandbox can actually be created (unprivileged user namespaces may be
@@ -189,6 +259,10 @@ fn smoke_test() -> Result<(), String> {
     let spec = Spec::new("sh").arg("-c").arg(":");
     let mut cmd = Command::new(BWRAP);
     cmd.args(bwrap_args(&spec));
+    // The limits too, so the probe exercises exactly what a helper will run
+    // under: a ceiling low enough to break bwrap itself must fail here, at
+    // startup, not silently disable thumbnails later.
+    apply_limits(&mut cmd, spec.limits);
     let output = crate::proc::run_with_timeout(cmd, std::time::Duration::from_secs(10))
         .ok_or_else(|| format!("`{BWRAP}` could not be run (is bubblewrap installed?)"))?;
     if output.status.success() {
@@ -564,6 +638,56 @@ mod tests {
         assert!(output.status.success(), "a read-write bind must be writable");
         assert_eq!(std::fs::read_to_string(dir.join("out.txt")).expect("read"), "written\n");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// bwrap bounds what a decoder can *reach*; the rlimits bound what it can
+    /// *consume*. A crafted file whose decode balloons to gigabytes must die,
+    /// not take the machine down with it.
+    #[test]
+    fn test_a_memory_bomb_hits_the_address_space_limit() {
+        if !available() {
+            return;
+        }
+        // `dd` allocates its whole block size up front: far past the limit.
+        let output = run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/dev/null bs=8G count=1"));
+        assert!(
+            !output.status.success(),
+            "an allocation past the address-space limit must fail, not succeed"
+        );
+    }
+
+    /// A decoder that never stops writing must not be able to fill the disk
+    /// (the thumbnail cache is the one place ffmpeg *can* write).
+    #[test]
+    fn test_a_runaway_write_hits_the_file_size_limit() {
+        if !available() {
+            return;
+        }
+        // A real read-write bind on disk, not the sandbox's tmpfs (which is
+        // RAM-bounded on its own and would stop the write for the wrong
+        // reason). Only RLIMIT_FSIZE can fail this one.
+        let dir = std::env::temp_dir().join("mf-sandbox-fsize");
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        let output = run(&Spec::new("sh")
+            .arg("-c")
+            .arg(format!("dd if=/dev/zero of={}/runaway bs=1M count=256 2>/dev/null", dir.display()))
+            .read_write(&dir));
+
+        assert!(!output.status.success(), "a write past the file-size limit must be killed");
+        let written = std::fs::metadata(dir.join("runaway")).map(|meta| meta.len()).unwrap_or(0);
+        assert!(written < 256 * 1024 * 1024, "the write must have been cut short, got {written}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The limits must leave a real thumbnail extraction room to work — a
+    /// sandbox that also breaks the feature is not a fix.
+    #[test]
+    fn test_the_limits_leave_room_for_a_real_decode() {
+        if !available() {
+            return;
+        }
+        let output = run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/tmp/ok bs=1M count=8"));
+        assert!(output.status.success(), "an ordinary write must still succeed: {output:?}");
     }
 
     #[test]

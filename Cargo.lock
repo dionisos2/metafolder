@@ -2238,6 +2238,7 @@ dependencies = [
  "axum",
  "clap",
  "http-body-util",
+ "libc",
  "metafolder-core",
  "notify",
  "reqwest 0.12.28",

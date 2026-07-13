@@ -63,8 +63,10 @@ names in parentheses.
 
 - **`bwrap`** (`bubblewrap`) — **required; the GUI refuses to start without a
   working one.** Every media decoder is untrusted-input-facing and must be
-  confined: `ffmpeg`/`gst-discoverer` run under `bwrap` (`sandbox.rs`, fail
-  closed), and the WebView's web process is confined by `WEBKIT_FORCE_SANDBOX=1`
+  confined: `ffmpeg`/`gst-discoverer` run under `bwrap` + rlimits (`sandbox.rs`,
+  fail closed; 2 GiB / 30 s CPU / 64 MiB written — bwrap bounds what a decoder
+  reaches, rlimits what it consumes), and the WebView's web process is confined
+  by `WEBKIT_FORCE_SANDBOX=1`
   (set in `sandbox::preflight` — `wry` never enables WebKit's sandbox, and it
   cannot be turned on later: `set_sandbox_enabled` aborts the app once a web
   process exists). Startup probes a real sandbox and then checks the web process
