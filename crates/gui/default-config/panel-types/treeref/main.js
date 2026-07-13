@@ -33,8 +33,6 @@ export async function mount(root, metafolder) {
 
   // Current node = the last breadcrumb entry; null UUID = the forest roots.
   const currentUuid = () => (stack.length > 0 ? stack[stack.length - 1].uuid : null);
-  // Root-relative path of the current node ("" at the roots).
-  const currentPath = () => stack.map((c) => c.name).join('/');
 
   // ── Field picker ──────────────────────────────────────────────────────────
 
