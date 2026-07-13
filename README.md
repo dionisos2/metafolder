@@ -22,6 +22,51 @@ The project is a Cargo workspace:
 
 The full specification lives under `docs/` (`spec-*.org`).
 
+## Dependencies
+
+Package names below are for Arch Linux; map them to your distribution.
+
+### Build
+
+```bash
+pacman -S --needed rust base-devel openssl webkit2gtk-4.1 gtk3 librsvg nodejs npm
+```
+
+- **Rust** (stable, edition 2021) and a C toolchain + `pkg-config`
+  (`base-devel`) — SQLite and libgit2 are bundled and compiled from source, so
+  no system package is needed for them.
+- **OpenSSL** — linked from the system by `reqwest` (gui/bench crates).
+- **Tauri system libraries** — `webkit2gtk-4.1`, `gtk3`, `librsvg`. Required
+  even for a plain `cargo build`, since the `gui` crate is part of the
+  workspace (use `cargo build --workspace --exclude metafolder-gui` to skip it).
+- **Node.js + npm** — builds the GUI frontend (`crates/gui/frontend`). A plain
+  `cargo build` works without a built frontend (`build.rs` writes a
+  placeholder), but the GUI window stays empty until
+  `npm --prefix crates/gui/frontend run build` has produced the real bundle.
+
+### Runtime (GUI only, optional)
+
+None of these are needed to build or test. Each degrades gracefully when
+absent (the feature is disabled, nothing crashes), but the feature silently
+looks broken without it:
+
+```bash
+pacman -S --needed noto-fonts-emoji ffmpeg \
+  gst-plugins-base gst-plugins-good gst-libav gst-plugins-bad gst-plugins-ugly
+```
+
+- **An emoji-color font** (`noto-fonts-emoji`) — the file-manager row icons and
+  thumbnail type glyphs are emoji; without it WebKit renders blank "tofu" boxes.
+- **`ffmpeg`** — video/GIF still poster thumbnails; absent ⇒ glyph/animated
+  fallback.
+- **GStreamer plugins** — inline media preview in the `file` panel:
+  `gst-plugins-base` provides `gst-discoverer-1.0` (per-file codec probe),
+  `gst-plugins-good` the audio/video sinks WebKit needs, and
+  `gst-libav`/`gst-plugins-bad`/`gst-plugins-ugly` the actual decoders
+  (e.g. H.264). Absent ⇒ the preview is disabled with a message.
+
+The daemon and CLI have no runtime dependencies beyond their binaries.
+
 ## Configuration
 
 The daemon and GUI read their configuration from `~/.config/metafolder/<crate>/`
@@ -63,8 +108,8 @@ at startup.
 
 ## Running the GUI
 
-Building the gui crate needs the Tauri system libraries (Arch:
-`webkit2gtk-4.1 gtk3 librsvg`) and `npm`. Build the frontend first, then run
+Building the gui crate needs the Tauri system libraries and `npm` (see
+[Dependencies](#dependencies)). Build the frontend first, then run
 `metafolder-gui` with the daemon running:
 
 ```bash
