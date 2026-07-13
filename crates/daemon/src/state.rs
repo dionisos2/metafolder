@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::config::RepoConfig;
 use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
+use crate::reconcile::ProgressFn;
 use crate::repo::{self, OpenedRepo, RepoLocator};
 use crate::tree_cache::TreeCache;
 
@@ -153,7 +154,7 @@ impl RepoState {
     /// on this repository wait until it finishes — the load progress bar tells
     /// the user why. Idempotent enough: re-running on an already-warm repo just
     /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
-    pub fn warmup(&self, progress: &dyn Fn(&str, Option<u64>, Option<u64>)) {
+    pub fn warmup(&self, progress: ProgressFn) {
         let conn = self.conn.lock_recover();
         progress("tree cache", None, None);
         if let Err(e) = self.lock_cache().populate(&conn) {

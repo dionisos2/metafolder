@@ -65,6 +65,12 @@ const PROGRESS_STEP: usize = 128;
 /// `Writer` so the in-progress transaction rolls back.
 pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
 
+/// Phase progress sink: `(phase, done, total)`, with `done`/`total` absent when
+/// the phase cannot place a cursor (spec-tasks "Display" renders those as an
+/// indeterminate spinner). Reported at phase boundaries and, inside the heavy
+/// loops, throttled to every [`PROGRESS_STEP`] items.
+pub type ProgressFn<'a> = &'a dyn Fn(&str, Option<u64>, Option<u64>);
+
 /// A reconcile that never cancels (used by the synchronous, non-task wrappers).
 fn never() -> impl Fn() -> bool {
     || false
@@ -105,7 +111,7 @@ pub fn reconcile_full_reported(
     threshold: Option<f64>,
     compute_mime: bool,
     refresh: bool,
-    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    progress: ProgressFn,
     cancel: CancelProbe,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
@@ -399,7 +405,7 @@ pub fn reconcile_metarecord_reported(
     uuid: Uuid,
     compute_mime: bool,
     refresh: bool,
-    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    progress: ProgressFn,
     cancel: CancelProbe,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
@@ -501,7 +507,7 @@ fn walk(
     internal_dir: &Path,
     base: &str,
     elig: &mut eligibility::EligibilityCache,
-    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    progress: ProgressFn,
     cancel: CancelProbe,
 ) -> Result<Vec<String>> {
     let mut paths: Vec<String> = Vec::new();
@@ -578,7 +584,7 @@ fn walk(
 fn stat_paths(
     root: &Path,
     paths: &[String],
-    progress: &dyn Fn(&str, Option<u64>, Option<u64>),
+    progress: ProgressFn,
 ) -> Vec<(String, Metadata)> {
     let total = paths.len() as u64;
     progress("stat", Some(0), Some(total));
