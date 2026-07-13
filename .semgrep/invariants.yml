@@ -1,0 +1,103 @@
+# Project invariants that neither rustc nor clippy can see (CLAUDE.md "Key
+# invariants", docs/spec-*.org). Run with:
+#
+#   semgrep scan --config .semgrep/invariants.yml
+#
+# Each rule is a regression guard: the codebase satisfies all of them today.
+
+rules:
+  - id: mf-write-outside-writer
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Direct SQL write to a data table. Every write must go through
+      `log::Writer`, which is what keeps the event log, HEAD and the data
+      tables mutually consistent in a single transaction. Add an operation
+      type to log.rs instead.
+    paths:
+      include:
+        - crates/daemon/src/**
+      exclude:
+        - crates/daemon/src/log.rs
+        - crates/daemon/src/db.rs
+    patterns:
+      - pattern-either:
+          - pattern: $C.execute($SQL, ...)
+          - pattern: $C.execute_batch($SQL)
+      # `UPDATE revision SET label` is deliberately not matched: labelling a
+      # revision annotates the log, it does not change data, so it produces no
+      # operation. Creating or removing a revision outside the Writer would.
+      - metavariable-regex:
+          metavariable: $SQL
+          regex: (?i).*((insert\s+into|update|delete\s+from)\s+(field|metarecord|metarecord_db|operation|op_snapshot|log_head)|(insert\s+into|delete\s+from)\s+revision)\b.*
+
+  - id: mf-mfr-path-nothing-outside-watcher
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Only the watcher (executor.rs) and manual `force` writes may set
+      `mfr_path` to Nothing — reconcile leaves stale TreeRefs in place
+      (spec-file-tracking). Writing Nothing here would erase a path on a file
+      that merely became ineligible.
+    paths:
+      include:
+        - crates/daemon/src/**
+      exclude:
+        - crates/daemon/src/executor.rs
+    pattern-either:
+      - pattern: $W.set_field_as($OP, $E, "mfr_path", Value::Nothing)
+      - pattern: $W.set_field($E, "mfr_path", Value::Nothing)
+
+  - id: mf-repostate-arc-in-background-task
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      The watcher and executor must hold a `Weak<RepoState>`, never an Arc:
+      an Arc would keep the repo — and its exclusive SQLite lock — alive
+      forever, so the repo could never be unloaded. Use `Arc::downgrade` and
+      `upgrade()` at each tick.
+    paths:
+      include:
+        - crates/daemon/src/watcher.rs
+        - crates/daemon/src/executor.rs
+    pattern-either:
+      - pattern: Arc::clone($REPO)
+      - pattern: Arc::new($REPO)
+
+  - id: mf-unsandboxed-decoder
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      Media decoders face untrusted files and must be confined: build a
+      `sandbox::Spec` (bwrap + rlimits, fail closed) instead of spawning the
+      program directly (spec-gui "Untrusted media").
+    paths:
+      include:
+        - crates/gui/src/**
+    patterns:
+      - pattern-either:
+          - pattern: Command::new($PROG)
+          - pattern: std::process::Command::new($PROG)
+      - metavariable-regex:
+          metavariable: $PROG
+          regex: .*(ffmpeg|ffprobe|gst-discoverer|gst-launch).*
+      # Tests may drive ffmpeg directly: they *generate* synthetic clips
+      # (`-f lavfi -i testsrc`), so no untrusted file is ever decoded. Matched
+      # by module name — semgrep does not see the `#[cfg(test)]` attribute.
+      - pattern-not-inside: mod tests { ... }
+
+  - id: mf-panel-queries-document
+    languages: [javascript]
+    severity: ERROR
+    message: >-
+      Panels run in the shell's JS realm and are mounted in a Shadow DOM root:
+      `document` is the shell, not the panel. Query `root` instead
+      (`root.getElementById(...)`), or the panel will silently find the
+      shell's nodes — or nothing at all.
+    paths:
+      include:
+        - crates/gui/default-config/panel-types/**
+    pattern-either:
+      - pattern: document.getElementById(...)
+      - pattern: document.querySelector(...)
+      - pattern: document.querySelectorAll(...)

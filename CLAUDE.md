@@ -24,6 +24,12 @@ cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
 # Every ignored advisory is documented there; keep this green.
 cargo deny check
 
+# Project invariants neither rustc nor clippy can see (writes go through
+# log::Writer, background tasks hold Weak<RepoState>, decoders run sandboxed,
+# panels query their Shadow root and not `document`, reconcile never writes
+# mfr_path = Nothing). Expect zero findings.
+semgrep scan --config .semgrep/invariants.yml --exclude=target
+
 # Run the daemon (default port 7523)
 cargo run -p metafolder-daemon
 cargo run -p metafolder-daemon -- --port 8080
