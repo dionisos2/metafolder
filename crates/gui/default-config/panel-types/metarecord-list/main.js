@@ -7,6 +7,7 @@ import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 import { attachHistory } from '/__history.js';
+import { latestOnly } from '/__coalesce.js';
 import {
   parseColumns,
   isSortable,
@@ -415,14 +416,35 @@ export async function mount(root, metafolder) {
 
   // ── Selection (workspace variables) ─────────────────────────────────────
 
-  async function setCursor(index) {
-    cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
-    render();
+  // Held-arrow navigation must stay cheaper than the key-repeat rate, or key
+  // events accumulate and keep replaying after release: moving the cursor only
+  // retargets the `.cursor` class (the rows are index-aligned with
+  // `metarecords`, no re-render), and the selection propagation (two
+  // workspace.set IPC round-trips fanning out to the other panels) is
+  // coalesced — one in flight, one trailing with the final position.
+  function moveCursorHighlight() {
+    for (const container of [rows, grid]) {
+      container.querySelector('.cursor')?.classList.remove('cursor');
+      container.children[cursorIndex]?.classList.add('cursor');
+    }
+  }
+
+  const propagateSelection = latestOnly(async () => {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
-    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
     await workspace.set('selected_metarecord', { uuid: metarecord.uuid, repo });
     await workspace.set('selected_paths', pathsOf(metarecord));
+  });
+
+  async function setCursor(index) {
+    cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
+    if (!metarecords[cursorIndex]) {
+      render();
+      return;
+    }
+    moveCursorHighlight();
+    root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
+    await propagateSelection();
   }
 
   async function toggleChecked() {

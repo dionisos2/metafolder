@@ -4,6 +4,7 @@
 
 import { el, fileTypeGlyph } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import { latestOnly } from '/__coalesce.js';
 import {
   loadTrackedFor,
   loadDirMetarecord,
@@ -171,6 +172,28 @@ export async function mount(root, metafolder) {
     statusLine.textContent = entriesFooter(shown, total);
   }
 
+  // Held-arrow navigation must stay cheaper than the key-repeat rate, or key
+  // events accumulate and keep replaying after release: inside the rendered
+  // window moving the cursor only retargets the `.cursor` class (the rows are
+  // index-aligned with `listing`) and refreshes the add button; the selection
+  // propagation (two workspace.set IPC round-trips fanning out to the other
+  // panels) is coalesced — one in flight, one trailing with the final position.
+  function moveCursorHighlight() {
+    entriesList.querySelector('.cursor')?.classList.remove('cursor');
+    entriesList.children[cursorIndex]?.classList.add('cursor');
+    const selected = listing[cursorIndex];
+    addButton.disabled =
+      !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
+  }
+
+  const propagateSelection = latestOnly(async () => {
+    const item = listing[cursorIndex];
+    if (!item) return;
+    await workspace.set('selected_paths', [item.path]);
+    const uuid = trackedPaths.get(item.path);
+    await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+  });
+
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
     // Keep the cursor inside the rendered window (jumping to the last entry
@@ -181,14 +204,13 @@ export async function mount(root, metafolder) {
       rendered = cursorIndex + 1;
       render();
       await enrichRange(prev, rendered);
+      render();
+    } else {
+      moveCursorHighlight();
     }
-    render();
-    const item = listing[cursorIndex];
-    if (!item) return;
+    if (!listing[cursorIndex]) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    await workspace.set('selected_paths', [item.path]);
-    const uuid = trackedPaths.get(item.path);
-    await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
+    await propagateSelection();
   }
 
   async function activate(index) {
