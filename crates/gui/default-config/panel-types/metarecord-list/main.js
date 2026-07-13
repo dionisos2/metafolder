@@ -456,6 +456,13 @@ export async function mount(root, metafolder) {
     await workspace.set('selected_metarecords', [...checked]);
   }
 
+  async function clearChecked() {
+    if (checked.size === 0) return;
+    checked = new Set();
+    render();
+    await workspace.set('selected_metarecords', []);
+  }
+
   async function openSelected() {
     const metarecord = metarecords[cursorIndex];
     if (!metarecord) return;
@@ -793,6 +800,10 @@ export async function mount(root, metafolder) {
   commands.register('metarecord-list:select-toggle', {
     label: 'Metarecord list: toggle multi-selection',
     handler: toggleChecked,
+  });
+  commands.register('metarecord-list:select-none', {
+    label: 'Metarecord list: clear the multi-selection',
+    handler: clearChecked,
   });
   commands.register('metarecord-list:open', {
     label: 'Metarecord list: open the selection in the other panel',

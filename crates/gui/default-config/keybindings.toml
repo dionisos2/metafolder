@@ -181,6 +181,7 @@
 
 # metarecord-list: selection, finder, query editing.
 "space" = { command = "metarecord-list:select-toggle", when = "metarecord-list" }
+"ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
 "/" = { command = "metarecord-list:find", when = "metarecord-list" }
 "ctrl+/" = { command = "metarecord-list:edit-query", when = "metarecord-list" }
 

@@ -803,6 +803,8 @@ Within =metarecord-list=:
   =selected_paths= is non-empty), opening the slot if hidden. See
   [[*Cross-panel selection]].
 - =Space= toggles selection for multi-select (updates =selected_metarecords=).
+- =Ctrl+Space= clears the multi-selection (=metarecord-list:select-none=,
+  resets =selected_metarecords= to =[]=).
 
 Within =metarecord-detail= (every action is also a command, so the panel is
 fully keyboard-drivable):
