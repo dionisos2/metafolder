@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Tracked-children lookup for the file-manager panel: query only the
 // metarecords whose mfr_path parent is the displayed directory (Follows with
 // a path target), instead of paginating the whole repository.
@@ -7,6 +6,7 @@
 // many of the directory's entries are currently rendered. The listing is
 // windowed (only the first `shown` rows are in the DOM) so a directory with
 // thousands of files stays responsive, mirroring metarecord-list's footer.
+/** @param {number} shown @param {number} total */
 export function entriesFooter(shown, total) {
   const word = total === 1 ? 'entry' : 'entries';
   const n = Math.min(shown, total);
@@ -15,8 +15,13 @@ export function entriesFooter(shown, total) {
 
 /**
  * One directory entry, as `metafolder.fs.readDir` returns it.
+ * @typedef {Metafolder.FsEntry} Entry
  *
- * @typedef {{name: string, path: string, is_dir: boolean}} Entry
+ * A `select: '*'` query page, as the daemon returns it.
+ * @typedef {{results: Metafolder.Metarecord[], next_cursor?: string|null}} Page
+ *
+ * The one API method these helpers need.
+ * @typedef {Pick<Metafolder.Daemon, 'call'>} Daemon
  */
 
 /**
@@ -34,6 +39,7 @@ export function filterHidden(items, showHidden) {
 
 // Parent directory of an absolute path; the filesystem root is its own
 // parent (as on Linux, where /.. is /).
+/** @param {string} path */
 export function parentDir(path) {
   if (path === '/') return '/';
   return path.slice(0, path.lastIndexOf('/')) || '/';
@@ -41,6 +47,10 @@ export function parentDir(path) {
 
 // Repo-relative path of `dir` ("" for the root itself, "/sub/dir" below
 // it, null outside the root) — the format Follows path targets expect.
+/**
+ * @param {string} dir @param {string|null} repoRoot
+ * @returns {string|null}
+ */
 export function relPath(dir, repoRoot) {
   if (repoRoot === null) return null;
   if (dir === repoRoot) return '';
@@ -49,10 +59,12 @@ export function relPath(dir, repoRoot) {
 }
 
 // Whether `path` is `dir` or one of its descendants (absolute paths).
+/** @param {string} path @param {string|null} dir */
 export function isWithin(path, dir) {
   return dir !== null && (path === dir || path.startsWith(`${dir}/`));
 }
 
+/** @param {string} s */
 function escapeRegex(s) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -60,6 +72,11 @@ function escapeRegex(s) {
 // Uuid of the metarecord of `dir` itself (the "." row), or null when untracked
 // or outside the repo. The root metarecord is the only one with an empty
 // TreeRef name; a subdirectory is pinned down by parent + exact name.
+/**
+ * @param {Daemon} daemon @param {string|null} repo
+ * @param {string|null} repoRoot @param {string} dir
+ * @returns {Promise<string|null>}
+ */
 export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null) return null;
@@ -82,11 +99,9 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
             matchSelf,
           ],
         };
-  const page = await daemon.call('POST', `/repos/${repo}/query`, {
-    query,
-    select: '*',
-    limit: 1,
-  });
+  const page = /** @type {Page} */ (
+    await daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1 })
+  );
   return page.results[0]?.uuid ?? null;
 }
 
@@ -97,7 +112,13 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
 // files only costs one bounded query per rendered window, not a full walk
 // of every tracked child up front. Outside the repo root, or with an empty
 // window, nothing is tracked and no round-trip happens.
+/**
+ * @param {Daemon} daemon @param {string|null} repo
+ * @param {string|null} repoRoot @param {string} dir @param {string[]} names
+ * @returns {Promise<Map<string, string>>}
+ */
 export async function loadTrackedFor(daemon, repo, repoRoot, dir, names) {
+  /** @type {Map<string, string>} absolute child path → metarecord uuid */
   const tracked = new Map();
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null || names.length === 0) return tracked;
@@ -110,16 +131,19 @@ export async function loadTrackedFor(daemon, repo, repoRoot, dir, names) {
       { type: 'matches', field: 'mfr_path', pattern: `^(${names.map(escapeRegex).join('|')})$` },
     ],
   };
+  /** @type {string|null|undefined} */
   let cursor = null;
   do {
-    const page = await daemon.call('POST', `/repos/${repo}/query`, {
-      query,
-      select: '*',
-      limit: names.length,
-      ...(cursor && { cursor }),
-    });
+    const page = /** @type {Page} */ (
+      await daemon.call('POST', `/repos/${repo}/query`, {
+        query,
+        select: '*',
+        limit: names.length,
+        ...(cursor && { cursor }),
+      })
+    );
     for (const metarecord of page.results) {
-      for (const field of metarecord.fields) {
+      for (const field of metarecord.fields ?? []) {
         if (field.name !== 'mfr_path' || field.value.type !== 'tree_ref') continue;
         // A matched metarecord may hold other positions outside the window
         // (multi-map): keep only the names we actually asked for.

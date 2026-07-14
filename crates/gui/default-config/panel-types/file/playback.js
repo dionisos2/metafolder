@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Video playback position (spec-gui "file panel type"): where the user
 // stopped watching, stored as an ordinary field on the metarecord of the
 // played file, so reopening the video resumes there.
@@ -6,6 +5,12 @@
 // The field is a plain user field: `mfr_*` is reserved (writes need `force`)
 // and an unknown `mf_*` name is rejected outright by the daemon.
 export const PLAYBACK_FIELD = 'playback_position';
+
+/**
+ * The one API method these helpers need — spelled out so a test can supply a
+ * stub without building the whole `metafolder.daemon`.
+ * @typedef {Pick<Metafolder.Daemon, 'call'>} Daemon
+ */
 
 // Below this, the video has barely started: there is nothing to resume to.
 export const MIN_RESUME = 5;
@@ -25,6 +30,10 @@ export const SAVE_INTERVAL_MS = 15000;
 // 'save' the position, 'clear' any stored one (start/end), or do 'none' of
 // it because the numbers cannot be judged (a stream with no known duration —
 // storing a position we could never recognize as stale).
+/**
+ * @param {number} currentTime @param {number} duration
+ * @returns {'save'|'clear'|'none'}
+ */
 export function playbackAction(currentTime, duration) {
   if (!Number.isFinite(currentTime) || currentTime < 0) return 'none';
   if (!Number.isFinite(duration) || duration <= 0) return 'none';
@@ -36,6 +45,10 @@ export function playbackAction(currentTime, duration) {
 // The time to seek to on open, or null to start from the beginning. `duration`
 // may be unknown (NaN) — the metadata has not loaded yet — in which case the
 // stored position is taken at face value.
+/**
+ * @param {number|null} saved @param {number} duration NaN when still unknown
+ * @returns {number|null}
+ */
 export function resumeTarget(saved, duration) {
   if (saved === null || !Number.isFinite(saved) || saved < MIN_RESUME) return null;
   if (Number.isFinite(duration) && duration > 0 && saved > duration - END_MARGIN) return null;
@@ -43,15 +56,17 @@ export function resumeTarget(saved, duration) {
 }
 
 // "12:34" / "1:02:03", as a media player shows it.
+/** @param {number} seconds */
 export function formatPosition(seconds) {
   const total = Math.max(0, Math.floor(seconds));
   const s = total % 60;
   const m = Math.floor(total / 60) % 60;
   const h = Math.floor(total / 3600);
-  const pad = (n) => String(n).padStart(2, '0');
+  const pad = (/** @type {number} */ n) => String(n).padStart(2, '0');
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
 }
 
+/** @param {string} repo @param {string} uuid */
 function fieldUrl(repo, uuid) {
   return `/repos/${repo}/metarecords/${uuid}/fields/${PLAYBACK_FIELD}`;
 }
@@ -59,10 +74,17 @@ function fieldUrl(repo, uuid) {
 // The stored position of a metarecord, or null when there is none. A field
 // holding anything but a number (Nothing, or a value a user typed by hand)
 // is treated as "no position" rather than an error: the preview must play.
+/**
+ * @param {Daemon} daemon @param {string} repo @param {string} uuid
+ * @returns {Promise<number|null>}
+ */
 export async function loadPosition(daemon, repo, uuid) {
+  /** @type {{values?: Metafolder.Value[]}|undefined} */
   let response;
   try {
-    response = await daemon.call('GET', fieldUrl(repo, uuid));
+    response = /** @type {{values?: Metafolder.Value[]}} */ (
+      await daemon.call('GET', fieldUrl(repo, uuid))
+    );
   } catch {
     return null; // unreachable daemon / unknown metarecord: just play from the start
   }
@@ -74,6 +96,11 @@ export async function loadPosition(daemon, repo, uuid) {
 // Store the position (replacing any previous one). Returns what is now stored,
 // so the caller can track it without a re-read. A write failure is swallowed:
 // watching a video must not fail because the daemon refused a field write.
+/**
+ * @param {Daemon} daemon @param {string} repo @param {string} uuid
+ * @param {number} seconds
+ * @returns {Promise<number|null>}
+ */
 export async function savePosition(daemon, repo, uuid, seconds) {
   try {
     await daemon.call('PUT', fieldUrl(repo, uuid), {
@@ -87,6 +114,10 @@ export async function savePosition(daemon, repo, uuid, seconds) {
 
 // Remove the stored position. Only call this when one is actually stored: an
 // unset of an absent field would still open an event-log revision.
+/**
+ * @param {Daemon} daemon @param {string} repo @param {string} uuid
+ * @returns {Promise<null>}
+ */
 export async function clearPosition(daemon, repo, uuid) {
   try {
     await daemon.call('DELETE', fieldUrl(repo, uuid));
