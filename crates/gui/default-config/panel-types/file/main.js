@@ -1,11 +1,10 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // file panel: media/text preview of the active path from selected_paths
 // (spec-gui "file panel type"). Files are streamed by the GUI server's
 // /fsraw endpoint (HTTP Range supported, so audio/video can seek).
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
 
-import { el, thumbnail } from '/__ui.js';
+import { byId, el, thumbnail } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import {
   SAVE_INTERVAL_MS,
@@ -40,38 +39,53 @@ const ZOOM_STEP = 1.25;
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 40;
 
+/**
+ * The metarecord the selection points at, as metarecord-list publishes it.
+ * @typedef {{uuid: string, repo: string}} Selected
+ *
+ * Position tracking of the mounted <video>: `stored` mirrors the field's value
+ * so a redundant write can be skipped.
+ * @typedef {{media: HTMLMediaElement, repo: string, uuid: string,
+ *            stored: number|null, timer: ReturnType<typeof setInterval>|null}} Playback
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
   const { workspace, fs, commands, daemon } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
 
+  /** @type {string[]} */
   let paths = [];
   let activeIndex = 0;
   // The metarecord the selection points at ({ uuid, repo }), published by
   // metarecord-list alongside selected_paths. It is what the playback position
   // is stored on — so it only applies while the viewer follows the selection
   // (a drill-in path has no metarecord in hand).
+  /** @type {Selected|null} */
   let selected = null;
-  // Local drill-in path: set when the user clicks into a directory's listing,
-  // overriding the selection until it changes. null = follow the selection.
+  /** @type {string|null} Local drill-in path: set when the user clicks into a
+   *  directory's listing, overriding the selection until it changes.
+   *  null = follow the selection. */
   let localPath = null;
   // Bumped on every renderViewer() call so a previous render's pending async
   // work (notably the media stall timer / probe) cannot write into the viewer
   // after the shown path has changed.
   let renderGeneration = 0;
 
-  const pathBar = root.getElementById('path-bar');
-  const viewer = root.getElementById('viewer');
-  const dirFooter = root.getElementById('dir-footer');
-  const mediaToolbar = root.getElementById('media-toolbar');
-  const zoomLabel = root.getElementById('zoom-label');
-  const resumeHint = root.getElementById('resume-hint');
-  const gifAnimateWrap = root.getElementById('gif-animate-wrap');
-  const gifAnimateBox = root.getElementById('gif-animate');
+  const pathBar = byId(root, 'path-bar');
+  const viewer = byId(root, 'viewer');
+  const dirFooter = byId(root, 'dir-footer');
+  const mediaToolbar = byId(root, 'media-toolbar');
+  const zoomLabel = byId(root, 'zoom-label');
+  const resumeHint = byId(root, 'resume-hint');
+  const gifAnimateWrap = byId(root, 'gif-animate-wrap');
+  const gifAnimateBox = byId(root, 'gif-animate', HTMLInputElement);
 
   // GIFs are shown as a still of their first frame unless this is on (the
   // toolbar checkbox, visible only while a GIF is previewed).
   let animateGifs = false;
-  // Blob URL of the current still frame, revoked when the view moves on.
+  /** @type {string|null} Blob URL of the current still frame, revoked when the
+   *  view moves on. */
   let staticGifUrl = null;
 
   function revokeStaticGif() {
@@ -82,6 +96,7 @@ export async function mount(root, metafolder) {
   // Still copy of an animated image: createImageBitmap uses the format's
   // default (first) frame, drawn onto a canvas and served as a blob URL — an
   // ordinary <img> for the zoom machinery, minus the animation.
+  /** @param {string} url @returns {Promise<string>} a blob URL */
   async function staticFirstFrame(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -89,8 +104,9 @@ export async function mount(root, metafolder) {
     const canvas = document.createElement('canvas');
     canvas.width = bitmap.width;
     canvas.height = bitmap.height;
-    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    canvas.getContext('2d')?.drawImage(bitmap, 0, 0);
     bitmap.close();
+    /** @type {Blob|null} */
     const blob = await new Promise((resolve) => canvas.toBlob(resolve));
     if (!blob) throw new Error('cannot rasterize the image');
     return URL.createObjectURL(blob);
@@ -102,11 +118,14 @@ export async function mount(root, metafolder) {
   // zoomable <img>/<video>, or null when the view is text/audio/a directory.
   let zoomMode = 'fit';
   let zoomFactor = 1;
+  /** @type {HTMLImageElement|HTMLVideoElement|null} */
   let zoomTarget = null;
-  // Detaches the current directory grid's scroll listener; called before the
-  // next render so an old folder's pager cannot keep firing.
+  /** @type {(() => void)|null} Detaches the current directory grid's scroll
+   *  listener; called before the next render so an old folder's pager cannot
+   *  keep firing. */
   let detachDirScroll = null;
 
+  /** @param {string} path */
   function rawUrl(path) {
     const auth = metafolder.sessionToken
       ? `&token=${encodeURIComponent(metafolder.sessionToken)}`
@@ -114,6 +133,7 @@ export async function mount(root, metafolder) {
     return `${metafolder.guiServer}/fsraw?path=${encodeURIComponent(path)}${auth}`;
   }
 
+  /** @param {string} text */
   function placeholder(text) {
     clearZoomTarget();
     viewer.replaceChildren(el('p', { class: 'placeholder' }, text));
@@ -121,15 +141,18 @@ export async function mount(root, metafolder) {
 
   // --- Zoom -----------------------------------------------------------------
 
+  /** @param {HTMLImageElement|HTMLVideoElement} elem */
   function naturalSize(elem) {
-    if (elem.tagName === 'VIDEO') return { w: elem.videoWidth, h: elem.videoHeight };
-    return { w: elem.naturalWidth, h: elem.naturalHeight };
+    return elem instanceof HTMLVideoElement
+      ? { w: elem.videoWidth, h: elem.videoHeight }
+      : { w: elem.naturalWidth, h: elem.naturalHeight };
   }
 
   // Run fn once the media reports its intrinsic dimensions (needed before a
   // manual pixel size can be computed).
+  /** @param {HTMLImageElement|HTMLVideoElement} elem @param {() => void} fn */
   function onceReady(elem, fn) {
-    elem.addEventListener(elem.tagName === 'VIDEO' ? 'loadedmetadata' : 'load', fn, {
+    elem.addEventListener(elem instanceof HTMLVideoElement ? 'loadedmetadata' : 'load', fn, {
       once: true,
     });
   }
@@ -162,6 +185,7 @@ export async function mount(root, metafolder) {
   }
 
   // Make `elem` the zoom target and render it at the current zoom state.
+  /** @param {HTMLImageElement|HTMLVideoElement} elem */
   function setZoomTarget(elem) {
     zoomTarget = elem;
     applyZoom();
@@ -174,12 +198,14 @@ export async function mount(root, metafolder) {
 
   // The on-screen scale of the target right now (used to start a manual zoom
   // continuously from whatever "fit" is currently showing).
+  /** @param {HTMLImageElement|HTMLVideoElement} elem */
   function shownScale(elem) {
     const nat = naturalSize(elem);
     if (!nat.w) return zoomFactor;
     return elem.getBoundingClientRect().width / nat.w;
   }
 
+  /** @param {number} mult */
   function zoomBy(mult) {
     if (!zoomTarget) return;
     if (zoomMode === 'fit') zoomFactor = shownScale(zoomTarget) || 1;
@@ -207,6 +233,7 @@ export async function mount(root, metafolder) {
   // on buffering (in a device-less environment the decoder queue grows
   // unbounded — gigabytes of RAM, then a crash). pause + drop src + load()
   // releases it immediately.
+  /** @type {HTMLMediaElement|null} */
   let activeMedia = null;
 
   // --- Playback position ------------------------------------------------
@@ -217,11 +244,13 @@ export async function mount(root, metafolder) {
   // has no metarecord to store a position on): { media, repo, uuid, stored,
   // timer }, with `stored` mirroring the field's value so a redundant write
   // can be skipped.
+  /** @type {Playback|null} */
   let playback = null;
   // A write in flight: pause/seek/interval can all fire while one is running,
   // and each write is an event-log revision — never stack them.
   let saving = false;
 
+  /** @param {number|null} seconds */
   function showResumeHint(seconds) {
     resumeHint.hidden = seconds === null;
     resumeHint.textContent = seconds === null ? '' : `↩ ${formatPosition(seconds)}`;
@@ -232,6 +261,7 @@ export async function mount(root, metafolder) {
   // Persist the position of `state`'s video. Reads currentTime/duration
   // synchronously, so it is safe to call from teardown (which drops the src
   // right after); the write itself finishes in the background.
+  /** @param {Playback|null} state */
   async function persistPlayback(state) {
     if (!state || saving) return;
     const { media, repo, uuid } = state;
@@ -263,11 +293,13 @@ export async function mount(root, metafolder) {
   // position, then keep it up to date. Writes happen on pause/seek/end, on
   // teardown, and periodically while playing — never on `timeupdate` (which
   // fires several times a second, and every write is an event-log revision).
+  /** @param {HTMLMediaElement} media @param {number} generation */
   async function attachPlayback(media, generation) {
     if (localPath !== null || selected === null) return; // no metarecord to store it on
     const { uuid, repo } = selected;
     const stored = await loadPosition(daemon, repo, uuid);
     if (generation !== renderGeneration) return; // the view moved on while we read
+    /** @type {Playback} */
     const state = { media, repo, uuid, stored, timer: null };
     playback = state;
 
@@ -295,7 +327,7 @@ export async function mount(root, metafolder) {
 
   function teardownPlayback() {
     if (!playback) return;
-    clearInterval(playback.timer);
+    if (playback.timer !== null) clearInterval(playback.timer);
     void persistPlayback(playback); // fire and forget: the write outlives the element
     playback = null;
     showResumeHint(null);
@@ -318,17 +350,20 @@ export async function mount(root, metafolder) {
     activeMedia = null;
   }
 
+  /** @param {string} path */
   function parentDir(path) {
     const index = path.lastIndexOf('/');
     return index <= 0 ? '/' : path.slice(0, index);
   }
 
   // The path currently shown: the local drill-in target, or the selection.
+  /** @returns {string|undefined} */
   function viewedPath() {
     return localPath ?? paths[activeIndex];
   }
 
   // Drill into a directory entry / preview a file from the listing.
+  /** @param {string} path */
   function navigateInto(path) {
     localPath = path;
     rerender();
@@ -337,6 +372,7 @@ export async function mount(root, metafolder) {
   // Step back out of the drill-in: up one level, returning to following the
   // selection once we reach the originally selected path.
   function navigateBack() {
+    if (localPath === null) return;
     const parent = parentDir(localPath);
     localPath = parent === paths[activeIndex] ? null : parent;
     rerender();
@@ -344,6 +380,7 @@ export async function mount(root, metafolder) {
 
   function renderPathBar() {
     pathBar.hidden = paths.length === 0 && localPath === null;
+    /** @type {HTMLElement[]} */
     const children = [];
     if (localPath !== null) {
       children.push(el('button', { class: 'nav', onclick: navigateBack }, '←'));
@@ -369,13 +406,16 @@ export async function mount(root, metafolder) {
     pathBar.replaceChildren(...children);
   }
 
+  /** @type {{audio: boolean, video: boolean, missing: string[]}|null} */
   let mediaSupportCache = null;
 
   async function mediaSupport() {
     if (mediaSupportCache === null) {
       try {
         const response = await fetch(`${metafolder.guiServer}/__media-support`);
-        mediaSupportCache = await response.json();
+        mediaSupportCache = /** @type {{audio: boolean, video: boolean, missing: string[]}} */ (
+          await response.json()
+        );
       } catch {
         // Undeterminable (GUI server unreachable): do not degrade silently.
         mediaSupportCache = { audio: true, video: true, missing: [] };
@@ -387,6 +427,7 @@ export async function mount(root, metafolder) {
   // Ask the GUI server which decoders/demuxers this specific file needs and
   // lacks (runs gst-discoverer, which parses the file safely without building
   // the full decode pipeline). Returns null when the probe is unreachable.
+  /** @param {string} path @returns {Promise<{missing: string[]}|null>} */
   async function probeFile(path) {
     try {
       const auth = metafolder.sessionToken
@@ -395,7 +436,7 @@ export async function mount(root, metafolder) {
       const response = await fetch(
         `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}${auth}`,
       );
-      if (response.ok) return await response.json();
+      if (response.ok) return /** @type {{missing: string[]}} */ (await response.json());
     } catch {
       // Unreachable: caller decides how to proceed.
     }
@@ -409,6 +450,10 @@ export async function mount(root, metafolder) {
   // diagnose on error" would be too late — we must not create the element at
   // all in that case. gst-discoverer is safe; it reports the missing plugins
   // without ever building the decode pipeline that crashes WebKit.
+  /**
+   * @param {'audio'|'video'} kind @param {string} path @param {string} url
+   * @param {number} generation
+   */
   async function renderMedia(kind, path, url, generation) {
     const current = () => generation === renderGeneration;
     const support = await mediaSupport();
@@ -440,8 +485,9 @@ export async function mount(root, metafolder) {
       if (current()) placeholder('cannot play this file (unsupported or corrupt media)');
     });
     viewer.replaceChildren(media);
-    // Only video is zoomable; audio has no visual frame.
-    if (kind === 'video') {
+    // Only video is zoomable; audio has no visual frame. (Narrowing `kind` does
+    // not narrow `media`, hence the instanceof.)
+    if (media instanceof HTMLVideoElement) {
       setZoomTarget(media);
       await attachPlayback(media, generation);
     }
@@ -450,12 +496,14 @@ export async function mount(root, metafolder) {
   // Directory view: a thumbnail grid of the folder's entries, rendered in
   // windows of `dirPage` (more appended as the grid is scrolled) so a huge
   // folder neither freezes on open nor holds thousands of <img> at once.
+  /** @param {string} dir @param {number} generation */
   async function renderDirectory(dir, generation) {
+    /** @type {Metafolder.FsEntry[]} */
     let entries;
     try {
       entries = await fs.readDir(dir);
     } catch (error) {
-      placeholder(`cannot read the folder: ${error.message ?? error}`);
+      placeholder(`cannot read the folder: ${messageOf(error)}`);
       return;
     }
     // The view may have changed while readDir was in flight; bail before
@@ -467,6 +515,7 @@ export async function mount(root, metafolder) {
     }
     // Folders first, then files, each group alphabetical.
     entries.sort((a, b) => Number(b.is_dir) - Number(a.is_dir) || a.name.localeCompare(b.name));
+    /** @param {Metafolder.FsEntry} entry */
     const tile = (entry) =>
       el(
         'button',
@@ -525,9 +574,10 @@ export async function mount(root, metafolder) {
       return;
     }
     // A directory has no meaningful file preview: list its contents instead.
+    /** @type {{is_dir?: boolean}|null} */
     let info = null;
     try {
-      info = await fs.stat(path);
+      info = /** @type {{is_dir?: boolean}} */ (await fs.stat(path));
     } catch {
       // Unreachable/removed: fall through to the file preview.
     }
@@ -574,7 +624,7 @@ export async function mount(root, metafolder) {
           pre.textContent += '\n… (truncated preview)';
         }
       } catch (error) {
-        placeholder(`cannot load the file: ${error.message ?? error}`);
+        placeholder(`cannot load the file: ${messageOf(error)}`);
       }
     } else {
       placeholder('no preview available for this format');
@@ -588,6 +638,7 @@ export async function mount(root, metafolder) {
 
   // Loading the file (image/media/text fetch) waits for an actual display:
   // a hidden instance following selected_paths must not stream anything.
+  /** @param {unknown} newPaths the `selected_paths` workspace variable */
   async function update(newPaths) {
     paths = Array.isArray(newPaths) ? newPaths : [];
     activeIndex = 0;
@@ -599,7 +650,7 @@ export async function mount(root, metafolder) {
     // together: a panel that later moves selected_metarecord alone (a ref
     // click in metarecord-detail) must not re-target the played file's
     // position onto another metarecord.
-    selected = (await workspace.get('selected_metarecord')) ?? null;
+    selected = /** @type {Selected|null} */ ((await workspace.get('selected_metarecord')) ?? null);
     metafolder.whenVisible(rerender);
   }
 
@@ -622,6 +673,7 @@ export async function mount(root, metafolder) {
     handler: zoomReset,
   });
 
+  /** @param {boolean} on */
   function setAnimateGifs(on) {
     animateGifs = on;
     gifAnimateBox.checked = on;
@@ -635,10 +687,10 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "file").
 
-  root.getElementById('zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
-  root.getElementById('zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
-  root.getElementById('zoom-fit').addEventListener('click', zoomFit);
-  root.getElementById('zoom-reset').addEventListener('click', zoomReset);
+  byId(root, 'zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
+  byId(root, 'zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
+  byId(root, 'zoom-fit').addEventListener('click', zoomFit);
+  byId(root, 'zoom-reset').addEventListener('click', zoomReset);
 
   workspace.onChange('selected_paths', update);
   await update(await workspace.get('selected_paths'));
@@ -650,4 +702,9 @@ export async function mount(root, metafolder) {
     revokeStaticGif();
     if (detachDirScroll) detachDirScroll();
   };
+}
+
+/** The message of a thrown error (the fs/daemon seams throw Error). */
+function messageOf(/** @type {unknown} */ error) {
+  return error instanceof Error ? error.message : String(error);
 }

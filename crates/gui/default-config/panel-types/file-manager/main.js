@@ -1,9 +1,8 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // file-manager panel: browse the disk (via metafolder.fs, not the
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (spec-gui "file-manager panel type").
 
-import { el, fileTypeGlyph } from '/__ui.js';
+import { byId, el, fileTypeGlyph } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
 import {
@@ -22,37 +21,52 @@ import {
 // the fallback when no config value is provided.
 const PAGE_DEFAULT = 200;
 
+/**
+ * One row of the listing: a real directory entry, or the synthetic "." / ".."
+ * rows this panel prepends.
+ * @typedef {Metafolder.FsEntry} Entry
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
   const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
-  const statusMessageMs = (metafolder.settings ?? {}).statusMessageMs ?? 5000;
+  const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
+  /** @type {string|null} */
   let repo = null;
+  /** @type {string|null} */
   let repoRoot = null;
-  let internalDir = null; // .metafolder/internal: hard-excluded from tracking
+  /** @type {string|null} .metafolder/internal: hard-excluded from tracking */
+  let internalDir = null;
+  /** @type {string|null} */
   let currentDir = null;
-  let listing = []; // [{name, path, is_dir}] — "." and ".." then the entries
+  /** @type {Entry[]} "." and ".." then the directory's entries */
+  let listing = [];
   let rendered = 0; // number of `listing` rows currently in the DOM (windowed)
   let cursorIndex = -1;
   let constrainToRoot = true;
   let showHidden = false;
-  let trackedPaths = new Map(); // absolute path -> metarecord uuid (children of currentDir only)
+  /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
+  let trackedPaths = new Map();
 
-  const entriesList = root.getElementById('entries');
-  const placeholderElement = root.getElementById('placeholder');
-  const pathElement = root.getElementById('current-path');
-  const addButton = root.getElementById('add');
-  const constrainBox = root.getElementById('constrain');
-  const showHiddenBox = root.getElementById('show-hidden');
-  const statusLine = root.getElementById('status-line');
-  const listingElement = root.getElementById('listing');
+  const entriesList = byId(root, 'entries');
+  const placeholderElement = byId(root, 'placeholder');
+  const pathElement = byId(root, 'current-path');
+  const addButton = byId(root, 'add', HTMLButtonElement);
+  const constrainBox = byId(root, 'constrain', HTMLInputElement);
+  const showHiddenBox = byId(root, 'show-hidden', HTMLInputElement);
+  const statusLine = byId(root, 'status-line');
+  const listingElement = byId(root, 'listing');
 
+  /** @param {string} path */
   function insideRoot(path) {
     return isWithin(path, repoRoot);
   }
 
+  /** @param {string} path */
   function trackable(path) {
     return insideRoot(path) && !isWithin(path, internalDir);
   }
@@ -60,13 +74,15 @@ export async function mount(root, metafolder) {
   // Tracked status of "." (the directory itself) and ".." (its parent) — the
   // two synthetic rows always present in the first window.
   async function enrichSelfParent() {
+    const dir = currentDir;
+    if (dir === null) return;
     try {
-      const parent = parentDir(currentDir);
+      const parent = parentDir(dir);
       const [selfUuid, parentUuid] = await Promise.all([
-        loadDirMetarecord(daemon, repo, repoRoot, currentDir),
+        loadDirMetarecord(daemon, repo, repoRoot, dir),
         loadDirMetarecord(daemon, repo, repoRoot, parent),
       ]);
-      if (selfUuid) trackedPaths.set(currentDir, selfUuid);
+      if (selfUuid) trackedPaths.set(dir, selfUuid);
       if (parentUuid) trackedPaths.set(parent, parentUuid);
     } catch (error) {
       await statusBar.error(error);
@@ -75,14 +91,18 @@ export async function mount(root, metafolder) {
 
   // Tracked status of the real entries in listing[start, end) — queried for
   // just that window's names, so a huge directory never resolves every child.
+  /** @param {number} start @param {number} end */
   async function enrichRange(start, end) {
+    const dir = currentDir;
+    if (dir === null) return;
+    /** @type {string[]} */
     const names = [];
     for (let i = start; i < end; i++) {
       const item = listing[i];
       if (item && item.name !== '.' && item.name !== '..') names.push(item.name);
     }
     try {
-      const found = await loadTrackedFor(daemon, repo, repoRoot, currentDir, names);
+      const found = await loadTrackedFor(daemon, repo, repoRoot, dir, names);
       for (const [path, uuid] of found) trackedPaths.set(path, uuid);
     } catch (error) {
       await statusBar.error(error);
@@ -97,13 +117,15 @@ export async function mount(root, metafolder) {
     await enrichRange(0, rendered);
   }
 
+  /** @param {string} dir @returns {Promise<void>} */
   function open(dir) {
     return bench.measure('mf:fm:load', () => openNow(dir));
   }
 
+  /** @param {string} dir */
   async function openNow(dir) {
     if (constrainToRoot && repoRoot !== null && !insideRoot(dir)) {
-      statusBar.message('navigation is constrained to the repo root', 4000);
+      void statusBar.message('navigation is constrained to the repo root', 4000);
       return;
     }
     let items;
@@ -152,7 +174,7 @@ export async function mount(root, metafolder) {
             ],
             onclick: () => select(index),
             ondblclick: () => activate(index),
-            oncontextmenu: (event) => rowMenu(event, index),
+            oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
             ...(internal && { title: 'always excluded from tracking (live database)' }),
           },
           el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
@@ -195,6 +217,7 @@ export async function mount(root, metafolder) {
     await workspace.set('selected_metarecord', uuid ? { uuid, repo } : null);
   });
 
+  /** @param {number} index */
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
     // Keep the cursor inside the rendered window (jumping to the last entry
@@ -214,6 +237,7 @@ export async function mount(root, metafolder) {
     await propagateSelection();
   }
 
+  /** @param {number} index */
   async function activate(index) {
     const item = listing[index];
     if (!item) return;
@@ -222,22 +246,20 @@ export async function mount(root, metafolder) {
   }
 
   // Right-click on a row: move the cursor there, then offer the row's actions.
+  /** @param {MouseEvent} event @param {number} index */
   function rowMenu(event, index) {
     const item = listing[index];
     if (!item) return;
     void select(index);
-    void metafolder.contextMenu(
-      event,
-      [
-        item.is_dir && { label: 'Open', action: () => void activate(index) },
-        item.is_dir && '-',
-        {
-          label: 'Track (mf_watch = false)',
-          disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
-          action: () => void addSelected(),
-        },
-      ].filter(Boolean),
-    );
+    /** @type {Metafolder.MenuItem[]} */
+    const items = [];
+    if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) }, '-');
+    items.push({
+      label: 'Track (mf_watch = false)',
+      disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
+      action: () => void addSelected(),
+    });
+    metafolder.contextMenu(event, items);
   }
 
   async function goUp() {
@@ -248,7 +270,7 @@ export async function mount(root, metafolder) {
   async function addSelected() {
     const item = listing[cursorIndex];
     if (!repo) {
-      statusBar.message('no active repository', 4000);
+      void statusBar.message('no active repository', 4000);
       return;
     }
     if (!item) return;
@@ -258,7 +280,7 @@ export async function mount(root, metafolder) {
       await statusBar.error(error, 6000);
       return;
     }
-    statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, statusMessageMs);
+    void statusBar.message(`Tracked: ${item.name} (mf_watch = false)`, statusMessageMs);
     await reenrichVisible();
     render();
     await select(cursorIndex);
@@ -267,7 +289,7 @@ export async function mount(root, metafolder) {
 
   async function gotoRoot() {
     if (!repo || repoRoot === null) {
-      statusBar.message('no active repository', 4000);
+      void statusBar.message('no active repository', 4000);
       return;
     }
     await open(repoRoot);
@@ -302,6 +324,7 @@ export async function mount(root, metafolder) {
     constrainToRoot = constrainBox.checked;
   });
   // Re-list the current directory so the dot-entries (dis)appear immediately.
+  /** @param {boolean} shown */
   async function setShowHidden(shown) {
     showHidden = shown;
     showHiddenBox.checked = shown;
@@ -309,10 +332,10 @@ export async function mount(root, metafolder) {
   }
   showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
   const detachScroll = pager.attach(listingElement);
-  root.getElementById('up').addEventListener('click', goUp);
-  root.getElementById('goto-root').addEventListener('click', gotoRoot);
-  root.getElementById('refresh').addEventListener('click', refresh);
-  addButton.addEventListener('click', addSelected);
+  byId(root, 'up').addEventListener('click', () => void goUp());
+  byId(root, 'goto-root').addEventListener('click', () => void gotoRoot());
+  byId(root, 'refresh').addEventListener('click', () => void refresh());
+  addButton.addEventListener('click', () => void addSelected());
 
   commands.register('file-manager:add', {
     label: 'File manager: track the selected path (mf_watch = false)',
@@ -365,7 +388,7 @@ export async function mount(root, metafolder) {
   // Keybindings for this panel live in keybindings.toml (when = "file-manager").
 
   async function start() {
-    repo = await workspace.get('active_repo');
+    repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     constrainBox.disabled = repo === null;
     // A value picker (spec-gui "Value picker") can seed the directory to open
     // at — e.g. the repos panel's folder picker starts from the typed path.
