@@ -63,7 +63,7 @@ export interface PanelApiCtx {
 
 export interface PanelApiInstance {
   /** The object passed to the panel's `mount(root, api)`. */
-  api: Record<string, unknown>;
+  api: MetafolderApi;
   /** A subscribed workspace variable changed (from `workspace-var-changed`). */
   pushVarChanged(key: string, value: unknown): void;
   /** A message-log entry was appended (null = the log was cleared). */
@@ -175,7 +175,23 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     taskPollMs: raw['task-poll-ms'],
   });
 
-  const api: Record<string, unknown> = {
+  // Menus render in the shell document (showMenu appends there), so viewport
+  // coordinates stay correct across shadow boundaries. Callable *and* carrying
+  // `addDefaultItems`: an object literal cannot satisfy a call signature, hence
+  // Object.assign, whose intersection type can.
+  const contextMenu: Metafolder.ContextMenu = Object.assign(
+    (event: MouseEvent, items: Metafolder.MenuItem[]) => {
+      event.preventDefault();
+      event.stopPropagation();
+      showMenu(items, { x: event.clientX, y: event.clientY });
+    },
+    {
+      addDefaultItems: (provider: (event: MouseEvent) => Metafolder.MenuItem[]) =>
+        deps.addDefaultMenuItems(provider),
+    },
+  );
+
+  const api: MetafolderApi = {
     // `mount` runs after init, so nothing to wait for; kept for compatibility.
     ready: Promise.resolve(),
 
@@ -232,14 +248,14 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         }
         return response.body;
       },
-      parseQuery: (dsl: string) => (api.query as { parse: (d: string) => unknown }).parse(dsl),
-      expandQuery: (s: string) => (api.query as { expand: (t: string) => unknown }).expand(s),
+      parseQuery: (dsl: string) => api.query.parse(dsl),
+      expandQuery: (s: string) => api.query.expand(s),
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
       resolveTreeRef: (repo: string, value: { parent: string | null; name: string }) =>
         resolverFor(repo).resolveTreeRef(value),
       invalidatePath: (repo: string, uuid: string) => resolverFor(repo).invalidate(uuid),
-      repoRoot: async (repo: string) => (await repoInfo(repo)).root,
-      repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir,
+      repoRoot: async (repo: string) => (await repoInfo(repo)).root as string,
+      repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir as string,
       metarecordPaths: async (repo: string, metarecord: { uuid: string }) => {
         const root = (await repoInfo(repo)).root as string;
         const response = await daemonRequest('POST', `/repos/${repo}/tree/resolve`, {
@@ -286,7 +302,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     // injected so the result returns to this panel's own workspace.
     pick: {
       start: (spec: Record<string, unknown>) =>
-        invoke('pick_start', { spec: { ...spec, callerWs: ctx.wsId } }),
+        invoke('pick_start', { spec: { ...spec, callerWs: ctx.wsId } }) as Promise<string>,
     },
 
     // Read-only GUI configuration a panel may need.
@@ -298,8 +314,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
     workspace: {
       get: (key: string) => invoke('ws_get_var', { wsId: ctx.wsId, key }),
-      set: (key: string, value: unknown) => invoke('ws_set_var', { wsId: ctx.wsId, key, value }),
-      adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }),
+      set: (key: string, value: unknown) =>
+        invoke('ws_set_var', { wsId: ctx.wsId, key, value }) as Promise<void>,
+      adoptRepo: (repo: string) => invoke('adopt_repo', { wsId: ctx.wsId, repo }) as Promise<void>,
       onChange(key: string, listener: (value: unknown, key?: string) => void) {
         let set = varListeners.get(key);
         if (!set) {
@@ -350,52 +367,44 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
 
     fs: {
-      readDir: (path: string) => invoke('fs_read_dir', { path }),
+      readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
       stat: (path: string) => invoke('fs_stat', { path }),
-      homeDir: () => invoke('fs_home_dir'),
+      homeDir: () => invoke('fs_home_dir') as Promise<string>,
     },
 
     /** Per-repo input history (spec-gui "Input history") — GUI-side files
      *  under `.metafolder/gui/history/<zone>`; the store behind the shared
      *  `attachHistory` helper (`/__history.js`). */
     history: {
-      read: (repo: string, zone: string) => invoke('history_read', { repo, zone }),
+      read: (repo: string, zone: string) =>
+        invoke('history_read', { repo, zone }) as Promise<string[]>,
       append: (repo: string, zone: string, entry: string) =>
-        invoke('history_append', { repo, zone, entry }),
+        invoke('history_append', { repo, zone, entry }) as Promise<void>,
     },
 
     statusBar: {
       message: (text: string, timeoutMs: number | null = null) =>
-        invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }),
+        invoke('post_status', { wsId: ctx.wsId, text, kind: 'info', timeoutMs }) as Promise<void>,
       error: (error: unknown, timeoutMs = 8000) =>
         invoke('post_status', {
           wsId: ctx.wsId,
           text: String((error as { message?: unknown })?.message ?? error),
           kind: 'info',
           timeoutMs,
-        }),
+        }) as Promise<void>,
     },
 
     messages: {
-      list: () => invoke('get_messages', { wsId: ctx.wsId }),
+      list: () => invoke('get_messages', { wsId: ctx.wsId }) as Promise<unknown[]>,
       /** Appends a line to this workspace's persistent message log. */
-      append: (text: string) => invoke('append_message', { wsId: ctx.wsId, text }),
+      append: (text: string) =>
+        invoke('append_message', { wsId: ctx.wsId, text }) as Promise<void>,
       onAppend(listener: (entry: unknown) => void) {
         messageListeners.add(listener);
       },
     },
+    contextMenu,
   };
-
-  // Context menu: menus render in the shell document (showMenu appends there),
-  // so viewport coordinates are correct across shadow boundaries.
-  const contextMenu = (event: MouseEvent, items: unknown[]) => {
-    event.preventDefault();
-    event.stopPropagation();
-    return showMenu(items, { x: event.clientX, y: event.clientY });
-  };
-  contextMenu.addDefaultItems = (provider: (event: MouseEvent) => unknown[]) =>
-    deps.addDefaultMenuItems(provider);
-  api.contextMenu = contextMenu;
 
   return {
     api,

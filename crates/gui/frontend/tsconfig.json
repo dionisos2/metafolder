@@ -22,5 +22,5 @@
       "/__coalesce.js": ["../panel-shim/coalesce.js"]
     }
   },
-  "include": ["src", "tests"]
+  "include": ["src", "tests", "types"]
 }

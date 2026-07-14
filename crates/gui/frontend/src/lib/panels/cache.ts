@@ -12,11 +12,8 @@ export interface DaemonResponse {
   body: unknown;
 }
 
-interface Metarecord {
-  uuid: string;
-  version?: number;
-  fields?: unknown[];
-}
+/** The data-model shape, declared once in types/metafolder-api.d.ts. */
+type Metarecord = Metafolder.Metarecord;
 
 /** Performs the real daemon round-trip (a cache miss). */
 export type RawFetcher = (
@@ -382,6 +379,9 @@ export function createCache(opts: CacheOptions = {}) {
     if (typeof next.maxQueries === 'number' && next.maxQueries > 0) maxQueries = next.maxQueries;
   }
 
+  // `as const`: a mutable property would widen REFRESH from `unique symbol` to
+  // `symbol`, and `value === cache.REFRESH` would then stop narrowing the union
+  // for the panels that read it.
   return {
     request,
     sync,
@@ -405,7 +405,7 @@ export function createCache(opts: CacheOptions = {}) {
       fields: fields.size,
     }),
     _lastHead: (repo: string) => lastHead.get(repo),
-  };
+  } as const;
 }
 
 export type Cache = ReturnType<typeof createCache>;
