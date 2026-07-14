@@ -5,7 +5,11 @@
 import { describe, expect, test } from 'vitest';
 import { schemaTypes, templateFields } from '../../panel-shim/schema-template.js';
 
-const schema = {
+// The JSDoc typedef the module exports — so the fixture's `targets: '*'` stays
+// the literal it must be, instead of widening to `string`.
+type Schema = import('../../panel-shim/schema-template.js').Schema;
+
+const schema: Schema = {
   version: 1,
   groups: [
     { targets: '*', constraints: [{ field: 'rating', type: 'int' }] },
@@ -69,7 +73,7 @@ describe('templateFields', () => {
   });
 
   test('de-duplicates a field, preferring the occurrence carrying a default', () => {
-    const dup = {
+    const dup: Schema = {
       version: 1,
       groups: [
         { targets: '*', constraints: [{ field: 'x', type: 'string' }] },

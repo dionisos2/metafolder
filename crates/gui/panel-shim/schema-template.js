@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Schema-driven templates for new metarecords (spec-schema). The user schema
 // (returned verbatim by GET /repos/:repo/schema) declares metarecord types
 // (the target names of its groups) and the fields each type constrains. The
@@ -6,8 +5,24 @@
 // and to pre-stage the chosen type's fields. Pure functions over the raw schema
 // JSON, so they are unit-tested in isolation.
 
-/** Sorted, unique list of the schema's declared types (all non-"*" targets). */
+/**
+ * The user schema, as `GET /repos/:repo/schema` returns it verbatim
+ * (spec-schema). Mirrors `RawSchema`/`RawGroup`/`RawConstraint` in the daemon's
+ * schema.rs, which are `deny_unknown_fields` — so this is the complete shape,
+ * not a convenient subset.
+ *
+ * @typedef {{field: string, type?: string, min?: number, max?: number|null,
+ *            description?: string|null, default?: unknown}} Constraint
+ * @typedef {{targets: '*'|string[], constraints?: Constraint[]}} Group
+ * @typedef {{version?: number, groups?: Group[]}|null|undefined} Schema
+ */
+
+/**
+ * Sorted, unique list of the schema's declared types (all non-"*" targets).
+ * @param {Schema} schema
+ */
 export function schemaTypes(schema) {
+  /** @type {Set<string>} */
   const types = new Set();
   for (const group of schema?.groups ?? []) {
     if (Array.isArray(group.targets)) {
@@ -17,7 +32,10 @@ export function schemaTypes(schema) {
   return [...types].sort();
 }
 
-/** True when a group applies to `type` (global "*" group or a matching list). */
+/**
+ * True when a group applies to `type` (global "*" group or a matching list).
+ * @param {Group} group @param {string} type
+ */
 function groupApplies(group, type) {
   return group.targets === '*' || (Array.isArray(group.targets) && group.targets.includes(type));
 }
@@ -30,13 +48,26 @@ function groupApplies(group, type) {
  * templated as `Nothing`. A field appearing in several applicable groups is
  * staged once, preferring the occurrence that carries a default.
  */
+/**
+ * @param {Constraint} c
+ * @returns {Metafolder.Value}
+ */
 function constraintValue(c) {
   // `'default' in c` (not truthiness) so a falsy default (0, '', false) counts.
-  return 'default' in c ? { type: c.type ?? 'string', value: c.default } : { type: 'nothing' };
+  return 'default' in c
+    ? /** @type {Metafolder.Value} */ ({ type: c.type ?? 'string', value: c.default })
+    : { type: 'nothing' };
 }
 
+/**
+ * @param {Schema} schema
+ * @param {string} type
+ * @returns {{name: string, value: Metafolder.Value}[]}
+ */
 export function templateFields(schema, type) {
+  /** @type {{name: string, value: Metafolder.Value}[]} */
   const fields = [{ name: 'mf_schema', value: { type: 'string', value: type } }];
+  /** @type {Map<string, number>} */
   const seen = new Map(); // field name -> index in `fields`
   for (const group of schema?.groups ?? []) {
     if (!groupApplies(group, type)) continue;

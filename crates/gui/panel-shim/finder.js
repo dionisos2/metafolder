@@ -1,11 +1,11 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Finder query builder (spec-gui "Finder"): turns the quick-filter text into an
 // OSM sub-query OR-combined across a set of target fields and AND-ed with the
 // panel's base query. Pure, framework-free, shared with the panels and unit
 // tested (frontend/tests/finder.test.ts).
 
 /** Splits the finder text into OSM terms on whitespace, dropping empty runs
- *  (the client-side mirror of `core::query::split_terms`). */
+ *  (the client-side mirror of `core::query::split_terms`).
+ *  @param {string} text */
 export function splitTerms(text) {
   return text.trim().split(/\s+/).filter(Boolean);
 }
@@ -18,7 +18,12 @@ export function splitTerms(text) {
  *  path (`osm`, mode `path`), everything else — including an unknown/not-yet-
  *  loaded field — searches the value directly (`osmd`, mode `direct`), which
  *  never errors. `typeOf(field)` returns the catalog value type (or
- *  null / REFRESH when unknown). */
+ *  null / REFRESH when unknown).
+ *
+ * @param {string[]} entries
+ * @param {(field: string) => string|null|symbol} typeOf
+ * @returns {{field: string, mode: 'path'|'direct'}[]}
+ */
 export function finderTargets(entries, typeOf) {
   return entries.map((entry) => {
     const cut = entry.lastIndexOf(':');
@@ -31,7 +36,12 @@ export function finderTargets(entries, typeOf) {
 }
 
 /** Builds the OSM filter for `terms` across `targets`, or null when there are no
- *  terms (finder inactive). A single target is used bare; several are OR-ed. */
+ *  terms (finder inactive). A single target is used bare; several are OR-ed.
+ *
+ * @param {string[]} terms
+ * @param {{field: string, mode: 'path'|'direct'}[]} targets
+ * @returns {Record<string, unknown>|null}
+ */
 export function finderClause(terms, targets) {
   if (terms.length === 0) return null;
   const ops = targets.map((t) => ({ type: 'osm', field: t.field, terms, mode: t.mode }));
@@ -42,7 +52,11 @@ export function finderClause(terms, targets) {
  *  query_exec.rs): every term must appear as a substring, in order and
  *  non-overlapping, case-insensitive on both sides; an empty term list matches
  *  everything. No `/` barrier — that is a property of path-mode term
- *  construction, not of this check. */
+ *  construction, not of this check.
+ *
+ * @param {string} haystack
+ * @param {string[]} terms
+ */
 export function osmMatch(haystack, terms) {
   const lower = haystack.toLowerCase();
   let from = 0;
@@ -55,7 +69,13 @@ export function osmMatch(haystack, terms) {
   return true;
 }
 
-/** Combines the base query IR (null = match all) with the finder clause. */
+/**
+ * Combines the base query IR (null = match all) with the finder clause.
+ *
+ * @param {Record<string, unknown>|null} baseIR
+ * @param {Record<string, unknown>|null} clause
+ * @returns {Record<string, unknown>|null}
+ */
 export function composeQuery(baseIR, clause) {
   if (!clause) return baseIR;
   if (!baseIR) return clause;

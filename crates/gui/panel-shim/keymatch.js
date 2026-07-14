@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Shared keybinding matcher, used identically by the Svelte shell and the
 // panel shim (key events inside an iframe never reach the parent, so each
 // document runs its own matcher against the same compiled table).
@@ -46,15 +45,23 @@ const SPECIAL_KEYS = {
 };
 const MODIFIER_KEYS = new Set(['control', 'shift', 'alt', 'meta', 'altgraph']);
 
-// Normalizes a KeyboardEvent(-like) object into the combo syntax produced
-// by the Rust engine; null for modifier-only events.
+/**
+ * Normalizes a KeyboardEvent(-like) object into the combo syntax produced by
+ * the Rust engine; null for modifier-only events.
+ *
+ * @param {{key?: string, ctrlKey?: boolean, altKey?: boolean,
+ *          shiftKey?: boolean, metaKey?: boolean}} event
+ * @returns {string|null}
+ */
 export function comboFromEvent(event) {
   const raw = event.key;
   if (raw === undefined || raw === null) return null;
   const lower = raw.toLowerCase();
   if (MODIFIER_KEYS.has(lower)) return null;
 
-  const key = SPECIAL_KEYS[raw] ?? SPECIAL_KEYS[lower] ?? lower;
+  const special = /** @type {Record<string, string|undefined>} */ (SPECIAL_KEYS);
+  const key = special[raw] ?? special[lower] ?? lower;
+  /** @type {string[]} */
   const parts = [];
   if (event.ctrlKey) parts.push('ctrl');
   if (event.altKey) parts.push('alt');
@@ -73,13 +80,23 @@ export function comboFromEvent(event) {
   return parts.join('+');
 }
 
+/**
+ * The context one key event is matched in.
+ *
+ * @typedef {{panelType?: string|null, textInput?: boolean, focus?: string|null}} MatchContext
+ */
+
+/** @param {Binding[]} [bindings] */
 export function createMatcher(bindings) {
   let table = bindings ?? [];
 
+  /** @type {string[]} */
   let buffer = [];
 
+  /** @param {unknown} value */
   const has = (value) => value !== null && value !== undefined;
 
+  /** @param {Binding} binding @param {MatchContext} context */
   function eligible(binding, context) {
     // A focus-scoped binding targets one named widget (e.g. the finder input):
     // it fires only while that widget is focused, and does so regardless of the
@@ -96,6 +113,7 @@ export function createMatcher(bindings) {
 
   // Lower rank = higher precedence. Focus dominates panel-locality, which
   // dominates global; text-input=false beats text-input=true within a tier.
+  /** @param {Binding} binding */
   function rank(binding) {
     const focus = has(binding.focus) ? 0 : 4;
     const local = has(binding.when) ? 0 : 2;
@@ -103,27 +121,31 @@ export function createMatcher(bindings) {
     return focus + local + strict;
   }
 
+  /** @param {string[]} a @param {string[]} b */
   function sameKeys(a, b) {
     return a.length === b.length && a.every((key, index) => key === b[index]);
   }
 
+  /** @param {string[]} keys @param {string[]} prefix */
   function startsWith(keys, prefix) {
     return keys.length > prefix.length && prefix.every((key, index) => key === keys[index]);
   }
 
-  /** @returns {MatchResult|null} */
+  /** @param {string[]} keys @param {MatchContext} context @returns {MatchResult|null} */
   function tryMatch(keys, context) {
     const eligibles = table.filter((binding) => eligible(binding, context));
     const exact = eligibles
       .filter((binding) => sameKeys(binding.keys, keys))
       .sort((a, b) => rank(a) - rank(b));
     if (exact.length > 0) return { invocation: exact[0].invocation };
+    /** @type {Binding[]} */
     const candidates = eligibles.filter((binding) => startsWith(binding.keys, keys));
     if (candidates.length > 0) return { pending: true, prefix: keys, candidates };
     return null;
   }
 
   return {
+    /** @param {Binding[]} [next] */
     setBindings(next) {
       table = next ?? [];
       buffer = [];
@@ -136,7 +158,7 @@ export function createMatcher(bindings) {
     // pending sequence), {unknown: true, sequence} (a key that does not
     // continue the pending sequence — the combo is swallowed and aborted,
     // no other binding fires), or null. A pending sequence never expires.
-    /** @returns {MatchResult|null} */
+    /** @param {string} combo @param {MatchContext} context @returns {MatchResult|null} */
     feed(combo, context) {
       if (buffer.length > 0 && combo === 'escape') {
         buffer = [];
@@ -153,7 +175,8 @@ export function createMatcher(bindings) {
         return { unknown: true, sequence };
       }
 
-      buffer = result?.pending ? result.prefix : [];
+      // Only a pending result carries a prefix — the union says so.
+      buffer = result && 'pending' in result ? result.prefix : [];
       return result;
     },
   };

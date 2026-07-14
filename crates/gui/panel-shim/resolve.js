@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // TreeRef path resolution with a memo cache (spec-gui "Path display"). Paths
 // are repo-root-relative ('/'-joined names). Resolution is delegated to the
 // daemon's tree-resolve endpoint (one round-trip, no client-side chain walk);
@@ -19,6 +18,7 @@
 export function createPathResolver(resolvePaths) {
   const cache = new Map(); // uuid -> Promise<relative path>
 
+  /** @param {string} uuid @returns {Promise<string>} */
   function resolveUuid(uuid) {
     if (!cache.has(uuid)) {
       const promise = compute(uuid);
@@ -29,6 +29,7 @@ export function createPathResolver(resolvePaths) {
     return cache.get(uuid);
   }
 
+  /** @param {string} uuid */
   async function compute(uuid) {
     const byUuid = await resolvePaths([uuid]);
     const paths = byUuid[uuid] ?? [];
@@ -46,6 +47,6 @@ export function createPathResolver(resolvePaths) {
   return {
     resolveUuid,
     resolveTreeRef,
-    invalidate: (uuid) => cache.delete(uuid),
+    invalidate: (/** @type {string} */ uuid) => cache.delete(uuid),
   };
 }

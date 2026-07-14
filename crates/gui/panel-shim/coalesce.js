@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Input-burst coalescing for async side effects. A held-down key repeats
 // faster than a workspace.set round-trip (Tauri IPC + the panels reacting to
 // the variable change), so naively awaiting the effect once per key event
@@ -11,11 +10,20 @@
 // only the final state matters). Collapsed callers get the trailing run's
 // promise, so awaiting still means "the effect has caught up with my call".
 
+/**
+ * @template {any[]} A
+ * @param {(...args: A) => unknown} fn
+ * @returns {(...args: A) => Promise<unknown>}
+ */
 export function latestOnly(fn) {
+  /** @type {Promise<unknown>|null} */
   let inFlight = null; // promise of the running fn, null when idle
+  /** @type {Promise<unknown>|null} */
   let trailing = null; // promise of the single queued re-run, null when none
+  /** @type {A|null} */
   let trailingArgs = null; // latest-wins arguments for the trailing re-run
 
+  /** @param {A} args @returns {Promise<unknown>} */
   return function call(...args) {
     if (inFlight === null) {
       // fn starts synchronously (the first key event propagates right away);
@@ -37,7 +45,7 @@ export function latestOnly(fn) {
         .catch(() => {})
         .then(() => {
           trailing = null;
-          const latest = trailingArgs;
+          const latest = /** @type {A} */ (trailingArgs);
           trailingArgs = null;
           return call(...latest);
         });

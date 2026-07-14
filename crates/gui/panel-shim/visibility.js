@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Visibility gate, served at /__visibility.js and used by the shim to
 // back metafolder.visible / metafolder.whenVisible. Panel construction
 // (command registration, listeners) happens at iframe load; expensive
@@ -10,6 +9,7 @@ export function createVisibilityGate() {
   let visible = false;
   // A Set: re-arming with the same (stable) callback while hidden must
   // not run it twice on the first show.
+  /** @type {Set<() => void>} */
   const pending = new Set();
 
   return {
@@ -18,7 +18,8 @@ export function createVisibilityGate() {
     },
 
     /** Records a visibility change; entering visibility flushes the
-     *  pending callbacks (each fires once). */
+     *  pending callbacks (each fires once).
+     *  @param {boolean} next */
     set(next) {
       visible = next;
       if (!visible) return;
@@ -27,7 +28,8 @@ export function createVisibilityGate() {
       for (const fn of ready) fn();
     },
 
-    /** Runs `fn` now when visible, otherwise once on the next show. */
+    /** Runs `fn` now when visible, otherwise once on the next show.
+     *  @param {() => void} fn */
     whenVisible(fn) {
       if (visible) fn();
       else pending.add(fn);

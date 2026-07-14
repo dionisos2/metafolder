@@ -5,13 +5,13 @@
 import { describe, expect, test, vi } from 'vitest';
 import { orphanState, orphanLabel } from '../../panel-shim/orphan.js';
 
-const treeRef = (parent: string | null, name: string) => ({
+const treeRef = (parent: string | null, name: string): Metafolder.Value => ({
   type: 'tree_ref',
   value: { parent, name },
 });
-const nothing = { type: 'nothing' };
+const nothing: Metafolder.Value = { type: 'nothing' };
 
-const metarecord = (...values: unknown[]) => ({
+const metarecord = (...values: Metafolder.Value[]): Metafolder.Metarecord => ({
   uuid: 'e1',
   fields: [
     { name: 'rating', value: { type: 'int', value: 5 } },

@@ -79,8 +79,9 @@ describe('createMatcher', () => {
       b(['ctrl+z'], 'log:undo'),
       b(['ctrl+shift+z'], 'log:redo'),
     ]);
-    const undo = comboFromEvent({ key: 'z', ctrlKey: true });
-    const redo = comboFromEvent({ key: 'Z', ctrlKey: true, shiftKey: true });
+    // Non-null: these are printable keys, not modifiers (which return null).
+    const undo = comboFromEvent({ key: 'z', ctrlKey: true })!;
+    const redo = comboFromEvent({ key: 'Z', ctrlKey: true, shiftKey: true })!;
     expect(matcher.feed(undo, noInput)).toEqual({ invocation: 'log:undo' });
     expect(matcher.feed(redo, noInput)).toEqual({ invocation: 'log:redo' });
   });
