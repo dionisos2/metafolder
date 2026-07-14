@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metarecord-list column specs (spec-gui "metarecord-list panel type").
 //
 // One token of the columns input (tokens separated by whitespace or commas;
@@ -25,13 +24,36 @@
 
 import { fields, formatValue } from '/__ui.js';
 
+/**
+ * One alternative of a field column: a base field, an optional followed field
+ * (`>`), and the display mode (`:`).
+ * @typedef {{field: string, follow: string|null, mode: string}} Alternative
+ *
+ * A parsed column: metarecord metadata (`&uuid`, `&version`) or a field column
+ * with its fallback alternatives.
+ * @typedef {{spec: string, kind: 'meta', name: string}} MetaColumn
+ * @typedef {{spec: string, kind: 'field', name: string,
+ *            alternatives: Alternative[]}} FieldColumn
+ * @typedef {MetaColumn|FieldColumn} Column
+ *
+ * Resolved display data, fetched by main.js after a page loads.
+ * @typedef {{pathsByField?: Record<string, Record<string, string[]>>,
+ *            targets?: Map<string, Metafolder.Metarecord|null>,
+ *            followedPathsByField?: Record<string, Record<string, string[]>>}} Data
+ */
+
 const META_COLUMNS = ['uuid', 'version'];
 const MODES = ['raw', 'name', 'uuid', 'path'];
 
 // Resolved display text per metarecord, keyed by column spec. Filled by
 // fillColumns, read by cellText. The WeakMap drops entries with the metarecord.
+/** @type {WeakMap<Metafolder.Metarecord, Map<string, string>>} */
 const derived = new WeakMap();
 
+/**
+ * @param {Metafolder.Metarecord} metarecord @param {Column} column
+ * @param {string} text
+ */
 function setDerived(metarecord, column, text) {
   let map = derived.get(metarecord);
   if (!map) {
@@ -46,6 +68,9 @@ function setDerived(metarecord, column, text) {
  * `{spec, kind:'field', name, alternatives:[{field, follow, mode}]}`; a meta
  * column is `{spec, kind:'meta', name}`. Throws an Error naming the offending
  * token on invalid input.
+ *
+ * @param {string} text
+ * @returns {Column[]}
  */
 export function parseColumns(text) {
   return text
@@ -62,14 +87,23 @@ export function parseColumns(text) {
         if (!META_COLUMNS.includes(name)) {
           throw new Error(`unknown metadata column "${spec}" (expected &uuid or &version)`);
         }
-        return { spec, kind: 'meta', name };
+        return /** @type {Column} */ ({ spec, kind: 'meta', name });
       }
       const alternatives = body.split('|').map((part) => parseAlternative(part, spec));
-      return { spec, kind: 'field', name: alternatives[0].field, alternatives };
+      return /** @type {Column} */ ({
+        spec,
+        kind: 'field',
+        name: alternatives[0].field,
+        alternatives,
+      });
     });
 }
 
-/** Parses one alternative `base[>follow][:mode]` of a field column. */
+/**
+ * Parses one alternative `base[>follow][:mode]` of a field column.
+ * @param {string} text @param {string} spec
+ * @returns {Alternative}
+ */
 function parseAlternative(text, spec) {
   if (text.includes('~')) {
     throw new Error(
@@ -89,6 +123,7 @@ function parseAlternative(text, spec) {
     }
   }
   let field = nav;
+  /** @type {string|null} */
   let follow = null;
   const gt = nav.indexOf('>');
   if (gt !== -1) {
@@ -103,12 +138,19 @@ function parseAlternative(text, spec) {
   return { field, follow, mode };
 }
 
-/** Meta columns are metarecord attributes, not fields: the daemon cannot sort on them. */
+/** Meta columns are metarecord attributes, not fields: the daemon cannot sort on
+ *  them — so "sortable" and "is a field column" are the same question.
+ *  @param {Column} column
+ *  @returns {column is FieldColumn} */
 export function isSortable(column) {
   return column.kind === 'field';
 }
 
-/** Projects a value through a display mode. `resolvedPaths` feeds `:path`. */
+/**
+ * Projects a value through a display mode. `resolvedPaths` feeds `:path`.
+ * @param {Metafolder.Value} value @param {string} mode
+ * @param {string[]|undefined} resolvedPaths
+ */
 function projectValue(value, mode, resolvedPaths) {
   if (value.type === 'tree_ref') {
     switch (mode) {
@@ -132,6 +174,10 @@ function projectValue(value, mode, resolvedPaths) {
  * The text of one alternative for a metarecord, or `null` when the alternative
  * has no value (so the next fallback alternative is tried). `data` carries the
  * resolved display data (absent for the daemon-free quick text).
+ *
+ * @param {Alternative} alt @param {Metafolder.Metarecord} metarecord
+ * @param {Data|undefined} data
+ * @returns {string|null}
  */
 function altText(alt, metarecord, data) {
   const baseRows = fields(metarecord, alt.field);
@@ -141,6 +187,7 @@ function altText(alt, metarecord, data) {
     return baseRows.map((f) => projectValue(f.value, alt.mode, resolved)).join(', ');
   }
   // Follow each Ref/RefBase to its target metarecord's `follow` field.
+  /** @type {string[]} */
   const out = [];
   for (const f of baseRows) {
     const v = f.value;
@@ -163,7 +210,12 @@ function altText(alt, metarecord, data) {
   return out.length > 0 ? out.join(', ') : null;
 }
 
-/** The first alternative that yields a value, or `null`. */
+/**
+ * The first alternative that yields a value, or `null`.
+ * @param {FieldColumn} column @param {Metafolder.Metarecord} metarecord
+ * @param {Data|undefined} data
+ * @returns {string|null}
+ */
 function columnText(column, metarecord, data) {
   for (const alt of column.alternatives) {
     const text = altText(alt, metarecord, data);
@@ -172,7 +224,8 @@ function columnText(column, metarecord, data) {
   return null;
 }
 
-/** Raw, daemon-free cell text (no resolution, no Ref targets). */
+/** Raw, daemon-free cell text (no resolution, no Ref targets).
+ *  @param {Column} column @param {Metafolder.Metarecord} metarecord */
 export function cellQuickText(column, metarecord) {
   if (column.kind === 'meta') {
     return column.name === 'uuid' ? metarecord.uuid : String(metarecord.version);
@@ -180,25 +233,35 @@ export function cellQuickText(column, metarecord) {
   return columnText(column, metarecord, undefined) ?? '';
 }
 
-/** Synchronous cell text: the resolved value (if `fillColumns` ran) else the quick text. */
+/** Synchronous cell text: the resolved value (if `fillColumns` ran) else the quick text.
+ *  @param {Column} column @param {Metafolder.Metarecord} metarecord */
 export function cellText(column, metarecord) {
   const resolved = derived.get(metarecord)?.get(column.spec);
   return resolved !== undefined ? resolved : cellQuickText(column, metarecord);
 }
 
-/** Fields read on the metarecord itself that need TreeRef path resolution (`:path`). */
+/** Fields read on the metarecord itself that need TreeRef path resolution (`:path`).
+ *  @param {Column[]} columns */
 export function treeRefFields(columns) {
   return distinct(columns, (a) => (a.follow === null && a.mode === 'path' ? a.field : null));
 }
 
-/** Followed fields (on Ref targets) that need TreeRef path resolution (`>x:path`). */
+/** Followed fields (on Ref targets) that need TreeRef path resolution (`>x:path`).
+ *  @param {Column[]} columns */
 export function followedTreeFields(columns) {
   return distinct(columns, (a) => (a.follow !== null && a.mode === 'path' ? a.follow : null));
 }
 
-/** Distinct field names selected by `pick` across every alternative. */
+/**
+ * Distinct field names selected by `pick` across every alternative.
+ * @param {Column[]} columns
+ * @param {(alt: Alternative) => string|null} pick
+ * @returns {string[]}
+ */
 function distinct(columns, pick) {
+  /** @type {string[]} */
   const out = [];
+  /** @type {Set<string>} */
   const seen = new Set();
   for (const c of columns) {
     if (c.kind !== 'field') continue;
@@ -213,8 +276,10 @@ function distinct(columns, pick) {
   return out;
 }
 
-/** The distinct Ref target uuids the `>` (follow) columns need dereferenced. */
+/** The distinct Ref target uuids the `>` (follow) columns need dereferenced.
+ *  @param {Column[]} columns @param {Metafolder.Metarecord[]} metarecords */
 export function refTargetUuids(columns, metarecords) {
+  /** @type {Set<string>} */
   const uuids = new Set();
   for (const c of columns) {
     if (c.kind !== 'field') continue;
@@ -236,6 +301,9 @@ export function refTargetUuids(columns, metarecords) {
  *   pathsByField:         { field: { uuid: [relPath] } }   (`:path` on the record)
  *   targets:              Map<uuid, metarecord | null>     (`>` follow targets)
  *   followedPathsByField: { field: { uuid: [relPath] } }   (`>x:path` on targets)
+ *
+ * @param {Column[]} columns @param {Metafolder.Metarecord[]} metarecords
+ * @param {Data} data
  */
 export function fillColumns(columns, metarecords, data) {
   for (const column of columns) {

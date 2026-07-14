@@ -1,26 +1,35 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Help panel (spec-gui "Help"). Loads the page set described by
 // pages/index.json, offers a grep search box on top, and resolves an exact
 // name (a page id, an alias, or a `panel:command`) straight to its page. The
 // shell hands a requested topic in via the `help.request` workspace var (set by
 // the `help` / `help:help` builtins and the help-cursor click resolution).
 
-import { el } from '/__ui.js';
+import { byId, el } from '/__ui.js';
 import { resolvePage, filterPages } from '/__help.js';
 
+/**
+ * A page of the manifest (pages/index.json), as /__help.js describes it.
+ * @typedef {import('/__help.js').Page} Page
+ * @typedef {import('/__help.js').IndexedPage} IndexedPage
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
-  const searchInput = root.getElementById('help-search');
-  const hint = root.getElementById('help-hint');
-  const results = root.getElementById('help-results');
-  const content = root.getElementById('help-content');
+  const searchInput = byId(root, 'help-search', HTMLInputElement);
+  const hint = byId(root, 'help-hint');
+  const results = byId(root, 'help-results');
+  const content = byId(root, 'help-content');
 
   const base = `${metafolder.guiServer}/panel/help/pages`;
 
   // Load the manifest and every page (raw HTML kept for display; textContent
   // built into a grep index).
+  /** @type {Page[]} */
   let manifest = [];
-  const html = new Map(); // id -> raw HTML
-  const index = []; // { id, title, text }
+  /** @type {Map<string, string>} id -> raw HTML */
+  const html = new Map();
+  /** @type {IndexedPage[]} */
+  const index = [];
   try {
     manifest = await (await fetch(`${base}/index.json`)).json();
     await Promise.all(
@@ -37,6 +46,7 @@ export async function mount(root, metafolder) {
     return;
   }
 
+  /** @param {string} id */
   function showPage(id) {
     const raw = html.get(id);
     if (raw === undefined) {
@@ -63,11 +73,12 @@ export async function mount(root, metafolder) {
     for (const link of content.querySelectorAll('a[data-help-page]')) {
       link.addEventListener('click', (event) => {
         event.preventDefault();
-        open(link.getAttribute('data-help-page'));
+        open(link.getAttribute('data-help-page') ?? '');
       });
     }
   }
 
+  /** @param {string} term */
   function showGrep(term) {
     content.hidden = true;
     content.replaceChildren();
@@ -91,6 +102,7 @@ export async function mount(root, metafolder) {
 
   // Open a page directly (used by result rows and in-page links): also reflect
   // it in the search box so the user sees the current topic.
+  /** @param {string} id */
   function open(id) {
     const page = manifest.find((p) => p.id === id);
     searchInput.value = page ? page.id : id;
@@ -99,6 +111,7 @@ export async function mount(root, metafolder) {
 
   // The search box: `#text` forces grep; otherwise an exact name opens a page,
   // and anything else greps live.
+  /** @param {string} value */
   function runSearch(value) {
     const v = value.trim();
     if (v.startsWith('#')) {
@@ -119,7 +132,9 @@ export async function mount(root, metafolder) {
 
   // Apply a requested topic from the shell. An empty topic shows the landing
   // page; an exact name opens its page; anything else greps.
-  function apply(request) {
+  /** @param {unknown} raw the `help.request` workspace variable */
+  function apply(raw) {
+    const request = /** @type {{topic?: unknown}|null} */ (raw);
     const topic = (request && request.topic ? String(request.topic) : '').trim();
     searchInput.value = topic;
     if (topic === '') {

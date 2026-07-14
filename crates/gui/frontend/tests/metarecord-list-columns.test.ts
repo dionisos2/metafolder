@@ -20,8 +20,8 @@ import {
   followedTreeFields,
 } from '../../default-config/panel-types/metarecord-list/columns.js';
 
-type Value = { type: string; value: unknown };
-type Entry = { uuid: string; version: number; fields: { name: string; value: Value }[] };
+type Value = Metafolder.Value;
+type Entry = Metafolder.Metarecord & { version: number; fields: Metafolder.Field[] };
 
 const treeRef = (parent: string | null, name: string): Value => ({
   type: 'tree_ref',
@@ -30,12 +30,20 @@ const treeRef = (parent: string | null, name: string): Value => ({
 const ref = (uuid: string): Value => ({ type: 'ref', value: uuid });
 const str = (s: string): Value => ({ type: 'string', value: s });
 
-const entry = (fields: { name: string; value: Value }[], extra = {}): Entry => ({
+const entry = (fields: Metafolder.Field[], extra = {}): Entry => ({
   uuid: 'aaaa',
   version: 7,
   fields,
   ...extra,
 });
+
+// parseColumns returns the Column union; the field-only assertions below go
+// through this so the narrowing is done once (isSortable is the type guard).
+function fieldCol(text: string, index = 0) {
+  const col = parseColumns(text)[index];
+  if (!isSortable(col)) throw new Error(`"${text}" is not a field column`);
+  return col;
+}
 
 describe('parseColumns', () => {
   test('splits on whitespace and commas', () => {
@@ -56,24 +64,24 @@ describe('parseColumns', () => {
   });
 
   test(':mode is a projection of the field value', () => {
-    expect(parseColumns('mfr_path:path')[0].alternatives).toEqual([
+    expect(fieldCol('mfr_path:path').alternatives).toEqual([
       { field: 'mfr_path', follow: null, mode: 'path' },
     ]);
-    expect(parseColumns('mfr_path:name')[0].alternatives[0].mode).toBe('name');
-    expect(parseColumns('mfr_path:uuid')[0].alternatives[0].mode).toBe('uuid');
+    expect(fieldCol('mfr_path:name').alternatives[0].mode).toBe('name');
+    expect(fieldCol('mfr_path:uuid').alternatives[0].mode).toBe('uuid');
   });
 
   test('>sub follows a reference to the target field', () => {
-    expect(parseColumns('tag>label')[0].alternatives).toEqual([
+    expect(fieldCol('tag>label').alternatives).toEqual([
       { field: 'tag', follow: 'label', mode: 'raw' },
     ]);
-    expect(parseColumns('tag>path:name')[0].alternatives).toEqual([
+    expect(fieldCol('tag>path:name').alternatives).toEqual([
       { field: 'tag', follow: 'path', mode: 'name' },
     ]);
   });
 
   test('| builds a fallback chain; the sort field is the first alternative', () => {
-    const col = parseColumns('tag>label | tag>path:name')[0];
+    const col = fieldCol('tag>label | tag>path:name');
     expect(col.name).toBe('tag');
     expect(col.alternatives).toEqual([
       { field: 'tag', follow: 'label', mode: 'raw' },
@@ -82,7 +90,7 @@ describe('parseColumns', () => {
   });
 
   test('parentheses around a fallback group are optional and stripped', () => {
-    const col = parseColumns('(label | path:name)')[0];
+    const col = fieldCol('(label | path:name)');
     expect(col.kind).toBe('field');
     expect(col.name).toBe('label');
     expect(col.alternatives).toEqual([
@@ -198,9 +206,9 @@ describe('fillColumns + cellText (resolved display)', () => {
     spec: string,
     e: Entry,
     data: {
-      pathsByField?: unknown;
+      pathsByField?: Record<string, Record<string, string[]>>;
       targets?: Record<string, Entry>;
-      followedPathsByField?: unknown;
+      followedPathsByField?: Record<string, Record<string, string[]>>;
     } = {},
   ) {
     const cols = parseColumns(spec);
