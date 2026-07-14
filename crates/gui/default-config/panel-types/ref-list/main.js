@@ -1,56 +1,77 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // ref-list panel: lists the metarecords whose chosen Ref field points to the
 // tree node currently selected in the treeref panel (via `selected_treeref`),
 // either exactly or including the node's descendants in the tree forest. Picks
 // a Ref field name from the repo's Ref fields. Selecting a row publishes
 // `selected_metarecord` / `selected_paths`. Spec-gui "ref-list panel type".
 
-import { el } from '/__ui.js';
+import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { refListQuery } from './queries.js';
 
 const PAGE_DEFAULT = 100;
 
+/**
+ * The tree node the treeref panel published in `selected_treeref`.
+ * @typedef {{repo: string, field: string, uuid: string, path: string}} Target
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, cache } = metafolder;
+  // Annotated: an unannotated `const x = cache.REFRESH` widens the unique symbol
+  // to plain `symbol`, and `value === x` then narrows nothing.
+  /** @type {Metafolder.Refresh} */
   const REFRESH = cache.REFRESH;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
-  let repo = null; // repo used to list Ref fields (the active repo)
-  let target = null; // {repo, field (tree field), uuid, path} from selected_treeref
+  /** @type {string|null} repo used to list Ref fields (the active repo) */
+  let repo = null;
+  /** @type {Target|null} the node selected in the treeref panel */
+  let target = null;
+  /** @type {string|null} */
   let refField = null;
   let mode = 'exact';
-  let records = []; // metarecord objects (select '*') referencing the node
+  /** @type {Metafolder.Metarecord[]} metarecords (select '*') referencing the node */
+  let records = [];
+  /** @type {string|null} */
   let nextCursor = null;
   let cursorIndex = -1;
   let loading = false;
-  let repoRoots = new Map(); // repo -> absolute root path (for selected_paths)
+  /** @type {Map<string, string>} repo -> absolute root path (for selected_paths) */
+  const repoRoots = new Map();
 
-  const fieldSelect = root.getElementById('field');
-  const modeSelect = root.getElementById('mode');
-  const targetLine = root.getElementById('target');
-  const entriesList = root.getElementById('entries');
-  const placeholderElement = root.getElementById('placeholder');
-  const statusLine = root.getElementById('status-line');
-  const listingElement = root.getElementById('listing');
+  const fieldSelect = byId(root, 'field', HTMLSelectElement);
+  const modeSelect = byId(root, 'mode', HTMLSelectElement);
+  const targetLine = byId(root, 'target');
+  const entriesList = byId(root, 'entries');
+  const placeholderElement = byId(root, 'placeholder');
+  const statusLine = byId(root, 'status-line');
+  const listingElement = byId(root, 'listing');
 
   // The repo the queries run against: the selected node's repo when there is a
   // selection, else the active repo (for populating the field picker).
   const queryRepo = () => target?.repo ?? repo;
 
+  /** @param {string} r @returns {Promise<string>} */
   async function rootOf(r) {
-    if (!repoRoots.has(r)) repoRoots.set(r, await daemon.repoRoot(r));
-    return repoRoots.get(r);
+    const known = repoRoots.get(r);
+    if (known !== undefined) return known;
+    const path = await daemon.repoRoot(r);
+    repoRoots.set(r, path);
+    return path;
   }
 
   // ── Field picker ──────────────────────────────────────────────────────────
 
   async function loadFields() {
+    /** @type {{name: string}[]} */
     let list = [];
     const r = queryRepo();
     if (r) {
       try {
-        list = (await daemon.call('GET', `/repos/${r}/fields?type=ref`)) ?? [];
+        list = /** @type {{name: string}[]} */ (
+          (await daemon.call('GET', `/repos/${r}/fields?type=ref`)) ?? []
+        );
       } catch (error) {
         await statusBar.error(error);
       }
@@ -74,6 +95,7 @@ export async function mount(root, metafolder) {
     }
   }
 
+  /** @param {boolean} reset */
   async function fetchPage(reset) {
     const r = queryRepo();
     if (!r || !target || !refField || loading) {
@@ -105,7 +127,9 @@ export async function mount(root, metafolder) {
         await statusBar.error(error);
         return;
       }
-      const fetched = result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH);
+      const fetched = /** @type {Metafolder.Metarecord[]} */ (
+        result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
+      );
       records = records.concat(fetched);
       nextCursor = result.nextCursor;
       // Resolve mfr_path for display / selected_paths (best-effort).
@@ -117,11 +141,16 @@ export async function mount(root, metafolder) {
   }
 
   // Relative mfr_path positions of a record (read from the cache), or [].
+  /** @param {Metafolder.Metarecord} record @returns {string[]} */
   function relPathsOf(record) {
-    const paths = cache.readTreeRef(queryRepo(), 'mfr_path', record.uuid);
-    return paths === REFRESH ? [] : paths;
+    const r = queryRepo();
+    if (!r) return [];
+    const paths = cache.readTreeRef(r, 'mfr_path', record.uuid);
+    if (paths === REFRESH) return [];
+    return paths;
   }
 
+  /** @param {Metafolder.Metarecord} record */
   function displayName(record) {
     const rel = relPathsOf(record)[0];
     if (rel === undefined) return record.uuid.slice(0, 8);
@@ -159,6 +188,7 @@ export async function mount(root, metafolder) {
       (nextCursor ? ' (more — scroll down)' : '');
   }
 
+  /** @param {number} index */
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, records.length - 1));
     render();
@@ -166,6 +196,7 @@ export async function mount(root, metafolder) {
     if (!record) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
     const r = queryRepo();
+    if (!r) return;
     const rootPath = await rootOf(r);
     const paths = relPathsOf(record).map((rel) => (rel === '' ? rootPath : `${rootPath}/${rel}`));
     await workspace.set('selected_metarecord', { uuid: record.uuid, repo: r });
@@ -197,7 +228,7 @@ export async function mount(root, metafolder) {
     mode = modeSelect.value === 'descendants' ? 'descendants' : 'exact';
     void fetchPage(true);
   });
-  root.getElementById('refresh').addEventListener('click', () => void refresh());
+  byId(root, 'refresh').addEventListener('click', () => void refresh());
 
   async function refresh() {
     await loadFields();
@@ -240,8 +271,8 @@ export async function mount(root, metafolder) {
   // Keybindings for this panel live in keybindings.toml (when = "ref-list").
 
   async function start() {
-    repo = await workspace.get('active_repo');
-    target = (await workspace.get('selected_treeref')) ?? null;
+    repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
+    target = /** @type {Target|null} */ ((await workspace.get('selected_treeref')) ?? null);
     modeSelect.value = mode;
     await loadFields();
     await fetchPage(true);
@@ -250,7 +281,7 @@ export async function mount(root, metafolder) {
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
   workspace.onChange('selected_treeref', (value) => {
-    target = value ?? null;
+    target = /** @type {Target|null} */ (value ?? null);
     metafolder.whenVisible(async () => {
       await loadFields(); // the node's repo may differ from the active one
       await fetchPage(true);
