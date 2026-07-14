@@ -197,8 +197,9 @@ declare namespace Metafolder {
     onAppend(listener: (entry: unknown) => void): void;
   }
 
-  /** One context-menu entry; a separator is `null`. */
-  type MenuItem = { label: string; action: () => void } | null;
+  /** One context-menu entry, or the string `'-'` for a separator. */
+  type MenuEntry = { label: string; action?: () => void; disabled?: boolean };
+  type MenuItem = MenuEntry | '-';
 
   /** Callable *and* carrying `addDefaultItems` — hence the `Object.assign` in
    *  api.ts: a plain object literal cannot satisfy a call signature. */

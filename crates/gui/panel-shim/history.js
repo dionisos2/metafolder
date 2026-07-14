@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Input-history helper (spec-gui "Input history"), shared by the shell
 // command input and the panel text zones. One history per repository × zone,
 // stored GUI-side under the repo's `.metafolder/gui/history/` (the Tauri
@@ -68,10 +67,13 @@ const MAX_SESSION_ENTRIES = 1000;
 
 /** Newest-first view of `entries` (stored oldest first): deduplicated (the
  *  newest occurrence wins) and filtered by OSM over the whitespace-split
- *  `text` terms. Empty text keeps everything. */
+ *  `text` terms. Empty text keeps everything.
+ *  @param {string[]} entries @param {string} text */
 export function filterHistory(entries, text) {
   const terms = splitTerms(text || '');
+  /** @type {Set<string>} */
   const seen = new Set();
+  /** @type {string[]} */
   const out = [];
   for (let i = entries.length - 1; i >= 0; i--) {
     const entry = entries[i];
@@ -84,10 +86,11 @@ export function filterHistory(entries, text) {
 
 /** Installs the overlay stylesheet once per root (document head or the
  *  panel's shadow root — `document.head` styles are invisible to shadow
- *  trees, so the target is derived from the container). */
+ *  trees, so the target is derived from the container).
+ *  @param {Element} container */
 function ensureStyle(container) {
   const root = container.getRootNode();
-  const target = root === document ? document.head : root;
+  const target = root === document ? document.head : /** @type {ShadowRoot} */ (root);
   if (target.querySelector('#mf-history-style')) return;
   const style = document.createElement('style');
   style.id = 'mf-history-style';
@@ -109,17 +112,36 @@ function ensureStyle(container) {
  *
  * Returns `{push, detach}`: call `push(text)` on submit; `detach()` on
  * cleanup.
+ *
+ * @typedef {{list: string[], index: number, draft: string}} Nav
+ *          The walk in progress; `index === list.length` is the draft.
+ * @typedef {{value?: string|null, refocus?: boolean}} CloseOptions
+ * @typedef {{el: HTMLElement, close: (options?: CloseOptions) => void}} Overlay
+ *
+ * @param {HTMLInputElement|HTMLTextAreaElement} input
+ * @param {{
+ *   zone: string|null|(() => string|null),
+ *   read: (repo: string, zone: string) => Promise<string[]>,
+ *   append: (repo: string, zone: string, entry: string) => Promise<unknown>,
+ *   getRepo: () => Promise<string|null>,
+ *   container: HTMLElement,
+ * }} options
  */
 export function attachHistory(input, { zone, read, append, getRepo, container }) {
-  const sessionEntries = new Map(); // zone name → oldest-first entries
-  let nav = null; // { list, index, draft } — index list.length = the draft
-  let starting = null; // in-flight nav-session load (collapses rapid ctrl-p)
+  /** @type {Map<string, string[]>} zone name → oldest-first entries */
+  const sessionEntries = new Map();
+  /** @type {Nav|null} */
+  let nav = null;
+  /** @type {Promise<void>|null} in-flight nav-session load (collapses rapid ctrl-p) */
+  let starting = null;
   let applying = false; // true while dispatching our own `input` event
-  let overlay = null; // { el, close }
+  /** @type {Overlay|null} */
+  let overlay = null;
   let opening = false;
 
   const zoneOf = () => (typeof zone === 'function' ? zone() : zone) || null;
 
+  /** @param {string} zoneName @returns {Promise<string[]>} */
   async function loadEntries(zoneName) {
     let repo = null;
     try {
@@ -136,6 +158,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     }
   }
 
+  /** @param {string} value */
   function setValue(value) {
     input.value = value;
     applying = true;
@@ -147,10 +170,12 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     }
   }
 
+  /** @param {Nav} nav @returns {string} */
   function currentOf(nav) {
     return nav.index === nav.list.length ? nav.draft : nav.list[nav.index];
   }
 
+  /** @param {string} zoneName */
   async function ensureNav(zoneName) {
     if (nav) return;
     if (!starting) {
@@ -164,6 +189,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     await starting;
   }
 
+  /** @param {string} zoneName */
   async function stepBack(zoneName) {
     await ensureNav(zoneName);
     if (!nav || nav.index === 0) return;
@@ -177,6 +203,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     setValue(currentOf(nav));
   }
 
+  /** @param {string} zoneName */
   async function openOverlay(zoneName) {
     if (overlay || opening) return;
     opening = true;
@@ -228,23 +255,26 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
       });
     }
 
+    /** @param {number} delta */
     function move(delta) {
       if (matches.length === 0) return;
       selected = Math.min(Math.max(selected + delta, 0), Math.min(matches.length, MAX_RENDERED) - 1);
       render();
     }
 
+    /** @param {CloseOptions} [options] */
     function close({ value = null, refocus = false } = {}) {
       if (!overlay) return;
       overlay = null;
-      box.removeEventListener('focusout', onFocusOut);
+      box.removeEventListener('focusout', /** @type {EventListener} */ (onFocusOut));
       box.remove();
       if (value !== null) setValue(value);
       if (refocus) input.focus();
     }
 
+    /** @param {FocusEvent} event */
     function onFocusOut(event) {
-      const to = event.relatedTarget;
+      const to = /** @type {Node|null} */ (event.relatedTarget);
       if (to && box.contains(to)) return;
       // Focus left the overlay (click elsewhere, or the shell's global
       // Escape → blur): cancel without stealing the focus back.
@@ -277,7 +307,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
       selected = 0;
       render();
     });
-    box.addEventListener('focusout', onFocusOut);
+    box.addEventListener('focusout', /** @type {EventListener} */ (onFocusOut));
 
     render();
     container.appendChild(box);
@@ -285,6 +315,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     search.focus();
   }
 
+  /** @param {KeyboardEvent} e */
   function onKeydown(e) {
     if (!e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.key !== 'p' && e.key !== 'n' && e.key !== 'r') return;
@@ -301,6 +332,7 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
     if (!applying) nav = null; // a real edit becomes the new draft
   }
 
+  /** @param {string} text */
   function push(text) {
     const entry = typeof text === 'string' ? text.trim() : '';
     if (!entry) return;
@@ -321,12 +353,12 @@ export function attachHistory(input, { zone, read, append, getRepo, container })
   }
 
   function detach() {
-    input.removeEventListener('keydown', onKeydown);
+    input.removeEventListener('keydown', /** @type {EventListener} */ (onKeydown));
     input.removeEventListener('input', onInput);
     overlay?.close();
   }
 
-  input.addEventListener('keydown', onKeydown);
+  input.addEventListener('keydown', /** @type {EventListener} */ (onKeydown));
   input.addEventListener('input', onInput);
   return { push, detach };
 }

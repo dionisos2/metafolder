@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Pure help logic (spec-gui "Help"), shared by the help panel and the shell.
 // No DOM, no fetch — unit-tested in crates/gui/frontend/tests/help.test.ts.
 //
@@ -10,8 +9,26 @@
 //  - resolveClickTopic: the help-cursor click resolution — the nearest tagged
 //    element's topic, else the clicked slot's panel type.
 
-/** The page in `manifest` whose `id` or one of whose `aliases` equals `name`
- *  (case-insensitive). */
+/**
+ * One entry of the help manifest (`pages/index.json`).
+ *
+ * @typedef {{id: string, title: string, file: string, aliases?: string[]}} Page
+ */
+
+/**
+ * A page as indexed for grep: its rendered text alongside the manifest entry.
+ *
+ * @typedef {{id: string, title: string, text?: string}} IndexedPage
+ */
+
+/**
+ * The page in `manifest` whose `id` or one of whose `aliases` equals `name`
+ * (case-insensitive).
+ *
+ * @param {Page[]} manifest
+ * @param {string} name already lower-cased
+ * @returns {Page|null}
+ */
 function directMatch(manifest, name) {
   return (
     manifest.find(
@@ -28,7 +45,12 @@ function directMatch(manifest, name) {
  *  `prefix:rest` command name, the more specific `rest` taken as an alias
  *  (so `metarecord-list:edit-query` → the queries page), then the `prefix`
  *  taken as a panel type (so every `panel:command` lands on at least its
- *  panel's page); else null. */
+ *  panel's page); else null.
+ *
+ * @param {Page[]} manifest
+ * @param {unknown} name
+ * @returns {Page|null}
+ */
 export function resolvePage(manifest, name) {
   if (typeof name !== 'string') return null;
   const n = name.trim().toLowerCase();
@@ -49,15 +71,23 @@ export function resolvePage(manifest, name) {
  *  title matches rank above those that only match in the body. Returns
  *  `{id, title, snippet}` (the snippet is a short window around the first body
  *  hit, or the title for title-only hits). An empty term returns every page,
- *  ordered by title. */
+ *  ordered by title.
+ *
+ * @param {IndexedPage[]} index
+ * @param {string|null|undefined} term
+ * @returns {{id: string, title: string, snippet: string}[]}
+ */
 export function filterPages(index, term) {
+  /** @param {{title: string}} a @param {{title: string}} b */
   const byTitle = (a, b) => a.title.localeCompare(b.title);
   const t = (term ?? '').trim().toLowerCase();
   if (t === '') {
     return [...index].sort(byTitle).map((p) => ({ id: p.id, title: p.title, snippet: '' }));
   }
 
+  /** @type {{id: string, title: string, snippet: string}[]} */
   const titleHits = [];
+  /** @type {{id: string, title: string, snippet: string}[]} */
   const bodyHits = [];
   for (const page of index) {
     if (page.title.toLowerCase().includes(t)) {
@@ -71,7 +101,10 @@ export function filterPages(index, term) {
   return [...titleHits, ...bodyHits];
 }
 
-/** A short text window centred on the first occurrence of `term` in `text`. */
+/**
+ * A short text window centred on the first occurrence of `term` in `text`.
+ * @param {string|undefined} text @param {string} term
+ */
 function snippetFor(text, term) {
   const body = text ?? '';
   const at = body.toLowerCase().indexOf(term);
@@ -84,7 +117,13 @@ function snippetFor(text, term) {
 /** The help topic for a clicked element, given `descriptors` in composedPath
  *  order (innermost first). The nearest element carrying a `helpTopic` wins;
  *  otherwise the nearest `slotBody` resolves to that slot's panel type via
- *  `slotPanelType`; otherwise null. */
+ *  `slotPanelType`; otherwise null.
+ *
+ * @param {({helpTopic?: string|null, slotBody?: string|null}|null|undefined)[]} descriptors
+ *   in composedPath order (innermost first)
+ * @param {(slot: string) => string|null|undefined} slotPanelType
+ * @returns {string|null}
+ */
 export function resolveClickTopic(descriptors, slotPanelType) {
   for (const d of descriptors) {
     if (d && d.helpTopic) return d.helpTopic;

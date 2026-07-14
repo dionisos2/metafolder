@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metafolder HTML context menu — served at /__menu.js for panel types and
 // imported by the shell and the shim (spec-gui "Context menus"). The
 // native WebView menu (back/forward/...) is suppressed everywhere except
@@ -46,7 +45,10 @@ const MENU_CSS = `
 // code), so the open-menu handle must live on globalThis: the shell's
 // hasOpenMenu() has to see a menu opened through the other instance, or its
 // key matcher keeps firing bindings over an open panel menu.
-const shared = (globalThis.__mfMenuState ??= { active: null }); // { close(item|null) }
+/** @typedef {{close: (item: Metafolder.MenuEntry|null) => void}} MenuHandle */
+const shared = /** @type {{__mfMenuState?: {active: MenuHandle|null}}} */ (
+  /** @type {unknown} */ (globalThis)
+).__mfMenuState ??= { active: null };
 
 function installStyle() {
   if (document.getElementById('mf-menu-style')) return;
@@ -62,8 +64,14 @@ export function hasOpenMenu() {
   return shared.active !== null;
 }
 
-/** Flips the menu to the other side of the anchor when it would overflow
- *  the viewport; never returns a negative position. */
+/**
+ * Flips the menu to the other side of the anchor when it would overflow
+ * the viewport; never returns a negative position.
+ *
+ * @param {number} x @param {number} y
+ * @param {number} menuWidth @param {number} menuHeight
+ * @param {number} viewportWidth @param {number} viewportHeight
+ */
 export function clampPosition(x, y, menuWidth, menuHeight, viewportWidth, viewportHeight) {
   let left = x;
   let top = y;
@@ -82,11 +90,17 @@ export function clampPosition(x, y, menuWidth, menuHeight, viewportWidth, viewpo
  * jumps to the first enabled item whose label starts with the typed prefix
  * (native-select typeahead: the buffer resets after a second's pause, and
  * repeating one letter cycles through its matches).
+ *
+ * @param {Metafolder.MenuItem[]} items
+ * @param {{x: number, y: number}} position viewport coordinates
+ * @returns {Promise<Metafolder.MenuEntry|null>}
  */
 export function showMenu(items, { x, y }) {
   shared.active?.close(null);
   if (!items.some((item) => item !== '-')) return Promise.resolve(null);
-  const enabled = items.filter((item) => item !== '-' && !item.disabled);
+  const enabled = /** @type {Metafolder.MenuEntry[]} */ (
+    items.filter((item) => item !== '-' && !item.disabled)
+  );
   installStyle();
 
   return new Promise((resolve) => {
@@ -95,6 +109,7 @@ export function showMenu(items, { x, y }) {
     menu.setAttribute('role', 'menu');
 
     let activeIndex = -1; // index into `enabled`
+    /** @type {Map<Metafolder.MenuEntry, HTMLElement>} */
     const itemElements = new Map(); // enabled item -> element
 
     for (const item of items) {
@@ -115,6 +130,7 @@ export function showMenu(items, { x, y }) {
       menu.append(element);
     }
 
+    /** @param {number} index index into `enabled` */
     function setActive(index) {
       const previous = itemElements.get(enabled[activeIndex]);
       previous?.classList.remove('active');
@@ -122,11 +138,16 @@ export function showMenu(items, { x, y }) {
       itemElements.get(enabled[activeIndex])?.classList.add('active');
     }
 
+    /** @param {Metafolder.MenuEntry|null} item the chosen item, null on dismissal */
     function close(item) {
       if (shared.active === handle) shared.active = null;
       menu.remove();
-      window.removeEventListener('keydown', onKeydown, { capture: true });
-      window.removeEventListener('mousedown', onMousedown, { capture: true });
+      window.removeEventListener('keydown', /** @type {EventListener} */ (onKeydown), {
+        capture: true,
+      });
+      window.removeEventListener('mousedown', /** @type {EventListener} */ (onMousedown), {
+        capture: true,
+      });
       item?.action?.();
       resolve(item);
     }
@@ -136,6 +157,7 @@ export function showMenu(items, { x, y }) {
     let typed = '';
     let typedAt = 0;
 
+    /** @param {string} char one printable character */
     function typeahead(char) {
       const now = Date.now();
       if (now - typedAt > 1000) typed = '';
@@ -156,6 +178,7 @@ export function showMenu(items, { x, y }) {
       }
     }
 
+    /** @param {KeyboardEvent} event */
     function onKeydown(event) {
       switch (event.key) {
         case 'Escape':
@@ -181,12 +204,15 @@ export function showMenu(items, { x, y }) {
       event.stopPropagation();
     }
 
+    /** @param {MouseEvent} event */
     function onMousedown(event) {
-      if (!menu.contains(event.target)) close(null);
+      if (!menu.contains(/** @type {Node|null} */ (event.target))) close(null);
     }
 
-    window.addEventListener('keydown', onKeydown, { capture: true });
-    window.addEventListener('mousedown', onMousedown, { capture: true });
+    window.addEventListener('keydown', /** @type {EventListener} */ (onKeydown), { capture: true });
+    window.addEventListener('mousedown', /** @type {EventListener} */ (onMousedown), {
+      capture: true,
+    });
     shared.active = handle;
 
     document.body.append(menu);
@@ -204,12 +230,15 @@ export function showMenu(items, { x, y }) {
 }
 
 /** Editable text fields keep the WebView's native menu: cut/copy/paste
- *  has no cheap HTML replacement. */
+ *  has no cheap HTML replacement.
+ *  @param {EventTarget|null} element the event's target */
 function keepsNativeMenu(element) {
-  const tag = element?.tagName;
+  if (!(element instanceof HTMLElement)) return false;
   return (
-    ((tag === 'INPUT' || tag === 'TEXTAREA') && !element.disabled && !element.readOnly) ||
-    element?.isContentEditable
+    ((element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) &&
+      !element.disabled &&
+      !element.readOnly) ||
+    element.isContentEditable
   );
 }
 
@@ -225,6 +254,7 @@ export function installContextMenuSuppression(target = window) {
   });
 }
 
+/** @param {string} text */
 function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   // Non-secure-context fallback: execCommand needs a live selection, and
@@ -246,14 +276,20 @@ function copyText(text) {
  * Returns `{ addItems, uninstall }`; `addItems` registers a provider
  * (`event => items`) whose items appear above the defaults — panels extend
  * the menu through `metafolder.contextMenu.addDefaultItems`.
+ *
+ * @param {Window} target
+ * @param {(invocation: string) => unknown} dispatch
  */
 export function installDefaultContextMenu(target, dispatch) {
+  /** @type {((event: MouseEvent) => Metafolder.MenuItem[])[]} */
   const providers = [];
 
+  /** @param {MouseEvent} event */
   function onContextMenu(event) {
     if (keepsNativeMenu(event.target)) return;
     if (hasOpenMenu()) return; // a more specific handler already answered
     const selection = String(target.getSelection?.() ?? '');
+    /** @type {Metafolder.MenuItem[]} */
     const items = [];
     for (const provider of providers) {
       const extra = provider(event) ?? [];
@@ -270,9 +306,11 @@ export function installDefaultContextMenu(target, dispatch) {
     void showMenu(items, { x: event.clientX, y: event.clientY });
   }
 
-  target.addEventListener('contextmenu', onContextMenu);
+  target.addEventListener('contextmenu', /** @type {EventListener} */ (onContextMenu));
   return {
-    addItems: (provider) => providers.push(provider),
-    uninstall: () => target.removeEventListener('contextmenu', onContextMenu),
+    addItems: (/** @type {(event: MouseEvent) => Metafolder.MenuItem[]} */ provider) =>
+      providers.push(provider),
+    uninstall: () =>
+      target.removeEventListener('contextmenu', /** @type {EventListener} */ (onContextMenu)),
   };
 }

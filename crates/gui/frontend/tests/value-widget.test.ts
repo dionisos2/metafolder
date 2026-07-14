@@ -155,7 +155,7 @@ describe('widgetFor', () => {
 });
 
 describe('bulkSetBody', () => {
-  const value = { type: 'int', value: 5 };
+  const value = { type: 'int', value: 5 } as const;
 
   test('a null query maps to the match-all tautology', () => {
     expect(bulkSetBody(null, 'rating', value, false)).toEqual({
