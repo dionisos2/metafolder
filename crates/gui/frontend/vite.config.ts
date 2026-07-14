@@ -21,6 +21,9 @@ const shimAlias = Object.fromEntries(
   ]),
 );
 
+/** An absolute path under crates/gui — two thirds of the GUI's JS is above the vite root. */
+const gui = (path: string) => fileURLToPath(new URL(`../${path}`, import.meta.url));
+
 export default defineConfig({
   plugins: [svelte()],
   resolve: { alias: shimAlias },
@@ -29,5 +32,37 @@ export default defineConfig({
   // also served to panel iframes by the Rust server).
   server: { port: 5173, strictPort: true, fs: { allow: ['..'] } },
   build: { target: 'esnext' },
-  test: { environment: 'jsdom' },
+  test: {
+    environment: 'jsdom',
+    // Vitest is rooted at crates/gui, NOT at the vite root (frontend/). Coverage
+    // hard-filters to the test project's root — no `include` or `coverage.root`
+    // gets around it — and panel-shim/ and the panel types live above frontend/.
+    // Rooted at frontend/ the report silently covers the Svelte shell alone (a
+    // third of the GUI) while reading as if it covered everything. Vite itself
+    // keeps frontend/ as its root for dev and build. (Resolving vitest's own
+    // packages from up here is why the repo root is an npm workspace.)
+    root: gui('.'),
+    include: ['frontend/tests/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      // `all` counts files no test imports — without it the 12 panel main.js
+      // would not appear at all, and the number would flatter us by measuring
+      // only what is already tested.
+      all: true,
+      include: [
+        'frontend/src/**/*.{ts,svelte}',
+        'panel-shim/**/*.js',
+        'default-config/panel-types/**/*.js',
+      ],
+      // The entry point and the ipc mock seam have nothing to cover.
+      exclude: ['frontend/src/main.ts', 'frontend/src/lib/ipc.ts'],
+      reporter: ['text-summary'],
+      reportsDirectory: 'frontend/coverage',
+      // The measured floor, not an aspiration: panel-shim is at 96%, the panel
+      // main.js at 14% (no test mounts a panel) and the Svelte components at 0%
+      // (no component tests at all). A ratchet, so the number cannot quietly
+      // fall; raise it as the panels get tested, never lower it to go green.
+      thresholds: { statements: 35, branches: 86, functions: 73, lines: 35 },
+    },
+  },
 });

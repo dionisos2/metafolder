@@ -4,7 +4,6 @@ benchmarks/bench_data_big/
 benchmarks/result*.txt
 benchmarks/.metafolder/
 .claude/
-crates/gui/frontend/node_modules/
 crates/gui/frontend/dist/
 crates/gui/gen/
 prompts.txt
@@ -14,3 +13,4 @@ benchmarks/bench_result
 benchmarks/A_B*
 benchmarks/real
 corrections.txt
+crates/gui/frontend/coverage/

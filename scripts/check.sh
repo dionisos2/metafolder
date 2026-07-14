@@ -17,7 +17,8 @@
 #               a compiler: vite strips the types without checking them.
 #               svelte-check runs --fail-on-warnings: the tree is clean, and an
 #               a11y or dead-CSS regression is worth failing on.
-#   frontend    the vitest suite (crates/gui/frontend).
+#   frontend    the vitest suite + JS coverage. The thresholds are a ratchet at
+#               the measured floor; raise them as the panels get tested.
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
 #               Every ignored advisory is justified in that file.
 #   semgrep     the project invariants no type checker can express
@@ -100,12 +101,13 @@ fi
 # ── tests ────────────────────────────────────────────────────────────────────
 run test cargo test --workspace
 
-if [ -d crates/gui/frontend/node_modules ]; then
+# node_modules lives at the repo root: the frontend is an npm workspace member.
+if [ -d node_modules ]; then
     run types npm --prefix crates/gui/frontend run typecheck
     run frontend npm --prefix crates/gui/frontend test
 else
-    skip types "run: npm --prefix crates/gui/frontend install"
-    skip frontend "run: npm --prefix crates/gui/frontend install"
+    skip types "run: npm install"
+    skip frontend "run: npm install"
 fi
 
 # ── dependency audit ─────────────────────────────────────────────────────────
