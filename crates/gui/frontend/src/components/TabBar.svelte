@@ -80,7 +80,7 @@
         <span class="dot dot-focused" class:on={ind.focused}></span>
         <span class="dot dot-other" class:on={ind.other}></span>
         {ws.name}
-        <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
         <span
           class="close"
           title="close this workspace"

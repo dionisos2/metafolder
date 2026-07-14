@@ -65,7 +65,7 @@
   }
 </script>
 
-<!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
 <div class="backdrop" onclick={close} data-help-topic="config">
   <div class="dialog" onclick={(e) => e.stopPropagation()}>
     <header>
@@ -194,7 +194,6 @@
     flex-wrap: wrap;
     align-items: center;
   }
-  .binding-form input[type='text'],
   .binding-form input:not([type]) {
     font-family: var(--mf-font-mono, monospace);
     background: var(--mf-bg, #1e1e24);
