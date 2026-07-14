@@ -19,15 +19,21 @@
 declare namespace Metafolder {
   // ── The data model (spec-data-model) ──────────────────────────────────────
 
-  /** A field value. `nothing` is explicit absence and carries no `value`. */
+  /**
+   * A field value. `nothing` is explicit absence and carries no `value`.
+   *
+   * The tags are what serde emits for `core::metarecord::Value`, which is
+   * `rename_all = "lowercase"` — hence `refbase` and `externalref` with no
+   * underscore. Only `TreeRef` carries an explicit rename, to `tree_ref`.
+   */
   type Value =
     | { type: 'nothing' }
     | { type: 'string' | 'datetime'; value: string }
     | { type: 'int' | 'float'; value: number }
     | { type: 'bool'; value: boolean }
-    | { type: 'ref' | 'ref_base'; value: string }
+    | { type: 'ref' | 'refbase'; value: string }
     | { type: 'tree_ref'; value: TreeRef }
-    | { type: 'external_ref'; value: { repo: string; metarecord: string } };
+    | { type: 'externalref'; value: { repo: string; metarecord: string } };
 
   /** A `tree_ref` value: the parent metarecord (null at a forest root) + name. */
   interface TreeRef {

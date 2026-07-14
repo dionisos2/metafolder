@@ -1,8 +1,24 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metafolder panel UI helpers — served at /__ui.js for panel types
 // (spec-gui "The metafolder API"). Plain DOM building (no innerHTML:
 // values come from user files, keep textContent semantics) and the
 // canonical display form of the data model's Value variants.
+
+/**
+ * Element properties. Deliberately loose: `on*` handlers keep implicitly-`any`
+ * parameters, which is what lets a panel write `onclick: () => select(i)` and
+ * `onkeydown: (e) => …` without annotating either. The one cast this forces
+ * (assigning through an index signature) is confined to `el` itself.
+ *
+ * @typedef {{class?: string | (string|false|null|undefined)[]} & Record<string, any>} ElProps
+ */
+
+/**
+ * Anything `el` accepts as a child. Nested arrays are flattened (to any depth),
+ * and null/undefined/false are dropped — so `cond && el(...)` works inline.
+ * The array arm is `any[]` because a JSDoc typedef cannot reference itself.
+ *
+ * @typedef {Node|string|number|false|null|undefined|any[]} ElChild
+ */
 
 /**
  * Builds a DOM element: el('td', { class: ['cell', active && 'cursor'],
@@ -13,6 +29,15 @@
  * colSpan, hidden, ...) are assigned, anything else becomes an attribute.
  * Children: nested arrays are flattened; null/undefined/false are
  * skipped; strings become text nodes.
+ *
+ * Generic over the tag, so `el('input', …)` is an `HTMLInputElement` at the
+ * call site with nothing to annotate.
+ *
+ * @template {keyof HTMLElementTagNameMap} K
+ * @param {K} tag
+ * @param {ElProps} [props]
+ * @param {...ElChild} children
+ * @returns {HTMLElementTagNameMap[K]}
  */
 export function el(tag, props = {}, ...children) {
   const element = document.createElement(tag);
@@ -22,7 +47,7 @@ export function el(tag, props = {}, ...children) {
     } else if (key.startsWith('on')) {
       element.addEventListener(key.slice(2).toLowerCase(), value);
     } else if (key in element) {
-      element[key] = value;
+      /** @type {any} */ (element)[key] = value;
     } else {
       element.setAttribute(key, value);
     }
@@ -31,6 +56,68 @@ export function el(tag, props = {}, ...children) {
     ...children.flat(Infinity).filter((c) => c !== null && c !== undefined && c !== false),
   );
   return element;
+}
+
+/**
+ * The element with `id`, or a throw.
+ *
+ * A panel owns its markup (its index.html), so a missing id is a bug in the
+ * panel, not a runtime condition worth branching on. Throwing collapses ~140
+ * `HTMLElement | null` types into one loud failure at mount that names the id,
+ * instead of a null-deref surfacing three functions away.
+ *
+ * Pass the expected constructor to narrow — and assert — the element type:
+ *
+ *     const list = byId(root, 'entries');                   // HTMLElement
+ *     const query = byId(root, 'query', HTMLInputElement);  // HTMLInputElement
+ *     query.value = '';
+ *
+ * @template {abstract new (...args: any) => HTMLElement} [T=typeof HTMLElement]
+ * @param {DocumentFragment|Document} root the panel's Shadow root
+ * @param {string} id
+ * @param {T} [type]
+ * @returns {InstanceType<T>}
+ */
+export function byId(root, id, type) {
+  const found = root.getElementById(id);
+  if (!found) throw new Error(`panel markup has no #${id}`);
+  const { nodeName } = found; // read before the instanceof: the negative branch narrows to never
+  if (type && !(found instanceof type)) {
+    throw new Error(`#${id} is a ${nodeName}, expected ${type.name}`);
+  }
+  return /** @type {InstanceType<T>} */ (found);
+}
+
+/**
+ * The first element matching `selector`, or a throw. As {@link byId}.
+ *
+ * @template {abstract new (...args: any) => HTMLElement} [T=typeof HTMLElement]
+ * @param {ParentNode} root
+ * @param {string} selector
+ * @param {T} [type]
+ * @returns {InstanceType<T>}
+ */
+export function qs(root, selector, type) {
+  const found = root.querySelector(selector);
+  if (!found) throw new Error(`panel markup has nothing matching ${selector}`);
+  const { nodeName } = found;
+  if (type && !(found instanceof type)) {
+    throw new Error(`${selector} is a ${nodeName}, expected ${type.name}`);
+  }
+  return /** @type {InstanceType<T>} */ (found);
+}
+
+/**
+ * Every match for `selector`, as an array — so `.map`/`.filter` work directly,
+ * and an empty result is an empty array, never null. Unlike {@link qs}, matching
+ * nothing is a legitimate outcome (a list may be empty), so this never throws.
+ *
+ * @param {ParentNode} root
+ * @param {string} selector
+ * @returns {HTMLElement[]}
+ */
+export function qsa(root, selector) {
+  return /** @type {HTMLElement[]} */ ([...root.querySelectorAll(selector)]);
 }
 
 /**
@@ -43,7 +130,10 @@ export const THUMBNAILABLE = new Set([
   'png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif', 'ico',
 ]);
 
-/** Whether a path/filename has an image extension safe for an <img> thumbnail. */
+/**
+ * Whether a path/filename has an image extension safe for an <img> thumbnail.
+ * @param {string} pathOrName
+ */
 export function isThumbnailable(pathOrName) {
   return THUMBNAILABLE.has(extensionOf(pathOrName));
 }
@@ -58,11 +148,15 @@ export const VIDEO_THUMBNAILABLE = new Set([
   'mp4', 'webm', 'mkv', 'mov', 'avi', 'wmv', 'm4v', 'mpg', 'mpeg', 'flv', '3gp', 'ts', 'm2ts',
 ]);
 
-/** Whether a path/filename is a video the server can make a poster for. */
+/**
+ * Whether a path/filename is a video the server can make a poster for.
+ * @param {string} pathOrName
+ */
 export function isVideoThumbnailable(pathOrName) {
   return VIDEO_THUMBNAILABLE.has(extensionOf(pathOrName));
 }
 
+/** @param {string} pathOrName */
 function extensionOf(pathOrName) {
   return (pathOrName.split('.').pop() ?? '').toLowerCase();
 }
@@ -92,6 +186,9 @@ const FILE_TYPE_GLYPHS = (() => {
 /**
  * Emoji icon for a file's type (🎬 video, 🎵 music, 📕 PDF, 🖼️ image,
  * 🗜️ archive…), or `fallback` (default 📄) for an unrecognised extension.
+ *
+ * @param {string} pathOrName
+ * @param {string} [fallback]
  */
 export function fileTypeGlyph(pathOrName, fallback = '📄') {
   return FILE_TYPE_GLYPHS.get(extensionOf(pathOrName)) ?? fallback;
@@ -114,9 +211,16 @@ export function fileTypeGlyph(pathOrName, fallback = '📄') {
  * unknown type, default 📄), `glyphClass` (CSS class for the glyph span),
  * `token` (the session token appended as `?token=`, required for the protected
  * `/fsraw` and `/thumbnail` routes — spec-auth).
+ *
+ * @param {string} guiServer
+ * @param {string|null} path
+ * @param {{isDir?: boolean, dirGlyph?: string, fileGlyph?: string,
+ *          glyphClass?: string, token?: string}} [options]
+ * @returns {HTMLElement}
  */
 export function thumbnail(guiServer, path, options = {}) {
   const { isDir = false, dirGlyph = '📁', fileGlyph = '📄', glyphClass = '', token = '' } = options;
+  /** @param {string} text */
   const glyph = (text) => el('span', glyphClass ? { class: glyphClass } : {}, text);
   if (isDir) return glyph(dirGlyph);
   if (!path) return glyph(fileGlyph);
@@ -145,18 +249,19 @@ export function thumbnail(guiServer, path, options = {}) {
  * Display form of a Value ({type, value} JSON, spec-data-model). `value` is
  * absent for `nothing` (explicit absence), which renders as ∅.
  *
- * @param {{type: string, value?: unknown}} field
+ * @param {Metafolder.Value} field
  */
-export function formatValue({ type, value }) {
-  switch (type) {
+export function formatValue(field) {
+  // The switch narrows the Value union, so each arm sees the right `value`.
+  switch (field.type) {
     case 'nothing':
       return '∅';
     case 'tree_ref':
-      return `${value.parent ?? '(root)'} / ${value.name}`;
+      return `${field.value.parent ?? '(root)'} / ${field.value.name}`;
     case 'externalref':
-      return `${value.repo} :: ${value.metarecord}`;
+      return `${field.value.repo} :: ${field.value.metarecord}`;
     default:
-      return String(value);
+      return String(field.value);
   }
 }
 
@@ -165,7 +270,12 @@ export function formatValue({ type, value }) {
 // result set is dropped.
 const byNameCache = new WeakMap();
 
-/** A `name -> field[]` map of a metarecord's fields (a multi-map), built once. */
+/**
+ * A `name -> field[]` map of a metarecord's fields (a multi-map), built once.
+ *
+ * @param {Metafolder.Metarecord} metarecord
+ * @returns {Map<string, Metafolder.Field[]>}
+ */
 export function byName(metarecord) {
   let map = byNameCache.get(metarecord);
   if (!map) {
@@ -180,12 +290,22 @@ export function byName(metarecord) {
   return map;
 }
 
-/** First field of an metarecord with the given name (fields are a multi-map). */
+/**
+ * First field of an metarecord with the given name (fields are a multi-map).
+ *
+ * @param {Metafolder.Metarecord} metarecord
+ * @param {string} name
+ */
 export function field(metarecord, name) {
   return byName(metarecord).get(name)?.[0];
 }
 
-/** Every field of an metarecord with the given name (multi-map rows, in order). */
+/**
+ * Every field of an metarecord with the given name (multi-map rows, in order).
+ *
+ * @param {Metafolder.Metarecord} metarecord
+ * @param {string} name
+ */
 export function fields(metarecord, name) {
   return byName(metarecord).get(name) ?? [];
 }
@@ -195,15 +315,19 @@ export function fields(metarecord, name) {
  * clickable: the uuid of ref/refbase, the parent of a tree_ref, the
  * metarecord of an externalref. Clicking calls onOpen(uuid, repo) — repo is
  * null except for externalref (the referenced metarecord's repository).
+ *
+ * @param {Metafolder.Value} value
+ * @param {(uuid: string, repo: string|null) => void} onOpen
  */
 export function valueEl(value, onOpen) {
+  /** @param {string} uuid @param {string|null} [repo] */
   const link = (uuid, repo = null) =>
     el(
       'a',
       {
         href: '#',
         class: 'ref-link',
-        onclick: (event) => {
+        onclick: (/** @type {Event} */ event) => {
           event.preventDefault();
           onOpen(uuid, repo);
         },
