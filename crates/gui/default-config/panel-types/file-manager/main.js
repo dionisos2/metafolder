@@ -337,50 +337,50 @@ export async function mount(root, metafolder) {
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   addButton.addEventListener('click', () => void addSelected());
 
-  commands.register('file-manager:add', {
+  void commands.register('file-manager:add', {
     label: 'File manager: track the selected path (mf_watch = false)',
     handler: addSelected,
   });
-  commands.register('file-manager:goto-root', {
+  void commands.register('file-manager:goto-root', {
     label: 'File manager: jump to the repo root',
     handler: gotoRoot,
   });
-  commands.register('file-manager:refresh', {
+  void commands.register('file-manager:refresh', {
     label: 'File manager: reload the current directory',
     handler: refresh,
   });
-  commands.register('file-manager:toggle-root', {
+  void commands.register('file-manager:toggle-root', {
     label: 'File manager: toggle the root constraint',
     handler: () => {
       constrainBox.checked = !constrainBox.checked;
       constrainToRoot = constrainBox.checked;
     },
   });
-  commands.register('file-manager:toggle-hidden', {
+  void commands.register('file-manager:toggle-hidden', {
     label: 'File manager: show/hide hidden files (dot-entries)',
     handler: () => setShowHidden(!showHidden),
   });
-  commands.register('file-manager:next', {
+  void commands.register('file-manager:next', {
     label: 'File manager: move down',
     handler: () => select(cursorIndex + 1),
   });
-  commands.register('file-manager:prev', {
+  void commands.register('file-manager:prev', {
     label: 'File manager: move up',
     handler: () => select(cursorIndex - 1),
   });
-  commands.register('file-manager:first', {
+  void commands.register('file-manager:first', {
     label: 'File manager: move to the first entry',
     handler: () => select(0),
   });
-  commands.register('file-manager:last', {
+  void commands.register('file-manager:last', {
     label: 'File manager: move to the last entry',
     handler: () => select(listing.length - 1),
   });
-  commands.register('file-manager:activate', {
+  void commands.register('file-manager:activate', {
     label: 'File manager: open directory / confirm file',
     handler: () => activate(cursorIndex),
   });
-  commands.register('file-manager:parent', {
+  void commands.register('file-manager:parent', {
     label: 'File manager: go up one level',
     handler: goUp,
   });
@@ -411,12 +411,13 @@ export async function mount(root, metafolder) {
   // The first directory listing waits for the first actual display.
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  workspace.onChange('metarecords:dirty', async () => {
+  async function onMetarecordsDirty() {
     if (currentDir === null) return; // not started yet (still hidden)
     if (repo) await cache.sync(repo); // pick up the change before re-querying
     await reenrichVisible();
     render();
-  });
+  }
+  workspace.onChange('metarecords:dirty', () => void onMetarecordsDirty());
 
   metafolder.whenVisible(deferredStart);
 

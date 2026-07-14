@@ -299,7 +299,8 @@ export async function mount(root, metafolder) {
     toggleForm(retypeForm, true);
   }
 
-  retypeForm.addEventListener('submit', async (event) => {
+  /** @param {Event} event */
+  async function onRetypeSubmit(event) {
     event.preventDefault();
     const errorElement = byId(root, 'retype-error');
     errorElement.textContent = '';
@@ -339,7 +340,8 @@ export async function mount(root, metafolder) {
     } catch (error) {
       errorElement.textContent = messageOf(error);
     }
-  });
+  }
+  retypeForm.addEventListener('submit', (event) => void onRetypeSubmit(event));
 
   initForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -371,19 +373,19 @@ export async function mount(root, metafolder) {
     });
   }
 
-  commands.register('repos:init', {
+  void commands.register('repos:init', {
     label: 'Repos: open the init form',
     handler: () => toggleForm(initForm, true),
   });
-  commands.register('repos:load', {
+  void commands.register('repos:load', {
     label: 'Repos: open the load form',
     handler: () => toggleForm(loadForm, true),
   });
-  commands.register('repos:refresh', {
+  void commands.register('repos:refresh', {
     label: 'Repos: refresh the repository list',
     handler: () => refresh(),
   });
-  commands.register('repos:retype', {
+  void commands.register('repos:retype', {
     label: 'Repos: convert a field type across the active repository',
     reveal: true,
     handler: async () => {

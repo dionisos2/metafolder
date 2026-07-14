@@ -242,10 +242,11 @@ export function createPickRunner(metafolder) {
  */
 function pickButton(input, pick, valueType, title) {
   const button = el('button', { type: 'button', class: 'pick-btn', title }, '🔍');
-  button.addEventListener('click', async () => {
+  const run = async () => {
     const uuid = await pick(valueType);
     if (uuid) input.value = uuid;
-  });
+  };
+  button.addEventListener('click', () => void run());
   return button;
 }
 

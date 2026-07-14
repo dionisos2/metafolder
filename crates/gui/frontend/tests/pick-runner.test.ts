@@ -38,7 +38,7 @@ describe('createPickRunner', () => {
     await tick();
 
     expect(stub.start).toHaveBeenCalledTimes(1);
-    const spec = stub.start.mock.calls[0][0] as Record<string, any>;
+    const spec = stub.start.mock.calls[0][0];
     expect(spec.repo).toBe('repo-1');
     expect(spec.panel.type).toBe('metarecord-list');
     expect(spec.panel.vars['metarecord-list:query']).toBe('type = "tag"');
@@ -56,7 +56,7 @@ describe('createPickRunner', () => {
     void runner.run({ field: 'plop', valueType: 'tree_ref' });
     await tick();
 
-    const spec = stub.start.mock.calls[0][0] as Record<string, any>;
+    const spec = stub.start.mock.calls[0][0];
     expect(spec.panel.type).toBe('treeref');
     expect(spec.panel.vars['treeref:field']).toBe('plop');
   });
@@ -75,7 +75,7 @@ describe('createPickRunner', () => {
     });
     await tick();
 
-    const spec = stub.start.mock.calls[0][0] as Record<string, any>;
+    const spec = stub.start.mock.calls[0][0];
     expect(spec.panel.type).toBe('file-manager');
     expect(spec.result).toBe('path');
     expect(spec.repo).toBeNull();
@@ -92,7 +92,7 @@ describe('createPickRunner', () => {
 
     const promise = runner.run({ field: 'tag', valueType: 'ref' });
     await tick();
-    const token = (stub.start.mock.calls[0][0] as Record<string, any>).token;
+    const token = (stub.start.mock.calls[0][0]).token;
 
     stub.deliver({ token, cancelled: true });
     expect(await promise).toBeNull();
@@ -105,7 +105,7 @@ describe('createPickRunner', () => {
 
     const promise = runner.run({ field: 'tag', valueType: 'ref' });
     await tick();
-    const token = (stub.start.mock.calls[0][0] as Record<string, any>).token;
+    const token = (stub.start.mock.calls[0][0]).token;
 
     stub.deliver({ token: 'stale', uuid: 'wrong' });
     let settled = false;

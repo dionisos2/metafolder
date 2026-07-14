@@ -119,7 +119,10 @@ describe('el', () => {
   });
 
   test('class accepts an array and drops falsy entries', () => {
-    const row = el('tr', { class: ['row', false && 'cursor', 'checked', null] });
+    // Typed, not literal `false`: this is the `index === cursor && 'cursor'`
+    // shape every panel writes, and a literal would just be constant-folded.
+    const active: boolean = false;
+    const row = el('tr', { class: ['row', active && 'cursor', 'checked', null] });
     expect(row.className).toBe('row checked');
   });
 

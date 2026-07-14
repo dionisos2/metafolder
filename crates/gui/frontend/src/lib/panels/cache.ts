@@ -150,7 +150,7 @@ export function createCache(opts: CacheOptions = {}) {
     let m = method === 'POST' ? cleanPath.match(QUERY) : null;
     if (m) {
       const repo = m[1];
-      const key = `${repo}|${queryKey(body as Record<string, unknown>)}`;
+      const key = `${repo}|${queryKey(body)}`;
       const hit = touch(queries, key);
       if (hit) return hit;
       const epoch = epochOf(repo);

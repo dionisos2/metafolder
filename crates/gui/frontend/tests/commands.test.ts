@@ -60,7 +60,7 @@ describe('needsMessagePanel', () => {
     panel_type,
   });
   const layout = (left: ReturnType<typeof slot>, right: ReturnType<typeof slot>): LayoutView =>
-    ({ left, right, focused: 'left' }) as LayoutView;
+    ({ left, right, focused: 'left' });
 
   test('needed when no slot of the workspace shows message', () => {
     const l = layout(slot(true, 'ws1', 'file'), slot(false, null, null));

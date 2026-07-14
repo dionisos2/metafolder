@@ -235,27 +235,27 @@ export async function mount(root, metafolder) {
     await fetchPage(true);
   }
 
-  commands.register('ref-list:next', {
+  void commands.register('ref-list:next', {
     label: 'Ref list: move the cursor down',
     handler: () => select(cursorIndex + 1),
   });
-  commands.register('ref-list:prev', {
+  void commands.register('ref-list:prev', {
     label: 'Ref list: move the cursor up',
     handler: () => select(cursorIndex - 1),
   });
-  commands.register('ref-list:first', {
+  void commands.register('ref-list:first', {
     label: 'Ref list: move to the first row',
     handler: () => select(0),
   });
-  commands.register('ref-list:last', {
+  void commands.register('ref-list:last', {
     label: 'Ref list: move to the last loaded row',
     handler: () => select(records.length - 1),
   });
-  commands.register('ref-list:open', {
+  void commands.register('ref-list:open', {
     label: 'Ref list: open the selection in the other panel',
     handler: openSelected,
   });
-  commands.register('ref-list:toggle-scope', {
+  void commands.register('ref-list:toggle-scope', {
     label: 'Ref list: toggle between exact and + descendants',
     handler: () => {
       mode = mode === 'descendants' ? 'exact' : 'descendants';
@@ -263,7 +263,7 @@ export async function mount(root, metafolder) {
       void fetchPage(true);
     },
   });
-  commands.register('ref-list:refresh', {
+  void commands.register('ref-list:refresh', {
     label: 'Ref list: reload from the daemon',
     handler: () => refresh(),
   });
@@ -280,12 +280,13 @@ export async function mount(root, metafolder) {
 
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
+  async function reloadForTarget() {
+    await loadFields(); // the node's repo may differ from the active one
+    await fetchPage(true);
+  }
   workspace.onChange('selected_treeref', (value) => {
     target = /** @type {Target|null} */ (value ?? null);
-    metafolder.whenVisible(async () => {
-      await loadFields(); // the node's repo may differ from the active one
-      await fetchPage(true);
-    });
+    metafolder.whenVisible(() => void reloadForTarget());
   });
   workspace.onChange('metarecords:dirty', () => {
     if (!target) return;

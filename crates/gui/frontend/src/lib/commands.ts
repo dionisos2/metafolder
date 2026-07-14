@@ -168,10 +168,13 @@ export function needsMessagePanel(layout: LayoutView, ws: string | null): boolea
  *  workspace var store and the metarecord/tree data through the daemon proxy. */
 function shellExpandDeps(ws: string | null): ExpandDeps {
   const daemon = async (path: string) => {
-    const res = (await invoke('daemon_request', { method: 'GET', path, body: null })) as {
-      status: number;
-      body: unknown;
-    };
+    // Through invoke's type parameter, not an `as` cast: same result, but the
+    // shape is asked for rather than asserted after the fact.
+    const res = await invoke<{ status: number; body: unknown }>('daemon_request', {
+      method: 'GET',
+      path,
+      body: null,
+    });
     if (res.status !== 200) throw new Error(`HTTP ${res.status}`);
     return res.body;
   };

@@ -852,88 +852,88 @@ export async function mount(root, metafolder) {
 
   // ── Wiring ──────────────────────────────────────────────────────────────
 
-  commands.register('metarecord-list:next', {
+  void commands.register('metarecord-list:next', {
     label: 'Metarecord list: move the selection down',
     handler: () => setCursor(cursorIndex + 1),
   });
-  commands.register('metarecord-list:prev', {
+  void commands.register('metarecord-list:prev', {
     label: 'Metarecord list: move the selection up',
     handler: () => setCursor(cursorIndex - 1),
   });
-  commands.register('metarecord-list:first', {
+  void commands.register('metarecord-list:first', {
     label: 'Metarecord list: move the selection to the first row',
     handler: () => setCursor(0),
   });
-  commands.register('metarecord-list:last', {
+  void commands.register('metarecord-list:last', {
     label: 'Metarecord list: move the selection to the last loaded row',
     handler: () => setCursor(metarecords.length - 1),
   });
-  commands.register('metarecord-list:page-next', {
+  void commands.register('metarecord-list:page-next', {
     label: 'Metarecord list: load the next page (same as scrolling to the bottom)',
     handler: () => (nextCursor ? fetchPage(false) : undefined),
   });
-  commands.register('metarecord-list:select-toggle', {
+  void commands.register('metarecord-list:select-toggle', {
     label: 'Metarecord list: toggle multi-selection',
     handler: () => toggleChecked(),
   });
-  commands.register('metarecord-list:select-none', {
+  void commands.register('metarecord-list:select-none', {
     label: 'Metarecord list: clear the multi-selection',
     handler: () => clearChecked(),
   });
-  commands.register('metarecord-list:open', {
+  void commands.register('metarecord-list:open', {
     label: 'Metarecord list: open the selection in the other panel',
     handler: () => openSelected(),
   });
-  commands.register('metarecord-list:set-mode', {
+  void commands.register('metarecord-list:set-mode', {
     label: 'Metarecord list: switch display mode (table | grid)',
     handler: (newMode) => {
       mode = newMode === 'grid' ? 'grid' : 'table';
       bodyEl.classList.toggle('grid', mode === 'grid');
     },
   });
-  commands.register('metarecord-list:find', {
+  void commands.register('metarecord-list:find', {
     label: 'Metarecord list: focus the finder (quick ordered-substring filter)',
     handler: () => finderInput.focus(),
   });
-  commands.register('metarecord-list:apply-finder', {
+  void commands.register('metarecord-list:apply-finder', {
     label: 'Metarecord list: re-run the finder filter now (bypass the debounce)',
     // The explicit re-run (Enter in the finder) also records the text in the
     // finder's input history; the debounced keystroke path does not.
     handler: () => applyFinder({ record: true }),
   });
-  commands.register('metarecord-list:edit-query', {
+  void commands.register('metarecord-list:edit-query', {
     label: 'Metarecord list: focus the query input',
     handler: () => queryInput.focus(),
   });
-  commands.register('metarecord-list:toggle-normal', {
+  void commands.register('metarecord-list:toggle-normal', {
     label: 'Metarecord list: show/hide the normal DSL editor',
     handler: () => setNormalShown(!normalShown),
   });
-  commands.register('metarecord-list:edit-columns', {
+  void commands.register('metarecord-list:edit-columns', {
     label: 'Metarecord list: focus the columns input',
     handler: () => columnsInput.focus(),
   });
-  commands.register('metarecord-list:apply-query', {
+  void commands.register('metarecord-list:apply-query', {
     label: 'Metarecord list: apply the query',
     handler: () => applyQuery(),
   });
-  commands.register('metarecord-list:apply-columns', {
+  void commands.register('metarecord-list:apply-columns', {
     label: 'Metarecord list: apply the displayed columns',
     handler: () => applyColumns(),
   });
-  commands.register('metarecord-list:refresh', {
+  void commands.register('metarecord-list:refresh', {
     label: 'Metarecord list: reload from the daemon',
     handler: () => {
       queryRan = true; // refresh is also how the deferred initial load is run
       return fetchPage(true);
     },
   });
-  commands.register('metarecord-list:bulk-edit', {
+  void commands.register('metarecord-list:bulk-edit', {
     label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
     reveal: true,
     handler: () => openBulkForm(),
   });
-  commands.register('metarecord-list:set-page-size', {
+  void commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',
     handler: async (raw) => {
       const n = Math.floor(Number(raw));
@@ -986,11 +986,13 @@ export async function mount(root, metafolder) {
   const deferredStart = () => void start();
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredStart));
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  workspace.onChange('metarecord-list:columns', async (value) => {
+  /** @param {unknown} value */
+  async function onColumnsChanged(value) {
     setColumns(value);
     await reresolveColumns();
     render();
-  });
+  }
+  workspace.onChange('metarecord-list:columns', (value) => void onColumnsChanged(value));
   workspace.onChange('metarecord-list:page-size', (value) => {
     const next = sanitizePageSize(value);
     if (next === pageSize) return;
@@ -1010,7 +1012,7 @@ export async function mount(root, metafolder) {
   pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
 
   // Restore the finder (quick filter) state.
-  finderText = String((await workspace.get('metarecord-list:finder')) ?? '');
+  finderText = asText(await workspace.get('metarecord-list:finder'));
   finderInput.value = finderText;
   const storedFinderFields = await workspace.get('metarecord-list:finder-fields');
   finderFields =
@@ -1020,8 +1022,8 @@ export async function mount(root, metafolder) {
   updateFinderFieldsLabel();
 
   // Restore the two-zone query editor (values only — no daemon call here).
-  queryInput.value = String((await workspace.get('metarecord-list:query')) ?? '');
-  normalInput.value = String((await workspace.get('metarecord-list:normal-query')) ?? '');
+  queryInput.value = asText(await workspace.get('metarecord-list:query'));
+  normalInput.value = asText(await workspace.get('metarecord-list:normal-query'));
   normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) === true;
   normalFreeze.checked = normalFrozen;
   normalInput.readOnly = !normalFrozen;
@@ -1039,6 +1041,14 @@ export async function mount(root, metafolder) {
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();
   };
+}
+
+/** A persisted workspace variable read back as text: anything that is not a
+ *  string (a stale value of another shape) reads as empty, never as
+ *  "[object Object]".
+ *  @param {unknown} value */
+function asText(value) {
+  return typeof value === 'string' ? value : '';
 }
 
 /** The message of a thrown daemon/parser error. */

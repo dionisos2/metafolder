@@ -282,37 +282,37 @@ export async function mount(root, metafolder) {
   pruneButton.addEventListener('click', () => void prune());
   checkpointButton.addEventListener('click', () => void markCheckpoint());
 
-  commands.register('log:rollback', {
+  void commands.register('log:rollback', {
     label: 'Log: rollback to the selected revision',
     reveal: true,
     handler: rollback,
   });
-  commands.register('log:prune', {
+  void commands.register('log:prune', {
     label: 'Log: prune history before the selected revision',
     reveal: true,
     handler: prune,
   });
-  commands.register('log:mark-checkpoint', {
+  void commands.register('log:mark-checkpoint', {
     label: 'Log: set or clear the selected revision label',
     reveal: true,
     handler: markCheckpoint,
   });
-  commands.register('log:toggle-graph', {
+  void commands.register('log:toggle-graph', {
     label: 'Log: toggle the branch graph view',
     handler: () => toggleGraph(),
   });
-  commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
-  commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
-  commands.register('log:prev', { label: 'Log: move the selection up', handler: () => moveBy(-1) });
-  commands.register('log:first', {
+  void commands.register('log:refresh', { label: 'Log: refresh from the daemon', handler: refresh });
+  void commands.register('log:next', { label: 'Log: move the selection down', handler: () => moveBy(1) });
+  void commands.register('log:prev', { label: 'Log: move the selection up', handler: () => moveBy(-1) });
+  void commands.register('log:first', {
     label: 'Log: move the selection to the newest revision',
     handler: () => moveToEdge('first'),
   });
-  commands.register('log:last', {
+  void commands.register('log:last', {
     label: 'Log: move the selection to the oldest revision',
     handler: () => moveToEdge('last'),
   });
-  commands.register('log:toggle-ops', {
+  void commands.register('log:toggle-ops', {
     label: 'Log: expand/collapse the selected revision',
     handler: () => {
       if (selectedRev !== null) selectRevision(selectedRev, { toggleOps: true });

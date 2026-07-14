@@ -22,7 +22,7 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 export function startCachePolling(intervalMs = 7000) {
   if (pollTimer) return;
   const raw: RawFetcher = (method, path, body) =>
-    ipcInvoke('daemon_request', { method, path, body }) as Promise<DaemonResponse>;
+    ipcInvoke('daemon_request', { method, path, body });
   pollTimer = setInterval(() => {
     for (const repo of sharedCache.trackedRepos()) void sharedCache.sync(repo, raw);
   }, intervalMs);
@@ -183,7 +183,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     (event: MouseEvent, items: Metafolder.MenuItem[]) => {
       event.preventDefault();
       event.stopPropagation();
-      showMenu(items, { x: event.clientX, y: event.clientY });
+      // The chosen item runs its own action; nothing here awaits the choice.
+      void showMenu(items, { x: event.clientX, y: event.clientY });
     },
     {
       addDefaultItems: (provider: (event: MouseEvent) => Metafolder.MenuItem[]) =>

@@ -42,7 +42,7 @@ export async function mount(root, metafolder) {
       }),
     );
   } catch (error) {
-    content.textContent = `Failed to load help pages: ${error}`;
+    content.textContent = `Failed to load help pages: ${String(error)}`;
     return;
   }
 
@@ -135,7 +135,7 @@ export async function mount(root, metafolder) {
   /** @param {unknown} raw the `help.request` workspace variable */
   function apply(raw) {
     const request = /** @type {{topic?: unknown}|null} */ (raw);
-    const topic = (request && request.topic ? String(request.topic) : '').trim();
+    const topic = (typeof request?.topic === 'string' ? request.topic : '').trim();
     searchInput.value = topic;
     if (topic === '') {
       showPage('getting-started');

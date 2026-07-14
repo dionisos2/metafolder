@@ -656,19 +656,19 @@ export async function mount(root, metafolder) {
 
   // Zoom commands (also reachable from the command input / a keybinding) and
   // their toolbar buttons. The handlers no-op unless an image/video is shown.
-  commands.register('file:zoom-in', {
+  void commands.register('file:zoom-in', {
     label: 'File: zoom in',
     handler: () => zoomBy(ZOOM_STEP),
   });
-  commands.register('file:zoom-out', {
+  void commands.register('file:zoom-out', {
     label: 'File: zoom out',
     handler: () => zoomBy(1 / ZOOM_STEP),
   });
-  commands.register('file:zoom-fit', {
+  void commands.register('file:zoom-fit', {
     label: 'File: fit to the available space',
     handler: zoomFit,
   });
-  commands.register('file:zoom-reset', {
+  void commands.register('file:zoom-reset', {
     label: 'File: original size',
     handler: zoomReset,
   });
@@ -679,7 +679,7 @@ export async function mount(root, metafolder) {
     gifAnimateBox.checked = on;
     void renderViewer();
   }
-  commands.register('file:toggle-gif-animation', {
+  void commands.register('file:toggle-gif-animation', {
     label: 'File: play/freeze GIF animations',
     handler: () => setAnimateGifs(!animateGifs),
   });
@@ -692,7 +692,7 @@ export async function mount(root, metafolder) {
   byId(root, 'zoom-fit').addEventListener('click', zoomFit);
   byId(root, 'zoom-reset').addEventListener('click', zoomReset);
 
-  workspace.onChange('selected_paths', update);
+  workspace.onChange('selected_paths', (value) => void update(value));
   await update(await workspace.get('selected_paths'));
 
   // Release the media pipeline if the panel is unmounted (workspace closed or

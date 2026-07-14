@@ -725,20 +725,20 @@ export async function mount(root, metafolder) {
   byId(root, 'add-cancel').addEventListener('click', () => addForm.classList.remove('open'));
   forceBox.addEventListener('change', render);
 
-  commands.register('metarecord:create', {
+  void commands.register('metarecord:create', {
     label: 'Create a new metarecord (metarecord-detail form)',
     reveal: true,
     handler: createMetarecord,
   });
-  commands.register('metarecord:delete', {
+  void commands.register('metarecord:delete', {
     label: 'Delete the selected metarecord',
     handler: deleteEntry,
   });
-  commands.register('metarecord:watch-reconcile', {
+  void commands.register('metarecord:watch-reconcile', {
     label: 'Enable tracking and reconcile the selected metarecord',
     handler: watchAndReconcile,
   });
-  commands.register('metarecord:add-field', {
+  void commands.register('metarecord:add-field', {
     label: 'Add a field to the selected metarecord (detail form)',
     reveal: true,
     handler: async () => {
@@ -749,7 +749,7 @@ export async function mount(root, metafolder) {
       void syncTypeToName();
     },
   });
-  commands.register('metarecord:batch-set', {
+  void commands.register('metarecord:batch-set', {
     label: 'Set a field on all selected metarecords',
     reveal: true,
     handler: async (...args) => {
@@ -787,29 +787,29 @@ export async function mount(root, metafolder) {
 
   // Keyboard editing (spec-gui): every field/metarecord operation is a command,
   // so the panel is fully drivable without the mouse.
-  commands.register('metarecord:field-next', {
+  void commands.register('metarecord:field-next', {
     label: 'Move the field cursor down',
     log: false,
     handler: () => moveCursor(1),
   });
-  commands.register('metarecord:field-prev', {
+  void commands.register('metarecord:field-prev', {
     label: 'Move the field cursor up',
     log: false,
     handler: () => moveCursor(-1),
   });
-  commands.register('metarecord:field-edit', {
+  void commands.register('metarecord:field-edit', {
     label: 'Edit the field under the cursor',
     handler: editCursorRow,
   });
-  commands.register('metarecord:field-delete', {
+  void commands.register('metarecord:field-delete', {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });
-  commands.register('metarecord:save', {
+  void commands.register('metarecord:save', {
     label: 'Save the new metarecord',
     handler: () => saveNewEntry(),
   });
-  commands.register('metarecord:edit-cancel', {
+  void commands.register('metarecord:edit-cancel', {
     label: 'Cancel the current field edit or add form',
     log: false,
     handler: () => {
@@ -838,11 +838,12 @@ export async function mount(root, metafolder) {
   // reload — unless an edit is in progress. Sync the cache first so the reload
   // reads fresh data even when the change came from a non-metarecord write
   // (e.g. a rollback, which the per-write invalidation can't pinpoint).
-  workspace.onChange('metarecords:dirty', async () => {
+  async function onMetarecordsDirty() {
     if (editingField !== null || newMetarecordMode || addFieldInProgress()) return;
     if (current?.repo) await cache.sync(current.repo);
     void load();
-  });
+  }
+  workspace.onChange('metarecords:dirty', () => void onMetarecordsDirty());
 
   current = /** @type {Selection|null} */ ((await workspace.get('selected_metarecord')) ?? null);
   await load();

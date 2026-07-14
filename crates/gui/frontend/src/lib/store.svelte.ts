@@ -166,7 +166,9 @@ export async function initStore() {
   // An external POST /gui/command: run it through the very same dispatch()
   // the command input and keybindings use, then report the outcome back so
   // the waiting HTTP handler resolves.
-  await listen<{ invocation_id: string; invocation: string }>('command-requested', async (event) => {
+  const onCommandRequested = async (event: {
+    payload: { invocation_id: string; invocation: string };
+  }) => {
     const { invocation_id, invocation } = event.payload;
     const result = await dispatch(invocation);
     await invoke('command_done', {
@@ -174,7 +176,11 @@ export async function initStore() {
       ok: result.ok,
       error: result.ok ? null : result.error,
     });
-  });
+  };
+  await listen<{ invocation_id: string; invocation: string }>(
+    'command-requested',
+    (event) => void onCommandRequested(event),
+  );
 
   // Keep the shared daemon-data cache fresh against background (watcher,
   // reconcile, other clients) changes via the daemon's change feed.

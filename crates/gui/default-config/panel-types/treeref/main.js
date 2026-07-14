@@ -233,35 +233,35 @@ export async function mount(root, metafolder) {
     await fetchChildren(true);
   }
 
-  commands.register('treeref:next', {
+  void commands.register('treeref:next', {
     label: 'TreeRef explorer: move the cursor down',
     handler: () => select(cursorIndex + 1),
   });
-  commands.register('treeref:prev', {
+  void commands.register('treeref:prev', {
     label: 'TreeRef explorer: move the cursor up',
     handler: () => select(cursorIndex - 1),
   });
-  commands.register('treeref:first', {
+  void commands.register('treeref:first', {
     label: 'TreeRef explorer: move to the first child',
     handler: () => select(0),
   });
-  commands.register('treeref:last', {
+  void commands.register('treeref:last', {
     label: 'TreeRef explorer: move to the last loaded child',
     handler: () => select(children.length - 1),
   });
-  commands.register('treeref:descend', {
+  void commands.register('treeref:descend', {
     label: 'TreeRef explorer: descend into the selected node',
     handler: () => descend(cursorIndex),
   });
-  commands.register('treeref:parent', {
+  void commands.register('treeref:parent', {
     label: 'TreeRef explorer: go up one level',
     handler: goUp,
   });
-  commands.register('treeref:root', {
+  void commands.register('treeref:root', {
     label: 'TreeRef explorer: jump to the forest roots',
     handler: gotoRoot,
   });
-  commands.register('treeref:refresh', {
+  void commands.register('treeref:refresh', {
     label: 'TreeRef explorer: reload from the daemon',
     handler: () => refresh(),
   });

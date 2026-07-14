@@ -84,7 +84,7 @@ class FakeDaemon {
         ...(b.count ? { total: matches.length } : {}),
       });
     }
-    let m = path.match(/\/metarecords\/([0-9a-fA-F-]+)$/);
+    const m = path.match(/\/metarecords\/([0-9a-fA-F-]+)$/);
     if (method === 'GET' && m) {
       const rec = this.records.get(m[1]);
       return rec ? ok(rec) : { status: 404, body: { error: 'not found' } };

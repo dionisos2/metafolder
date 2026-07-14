@@ -19,6 +19,9 @@
 #               a11y or dead-CSS regression is worth failing on.
 #   frontend    the vitest suite + JS coverage. The thresholds are a ratchet at
 #               the measured floor; raise them as the panels get tested.
+#   lint        ESLint over the GUI's JS/TS/Svelte, with type-aware rules
+#               (eslint.config.js). Catches what tsc will not: a floating
+#               promise, an async handler where a void return is expected.
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
 #               Every ignored advisory is justified in that file.
 #   semgrep     the project invariants no type checker can express
@@ -42,7 +45,7 @@ for arg in "$@"; do
     case "$arg" in
         --lax) strict=false ;;
         --coverage) coverage=true ;;
-        -h|--help) sed -n '2,31p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,34p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -105,9 +108,11 @@ run test cargo test --workspace
 if [ -d node_modules ]; then
     run types npm --prefix crates/gui/frontend run typecheck
     run frontend npm --prefix crates/gui/frontend test
+    run lint npx eslint .
 else
     skip types "run: npm install"
     skip frontend "run: npm install"
+    skip lint "run: npm install"
 fi
 
 # ── dependency audit ─────────────────────────────────────────────────────────

@@ -34,7 +34,6 @@ function setup() {
       visibilityGate,
     },
   );
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const api = instance.api as any;
   return { instance, api, invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems, visibilityGate };
 }
@@ -67,7 +66,6 @@ describe('panel api — identity', () => {
         visibilityGate: gate,
       },
     );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const settings = (instance.api as any).settings;
     expect(settings.finderDebounceMs).toBe(900);
     expect(settings.statusErrorMs).toBe(4000);

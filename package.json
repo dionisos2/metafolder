@@ -4,5 +4,12 @@
   "description": "npm workspace root. The project is a Rust workspace; this exists only so the GUI frontend's node_modules hoists here, which lets vitest be rooted at crates/gui and therefore see the panel JS (panel-shim/ and default-config/panel-types/) that lives above the vite root. Without it, coverage silently reports on the Svelte shell alone — a third of the GUI — and reads as if it covered everything.",
   "workspaces": [
     "crates/gui/frontend"
-  ]
+  ],
+  "devDependencies": {
+    "eslint": "^9.39.5",
+    "eslint-plugin-svelte": "^3.20.0",
+    "globals": "^17.7.0",
+    "svelte-eslint-parser": "^1.8.0",
+    "typescript-eslint": "^8.64.0"
+  }
 }
