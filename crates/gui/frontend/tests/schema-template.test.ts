@@ -3,7 +3,6 @@
 // type into the staged fields of a new metarecord (used by metarecord-detail).
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panels
 import { schemaTypes, templateFields } from '../../panel-shim/schema-template.js';
 
 const schema = {

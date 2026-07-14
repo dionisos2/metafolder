@@ -4,7 +4,6 @@
 // panel fetches them from GET …/tree/roots instead.
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import { childrenQuery, treeNameOf } from '../../default-config/panel-types/treeref/queries.js';
 
 describe('childrenQuery', () => {

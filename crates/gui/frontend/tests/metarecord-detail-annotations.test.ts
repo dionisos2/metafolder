@@ -3,7 +3,6 @@
 // endpoint, general over the field) and the "name" field of a ref's target.
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import { createAnnotator } from '../../default-config/panel-types/metarecord-detail/annotations.js';
 
 type Field = { name: string; value: { type: string; value?: unknown } };

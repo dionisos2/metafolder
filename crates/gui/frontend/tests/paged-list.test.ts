@@ -6,7 +6,6 @@
 // the daemon-paginated and the known-list-with-lazy-enrichment cases.
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { createPagedList } from '../../panel-shim/paged-list.js';
 
 // A scroll container is read for three numbers only; tests pass plain

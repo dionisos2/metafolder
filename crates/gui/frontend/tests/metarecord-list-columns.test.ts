@@ -9,7 +9,6 @@
 //   a | b                 fallback: the first alternative that has a value
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import {
   parseColumns,
   isSortable,

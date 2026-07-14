@@ -2,15 +2,12 @@
 // realm (Shadow DOM), so their key events bubble here too — one matcher serves
 // everything, consuming the compiled table from the Rust keybinding engine.
 
-// @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../../panel-shim/keymatch.js';
-// @ts-expect-error plain-JS module shared with the panel shim
 import {
   hasOpenMenu,
   installContextMenuSuppression,
   installDefaultContextMenu,
 } from '../../../panel-shim/menu.js';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen } from './commands';
 import { setHelpCursor } from './cursor';
@@ -121,13 +118,14 @@ export function installKeys() {
       });
       // Continuation hint: shown while a sequence is pending, cleared by
       // any other outcome (fired, cancelled with escape, aborted).
-      store.ui.pendingKeys = result?.pending
-        ? { prefix: result.prefix, candidates: result.candidates }
-        : null;
+      store.ui.pendingKeys =
+        result && 'pending' in result
+          ? { prefix: result.prefix, candidates: result.candidates }
+          : null;
       // A key that does not continue a pending combo: swallow it (a combo in
       // progress takes priority over any single-key binding) and report the
       // dead sequence.
-      if (result?.unknown) {
+      if (result && 'unknown' in result) {
         flashStatus(`'${result.sequence.join(' ')}' is undefined`);
         event.preventDefault();
         event.stopPropagation();
@@ -138,15 +136,17 @@ export function installKeys() {
       // Without it, dispatch falls back to the deep-focused panel input for
       // unfocus/goto-line-*, but Enter/Escape stay native so panel forms keep
       // their own keydown handlers (e.g. the metarecord-list query input).
-      if (result.invocation?.startsWith('editing:') && !hasEditingTarget()) {
+      if ('invocation' in result && result.invocation.startsWith('editing:') && !hasEditingTarget()) {
         if (!textInput) return;
         if (result.invocation === 'editing:confirm' || result.invocation === 'editing:discard') {
           return;
         }
       }
+      // Any outcome the matcher claims — fired, pending or cancelled — swallows
+      // the key; only a fired one dispatches.
       event.preventDefault();
       event.stopPropagation();
-      if (result.invocation) void dispatch(result.invocation);
+      if ('invocation' in result) void dispatch(result.invocation);
     },
     { capture: true },
   );

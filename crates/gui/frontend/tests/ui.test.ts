@@ -2,7 +2,6 @@
 // shared by the built-in panel types (spec-gui "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel types
 import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {

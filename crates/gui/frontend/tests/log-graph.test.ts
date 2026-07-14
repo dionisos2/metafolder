@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'vitest';
 
-// @ts-expect-error — plain JS panel module, no types.
 import { graphLayout, revisionParents } from '../../default-config/panel-types/log/graph.js';
 
 const gutters = (revs: { id: number; parent: number | null }[]) =>

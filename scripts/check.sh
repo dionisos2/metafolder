@@ -12,6 +12,8 @@
 #               and the only way it stays clean is if the first new warning
 #               fails the build. --lax downgrades them while you work.
 #   test        the Rust workspace suite.
+#   types       tsc --noEmit over the GUI frontend. Nothing else runs the
+#               compiler: vite strips the types without checking them.
 #   frontend    the vitest suite (crates/gui/frontend).
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
 #               Every ignored advisory is justified in that file.
@@ -36,7 +38,7 @@ for arg in "$@"; do
     case "$arg" in
         --lax) strict=false ;;
         --coverage) coverage=true ;;
-        -h|--help) sed -n '2,26p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,28p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -96,8 +98,10 @@ fi
 run test cargo test --workspace
 
 if [ -d crates/gui/frontend/node_modules ]; then
+    run types npm --prefix crates/gui/frontend run typecheck
     run frontend npm --prefix crates/gui/frontend test
 else
+    skip types "run: npm --prefix crates/gui/frontend install"
     skip frontend "run: npm --prefix crates/gui/frontend install"
 fi
 

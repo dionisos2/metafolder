@@ -3,7 +3,6 @@
 // and the panel text zones (spec-gui "Input history").
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panels
 import { attachHistory, filterHistory } from '/__history.js';
 
 type Attached = { push: (text: string) => void; detach: () => void };

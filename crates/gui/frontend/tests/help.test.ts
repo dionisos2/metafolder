@@ -2,7 +2,6 @@
 // and click-target -> topic resolution. No DOM, no fetch.
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { resolvePage, filterPages, resolveClickTopic } from '../../panel-shim/help.js';
 
 // A miniature manifest mirroring pages/index.json.

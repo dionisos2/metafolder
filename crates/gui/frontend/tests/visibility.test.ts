@@ -3,7 +3,6 @@
 // cost nothing beyond command registration.
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { createVisibilityGate } from '../../panel-shim/visibility.js';
 
 describe('createVisibilityGate', () => {

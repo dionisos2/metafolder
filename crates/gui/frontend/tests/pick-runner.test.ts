@@ -1,7 +1,6 @@
 // Unit tests for createPickRunner (panel-shim/value-widget.js): the value
 // picker driver shared by the field forms (spec-gui "Value picker").
 import { describe, it, expect, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panels
 import { createPickRunner } from '/__value-widget.js';
 
 /** Flush pending microtasks (run() awaits active_repo + the seed before start). */
@@ -12,7 +11,7 @@ function stubMetafolder({ seed = null }: { seed?: string | null } = {}) {
   let resultListener: ((value: unknown) => void) | null = null;
   const vars: Record<string, unknown> = { active_repo: 'repo-1' };
   return {
-    start: vi.fn(async () => 'ws-2'),
+    start: vi.fn(async (_spec: Record<string, any>) => 'ws-2'),
     deliver(value: unknown) {
       resultListener?.(value);
     },
@@ -24,7 +23,7 @@ function stubMetafolder({ seed = null }: { seed?: string | null } = {}) {
         },
       },
       config: { pickerSeed: async () => seed },
-      pick: { start: undefined as unknown as (spec: unknown) => Promise<string> },
+      pick: { start: undefined as unknown as (spec: Record<string, any>) => Promise<string> },
     },
   };
 }

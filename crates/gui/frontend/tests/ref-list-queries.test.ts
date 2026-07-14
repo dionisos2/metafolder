@@ -3,7 +3,6 @@
 // in the tree field's forest (classic tag inheritance).
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import { refListQuery } from '../../default-config/panel-types/ref-list/queries.js';
 
 describe('refListQuery', () => {

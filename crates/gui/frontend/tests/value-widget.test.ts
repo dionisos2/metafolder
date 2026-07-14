@@ -4,7 +4,6 @@
 // metarecord-detail add-field form and the metarecord-list bulk-set form.
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panels
 import {
   TYPES,
   createTypePicker,

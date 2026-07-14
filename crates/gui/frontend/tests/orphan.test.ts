@@ -3,7 +3,6 @@
 // deletion) or stale tree_refs (spec-file-tracking "Orphaned metarecord").
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { orphanState, orphanLabel } from '../../panel-shim/orphan.js';
 
 const treeRef = (parent: string | null, name: string) => ({

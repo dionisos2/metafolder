@@ -11,7 +11,6 @@
     shortcutsFor,
   } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
-  // @ts-expect-error plain-JS module shared with the panel shim
   import { attachHistory } from '../../../panel-shim/history.js';
 
   let element = $state<HTMLInputElement | null>(null);

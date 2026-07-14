@@ -8,6 +8,31 @@
 // Precedence (spec-gui "Keybinding"): focus-scoped over panel-local over
 // global, then text-input=false over text-input=true.
 
+/**
+ * One compiled binding, as the Rust engine emits it.
+ *
+ * @typedef {object} Binding
+ * @property {string[]} keys the combos, in order (`["g","g"]` is a sequence)
+ * @property {string} invocation the command to dispatch
+ * @property {string|null} [when] restricts the binding to one panel type
+ * @property {string|null} [focus] restricts it to a focus scope
+ * @property {boolean} [text_input] may fire while a text input has focus
+ */
+
+/**
+ * The outcome of feeding one combo — a union, not a bag of optional fields:
+ * `prefix`/`candidates` exist exactly when a sequence is pending, and
+ * `sequence` exactly when one dead-ends. Callers narrow with `in`.
+ *
+ * @typedef {{invocation: string}} Fired a binding fired
+ * @typedef {{pending: true, prefix: string[], candidates: Binding[]}} Pending
+ *   a sequence is in progress; `candidates` are the bindings that can still
+ *   complete it (for the continuation hint)
+ * @typedef {{cancelled: true}} Cancelled escape dropped the pending sequence
+ * @typedef {{unknown: true, sequence: string[]}} Unknown the sequence dead-ends
+ * @typedef {Fired|Pending|Cancelled|Unknown} MatchResult
+ */
+
 const SPECIAL_KEYS = {
   ' ': 'space',
   arrowleft: 'left',
@@ -85,6 +110,7 @@ export function createMatcher(bindings) {
     return keys.length > prefix.length && prefix.every((key, index) => key === keys[index]);
   }
 
+  /** @returns {MatchResult|null} */
   function tryMatch(keys, context) {
     const eligibles = table.filter((binding) => eligible(binding, context));
     const exact = eligibles
@@ -109,6 +135,7 @@ export function createMatcher(bindings) {
     // pending sequence), {unknown: true, sequence} (a key that does not
     // continue the pending sequence — the combo is swallowed and aborted,
     // no other binding fires), or null. A pending sequence never expires.
+    /** @returns {MatchResult|null} */
     feed(combo, context) {
       if (buffer.length > 0 && combo === 'escape') {
         buffer = [];

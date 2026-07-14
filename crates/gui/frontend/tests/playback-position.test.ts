@@ -3,7 +3,6 @@
 // store it on the metarecord of the played file.
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import {
   PLAYBACK_FIELD,
   MIN_RESUME,

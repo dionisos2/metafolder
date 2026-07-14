@@ -5,9 +5,7 @@
 // shell pushes workspace/message/visibility changes through the returned
 // `push*` methods.
 
-// @ts-expect-error plain-JS module shared with the (former) panel shim
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
-// @ts-expect-error plain-JS module shared with the (former) panel shim
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { invoke as ipcInvoke } from '../ipc';
 import { createCache, type DaemonResponse, type RawFetcher } from './cache';
@@ -159,7 +157,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
             const err = (response.body as { error?: string })?.error;
             throw new Error(err ?? `tree/resolve failed (HTTP ${response.status})`);
           }
-          return response.body; // { uuid: [paths] }
+          return response.body as Record<string, string[]>; // { uuid: [paths] }
         }),
       );
     }
@@ -237,7 +235,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       parseQuery: (dsl: string) => (api.query as { parse: (d: string) => unknown }).parse(dsl),
       expandQuery: (s: string) => (api.query as { expand: (t: string) => unknown }).expand(s),
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
-      resolveTreeRef: (repo: string, value: unknown) => resolverFor(repo).resolveTreeRef(value),
+      resolveTreeRef: (repo: string, value: { parent: string | null; name: string }) =>
+        resolverFor(repo).resolveTreeRef(value),
       invalidatePath: (repo: string, uuid: string) => resolverFor(repo).invalidate(uuid),
       repoRoot: async (repo: string) => (await repoInfo(repo)).root,
       repoInternalDir: async (repo: string) => (await repoInfo(repo)).internal_dir,

@@ -8,7 +8,6 @@ import {
   installContextMenuSuppression,
   installDefaultContextMenu,
   showMenu,
-  // @ts-expect-error plain-JS module shared with the panel types
 } from '../../panel-shim/menu.js';
 
 type Item = { label: string; action?: () => void; disabled?: boolean } | '-';
@@ -132,7 +131,6 @@ describe('showMenu', () => {
 describe('shared state across module instances', () => {
   async function secondInstance() {
     vi.resetModules();
-    // @ts-expect-error plain-JS module shared with the panel types
     return await import('../../panel-shim/menu.js');
   }
 

@@ -140,7 +140,12 @@ export function thumbnail(guiServer, path, options = {}) {
   return glyph(fileTypeGlyph(path, fileGlyph));
 }
 
-/** Display form of a Value ({type, value} JSON, spec-data-model). */
+/**
+ * Display form of a Value ({type, value} JSON, spec-data-model). `value` is
+ * absent for `nothing` (explicit absence), which renders as ∅.
+ *
+ * @param {{type: string, value?: unknown}} field
+ */
 export function formatValue({ type, value }) {
   switch (type) {
     case 'nothing':

@@ -120,10 +120,20 @@ export function createPickRunner(metafolder) {
     });
   }
 
-  // Low-level: opens a picker described by `spec` in the other slot and
-  // resolves to the chosen value (a metarecord uuid, or a path when
-  // result === 'path') or null on cancel. `repo` defaults to the active repo;
-  // pass it explicitly (e.g. null) to override.
+  /**
+   * Low-level: opens a picker described by `spec` in the other slot and
+   * resolves to the chosen value (a metarecord uuid, or a path when
+   * result === 'path') or null on cancel.
+   *
+   * @param {object} spec
+   * @param {string} spec.panel the panel type to open
+   * @param {Record<string, unknown>} [spec.vars] workspace vars seeding it
+   * @param {'uuid'|'path'} [spec.result] what the pick resolves to
+   * @param {string} [spec.name] the field being picked, for the prompt
+   * @param {string} [spec.prompt] overrides the generated prompt
+   * @param {string|null} [spec.repo] defaults to the active repo; pass null to
+   *   override (e.g. the repos panel, which has none)
+   */
   async function request({ panel, vars = {}, result = 'uuid', name, prompt, repo }) {
     ensureWired();
     const activeRepo = repo !== undefined ? repo : ((await workspace.get('active_repo')) ?? null);

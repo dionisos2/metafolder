@@ -4,7 +4,6 @@
 // thousands of tracked files only queries the slice the user can see.
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel
 import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter, filterHidden } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
@@ -25,7 +24,7 @@ const entry = (uuid: string, name: string): Entry => ({
 function fakeDaemon(pages: { results: Entry[]; next_cursor: string | null }[]) {
   let i = 0;
   return {
-    call: vi.fn(async () => pages[i++]),
+    call: vi.fn(async (..._args: any[]) => pages[i++]),
   };
 }
 

@@ -2,7 +2,6 @@
 // daemon's tree-resolve endpoint (no client-side chain walk).
 
 import { describe, expect, test, vi } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { createPathResolver } from '../../panel-shim/resolve.js';
 
 // Resolved paths, as the daemon's tree-resolve endpoint would return them.

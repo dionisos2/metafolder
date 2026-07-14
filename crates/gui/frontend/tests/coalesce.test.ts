@@ -5,7 +5,6 @@
 // to propagate the selection (workspace.set IPC) without accumulating input.
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { latestOnly } from '../../panel-shim/coalesce.js';
 
 /** An async gate the test opens by hand. */

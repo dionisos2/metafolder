@@ -3,7 +3,6 @@
 // panel shim use it, so key handling behaves identically inside iframes.
 
 import { describe, expect, test } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panel shim
 import { comboFromEvent, createMatcher } from '../../panel-shim/keymatch.js';
 
 type Binding = {

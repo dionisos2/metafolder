@@ -2,7 +2,6 @@
 // (spec-gui "Command input"). Parsing and filtering are pure and unit
 // tested; dispatch routes to Tauri commands and panel iframes.
 
-// @ts-expect-error plain-JS module shared with the panel shim
 import { osmMatch } from '../../../panel-shim/finder.js';
 import { setHelpCursor } from './cursor';
 import { invoke } from './ipc';

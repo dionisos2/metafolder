@@ -12,9 +12,21 @@ export function entriesFooter(shown, total) {
   return `${n}/${total} ${word}${n < total ? ' (more — scroll down)' : ''}`;
 }
 
-// Directory entries to display: dot-entries (Unix hidden files) are dropped
-// unless the "hidden files" checkbox is on. Applied to the real entries only —
-// the synthetic "." / ".." rows are added afterwards and always shown.
+/**
+ * One directory entry, as `metafolder.fs.readDir` returns it.
+ *
+ * @typedef {{name: string, path: string, is_dir: boolean}} Entry
+ */
+
+/**
+ * Directory entries to display: dot-entries (Unix hidden files) are dropped
+ * unless the "hidden files" checkbox is on. Applied to the real entries only —
+ * the synthetic "." / ".." rows are added afterwards and always shown.
+ *
+ * @param {Entry[]} items
+ * @param {boolean} showHidden
+ * @returns {Entry[]}
+ */
 export function filterHidden(items, showHidden) {
   return showHidden ? items : items.filter((item) => !item.name.startsWith('.'));
 }

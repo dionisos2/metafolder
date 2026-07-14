@@ -4,6 +4,17 @@
 // `resolvePaths(uuids)` returns `{ uuid: [paths] }`. The shim exposes this per
 // repo as metafolder.daemon.resolvePath / resolveTreeRef / invalidatePath.
 
+/**
+ * A `tree_ref` value as the daemon serialises it: the parent metarecord (null
+ * at a forest root) and this node's name.
+ *
+ * @typedef {{parent: string|null, name: string}} TreeRefValue
+ */
+
+/**
+ * @param {(uuids: string[]) => Promise<Record<string, string[]>>} resolvePaths
+ *   one daemon round-trip resolving uuids to their (multi-map) paths
+ */
 export function createPathResolver(resolvePaths) {
   const cache = new Map(); // uuid -> Promise<relative path>
 
@@ -24,6 +35,7 @@ export function createPathResolver(resolvePaths) {
     return paths[0]; // first position (multi-map: hardlinks etc.)
   }
 
+  /** @param {TreeRefValue} value */
   async function resolveTreeRef({ parent, name }) {
     if (!parent) return name; // tree root (empty name for the repo root)
     const parentPath = await resolveUuid(parent);

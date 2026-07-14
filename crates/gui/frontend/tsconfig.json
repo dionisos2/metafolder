@@ -7,7 +7,8 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "types": ["svelte", "vite/client"],
+    "allowJs": true,
+    "types": ["node", "svelte", "vite/client"],
     "paths": {
       "/__ui.js": ["../panel-shim/ui.js"],
       "/__menu.js": ["../panel-shim/menu.js"],

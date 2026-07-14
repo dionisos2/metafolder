@@ -7,7 +7,6 @@
   import { createPanelApi, type PanelApiInstance } from './api';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, SlotId } from '../types';
-  // @ts-expect-error plain-JS module shared with the (former) panel shim
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
 
   let layer = $state<HTMLElement | null>(null);

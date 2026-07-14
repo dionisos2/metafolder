@@ -1,7 +1,6 @@
 // Unit tests for the finder query builder (panel-shim/finder.js): the
 // quick-filter → OSM query composition shared by the list panels.
 import { describe, it, expect } from 'vitest';
-// @ts-expect-error plain-JS module shared with the panels
 import { splitTerms, finderTargets, finderClause, composeQuery, osmMatch } from '/__finder.js';
 
 describe('splitTerms', () => {
