@@ -1,8 +1,7 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
-import { el, fields, thumbnail } from '/__ui.js';
+import { byId, el, fields, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
@@ -39,28 +38,55 @@ const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:direct', 'name:direct'];
 const FINDER_DEBOUNCE_MS = 500;
 const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
 
+/**
+ * A column spec, as ./columns.js parses it.
+ * @typedef {import('./columns.js').Column} Column
+ *
+ * A sort key, as the daemon's query body takes it.
+ * @typedef {{field: string, order: 'asc'|'desc'}} SortKey
+ *
+ * The value editor `widgetFor` builds.
+ * @typedef {{element: HTMLElement, read: () => Metafolder.Value}} Widget
+ *
+ * Whether a metarecord's tracked file is gone, as /__orphan.js reports it.
+ * @typedef {'deleted'|'missing'|null} OrphanState
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, query, bench, cache } = metafolder;
+  // Annotated: an unannotated `const x = cache.REFRESH` widens the unique symbol
+  // to plain `symbol`, and `value === x` then narrows nothing.
+  /** @type {Metafolder.Refresh} */
   const REFRESH = cache.REFRESH;
   const defaultPageSize = metafolder.pageSize ?? DEFAULT_PAGE_SIZE_FALLBACK;
   // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
-  const settings = metafolder.settings ?? {};
+  const { settings } = metafolder;
   const finderDebounceMs = settings.finderDebounceMs ?? FINDER_DEBOUNCE_MS;
   const livePreviewMs = settings.livePreviewDebounceMs ?? 130;
   const statusMessageMs = settings.statusMessageMs ?? 5000;
 
+  /** @type {string|null} */
   let repo = null;
-  let columns = parseColumns(DEFAULT_COLUMNS); // persisted per workspace (spec strings)
-  let widths = {}; // column spec -> px; persisted per workspace
+  /** @type {Column[]} persisted per workspace (spec strings) */
+  let columns = parseColumns(DEFAULT_COLUMNS);
+  /** @type {Record<string, number>} column spec -> px; persisted per workspace */
+  let widths = {};
+  /** @type {Metafolder.Metarecord[]} */
   let metarecords = [];
+  /** @type {string|null} */
   let nextCursor = null;
-  let total = null; // full result count (daemon-side COUNT, first page only)
+  /** @type {number|null} full result count (daemon-side COUNT, first page only) */
+  let total = null;
   let pageSize = defaultPageSize; // persisted per workspace
   let loading = false;
-  let queryIR = null; // null = match all (the structural base query)
+  /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
+  let queryIR = null;
   let finderText = ''; // quick OSM filter, AND-ed onto the base query
+  /** @type {string[]} */
   let finderFields = DEFAULT_FINDER_FIELDS.slice();
-  let finderTimer = null;
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let finderTimer;
   let normalShown = false; // zone B (normal DSL) revealed?
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
@@ -69,40 +95,46 @@ export async function mount(root, metafolder) {
   // — apply the query, type in the finder, sort, or refresh. Reset on repo
   // change; a value-picker opening (pick_request) arms it, rows are needed.
   let queryRan = false;
-  let livePreviewTimer = null;
-  let sort = []; // [{field, order}]
+  /** @type {ReturnType<typeof setTimeout>|undefined} */
+  let livePreviewTimer;
+  /** @type {SortKey[]} */
+  let sort = [];
   let cursorIndex = -1;
-  let checked = new Set(); // multi-selection (uuids)
+  /** @type {Set<string>} multi-selection (uuids) */
+  let checked = new Set();
   let mode = 'table';
-  let orphanCache = new Map(); // uuid -> Promise<null|'deleted'|'missing'>
+  /** @type {Map<string, Promise<OrphanState>>} uuid -> orphan state */
+  let orphanCache = new Map();
 
-  const bodyEl = root.querySelector('.mf-panel-body');
-  const rows = root.getElementById('rows');
-  const grid = root.getElementById('grid');
-  const scroll = root.getElementById('scroll');
-  const statusLine = root.getElementById('status-line');
-  const finderInput = root.getElementById('finder-input');
-  const finderFieldsLabel = root.getElementById('finder-fields');
-  const queryInput = root.getElementById('query-input');
-  const columnsInput = root.getElementById('columns-input');
-  const queryError = root.getElementById('query-error');
-  const columnsError = root.getElementById('columns-error');
-  const normalToggle = root.getElementById('normal-toggle');
-  const normalEditor = root.getElementById('normal-editor');
-  const normalInput = root.getElementById('normal-input');
-  const normalError = root.getElementById('normal-error');
-  const normalFreeze = root.getElementById('normal-freeze');
-  const bulkForm = root.getElementById('bulk-form');
-  const bulkOp = root.getElementById('bulk-op');
-  const bulkName = root.getElementById('bulk-name');
-  const bulkValueSlot = root.getElementById('bulk-value');
-  const bulkForce = root.getElementById('bulk-force');
-  const bulkError = root.getElementById('bulk-error');
+  const bodyEl = qs(root, '.mf-panel-body');
+  const rows = byId(root, 'rows');
+  const grid = byId(root, 'grid');
+  const scroll = byId(root, 'scroll');
+  const statusLine = byId(root, 'status-line');
+  const finderInput = byId(root, 'finder-input', HTMLInputElement);
+  const finderFieldsLabel = byId(root, 'finder-fields');
+  const queryInput = byId(root, 'query-input', HTMLInputElement);
+  const columnsInput = byId(root, 'columns-input', HTMLInputElement);
+  const queryError = byId(root, 'query-error');
+  const columnsError = byId(root, 'columns-error');
+  const normalToggle = byId(root, 'normal-toggle');
+  const normalEditor = byId(root, 'normal-editor');
+  const normalInput = byId(root, 'normal-input', HTMLTextAreaElement);
+  const normalError = byId(root, 'normal-error');
+  const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
+  const bulkForm = byId(root, 'bulk-form');
+  const bulkOp = byId(root, 'bulk-op', HTMLSelectElement);
+  const bulkName = byId(root, 'bulk-name', HTMLInputElement);
+  const bulkValueSlot = byId(root, 'bulk-value');
+  const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
+  const bulkError = byId(root, 'bulk-error');
 
   // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
   const historyDeps = {
+    /** @param {string} histRepo @param {string} zone */
     read: (histRepo, zone) => metafolder.history.read(histRepo, zone),
+    /** @param {string} histRepo @param {string} zone @param {string} entry */
     append: (histRepo, zone, entry) => metafolder.history.append(histRepo, zone, entry),
     getRepo: async () => repo,
     container: bodyEl,
@@ -115,8 +147,10 @@ export async function mount(root, metafolder) {
 
   // ── Data access (all daemon data comes from the shared cache) ─────────────
 
-  let repoRoot = null; // absolute root path of the active repo (cached once)
+  /** @type {string|null} absolute root path of the active repo (cached once) */
+  let repoRoot = null;
 
+  /** @param {Metafolder.Metarecord} metarecord @param {string} field */
   function hasTreeRef(metarecord, field) {
     return fields(metarecord, field).some((f) => f.value.type === 'tree_ref');
   }
@@ -126,33 +160,38 @@ export async function mount(root, metafolder) {
   // Pre-fetches the display data for the ~ columns into the shared cache, then
   // fills the columns from cache reads — rendering stays synchronous and never
   // mutates the (shared, read-only) cached metarecords.
+  /** @param {Metafolder.Metarecord[]} subset @returns {Promise<void>} */
   function prepare(subset) {
     return bench.measure('mf:list:enrich', () => prepareNow(subset));
   }
 
+  /** @param {Metafolder.Metarecord[]} subset */
   async function prepareNow(subset) {
-    if (subset.length === 0) return;
-    if (repoRoot === null) repoRoot = await daemon.repoRoot(repo);
+    // Held in a const: `repo` is a captured `let`, so a guard on it does not
+    // narrow inside the callbacks below.
+    const r = repo;
+    if (subset.length === 0 || !r) return;
+    if (repoRoot === null) repoRoot = await daemon.repoRoot(r);
     await Promise.all(
       [...treeFieldsOf()].map((field) =>
         cache.fetchTreeRefs(
-          repo,
+          r,
           field,
           subset.filter((m) => hasTreeRef(m, field)).map((m) => m.uuid),
         ),
       ),
     );
     const targetUuids = refTargetUuids(columns, subset);
-    await cache.fetchMetarecords(repo, targetUuids);
+    await cache.fetchMetarecords(r, targetUuids);
     // Phase 2: `tag>path:path` columns also need the followed targets' own tree
     // paths resolved (same machinery, on the target uuids).
     await Promise.all(
       followedTreeFields(columns).map((field) =>
         cache.fetchTreeRefs(
-          repo,
+          r,
           field,
           targetUuids.filter((u) => {
-            const t = cache.readMetarecord(repo, u);
+            const t = cache.readMetarecord(r, u);
             return t !== REFRESH && hasTreeRef(t, field);
           }),
         ),
@@ -161,26 +200,32 @@ export async function mount(root, metafolder) {
     fillFromCache(subset);
   }
 
+  /** @param {Metafolder.Metarecord[]} subset */
   function fillFromCache(subset) {
+    const r = repo;
+    if (!r) return;
+    /** @type {Record<string, Record<string, string[]>>} */
     const pathsByField = {};
     for (const field of treeFieldsOf()) {
       pathsByField[field] = {};
       for (const m of subset) {
-        const paths = cache.readTreeRef(repo, field, m.uuid);
+        const paths = cache.readTreeRef(r, field, m.uuid);
         if (paths !== REFRESH) pathsByField[field][m.uuid] = paths;
       }
     }
     const targetUuids = refTargetUuids(columns, subset);
+    /** @type {Map<string, Metafolder.Metarecord|null>} */
     const targets = new Map();
     for (const uuid of targetUuids) {
-      const target = cache.readMetarecord(repo, uuid);
+      const target = cache.readMetarecord(r, uuid);
       targets.set(uuid, target === REFRESH ? null : target);
     }
+    /** @type {Record<string, Record<string, string[]>>} */
     const followedPathsByField = {};
     for (const field of followedTreeFields(columns)) {
       followedPathsByField[field] = {};
       for (const uuid of targetUuids) {
-        const paths = cache.readTreeRef(repo, field, uuid);
+        const paths = cache.readTreeRef(r, field, uuid);
         if (paths !== REFRESH) followedPathsByField[field][uuid] = paths;
       }
     }
@@ -189,10 +234,14 @@ export async function mount(root, metafolder) {
 
   // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
   // from the cache + the repo root) — replaces the old per-metarecord `.paths`.
+  /** @param {Metafolder.Metarecord} metarecord @returns {string[]} */
   function pathsOf(metarecord) {
-    const rel = cache.readTreeRef(repo, 'mfr_path', metarecord.uuid);
-    if (rel === REFRESH || repoRoot === null) return [];
-    return rel.map((r) => (r === '' ? repoRoot : `${repoRoot}/${r}`));
+    const r = repo;
+    const rootPath = repoRoot;
+    if (!r || rootPath === null) return [];
+    const rel = cache.readTreeRef(r, 'mfr_path', metarecord.uuid);
+    if (rel === REFRESH) return [];
+    return rel.map((p) => (p === '' ? rootPath : `${rootPath}/${p}`));
   }
 
   /** Re-derives the ~ columns over the loaded metarecords (after a column change). */
@@ -203,35 +252,39 @@ export async function mount(root, metafolder) {
   // The query actually run: the structural base query AND the finder's OSM
   // clause (mode auto-detected per field from the catalog). null = match all.
   function effectiveQuery() {
-    const targets = finderTargets(finderFields, (f) => cache.fieldType(repo, f));
+    const r = repo;
+    const targets = finderTargets(finderFields, (f) => (r ? cache.fieldType(r, f) : null));
     return composeQuery(queryIR, finderClause(splitTerms(finderText), targets));
   }
 
   // Returns false when the call is dropped (no repo, or another fetch is in
   // flight — fetches are serialized on `loading`), so the finder can re-run the
   // latest query instead of leaving the list stale.
+  /** @param {boolean} reset @returns {Promise<boolean|undefined>} */
   async function fetchPage(reset) {
-    if (!repo || loading) return false;
+    const r = repo;
+    if (!r || loading) return false;
     loading = true;
     try {
       // A reset fetch is a deliberate freshness point (query, refresh, display):
       // poll the change feed so stale cached data is dropped before we read.
-      if (reset) await cache.sync(repo);
+      if (reset) await cache.sync(r);
+      /** @type {string|null} */
       let keepUuid = null;
       if (reset) {
         // A refresh must not steal the selection: remember the highlighted
         // metarecord and restore it.
-        keepUuid =
-          metarecords[cursorIndex]?.uuid ??
-          (await workspace.get('selected_metarecord'))?.uuid ??
-          null;
+        const previous = /** @type {{uuid: string}|null} */ (
+          (await workspace.get('selected_metarecord')) ?? null
+        );
+        keepUuid = metarecords[cursorIndex]?.uuid ?? previous?.uuid ?? null;
         metarecords = [];
         nextCursor = null;
         orphanCache = new Map();
       }
       let result;
       try {
-        result = await cache.query(repo, {
+        result = await cache.query(r, {
           query: effectiveQuery() ?? MATCH_ALL,
           select: '*',
           limit: pageSize,
@@ -244,9 +297,9 @@ export async function mount(root, metafolder) {
         return;
       }
       // The page's metarecords are read from the cache the query just populated.
-      const fetched = result.uuids
-        .map((u) => cache.readMetarecord(repo, u))
-        .filter((m) => m !== REFRESH);
+      const fetched = /** @type {Metafolder.Metarecord[]} */ (
+        result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
+      );
       metarecords = metarecords.concat(fetched);
       nextCursor = result.nextCursor;
       await prepare(fetched); // pre-resolve display data; rendering stays sync
@@ -278,20 +331,20 @@ export async function mount(root, metafolder) {
 
   // ── Rendering ─────────────────────────────────────────────────────────
 
-  let resizing = null; // {column, startX, startWidth, moved}
+  /** @type {{column: Column, startX: number, startWidth: number, moved: boolean}|null} */
+  let resizing = null;
 
+  /** @param {MouseEvent} event @param {Column} column */
   function startResize(event, column) {
     event.preventDefault();
-    resizing = {
-      column,
-      startX: event.clientX,
-      startWidth: event.target.closest('th').offsetWidth,
-      moved: false,
-    };
+    const th = /** @type {HTMLElement} */ (event.target).closest('th');
+    if (!th) return;
+    resizing = { column, startX: event.clientX, startWidth: th.offsetWidth, moved: false };
   }
 
   // Document-level so the drag keeps tracking outside the column; removed on
   // unmount (cleanup) so they do not leak across panel instances.
+  /** @param {MouseEvent} event */
   const onMouseMove = (event) => {
     if (!resizing) return;
     resizing.moved = true;
@@ -307,21 +360,21 @@ export async function mount(root, metafolder) {
     resizing = null;
     if (moved) void workspace.set('metarecord-list:column-widths', { ...widths });
   };
-  document.addEventListener('mousemove', onMouseMove);
+  document.addEventListener('mousemove', /** @type {EventListener} */ (onMouseMove));
   document.addEventListener('mouseup', onMouseUp);
 
   function renderHeader() {
-    root.getElementById('header-row').replaceChildren(
+    byId(root, 'header-row').replaceChildren(
       ...columns.map((column) => {
-        const active = isSortable(column) && sort.find((s) => s.field === column.name);
+        const active = isSortable(column) ? sort.find((s) => s.field === column.name) : undefined;
         const th = el(
           'th',
           { onclick: () => toggleSort(column) },
           column.spec + (active ? (active.order === 'asc' ? ' ▲' : ' ▼') : ''),
           el('div', {
             class: 'col-resize',
-            onmousedown: (event) => startResize(event, column),
-            onclick: (event) => event.stopPropagation(),
+            onmousedown: (/** @type {MouseEvent} */ event) => startResize(event, column),
+            onclick: (/** @type {Event} */ event) => event.stopPropagation(),
           }),
         );
         if (widths[column.spec]) th.style.width = `${widths[column.spec]}px`;
@@ -333,7 +386,11 @@ export async function mount(root, metafolder) {
   // Orphan check environment: paths are pre-resolved (enrich), so this is just a
   // disk stat (no daemon traffic during rendering).
   const orphanCtx = {
-    metarecordPaths: (metarecord) => pathsOf(metarecord),
+    // Async by contract (orphanState awaits it), though the paths are already
+    // resolved in the cache — the orphan check costs no daemon traffic.
+    /** @param {Metafolder.Metarecord} metarecord */
+    metarecordPaths: (metarecord) => Promise.resolve(pathsOf(metarecord)),
+    /** @param {string} path */
     exists: (path) =>
       metafolder.fs.stat(path).then(
         () => true,
@@ -341,18 +398,18 @@ export async function mount(root, metafolder) {
       ),
   };
 
-  /** Marks the row/card when the metarecord's tracked file is gone (async). */
+  /** Marks the row/card when the metarecord's tracked file is gone (async).
+   *  @param {HTMLElement} node @param {Metafolder.Metarecord} metarecord */
   function fillOrphan(node, metarecord) {
-    if (!orphanCache.has(metarecord.uuid)) {
-      orphanCache.set(
-        metarecord.uuid,
-        orphanState(metarecord, orphanCtx).catch(() => null),
-      );
+    let state = orphanCache.get(metarecord.uuid);
+    if (!state) {
+      state = orphanState(metarecord, orphanCtx).catch(() => null);
+      orphanCache.set(metarecord.uuid, state);
     }
-    void orphanCache.get(metarecord.uuid).then((state) => {
-      if (state === null) return;
+    void state.then((resolved) => {
+      if (resolved === null) return;
       node.classList.add('orphan');
-      node.title = orphanLabel(state);
+      node.title = orphanLabel(resolved);
     });
   }
 
@@ -437,6 +494,7 @@ export async function mount(root, metafolder) {
     await workspace.set('selected_paths', pathsOf(metarecord));
   });
 
+  /** @param {number} index */
   async function setCursor(index) {
     cursorIndex = Math.max(0, Math.min(index, metarecords.length - 1));
     if (!metarecords[cursorIndex]) {
@@ -477,6 +535,7 @@ export async function mount(root, metafolder) {
   async function recomputeQuery() {
     queryError.textContent = '';
     normalError.textContent = '';
+    /** @type {string} */
     let dsl;
     if (normalShown && normalFrozen) {
       dsl = normalInput.value.trim(); // frozen normal DSL is authoritative
@@ -486,9 +545,9 @@ export async function mount(root, metafolder) {
         dsl = '';
       } else {
         try {
-          dsl = (await query.expand(simplified)).trim();
+          dsl = String(await query.expand(simplified)).trim();
         } catch (error) {
-          queryError.textContent = String(error.message ?? error);
+          queryError.textContent = messageOf(error);
           return false;
         }
       }
@@ -498,9 +557,9 @@ export async function mount(root, metafolder) {
       queryIR = null; // empty = match all
     } else {
       try {
-        queryIR = await query.parse(dsl);
+        queryIR = /** @type {Record<string, unknown>} */ (await query.parse(dsl));
       } catch (error) {
-        (normalShown ? normalError : queryError).textContent = String(error.message ?? error);
+        (normalShown ? normalError : queryError).textContent = messageOf(error);
         return false;
       }
     }
@@ -536,12 +595,13 @@ export async function mount(root, metafolder) {
       return;
     }
     try {
-      normalInput.value = (await query.expand(simplified)).trim();
+      normalInput.value = String(await query.expand(simplified)).trim();
     } catch (error) {
-      queryError.textContent = String(error.message ?? error);
+      queryError.textContent = messageOf(error);
     }
   }
 
+  /** @param {boolean} shown */
   async function setNormalShown(shown) {
     normalShown = shown;
     normalEditor.hidden = !shown;
@@ -550,6 +610,7 @@ export async function mount(root, metafolder) {
     await workspace.set('metarecord-list:normal-shown', shown);
   }
 
+  /** @param {boolean} frozen */
   async function setNormalFrozen(frozen) {
     normalFrozen = frozen;
     normalFreeze.checked = frozen;
@@ -560,7 +621,9 @@ export async function mount(root, metafolder) {
 
   // ── Columns ─────────────────────────────────────────────────────────────
 
+  /** @param {unknown} value the persisted `metarecord-list:columns` variable */
   function setColumns(value) {
+    /** @type {Column[]} */
     let parsed = [];
     try {
       parsed = parseColumns(Array.isArray(value) ? value.join(' ') : '');
@@ -574,11 +637,12 @@ export async function mount(root, metafolder) {
   /** Applies the columns input (no daemon round-trip: select is always '*'). */
   async function applyColumns() {
     columnsError.textContent = '';
+    /** @type {Column[]} */
     let parsed;
     try {
       parsed = parseColumns(columnsInput.value);
     } catch (error) {
-      columnsError.textContent = String(error.message ?? error);
+      columnsError.textContent = messageOf(error);
       return;
     }
     columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
@@ -592,11 +656,13 @@ export async function mount(root, metafolder) {
   }
 
   /** A stored/typed page size; anything invalid falls back to the default. */
+  /** @param {unknown} value */
   function sanitizePageSize(value) {
     const n = Math.floor(Number(value));
     return Number.isFinite(n) && n >= 1 ? n : defaultPageSize;
   }
 
+  /** @param {Column} column */
   function toggleSort(column) {
     if (!isSortable(column)) return; // metarecord meta, not a sortable field
     const current = sort.find((s) => s.field === column.name);
@@ -611,10 +677,12 @@ export async function mount(root, metafolder) {
 
   // ── Bulk edit (set/append/remove a field over the whole query result) ────
 
-  let bulkWidget = null; // {element, read()} following the picked type
+  /** @type {Widget|null} the value editor following the picked type */
+  let bulkWidget = null;
 
   // Each operation maps to its batch endpoint and a confirmation verb.
   // `valueless` ops (unset) act on the field name alone — no value widget.
+  /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean}>} */
   const BULK_OPS = {
     set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
     append: { path: 'query/fields/append', verb: 'Append', prep: 'to' },
@@ -625,24 +693,22 @@ export async function mount(root, metafolder) {
   // Value picker (spec-gui "Value picker") for the bulk-set value widget.
   const pickRunner = createPickRunner(metafolder);
   const bulkPickOpts = {
+    /** @param {string} valueType */
     pick: (valueType) => pickRunner.run({ field: bulkName.value.trim(), valueType }),
   };
 
-  /** The form's value widget follows the picked type. */
+  /** The form's value widget follows the picked type.
+   *  @param {string} type */
   function setBulkWidget(type) {
     bulkWidget = widgetFor(type, undefined, bulkPickOpts);
     bulkValueSlot.replaceChildren(bulkWidget.element);
   }
-  const bulkTypePicker = createTypePicker(
-    root.getElementById('bulk-type'),
-    'string',
-    setBulkWidget,
-  );
+  const bulkTypePicker = createTypePicker(byId(root, 'bulk-type'), 'string', setBulkWidget);
   setBulkWidget(bulkTypePicker.get());
 
   // Hide the type picker + value row for value-less ops (unset).
-  const bulkValueRow = root.getElementById('bulk-value-row');
-  const bulkTypeBtn = root.getElementById('bulk-type');
+  const bulkValueRow = byId(root, 'bulk-value-row');
+  const bulkTypeBtn = byId(root, 'bulk-type');
   function syncBulkOpUi() {
     const valueless = (BULK_OPS[bulkOp.value] ?? BULK_OPS.set).valueless === true;
     bulkValueRow.hidden = valueless;
@@ -659,12 +725,14 @@ export async function mount(root, metafolder) {
 
   /** Counts the metarecords the current query matches (for the confirmation). */
   async function countMatches() {
-    const result = await daemon.call('POST', `/repos/${repo}/query`, {
-      query: effectiveQuery() ?? MATCH_ALL,
-      select: '*',
-      limit: 1,
-      count: true,
-    });
+    const result = /** @type {{total?: number|null}} */ (
+      await daemon.call('POST', `/repos/${repo}/query`, {
+        query: effectiveQuery() ?? MATCH_ALL,
+        select: '*',
+        limit: 1,
+        count: true,
+      })
+    );
     return result.total ?? 0;
   }
 
@@ -681,13 +749,18 @@ export async function mount(root, metafolder) {
       // Value-less ops (unset) act on the name alone. Bulk edits target the
       // effective (finder-filtered) set — you act on what you see.
       const effQ = effectiveQuery();
-      const body = op.valueless
-        ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
-        : bulkSetBody(effQ, name, bulkWidget.read(), force);
-      const resp = await daemon.call('POST', `/repos/${repo}/${op.path}`, body);
+      const widget = bulkWidget;
+      if (!op.valueless && !widget) throw new Error('no value widget');
+      const body =
+        op.valueless || !widget
+          ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
+          : bulkSetBody(effQ, name, widget.read(), force);
+      const resp = /** @type {{updated?: number}} */ (
+        await daemon.call('POST', `/repos/${repo}/${op.path}`, body)
+      );
       const updated = resp.updated ?? 0;
       bulkForm.classList.remove('open');
-      statusBar.message(
+      void statusBar.message(
         `${op.verb} "${name}": ${updated} metarecord${updated === 1 ? '' : 's'} changed.`,
         statusMessageMs,
       );
@@ -695,7 +768,7 @@ export async function mount(root, metafolder) {
       // write up via the change feed on the next reset fetch).
       await workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
-      bulkError.textContent = String(error.message ?? error);
+      bulkError.textContent = messageOf(error);
     }
   }
 
@@ -706,16 +779,18 @@ export async function mount(root, metafolder) {
     loaded: () => metarecords.length,
     total: () => total,
     hasMore: () => nextCursor !== null,
-    loadMore: () => fetchPage(false),
+    loadMore: async () => {
+      await fetchPage(false); // the pager wants no result, only completion
+    },
   });
   const detachScroll = pager.attach(scroll);
 
-  root
-    .getElementById('query-apply')
-    .addEventListener('click', () => void commands.invoke('metarecord-list:apply-query'));
-  root
-    .getElementById('columns-apply')
-    .addEventListener('click', () => void commands.invoke('metarecord-list:apply-columns'));
+  byId(root, 'query-apply').addEventListener('click', () => {
+    void commands.invoke('metarecord-list:apply-query');
+  });
+  byId(root, 'columns-apply').addEventListener('click', () => {
+    void commands.invoke('metarecord-list:apply-columns');
+  });
   queryInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyQuery();
   });
@@ -734,6 +809,7 @@ export async function mount(root, metafolder) {
    *  fast typist can outrun an in-flight fetch and leave the list showing an
    *  earlier term. Re-run when our fetch was dropped, or the input moved on
    *  while we were fetching, until the shown list matches the current input. */
+  /** @param {{record?: boolean}} [options] */
   async function applyFinder({ record = false } = {}) {
     clearTimeout(finderTimer);
     queryRan = true;
@@ -765,13 +841,11 @@ export async function mount(root, metafolder) {
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyColumns();
   });
-  root
-    .getElementById('bulk-open')
-    .addEventListener('click', () => void commands.invoke('metarecord-list:bulk-edit'));
-  root.getElementById('bulk-apply').addEventListener('click', () => void applyBulkEdit());
-  root
-    .getElementById('bulk-cancel')
-    .addEventListener('click', () => bulkForm.classList.remove('open'));
+  byId(root, 'bulk-open').addEventListener('click', () => {
+    void commands.invoke('metarecord-list:bulk-edit');
+  });
+  byId(root, 'bulk-apply').addEventListener('click', () => void applyBulkEdit());
+  byId(root, 'bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
   bulkName.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyBulkEdit();
   });
@@ -800,15 +874,15 @@ export async function mount(root, metafolder) {
   });
   commands.register('metarecord-list:select-toggle', {
     label: 'Metarecord list: toggle multi-selection',
-    handler: toggleChecked,
+    handler: () => toggleChecked(),
   });
   commands.register('metarecord-list:select-none', {
     label: 'Metarecord list: clear the multi-selection',
-    handler: clearChecked,
+    handler: () => clearChecked(),
   });
   commands.register('metarecord-list:open', {
     label: 'Metarecord list: open the selection in the other panel',
-    handler: openSelected,
+    handler: () => openSelected(),
   });
   commands.register('metarecord-list:set-mode', {
     label: 'Metarecord list: switch display mode (table | grid)',
@@ -857,7 +931,7 @@ export async function mount(root, metafolder) {
   commands.register('metarecord-list:bulk-edit', {
     label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
     reveal: true,
-    handler: openBulkForm,
+    handler: () => openBulkForm(),
   });
   commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',
@@ -873,7 +947,7 @@ export async function mount(root, metafolder) {
   let pickFocused = false; // focus the finder once when opened as a picker
 
   async function start() {
-    const activeRepo = await workspace.get('active_repo');
+    const activeRepo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     if (activeRepo !== repo) {
       // A new repo: empty the list and disarm the query — it only runs again
       // on an explicit user action (see `queryRan`).
@@ -890,7 +964,7 @@ export async function mount(root, metafolder) {
         await workspace.set('selected_metarecords', []);
       }
     }
-    root.getElementById('no-repo').hidden = repo !== null;
+    byId(root, 'no-repo').hidden = repo !== null;
     if (!queryInitialized) {
       queryInitialized = true;
       await recomputeQuery();
@@ -930,11 +1004,13 @@ export async function mount(root, metafolder) {
   });
 
   setColumns(await workspace.get('metarecord-list:columns'));
-  widths = (await workspace.get('metarecord-list:column-widths')) ?? {};
+  widths = /** @type {Record<string, number>} */ (
+    (await workspace.get('metarecord-list:column-widths')) ?? {}
+  );
   pageSize = sanitizePageSize(await workspace.get('metarecord-list:page-size'));
 
   // Restore the finder (quick filter) state.
-  finderText = (await workspace.get('metarecord-list:finder')) ?? '';
+  finderText = String((await workspace.get('metarecord-list:finder')) ?? '');
   finderInput.value = finderText;
   const storedFinderFields = await workspace.get('metarecord-list:finder-fields');
   finderFields =
@@ -944,12 +1020,12 @@ export async function mount(root, metafolder) {
   updateFinderFieldsLabel();
 
   // Restore the two-zone query editor (values only — no daemon call here).
-  queryInput.value = (await workspace.get('metarecord-list:query')) ?? '';
-  normalInput.value = (await workspace.get('metarecord-list:normal-query')) ?? '';
-  normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) ?? false;
+  queryInput.value = String((await workspace.get('metarecord-list:query')) ?? '');
+  normalInput.value = String((await workspace.get('metarecord-list:normal-query')) ?? '');
+  normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) === true;
   normalFreeze.checked = normalFrozen;
   normalInput.readOnly = !normalFrozen;
-  normalShown = (await workspace.get('metarecord-list:normal-shown')) ?? false;
+  normalShown = (await workspace.get('metarecord-list:normal-shown')) === true;
   normalEditor.hidden = !normalShown;
   normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
 
@@ -959,8 +1035,13 @@ export async function mount(root, metafolder) {
     clearTimeout(finderTimer);
     finderHistory.detach();
     queryHistory.detach();
-    document.removeEventListener('mousemove', onMouseMove);
+    document.removeEventListener('mousemove', /** @type {EventListener} */ (onMouseMove));
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();
   };
+}
+
+/** The message of a thrown daemon/parser error. */
+function messageOf(/** @type {unknown} */ error) {
+  return error instanceof Error ? error.message : String(error);
 }
