@@ -20,6 +20,11 @@ cargo test -p metafolder-cli
 cargo test -p metafolder-daemon --test storage
 cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
 
+# All of the static checks below, in one pass (--strict makes clippy warnings
+# fatal; --coverage adds cargo-llvm-cov). A missing optional tool is a loud
+# SKIP, not a pass.
+scripts/check.sh
+
 # Dependency audit: vulnerabilities, licenses, sources (config: deny.toml).
 # Every ignored advisory is documented there; keep this green.
 cargo deny check
