@@ -1,14 +1,23 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // repos panel: list loaded repositories, init/load new ones, open a
 // repository in a workspace (spec-gui "Repository management").
 
-import { el } from '/__ui.js';
+import { byId, el, qsa } from '/__ui.js';
 import { createPickRunner } from '/__value-widget.js';
 
+/**
+ * A loaded repository, as `GET /repos` lists it.
+ * @typedef {{repo_uuid: string, name: string, root: string}} Repo
+ *
+ * An in-flight daemon task (spec-tasks).
+ * @typedef {{id: string, repo_uuid: string, kind: string, status: string,
+ *            phase?: string|null, done: number|null, total: number|null}} Task
+ *
+ * @param {ShadowRoot} root @param {MetafolderApi} metafolder
+ */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, fs, messages } = metafolder;
   // Timing knobs (config.toml `[panels]`), with the former hard-coded fallbacks.
-  const settings = metafolder.settings ?? {};
+  const { settings } = metafolder;
   const statusErrorMs = settings.statusErrorMs ?? 8000;
   const taskPollMs = settings.taskPollMs ?? 1500;
 
@@ -17,19 +26,23 @@ export async function mount(root, metafolder) {
   // scan at the cap, so a repo with hundreds of thousands of violations stays
   // cheap, and we only show a heads-up — the schema takes priority either way.
   const SCHEMA_CHECK_CAP = 20;
+  /** @type {Set<string>} */
   const announcedRepos = new Set();
+  /** @param {string} repoUuid */
   async function announceSchemaConflicts(repoUuid) {
     if (announcedRepos.has(repoUuid)) return;
     announcedRepos.add(repoUuid);
     try {
-      const res = await daemon.call('POST', `/repos/${repoUuid}/schema/check`, {
-        limit: SCHEMA_CHECK_CAP,
-      });
+      const res = /** @type {{violations?: unknown[], truncated?: boolean}} */ (
+        await daemon.call('POST', `/repos/${repoUuid}/schema/check`, {
+          limit: SCHEMA_CHECK_CAP,
+        })
+      );
       const n = res?.violations?.length ?? 0;
       if (n === 0) return;
       const count = res.truncated ? `${n}+` : `${n}`;
       const noun = n === 1 && !res.truncated ? 'inconsistency' : 'inconsistencies';
-      messages.append(
+      void messages.append(
         `schema: ${count} ${noun} with existing data (schema takes priority; run a schema check for details)`,
       );
     } catch {
@@ -37,26 +50,30 @@ export async function mount(root, metafolder) {
     }
   }
 
-  const list = root.getElementById('repo-list');
-  const empty = root.getElementById('empty');
-  const initForm = root.getElementById('init-form');
-  const loadForm = root.getElementById('load-form');
-  const retypeForm = root.getElementById('retype-form');
-  let retypeTarget = null; // repo uuid the retype form acts on
+  const list = byId(root, 'repo-list');
+  const empty = byId(root, 'empty');
+  const initForm = byId(root, 'init-form', HTMLFormElement);
+  const loadForm = byId(root, 'load-form', HTMLFormElement);
+  const retypeForm = byId(root, 'retype-form', HTMLFormElement);
+  /** @type {string|null} repo uuid the retype form acts on */
+  let retypeTarget = null;
 
   // ── Folder picker ─────────────────────────────────────────────────────────
   // Reuses the value-picker system (spec-gui "Value picker"): "Browse…" opens
   // the file-manager in the other slot and returns the chosen folder path.
   const pickRunner = createPickRunner(metafolder);
-  let homeDir = null; // cached, the default start when the input is empty
+  /** @type {string|null} cached; the default start when the input is empty */
+  let homeDir = null;
 
+  /** @param {string} path */
   function basename(path) {
     return path.split('/').filter(Boolean).pop() ?? path;
   }
 
+  /** @param {HTMLElement} form @param {boolean} show */
   function toggleForm(form, show) {
     form.classList.toggle('hidden', !show);
-    if (show) form.querySelector('input').focus();
+    if (show) form.querySelector('input')?.focus();
   }
 
   async function homeDirCached() {
@@ -70,6 +87,7 @@ export async function mount(root, metafolder) {
     return homeDir;
   }
 
+  /** @param {HTMLInputElement} targetInput */
   async function browseFolder(targetInput) {
     const start = targetInput.value.trim() || (await homeDirCached());
     const path = await pickRunner.request({
@@ -85,15 +103,16 @@ export async function mount(root, metafolder) {
     targetInput.value = path;
     // Prefill the init name with the folder name when left blank.
     if (targetInput.id === 'init-root') {
-      const nameInput = root.getElementById('init-name');
+      const nameInput = byId(root, 'init-name', HTMLInputElement);
       if (!nameInput.value.trim()) nameInput.value = basename(path);
     }
   }
 
   async function refresh() {
+    /** @type {Repo[]} */
     let repos;
     try {
-      repos = (await daemon.call('GET', '/repos')) ?? [];
+      repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos')) ?? []);
     } catch (error) {
       await statusBar.error(error);
       return;
@@ -118,7 +137,7 @@ export async function mount(root, metafolder) {
                 class: 'repo-unload',
                 type: 'button',
                 title: 'Convert a field type across this repository',
-                onclick: (event) => {
+                onclick: (/** @type {Event} */ event) => {
                   event.stopPropagation();
                   openRetype(repo.repo_uuid, repo.name);
                 },
@@ -132,7 +151,7 @@ export async function mount(root, metafolder) {
                 type: 'button',
                 title: 'Unload this repository from the daemon',
                 // The header row opens the repo on click; keep that from firing.
-                onclick: (event) => {
+                onclick: (/** @type {Event} */ event) => {
                   event.stopPropagation();
                   void unloadRepo(repo.repo_uuid);
                 },
@@ -156,23 +175,29 @@ export async function mount(root, metafolder) {
   const CANCELLABLE = new Set(['reconcile', 'query']);
 
   async function pollTasks() {
+    /** @type {Task[]} */
     let tasks;
     try {
-      tasks = (await daemon.call('GET', '/tasks')) ?? [];
+      tasks = /** @type {Task[]} */ ((await daemon.call('GET', '/tasks')) ?? []);
     } catch {
       return; // A transient daemon hiccup: leave the last paint in place.
     }
+    /** @type {Map<string, Task[]>} */
     const byRepo = new Map();
     for (const task of tasks) {
       if (task.status !== 'running' && task.status !== 'pending') continue;
-      if (!byRepo.has(task.repo_uuid)) byRepo.set(task.repo_uuid, []);
-      byRepo.get(task.repo_uuid).push(task);
+      const known = byRepo.get(task.repo_uuid);
+      if (known) known.push(task);
+      else byRepo.set(task.repo_uuid, [task]);
     }
-    for (const container of list.querySelectorAll('.repo-tasks')) {
-      renderTasks(container, container.dataset.tasksFor, byRepo.get(container.dataset.tasksFor) ?? []);
+    for (const container of qsa(list, '.repo-tasks')) {
+      const forRepo = container.dataset.tasksFor;
+      if (!forRepo) continue;
+      renderTasks(container, forRepo, byRepo.get(forRepo) ?? []);
     }
   }
 
+  /** @param {HTMLElement} container @param {string} repoUuid @param {Task[]} tasks */
   function renderTasks(container, repoUuid, tasks) {
     container.replaceChildren(
       ...tasks.map((task) => {
@@ -194,30 +219,33 @@ export async function mount(root, metafolder) {
     );
   }
 
+  /** @param {string} repoUuid @param {string} taskId */
   async function stopTask(repoUuid, taskId) {
     try {
       await daemon.call('POST', `/repos/${repoUuid}/tasks/${taskId}/cancel`);
-      statusBar.message('stopping task…', 3000);
+      void statusBar.message('stopping task…', 3000);
     } catch (error) {
-      statusBar.message(`cannot stop task: ${error.message ?? error}`, 6000);
+      void statusBar.message(`cannot stop task: ${messageOf(error)}`, 6000);
     }
     await pollTasks();
   }
 
   // Unload a repository from the daemon (spec-main "Repository management"):
   // stops its watcher and releases its DB lock, then refreshes the list.
+  /** @param {string} repoUuid */
   async function unloadRepo(repoUuid) {
     try {
       await daemon.call('POST', `/repos/${repoUuid}/unload`);
-      statusBar.message('repository unloaded', 3000);
+      void statusBar.message('repository unloaded', 3000);
     } catch (error) {
-      statusBar.message(`cannot unload: ${error.message ?? error}`, 6000);
+      void statusBar.message(`cannot unload: ${messageOf(error)}`, 6000);
     }
     await refresh();
   }
 
   // Selecting a repo: adopt it in place when the workspace has none yet
   // (startup case), otherwise open a new workspace.
+  /** @param {string} repoUuid */
   async function openRepo(repoUuid) {
     try {
       const current = await workspace.get('active_repo');
@@ -229,14 +257,20 @@ export async function mount(root, metafolder) {
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {
-      statusBar.message(`cannot open the repository: ${error.message ?? error}`, statusErrorMs);
+      void statusBar.message(`cannot open the repository: ${messageOf(error)}`, statusErrorMs);
     }
   }
 
+  /**
+   * @param {HTMLElement} form @param {string} path @param {unknown} payload
+   * @param {HTMLElement} errorElement
+   */
   async function submit(form, path, payload, errorElement) {
     errorElement.textContent = '';
     try {
-      const created = await daemon.call('POST', path, payload);
+      const created = /** @type {{repo_uuid: string}} */ (
+        await daemon.call('POST', path, payload)
+      );
       toggleForm(form, false);
       await refresh();
       const current = await workspace.get('active_repo');
@@ -244,41 +278,44 @@ export async function mount(root, metafolder) {
         await workspace.adoptRepo(created.repo_uuid);
         await commands.invoke('panel:set-type metarecord-list');
       } else {
-        statusBar.message(
+        void statusBar.message(
           `Repository ready: ${created.repo_uuid.slice(0, 8)}… (open it from the list)`,
           6000,
         );
       }
     } catch (error) {
-      errorElement.textContent = String(error.message ?? error);
+      errorElement.textContent = messageOf(error);
     }
   }
 
   // ── Retype a field across a whole repository (spec-data-model) ─────────────
 
+  /** @param {string} repoUuid @param {string} repoName */
   function openRetype(repoUuid, repoName) {
     retypeTarget = repoUuid;
-    root.getElementById('retype-target').textContent = `Repository: ${repoName}`;
-    root.getElementById('retype-error').textContent = '';
-    root.getElementById('retype-name').value = '';
+    byId(root, 'retype-target').textContent = `Repository: ${repoName}`;
+    byId(root, 'retype-error').textContent = '';
+    byId(root, 'retype-name', HTMLInputElement).value = '';
     toggleForm(retypeForm, true);
   }
 
   retypeForm.addEventListener('submit', async (event) => {
     event.preventDefault();
-    const errorElement = root.getElementById('retype-error');
+    const errorElement = byId(root, 'retype-error');
     errorElement.textContent = '';
-    const name = root.getElementById('retype-name').value.trim();
-    const to = root.getElementById('retype-type').value;
+    const name = byId(root, 'retype-name', HTMLInputElement).value.trim();
+    const to = byId(root, 'retype-type', HTMLSelectElement).value;
     if (!name || !retypeTarget) return;
     try {
       // Count the metarecords carrying the field, to describe the change.
-      const count = await daemon.call('POST', `/repos/${retypeTarget}/query`, {
-        query: { type: 'is_present', field: name },
-        select: '*',
-        limit: 1,
-        count: true,
-      });
+      const count = /** @type {{total?: number|null}} */ (
+        await daemon.call('POST', `/repos/${retypeTarget}/query`, {
+          query: { type: 'is_present', field: name },
+          select: '*',
+          limit: 1,
+          count: true,
+        })
+      );
       const n = count.total ?? 0;
       const ok = confirm(
         `Convert field "${name}" to ${to} on ${n} metarecord${n === 1 ? '' : 's'} ` +
@@ -286,11 +323,13 @@ export async function mount(root, metafolder) {
           `the type's default (and Nothing rows are left untouched).`,
       );
       if (!ok) return;
-      const resp = await daemon.call('POST', `/repos/${retypeTarget}/retype`, { name, to });
+      const resp = /** @type {{converted?: number, fallback_count?: number}} */ (
+        await daemon.call('POST', `/repos/${retypeTarget}/retype`, { name, to })
+      );
       toggleForm(retypeForm, false);
       const converted = resp.converted ?? 0;
       const fell = resp.fallback_count ?? 0;
-      statusBar.message(
+      void statusBar.message(
         `Retyped "${name}" to ${to}: ${converted} value(s) converted` +
           (fell > 0 ? `, ${fell} fell back to the default` : '') + '.',
         7000,
@@ -298,34 +337,38 @@ export async function mount(root, metafolder) {
       // Other panels reading this repo should refresh.
       await workspace.set('metarecords:dirty', Date.now());
     } catch (error) {
-      errorElement.textContent = String(error.message ?? error);
+      errorElement.textContent = messageOf(error);
     }
   });
 
   initForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const root_ = root.getElementById('init-root').value.trim();
-    const name = root.getElementById('init-name').value.trim();
+    const root_ = byId(root, 'init-root', HTMLInputElement).value.trim();
+    const name = byId(root, 'init-name', HTMLInputElement).value.trim();
     const payload = name ? { root: root_, name } : { root: root_ };
-    void submit(initForm, '/repos/init', payload, root.getElementById('init-error'));
+    void submit(initForm, '/repos/init', payload, byId(root, 'init-error'));
   });
 
   loadForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const root_ = root.getElementById('load-root').value.trim();
-    void submit(loadForm, '/repos/load', { root: root_ }, root.getElementById('load-error'));
+    const root_ = byId(root, 'load-root', HTMLInputElement).value.trim();
+    void submit(loadForm, '/repos/load', { root: root_ }, byId(root, 'load-error'));
   });
 
-  root.getElementById('show-init').addEventListener('click', () => toggleForm(initForm, true));
-  root.getElementById('show-load').addEventListener('click', () => toggleForm(loadForm, true));
-  root.getElementById('refresh').addEventListener('click', refresh);
-  for (const button of root.querySelectorAll('.cancel')) {
-    button.addEventListener('click', () => toggleForm(button.closest('form'), false));
+  byId(root, 'show-init').addEventListener('click', () => toggleForm(initForm, true));
+  byId(root, 'show-load').addEventListener('click', () => toggleForm(loadForm, true));
+  byId(root, 'refresh').addEventListener('click', () => void refresh());
+  for (const button of qsa(root, '.cancel')) {
+    button.addEventListener('click', () => {
+      const form = button.closest('form');
+      if (form) toggleForm(form, false);
+    });
   }
-  for (const button of root.querySelectorAll('.browse')) {
-    button.addEventListener('click', () =>
-      void browseFolder(root.getElementById(button.dataset.target)),
-    );
+  for (const button of qsa(root, '.browse')) {
+    button.addEventListener('click', () => {
+      const target = button.dataset.target;
+      if (target) void browseFolder(byId(root, target, HTMLInputElement));
+    });
   }
 
   commands.register('repos:init', {
@@ -338,18 +381,18 @@ export async function mount(root, metafolder) {
   });
   commands.register('repos:refresh', {
     label: 'Repos: refresh the repository list',
-    handler: refresh,
+    handler: () => refresh(),
   });
   commands.register('repos:retype', {
     label: 'Repos: convert a field type across the active repository',
     reveal: true,
     handler: async () => {
-      const repoUuid = await workspace.get('active_repo');
+      const repoUuid = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
       if (!repoUuid) {
-        statusBar.message('no active repository', 4000);
+        void statusBar.message('no active repository', 4000);
         return;
       }
-      const repos = (await daemon.call('GET', '/repos')) ?? [];
+      const repos = /** @type {Repo[]} */ ((await daemon.call('GET', '/repos')) ?? []);
       const repo = repos.find((r) => r.repo_uuid === repoUuid);
       openRetype(repoUuid, repo?.name ?? repoUuid.slice(0, 8));
     },
@@ -359,4 +402,9 @@ export async function mount(root, metafolder) {
   // Keep the per-repo task blocks live while the panel is mounted.
   const taskTimer = setInterval(() => void pollTasks(), taskPollMs);
   return () => clearInterval(taskTimer);
+}
+
+/** The message of a thrown daemon error (`{"error": …}` bodies arrive as Error). */
+function messageOf(/** @type {unknown} */ error) {
+  return error instanceof Error ? error.message : String(error);
 }
