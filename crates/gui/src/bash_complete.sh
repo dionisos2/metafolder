@@ -75,7 +75,18 @@ complete_via_spec() {
 complete_fallback() {
   local entry entries=()
   if ((cword == 0)); then
-    mapfile -t candidates < <(compgen -c -- "$cur" 2>/dev/null | LC_ALL=C sort -u)
+    if [[ -z $cur ]]; then
+      # No prefix: `compgen -c ""` generates every executable on PATH — 8000+
+      # entries, ~1 s, most of it spent building a list nobody can read (bash
+      # itself refuses to print it: "Display all 8356 possibilities?"). Offer
+      # the shell's own commands instead — aliases, builtins and keywords, ~80
+      # entries that cost nothing to enumerate. One typed character falls
+      # through to the full PATH search below, which is cheap because compgen
+      # filters on the prefix as it generates.
+      mapfile -t candidates < <(compgen -abk -- "" 2>/dev/null | LC_ALL=C sort -u)
+    else
+      mapfile -t candidates < <(compgen -c -- "$cur" 2>/dev/null | LC_ALL=C sort -u)
+    fi
   else
     mapfile -t entries < <(compgen -f -- "$cur" 2>/dev/null | LC_ALL=C sort)
     for entry in "${entries[@]}"; do

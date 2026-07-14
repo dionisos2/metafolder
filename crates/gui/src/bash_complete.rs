@@ -13,8 +13,10 @@ use tokio::process::Command;
 
 const HARNESS: &str = include_str!("bash_complete.sh");
 
-/// Upper bound on returned candidates (`compgen -c` on an empty word lists
-/// every command in PATH).
+/// Upper bound on returned candidates: a directory of thousands of files, or a
+/// one-letter prefix, still matches more than a list can usefully show.
+/// (The harness no longer produces the worst case — an empty command word — at
+/// all: see `complete_fallback` in bash_complete.sh.)
 const MAX_CANDIDATES: usize = 500;
 
 /// A stuck completion function must never freeze the input.
@@ -102,6 +104,43 @@ mod tests {
         let completion = complete("").await.unwrap();
         assert_eq!(completion.word, "");
         assert!(!completion.candidates.is_empty());
+    }
+
+    /// An empty command word lists the shell's own commands, and does *not*
+    /// walk PATH: `compgen -c ""` generates every executable on the system
+    /// (8000+ here, ~1 s) to produce a list nobody can read — bash itself
+    /// refuses to print it. One typed character switches to the full search,
+    /// which is what the next test pins down.
+    #[tokio::test]
+    async fn test_empty_word_does_not_enumerate_path() {
+        let completion = complete("").await.unwrap();
+        assert!(
+            completion.candidates.iter().any(|c| c == "if"),
+            "shell keywords missing: {:?}",
+            completion.candidates
+        );
+        assert!(
+            completion.candidates.iter().any(|c| c == "cd"),
+            "shell builtins missing: {:?}",
+            completion.candidates
+        );
+        // `bash` is on PATH and is neither a builtin nor a keyword, so its
+        // presence would mean PATH was walked after all.
+        assert!(
+            !completion.candidates.iter().any(|c| c == "bash"),
+            "PATH was enumerated for the empty word"
+        );
+    }
+
+    /// ...and a prefix — even one character — still searches all of PATH.
+    #[tokio::test]
+    async fn test_one_character_prefix_searches_path() {
+        let completion = complete("ba").await.unwrap();
+        assert!(
+            completion.candidates.iter().any(|c| c == "bash"),
+            "PATH not searched for a prefixed word: {:?}",
+            completion.candidates
+        );
     }
 
     #[tokio::test]
