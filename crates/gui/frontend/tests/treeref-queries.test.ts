@@ -17,7 +17,7 @@ describe('childrenQuery', () => {
 });
 
 describe('treeNameOf', () => {
-  const record = {
+  const record: Metafolder.Metarecord = {
     uuid: 'u1',
     fields: [
       { id: 1, name: 'tag_path', value: { type: 'tree_ref', value: { parent: 'p', name: 'rock' } } },

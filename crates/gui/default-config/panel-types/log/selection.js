@@ -1,11 +1,20 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // log panel selection movement: revisions are listed in reverse
 // chronological order, so delta +1 moves down the list (older).
+
+/**
+ * A revision, of which only the id matters here.
+ * @typedef {{id: number}} Revision
+ */
 
 /**
  * Returns the revision id selected after moving by `delta` rows from
  * `selectedRev`, clamped to the list; the first (newest) revision when
  * nothing valid is selected yet, null when the log is empty.
+ *
+ * @param {Revision[]} revisions
+ * @param {number|null} selectedRev
+ * @param {number} delta
+ * @returns {number|null}
  */
 export function moveSelection(revisions, selectedRev, delta) {
   if (revisions.length === 0) return null;
@@ -18,6 +27,10 @@ export function moveSelection(revisions, selectedRev, delta) {
 /**
  * Returns the revision id at the start (`'first'`, newest) or end
  * (`'last'`, oldest) of the list; null when the log is empty.
+ *
+ * @param {Revision[]} revisions
+ * @param {string} edge
+ * @returns {number|null}
  */
 export function edgeSelection(revisions, edge) {
   if (revisions.length === 0) return null;

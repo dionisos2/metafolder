@@ -1,4 +1,3 @@
-// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Secondary display line under reference values: the resolved path of a
 // tree_ref and the "name" field of a ref's target (a soft convention —
 // metarecords without one simply get no annotation). Path resolution goes
@@ -8,7 +7,14 @@
 //   resolvePaths(field, uuids) -> { uuid: [relPath] }
 //   getMetarecords(uuids)      -> { uuid: metarecord }
 
+/**
+ * @param {{
+ *   resolvePaths: (field: string, uuids: string[]) => Promise<Record<string, string[]>>,
+ *   getMetarecords: (uuids: string[]) => Promise<Record<string, Metafolder.Metarecord>>,
+ * }} ctx
+ */
 export function createAnnotator({ resolvePaths, getMetarecords }) {
+  /** @param {string} field @param {Metafolder.TreeRef} treeRef */
   async function treeRefPath(field, { parent, name }) {
     if (!parent) return name; // a rootless node's path is its own name
     const byUuid = await resolvePaths(field, [parent]);
@@ -17,15 +23,22 @@ export function createAnnotator({ resolvePaths, getMetarecords }) {
     return parentPath === '' ? name : `${parentPath}/${name}`;
   }
 
+  /** @param {string} uuid @returns {Promise<string|null>} */
   async function refName(uuid) {
     const byUuid = await getMetarecords([uuid]);
-    const field = (byUuid[uuid]?.fields ?? []).find(
-      (f) => f.name === 'name' && typeof f.value?.value === 'string',
-    );
-    return field ? field.value.value : null;
+    for (const f of byUuid[uuid]?.fields ?? []) {
+      if (f.name === 'name' && 'value' in f.value && typeof f.value.value === 'string') {
+        return f.value.value;
+      }
+    }
+    return null;
   }
 
-  /** Annotation text for a field's value, or null when there is none. */
+  /**
+   * Annotation text for a field's value, or null when there is none.
+   * @param {string} fieldName @param {Metafolder.Value} value
+   * @returns {Promise<string|null>}
+   */
   async function annotate(fieldName, value) {
     try {
       if (value.type === 'tree_ref') {

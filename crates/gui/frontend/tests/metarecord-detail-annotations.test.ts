@@ -5,10 +5,9 @@
 import { describe, expect, test, vi } from 'vitest';
 import { createAnnotator } from '../../default-config/panel-types/metarecord-detail/annotations.js';
 
-type Field = { name: string; value: { type: string; value?: unknown } };
-type Entry = { uuid: string; fields: Field[] };
+type Entry = Metafolder.Metarecord & { fields: Metafolder.Field[] };
 
-const treeRef = (parent: string | null, name: string) => ({
+const treeRef = (parent: string | null, name: string): Metafolder.Value => ({
   type: 'tree_ref',
   value: { parent, name },
 });
@@ -22,9 +21,12 @@ function annotatorFor(entries: Entry[]) {
     const components: string[] = [];
     let cur: string | null = uuid;
     while (cur) {
-      const f = byUuid.get(cur)?.fields.find((x) => x.name === field && x.value.type === 'tree_ref');
-      if (!f) return null;
-      const { parent, name } = f.value.value as { parent: string | null; name: string };
+      // Annotated: `cur` is re-assigned from `f`, so inference would be circular.
+      const f: Metafolder.Field | undefined = byUuid
+        .get(cur)
+        ?.fields.find((x) => x.name === field && x.value.type === 'tree_ref');
+      if (f?.value.type !== 'tree_ref') return null;
+      const { parent, name }: Metafolder.TreeRef = f.value.value;
       components.push(name);
       cur = parent;
     }
