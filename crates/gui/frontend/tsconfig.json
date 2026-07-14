@@ -7,7 +7,19 @@
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "types": ["svelte", "vite/client"]
+    "types": ["svelte", "vite/client"],
+    "paths": {
+      "/__ui.js": ["../panel-shim/ui.js"],
+      "/__menu.js": ["../panel-shim/menu.js"],
+      "/__orphan.js": ["../panel-shim/orphan.js"],
+      "/__paged-list.js": ["../panel-shim/paged-list.js"],
+      "/__value-widget.js": ["../panel-shim/value-widget.js"],
+      "/__schema-template.js": ["../panel-shim/schema-template.js"],
+      "/__finder.js": ["../panel-shim/finder.js"],
+      "/__history.js": ["../panel-shim/history.js"],
+      "/__help.js": ["../panel-shim/help.js"],
+      "/__coalesce.js": ["../panel-shim/coalesce.js"]
+    }
   },
   "include": ["src", "tests"]
 }

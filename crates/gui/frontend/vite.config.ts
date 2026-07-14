@@ -1,27 +1,29 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
+// Panel files import the shim helpers by the URL the Rust server serves them at
+// (`import { el } from '/__ui.js'`). That served-URL → source-file map lives in
+// tsconfig.json `paths` — TypeScript needs it to resolve panel code — so derive
+// the Vite alias from it rather than restating it: a shim module added to one is
+// added to both, and tests/served-modules.test.ts pins both against the Rust
+// routes. (They had already drifted: /__paged-list.js and /__help.js were served
+// and imported, but absent here.)
+const { compilerOptions } = JSON.parse(
+  readFileSync(new URL('./tsconfig.json', import.meta.url), 'utf8'),
+) as { compilerOptions: { paths: Record<string, [string]> } };
+
+const shimAlias = Object.fromEntries(
+  Object.entries(compilerOptions.paths).map(([url, [file]]) => [
+    url,
+    fileURLToPath(new URL(file, import.meta.url)),
+  ]),
+);
+
 export default defineConfig({
   plugins: [svelte()],
-  resolve: {
-    alias: {
-      // Panel files import the UI helpers by their served URL; map it to
-      // the source module so vitest can load panel code unchanged.
-      '/__ui.js': fileURLToPath(new URL('../panel-shim/ui.js', import.meta.url)),
-      '/__menu.js': fileURLToPath(new URL('../panel-shim/menu.js', import.meta.url)),
-      '/__orphan.js': fileURLToPath(new URL('../panel-shim/orphan.js', import.meta.url)),
-      '/__value-widget.js': fileURLToPath(
-        new URL('../panel-shim/value-widget.js', import.meta.url),
-      ),
-      '/__schema-template.js': fileURLToPath(
-        new URL('../panel-shim/schema-template.js', import.meta.url),
-      ),
-      '/__finder.js': fileURLToPath(new URL('../panel-shim/finder.js', import.meta.url)),
-      '/__history.js': fileURLToPath(new URL('../panel-shim/history.js', import.meta.url)),
-      '/__coalesce.js': fileURLToPath(new URL('../panel-shim/coalesce.js', import.meta.url)),
-    },
-  },
+  resolve: { alias: shimAlias },
   clearScreen: false,
   // The shared key matcher lives outside the Vite root (panel-shim/ is
   // also served to panel iframes by the Rust server).
