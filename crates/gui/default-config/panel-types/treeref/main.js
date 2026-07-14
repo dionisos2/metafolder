@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // treeref panel: explore a TreeRef field's forest like a file explorer. Pick a
 // TreeRef field name (e.g. mfr_path, or a tag tree), then descend from the
 // roots to the leaves. Selecting a node publishes `selected_treeref` (consumed

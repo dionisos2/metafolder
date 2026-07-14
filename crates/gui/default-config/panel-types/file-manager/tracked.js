@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Tracked-children lookup for the file-manager panel: query only the
 // metarecords whose mfr_path parent is the displayed directory (Follows with
 // a path target), instead of paginating the whole repository.

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // file panel: media/text preview of the active path from selected_paths
 // (spec-gui "file panel type"). Files are streamed by the GUI server's
 // /fsraw endpoint (HTTP Range supported, so audio/video can seek).

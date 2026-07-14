@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Input-history helper (spec-gui "Input history"), shared by the shell
 // command input and the panel text zones. One history per repository × zone,
 // stored GUI-side under the repo's `.metafolder/gui/history/` (the Tauri

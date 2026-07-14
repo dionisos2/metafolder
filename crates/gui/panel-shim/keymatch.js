@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Shared keybinding matcher, used identically by the Svelte shell and the
 // panel shim (key events inside an iframe never reach the parent, so each
 // document runs its own matcher against the same compiled table).

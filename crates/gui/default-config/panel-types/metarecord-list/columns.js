@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metarecord-list column specs (spec-gui "metarecord-list panel type").
 //
 // One token of the columns input (tokens separated by whitespace or commas;

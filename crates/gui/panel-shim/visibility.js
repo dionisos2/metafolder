@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Visibility gate, served at /__visibility.js and used by the shim to
 // back metafolder.visible / metafolder.whenVisible. Panel construction
 // (command registration, listeners) happens at iframe load; expensive

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // message panel: per-workspace append-only log (spec-gui "Message view").
 
 import { el } from '/__ui.js';

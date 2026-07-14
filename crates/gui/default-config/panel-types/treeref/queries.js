@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Query builders for the treeref (tree-explorer) panel. Pure functions, no
 // daemon access — unit-tested in frontend/tests/treeref-queries.test.js.
 

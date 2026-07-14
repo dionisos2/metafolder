@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Finder query builder (spec-gui "Finder"): turns the quick-filter text into an
 // OSM sub-query OR-combined across a set of target fields and AND-ed with the
 // panel's base query. Pure, framework-free, shared with the panels and unit

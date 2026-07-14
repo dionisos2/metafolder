@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // log panel selection movement: revisions are listed in reverse
 // chronological order, so delta +1 moves down the list (older).
 

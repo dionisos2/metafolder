@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Input-burst coalescing for async side effects. A held-down key repeats
 // faster than a workspace.set round-trip (Tauri IPC + the panels reacting to
 // the variable change), so naively awaiting the effect once per key event

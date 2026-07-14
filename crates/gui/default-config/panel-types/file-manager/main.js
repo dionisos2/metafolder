@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // file-manager panel: browse the disk (via metafolder.fs, not the
 // daemon), distinguish tracked metarecords, add paths to the DB
 // (spec-gui "file-manager panel type").

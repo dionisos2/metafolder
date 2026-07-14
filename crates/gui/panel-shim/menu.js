@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metafolder HTML context menu — served at /__menu.js for panel types and
 // imported by the shell and the shim (spec-gui "Context menus"). The
 // native WebView menu (back/forward/...) is suppressed everywhere except

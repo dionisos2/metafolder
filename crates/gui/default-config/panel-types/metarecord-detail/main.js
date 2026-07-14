@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // metarecord-detail panel: shows and edits all fields of selected_metarecord
 // (spec-gui "metarecord-detail panel type").
 

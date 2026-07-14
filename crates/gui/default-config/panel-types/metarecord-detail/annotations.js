@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Secondary display line under reference values: the resolved path of a
 // tree_ref and the "name" field of a ref's target (a soft convention —
 // metarecords without one simply get no annotation). Path resolution goes

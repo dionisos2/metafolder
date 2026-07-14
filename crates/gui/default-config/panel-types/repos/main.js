@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // repos panel: list loaded repositories, init/load new ones, open a
 // repository in a workspace (spec-gui "Repository management").
 

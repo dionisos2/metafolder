@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // workspace-info panel: reactive JSON view of every workspace variable
 // (spec-gui "workspace-info panel type"). Read-only; useful to debug
 // panel communication and to monitor the GUI from scripts.

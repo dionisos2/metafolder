@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Pure help logic (spec-gui "Help"), shared by the help panel and the shell.
 // No DOM, no fetch — unit-tested in crates/gui/frontend/tests/help.test.ts.
 //

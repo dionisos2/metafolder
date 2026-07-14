@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Progressive list loading (panel-shim/paged-list.js): the shared bits every
 // long-list panel needs — the scroll-near-bottom threshold, the re-entrancy
 // guard while a load is in flight, and the "loaded / total" footer text.

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Example panel type. Copy this directory under
 // ~/.config/metafolder/gui/panel-types/<your-name>/ to start a custom panel.
 // The shell calls `mount(root, metafolder)` after the panel's markup

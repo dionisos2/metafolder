@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // log panel: revisions in reverse chronological order, expandable into
 // operations; rollback and prune (spec-gui "Event log").
 

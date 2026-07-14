@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Shared value-input widgets for the metarecord field forms. Both the
 // metarecord-detail add-field form and the metarecord-list bulk-set form pick a
 // value type and build the matching input widget, so the type picker

@@ -8,6 +8,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "allowJs": true,
+    "checkJs": true,
     "types": ["node", "svelte", "vite/client"],
     "paths": {
       "/__ui.js": ["../panel-shim/ui.js"],
@@ -22,5 +23,5 @@
       "/__coalesce.js": ["../panel-shim/coalesce.js"]
     }
   },
-  "include": ["src", "tests", "types"]
+  "include": ["src", "tests", "types", "../panel-shim", "../default-config/panel-types"]
 }

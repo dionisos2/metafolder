@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Schema-driven templates for new metarecords (spec-schema). The user schema
 // (returned verbatim by GET /repos/:repo/schema) declares metarecord types
 // (the target names of its groups) and the fields each type constrains. The

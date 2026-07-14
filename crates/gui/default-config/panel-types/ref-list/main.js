@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // ref-list panel: lists the metarecords whose chosen Ref field points to the
 // tree node currently selected in the treeref panel (via `selected_treeref`),
 // either exactly or including the node's descendants in the tree forest. Picks

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Video playback position (spec-gui "file panel type"): where the user
 // stopped watching, stored as an ordinary field on the metarecord of the
 // played file, so reopening the video resumes there.

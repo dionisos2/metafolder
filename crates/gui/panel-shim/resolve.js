@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // TreeRef path resolution with a memo cache (spec-gui "Path display"). Paths
 // are repo-root-relative ('/'-joined names). Resolution is delegated to the
 // daemon's tree-resolve endpoint (one round-trip, no client-side chain walk);

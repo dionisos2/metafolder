@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Lane-based ASCII graph layout for the history forest. Mirrors the CLI's
 // `graph_layout` (crates/cli/src/log.rs): the active line stays in the leftmost
 // column, divergent branches open a column to the right and converge back with

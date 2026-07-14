@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Query builder for the ref-list panel. Pure function, no daemon access —
 // unit-tested in frontend/tests/ref-list-queries.test.js.
 

@@ -1,3 +1,4 @@
+// @ts-nocheck — not typed yet; the JS is being converted file by file.
 // Help panel (spec-gui "Help"). Loads the page set described by
 // pages/index.json, offers a grep search box on top, and resolves an exact
 // name (a page id, an alias, or a `panel:command`) straight to its page. The
