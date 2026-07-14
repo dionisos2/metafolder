@@ -101,3 +101,18 @@ rules:
       - pattern: document.getElementById(...)
       - pattern: document.querySelector(...)
       - pattern: document.querySelectorAll(...)
+
+  - id: mf-typecheck-suppressed-in-gui-js
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      The GUI's JS is fully typechecked (`checkJs`, no exceptions): the shim and
+      every panel are in the tsc program, and `npm run typecheck` is the only
+      thing standing between a typo in a panel and a broken mount at runtime.
+      A suppression comment silently takes a file back out of that program.
+      Fix the type, or name the shape the value really has.
+    paths:
+      include:
+        - crates/gui/panel-shim/**
+        - crates/gui/default-config/panel-types/**
+    pattern-regex: '@ts-(nocheck|ignore|expect-error)'

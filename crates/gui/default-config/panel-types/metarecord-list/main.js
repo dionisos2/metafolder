@@ -119,7 +119,7 @@ export async function mount(root, metafolder) {
   const columnsError = byId(root, 'columns-error');
   const normalToggle = byId(root, 'normal-toggle');
   const normalEditor = byId(root, 'normal-editor');
-  const normalInput = byId(root, 'normal-input', HTMLTextAreaElement);
+  const normalInput = byId(root, 'normal-input', HTMLInputElement);
   const normalError = byId(root, 'normal-error');
   const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
   const bulkForm = byId(root, 'bulk-form');
