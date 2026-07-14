@@ -130,7 +130,7 @@ pub fn merge_field_catalog(
     for (field, ty) in schema_decls {
         map.insert(field, ty); // schema wins on conflict
     }
-    map.into_iter().filter(|(_, ty)| type_filter.map_or(true, |w| w == ty)).collect()
+    map.into_iter().filter(|(_, ty)| type_filter.is_none_or(|w| w == ty)).collect()
 }
 
 /// Parses and validates a schema document. Error messages identify the

@@ -62,7 +62,12 @@ pub fn enqueue(conn: &Connection, ev: &FsEvent, tracker: Option<i64>) -> Result<
     Ok(())
 }
 
-fn load_pending(conn: &Connection) -> Result<(Vec<(FsEvent, Option<i64>)>, i64)> {
+/// The buffered events (each with its optional tracker id) and the highest
+/// `pending_operation` row id read — the flush deletes up to that id, so events
+/// enqueued while it runs survive for the next round.
+type PendingBatch = (Vec<(FsEvent, Option<i64>)>, i64);
+
+fn load_pending(conn: &Connection) -> Result<PendingBatch> {
     let mut stmt = conn.prepare(
         "SELECT id, op_type, path, from_path, to_path, tracker FROM pending_operation
          WHERE op_type LIKE 'fs_%' ORDER BY id",

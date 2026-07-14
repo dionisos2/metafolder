@@ -385,14 +385,13 @@ fn collect_files(dir: &Path, cap: usize) -> Vec<PathBuf> {
             let path = entry.path();
             match entry.file_type() {
                 Ok(ft) if ft.is_dir() => stack.push(path),
-                Ok(ft) if ft.is_file() => {
-                    if !path.to_string_lossy().ends_with(BENCH_SUFFIX) {
+                Ok(ft) if ft.is_file()
+                    && !path.to_string_lossy().ends_with(BENCH_SUFFIX) => {
                         out.push(path);
                         if out.len() >= cap {
                             return out;
                         }
                     }
-                }
                 _ => {}
             }
         }

@@ -470,74 +470,6 @@ fn float_from_cursor(key: &serde_json::Value) -> Result<f64, ApiError> {
     Ok(f64::from_bits(u64::from_be_bytes(arr)))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn float_cursor_roundtrip_is_bit_exact() {
-        let mut cases = vec![
-            0.0,
-            -0.0,
-            0.1,
-            0.1 + 0.2,
-            1.0 / 3.0,
-            std::f64::consts::PI,
-            f64::MIN_POSITIVE,
-            f64::from_bits(1), // smallest subnormal
-            f64::MAX,
-            f64::MIN,
-            2f64.powi(53) + 2.0,
-        ];
-        // Deterministic sweep of bit patterns (one such value drifts by 1 ULP
-        // through a decimal JSON round-trip, which this encoding avoids).
-        for i in 0..5000u64 {
-            let f = f64::from_bits(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
-            if f.is_finite() {
-                cases.push(f);
-            }
-        }
-        for &f in &cases {
-            // Through the same JSON serialization the cursor undergoes.
-            let value = float_to_cursor(f);
-            let json = serde_json::to_vec(&value).unwrap();
-            let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
-            assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
-        }
-    }
-
-    #[test]
-    fn query_node_count_and_size_limit() {
-        let leaf = || Query::IsPresent { field: "x".into() };
-        assert_eq!(node_count(&leaf()), 1);
-
-        // 1 (Or) + 5 leaves; nesting and follow conditions also count.
-        let nested = Query::And {
-            operands: vec![
-                leaf(),
-                Query::Not { operand: Box::new(leaf()) },
-                Query::FollowsTransitive {
-                    field: "mfr_path".into(),
-                    target: FollowTarget::Condition(Box::new(leaf())),
-                },
-            ],
-        };
-        // And + leaf + (Not + leaf) + (FollowsTransitive + leaf) = 6
-        assert_eq!(node_count(&nested), 6);
-
-        // At the limit passes; one over is rejected.
-        let at_limit =
-            Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
-        assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
-        assert!(check_query_size(&at_limit).is_ok());
-
-        let over = Query::Or { operands: (0..MAX_QUERY_NODES).map(|_| leaf()).collect() };
-        assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
-        let err = check_query_size(&over).unwrap_err();
-        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
-    }
-}
-
 // ── Compiler ──────────────────────────────────────────────────────────────────
 
 enum CmpOp {
@@ -1079,5 +1011,73 @@ impl<'a> Compiler<'a> {
                     .to_string())
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn float_cursor_roundtrip_is_bit_exact() {
+        let mut cases = vec![
+            0.0,
+            -0.0,
+            0.1,
+            0.1 + 0.2,
+            1.0 / 3.0,
+            std::f64::consts::PI,
+            f64::MIN_POSITIVE,
+            f64::from_bits(1), // smallest subnormal
+            f64::MAX,
+            f64::MIN,
+            2f64.powi(53) + 2.0,
+        ];
+        // Deterministic sweep of bit patterns (one such value drifts by 1 ULP
+        // through a decimal JSON round-trip, which this encoding avoids).
+        for i in 0..5000u64 {
+            let f = f64::from_bits(i.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+            if f.is_finite() {
+                cases.push(f);
+            }
+        }
+        for &f in &cases {
+            // Through the same JSON serialization the cursor undergoes.
+            let value = float_to_cursor(f);
+            let json = serde_json::to_vec(&value).unwrap();
+            let back = float_from_cursor(&serde_json::from_slice(&json).unwrap()).unwrap();
+            assert_eq!(f.to_bits(), back.to_bits(), "diverged at {f}");
+        }
+    }
+
+    #[test]
+    fn query_node_count_and_size_limit() {
+        let leaf = || Query::IsPresent { field: "x".into() };
+        assert_eq!(node_count(&leaf()), 1);
+
+        // 1 (Or) + 5 leaves; nesting and follow conditions also count.
+        let nested = Query::And {
+            operands: vec![
+                leaf(),
+                Query::Not { operand: Box::new(leaf()) },
+                Query::FollowsTransitive {
+                    field: "mfr_path".into(),
+                    target: FollowTarget::Condition(Box::new(leaf())),
+                },
+            ],
+        };
+        // And + leaf + (Not + leaf) + (FollowsTransitive + leaf) = 6
+        assert_eq!(node_count(&nested), 6);
+
+        // At the limit passes; one over is rejected.
+        let at_limit =
+            Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
+        assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
+        assert!(check_query_size(&at_limit).is_ok());
+
+        let over = Query::Or { operands: (0..MAX_QUERY_NODES).map(|_| leaf()).collect() };
+        assert_eq!(node_count(&over), MAX_QUERY_NODES + 1);
+        let err = check_query_size(&over).unwrap_err();
+        assert_eq!(err.status, axum::http::StatusCode::BAD_REQUEST);
     }
 }

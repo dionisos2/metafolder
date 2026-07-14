@@ -103,6 +103,12 @@ impl From<anyhow::Error> for ApiError {
     }
 }
 
+impl From<axum::extract::rejection::JsonRejection> for ApiError {
+    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
+        ApiError::bad_request(rejection.body_text())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -140,11 +146,5 @@ mod tests {
             ApiError::from(anyhow::anyhow!("disk not found")).status,
             StatusCode::INTERNAL_SERVER_ERROR
         );
-    }
-}
-
-impl From<axum::extract::rejection::JsonRejection> for ApiError {
-    fn from(rejection: axum::extract::rejection::JsonRejection) -> Self {
-        ApiError::bad_request(rejection.body_text())
     }
 }

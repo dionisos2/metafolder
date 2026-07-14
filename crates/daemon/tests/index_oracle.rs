@@ -837,7 +837,7 @@ fn keyset_pagination_is_stable_under_insertion() {
 
 #[test]
 fn cursor_is_bound_to_query_and_sort() {
-    let mut o = sortable();
+    let o = sortable();
     let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
     let by_rate = [SortBy { field: "rate".into(), ascending: true }];
     let (_p, next) = index.evaluate_page(&present("all"), &by_rate, Some(2), None).unwrap();

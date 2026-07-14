@@ -71,6 +71,28 @@ pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
 /// loops, throttled to every [`PROGRESS_STEP`] items.
 pub type ProgressFn<'a> = &'a dyn Fn(&str, Option<u64>, Option<u64>);
 
+/// The two callbacks a reported reconcile carries: where to report phase
+/// progress, and how to learn the task was cancelled. They always travel
+/// together — one pair per task — so they are passed as one.
+pub struct Reporter<'a> {
+    progress: ProgressFn<'a>,
+    cancel: CancelProbe<'a>,
+}
+
+impl<'a> Reporter<'a> {
+    pub fn new(progress: ProgressFn<'a>, cancel: CancelProbe<'a>) -> Self {
+        Self { progress, cancel }
+    }
+
+    fn progress(&self, phase: &str, done: Option<u64>, total: Option<u64>) {
+        (self.progress)(phase, done, total);
+    }
+
+    fn is_cancelled(&self) -> bool {
+        (self.cancel)()
+    }
+}
+
 /// A reconcile that never cancels (used by the synchronous, non-task wrappers).
 fn never() -> impl Fn() -> bool {
     || false
@@ -99,7 +121,7 @@ pub fn reconcile_full(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_full_reported(repo, threshold, compute_mime, refresh, &|_, _, _| {}, &never())
+    reconcile_full_reported(repo, threshold, compute_mime, refresh, &Reporter::new(&|_, _, _| {}, &never()))
 }
 
 /// Like [`reconcile_full`], reporting phase progress through `progress`
@@ -111,8 +133,7 @@ pub fn reconcile_full_reported(
     threshold: Option<f64>,
     compute_mime: bool,
     refresh: bool,
-    progress: ProgressFn,
-    cancel: CancelProbe,
+    reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
@@ -124,12 +145,12 @@ pub fn reconcile_full_reported(
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
     let mut elig = eligibility::EligibilityCache::default();
-    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, progress, cancel)?;
+    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, reporter)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
     // determinate phase (spec-tasks "Decompose walk").
-    let fs_paths = stat_paths(&root, &paths, progress);
-    if cancel() {
+    let fs_paths = stat_paths(&root, &paths, reporter);
+    if reporter.is_cancelled() {
         return Err(cancelled());
     }
 
@@ -138,13 +159,13 @@ pub fn reconcile_full_reported(
     // `fs_paths` is kept whole for the optional refresh pass. Now the total is
     // known, so this indexing pass reports a determinate "index" phase.
     let index_total = fs_paths.len() as u64;
-    progress("index", Some(0), Some(index_total));
+    reporter.progress("index", Some(0), Some(index_total));
     let mut new_files: Vec<(String, Metadata)> = Vec::new();
     let mut disk_files: Vec<String> = Vec::new();
     for (i, (rel, meta)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("index", Some(i as u64), Some(index_total));
-            if cancel() {
+            reporter.progress("index", Some(i as u64), Some(index_total));
+            if reporter.is_cancelled() {
                 return Err(cancelled());
             }
         }
@@ -161,12 +182,12 @@ pub fn reconcile_full_reported(
     // ineligible are not mistaken for orphans.) Determinate "scan" phase.
     let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
     let scan_total = tracked.len() as u64;
-    progress("scan", Some(0), Some(scan_total));
+    reporter.progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
     for (i, uuid) in tracked.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("scan", Some(i as u64), Some(scan_total));
-            if cancel() {
+            reporter.progress("scan", Some(i as u64), Some(scan_total));
+            if reporter.is_cancelled() {
                 return Err(cancelled());
             }
         }
@@ -198,12 +219,12 @@ pub fn reconcile_full_reported(
     }
     let mut states: Vec<OrphanState> = Vec::with_capacity(orphans.len());
     let orphan_total = orphans.len() as u64;
-    progress("fingerprint", Some(0), Some(orphan_total));
+    reporter.progress("fingerprint", Some(0), Some(orphan_total));
 
     for (i, (orphan, stale_path)) in orphans.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("fingerprint", Some(i as u64), Some(orphan_total));
-            if cancel() {
+            reporter.progress("fingerprint", Some(i as u64), Some(orphan_total));
+            if reporter.is_cancelled() {
                 return Err(cancelled());
             }
         }
@@ -287,8 +308,8 @@ pub fn reconcile_full_reported(
     // Step 4 — similarity phase (v2): for each still-unmatched orphan and each
     // still-unmatched new path of the same kind, append score-based candidates.
     if let Some(threshold) = threshold {
-        progress("similarity", None, None);
-        if cancel() {
+        reporter.progress("similarity", None, None);
+        if reporter.is_cancelled() {
             return Err(cancelled());
         }
         for state in states.iter_mut().filter(|s| !s.moved) {
@@ -322,11 +343,11 @@ pub fn reconcile_full_reported(
     // Step 5 — create metarecords for the remaining new files, parents first.
     new_files.sort_by_key(|(rel, _)| rel.matches('/').count());
     let create_total = new_files.len() as u64;
-    progress("create", Some(0), Some(create_total));
+    reporter.progress("create", Some(0), Some(create_total));
     for (i, (rel, _)) in new_files.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("create", Some(i as u64), Some(create_total));
-            if cancel() {
+            reporter.progress("create", Some(i as u64), Some(create_total));
+            if reporter.is_cancelled() {
                 return Err(cancelled());
             }
         }
@@ -348,11 +369,11 @@ pub fn reconcile_full_reported(
     // them. Same behaviour as single-metarecord reconcile.
     if refresh {
         let refresh_total = fs_paths.len() as u64;
-        progress("refresh", Some(0), Some(refresh_total));
+        reporter.progress("refresh", Some(0), Some(refresh_total));
         for (i, (rel, _)) in fs_paths.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
-                progress("refresh", Some(i as u64), Some(refresh_total));
-                if cancel() {
+                reporter.progress("refresh", Some(i as u64), Some(refresh_total));
+                if reporter.is_cancelled() {
                     return Err(cancelled());
                 }
             }
@@ -366,11 +387,11 @@ pub fn reconcile_full_reported(
     // a record; fill in mfr_mime where it is still absent.
     if compute_mime {
         let mime_total = disk_files.len() as u64;
-        progress("mime", Some(0), Some(mime_total));
+        reporter.progress("mime", Some(0), Some(mime_total));
         for (i, rel) in disk_files.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
-                progress("mime", Some(i as u64), Some(mime_total));
-                if cancel() {
+                reporter.progress("mime", Some(i as u64), Some(mime_total));
+                if reporter.is_cancelled() {
                     return Err(cancelled());
                 }
             }
@@ -394,7 +415,7 @@ pub fn reconcile_metarecord(
     compute_mime: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &|_, _, _| {}, &never())
+    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &Reporter::new(&|_, _, _| {}, &never()))
 }
 
 /// Like [`reconcile_metarecord`], reporting phase progress for a task
@@ -405,8 +426,7 @@ pub fn reconcile_metarecord_reported(
     uuid: Uuid,
     compute_mime: bool,
     refresh: bool,
-    progress: ProgressFn,
-    cancel: CancelProbe,
+    reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
@@ -432,20 +452,20 @@ pub fn reconcile_metarecord_reported(
     let abs_base = root.join(base.trim_start_matches('/'));
     if abs_base.exists() {
         paths.push(base.clone()); // The subtree root itself.
-        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, progress, cancel)?);
+        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, reporter)?);
     }
-    let mut fs_paths = stat_paths(&root, &paths, progress);
-    if cancel() {
+    let mut fs_paths = stat_paths(&root, &paths, reporter);
+    if reporter.is_cancelled() {
         return Err(cancelled());
     }
 
     fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
     let create_total = fs_paths.len() as u64;
-    progress("create", Some(0), Some(create_total));
+    reporter.progress("create", Some(0), Some(create_total));
     for (i, (rel, _)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("create", Some(i as u64), Some(create_total));
-            if cancel() {
+            reporter.progress("create", Some(i as u64), Some(create_total));
+            if reporter.is_cancelled() {
                 return Err(cancelled());
             }
         }
@@ -466,11 +486,11 @@ pub fn reconcile_metarecord_reported(
 
     if compute_mime {
         let mime_total = fs_paths.len() as u64;
-        progress("mime", Some(0), Some(mime_total));
+        reporter.progress("mime", Some(0), Some(mime_total));
         for (i, (rel, meta)) in fs_paths.iter().enumerate() {
             if i % PROGRESS_STEP == 0 {
-                progress("mime", Some(i as u64), Some(mime_total));
-                if cancel() {
+                reporter.progress("mime", Some(i as u64), Some(mime_total));
+                if reporter.is_cancelled() {
                     return Err(cancelled());
                 }
             }
@@ -507,8 +527,7 @@ fn walk(
     internal_dir: &Path,
     base: &str,
     elig: &mut eligibility::EligibilityCache,
-    progress: ProgressFn,
-    cancel: CancelProbe,
+    reporter: &Reporter,
 ) -> Result<Vec<String>> {
     let mut paths: Vec<String> = Vec::new();
     // The two lists the traversal alternates between: the directories at the
@@ -525,9 +544,9 @@ fn walk(
         let label = |files: u64| format!("walk (depth {depth}, {dirs_at_depth} dirs, {files} files)");
         let mut next: Vec<String> = Vec::new();
         for (i, dir) in frontier.iter().enumerate() {
-            if i as u64 % PROGRESS_STEP as u64 == 0 {
-                progress(&label(files), Some(i as u64), Some(dirs_at_depth));
-                if cancel() {
+            if (i as u64).is_multiple_of(PROGRESS_STEP as u64) {
+                reporter.progress(&label(files), Some(i as u64), Some(dirs_at_depth));
+                if reporter.is_cancelled() {
                     anyhow::bail!("reconcile cancelled");
                 }
             }
@@ -559,9 +578,9 @@ fn walk(
                     // Keep the count moving and cancellation responsive even
                     // inside a single huge directory (the per-dir checkpoint
                     // above would not fire until the next directory).
-                    if files % PROGRESS_STEP as u64 == 0 {
-                        progress(&label(files), Some(i as u64), Some(dirs_at_depth));
-                        if cancel() {
+                    if files.is_multiple_of(PROGRESS_STEP as u64) {
+                        reporter.progress(&label(files), Some(i as u64), Some(dirs_at_depth));
+                        if reporter.is_cancelled() {
                             anyhow::bail!("reconcile cancelled");
                         }
                     }
@@ -570,7 +589,7 @@ fn walk(
         }
         // End-of-level tick: the cumulative file count now includes this whole
         // depth, so the reported number reaches the true total for small trees.
-        progress(&label(files), Some(dirs_at_depth), Some(dirs_at_depth));
+        reporter.progress(&label(files), Some(dirs_at_depth), Some(dirs_at_depth));
         frontier = next;
         depth += 1;
     }
@@ -584,14 +603,14 @@ fn walk(
 fn stat_paths(
     root: &Path,
     paths: &[String],
-    progress: ProgressFn,
+    reporter: &Reporter,
 ) -> Vec<(String, Metadata)> {
     let total = paths.len() as u64;
-    progress("stat", Some(0), Some(total));
+    reporter.progress("stat", Some(0), Some(total));
     let mut out: Vec<(String, Metadata)> = Vec::with_capacity(paths.len());
     for (i, rel) in paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
-            progress("stat", Some(i as u64), Some(total));
+            reporter.progress("stat", Some(i as u64), Some(total));
         }
         let abs = root.join(rel.trim_start_matches('/'));
         // symlink_metadata matches the former DirEntry::metadata (no symlink follow).

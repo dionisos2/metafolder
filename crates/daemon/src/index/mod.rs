@@ -848,7 +848,7 @@ impl<'a> Reader<'a> {
 fn decode_rep(r: &mut Reader<'_>) -> Option<SortRep> {
     let text = |r: &mut Reader<'_>| -> Option<String> {
         let len = r.u32()? as usize;
-        Some(String::from_utf8(r.take(len)?.to_vec()).ok()?)
+        String::from_utf8(r.take(len)?.to_vec()).ok()
     };
     Some(match r.u8()? {
         0 => SortRep::Bool(r.u8()? != 0),

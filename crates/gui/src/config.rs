@@ -527,7 +527,7 @@ mod tests {
         ConfigDir::at(dir)
     }
 
-    fn scopes_of<'a>(set: &'a KeybindingSet, combo: &[&str]) -> Vec<Option<String>> {
+    fn scopes_of(set: &KeybindingSet, combo: &[&str]) -> Vec<Option<String>> {
         let mut v: Vec<Option<String>> = set
             .compiled()
             .into_iter()

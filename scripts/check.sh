@@ -3,14 +3,14 @@
 # prints one summary line per check.
 #
 #   scripts/check.sh              # the standard pass
-#   scripts/check.sh --strict     # clippy warnings become failures
+#   scripts/check.sh --lax        # clippy warnings stay warnings (for work in progress)
 #   scripts/check.sh --coverage   # also measure test coverage (slow, ~9 GiB in target/)
 #
 # Checks, and what each is for:
 #
-#   clippy      lints rustc cannot see. NOT -D warnings by default: the tree
-#               still carries a dozen style warnings, and failing on them would
-#               make this script useless until someone clears them.
+#   clippy      lints rustc cannot see. Run with -D warnings: the tree is clean,
+#               and the only way it stays clean is if the first new warning
+#               fails the build. --lax downgrades them while you work.
 #   test        the Rust workspace suite.
 #   frontend    the vitest suite (crates/gui/frontend).
 #   deny        dependency vulnerabilities, licenses and sources (deny.toml).
@@ -30,11 +30,11 @@ set -uo pipefail   # NOT -e: every check must run, even after one fails.
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$repo"
 
-strict=false
+strict=true
 coverage=false
 for arg in "$@"; do
     case "$arg" in
-        --strict) strict=true ;;
+        --lax) strict=false ;;
         --coverage) coverage=true ;;
         -h|--help) sed -n '2,26p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;

@@ -72,9 +72,9 @@ fn reconcile_reports_phase_progress() {
     write_file(&root, "dir/b.txt", b"beta");
 
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, true, true, &|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, true, true, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false)
+    }, &|| false))
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -106,9 +106,9 @@ fn stat_phase_total_matches_walked_paths() {
     // The pure walk yields the full path list, so the stat phase (the heavy
     // pass) has an exact total — a.txt, dir, dir/b.txt = 3 eligible paths.
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false)
+    }, &|| false))
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -126,9 +126,9 @@ fn walk_phase_reports_cumulative_file_count() {
     // the displayed number actually advances instead of being stuck at 0 (the
     // per-depth `done/total` is too coarse for trees smaller than the step).
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, &|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false)
+    }, &|| false))
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -509,7 +509,7 @@ fn cancelled_reconcile_bails_and_rolls_back() {
     write_file(&root, "a.txt", b"hello");
     write_file(&root, "sub/b.txt", b"world");
 
-    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, &|_, _, _| {}, &|| true);
+    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|_, _, _| {}, &|| true));
     assert!(outcome.is_err(), "a pre-cancelled reconcile must bail");
 
     // Rolled back: no file metarecords exist.

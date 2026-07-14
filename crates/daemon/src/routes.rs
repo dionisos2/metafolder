@@ -1358,16 +1358,14 @@ async fn full_reconcile(
                 uuid,
                 body.mime,
                 body.refresh,
-                &progress,
-                &cancel,
+                &crate::reconcile::Reporter::new(&progress, &cancel),
             ),
             None => crate::reconcile::reconcile_full_reported(
                 &repo_state,
                 body.threshold,
                 body.mime,
                 body.refresh,
-                &progress,
-                &cancel,
+                &crate::reconcile::Reporter::new(&progress, &cancel),
             ),
         };
         match outcome {
@@ -1508,6 +1506,11 @@ async fn run_query(
     .await
 }
 
+/// One page of query results: the metarecords, the cursor for the next page
+/// (`None` at the end), and the total — present only when the body asked to
+/// `count`.
+type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
+
 /// Resolves a query's page (and optional total) through the in-memory bitmap
 /// index when it is applicable, falling back to the SQL engine otherwise.
 ///
@@ -1523,7 +1526,7 @@ fn run_query_filter(
     cache: &mut crate::tree_cache::TreeCache,
     repo_uuid: Uuid,
     body: &QueryBody,
-) -> Result<(Vec<Uuid>, Option<String>, Option<usize>), ApiError> {
+) -> Result<QueryPage, ApiError> {
     // Reject ill-defined comparisons upfront, before choosing an engine, so the
     // rejection never depends on the index→SQL fallback path (spec-query).
     query_exec::validate_query(&body.query)?;

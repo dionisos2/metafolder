@@ -293,8 +293,14 @@ impl SortReps {
         self.max.remove(&id);
     }
 
+    /// Entry count across both maps — a memory-accounting figure, not a
+    /// metarecord count (each metarecord holds one min *and* one max).
     pub fn len(&self) -> usize {
         self.min.len() + self.max.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.min.is_empty() && self.max.is_empty()
     }
 }
 

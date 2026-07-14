@@ -55,9 +55,8 @@ pub async fn run(
     let started = daemon
         .request("POST", &format!("/repos/{repo}/reconcile"), None)
         .await
-        .map_err(|error| {
-            let _ = gui.post_status(&ws_id, &error, "error", Some(timings.error_ms));
-            error
+        .inspect_err(|error| {
+            let _ = gui.post_status(&ws_id, error, "error", Some(timings.error_ms));
         })?;
     if started.status != 202 {
         let message = started.body["error"]
@@ -76,9 +75,8 @@ pub async fn run(
         let response = daemon
             .request("GET", &format!("/repos/{repo}/tasks/{task_id}"), None)
             .await
-            .map_err(|error| {
-                let _ = gui.post_status(&ws_id, &error, "error", Some(timings.error_ms));
-                error
+            .inspect_err(|error| {
+                let _ = gui.post_status(&ws_id, error, "error", Some(timings.error_ms));
             })?;
         let task = &response.body;
         match task["status"].as_str() {
