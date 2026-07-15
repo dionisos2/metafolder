@@ -7,3 +7,12 @@ members = [
     "crates/bench",
 ]
 resolver = "2"
+
+# Keep target/ small: full debug info (the default) duplicates gigabytes of
+# DWARF into every test binary. Line tables keep backtraces readable.
+[profile.dev]
+debug = "line-tables-only"
+
+# External dependencies: no debug info at all (workspace members keep theirs).
+[profile.dev.package."*"]
+debug = false
