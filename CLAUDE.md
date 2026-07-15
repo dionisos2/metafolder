@@ -5,7 +5,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-# Build all crates
+# Full build — ALWAYS use this script rather than raw cargo for a complete
+# build: it builds every live artifact universe (workspace, test binaries,
+# sync-config core), the GUI frontend bundle, applies the user config, and
+# runs scripts/prune-target.sh every time so target/ stays small.
+scripts/complete-build.sh
+
+# Build all crates (quick iteration; fine for single-crate work)
 cargo build
 
 # Run all tests
