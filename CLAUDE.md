@@ -25,6 +25,13 @@ cargo test -p metafolder-daemon test_reconcile_creates_records_for_new_files
 # SKIP, not a pass.
 scripts/check.sh
 
+# Prune superseded artifacts from target/ (cargo never GCs it): run after a
+# successful build when target/ has grown — dependency bumps, feature or rustc
+# changes leave the old hash-named artifacts behind. First run only records
+# state; deleting too much only ever costs a recompile. Tests:
+# scripts/test-prune-target.sh
+scripts/prune-target.sh [--dry-run]
+
 # Dependency audit: vulnerabilities, licenses, sources (config: deny.toml).
 # Every ignored advisory is documented there; keep this green.
 cargo deny check
