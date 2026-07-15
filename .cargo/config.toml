@@ -1,7 +1,0 @@
-# Unify dependency features across the whole workspace regardless of which
-# package subset a command builds. Without this, `cargo build`, `cargo test
-# -p <crate>`, `--features sync-config`... each unify features over their own
-# package set, so the same dependency version gets recompiled (and its stale
-# rlibs accumulate in target/) once per distinct combination.
-[resolver]
-feature-unification = "workspace"
