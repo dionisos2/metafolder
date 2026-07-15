@@ -15,7 +15,12 @@ set -euo pipefail
 repo=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
 cd "$repo"
 
-cargo build --features sync-config
+# Build the workspace, then the sync-config binary with the feature scoped to
+# core only: `--features sync-config` on the whole workspace would recompile
+# every crate against a feature-enabled core, duplicating all artifacts in
+# target/ (a second "universe" of rlibs cargo never garbage-collects).
+cargo build
+cargo build -p metafolder-core --features sync-config
 
 # First run on a fresh checkout: install the frontend deps once.
 if [ ! -d crates/gui/frontend/node_modules ]; then
