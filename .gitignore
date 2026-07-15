@@ -14,3 +14,4 @@ benchmarks/A_B*
 benchmarks/real
 corrections.txt
 crates/gui/frontend/coverage/
+crates/gui/frontend/package-lock.json
