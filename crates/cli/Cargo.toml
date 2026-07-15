@@ -17,7 +17,7 @@ serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 ureq = { version = "2", features = ["json"] }
 # Reading the GUI's config.toml to discover its port (spec-gui "mf gui").
-toml = "0.8"
+toml = "1.0"
 
 [dev-dependencies]
 metafolder-daemon = { path = "../daemon" }
