@@ -21,6 +21,12 @@ cd "$repo"
 # target/ (a second "universe" of rlibs cargo never garbage-collects).
 cargo build
 cargo build -p metafolder-core --features sync-config
+# Prune superseded artifacts now: both live "universes" (plain workspace and
+# sync-config core) were just (re)built, so everything current is in the fresh
+# generation and only what they superseded gets deleted. Never prune between
+# two builds of different feature sets — each would look "new" and evict the
+# other, forcing perpetual recompilation.
+scripts/prune-target.sh
 
 # First run on a fresh checkout: install the frontend deps once.
 if [ ! -d crates/gui/frontend/node_modules ]; then
