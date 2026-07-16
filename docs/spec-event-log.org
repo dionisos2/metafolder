@@ -64,7 +64,7 @@ No history is ever lost unless explicitly pruned (see [[*Log pruning]]).
 ** HEAD pointer
 
 A singleton table =log_head= records the current operation. All data tables
-(=metadata=, =metarecord_db=, =field=) reflect exactly the state of the
+(=metadata=, =field=) reflect exactly the state of the
 operation at HEAD.
 
 Invariant: HEAD and the data tables are always mutually consistent. Every HEAD
@@ -200,10 +200,6 @@ Per operation type:
 | =file_moved=    | the previous =mfr_path= row(s)                       | the new =mfr_path= row(s)                        |
 | =file_modified= | =mfr_size=, =mfr_mtime=, hash rows before            | new =mfr_size=, =mfr_mtime= rows                 |
 
-=create_metarecord= and =delete_metarecord= also require saving =metarecord_db= rows
-(the =db_ids=). In v1, =db_ids= is always the single current repo UUID and
-is not stored explicitly; this is deferred to v2 (link metarecords).
-
 For =file_deleted= on a directory: each descendant metarecord receives its own
 =file_deleted= operation within the same revision. Operations and their
 snapshot rows are inserted in bulk for large cascades.
@@ -277,15 +273,15 @@ Given =current= (=log_head.op_id=) and =target=:
 The entire navigation is atomic. A crash leaves HEAD and data tables in their
 pre-navigation state.
 
-If =target= is =NULL= (empty state), all =metadata=, =metarecord_db=, and =field=
-rows owned by this repository are deleted and =log_head.op_id= is set to =NULL=.
+If =target= is =NULL= (empty state), all =metadata= and =field= rows are
+deleted and =log_head.op_id= is set to =NULL=.
 
 *** Inverse operations
 
 | =op_type=        | Inverse action                                                                                    |
 |------------------+---------------------------------------------------------------------------------------------------|
-| =create_metarecord=   | Delete the metarecord and all its =metarecord_db= and =field= rows                                       |
-| =delete_metarecord=   | Recreate =metadata= (with =entity_version_before=), =metarecord_db=, =field= rows from snapshots   |
+| =create_metarecord=   | Delete the metarecord and all its =field= rows                                                      |
+| =delete_metarecord=   | Recreate =metadata= (with =entity_version_before=) and =field= rows from snapshots                 |
 | =set_field=      | Delete current rows for =(uuid, field_name)=; insert =is_new=0= snapshot rows with original ids  |
 | =append_field=   | Delete the field row whose =id= matches the =is_new=1= snapshot =field_id=                        |
 | =delete_field=   | Insert the =is_new=0= snapshot row with its original =field_id=                                   |

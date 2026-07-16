@@ -89,7 +89,7 @@ Two indexes, added in the daemon schema (=crates/daemon/src/db.rs=), created by
 | Index                     | Definition                              | Fixes                                |
 |---------------------------+-----------------------------------------+--------------------------------------|
 | =idx_field_name=          | =field(field_name, metarecord_uuid)=    | predicate seeks the field_name range instead of scanning the EAV table; covers the =DISTINCT metarecord_uuid= projection |
-| =idx_metarecord_db_uuid=  | =metarecord_db(db_id, metarecord_uuid)= | listing seeks by keyset, reads rows already ordered — no temp b-tree per page |
+| =idx_metarecord_db_uuid=  | =metarecord_db(db_id, metarecord_uuid)= | listing seeks by keyset, reads rows already ordered — no temp b-tree per page. Obsolete once =metarecord_db= is removed (see [[file:spec-sync.org][spec-sync.org]]): the listing keyset then seeks =metarecord(uuid)= (the primary key) directly |
 
 =list_entries_page= emits a *conditional* keyset (the cursor predicate is
 omitted on the first page) so the composite index can seek; folding it into

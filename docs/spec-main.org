@@ -61,9 +61,11 @@ reconcile, observable queries, the task registry — are part of version 1.
   =mfr_path= field is set to =Nothing= rather than deleting the row.
 - =set_field= replaces *all* rows for =(uuid, field_name)=, collapsing multi-map
   fields to a single value.
-- A metadata metarecord whose =db_ids= contains more than one repository UUID (a
-  /link metarecord/) can only be created or modified when every listed repository is
-  simultaneously loaded in the same daemon instance. [v2]
+- Cross-repo sync state (links and snapshots) lives outside the data model,
+  in per-pair sync databases under =.metafolder/internal/=; it is never
+  recorded in the event log and can only be modified when both repositories
+  of the pair are simultaneously loaded in the same daemon instance
+  (see [[file:spec-sync.org][spec-sync.org]]). [v2]
 - The =version= counter on a metadata metarecord is managed exclusively by the
   daemon; it is incremented on every write to =fields= and cannot be set
   directly by users.

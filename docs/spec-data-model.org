@@ -42,19 +42,15 @@ names what the fields are.
 | Field     | Type       | Description                                              |
 |-----------+------------+----------------------------------------------------------|
 | =uuid=    | UUID       | Stable identifier for this metarecord                         |
-| =db_ids=  | list<UUID> | Repositories that own this metarecord (usually one)           |
 | =version= | u64        | Monotonic write counter, managed by the daemon           |
 | =fields=  | list       | Ordered list of =Field= values                           |
 
 Fields form a *multi-map*: multiple fields with the same name are allowed.
 
-=db_ids= normally contains a single repository UUID (the owning repo). When it
-contains two UUIDs the metarecord is a /link metarecord/ shared between two repositories
-(see [[*Cross-repo Synchronisation]]).
-
-By default, queries return only metarecords whose =db_ids= equals exactly
-={current_repo}=. Metarecords with multiple =db_ids= are excluded unless explicitly
-requested.
+Ownership is implicit: every metarecord belongs to the repository whose
+database holds it (one database per repository). Cross-repo sync state (links
+between metarecords of two repositories) lives outside the data model, in a
+dedicated sync database — see [[file:spec-sync.org][spec-sync.org]].
 
 ** Field and Value
 
@@ -276,15 +272,6 @@ CREATE TABLE metarecord (
     version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
 );
 
--- One row per owning repository (usually one; two for link metarecords).
-CREATE TABLE metarecord_db (
-    metarecord_uuid  BLOB NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
-    db_id          BLOB NOT NULL,           -- 16-byte repo UUID
-    PRIMARY KEY (metarecord_uuid, db_id)
-);
-
-CREATE INDEX idx_metarecord_db ON metarecord_db(db_id);
-
 CREATE TABLE field (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     metarecord_uuid   BLOB    NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
@@ -429,7 +416,7 @@ Response: the full metadata object (=id= on each field).
 Returns one metarecord with all its fields. Each field carries its DB-row =id=
 (used by the by-id endpoints).
 #+BEGIN_SRC json
-{ "uuid": "...", "db_ids": ["<repo>"], "version": 3,
+{ "uuid": "...", "version": 3,
   "fields": [ {"id": 42, "name": "rating", "value": {"type": "int", "value": 5}} ] }
 #+END_SRC
 
@@ -462,6 +449,16 @@ A field of one metarecord, addressed by name (the direct analog of the
 - =DELETE= → *unset*: removes every row of =name= (the field becomes unknown).
 Protected names need =force= (in the body for PUT/DELETE). Updated full object
 (PUT) / =204= (DELETE).
+
+*** Conditional writes (=expected_version=)
+
+The single-record write endpoints (whole-record =PUT=, field =POST=, field
+=PUT=/=DELETE= by name) accept an optional =expected_version= query
+parameter: the write is rejected with =409= (nothing written, no revision)
+when the metarecord's current =version= differs from the given value. This
+is the optimistic-concurrency primitive used by cross-repo sync propagation
+([[file:spec-sync.org][spec-sync.org]]) so a concurrent user write is never silently overwritten;
+ordinary clients may use it for the same purpose.
 
 *** =GET /repos/:repo_uuid/metarecords/:uuid/fields/:name/resolve-tree=
 

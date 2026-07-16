@@ -186,15 +186,18 @@ as validation errors on write.
   prefix); the schema file is rejected at load otherwise. Constraints can
   therefore never block the daemon's own writes (watcher, reconcile) nor the
   =mf_schema= mechanism itself.
-- The schema file constrains user data only; it has no effect on link or
-  snapshot metarecords managed by cross-repo sync.
+- The schema file constrains user data only; cross-repo sync state (links,
+  snapshots) lives outside the data model entirely (see [[file:spec-sync.org][spec-sync.org]]) and
+  is never subject to it. Field values *propagated* by sync, on the other
+  hand, arrive through the ordinary field endpoints and are validated like
+  any user write (spec-sync "Schema validation of propagated writes").
 
 ** Validation model: delta validation
 
 Validation is triggered by /user writes/ only — the API endpoints that modify
 fields (metarecord creation, =PATCH=, field append/replace/delete, batch =set=).
-Daemon-internal writes (watcher, reconcile, sync crash-recovery) are never
-validated against the schema.
+Daemon-internal writes (watcher, reconcile) are never validated against the
+schema.
 
 Validation is /delta-based/: a write only validates the field names it
 touches, against the metarecord state resulting from the write. Fields not touched
@@ -275,7 +278,7 @@ Request body (optional):
 #+END_SRC
 
 When =query= is given, only matching metarecords are checked; otherwise the whole
-repository (link metarecords excluded, as with normal queries). =limit= caps the
+repository. =limit= caps the
 number of violations returned: the scan stops once it is exceeded (so a repo
 with hundreds of thousands of violations never builds an unusable response), and
 the response carries =truncated: true=; =checked= is then the number of

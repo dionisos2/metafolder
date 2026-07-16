@@ -43,8 +43,8 @@ than one request per UUID.
 ** Compilation
 
 Queries are compiled to a CTE chain in SQL. Each query node becomes one CTE;
-the final SELECT is filtered via =metarecord_db= to isolate the repository and
-exclude link metarecords by default.
+the universe CTE enumerates the =metarecord= table (every metarecord of the
+repository database).
 
 Exception: =FollowsTransitive= on a =TreeRef= field is executed as a hybrid
 operation — the daemon first collects the descendant UUID set iteratively via
