@@ -183,15 +183,6 @@ its creation). This is indistinguishable from a deliberate deletion at the
 data level, which is why deletion propagation is never applied silently (see
 [[*Metarecord deletion propagation]]).
 
-** Directory linking during sync
-
-Links are always UUID-based; only the *initial* directory link is
-established by path matching (the =path= candidates mode): same
-reconstructed path on both sides → link them; present on one side only →
-create the directory metarecord on the other side, then link. Once linked,
-a moved directory keeps its link by UUID — the path divergence is an
-ordinary =mfr_path= change or conflict.
-
 ** Version-based change detection
 
 After a successful sync of metarecords =E_A= (repo A) and =E_B= (repo B), the
@@ -395,21 +386,61 @@ holds a single EXCLUSIVE connection per repo.)
 
 ** Sync intentions
 
-Sync intentions are declared in the intents file as an *ordered* mapping
-from sync method to a query (see [[*The intents file]] for the concrete
-format). Example:
+Sync intentions are declared in the intents file as an *ordered* list of
+entries, each naming a *source repo*, a sync method, and a query (see
+[[*The intents file]] for the concrete format). Intents are *directional*:
+the query runs on the source repo only, and its result is the set of source
+metarecords that must be linked to the other repo. Example (source repo
+before the arrow):
 
 #+BEGIN_SRC
-rsync  ←  tag = "sync_pc_b"
-git    ←  path →* "/projects"
-rsync  ←  tag = "image" AND tag = "family"
+laptop:  rsync  ←  tag = "sync_pc_b"
+laptop:  git    ←  files "/projects"
+nas:     rsync  ←  tag = "image" AND tag = "family"
 #+END_SRC
 
-The CLI evaluates each query on both repos to determine which metarecords
-should be linked and with what method; for a metarecord matched by several
-intents, the first matching entry wins. Everything downstream (comparing
-with existing links, transfers, propagation, commit) is the =mf sync= flow
-(see [[*CLI]]).
+For a metarecord matched by several intents, the first matching entry (file
+order) wins; the same rule picks the method of a link whose two endpoints
+are covered by intents from both sides. The intent scopes maintain the link
+set:
+
+- an in-scope source record with no link → link it (see
+  [[*The linking phase: match or create]]);
+- a link neither of whose endpoints is in any intent scope → drop the link
+  (never the records);
+- every remaining link is then synchronised with its method — the sync
+  phase, i.e. the change-detection/propagation machinery above driven by the
+  =mf sync= flow (see [[*CLI]]).
+
+*** The linking phase: match or create
+
+For each in-scope source record without a link, the CLI looks for a match
+on the target side (=POST …/candidates=):
+
+- an *exact* match — same content (=mfr_full_hash=) for a file, same
+  reconstructed path for a directory — is linked automatically;
+- failing that, a *similar* record — the four-signal similarity score of
+  spec-file-tracking "File Similarity" (already used by reconcile), computed
+  across the two repos, at or above =similarity-threshold= — is proposed:
+  linked after interactive confirmation, skipped in a non-interactive run;
+- no match → the record is *created* on the target side and linked: for a
+  file, transfer + track (directories created top-down first); for a
+  metadata-only record, a bare metarecord.
+
+Records created by sync start *minimal*: all their fields — references
+included — arrive through the sync phase that follows (the new link's first
+sync, union semantics). By then the linking phase has completed the link
+table, so Ref/TreeRef translation has every mapping it will ever have: a
+reference that still has no translation points at a record genuinely out of
+sync scope and is skipped with a warning ([[*Ref translation during sync]]).
+This ordering is what makes reference-carrying creations well-defined —
+there is never a moment where a new record must guess a target-side UUID.
+
+Links are 1:1, so matching is too: when several source records match the
+same target record (duplicate content), the group is ambiguous and never
+auto-linked — it is prompted for, or resolved manually with =mf sync link=.
+Once linked, a record keeps its link by UUID whatever moves or renames
+happen — path divergence is an ordinary =mfr_path= change or conflict.
 
 ** Ref translation during sync
 
@@ -417,10 +448,11 @@ with existing links, transfers, propagation, commit) is the =mf sync= flow
 the CLI translates it through the link table: for =Ref=, the target-repo
 UUID of the linked metarecord; for =TreeRef=, the parent UUID is translated
 and =value_name= is written as-is (portable); =Nothing= needs no
-translation. Links are created and deleted *before* fields are propagated,
-so the link table is complete at translation time: a missing translation
-means the referenced metarecord is genuinely out of sync scope — the field
-is skipped with a warning.
+translation. The linking phase runs first and sync-created records start
+minimal ([[*The linking phase: match or create]]), so the link table is
+complete at translation time: a missing translation means the referenced
+metarecord is genuinely out of sync scope — the field is skipped with a
+warning.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
@@ -586,25 +618,28 @@ be loaded (=404= otherwise).
   (deletion propagation helper — see [[*Metarecord deletion propagation]] for
   the normative order). Returns ={ "deleted": true }=.
 
-- =POST /sync/:repo/:repo/candidates= — detect linkable pairs. Read-only.
-  Body:
+- =POST /sync/:repo/:repo/candidates= — find link targets for unlinked
+  source records (the linking phase's matcher). Read-only. Body:
   #+BEGIN_SRC json
-  { "mode": "fingerprint" | "path",
-    "records_a": [ "<uuid>", … ] | null,
-    "records_b": [ "<uuid>", … ] | null }
+  { "source": "<repo uuid>",
+    "records": [ "<uuid>", … ] | null,
+    "threshold": 0.7 | null }
   #+END_SRC
-  =null= scope means "all unlinked metarecords of that repo".
-  - =fingerprint= (files): matches on stored =mfr_full_hash= (confidence
-    ="full"=), else =mfr_partial_hash= + =mfr_size= (confidence ="partial"=).
-    No hashing is performed; only stored values are compared.
-  - =path= (directories): matches on the reconstructed =mfr_path= string
-    (confidence ="path"=). Note: paths come from the database, which may be
-    stale relative to the filesystem (reconcile deliberately leaves stale
-    TreeRefs in place).
+  =records= =null= means every unlinked metarecord of the source repo. For
+  each source record, at most the best unlinked target-side match is
+  returned: exact content (stored =mfr_full_hash=; confidence ="full"=),
+  exact reconstructed path (confidence ="path"=), or — only when
+  =threshold= is given — the best similarity-scored candidate at or above
+  it (the four-signal score + MinHash banding of spec-file-tracking "File
+  Similarity"; confidence ="similar"=). No hashing is performed; stored
+  values only, and paths come from the database, which may be stale
+  relative to the filesystem (reconcile deliberately leaves stale TreeRefs
+  in place).
   #+BEGIN_SRC json
-  { "candidates": [ { "record_a": "…", "record_b": "…",
-                      "confidence": "full" | "partial" | "path",
-                      "path_a": "/x/y", "path_b": "/x/y" } ] }
+  { "candidates": [ { "source": "…", "target": "…",
+                      "confidence": "full" | "path" | "similar",
+                      "score": 0.87,
+                      "path_source": "/x/y", "path_target": "/x/y" } ] }
   #+END_SRC
 
 - =GET /sync/:repo/:repo/status= — the per-link change/conflict state plus
@@ -691,15 +726,20 @@ repo: mount it, e.g. over SSHFS, and =mf repo load= it first).
 *** =mf sync plan=
 
 Read-only. Checks that both repos' schemas are identical (abort otherwise —
-see [[*Schemas must be identical]]), evaluates the intent queries on both
-repos, fetches =GET …/status= and =GET …/links=, detects candidates for
-unlinked in-scope metarecords (=POST …/candidates=: =path= mode for
-directories, =fingerprint= mode for files), computes the three-way diffs,
-and prints the plan:
+see [[*Schemas must be identical]]), evaluates each intent query on its
+source repo, fetches =GET …/status= and =GET …/links=, matches unlinked
+in-scope records (=POST …/candidates=), computes the three-way diffs, and
+prints the plan in two parts.
 
-- links to create (matched candidates) and metarecords to create on the other
-  side (in-scope on one side only: transfer + track + copy metadata + link);
-- links to drop (both endpoints out of every intent scope);
+The linking phase ([[*The linking phase: match or create]]):
+
+- links to create onto matched records (exact matches automatic; =similar=
+  matches and ambiguous groups pending confirmation);
+- records to create on the target side (transfer + track + link, minimal);
+- links to drop (no endpoint in any intent scope).
+
+The sync phase:
+
 - deletions to propagate (states =missing_a= / =missing_b=), listed
   nominatively (see [[*Metarecord deletion propagation]]);
 - file transfers with direction and method (content-signature rule — see
@@ -707,15 +747,8 @@ and prints the plan:
 - field propagations (states =ahead_a= / =ahead_b=);
 - conflicts (state =conflict= and first-sync divergences) with the resolution
   each policy would choose;
-- warnings (untranslatable refs, ambiguous or partial-confidence candidates);
+- warnings (untranslatable refs, similar/ambiguous candidates);
 - both change tokens.
-
-Candidate matching is conservative: only ="full"=-confidence (or exact-path)
-candidates are linked automatically. ="partial"= candidates (partial hash +
-size — collisions possible) and ambiguous groups (duplicate content matching
-several records; links are 1:1) are never auto-linked: the run prompts for
-them (skipped in non-interactive runs), or they are linked manually with
-=mf sync link=.
 
 =--json= prints the plan as JSON for scripting.
 
@@ -725,7 +758,7 @@ them (skipped in non-interactive runs), or they are linked manually with
 2. Resolve interactively *now*, before anything is suspended: =ask=
    conflicts (per conflicting field name: show the record's path/uuid and
    the snapshot / A / B multisets; choices: keep A, keep B, skip field, skip
-   link, abort), partial/ambiguous candidates, and the deletion confirmation
+   link, abort), similar/ambiguous candidates, and the deletion confirmation
    (see [[*Metarecord deletion propagation]]; =--allow-deletions= replaces it in
    non-interactive runs). =--yes= only skips the final "execute this plan?"
    confirmation — never conflict prompts, never the deletion confirmation.
@@ -734,20 +767,23 @@ them (skipped in non-interactive runs), or they are linked manually with
    =…/executor/resume=).
 4. Re-fetch both change tokens; on any mismatch with step 1, resume and abort
    ("repository changed during planning; re-run").
-5. Execute, interleaved by batches (=[settings]= in the intents file): each
-   batch of file transfers and file operations (moves for =mfr_path=,
-   top-down), then its metadata work (field propagation with ref translation
-   and =expected_version= preconditions, creations + track on the other
-   side, deletion propagation, link create/delete), then
-   =POST …/links/commit= for the fully-synced links of the batch. A failed
-   transfer or a =409= precondition skips that link for this run and is
-   reported; execution continues.
-6. Resume both executors (also on every error path). The resume flushes the
+5. Execute the *linking phase*: drop out-of-scope links, create the planned
+   links — onto matched records, and onto records created for the purpose
+   (file transfer + track, directories top-down, minimal records). A failed
+   transfer skips that record for this run and is reported.
+6. Execute the *sync phase*, interleaved by batches (=[settings]= in the
+   intents file): each batch of file transfers and file operations (moves
+   for =mfr_path=, top-down), then its metadata work (field propagation with
+   ref translation and =expected_version= preconditions, deletion
+   propagation), then =POST …/links/commit= for the fully-synced links of
+   the batch. A failed transfer or a =409= precondition skips that link for
+   this run and is reported; execution continues.
+7. Resume both executors (also on every error path). The resume flushes the
    pending buffer synchronously; the run then performs the *re-commit pass*:
    links whose endpoint versions moved during the flush (transfer events
    refreshing =mfr_*=) but whose effective diff is empty are re-committed
    with the fresh versions, so the next plan starts clean.
-7. Print a summary and recommend =mf reconcile= on both repos.
+8. Print a summary and recommend =mf reconcile= on both repos.
 
 =--host <repo>= (name or UUID) designates the sync database's host repo when
 the run creates it (first sync of the pair); ignored otherwise.
@@ -770,8 +806,8 @@ mf sync unlink <repo_a> <repo_b> <link_uuid> [--with-endpoint a|b]
 mf sync resume <repo>                            # clear a stale executor suspension
 #+END_SRC
 
-=link=/=unlink= are the manual escape hatch for ambiguous or
-partial-confidence candidates; =resume= recovers from a killed run.
+=link=/=unlink= are the manual escape hatch for similar or ambiguous
+candidates; =resume= recovers from a killed run.
 
 ** The intents file
 
@@ -784,16 +820,25 @@ TOML. Example:
 rsync = "rsync -a {src} {dst}"
 scp   = "scp {src} {dst}"
 
-# Ordered list; for a metarecord matched by several intents, the first match
+# Ordered list; directional: the query runs on the source `repo` only, its
+# result is the set of records that must be linked to the other repo. For a
+# record (or a link's method) matched by several intents, the first match
 # wins (later matches produce a warning).
 [[intents]]
+repo   = "laptop"            # source repo (name or UUID; one of the pair)
 method = "rsync"
 query  = 'tag = "sync_pc_b"'
 
 [[intents]]
+repo       = "laptop"
 method     = "copy"
 query      = 'files "/projects"'
 simplified = true            # expand with the simplified-query grammar first
+
+[[intents]]
+repo   = "nas"
+method = "rsync"
+query  = 'tag = "image" AND tag = "family"'
 
 [conflicts]
 policy = "ask"               # "ask" | "skip" | "prefer:<repo name or uuid>"
@@ -803,8 +848,10 @@ rating   = "prefer:laptop"
 mfr_path = "skip"
 
 [settings]                   # optional
-commit-batch-size   = 50     # links per sync-commit call
-transfer-batch-size = 20     # file transfers between metadata batches
+commit-batch-size    = 50    # links per sync-commit call
+transfer-batch-size  = 20    # file transfers between metadata batches
+similarity-threshold = 0.7   # enable similar-record matching in the linking
+                             # phase (absent: exact matches only)
 #+END_SRC
 
 Template placeholders (substituted after shell-word splitting, one token at a
