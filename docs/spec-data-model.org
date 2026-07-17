@@ -462,10 +462,11 @@ Protected names need =force= (in the body for PUT/DELETE). Updated full object
 
 *** Conditional writes (=expected_version=)
 
-The single-record write endpoints (whole-record =PUT=, field =POST=, field
-=PUT=/=DELETE= by name) accept an optional =expected_version= query
-parameter: the write is rejected with =409= (nothing written, no revision)
-when the metarecord's current =version= differs from the given value. This
+The single-record write endpoints (whole-record =PUT=, metarecord =DELETE=,
+field =POST=, field =PUT=/=DELETE= by name) accept an optional
+=expected_version= query parameter: the write is rejected with =409=
+(nothing written, no revision) when the metarecord's current =version=
+differs from the given value. This
 is the optimistic-concurrency primitive used by cross-repo sync propagation
 ([[file:spec-sync.org][spec-sync.org]]) so a concurrent user write is never silently overwritten;
 ordinary clients may use it for the same purpose.

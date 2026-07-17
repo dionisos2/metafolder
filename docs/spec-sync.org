@@ -347,42 +347,25 @@ later run would resurrect as "new".
 
 Sync is split into two distinct phases:
 
-1. *Planning* (watcher running): query both repos, compute all operations to
-   perform (file transfers, metadata propagations, conflicts). The plan
-   records, for each repo, a *change token* (see below) at planning time.
-   The user can inspect the plan before proceeding.
+1. *Planning*: query both repos and compute every operation to perform
+   (matches and creations for the linking phase; transfers, propagations,
+   conflicts for the sync phase). =mf sync plan= runs this alone, read-only,
+   as a preview.
 
-2. *Execution* (executor suspended): validate that each repo's change token
-   still equals the recorded value. If any repo has changed — even by a
-   single write — the plan is invalidated and the user must re-plan. This is
-   intentional: detecting *what* changed is complex, and even a single change
-   could mean the plan would overwrite recent modifications. If valid,
-   suspend the pending operation executor on both repos (see
-   [[*Executor suspension during sync]]), then execute operations in order:
-   file transfers first (all idempotent), then metadata commits in batches.
+2. *Execution* (=mf sync run=): suspend the pending-operation executor on
+   both repos *first* (see [[*Executor suspension during sync]]), then run the
+   planning again on the now-stable state, resolve the interactive
+   questions, and execute. Suspending before planning is what makes the
+   plan exact: the watcher can no longer commit anything between planning
+   and execution, and the only remaining writers — concurrent API clients —
+   are fenced per-write by the =expected_version= preconditions. No global
+   freshness guard is needed: the plan cannot go stale inside the
+   suspension window.
 
 After execution: resume the executor, let it flush, then re-commit the
 links whose versions moved during the flush (see the =mf sync run= flow and
 [[*Executor suspension during sync]]). Running =reconcile= is recommended to
 catch any remaining filesystem drift.
-
-*** Change token
-
-The freshness guard is derived from the event log:
-
-: { "head": <log_head.op_id or null>, "last_op_id": <MAX(operation.id) or 0> }
-
-Two tokens match only if *both* fields are strictly equal. Every logged write
-creates operation rows (=last_op_id= grows); a pure rollback/redo navigation
-creates no operations but moves =head=. Both kinds of change are therefore
-detected.
-
-The token's soundness depends on =operation.id= being =AUTOINCREMENT= (ids
-are never reused, even after a log prune) — a requirement on the event-log
-schema. A prune between plan and run can *shrink* =last_op_id=, causing a
-spurious (but safe) "repository changed" abort. (=PRAGMA data_version=
-cannot serve here: it only reacts to *other* connections, and the daemon
-holds a single EXCLUSIVE connection per repo.)
 
 ** Sync intentions
 
@@ -423,18 +406,20 @@ on the target side (=POST …/candidates=):
   spec-file-tracking "File Similarity" (already used by reconcile), computed
   across the two repos, at or above =similarity-threshold= — is proposed:
   linked after interactive confirmation, skipped in a non-interactive run;
-- no match → the record is *created* on the target side and linked: for a
-  file, transfer + track (directories created top-down first); for a
-  metadata-only record, a bare metarecord.
+- no match → a *bare* metarecord (no fields at all) is created on the
+  target side, and its UUID is used to create the link. Nothing else
+  happens at this point.
 
-Records created by sync start *minimal*: all their fields — references
-included — arrive through the sync phase that follows (the new link's first
-sync, union semantics). By then the linking phase has completed the link
-table, so Ref/TreeRef translation has every mapping it will ever have: a
-reference that still has no translation points at a record genuinely out of
-sync scope and is skipped with a warning ([[*Ref translation during sync]]).
-This ordering is what makes reference-carrying creations well-defined —
-there is never a moment where a new record must guess a target-side UUID.
+Sync-created records are bare: *everything* — the file itself (content
+transfer), =mfr_path= (file placement, directories top-down), every field,
+references included — arrives through the sync phase that follows (the new
+link's first sync, union semantics). By then the linking phase has
+completed the link table, so Ref/TreeRef translation has every mapping it
+will ever have: a reference that still has no translation points at a
+record genuinely out of sync scope and is skipped with a warning
+([[*Ref translation during sync]]). This ordering is what makes
+reference-carrying creations well-defined — there is never a moment where a
+new record must guess a target-side UUID.
 
 Links are 1:1, so matching is too: when several source records match the
 same target record (duplicate content), the group is ambiguous and never
@@ -506,9 +491,12 @@ reading OS events and writing them to the =pending_operation= table (see
 [[file:spec-event-log.org][spec-event-log.org]]). What is suspended is the *executor*: the component that
 reads from =pending_operation= and commits operations to the data tables.
 
-Without executor suspension, watcher events (e.g. a file rename during a file
-transfer) could increment =version= on a metarecord mid-sync, corrupting
-change detection and invalidating the change-token guard.
+Without executor suspension, watcher events (e.g. a file rename during a
+file transfer) could increment =version= on a metarecord between planning
+and commit, corrupting change detection. In the =mf sync run= flow the
+suspension starts *before* planning and spans the interactive resolution:
+filesystem events buffer crash-safely in =pending_operation= during the
+prompts and cannot invalidate the plan.
 
 Suspension is per-repo and *exclusive*: suspending an already-suspended
 executor is rejected with =409=. This makes two concurrent sync runs sharing
@@ -558,12 +546,6 @@ be loaded (=404= otherwise).
 
 *** Per-repo primitives
 
-- =GET /repos/:repo/sync/change-token= →
-  #+BEGIN_SRC json
-  { "head": 41, "last_op_id": 44 }
-  #+END_SRC
-  =head= is =null= for an empty history.
-
 - =POST /repos/:repo/executor/suspend= → ={ "suspended": true }=
   (*not* idempotent: =409= if already suspended, while a rollback lock is
   held, or vice versa — see [[*Executor suspension during sync]]).
@@ -571,13 +553,13 @@ be loaded (=404= otherwise).
   (idempotent; flushes the pending buffer synchronously before returning).
 - =GET /repos/:repo= gains an =executor_suspended= boolean.
 
-- Field-write endpoints (single-record =PUT=/=POST=/=DELETE= on fields, and
-  the whole-record =PUT=) accept an optional =expected_version= query
-  parameter: the write is rejected with =409= if the metarecord's current
-  =version= differs (see [[file:spec-data-model.org][spec-data-model.org]] "Conditional writes"). Sync
-  propagation always uses it, so a user write racing the execution phase
-  makes the affected link skip this run instead of being silently
-  overwritten.
+- Single-record write endpoints (field =POST=/=PUT=/=DELETE=, whole-record
+  =PUT=, and metarecord =DELETE=) accept an optional =expected_version=
+  query parameter: the write is rejected with =409= if the metarecord's
+  current =version= differs (see [[file:spec-data-model.org][spec-data-model.org]] "Conditional writes").
+  Sync propagation and deletion propagation always use it, so a user write
+  racing the execution phase makes the affected link skip this run instead
+  of being silently overwritten.
 
 *** Pair primitives
 
@@ -642,8 +624,7 @@ be loaded (=404= otherwise).
                       "path_source": "/x/y", "path_target": "/x/y" } ] }
   #+END_SRC
 
-- =GET /sync/:repo/:repo/status= — the per-link change/conflict state plus
-  both change tokens (one round-trip for planning):
+- =GET /sync/:repo/:repo/status= — the per-link change/conflict state:
   #+BEGIN_SRC json
   { "repo_a": "…", "repo_b": "…",
     "links": [ { "uuid": "…",
@@ -651,9 +632,7 @@ be loaded (=404= otherwise).
                         | "conflict" | "missing_a" | "missing_b"
                         | "missing_both",
                  "e_a_version": 7, "e_b_version": 3,
-                 "version_a": 5, "version_b": 3 } ],
-    "change_token_a": { "head": 41, "last_op_id": 44 },
-    "change_token_b": { "head": 12, "last_op_id": 12 } }
+                 "version_a": 5, "version_b": 3 } ] }
   #+END_SRC
   States, in decreasing precedence:
   - =missing_a= / =missing_b= / =missing_both= — an endpoint metarecord no
@@ -735,7 +714,8 @@ The linking phase ([[*The linking phase: match or create]]):
 
 - links to create onto matched records (exact matches automatic; =similar=
   matches and ambiguous groups pending confirmation);
-- records to create on the target side (transfer + track + link, minimal);
+- bare metarecords to create on the target side, immediately linked (their
+  file content and fields arrive through the sync phase);
 - links to drop (no endpoint in any intent scope).
 
 The sync phase:
@@ -747,37 +727,40 @@ The sync phase:
 - field propagations (states =ahead_a= / =ahead_b=);
 - conflicts (state =conflict= and first-sync divergences) with the resolution
   each policy would choose;
-- warnings (untranslatable refs, similar/ambiguous candidates);
-- both change tokens.
+- warnings (untranslatable refs, similar/ambiguous candidates).
 
 =--json= prints the plan as JSON for scripting.
 
 *** =mf sync run=
 
-1. Re-plan (as above), recording fresh change tokens.
-2. Resolve interactively *now*, before anything is suspended: =ask=
-   conflicts (per conflicting field name: show the record's path/uuid and
-   the snapshot / A / B multisets; choices: keep A, keep B, skip field, skip
-   link, abort), similar/ambiguous candidates, and the deletion confirmation
-   (see [[*Metarecord deletion propagation]]; =--allow-deletions= replaces it in
-   non-interactive runs). =--yes= only skips the final "execute this plan?"
-   confirmation — never conflict prompts, never the deletion confirmation.
-3. Suspend the executor on both repos; a =409= aborts with a hint (another
+1. Check that both repos' schemas are identical (abort otherwise).
+2. Suspend the executor on both repos; a =409= aborts with a hint (another
    sync is running, a rollback is in progress, or a stale suspension needs
    =…/executor/resume=).
-4. Re-fetch both change tokens; on any mismatch with step 1, resume and abort
-   ("repository changed during planning; re-run").
+3. Plan, on the now-stable state. The run re-plans rather than executing a
+   stored =mf sync plan= output because nothing freezes the repos between
+   two CLI invocations; =mf sync plan= remains the unsuspended, side-effect
+   free preview, and the run presents its own (now exact) plan before
+   executing anything.
+4. Resolve interactively: =ask= conflicts (per conflicting field name: show
+   the record's path/uuid and the snapshot / A / B multisets; choices: keep
+   A, keep B, skip field, skip link, abort), similar/ambiguous candidates,
+   and the deletion confirmation (see [[*Metarecord deletion propagation]];
+   =--allow-deletions= replaces it in non-interactive runs). =--yes= only
+   skips the final "execute this plan?" confirmation — never conflict
+   prompts, never the deletion confirmation. The executors stay suspended
+   throughout: filesystem events buffer crash-safely meanwhile.
 5. Execute the *linking phase*: drop out-of-scope links, create the planned
-   links — onto matched records, and onto records created for the purpose
-   (file transfer + track, directories top-down, minimal records). A failed
-   transfer skips that record for this run and is reported.
+   links — onto matched records, or onto bare metarecords created for the
+   purpose.
 6. Execute the *sync phase*, interleaved by batches (=[settings]= in the
-   intents file): each batch of file transfers and file operations (moves
-   for =mfr_path=, top-down), then its metadata work (field propagation with
-   ref translation and =expected_version= preconditions, deletion
-   propagation), then =POST …/links/commit= for the fully-synced links of
-   the batch. A failed transfer or a =409= precondition skips that link for
-   this run and is reported; execution continues.
+   intents file): each batch of file transfers and file operations
+   (placements and moves for =mfr_path=, directories top-down), then its
+   metadata work (field propagation with ref translation and
+   =expected_version= preconditions, deletion propagation), then
+   =POST …/links/commit= for the fully-synced links of the batch. A failed
+   transfer or a =409= precondition skips that link for this run and is
+   reported; execution continues.
 7. Resume both executors (also on every error path). The resume flushes the
    pending buffer synchronously; the run then performs the *re-commit pass*:
    links whose endpoint versions moved during the flush (transfer events
@@ -800,7 +783,7 @@ record); =mf reconcile= sorts out the rest.
 *** Utility subcommands
 
 #+BEGIN_SRC
-mf sync status <repo_a> <repo_b>                 # print per-link states + tokens
+mf sync status <repo_a> <repo_b>                 # print per-link states
 mf sync link   <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]
 mf sync unlink <repo_a> <repo_b> <link_uuid> [--with-endpoint a|b]
 mf sync resume <repo>                            # clear a stale executor suspension
