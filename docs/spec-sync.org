@@ -289,14 +289,23 @@ by the empty-effective-diff rule above.
   two endpoint records are compared; if they differ, a transfer is planned
   from the changed side (for a content conflict — both sides changed — the
   conflict policy chooses the direction, like any conflicting field).
-- =mfr_path= is synced as a *file operation*: propagating a path change
-  means the CLI physically renames/moves the file in the target repo, then
-  force-writes the translated =mfr_path= so the queued watcher event becomes
-  redundant. Moves and creations are applied top-down (parents before
-  children, across batches if necessary): a translated TreeRef write is
-  rejected by the daemon's forest validation if the parent is missing or
-  orphaned, so directory links must be resolved first. Such a =400= is
-  treated like a schema violation: skip and report.
+- =mfr_path= is synced as a *file operation*, with a per-kind safe order:
+  - *Placement* (a sync-created record receiving its file): the translated
+    =mfr_path= is force-written *first*, the file transferred *second*.
+    The record therefore exists at the path before the file ever does, so
+    the watcher's arrival event always resolves to it — a duplicate record
+    for the new file is impossible by construction. A crash in between
+    leaves a stale-path record whose uncommitted link re-detects and
+    re-transfers next run; a rejected =mfr_path= write skips the transfer
+    entirely.
+  - *Move* (a linked file relocating): the file is moved on disk *first*,
+    the translated =mfr_path= force-written *second* — a crash in between
+    is healed by the buffered rename event when the executor resumes.
+  All path operations are applied top-down (parents before children,
+  across batches if necessary): a translated TreeRef write is rejected by
+  the daemon's forest validation if the parent is missing or orphaned, so
+  directory links must be resolved first. Such a =400= is treated like a
+  schema violation: skip and report.
 - All other fields (user data, including reserved =mf_*= written with
   =force=) are propagated as ordinary field writes.
 
@@ -754,13 +763,14 @@ The sync phase:
    links — onto matched records, or onto bare metarecords created for the
    purpose.
 6. Execute the *sync phase*, interleaved by batches (=[settings]= in the
-   intents file): each batch of file transfers and file operations
-   (placements and moves for =mfr_path=, directories top-down), then its
-   metadata work (field propagation with ref translation and
-   =expected_version= preconditions, deletion propagation), then
-   =POST …/links/commit= for the fully-synced links of the batch. A failed
-   transfer or a =409= precondition skips that link for this run and is
-   reported; execution continues.
+   intents file): each batch performs its metadata work (field propagation
+   with ref translation and =expected_version= preconditions, =mfr_path=
+   placements — database before disk —, deletion propagation) and its file
+   operations (transfers into the placed paths, in-place content updates,
+   moves — disk before database), each in the per-kind order of
+   [[*Field coverage and diff semantics]], then =POST …/links/commit= for the
+   links whose operations all succeeded. A failed transfer or a =409=/=400=
+   skips that link for this run and is reported; execution continues.
 7. Resume both executors (also on every error path). The resume flushes the
    pending buffer synchronously; the run then performs the *re-commit pass*:
    links whose endpoint versions moved during the flush (transfer events
@@ -774,11 +784,11 @@ the run creates it (first sync of the pair); ignored otherwise.
 Crash mid-run: file transfers are idempotent, committed links are consistent,
 uncommitted links re-detect as changed on the next run and re-commit or
 re-propagate (the value-equal rule prevents phantom conflicts) — at most one
-batch of re-work. If the CLI is killed outright, the executor suspension
-leaks and must be cleared manually (see [[*Executor suspension during sync]]).
-A transferred file whose metadata write was skipped is left to the watcher's
-ordinary arrival semantics (it may be adopted by fingerprint into an orphan
-record); =mf reconcile= sorts out the rest.
+batch of re-work. The per-kind operation orders guarantee a new file never
+reaches the disk before its record exists at that path, so a crash can
+never make the watcher duplicate a sync-created record. If the CLI is
+killed outright, the executor suspension leaks and must be cleared manually
+(see [[*Executor suspension during sync]]).
 
 *** Utility subcommands
 
