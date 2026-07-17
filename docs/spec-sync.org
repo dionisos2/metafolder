@@ -22,7 +22,7 @@ absent from the event log, and are not subject to rollback.
 - Sync intentions (which metarecords to link, with what method) are expressed as
   queries in the intents file, not stored in the database.
 - Both repos must be loaded in the same daemon instance for every sync
-  primitive (link creation/deletion, status, commit, repair).
+  primitive (link creation/deletion, status, commit).
 - For cross-machine sync, the recommended approach is to mount the remote
   repository root over SSH (e.g. SSHFS) and load it into the local daemon.
   The daemon itself makes no network calls.
@@ -33,15 +33,22 @@ absent from the event log, and are not subject to rollback.
 ** The sync database
 
 Each synchronised pair of repositories =(A, B)= shares one *sync database*: a
-SQLite file stored in *both* repos as
+single SQLite file named
 
 : .metafolder/internal/sync-<uuid_A>-<uuid_B>.sqlite
 
 where =<uuid_A>= and =<uuid_B>= are the 32-char lowercase hex repo UUIDs in
-canonical order (see below). Both copies are identical after every completed
-sync operation; divergence is repaired automatically (see
-[[*Consistency between the two copies]]). Living under =internal/=, the file is
+canonical order (see below). The file lives in the =internal/= directory of
+*one* of the two repos — the *host* repo, chosen when the pair is first
+created (see [[*Location and discovery]]). Living under =internal/=, it is
 excluded from tracking like =db.sqlite=.
+
+There is exactly one copy: every sync-state mutation is a single ordinary
+SQLite transaction, so link state is always internally consistent — no
+replication, no repair protocol. The trade-off is redundancy: if the file is
+lost or corrupted, the pair's sync state is gone and the next sync starts
+over as a first sync (divergent fields resurface as immediate conflicts;
+identical fields re-link silently via candidates).
 
 A repo may participate in any number of pairs, each with its own sync
 database. Only the pair being synced is ever opened; sync state adds no
@@ -56,8 +63,10 @@ from the pair alone and is used consistently for:
 - the file name (=sync-<uuid_A>-<uuid_B>.sqlite=),
 - the =a=/=b= role names in the schema and the HTTP API,
 - the canonical perspective of snapshots (see
-  [[*Ref and TreeRef fields in the snapshot]]),
-- the write order of the two copies (A's file first, then B's).
+  [[*Ref and TreeRef fields in the snapshot]]).
+
+The canonical order does *not* choose where the file lives — that is the
+host repo, an independent choice (see [[*Location and discovery]]).
 
 The order of repos in a URL or on the =mf sync= command line is irrelevant;
 the daemon and CLI normalise to canonical order internally. Conflict policies
@@ -67,25 +76,24 @@ therefore never say "a" or "b" — they name the repo (see [[*Conflict resolutio
 
 #+BEGIN_SRC sql
 -- Identification and format version. Rows: format_version (currently "1"),
--- repo_a, repo_b (32-char hex). On open, repo_a/repo_b must match the file
--- name and the repo pair being synced; a mismatch (e.g. a file copied from
--- another pair) is an error and the file is not used.
+-- repo_a, repo_b, host (32-char hex). On open, repo_a/repo_b must match the
+-- file name and the repo pair being synced; a mismatch (e.g. a file copied
+-- from another pair) is an error and the file is not used. host records the
+-- repo whose internal/ holds the file (updated if the file is moved).
 CREATE TABLE meta (
     key    TEXT PRIMARY KEY,
     value  TEXT NOT NULL
 );
 
 CREATE TABLE link (
-    uuid       BLOB PRIMARY KEY,        -- 16-byte link id, identical in both copies
+    uuid       BLOB PRIMARY KEY,        -- 16-byte link id
     record_a   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo A
     record_b   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo B
     version_a  INTEGER,                 -- E_A.version at last sync-commit (NULL before)
     version_b  INTEGER,                 -- E_B.version at last sync-commit (NULL before)
     head_a     INTEGER,                 -- repo A's log_head.op_id at last sync-commit
     head_b     INTEGER,                 -- repo B's log_head.op_id at last sync-commit
-    last_sync_method  TEXT,             -- method used during the last sync (informational)
-    seq        INTEGER NOT NULL,        -- per-link monotonic counter (see consistency)
-    deleted    INTEGER NOT NULL DEFAULT 0  -- deletion tombstone (see two-phase deletion)
+    last_sync_method  TEXT              -- method used during the last sync (informational)
 );
 
 -- Snapshot of the common field state at the last sync-commit. Value columns
@@ -109,9 +117,9 @@ CREATE TABLE snapshot_field (
 CREATE INDEX idx_snapshot_link ON snapshot_field(link_uuid);
 #+END_SRC
 
-Sync-database copies are opened on demand with journal mode =DELETE= and
-=synchronous = FULL= — never WAL: one copy lives on a network filesystem by
-design (the SSHFS-mounted repo), where WAL's shared-memory file cannot work.
+The sync database is opened on demand with journal mode =DELETE= and
+=synchronous = FULL= — never WAL: the host repo may be the SSHFS-mounted
+one, and WAL's shared-memory file cannot work on a network filesystem.
 
 Links are 1:1: a metarecord of A is linked to at most one metarecord of B and
 vice versa — enforced by the two =UNIQUE= constraints.
@@ -120,71 +128,45 @@ The =version_a= / =version_b= / =last_sync_method= columns are written only by
 the sync-commit primitive; =record_a= / =record_b= are immutable after
 creation.
 
-*** Consistency between the two copies
+*** Location and discovery
 
-There is no cross-file transaction. Every mutation of a link (creation,
-tombstone, physical deletion, sync-commit) increments its =seq= and is applied
-to copy A's file first, then copy B's, each in its own transaction. A crash
-between the two writes leaves the copies divergent; recovery is automatic and
-deterministic:
+The sync database lives in the =internal/= directory of one of the two
+repos, the *host*. The first mutating primitive on a pair creates the file
+(with its =meta= rows); the request designates the host repo, defaulting to
+canonical repo A. Choosing the host lets the user keep sync state on the
+machine that orchestrates the syncs (e.g. the local repo rather than the
+SSHFS-mounted one).
 
-*Repair rule* — for every link UUID present in either copy:
+Every pair primitive locates the file by checking both loaded repos'
+=internal/= directories:
 
-- present in both, same =seq= → the copies must be identical (the protocol
-  guarantees it as long as a pair is only ever synced from one daemon at a
-  time — see below). Repair verifies content equality; a mismatch is
-  reported as an error and never silently resolved (delete one copy manually
-  to let repair reconstruct it from the other).
-- present in both, different =seq= → the copy with the higher =seq= is
-  authoritative; its row and snapshot rows overwrite the other copy verbatim.
-- present in both with =deleted = 1= (after the seq reconciliation above) →
-  an interrupted deletion whose tombstone phase completed: finish the
-  physical deletion in both copies.
-- present in exactly one copy:
-  - =deleted = 1= → an interrupted deletion: complete it (remove the row and
-    its snapshot from the surviving copy).
-  - =deleted = 0= → an interrupted creation: complete it (copy the row and
-    its snapshot to the missing side).
-- a copy file that is missing or unreadable is treated as an empty copy: the
-  repair rule then reconstructs it entirely from the peer copy.
+- found in exactly one → use it (and update =meta.host= if the file was
+  moved by hand — relocation is supported: move the file, nothing else).
+- found in neither → the pair has no sync state yet (empty link set;
+  mutating primitives create the file, read-only ones return empty).
+- found in both → ambiguous (=409=); the user deletes the stale one. The
+  daemon never merges two sync databases.
 
-*Single-writer requirement.* The seq-based rule is sound only because both
-repos must be loaded in the same daemon for every mutation, and the main
-databases' exclusive locks prevent double-loading. On network filesystems
-whose locks are unreliable (SSHFS), this exclusion can silently fail; syncing
-the same pair from two daemons concurrently is unsupported and is what the
-content-equality check above defends against.
+*** Consistency
 
-Repair runs:
+Every sync-state mutation (link creation, deletion, batched sync-commit) is
+one ordinary SQLite transaction on the single file — link state is always
+internally consistent, whatever crashes. Cross-database consistency (sync
+state vs. the two main databases) is the job of the change-detection
+machinery: a crash between a metadata write and its sync-commit simply
+leaves the link "changed", re-detected and re-committed on the next run
+(see [[*Version-based change detection]]).
 
-- when a repo is loaded and the other member of a pair is already loaded
-  (see [[*Sync database discovery on repo load]]),
-- at the start of every mutating sync primitive (link create/delete, commit),
-- on explicit request (=POST /sync/:a/:b/repair=).
-
-Read-only primitives (=links=, =status=) never repair; they *report*
-divergence (state =divergent=) so that planning stays side-effect-free.
-
-*** Two-phase deletion (tombstone)
-
-Without a tombstone, an interrupted creation and an interrupted deletion are
-indistinguishable (both leave the link in exactly one copy). Deleting a link
-therefore proceeds in two phases:
-
-1. write =deleted = 1=, =seq += 1= in copy A, then copy B;
-2. physically delete the link row (and, by cascade, its snapshot rows) from
-   copy A, then copy B.
-
-A crash at any point leaves a state the repair rule resolves deterministically
-(including the tombstone present in both copies — the third repair case).
-Link creation treats a tombstoned row as absent: mutating primitives run
-repair first, which purges it before the =UNIQUE= constraints are checked.
+Concurrent mutation of the same pair from two daemons is excluded by the
+main databases' exclusive locks (both repos must be loaded to touch a
+pair). On network filesystems with unreliable locks (SSHFS) that exclusion
+can weaken; the sync database's own SQLite locking is then the last line of
+defence. Syncing the same pair from two daemons concurrently is unsupported.
 
 *** Interaction with rollback
 
 The sync database is not part of the data model: link state is never recorded
-in the event log and cannot be rolled back. Link state is monotonic in its
-own =seq= counter.
+in the event log and cannot be rolled back.
 
 Rolling back a repo's event log *does* restore the =version= counters of the
 linked metarecords themselves. A restored =E_X.version= that no longer
@@ -381,17 +363,9 @@ that the "deletion" may be a log navigation.
 
 Normative order (used by =DELETE …?with_endpoint= and the CLI alike): delete
 the endpoint metarecord *first* (a logged, rollbackable write), then delete
-the link (tombstone + physical). A crash in between leaves state
-=missing_x=, which the next run re-detects and completes — never a deleted
-link with a live record that a later run would resurrect as "new".
-
-** Sync database discovery on repo load
-
-When a repo is loaded into the daemon, the daemon lists the
-=sync-*.sqlite= files under its =.metafolder/internal/=. For each file whose
-name contains the UUID of another *already-loaded* repo, it opens both copies
-(after checking their =meta= identification) and runs the repair rule over
-every link. Files whose peer repo is not loaded are left untouched.
+the link. A crash in between leaves state =missing_x=, which the next run
+re-detects and completes — never a deleted link with a live record that a
+later run would resurrect as "new".
 
 ** Two-phase sync process
 
@@ -411,10 +385,10 @@ Sync is split into two distinct phases:
    [[*Executor suspension during sync]]), then execute operations in order:
    file transfers first (all idempotent), then metadata commits in batches.
 
-After execution: resume the executor. Pending watcher events accumulated
-during the execution window are processed normally; events already consistent
-with the database (because sync updated the metadata) are no-ops. Running
-=reconcile= is recommended to catch any remaining filesystem drift.
+After execution: resume the executor, let it flush, then re-commit the
+links whose versions moved during the flush (see the =mf sync run= flow and
+[[*Executor suspension during sync]]). Running =reconcile= is recommended to
+catch any remaining filesystem drift.
 
 *** Change token
 
@@ -499,17 +473,19 @@ inconsistency as skipped fields.
 
 ** Sync database lifecycle
 
-The daemon opens a pair's sync database copies on demand, for the duration of
-one primitive call, and closes them afterwards; no handle is kept in the repo
-state. Writes follow canonical order (copy A's file, then copy B's), one
-transaction per file. On every open, the =meta= table is checked against the
-file name and the repo pair; a mismatch is an error (=409=) and the file is
-not used. The two UUIDs of a pair must differ (=400= otherwise).
+The daemon opens the pair's sync database on demand, for the duration of one
+primitive call, and closes it afterwards; no handle is kept in the repo
+state. The file is located by the discovery rule (both loaded repos'
+=internal/= directories — see [[*Location and discovery]]); on every open, the
+=meta= table is checked against the file name and the repo pair (=409= on
+mismatch, and =409= when the file is found on both sides). The two UUIDs of
+a pair must differ (=400= otherwise).
 
-Both copies are created (with their =meta= rows) by the first mutating
-primitive on the pair. A copy that is missing or unreadable afterwards is
-treated as empty and reconstructed from the peer by the repair rule; a
-corrupted file can simply be deleted to trigger that reconstruction.
+The file is created (with its =meta= rows) by the first mutating primitive
+on the pair, in the host repo designated by the request (default: canonical
+repo A). A missing file simply means an empty link set; an unreadable or
+corrupted one is an error — deleting it abandons the pair's sync state (the
+next sync starts over as a first sync).
 
 Concurrent primitive calls on the same pair are serialised by the daemon (the
 two repos' locks are always acquired in canonical order, preventing
@@ -597,17 +573,17 @@ be loaded (=404= otherwise).
 
 *** Pair primitives
 
-- =GET /sync/:repo/:repo/links= — list links (including tombstoned ones):
+- =GET /sync/:repo/:repo/links= — list links:
   #+BEGIN_SRC json
-  { "repo_a": "…", "repo_b": "…",
+  { "repo_a": "…", "repo_b": "…", "host": "…",
     "links": [ { "uuid": "…", "record_a": "…", "record_b": "…",
                  "version_a": 5, "version_b": 9,
-                 "last_sync_method": "rsync", "seq": 3,
-                 "deleted": false, "divergent": false } ] }
+                 "last_sync_method": "rsync" } ] }
   #+END_SRC
-  =divergent= is true when the two copies disagree for this link (repair
-  needed). =version_a= / =version_b= / =last_sync_method= are =null= before
-  the first sync-commit. Read-only: never repairs.
+  =host= is the repo whose =internal/= holds the sync database (=null= when
+  no sync database exists yet — the link list is then empty).
+  =version_a= / =version_b= / =last_sync_method= are =null= before the first
+  sync-commit.
 
 - =GET /sync/:repo/:repo/links/:uuid= — one link, plus its decoded snapshot
   and both endpoint metarecords inline (avoids extra round-trips while
@@ -619,16 +595,20 @@ be loaded (=404= otherwise).
     "record_b": { …full metarecord JSON… } | null }
   #+END_SRC
 
-- =POST /sync/:repo/:repo/links= — create a link. Runs repair first.
-  Body: ={ "record_a": "<uuid>", "record_b": "<uuid>" }= (canonical roles).
-  Both metarecords must exist (=404=) and be unlinked in this pair (=409=).
-  The link is created with =seq = 1=, no versions, no snapshot (state
-  =never_synced=). Returns the link JSON.
+- =POST /sync/:repo/:repo/links= — create a link.
+  Body: ={ "record_a": "<uuid>", "record_b": "<uuid>", "host"?: "<repo uuid>" }=
+  (canonical roles). Both metarecords must exist (=404=) and be unlinked in
+  this pair (=409=). =host= designates the repo that will hold the sync
+  database; it is honoured only when the database does not exist yet
+  (default: canonical repo A) and ignored otherwise. The link is created
+  with no versions and no snapshot (state =never_synced=). Returns the link
+  JSON.
 
 - =DELETE /sync/:repo/:repo/links/:uuid[?with_endpoint=a|b]= — delete a link
-  (two-phase, see [[*Two-phase deletion (tombstone)]]). Runs repair first.
-  With =with_endpoint=, the endpoint metarecord on that side is deleted in
-  the same call (deletion propagation helper). Returns ={ "deleted": true }=.
+  and its snapshot (one transaction). With =with_endpoint=, the endpoint
+  metarecord on that side is deleted in the same call, *before* the link
+  (deletion propagation helper — see [[*Metarecord deletion propagation]] for
+  the normative order). Returns ={ "deleted": true }=.
 
 - =POST /sync/:repo/:repo/candidates= — detect linkable pairs. Read-only.
   Body:
@@ -658,15 +638,13 @@ be loaded (=404= otherwise).
     "links": [ { "uuid": "…",
                  "state": "never_synced" | "in_sync" | "ahead_a" | "ahead_b"
                         | "conflict" | "verify" | "missing_a" | "missing_b"
-                        | "missing_both" | "divergent",
+                        | "missing_both",
                  "e_a_version": 7, "e_b_version": 3,
                  "version_a": 5, "version_b": 3 } ],
     "change_token_a": { "head": 41, "last_op_id": 44 },
     "change_token_b": { "head": 12, "last_op_id": 12 } }
   #+END_SRC
   States, in decreasing precedence:
-  - =divergent= — the two sync-database copies disagree; no other state can
-    be trusted (the per-link version fields are omitted); repair first.
   - =missing_a= / =missing_b= / =missing_both= — an endpoint metarecord no
     longer exists (deletion to propagate; =missing_both= → just delete the
     link).
@@ -675,10 +653,8 @@ be loaded (=404= otherwise).
     full diff (see [[*Interaction with rollback]]).
   - =never_synced= (no sync-commit yet), then the change-detection truth
     table: =in_sync=, =ahead_a=, =ahead_b=, =conflict=.
-  Tombstoned links are omitted. Read-only: never repairs.
 
-- =POST /sync/:repo/:repo/links/commit= — sync-commit, batched. Runs repair
-  first. Body:
+- =POST /sync/:repo/:repo/links/commit= — sync-commit, batched. Body:
   #+BEGIN_SRC json
   { "commits": [ { "link": "<uuid>",
                    "version_a": 8, "version_b": 4,
@@ -695,27 +671,21 @@ be loaded (=404= otherwise).
   versions no longer match the metarecords' current versions is rejected for
   that link (it stays uncommitted and re-detects as changed on the next
   run). The daemon records =head_a= / =head_b= itself from each repo's
-  current =log_head=. Per copy (A's file first, then B's), all accepted
-  commits of the batch are applied in a single transaction: for each commit,
-  =seq += 1=, the link columns are updated and the =snapshot_field= rows
-  replaced. Returns
+  current =log_head=. All accepted commits of the batch are applied in a
+  single transaction: for each commit, the link columns are updated and the
+  =snapshot_field= rows replaced. Returns
   ={ "committed": N, "rejected": [ { "link": "…", "reason": "…" } ] }=.
-
-- =POST /sync/:repo/:repo/repair= — run the repair rule over every link:
-  #+BEGIN_SRC json
-  { "repaired": N, "completed_creations": N, "completed_deletions": N }
-  #+END_SRC
 
 ** Performance concerns                                                   :v2:
 
-1. *Sequential writes without batching*: the sync-commit writes the link and
-   snapshot in both sync-database copies. Over SSHFS each write is slow.
-   Batch transactions (the =commits= array) reduce this cost at the price of
-   more re-work after a crash (at most one batch to redo). The optimal batch
-   size is to be determined by benchmark; it is configurable in the intents
-   file (=[settings]=). For file metarecords, batches should be smaller than
-   for pure metadata metarecords, since each batch corresponds to file
-   transfers (idempotent, but slow to re-transfer if the batch is large).
+1. *Batching*: when the sync database is hosted on the SSHFS-mounted repo,
+   each transaction is slow. Batch transactions (the =commits= array) reduce
+   this cost at the price of more re-work after a crash (at most one batch
+   to redo). The optimal batch size is to be determined by benchmark; it is
+   configurable in the intents file (=[settings]=). For file metarecords,
+   batches should be smaller than for pure metadata metarecords, since each
+   batch corresponds to file transfers (idempotent, but slow to re-transfer
+   if the batch is large).
 
 2. *Executor suspension duration*: the executor is suspended only during the
    execution phase. Watcher events accumulate in =pending_operation= (crash-safe)
@@ -764,8 +734,7 @@ mode for files), computes the three-way diffs, and prints the plan:
   full diff found one-sided changes);
 - conflicts (state =conflict= and first-sync divergences) with the resolution
   each policy would choose;
-- warnings (untranslatable refs, =divergent= links needing repair, ambiguous
-  or partial-confidence candidates);
+- warnings (untranslatable refs, ambiguous or partial-confidence candidates);
 - both change tokens.
 
 Candidate matching is conservative: only ="full"=-confidence (or exact-path)
@@ -779,21 +748,20 @@ them (skipped in non-interactive runs), or they are linked manually with
 
 *** =mf sync run=
 
-1. =POST …/repair=.
-2. Re-plan (as above), recording fresh change tokens.
-3. Resolve interactively *now*, before anything is suspended: =ask=
+1. Re-plan (as above), recording fresh change tokens.
+2. Resolve interactively *now*, before anything is suspended: =ask=
    conflicts (per conflicting field name: show the record's path/uuid and
    the snapshot / A / B multisets; choices: keep A, keep B, skip field, skip
    link, abort), partial/ambiguous candidates, and the deletion confirmation
    (see [[*Metarecord deletion propagation]]; =--allow-deletions= replaces it in
    non-interactive runs). =--yes= only skips the final "execute this plan?"
    confirmation — never conflict prompts, never the deletion confirmation.
-4. Suspend the executor on both repos; a =409= aborts with a hint (another
+3. Suspend the executor on both repos; a =409= aborts with a hint (another
    sync is running, a rollback is in progress, or a stale suspension needs
    =…/executor/resume=).
-5. Re-fetch both change tokens; on any mismatch with step 2, resume and abort
+4. Re-fetch both change tokens; on any mismatch with step 1, resume and abort
    ("repository changed during planning; re-run").
-6. Execute, interleaved by batches (=[settings]= in the intents file): each
+5. Execute, interleaved by batches (=[settings]= in the intents file): each
    batch of file transfers and file operations (moves for =mfr_path=,
    top-down), then its metadata work (field propagation with ref translation
    and =expected_version= preconditions, creations + track on the other
@@ -801,12 +769,15 @@ them (skipped in non-interactive runs), or they are linked manually with
    =POST …/links/commit= for the fully-synced links of the batch. A failed
    transfer, a =409= precondition, or a rejected commit skips that link for
    this run and is reported; execution continues.
-7. Resume both executors (also on every error path). The resume flushes the
+6. Resume both executors (also on every error path). The resume flushes the
    pending buffer synchronously; the run then performs the *re-commit pass*:
    links whose endpoint versions moved during the flush (transfer events
    refreshing =mfr_*=) but whose effective diff is empty are re-committed
    with the fresh versions, so the next plan starts clean.
-8. Print a summary and recommend =mf reconcile= on both repos.
+7. Print a summary and recommend =mf reconcile= on both repos.
+
+=--host <repo>= (name or UUID) designates the sync database's host repo when
+the run creates it (first sync of the pair); ignored otherwise.
 
 Crash mid-run: file transfers are idempotent, committed links are consistent,
 uncommitted links re-detect as changed on the next run and re-commit or
@@ -821,8 +792,7 @@ record); =mf reconcile= sorts out the rest.
 
 #+BEGIN_SRC
 mf sync status <repo_a> <repo_b>                 # print per-link states + tokens
-mf sync repair <repo_a> <repo_b>                 # run the repair rule
-mf sync link   <repo_a> <repo_b> <uuid_a> <uuid_b>   # create a link manually
+mf sync link   <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]
 mf sync unlink <repo_a> <repo_b> <link_uuid> [--with-endpoint a|b]
 mf sync resume <repo>                            # clear a stale executor suspension
 #+END_SRC
