@@ -190,7 +190,7 @@ as validation errors on write.
   snapshots) lives outside the data model entirely (see [[file:spec-sync.org][spec-sync.org]]) and
   is never subject to it. Field values *propagated* by sync, on the other
   hand, arrive through the ordinary field endpoints and are validated like
-  any user write (spec-sync "Schema validation of propagated writes").
+  any user write (spec-sync "Schemas must be identical").
 
 ** Validation model: delta validation
 
@@ -387,9 +387,10 @@ mf query 'mf_schema = "film"'
 ** Schema file distribution across linked repositories
 
 The schema file is per-repository and outside the database: it is not
-recorded in the event log and not propagated by cross-repo sync. Two linked
-repositories that share metarecord types must keep their schema files consistent
-manually. Whether sync should compare (or copy) schema files is unresolved.
+recorded in the event log and not propagated by cross-repo sync. Cross-repo
+sync *requires* the two schemas to be identical (structural equality of the
+parsed documents) and refuses to run otherwise (spec-sync "Schemas must be
+identical"); bringing them back in line is a manual step.
 
 ** Full validation at metarecord creation
 

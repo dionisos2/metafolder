@@ -460,14 +460,23 @@ system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
 results. Circular references (A → B → A) are likewise permitted; =Follows= is
 non-recursive so cycles are not a concern.
 
-** Schema validation of propagated writes
+** Schemas must be identical
 
-Field propagation goes through the ordinary field endpoints of the target
-repo, so the target repo's user schema (see [[file:spec-schema.org][spec-schema.org]]) validates it like
-any user write. A violation rejects that write; the CLI reports the field as
-skipped with the violation message and continues. Sync never bypasses the
-schema — linked repos with inconsistent schema files will surface the
-inconsistency as skipped fields.
+Syncing two repositories with different user schemas makes little sense —
+the same metadata would be legal on one side and illegal on the other. =mf
+sync plan= and =mf sync run= therefore start by fetching both repos' schemas
+(=GET /repos/:repo/schema=) and abort with an error if they differ.
+"Identical" is structural equality of the parsed schema documents (JSON
+value equality — formatting and key order do not matter); two repos with no
+schema at all are identical. The schema file itself is never propagated by
+sync (see [[file:spec-schema.org][spec-schema.org]]): resolving a mismatch is a manual step.
+
+Field propagation still goes through the ordinary field endpoints of the
+target repo, so the target's schema validates it like any user write — even
+with identical schemas a propagated field can violate a constraint in
+combination with the target record's other fields. Such a violation rejects
+that write; the CLI reports the field as skipped with the violation message
+and continues. Sync never bypasses the schema.
 
 * Daemon
 
@@ -718,10 +727,12 @@ repo: mount it, e.g. over SSHFS, and =mf repo load= it first).
 
 *** =mf sync plan=
 
-Read-only. Evaluates the intent queries on both repos, fetches
-=GET …/status= and =GET …/links=, detects candidates for unlinked in-scope
-metarecords (=POST …/candidates=: =path= mode for directories, =fingerprint=
-mode for files), computes the three-way diffs, and prints the plan:
+Read-only. Checks that both repos' schemas are identical (abort otherwise —
+see [[*Schemas must be identical]]), evaluates the intent queries on both
+repos, fetches =GET …/status= and =GET …/links=, detects candidates for
+unlinked in-scope metarecords (=POST …/candidates=: =path= mode for
+directories, =fingerprint= mode for files), computes the three-way diffs,
+and prints the plan:
 
 - links to create (matched candidates) and metarecords to create on the other
   side (in-scope on one side only: transfer + track + copy metadata + link);
@@ -866,8 +877,5 @@ than =ask=) never prompts.
 
 * Open questions
 
-- Whether sync should compare (or copy) schema files between linked repos
-  (see [[file:spec-schema.org][spec-schema.org]]) is unresolved; for now schema consistency is manual
-  and inconsistencies surface as skipped fields.
 - Optimal =commit-batch-size= / =transfer-batch-size= defaults await the
   benchmark (see [[*Performance concerns]]).
