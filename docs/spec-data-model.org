@@ -268,9 +268,19 @@ collision among 1 billion metarecords is ≈ 10⁻¹⁹ — negligible in practi
 
 #+BEGIN_SRC sql
 CREATE TABLE metarecord (
-    uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
-    version  INTEGER NOT NULL DEFAULT 0     -- incremented by daemon on every field write
+    uuid          BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
+    version       INTEGER NOT NULL DEFAULT 0,    -- current version (assigned from next_version)
+    next_version  INTEGER NOT NULL DEFAULT 1     -- monotonic version allocator; never restored
 );
+
+-- Version allocation: every field write sets version = next_version and
+-- increments next_version. Rollback/redo restore =version= exactly but never
+-- touch =next_version=, so a fresh write after a rollback gets a number that
+-- was never used before (versions have gaps after a rollback). Invariant:
+-- within one metarecord's whole history, across all log branches, a given
+-- version number denotes exactly one field state — equal versions imply
+-- identical states. Cross-repo sync's change detection relies on this
+-- ([[file:spec-sync.org][spec-sync.org]]).
 
 CREATE TABLE field (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -91,8 +91,6 @@ CREATE TABLE link (
     record_b   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo B
     version_a  INTEGER,                 -- E_A.version at last sync-commit (NULL before)
     version_b  INTEGER,                 -- E_B.version at last sync-commit (NULL before)
-    head_a     INTEGER,                 -- repo A's log_head.op_id at last sync-commit
-    head_b     INTEGER,                 -- repo B's log_head.op_id at last sync-commit
     last_sync_method  TEXT              -- method used during the last sync (informational)
 );
 
@@ -174,16 +172,11 @@ matches the recorded =version_x= — even if numerically smaller — simply mean
 "changed since the last sync" and is reported as such by the status primitive
 (see [[*Version-based change detection]]).
 
-Version *equality*, however, is not proof of "unchanged" across a rollback:
-after rolling back and writing again, a metarecord can reach the same
-numeric =version= with different content (version numbers are reused across
-log branches — ABA). This is why the sync-commit also records each repo's
-=log_head.op_id= (=head_a= / =head_b=): version comparison for a link is
-trusted only while the recorded head is an *ancestor* of the repo's current
-head (only forward writes happened). If it is not — a navigation occurred —
-the status primitive reports the link as =verify= and the CLI falls back to
-a full three-way diff for it (a pruned recorded head, no longer found in the
-log, is treated the same way).
+Version *equality* is trustworthy even across rollbacks: versions are
+assigned from the per-metarecord =next_version= allocator, which navigation
+never restores, so a version number is never reused for a different state
+(see [[file:spec-data-model.org][spec-data-model.org]]). =E_X.version == version_x= therefore guarantees
+the metarecord is in the exact state it had at the last sync-commit.
 
 A navigation can also make a linked metarecord *disappear* (rollback before
 its creation). This is indistinguishable from a deliberate deletion at the
@@ -224,10 +217,9 @@ On the next sync, for each linked pair:
 
 "Different" rather than "greater": a rollback can restore a *smaller*
 =E_X.version=; any difference from the recorded value means the metarecord
-changed relative to the last sync point. Version *equality* is trusted only
-while the head recorded at commit is an ancestor of the repo's current head;
-otherwise the link needs a full diff (state =verify= — see
-[[*Interaction with rollback]]).
+changed relative to the last sync point. Equality, conversely, proves the
+state is unchanged: version numbers are never reused for different states
+(the =next_version= allocator — see [[*Interaction with rollback]]).
 
 The version test is a cheap pre-filter, not the definition of change:
 
@@ -357,9 +349,7 @@ make a record vanish without any user intent (see
 [[*Interaction with rollback]]), so it is never silent: planned deletions are
 listed nominatively, and =mf sync run= requires an explicit interactive
 confirmation for them — or the =--allow-deletions= flag in non-interactive
-runs; =--yes= alone never covers deletions. When the source repo's recorded
-head is not an ancestor of its current head, the plan additionally warns
-that the "deletion" may be a log navigation.
+runs; =--yes= alone never covers deletions.
 
 Normative order (used by =DELETE …?with_endpoint= and the CLI alike): delete
 the endpoint metarecord *first* (a logged, rollbackable write), then delete
@@ -646,7 +636,7 @@ be loaded (=404= otherwise).
   { "repo_a": "…", "repo_b": "…",
     "links": [ { "uuid": "…",
                  "state": "never_synced" | "in_sync" | "ahead_a" | "ahead_b"
-                        | "conflict" | "verify" | "missing_a" | "missing_b"
+                        | "conflict" | "missing_a" | "missing_b"
                         | "missing_both",
                  "e_a_version": 7, "e_b_version": 3,
                  "version_a": 5, "version_b": 3 } ],
@@ -657,9 +647,6 @@ be loaded (=404= otherwise).
   - =missing_a= / =missing_b= / =missing_both= — an endpoint metarecord no
     longer exists (deletion to propagate; =missing_both= → just delete the
     link).
-  - =verify= — a recorded head is no longer an ancestor of its repo's
-    current head (or was pruned): version comparison is unreliable, do a
-    full diff (see [[*Interaction with rollback]]).
   - =never_synced= (no sync-commit yet), then the change-detection truth
     table: =in_sync=, =ahead_a=, =ahead_b=, =conflict=.
 
@@ -679,8 +666,7 @@ be loaded (=404= otherwise).
   re-read at commit time. The daemon enforces this as a CAS: a commit whose
   versions no longer match the metarecords' current versions is rejected for
   that link (it stays uncommitted and re-detects as changed on the next
-  run). The daemon records =head_a= / =head_b= itself from each repo's
-  current =log_head=. All accepted commits of the batch are applied in a
+  run). All accepted commits of the batch are applied in a
   single transaction: for each commit, the link columns are updated and the
   =snapshot_field= rows replaced. Returns
   ={ "committed": N, "rejected": [ { "link": "…", "reason": "…" } ] }=.
@@ -741,8 +727,7 @@ and prints the plan:
   nominatively (see [[*Metarecord deletion propagation]]);
 - file transfers with direction and method (content-signature rule — see
   [[*Field coverage and diff semantics]]);
-- field propagations (states =ahead_a= / =ahead_b=, plus =verify= links whose
-  full diff found one-sided changes);
+- field propagations (states =ahead_a= / =ahead_b=);
 - conflicts (state =conflict= and first-sync divergences) with the resolution
   each policy would choose;
 - warnings (untranslatable refs, ambiguous or partial-confidence candidates);

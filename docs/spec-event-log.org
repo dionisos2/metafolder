@@ -127,6 +127,7 @@ CREATE TABLE operation (
     op_type               TEXT    NOT NULL,    -- see Operation types
     entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata metarecord
     entity_version_before INTEGER,             -- metadata.version before this op; restored on inverse
+    entity_version_after  INTEGER,             -- metadata.version after this op; restored on redo
     field_name            TEXT                 -- for field operations; NULL otherwise
 );
 
@@ -213,9 +214,19 @@ operations on other branches that reference the same =field_id= remain valid
 after navigating across that operation's boundary.
 
 The =metadata.version= counter is likewise saved and restored via the
-=entity_version_before= column on =operation=. The inverse sets
-=metadata.version= back to this value exactly. This ensures that =version=
-remains a reliable cache key across rollback/redo cycles.
+=entity_version_before= / =entity_version_after= columns on =operation=: the
+inverse sets =metadata.version= back to =entity_version_before=, the forward
+action to =entity_version_after= — both exactly. (The after value must be
+recorded because versions are assigned from the =next_version= allocator,
+not computed as before + 1 — see [[file:spec-data-model.org][spec-data-model.org]].) This ensures that
+=version= remains a reliable cache key across rollback/redo cycles.
+
+=next_version= itself is deliberately *not* restored by navigation — its
+monotonicity across branches is what guarantees that version numbers are
+never reused for different states. When navigation recreates a metarecord
+whose row (and thus =next_version=) had been deleted, =next_version= is
+recomputed as 1 + the maximum version recorded for that entity across the
+whole =operation= table.
 
 ** Normal write flow
 
@@ -226,7 +237,8 @@ Every API call that modifies metadata:
 3. For each change (first to last):
    a. Records the before state: reads the affected =field= rows and the current
       =metadata.version=, to be written as =op_snapshot= rows (=is_new=0=).
-   b. Applies the change to the data tables (increments =metadata.version=).
+   b. Applies the change to the data tables (=metadata.version= is assigned
+      from =next_version=, which is incremented).
    c. Records the after state: reads the resulting =field= rows, written as
       =op_snapshot= rows (=is_new=1=).
    d. Inserts one =operation= row with:
@@ -234,6 +246,7 @@ Every API call that modifies metadata:
       - =rev_id= = the revision created in step 2
       - =seq= = incrementing from 1
       - =entity_version_before= = the version recorded in step 3a
+      - =entity_version_after= = the version assigned in step 3b
    e. Inserts the =op_snapshot= rows for this operation.
    f. Updates the running HEAD to this new operation's =id=.
 4. Writes the final =log_head.op_id= to the singleton row.

@@ -67,8 +67,10 @@ reconcile, observable queries, the task registry — are part of version 1.
   of the pair are simultaneously loaded in the same daemon instance
   (see [[file:spec-sync.org][spec-sync.org]]). [v2]
 - The =version= counter on a metadata metarecord is managed exclusively by the
-  daemon; it is incremented on every write to =fields= and cannot be set
-  directly by users.
+  daemon and cannot be set directly by users. Versions are assigned from a
+  per-metarecord monotonic allocator (=next_version=) that rollback never
+  restores: a version number is never reused for a different state, so equal
+  versions imply identical field states — even across rollback/redo cycles.
 - A repository database must be held under an exclusive SQLite lock for the
   entire lifetime of the daemon connection (=PRAGMA locking_mode = EXCLUSIVE=).
   This prevents a second daemon instance from loading the same repo
