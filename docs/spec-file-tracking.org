@@ -367,7 +367,7 @@ individually.
 
 | Filesystem event   | Action                                                                                                     |
 |--------------------+------------------------------------------------------------------------------------------------------------|
-| =Create=           | Look up parent UUID via tree cache; create metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
+| =Create=           | Resolve the path first: if a metarecord already holds this =mfr_path=, refresh it as for =Modify(Data)= (idempotent — crash replay, or a file that appeared where the database already expected one, e.g. a cross-repo sync placement). Otherwise look up the parent UUID via the tree cache and create a metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
 | =Remove=           | Set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade =Nothing= to all descendants in the same transaction |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID) |
 | =Rename(From)=     | File definitively left the repository: set =mfr_path= to =Nothing=; if a directory, cascade =Nothing= to all descendants in the same transaction |
@@ -378,6 +378,14 @@ individually.
 On platforms where the =Data= / =Metadata= distinction is unavailable (e.g.
 some macOS or Windows backends), the daemon falls back to =Modify(Data)=
 semantics (full refresh + hash invalidation).
+
+The refresh is *idempotent*: when the stored =mfr_size= / =mfr_mtime= (and,
+for =Modify(Metadata)=, the attribute fields) already equal what =stat=
+reports, no field is written — hence no operation and no =version= bump.
+This keeps redundant events (crash replay, or the watcher's echo of a change
+the daemon itself just recorded, e.g. a cross-repo sync file operation) from
+churning versions; a genuine change differs in =stat= and is applied
+normally.
 
 Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
 (see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries

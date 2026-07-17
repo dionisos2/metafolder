@@ -212,13 +212,13 @@ The version test is a cheap pre-filter, not the definition of change:
 - A *conflict* is a field changed on both sides *to different values* (after
   ref translation). Both sides changed to the *same* value → the field is
   simply in sync; nothing to propagate.
-- A changed version whose *effective diff* is empty (e.g. only excluded
-  =mfr_*= fields moved — see [[*Field coverage and diff semantics]]) means the
-  link is in sync: the run re-commits the fresh versions silently instead of
-  reporting a change or a conflict. This also makes crash recovery benign: a
-  crash between metadata propagation and sync-commit re-detects the link as
-  "changed on both sides", but the values are equal, so the next run just
-  re-commits.
+- A changed version whose *effective diff* is empty (only excluded =mfr_*=
+  fields moved — see [[*Field coverage and diff semantics]] — or a stat-only
+  attribute change) means the link is in sync: the run simply records the
+  fresh versions instead of reporting a change or a conflict. This also
+  makes crash recovery benign: a crash between metadata propagation and
+  sync-commit re-detects the link as "changed on both sides", but the values
+  are equal, so the next run just records the versions.
 
 Conflict resolution is left to the sync command (user prompt or declared
 policy in the intents file).
@@ -278,10 +278,10 @@ verbatim, never translated.
 
 =mfr_*= fields (except =mfr_path=) are *excluded* from the snapshot, the
 diff, and metadata propagation. They are stat- and content-derived: each
-repo's watcher/reconcile owns them, and after a file transfer the target's
-executor refreshes =mfr_size= / =mfr_mtime= and clears the stored hashes —
-propagating them would ping-pong forever. Their version bumps are absorbed
-by the empty-effective-diff rule above.
+repo describes its own file (=mfr_size=, =mfr_mtime=, hashes), so
+propagating them across repos would ping-pong forever. Any version bump they
+still cause (a stat-only change) is absorbed by the empty-effective-diff
+rule above.
 
 - *File content* is synced as a *file transfer*, not a field write: for a
   changed/conflicting file link, the stored content signatures
@@ -289,25 +289,28 @@ by the empty-effective-diff rule above.
   two endpoint records are compared; if they differ, a transfer is planned
   from the changed side (for a content conflict — both sides changed — the
   conflict policy chooses the direction, like any conflicting field).
-- =mfr_path= is synced as a *file operation*, with a per-kind safe order:
-  - *Placement* (a sync-created record receiving its file): the translated
-    =mfr_path= is force-written *first*, the file transferred *second*.
-    The record therefore exists at the path before the file ever does, so
-    the watcher's arrival event always resolves to it — a duplicate record
-    for the new file is impossible by construction. A crash in between
-    leaves a stale-path record whose uncommitted link re-detects and
-    re-transfers next run; a rejected =mfr_path= write skips the transfer
-    entirely.
-  - *Move* (a linked file relocating): the file is moved on disk *first*,
-    the translated =mfr_path= force-written *second* — a crash in between
-    is healed by the buffered rename event when the executor resumes.
-  All path operations are applied top-down (parents before children,
-  across batches if necessary): a translated TreeRef write is rejected by
-  the daemon's forest validation if the parent is missing or orphaned, so
-  directory links must be resolved first. Such a =400= is treated like a
-  schema violation: skip and report.
+- =mfr_path= is synced as a *file operation* (a placement onto a sync-created
+  record, or a move of a linked file). Directory links are resolved
+  top-down first (a translated TreeRef whose parent is missing or orphaned
+  is rejected by forest validation with a =400=, treated like a schema
+  violation: skip and report).
 - All other fields (user data, including reserved =mf_*= written with
   =force=) are propagated as ordinary field writes.
+
+*Metadata gates the disk.* A link's physical file operation (transfer or
+move) is performed only *after* that link's metadata propagation — every
+field write, including the translated =mfr_path= — has fully succeeded on
+the target. If any metadata write is rejected (=409= precondition, =400=
+schema/forest violation, an unresolved conflict), the link's file operation
+is skipped entirely and the link is not committed: the metadata and the
+file never diverge from a partial sync. Because =mfr_path= is written to the
+database *before* the file is placed or moved, a sync-created record already
+exists at its path when the file arrives — so the watcher's create/arrival
+event resolves to that record and refreshes it rather than creating a
+duplicate (spec-file-tracking: =Create= / =Rename(To)= resolve by path
+first). A crash between the metadata write and the disk operation leaves a
+record with a stale path, which the next run (uncommitted link, re-detected)
+or =reconcile= repairs.
 
 *** Diff semantics
 
@@ -371,10 +374,11 @@ Sync is split into two distinct phases:
    freshness guard is needed: the plan cannot go stale inside the
    suspension window.
 
-After execution: resume the executor, let it flush, then re-commit the
-links whose versions moved during the flush (see the =mf sync run= flow and
-[[*Executor suspension during sync]]). Running =reconcile= is recommended to
-catch any remaining filesystem drift.
+After execution: resume the executor and let it flush. The events it buffered
+during execution are the watcher's echoes of sync's own file operations plus
+any genuine concurrent user changes; the echoes make no change (see
+[[*Executor suspension during sync]]), so no post-sync re-commit is needed.
+Running =reconcile= is recommended to catch any remaining filesystem drift.
 
 ** Sync intentions
 
@@ -529,21 +533,29 @@ Normal API writes remain allowed while suspended — the executor gate only
 stops *watcher-originated* commits. They are guarded per-link by the
 expected-version preconditions (see [[*HTTP API]]).
 
-On resume, pending events accumulated in =pending_operation= are processed
-normally:
+*** Suppressing sync's own echoes
 
-- Events for the files sync itself touched are *not* strict no-ops: the
-  executor refreshes stat-derived =mfr_*= fields (and clears stored hashes),
-  bumping versions after the sync-commit recorded them. This is why =mf sync
-  run= performs a re-commit pass after resuming, and why =mfr_*= fields are
-  excluded from the diff (see [[*Field coverage and diff semantics]]).
-- Events for paths that diverge from the database (user-driven changes
-  during the suspended window) → processed normally (path update, =version=
-  bump, etc.).
+Sync's file operations make the watcher enqueue events that, once applied,
+would refresh =mfr_*= and bump the very versions the sync-commit just
+recorded — so the next plan would see every synced link as changed. Two
+mechanisms make these echoes no-ops, so no post-sync re-commit is needed:
 
-Crash safety: because =pending_operation= is a persistent table, events are
-never lost on crash or SIGKILL. The executor replays them automatically on
-daemon restart before accepting new requests.
+1. As part of each file operation, sync sets the target record's
+   stat-derived fields (=mfr_size=, =mfr_mtime=, cleared hashes) to match
+   the file it just wrote — the same fields the watcher would refresh, but
+   in the write that the sync-commit records. The database is thus already
+   consistent with the file.
+2. The executor's data refresh is *idempotent*: it produces no operation and
+   no =version= bump when the record's stored stat already matches the file
+   on disk (see [[file:spec-file-tracking.org][spec-file-tracking.org]]). So the buffered echo of a sync
+   operation, arriving on resume, finds nothing to do.
+
+A *genuine* user change during the suspended window has a different
+size/mtime, so it is not idempotent-skipped: it is applied normally (path
+update, =version= bump), and any sync write that raced it was already fenced
+by the =expected_version= precondition. Because =pending_operation= is a
+persistent table, no event is lost on crash or SIGKILL; the executor replays
+them on restart before accepting new requests.
 
 ** HTTP API
 
@@ -763,32 +775,32 @@ The sync phase:
    links — onto matched records, or onto bare metarecords created for the
    purpose.
 6. Execute the *sync phase*, interleaved by batches (=[settings]= in the
-   intents file): each batch performs its metadata work (field propagation
-   with ref translation and =expected_version= preconditions, =mfr_path=
-   placements — database before disk —, deletion propagation) and its file
-   operations (transfers into the placed paths, in-place content updates,
-   moves — disk before database), each in the per-kind order of
-   [[*Field coverage and diff semantics]], then =POST …/links/commit= for the
-   links whose operations all succeeded. A failed transfer or a =409=/=400=
-   skips that link for this run and is reported; execution continues.
-7. Resume both executors (also on every error path). The resume flushes the
-   pending buffer synchronously; the run then performs the *re-commit pass*:
-   links whose endpoint versions moved during the flush (transfer events
-   refreshing =mfr_*=) but whose effective diff is empty are re-committed
-   with the fresh versions, so the next plan starts clean.
+   intents file). For each link: propagate all metadata first (field writes
+   with ref translation and =expected_version= preconditions, the
+   translated =mfr_path=, deletion propagation); only if that fully succeeds
+   perform the file operation (transfer or move) and set the target's stat
+   fields to match (see [[*Field coverage and diff semantics]] "Metadata gates
+   the disk" and [[*Executor suspension during sync]]). Then =POST …/links/commit=
+   for the links whose metadata and file operations both succeeded. A failed
+   metadata write (=409=/=400=/conflict-skip) leaves the file untouched and
+   skips the link; a failed transfer skips the link; either is reported and
+   execution continues.
+7. Resume both executors (also on every error path); the resume flushes the
+   pending buffer synchronously. Sync's own echoes are idempotent no-ops, so
+   nothing more is committed.
 8. Print a summary and recommend =mf reconcile= on both repos.
 
 =--host <repo>= (name or UUID) designates the sync database's host repo when
 the run creates it (first sync of the pair); ignored otherwise.
 
 Crash mid-run: file transfers are idempotent, committed links are consistent,
-uncommitted links re-detect as changed on the next run and re-commit or
-re-propagate (the value-equal rule prevents phantom conflicts) — at most one
-batch of re-work. The per-kind operation orders guarantee a new file never
-reaches the disk before its record exists at that path, so a crash can
-never make the watcher duplicate a sync-created record. If the CLI is
-killed outright, the executor suspension leaks and must be cleared manually
-(see [[*Executor suspension during sync]]).
+uncommitted links re-detect as changed on the next run (the value-equal rule
+prevents phantom conflicts) — at most one batch of re-work. Metadata is
+always written before its file operation, so a sync-created record exists at
+its path before the file does and the watcher can never duplicate it; a
+crash between the two leaves a stale path that the next run or =reconcile=
+repairs. If the CLI is killed outright, the executor suspension leaks and
+must be cleared manually (see [[*Executor suspension during sync]]).
 
 *** Utility subcommands
 
