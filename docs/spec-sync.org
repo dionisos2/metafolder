@@ -185,17 +185,12 @@ data level, which is why deletion propagation is never applied silently (see
 
 ** Directory linking during sync
 
-Links are always UUID-based. For directory metarecords, the initial link is
-established by matching reconstructed path strings across repos:
-
-1. A directory exists in both repos with the same reconstructed path string
-   (assembled from =value_name= components via =value_uuid= chain) →
-   create a link between them.
-2. A directory exists in repo A but has no corresponding metarecord (same path) in
-   repo B → create the directory metarecord in repo B, then link it.
-3. A linked directory is later moved on one side → the link persists by UUID;
-   the path divergence is detectable as a version change and treated as a
-   field conflict on the =mfr_path= field.
+Links are always UUID-based; only the *initial* directory link is
+established by path matching (the =path= candidates mode): same
+reconstructed path on both sides → link them; present on one side only →
+create the directory metarecord on the other side, then link. Once linked,
+a moved directory keeps its link by UUID — the path divergence is an
+ordinary =mfr_path= change or conflict.
 
 ** Version-based change detection
 
@@ -394,18 +389,15 @@ detected.
 The token's soundness depends on =operation.id= being =AUTOINCREMENT= (ids
 are never reused, even after a log prune) — a requirement on the event-log
 schema. A prune between plan and run can *shrink* =last_op_id=, causing a
-spurious (but safe) "repository changed" abort.
-
-(An earlier design used =PRAGMA data_version=. It cannot work here: the
-daemon holds a single connection per repo in =locking_mode = EXCLUSIVE=, and
-=data_version= only changes when *another* connection commits — it would
-never change at all. The change token is strictly stronger anyway, since it
-also detects pure HEAD movements.)
+spurious (but safe) "repository changed" abort. (=PRAGMA data_version=
+cannot serve here: it only reacts to *other* connections, and the daemon
+holds a single EXCLUSIVE connection per repo.)
 
 ** Sync intentions
 
-Sync intentions are declared in the intents file as a mapping from sync method
-to a query (see [[*The intents file]] for the concrete format). Example:
+Sync intentions are declared in the intents file as an *ordered* mapping
+from sync method to a query (see [[*The intents file]] for the concrete
+format). Example:
 
 #+BEGIN_SRC
 rsync  ←  tag = "sync_pc_b"
@@ -413,37 +405,22 @@ git    ←  path →* "/projects"
 rsync  ←  tag = "image" AND tag = "family"
 #+END_SRC
 
-At sync time the CLI:
-
-1. Evaluates each query on both repos to determine which metarecords should be
-   linked (and with what method). Entries are ordered: for a metarecord
-   matched by several intents, the first matching entry wins.
-2. Compares the result with the existing links to identify links to create,
-   delete, or update.
-3. Executes file transfers for file metarecords (using the declared method).
-4. Propagates changed fields for all linked metarecords (metadata sync).
-5. Calls the sync-commit primitive to set common versions, the new snapshot,
-   and =last_sync_method= on each updated link.
+The CLI evaluates each query on both repos to determine which metarecords
+should be linked and with what method; for a metarecord matched by several
+intents, the first matching entry wins. Everything downstream (comparing
+with existing links, transfers, propagation, commit) is the =mf sync= flow
+(see [[*CLI]]).
 
 ** Ref translation during sync
 
-=Ref= and =TreeRef= fields store local UUIDs that must be translated when
-writing to the target repo.
-
-Sync order for a given repo pair:
-
-1. Update the link table first (create, delete).
-2. Sync metarecord fields:
-   - Any UUID value that is =NULL= / =Nothing= is written as-is — no translation
-     needed.
-   - For each =Ref= field: look up the link table to find the corresponding
-     UUID in the target repo.
-   - For each =TreeRef= field: translate =value_uuid= A→B via the link
-     table; =value_name= is portable and written as-is.
-   - Translation found → write the translated value.
-   - Translation not found → skip the field and emit a warning. Since the link
-     table is complete at this point, a missing translation means the
-     referenced metarecord is genuinely out of sync scope.
+=Ref= and =TreeRef= fields store local UUIDs. When propagating such a value,
+the CLI translates it through the link table: for =Ref=, the target-repo
+UUID of the linked metarecord; for =TreeRef=, the parent UUID is translated
+and =value_name= is written as-is (portable); =Nothing= needs no
+translation. Links are created and deleted *before* fields are propagated,
+so the link table is complete at translation time: a missing translation
+means the referenced metarecord is genuinely out of sync scope — the field
+is skipped with a warning.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
@@ -661,15 +638,15 @@ be loaded (=404= otherwise).
   #+END_SRC
   Snapshot values are given in wire JSON, A-perspective; for Ref/TreeRef
   entries =value_b= carries the B-perspective UUID captured by the client at
-  commit time (dual perspective). =version_a= / =version_b= are the versions
-  whose field state the client actually read and propagated — *never*
-  re-read at commit time. The daemon enforces this as a CAS: a commit whose
-  versions no longer match the metarecords' current versions is rejected for
-  that link (it stays uncommitted and re-detects as changed on the next
-  run). All accepted commits of the batch are applied in a
-  single transaction: for each commit, the link columns are updated and the
-  =snapshot_field= rows replaced. Returns
-  ={ "committed": N, "rejected": [ { "link": "…", "reason": "…" } ] }=.
+  commit time (dual perspective). Normative client rule: =version_a= /
+  =version_b= are the versions whose field state the client actually read
+  and propagated — *never* re-read at commit time. (No server check can
+  enforce this — re-read versions are indistinguishable from honest ones —
+  and none is needed: committing an honest-but-stale version is safe, the
+  link simply shows =ahead= on the next run and the concurrent write gets
+  propagated then.) The batch is applied in a single transaction: for each
+  commit, the link columns are updated and the =snapshot_field= rows
+  replaced. Returns ={ "committed": N }=.
 
 ** Performance concerns                                                   :v2:
 
@@ -763,8 +740,8 @@ them (skipped in non-interactive runs), or they are linked manually with
    and =expected_version= preconditions, creations + track on the other
    side, deletion propagation, link create/delete), then
    =POST …/links/commit= for the fully-synced links of the batch. A failed
-   transfer, a =409= precondition, or a rejected commit skips that link for
-   this run and is reported; execution continues.
+   transfer or a =409= precondition skips that link for this run and is
+   reported; execution continues.
 6. Resume both executors (also on every error path). The resume flushes the
    pending buffer synchronously; the run then performs the *re-commit pass*:
    links whose endpoint versions moved during the flush (transfer events
