@@ -187,6 +187,7 @@ The stored fields for a file/directory metarecord are:
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
 | =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[*Watch and Ignore]])  |
 | =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
+| =mf_sync=          | mf     | String     | =internal= (default) / =external=: whether metafolder or an external tool owns this metarecord's content during cross-repo sync; inherited down the =mfr_path= tree (see [[file:spec-sync.org][spec-sync.org]]) |
 
 The user schema feature defines one additional reserved =mf_*= field:
 =mf_schema= (String, multi-map — metarecord type declaration). The constraints
@@ -229,7 +230,7 @@ Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
 miss, the daemon resolves each component iteratively via the
 =(field_name, value_uuid, value_name)= index.
 
-Inherited property lookup (e.g. nearest ancestor with =sync_method=) is performed
+Inherited property lookup (e.g. nearest ancestor with =mf_sync=) is performed
 in two steps: first, walk the parent chain via the tree cache (fetching missing
 nodes from the DB step by step) to collect the ordered list of ancestor UUIDs;
 then issue a single query =WHERE metarecord_uuid IN (...)= to retrieve the desired

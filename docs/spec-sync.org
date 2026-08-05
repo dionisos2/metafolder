@@ -4,8 +4,8 @@
 * Overview                                                               :v2:
 
 The daemon provides low-level primitives for cross-repo sync. Orchestration
-(deciding what to link, in which order, with which method) lives in the CLI
-(=mf sync=) and user scripts.
+(deciding what to link, in which order, and running the file operations)
+lives in the CLI (=mf sync=) and user scripts.
 
 Sync state — the links between metarecords of two repositories and the
 snapshot of their common state at the last sync — lives *outside the data
@@ -17,10 +17,12 @@ absent from the event log, and are not subject to rollback.
 
 ** Design principles
 
-- The daemon never touches files. File transfers are always performed by the
+- The daemon never touches files. File operations are always performed by the
   CLI command or script.
-- Sync intentions (which metarecords to link, with what method) are expressed as
-  queries in the intents file, not stored in the database.
+- Sync intentions (which metarecords to link) are expressed as queries in the
+  intents file, not stored in the database. Whether a record's content is
+  metafolder's to move or an external tool's is the record's inherited
+  =mf_sync= field (=internal= / =external=).
 - Both repos must be loaded in the same daemon instance for every sync
   primitive (link creation/deletion, status, commit).
 - For cross-machine sync, the recommended approach is to mount the remote
@@ -90,8 +92,7 @@ CREATE TABLE link (
     record_a   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo A
     record_b   BLOB NOT NULL UNIQUE,    -- metarecord UUID in repo B
     version_a  INTEGER,                 -- E_A.version at last sync-commit (NULL before)
-    version_b  INTEGER,                 -- E_B.version at last sync-commit (NULL before)
-    last_sync_method  TEXT              -- method used during the last sync (informational)
+    version_b  INTEGER                  -- E_B.version at last sync-commit (NULL before)
 );
 
 -- Snapshot of the common field state at the last sync-commit. Value columns
@@ -122,9 +123,11 @@ one, and WAL's shared-memory file cannot work on a network filesystem.
 Links are 1:1: a metarecord of A is linked to at most one metarecord of B and
 vice versa — enforced by the two =UNIQUE= constraints.
 
-The =version_a= / =version_b= / =last_sync_method= columns are written only by
-the sync-commit primitive; =record_a= / =record_b= are immutable after
-creation.
+The =version_a= / =version_b= columns are written only by the sync-commit
+primitive; =record_a= / =record_b= are immutable after creation. (There is
+no stored method: whether a record's content is metafolder's or an external
+tool's is the =mf_sync= field on the record itself — see
+[[*Metadata versus content: the =mf_sync= field]].)
 
 *** Location and discovery
 
@@ -274,43 +277,75 @@ verbatim, never translated.
 
 ** Field coverage and diff semantics
 
-*** Which fields sync covers
+*** Metadata versus content: the =mf_sync= field
+
+Every field of a record is *metadata* and is always synced (subject to the
+diff below). Only the record's *content* — the file's bytes and its position
+(=mfr_path=) — may be handled by metafolder or by an external tool, and that
+choice is the =mf_sync= field:
+
+- =internal= (the default) — metafolder owns the content: it copies/moves
+  files and creates/renames directories as needed to make the two sides
+  agree.
+- =external= — something outside metafolder owns the content (a git repo, a
+  manually-run =rsync=, …): metafolder performs *no* file or directory
+  operation. A content or path divergence between the two sides then means
+  the external sync is incomplete and is reported as an error (aggregated —
+  see [[*The run report]]).
+
+=mf_sync= is a reserved config field (=mf_= prefix, needs =force=), set on a
+directory and *inherited* down the =mfr_path= tree exactly like =mf_watch= /
+=mf_ignore= (nearest ancestor wins; absent everywhere ⇒ =internal=). So a git
+repository is marked once — =mf_sync = external= on its root — and its whole
+subtree inherits it; a =.gitignore='d subdirectory metafolder should still
+manage gets =mf_sync = internal= closer to the leaf. It governs *files and
+directories* alike; on a directory it doubles as the inheritance anchor. It
+is itself an ordinary synced field, so the two sides agree on it before any
+content decision (metadata precedes content — below), and a contradiction is
+a normal metadata conflict resolved at plan time.
+
+*** Which fields the diff covers
 
 =mfr_*= fields (except =mfr_path=) are *excluded* from the snapshot, the
-diff, and metadata propagation. They are stat- and content-derived: each
-repo describes its own file (=mfr_size=, =mfr_mtime=, hashes), so
-propagating them across repos would ping-pong forever. Any version bump they
-still cause (a stat-only change) is absorbed by the empty-effective-diff
-rule above.
+diff, and propagation. They are stat- and content-derived: each repo
+describes its own file (=mfr_size=, =mfr_mtime=, hashes), so propagating them
+would ping-pong forever. Any version bump they cause (a stat-only change) is
+absorbed by the empty-effective-diff rule above. All other fields — user
+data, and reserved =mf_*= (including =mf_sync=) written with =force= — are
+propagated as ordinary field writes.
 
-- *File content* is synced as a *file transfer*, not a field write: for a
-  changed/conflicting file link, the stored content signatures
-  (=mfr_full_hash=, falling back to =mfr_partial_hash= + =mfr_size=) of the
-  two endpoint records are compared; if they differ, a transfer is planned
-  from the changed side (for a content conflict — both sides changed — the
-  conflict policy chooses the direction, like any conflicting field).
-- =mfr_path= is synced as a *file operation* (a placement onto a sync-created
-  record, or a move of a linked file). Directory links are resolved
-  top-down first (a translated TreeRef whose parent is missing or orphaned
-  is rejected by forest validation with a =400=, treated like a schema
-  violation: skip and report).
-- All other fields (user data, including reserved =mf_*= written with
-  =force=) are propagated as ordinary field writes.
+*** Content operations (=internal= records only)
 
-*Metadata gates the disk.* A link's physical file operation (transfer or
-move) is performed only *after* that link's metadata propagation — every
-field write, including the translated =mfr_path= — has fully succeeded on
-the target. If any metadata write is rejected (=409= precondition, =400=
-schema/forest violation, an unresolved conflict), the link's file operation
-is skipped entirely and the link is not committed: the metadata and the
-file never diverge from a partial sync. Because =mfr_path= is written to the
-database *before* the file is placed or moved, a sync-created record already
-exists at its path when the file arrives — so the watcher's create/arrival
-event resolves to that record and refreshes it rather than creating a
-duplicate (spec-file-tracking: =Create= / =Rename(To)= resolve by path
-first). A crash between the metadata write and the disk operation leaves a
-record with a stale path, which the next run (uncommitted link, re-detected)
-or =reconcile= repairs.
+- *File content*: the stored content signatures (=mfr_full_hash=, falling
+  back to =mfr_partial_hash= + =mfr_size=) of the two endpoints are compared;
+  if they differ, a transfer is planned from the changed side (for a content
+  conflict — both sides changed — the conflict policy chooses the direction,
+  like any conflicting field). A record present on one side only is created
+  on the other (bare metarecord + transfer/mkdir).
+- =mfr_path=: a placement (onto a sync-created record) or a move/rename of a
+  linked file or directory. Path operations are applied top-down (parents
+  before children); a translated TreeRef whose parent is missing or orphaned
+  is rejected by forest validation (=400=), skipped and reported.
+
+For an =external= record none of the above runs: no transfer, no
+create/mkdir, no move. Instead, a content or path *difference* between the
+two sides is recorded as an error in the report (the external tool should
+have reconciled it). Metadata still syncs normally.
+
+*Metadata gates the disk.* An =internal= record's file/directory operation is
+performed only *after* its metadata propagation — every field write,
+=mf_sync= and the translated =mfr_path= included — has fully succeeded on the
+target. If any metadata write is rejected (=409= precondition, =400=
+forest/schema violation, an unresolved conflict), the operation is skipped
+and the link is not committed: metadata and content never diverge from a
+partial sync. This ordering also gives three guarantees for free: the two
+sides agree on =mf_sync= before the content decision reads it; =mfr_path= is
+written before the file is placed, so a sync-created record already exists at
+its path when the file arrives and the watcher's create/arrival event
+resolves to it rather than duplicating it (spec-file-tracking: =Create= /
+=Rename(To)= resolve by path first); and a crash between the metadata write
+and the disk operation leaves only a stale path, which the next run
+(uncommitted link, re-detected) or =reconcile= repairs.
 
 *** Diff semantics
 
@@ -341,6 +376,11 @@ semantics:
 - Metarecord fully deleted → the sync command propagates the deletion to the
   corresponding metarecord in the other repo, then deletes the link (and with
   it the snapshot, which has no existence of its own).
+
+For =external= records this stays metadata-only: metafolder removes the peer
+metarecord and the link but never deletes the file (the external tool owns
+the content). For =internal= records the peer file is removed as part of the
+propagation.
 
 Deletion propagation is destructive on the surviving side and a rollback can
 make a record vanish without any user intent (see
@@ -400,31 +440,30 @@ quiet-period window).
 
 ** Sync intentions
 
-Sync intentions are declared in the intents file as an *ordered* list of
-entries, each naming a *source repo*, a sync method, and a query (see
-[[*The intents file]] for the concrete format). Intents are *directional*:
-the query runs on the source repo only, and its result is the set of source
-metarecords that must be linked to the other repo. Example (source repo
-before the arrow):
+Sync intentions declare the sync *scope* — which records to link and keep in
+sync between the pair. (They no longer carry a transfer method: whether a
+record's content is metafolder's or an external tool's is the inherited
+=mf_sync= field, see [[*Metadata versus content: the =mf_sync= field]].) They are
+a list of entries, each naming a *source repo* and a query (see
+[[*The intents file]]). Intents are *directional*: the query runs on the source
+repo only, and its result is the set of source records that must be linked to
+the other repo. Example (source repo before the arrow):
 
 #+BEGIN_SRC
-laptop:  rsync  ←  tag = "sync_pc_b"
-laptop:  git    ←  files "/projects"
-nas:     rsync  ←  tag = "image" AND tag = "family"
+laptop:  tag = "sync_pc_b"
+laptop:  mfr_path ->* "/projects"
+nas:     tag = "image" AND tag = "family"
 #+END_SRC
 
-For a metarecord matched by several intents, the first matching entry (file
-order) wins; the same rule picks the method of a link whose two endpoints
-are covered by intents from both sides. The intent scopes maintain the link
-set:
+The union of the entries is the scope. It maintains the link set:
 
 - an in-scope source record with no link → link it (see
   [[*The linking phase: match or create]]);
 - a link neither of whose endpoints is in any intent scope → drop the link
   (never the records);
-- every remaining link is then synchronised with its method — the sync
-  phase, i.e. the change-detection/propagation machinery above driven by the
-  =mf sync= flow (see [[*CLI]]).
+- every remaining link is then synchronised — the sync phase, i.e. the
+  change-detection/propagation machinery above driven by the =mf sync= flow
+  (see [[*CLI]]).
 
 *** The linking phase: match or create
 
@@ -437,9 +476,12 @@ on the target side (=POST …/candidates=):
   spec-file-tracking "File Similarity" (already used by reconcile), computed
   across the two repos, at or above =similarity-threshold= — is proposed:
   linked after interactive confirmation, skipped in a non-interactive run;
-- no match → a *bare* metarecord (no fields at all) is created on the
-  target side, and its UUID is used to create the link. Nothing else
-  happens at this point.
+- no match, and the record is =internal= → a *bare* metarecord (no fields at
+  all) is created on the target side, and its UUID is used to create the
+  link. Nothing else happens at this point.
+- no match, and the record is =external= → the record cannot be created
+  (metafolder owns no content there): the external tool should have provided
+  it. This is reported as an error and no link is made.
 
 Sync-created records are bare: *everything* — the file itself (content
 transfer), =mfr_path= (file placement, directories top-down), every field,
@@ -574,13 +616,11 @@ be loaded (=404= otherwise).
   #+BEGIN_SRC json
   { "repo_a": "…", "repo_b": "…", "host": "…",
     "links": [ { "uuid": "…", "record_a": "…", "record_b": "…",
-                 "version_a": 5, "version_b": 9,
-                 "last_sync_method": "rsync" } ] }
+                 "version_a": 5, "version_b": 9 } ] }
   #+END_SRC
   =host= is the repo whose =internal/= holds the sync database (=null= when
   no sync database exists yet — the link list is then empty).
-  =version_a= / =version_b= / =last_sync_method= are =null= before the first
-  sync-commit.
+  =version_a= / =version_b= are =null= before the first sync-commit.
 
 - =GET /sync/:repo/:repo/links/:uuid= — one link, plus its decoded snapshot
   and both endpoint metarecords inline (avoids extra round-trips while
@@ -652,7 +692,6 @@ be loaded (=404= otherwise).
   #+BEGIN_SRC json
   { "commits": [ { "link": "<uuid>",
                    "version_a": 8, "version_b": 4,
-                   "last_sync_method": "rsync",
                    "snapshot": [ { "name": "rating",
                                    "value": { "type": "int", "value": 5 },
                                    "value_b": null }, … ] } ] }
@@ -670,6 +709,11 @@ be loaded (=404= otherwise).
   replaced. Returns ={ "committed": N }=.
 
 ** Performance concerns                                                   :v2:
+
+=internal= transfers/moves are native (=fs::copy= / =fs::rename=), one call
+per record, no process spawn — so a large batch of small files costs syscalls,
+not =fork+exec=. The concerns below are about the daemon round-trips, not the
+file operations.
 
 1. *Batching*: when the sync database is hosted on the SSHFS-mounted repo,
    each transaction is slow. Batch transactions (the =commits= array) reduce
@@ -732,8 +776,9 @@ Read-only. Produces the plan file =run= will consume. Steps:
      onto matched records, bare metarecords to create then link, links to
      drop;
    - sync phase: deletions to propagate (=missing_a= / =missing_b=), file
-     transfers with direction and method, field propagations
-     (=ahead_a= / =ahead_b=), and the chosen resolution of each conflict —
+     transfers/moves with direction (=internal= records), field propagations
+     (=ahead_a= / =ahead_b=), the chosen resolution of each conflict, and the
+     content/path divergences on =external= records (reported, not acted on) —
    each tagged with the *baseline* =version= of every metarecord it touches.
 
 The file is human-readable and may be inspected and hand-edited before
@@ -752,17 +797,16 @@ Takes a plan file, executes what is still valid, and writes a report. Steps:
 4. Execute the *sync phase*, interleaved by batches (=[settings]= in the
    intents file, recorded in the plan). For each link: propagate all metadata
    first (field writes with ref translation and =expected_version= set to the
-   plan's baselines, the translated =mfr_path=, deletion propagation); only
-   if that fully succeeds perform the file operation (transfer or move) and
-   set the target's stat fields to match (see [[*Field coverage and diff semantics]]
-   "Metadata gates the disk"). Then =POST …/links/commit=. A rejected write
-   (=409= stale baseline, =400= forest violation) leaves the file untouched
-   and skips the link; a failed transfer skips the link; every skip is
-   recorded.
-5. Write the report: what was done (counts) and, most importantly, *the
-   operations skipped because a metarecord had changed since the plan* — each
-   with the record and its old/new version — so the user knows exactly what a
-   fresh =mf sync plan= still needs to pick up. Recommend =mf reconcile= on
+   plan's baselines, =mf_sync=, the translated =mfr_path=, deletion
+   propagation). Then, only for =internal= records and only if the metadata
+   fully succeeded, perform the file/directory operation (transfer, move,
+   create) and set the target's stat fields to match (see
+   [[*Field coverage and diff semantics]] "Metadata gates the disk"); for
+   =external= records with a content/path divergence, record the error
+   instead. Then =POST …/links/commit=. A rejected write (=409= stale
+   baseline, =400= forest violation) leaves the file untouched and skips the
+   link; a failed transfer skips the link; every skip is recorded.
+5. Write the report (see [[*The run report]]) and recommend =mf reconcile= on
    both repos.
 
 Crash mid-run: file transfers are idempotent, committed links are consistent,
@@ -772,6 +816,23 @@ always written before its file operation, so a sync-created record exists at
 its path before the file does and the watcher can never duplicate it; a
 crash between the two leaves a stale path that the next run or =reconcile=
 repairs.
+
+*** The run report
+
+Written to a file (see above), grouped so it stays short at any scale —
+*never one line per file*. It contains:
+
+- a summary of what was done (counts: links created/dropped, files
+  transferred/moved/created, fields propagated, deletions);
+- operations *skipped because a metarecord changed since the plan*, grouped
+  by reason with counts and a few examples, so the user knows what a fresh
+  =mf sync plan= will pick up;
+- =external= content/path divergences, *aggregated by subtree/intent* — one
+  line such as "=/projects=: 3841 external files diverge (external sync
+  incomplete)", not one per file, since they almost always share the single
+  cause of an external sync not yet run;
+- per-record =internal= failures (a copy error, a =400= forest violation),
+  which are rarer and individually actionable — grouped by reason.
 
 *** Utility subcommands
 
@@ -786,63 +847,41 @@ candidates.
 
 ** The intents file
 
-TOML. Example:
+TOML. It declares only the sync *scope* (which records to link) and a few
+policies — no transfer methods (whether a record's content is metafolder's
+or an external tool's is the inherited =mf_sync= field on the record, see
+[[*Metadata versus content: the =mf_sync= field]]).
 
 #+BEGIN_SRC toml
-# Transfer methods as command templates. The built-in method "copy" (native
-# file copy, no external tool) is always available unless overridden.
-[methods]
-rsync = "rsync -a {src} {dst}"
-scp   = "scp {src} {dst}"
+  # Directional: each query runs on its source `repo` only; its result is the
+  # set of records that must be linked to the other repo of the pair. The
+  # union of the entries is the scope.
+  [[intents]]
+  repo   = "laptop"            # source repo (name or UUID; one of the pair)
+  query  = 'tag = "sync_pc_b"'
 
-# Ordered list; directional: the query runs on the source `repo` only, its
-# result is the set of records that must be linked to the other repo. For a
-# record (or a link's method) matched by several intents, the first match
-# wins (later matches produce a warning).
-[[intents]]
-repo   = "laptop"            # source repo (name or UUID; one of the pair)
-method = "rsync"
-query  = 'tag = "sync_pc_b"'
+  [[intents]]
+  repo       = "laptop"
+  query      = 'mfr_path ->* "/projects"'
+  simplified = false           # if true, expand with the simplified grammar first
 
-[[intents]]
-repo       = "laptop"
-method     = "copy"
-query      = 'files "/projects"'
-simplified = true            # expand with the simplified-query grammar first
+  [[intents]]
+  repo   = "nas"
+  query  = 'tag = "image" AND tag = "family"'
 
-[[intents]]
-repo   = "nas"
-method = "rsync"
-query  = 'tag = "image" AND tag = "family"'
+  [conflicts]
+  policy = "ask"               # "ask" | "skip" | "prefer:<repo name or uuid>"
 
-[conflicts]
-policy = "ask"               # "ask" | "skip" | "prefer:<repo name or uuid>"
+  [conflicts.fields]           # optional per-field overrides
+  rating   = "prefer:laptop"
+  mfr_path = "skip"
 
-[conflicts.fields]           # optional per-field overrides
-rating   = "prefer:laptop"
-mfr_path = "skip"
-
-[settings]                   # optional
-commit-batch-size    = 50    # links per sync-commit call
-transfer-batch-size  = 20    # file transfers between metadata batches
-similarity-threshold = 0.7   # enable similar-record matching in the linking
-                             # phase (absent: exact matches only)
+  [settings]                   # optional
+  commit-batch-size    = 50    # links per sync-commit call
+  transfer-batch-size  = 20    # file transfers between metadata batches
+  similarity-threshold = 0.7   # enable similar-record matching in the linking
+                               # phase (absent: exact matches only)
 #+END_SRC
-
-Template placeholders (substituted after shell-word splitting, one token at a
-time — file names are never shell-interpreted):
-
-| Placeholder  | Value                                        |
-|--------------+----------------------------------------------|
-| ={src}=      | absolute path of the source file             |
-| ={dst}=      | absolute path of the destination file        |
-| ={src_root}= | source repository root                       |
-| ={dst_root}= | destination repository root                  |
-| ={rel_path}= | repo-relative path (leading =/=), same on both sides for new files |
-
-The CLI creates missing destination parent directories before invoking the
-method. An intent naming an unknown method, or a template with an unknown
-placeholder, is a usage error (exit 2).
 
 ** Conflict resolution
 

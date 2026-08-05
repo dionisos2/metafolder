@@ -35,7 +35,7 @@ that can be used as an additional signal in the similarity phase (see
 [[*File Similarity]]).
 
 Files and directories are both tracked as first-class metarecords. Directories can
-carry arbitrary metadata fields (e.g. =sync_method=) that files can inherit via
+carry arbitrary metadata fields (e.g. =mf_sync=, spec-sync) that files can inherit via
 the =value_uuid= chain of their =mfr_path= TreeRef field.
 
 The root directory metarecord has =mfr_path= with =value_uuid = x'00...00'= and
