@@ -369,34 +369,34 @@ plan= writes and =mf sync run= consumes:
    plan's baseline. The file is human-readable and may be inspected at
    leisure and hand-edited before running.
 
-2. *Execution* (=mf sync run <plan>=): suspend the executors, verify that
-   every metarecord in the plan is still at its baseline =version=, and — if
-   so — execute the plan verbatim. =run= does *not* re-plan: the reviewed
-   (and possibly edited) plan is exactly what executes.
+2. *Execution* (=mf sync run <plan>=): execute each operation whose
+   metarecords are still at their baseline =version=, and *skip* the rest,
+   listing them in the run report. =run= does *not* re-plan: the reviewed
+   (and possibly edited) plan is exactly what executes, minus what has since
+   changed.
 
-The baseline-version check is the freshness guard. Because a version number
-is never reused for a different state (the =next_version= allocator, see
-[[*Version-based change detection]]), "every baseline still matches" proves
-every involved record is in the exact state the plan was computed from, so
-the plan's decisions — including baked conflict resolutions — are still
-valid. It also lets =run= re-read current field values instead of embedding
-them in the plan: equal version ⇒ identical fields. Any baseline mismatch
-aborts the run with the list of changed records ("plan is stale; re-plan").
-Concurrent API writes during execution are additionally fenced per-write by
-the =expected_version= preconditions.
+The per-operation baseline check is the freshness guard. Because a version
+number is never reused for a different state (the =next_version= allocator,
+see [[*Version-based change detection]]), a record still at its baseline is in
+the exact state the plan was computed from, so that operation's decisions —
+including a baked conflict resolution — are still valid, and =run= re-reads
+current field values instead of embedding them in the plan (equal version ⇒
+identical fields). A record that changed fails the check: every operation
+touching it is skipped and reported, for a later plan to pick up. The check
+runs on the daemon as the =expected_version= precondition of each write, so
+a concurrent writer that slips between check and write is caught too.
 
-By default =plan= leaves the executors running (a pure read-only preview);
-=--keep-suspended= suspends them at the end so the plan is *guaranteed*
-runnable — nothing the watcher sees can move a baseline — at the cost that a
-forgotten plan leaks the suspension until =mf sync run= or =mf sync resume=
-clears it (see [[*Executor suspension during sync]]).
+Crucially, this covers *file* changes as well as metadata: modifying a file
+bumps its record's =mfr_*= version through the watcher, so a plan built
+before the change no longer matches the baseline and its file operation is
+skipped. That is exactly why =run= does *not* suspend the executors — the
+running executor is what keeps versions current. Suspending it would freeze
+versions and let =run= act on a file that has since changed (see
+[[*Why the executor keeps running]]).
 
-After execution: =run= resumes the executors and lets them flush. The
-buffered events are the watcher's echoes of sync's own file operations
-(idempotent no-ops) plus any genuine concurrent user changes; the echoes
-change nothing (see [[*Executor suspension during sync]]), so no post-sync
-re-commit is needed. Running =reconcile= is recommended to catch any
-remaining filesystem drift.
+After execution, =run= writes its report and recommends =reconcile= to catch
+any residual filesystem drift (e.g. a change inside the executor's sub-second
+quiet-period window).
 
 ** Sync intentions
 
@@ -515,68 +515,40 @@ Concurrent primitive calls on the same pair are serialised by the daemon (the
 two repos' locks are always acquired in canonical order, preventing
 deadlock).
 
-** Executor suspension during sync
+** Why the executor keeps running
 
-The file watcher *always keeps running* during sync execution — it continues
-reading OS events and writing them to the =pending_operation= table (see
-[[file:spec-event-log.org][spec-event-log.org]]). What is suspended is the *executor*: the component that
-reads from =pending_operation= and commits operations to the data tables.
-
-Without executor suspension, a watcher event (e.g. a file rename during a
-file transfer) could increment =version= on a metarecord mid-execution,
-corrupting change detection. =mf sync run= suspends both repos for the whole
-execution; buffered filesystem events are applied on resume.
-
-*Ownership.* A suspension is held under an opaque *owner token* minted when
-it is taken. This makes the =plan --keep-suspended= → =run= handoff safe:
-=plan --keep-suspended= records its token in the plan file, and =run= adopts
-that suspension (proceeds on the already-suspended repos) only when the
-token matches; a suspension held under a different token is another sync's,
-so =run= reports =409=. =run= releases (or, if it took its own suspension,
-resumes) on every exit path, success or abort.
-
-Suspension is per-repo and *exclusive*: suspending an already-suspended
-executor is =409= (unless the caller presents the matching owner token, the
-adopt case above). This keeps two sync activities from sharing a repo. It is
-likewise mutually exclusive with the rollback lock, both directions
-(=executor/suspend= =409= while a rollback lock is held; =rollback/start=
-=409= while suspended). Unloading a suspended repo is =409= too: reloading
-would replay the pending buffer unconditionally, defeating the suspension.
-
-Suspension is not persisted: a daemon restart clears it and replays the
-pending buffer as usual. A leaked suspension — =plan --keep-suspended=
-whose run was forgotten, or a =run= killed by SIGKILL — is visible as
-=executor_suspended= in =GET /repos/:repo= and cleared by
-=mf sync resume= (a forced =POST /repos/:repo/executor/resume=) or a daemon
-restart.
-
-Normal API writes remain allowed while suspended — the executor gate only
-stops *watcher-originated* commits. They are guarded per-record by the
-=expected_version= preconditions (see [[*HTTP API]]).
+Sync never suspends the watcher or its executor. The running executor is
+what keeps metarecord versions current with the filesystem, and current
+versions are exactly what the per-operation baseline check relies on: a file
+modified during a run bumps its record's =mfr_*= version, so the stale
+operation is skipped rather than run against changed content. Freezing the
+executor would freeze versions and defeat that guard. Nothing needs
+mutual-exclusion machinery (owner tokens, unload locks, rollback-lock
+interplay): concurrency is handled uniformly by the =expected_version=
+precondition on every write, and a rollback in progress simply makes those
+writes fail (=423=), skipping their operations.
 
 *** Suppressing sync's own echoes
 
-Sync's file operations make the watcher enqueue events that, once applied,
-would refresh =mfr_*= and bump the very versions the sync-commit just
-recorded — so the next plan would see every synced link as changed. Two
-mechanisms make these echoes no-ops, so no post-sync re-commit is needed:
+Sync's own file operations make the watcher enqueue events that, once
+applied, would refresh =mfr_*= and bump the very versions the sync-commit
+just recorded — so the next plan would see every synced link as changed.
+Two mechanisms make these echoes no-ops:
 
 1. As part of each file operation, sync sets the target record's
    stat-derived fields (=mfr_size=, =mfr_mtime=, cleared hashes) to match
-   the file it just wrote — the same fields the watcher would refresh, but
-   in the write that the sync-commit records. The database is thus already
-   consistent with the file.
+   the file it just wrote — the same fields the watcher would refresh,
+   folded into the write the sync-commit records. The database is thus
+   already consistent with the file.
 2. The executor's data refresh is *idempotent*: it produces no operation and
    no =version= bump when the record's stored stat already matches the file
    on disk (see [[file:spec-file-tracking.org][spec-file-tracking.org]]). So the buffered echo of a sync
-   operation, arriving on resume, finds nothing to do.
+   operation finds nothing to do.
 
-A *genuine* user change during the suspended window has a different
-size/mtime, so it is not idempotent-skipped: it is applied normally (path
-update, =version= bump), and any sync write that raced it was already fenced
-by the =expected_version= precondition. Because =pending_operation= is a
-persistent table, no event is lost on crash or SIGKILL; the executor replays
-them on restart before accepting new requests.
+A *genuine* concurrent user change has a different size/mtime, so it is not
+idempotent-skipped: it is applied normally and bumps the version — which is
+exactly what makes the baseline check catch it. Any sync write that raced it
+was already fenced by the =expected_version= precondition.
 
 ** HTTP API
 
@@ -588,24 +560,13 @@ be loaded (=404= otherwise).
 
 *** Per-repo primitives
 
-- =POST /repos/:repo/executor/suspend= → ={ "suspended": true, "owner": "<token>" }=
-  — mints an owner token. =409= if already suspended (unless the body carries
-  the matching ={ "owner": "<token>" }=, which adopts the existing
-  suspension), while a rollback lock is held, or vice versa (see
-  [[*Executor suspension during sync]]).
-- =POST /repos/:repo/executor/resume= — body ={ "owner": "<token>" }= (=409=
-  on token mismatch) or ={ "force": true }= (unconditional, for manual
-  recovery). → ={ "suspended": false, "flushed_events": N }=. Flushes the
-  pending buffer synchronously before returning.
-- =GET /repos/:repo= gains an =executor_suspended= boolean.
-
 - Single-record write endpoints (field =POST=/=PUT=/=DELETE=, whole-record
   =PUT=, and metarecord =DELETE=) accept an optional =expected_version=
   query parameter: the write is rejected with =409= if the metarecord's
   current =version= differs (see [[file:spec-data-model.org][spec-data-model.org]] "Conditional writes").
-  Sync propagation and deletion propagation always use it, so a user write
-  racing the execution phase makes the affected link skip this run instead
-  of being silently overwritten.
+  Sync propagation and deletion propagation always set it to the plan's
+  baseline, so a metarecord that changed since the plan makes its operation
+  skip (and be reported) instead of being run against stale state.
 
 *** Pair primitives
 
@@ -719,12 +680,7 @@ be loaded (=404= otherwise).
    batch corresponds to file transfers (idempotent, but slow to re-transfer
    if the batch is large).
 
-2. *Executor suspension duration*: the executor is suspended only during the
-   execution phase. Watcher events accumulate in =pending_operation= (crash-safe)
-   and are replayed on resume. =reconcile= remains the fallback for any
-   filesystem drift that the watcher missed (e.g. if the daemon was down).
-
-3. *Tree-cache rebuilds during =mfr_path= propagation*: every manual TreeRef
+2. *Tree-cache rebuilds during =mfr_path= propagation*: every manual TreeRef
    write currently triggers a full tree-cache rebuild in the target repo —
    propagating paths for N records is O(N) rebuilds. Batching the rebuild
    (one per metadata batch) is an optimisation to evaluate with the
@@ -740,39 +696,38 @@ listed in [[*HTTP API]].
 
 #+BEGIN_SRC
 mf sync plan <repo_a> <repo_b> --intents <file> [-o <plan>]
-                 [--keep-suspended] [--host <repo>] [--on-conflict <policy>]
-mf sync run  <plan> [--yes]
+                 [--host <repo>] [--on-conflict <policy>]
+mf sync run  <plan> [-o <report>] [--yes]
 #+END_SRC
-
-Without =-o=, =plan= prints a human-readable preview to stdout and produces
-no artifact (=--keep-suspended= then has no plan file to record its token,
-so it is rejected). With =-o <plan>= it writes the runnable plan file that
-=run= consumes.
 
 =<repo_a>= / =<repo_b>= are repo names or UUIDs; their order on the command
 line does not matter (roles are canonical — see [[*Canonical pair order]]).
 Both repositories must be loaded in the same daemon instance (for a remote
 repo: mount it, e.g. over SSHFS, and =mf repo load= it first).
 
+*Files are the default interface.* Both commands persist their output to a
+file, printing only its path (and a short summary) to the console — so a
+plan is never lost after a long series of interactive answers, and a run
+report is never lost in scrollback. =-o= overrides the path; the generated
+default sits in the current directory.
+
 *** =mf sync plan=
 
-Produces the plan file =run= will consume. Steps:
+Read-only. Produces the plan file =run= will consume. Steps:
 
 1. Check that both repos' schemas are identical (abort otherwise — see
    [[*Schemas must be identical]]).
-2. If =--keep-suspended=: suspend both executors (recording the owner token
-   for the plan file).
-3. Evaluate each intent query on its source repo, fetch =GET …/status= and
+2. Evaluate each intent query on its source repo, fetch =GET …/status= and
    =GET …/links=, match unlinked in-scope records (=POST …/candidates=), and
    compute the diffs.
-4. Resolve interactively: =ask= conflicts (per conflicting field name, show
+3. Resolve interactively: =ask= conflicts (per conflicting field name, show
    the record's path/uuid and the snapshot / A / B multisets; choices: keep
    A, keep B, skip field, skip link), similar/ambiguous candidates, and the
    deletion confirmation. Under a non-interactive policy (=--on-conflict
-   skip|prefer:…=, or the intents file's =[conflicts]=) nothing prompts.
-5. Write the plan file: the pair, the host (=--host=, default canonical A),
-   whether the executors were left suspended and their owner token, and
-   every operation —
+   skip|prefer:…=, or the intents file's =[conflicts]=) nothing prompts and
+   unconfirmed deletions are omitted.
+4. Write the plan file: the pair, the host (=--host=, default canonical A),
+   and every operation —
    - linking phase ([[*The linking phase: match or create]]): links to create
      onto matched records, bare metarecords to create then link, links to
      drop;
@@ -782,42 +737,33 @@ Produces the plan file =run= will consume. Steps:
    each tagged with the *baseline* =version= of every metarecord it touches.
 
 The file is human-readable and may be inspected and hand-edited before
-running (editing a resolution, dropping an operation, …). It is not
-read-only only when =--keep-suspended= is given; the plain form has no side
-effect on the repos.
+running (editing a resolution, dropping an operation, …).
 
 *** =mf sync run=
 
-Takes a plan file. Steps:
+Takes a plan file, executes what is still valid, and writes a report. Steps:
 
 1. Re-check that both repos' schemas are identical (abort otherwise).
-2. Suspend both executors — adopting the plan's suspension when its owner
-   token still matches (the =plan --keep-suspended= handoff), taking a fresh
-   suspension otherwise. =409= aborts with a hint (another sync holds the
-   repo, a rollback is in progress).
-3. Verify every baseline =version= in the plan against the repos' current
-   versions. Any mismatch → resume and abort, listing the changed records
-   ("plan is stale; re-plan"). On success the plan's decisions are all still
-   valid and =run= re-reads current field values (equal version ⇒ identical
-   fields — see [[*Two-phase sync process]]).
-4. Confirm ("execute this plan?") unless =--yes=.
-5. Execute the *linking phase*: drop out-of-scope links, create the planned
+2. Confirm ("execute this plan?") unless =--yes=.
+3. Execute the *linking phase*: drop out-of-scope links, create the planned
    links — onto matched records, or onto bare metarecords created for the
-   purpose.
-6. Execute the *sync phase*, interleaved by batches (=[settings]= in the
+   purpose. An operation whose source record is no longer at its baseline
+   =version= is skipped and recorded in the report.
+4. Execute the *sync phase*, interleaved by batches (=[settings]= in the
    intents file, recorded in the plan). For each link: propagate all metadata
-   first (field writes with ref translation and =expected_version=
-   preconditions, the translated =mfr_path=, deletion propagation); only if
-   that fully succeeds perform the file operation (transfer or move) and set
-   the target's stat fields to match (see [[*Field coverage and diff semantics]]
-   "Metadata gates the disk"). Then =POST …/links/commit= for the links whose
-   metadata and file operations both succeeded. A failed metadata write
-   (=409=/=400=) leaves the file untouched and skips the link; a failed
-   transfer skips the link; either is reported and execution continues.
-7. Resume both executors (also on every error path); the resume flushes the
-   pending buffer synchronously. Sync's own echoes are idempotent no-ops, so
-   nothing more is committed.
-8. Print a summary and recommend =mf reconcile= on both repos.
+   first (field writes with ref translation and =expected_version= set to the
+   plan's baselines, the translated =mfr_path=, deletion propagation); only
+   if that fully succeeds perform the file operation (transfer or move) and
+   set the target's stat fields to match (see [[*Field coverage and diff semantics]]
+   "Metadata gates the disk"). Then =POST …/links/commit=. A rejected write
+   (=409= stale baseline, =400= forest violation) leaves the file untouched
+   and skips the link; a failed transfer skips the link; every skip is
+   recorded.
+5. Write the report: what was done (counts) and, most importantly, *the
+   operations skipped because a metarecord had changed since the plan* — each
+   with the record and its old/new version — so the user knows exactly what a
+   fresh =mf sync plan= still needs to pick up. Recommend =mf reconcile= on
+   both repos.
 
 Crash mid-run: file transfers are idempotent, committed links are consistent,
 uncommitted links re-detect as changed on the next run (the value-equal rule
@@ -825,8 +771,7 @@ prevents phantom conflicts) — at most one batch of re-work. Metadata is
 always written before its file operation, so a sync-created record exists at
 its path before the file does and the watcher can never duplicate it; a
 crash between the two leaves a stale path that the next run or =reconcile=
-repairs. If the CLI is killed outright, the executor suspension leaks and
-must be cleared with =mf sync resume= (see [[*Executor suspension during sync]]).
+repairs.
 
 *** Utility subcommands
 
@@ -834,12 +779,10 @@ must be cleared with =mf sync resume= (see [[*Executor suspension during sync]])
 mf sync status <repo_a> <repo_b>                 # print per-link states
 mf sync link   <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]
 mf sync unlink <repo_a> <repo_b> <link_uuid> [--with-endpoint a|b]
-mf sync resume <repo>                            # force-clear a stale suspension
 #+END_SRC
 
 =link=/=unlink= are the manual escape hatch for similar or ambiguous
-candidates; =resume= force-clears a suspension leaked by a forgotten
-=plan --keep-suspended= or a killed =run=.
+candidates.
 
 ** The intents file
 
