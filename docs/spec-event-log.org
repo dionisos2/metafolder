@@ -314,7 +314,10 @@ Three op types require attention at rollback time:
 
 - =file_moved=: the CLI checks whether the file still exists at its current
   location before executing the =mv=. If the file is gone or inaccessible,
-  the CLI calls =step= with =skip: true=.
+  the CLI calls =step= with =skip: true=. If the destination path is
+  occupied, the =mv= would overwrite it — the CLI first moves that file to
+  the trash (file content is never destroyed by rollback, as by sync; see
+  [[file:spec-sync.org][spec-sync.org]] "Design principles" — trash design TBD).
 - =file_deleted=, =file_modified=: no filesystem action is possible (content
   is gone). The CLI calls =step= with =skip: true= when it does not want
   the metadata left in a stale state.

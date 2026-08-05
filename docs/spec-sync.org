@@ -19,6 +19,13 @@ absent from the event log, and are not subject to rollback.
 
 - The daemon never touches files. File operations are always performed by the
   CLI command or script.
+- File content is never destroyed. Any file operation that would overwrite or
+  delete a file (a =copy= over existing content, a =delete=, a =move= onto an
+  occupied path) first moves the existing file into a *trash* area under
+  =internal/= — so a botched or unwanted sync is always recoverable. Rollback
+  obeys the same rule for the =mv= it performs (see [[file:spec-event-log.org][spec-event-log.org]]).
+  The trash-bin itself (layout, retention, restore command) is still to be
+  designed (see [[*Open questions]]).
 - Sync intentions (which metarecords to link) are expressed as queries in the
   intents file, not stored in the database. Whether a record's content is
   metafolder's to move or an external tool's is the record's inherited
@@ -322,7 +329,8 @@ immediate conflict, resolved by policy before the first sync-commit.
   if they differ, a transfer is planned from the changed side (for a content
   conflict — both sides changed — the conflict policy chooses the direction,
   like any conflicting field). A record present on one side only is created
-  on the other (bare metarecord + transfer/mkdir).
+  on the other (bare metarecord + transfer/mkdir). A transfer that would
+  overwrite existing bytes trashes them first (see [[*Design principles]]).
 - =mfr_path=: a placement (onto a sync-created record) or a move/rename of a
   linked file or directory. Path operations are applied top-down (parents
   before children); a translated TreeRef whose parent is missing or orphaned
@@ -358,8 +366,8 @@ and the disk operation leaves only a stale path, which the next run
 
 For =external= records this stays metadata-only: metafolder removes the peer
 metarecord and the link but never deletes the file (the external tool owns
-the content). For =internal= records the peer file is removed as part of the
-propagation.
+the content). For =internal= records the peer file is moved to the trash as
+part of the propagation (never destroyed — see [[*Design principles]]).
 
 Deletion propagation is destructive on the surviving side and a rollback can
 make a record vanish without any user intent, so it is never silent: =mf sync
@@ -857,5 +865,10 @@ recorded in the plan and can still be hand-edited before =run=.
 
 * Open questions
 
+- The *trash-bin* (see [[*Design principles]]) is undesigned: where under
+  =internal/= trashed files live, how they are named (to allow restore and
+  to survive collisions), retention/pruning, a =mf= restore command, and
+  whether sync and rollback share one trash or keep separate ones. Both must
+  route every overwrite/delete through it.
 - Optimal =commit-batch-size= / =transfer-batch-size= defaults await the
   benchmark (see [[*Performance concerns]]).
