@@ -30,7 +30,9 @@ absent from the event log, and are not subject to rollback.
   The daemon itself makes no network calls.
 - Sync state is bookkeeping, not user data: it lives outside the data model
   and the event log, so the log, rollback, queries and the index are entirely
-  unaffected by sync (see [[*Interaction with rollback]]).
+  unaffected by sync. (A rollback still moves the linked metarecords' own
+  =version= counters, which change detection accounts for — see
+  [[*Version-based change detection]].)
 
 ** The sync database
 
@@ -138,8 +140,10 @@ canonical repo A. Choosing the host lets the user keep sync state on the
 machine that orchestrates the syncs (e.g. the local repo rather than the
 SSHFS-mounted one).
 
-Every pair primitive locates the file by checking both loaded repos'
-=internal/= directories:
+The two repo UUIDs of a pair must differ (=400= otherwise). Every pair
+primitive locates the file by checking both loaded repos' =internal/=
+directories, then checks its =meta= table matches the file name and the pair
+(=409= on mismatch):
 
 - found in exactly one → use it (and update =meta.host= if the file was
   moved by hand — relocation is supported: move the file, nothing else).
@@ -148,43 +152,29 @@ Every pair primitive locates the file by checking both loaded repos'
 - found in both → ambiguous (=409=); the user deletes the stale one. The
   daemon never merges two sync databases.
 
-*** Consistency
+A missing file simply means an empty link set; an unreadable or corrupted
+one is an error — deleting it abandons the pair's sync state (the next sync
+starts over as a first sync).
 
-Every sync-state mutation (link creation, deletion, batched sync-commit) is
-one ordinary SQLite transaction on the single file — link state is always
+*** Consistency and access
+
+The daemon opens the file on demand, for the duration of one primitive call,
+and closes it afterwards — no handle is kept in the repo state. Every
+sync-state mutation (link creation, deletion, batched sync-commit) is one
+ordinary SQLite transaction on the single file, so link state is always
 internally consistent, whatever crashes. Cross-database consistency (sync
 state vs. the two main databases) is the job of the change-detection
 machinery: a crash between a metadata write and its sync-commit simply
 leaves the link "changed", re-detected and re-committed on the next run
 (see [[*Version-based change detection]]).
 
-Concurrent mutation of the same pair from two daemons is excluded by the
-main databases' exclusive locks (both repos must be loaded to touch a
-pair). On network filesystems with unreliable locks (SSHFS) that exclusion
-can weaken; the sync database's own SQLite locking is then the last line of
-defence. Syncing the same pair from two daemons concurrently is unsupported.
-
-*** Interaction with rollback
-
-The sync database is not part of the data model: link state is never recorded
-in the event log and cannot be rolled back.
-
-Rolling back a repo's event log *does* restore the =version= counters of the
-linked metarecords themselves. A restored =E_X.version= that no longer
-matches the recorded =version_x= — even if numerically smaller — simply means
-"changed since the last sync" and is reported as such by the status primitive
-(see [[*Version-based change detection]]).
-
-Version *equality* is trustworthy even across rollbacks: versions are
-assigned from the per-metarecord =next_version= allocator, which navigation
-never restores, so a version number is never reused for a different state
-(see [[file:spec-data-model.org][spec-data-model.org]]). =E_X.version == version_x= therefore guarantees
-the metarecord is in the exact state it had at the last sync-commit.
-
-A navigation can also make a linked metarecord *disappear* (rollback before
-its creation). This is indistinguishable from a deliberate deletion at the
-data level, which is why deletion propagation is never applied silently (see
-[[*Metarecord deletion propagation]]).
+Concurrent primitive calls on the same pair are serialised by the daemon
+(the two repos' locks are acquired in canonical order, so no deadlock).
+Concurrent mutation from *two* daemons is excluded by the main databases'
+exclusive locks (both repos must be loaded to touch a pair); on network
+filesystems with unreliable locks (SSHFS) that exclusion can weaken, and the
+sync database's own SQLite locking is then the last line of defence —
+syncing the same pair from two daemons concurrently is unsupported.
 
 ** Version-based change detection
 
@@ -207,8 +197,12 @@ On the next sync, for each linked pair:
 "Different" rather than "greater": a rollback can restore a *smaller*
 =E_X.version=; any difference from the recorded value means the metarecord
 changed relative to the last sync point. Equality, conversely, proves the
-state is unchanged: version numbers are never reused for different states
-(the =next_version= allocator — see [[*Interaction with rollback]]).
+state is unchanged — a version number is never reused for a different state
+(the per-metarecord =next_version= allocator, which navigation never
+restores; see [[file:spec-data-model.org][spec-data-model.org]]). A rollback can also make a linked
+metarecord *disappear* (undo its creation); that is indistinguishable from a
+deliberate deletion, which is why deletion propagation is never silent (see
+[[*Metarecord deletion propagation]]).
 
 The version test is a cheap pre-filter, not the definition of change:
 
@@ -223,24 +217,17 @@ The version test is a cheap pre-filter, not the definition of change:
   sync-commit re-detects the link as "changed on both sides", but the values
   are equal, so the next run just records the versions.
 
-Conflict resolution is left to the sync command (user prompt or declared
-policy in the intents file).
+The *snapshot* — the =snapshot_field= rows of the link — records the common
+field state at the last sync-commit and is what resolves the "both changed"
+case into three:
 
-When a link is created for the first time, =version_a= / =version_b= are
-=NULL= and no snapshot exists (state =never_synced=). If =E_A= and =E_B=
-already have divergent fields, this is treated as an immediate conflict to
-resolve before the first sync-commit can record versions and snapshot.
+- changed only in A = =diff(E_A, snapshot)= → propagate A → B;
+- changed only in B = =diff(E_B, snapshot)= → propagate B → A;
+- changed in both = a conflict → resolved by policy (see [[*Conflict resolution]]).
 
-The snapshot (the =snapshot_field= rows of the link) captures the common
-field state after each successful sync. It is replaced at every sync-commit
-alongside =version_a= and =version_b=. During conflict resolution (both sides
-changed), the sync command computes:
-
-- Fields changed only in A = diff(E_A, snapshot)
-- Fields changed only in B = diff(E_B, snapshot)
-- Fields changed in both   = conflict → manual resolution
-
-Fields changed on only one side are propagated automatically.
+The snapshot is replaced at every sync-commit alongside =version_a= /
+=version_b=. Before the first sync there is none (state =never_synced=) and
+union semantics apply (see [[*The metadata diff]]).
 
 *** Ref and TreeRef fields in the snapshot
 
@@ -304,7 +291,7 @@ is itself an ordinary synced field, so the two sides agree on it before any
 content decision (metadata precedes content — below), and a contradiction is
 a normal metadata conflict resolved at plan time.
 
-*** Which fields the diff covers
+*** The metadata diff
 
 =mfr_*= fields (except =mfr_path=) are *excluded* from the snapshot, the
 diff, and propagation. They are stat- and content-derived: each repo
@@ -313,6 +300,20 @@ would ping-pong forever. Any version bump they cause (a stat-only change) is
 absorbed by the empty-effective-diff rule above. All other fields — user
 data, and reserved =mf_*= (including =mf_sync=) written with =force= — are
 propagated as ordinary field writes.
+
+Fields form a multi-map: the diff compares, per field *name*, the full
+*multiset* of values (after ref translation on the B side). Propagation
+replaces the target's whole row set for that name (set semantics, not
+append). A field name absent on one side and present in the snapshot is a
+*removal*, propagated as an unset — "absent" (unknown) and =Nothing= (does
+not apply) are distinct states and both are preserved by snapshot and
+propagation. Conflict prompts operate per field name and display the full
+multisets.
+
+At the *first sync* the snapshot is empty, so union semantics apply: a name
+present on one side only is propagated to the other; present on both with
+equal multisets is in sync; present on both with different multisets is an
+immediate conflict, resolved by policy before the first sync-commit.
 
 *** Content operations (=internal= records only)
 
@@ -347,28 +348,6 @@ resolves to it rather than duplicating it (spec-file-tracking: =Create= /
 and the disk operation leaves only a stale path, which the next run
 (uncommitted link, re-detected) or =reconcile= repairs.
 
-*** Diff semantics
-
-Fields form a multi-map: the diff compares, per field *name*, the full
-*multiset* of values (after ref translation on the B side). Propagation
-replaces the target's whole row set for that name (set semantics, not
-append). A field name absent on one side and present in the snapshot is a
-*removal*, propagated as an unset — "absent" (unknown) and =Nothing= (does
-not apply) are distinct states and both are preserved by snapshot and
-propagation. Conflict prompts operate per field name and display the full
-multisets.
-
-*** First sync
-
-When a link is created, the snapshot is empty; the first sync uses union
-semantics:
-
-- a field name present on one side only → propagated to the other side;
-- present on both sides with equal multisets (after translation) → in sync;
-- present on both sides with different multisets → an immediate conflict,
-  resolved by the normal policy before the first sync-commit records
-  versions and snapshot.
-
 ** Metarecord deletion propagation
 
 - =mfr_path= set to =Nothing= (file deleted, metarecord preserved) → link is kept;
@@ -383,10 +362,9 @@ the content). For =internal= records the peer file is removed as part of the
 propagation.
 
 Deletion propagation is destructive on the surviving side and a rollback can
-make a record vanish without any user intent (see
-[[*Interaction with rollback]]), so it is never silent: =mf sync plan= lists
-planned deletions nominatively and confirms them interactively before
-writing them into the plan (a non-interactive =plan= omits unconfirmed
+make a record vanish without any user intent, so it is never silent: =mf sync
+plan= lists planned deletions nominatively and confirms them interactively
+before writing them into the plan (a non-interactive =plan= omits unconfirmed
 deletions). The deletions that survive into the plan are then plainly
 visible in the file for review before =run=.
 
@@ -426,13 +404,10 @@ touching it is skipped and reported, for a later plan to pick up. The check
 runs on the daemon as the =expected_version= precondition of each write, so
 a concurrent writer that slips between check and write is caught too.
 
-Crucially, this covers *file* changes as well as metadata: modifying a file
-bumps its record's =mfr_*= version through the watcher, so a plan built
-before the change no longer matches the baseline and its file operation is
-skipped. That is exactly why =run= does *not* suspend the executors — the
-running executor is what keeps versions current. Suspending it would freeze
-versions and let =run= act on a file that has since changed (see
-[[*Why the executor keeps running]]).
+This covers *file* changes too: modifying a file bumps its record's =mfr_*=
+version through the watcher, so the baseline no longer matches and the file
+operation is skipped. This is why =run= does *not* suspend the executors —
+they are what keeps versions current (see [[*Why the executor keeps running]]).
 
 After execution, =run= writes its report and recommends =reconcile= to catch
 any residual filesystem drift (e.g. a change inside the executor's sub-second
@@ -536,26 +511,6 @@ that write; the CLI reports the field as skipped with the violation message
 and continues. Sync never bypasses the schema.
 
 * Daemon
-
-** Sync database lifecycle
-
-The daemon opens the pair's sync database on demand, for the duration of one
-primitive call, and closes it afterwards; no handle is kept in the repo
-state. The file is located by the discovery rule (both loaded repos'
-=internal/= directories — see [[*Location and discovery]]); on every open, the
-=meta= table is checked against the file name and the repo pair (=409= on
-mismatch, and =409= when the file is found on both sides). The two UUIDs of
-a pair must differ (=400= otherwise).
-
-The file is created (with its =meta= rows) by the first mutating primitive
-on the pair, in the host repo designated by the request (default: canonical
-repo A). A missing file simply means an empty link set; an unreadable or
-corrupted one is an error — deleting it abandons the pair's sync state (the
-next sync starts over as a first sync).
-
-Concurrent primitive calls on the same pair are serialised by the daemon (the
-two repos' locks are always acquired in canonical order, preventing
-deadlock).
 
 ** Why the executor keeps running
 
