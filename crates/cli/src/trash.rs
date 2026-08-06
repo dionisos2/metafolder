@@ -1,4 +1,4 @@
-//! The repository trash-bin (spec-sync "The trash-bin").
+//! The repository trash-bin (spec-trash.org).
 //!
 //! A single per-repository trash, shared by every metafolder file operation
 //! that would overwrite or delete a file (rollback today, sync in v2). It

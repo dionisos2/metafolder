@@ -282,6 +282,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-file-tracking.org][spec-file-tracking.org]] | =mf reconcile=, =mf track=, watch-scope workflow |
 | [[file:spec-schema.org][spec-schema.org]]           | =mf schema {check,reload,show}=                    |
 | [[file:spec-event-log.org][spec-event-log.org]]     | =mf log {list,rollback,prune}=                     |
+| [[file:spec-trash.org][spec-trash.org]]             | =mf trash {list,restore,prune}=                   |
 | [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
 

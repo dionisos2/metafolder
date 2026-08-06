@@ -1,0 +1,102 @@
+#+TITLE: Metafolder — Trash-bin Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+A single trash-bin per repository, shared by *every* metafolder file operation
+that would overwrite or delete a file — rollback today (see
+[[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination"), cross-repo sync tomorrow (see
+[[file:spec-sync.org][spec-sync.org]], v2). It guarantees no byte is ever lost: the destroyed content is
+set aside, and the user decides later whether to bring it back or discard it.
+
+The trash-bin is filesystem state managed *entirely by the CLI* (the daemon
+never touches files); it lives under =internal/=, excluded from tracking like
+=db.sqlite=. The daemon's only involvement is exposing the repo's =internal_dir=
+in =GET /repos/:repo= so the CLI can locate it without guessing the
+=.metafolder= location.
+
+Restoration is always an explicit act (=mf trash restore=), never automatic: an
+operation only ever *moves victims into* the trash, and the log/navigation are
+never coupled to it.
+
+* Layout
+
+: .metafolder/internal/trash/<id>        -- the trashed file's bytes (the blob)
+: .metafolder/internal/trash/<id>.json    -- the entry's manifest
+
+=<id>= is a fresh 32-char lowercase hex UUID (collision-free; the blob carries
+no extension — the original name is in the manifest). The blob is written
+*before* its manifest, so a manifest on disk always implies its blob is present;
+=list= enumerates =*.json=. One directory, flat, no per-reason subdirectories.
+
+The manifest (=<id>.json=) records everything =restore= and =prune= need:
+
+#+BEGIN_SRC json
+{
+  "id":            "<32-hex>",
+  "original_path": "/abs/path/the/file/was/at",
+  "original_name": "basename.ext",
+  "trashed_at":    1733500000000,          // unix-ms — prune -d, and list order
+  "size":          12345,                   // bytes — prune -s
+  "reason":        "rollback",              // rollback | sync | manual
+  "revision":      101,                     // op id that trashed it, or null
+  "metarecord":    "<32-hex-uuid>"          // the record it belonged to, or null
+}
+#+END_SRC
+
+=reason=/=revision=/=metarecord= are provenance: they let the user correlate a
+trashed version with the operation that displaced it (e.g. which rollback step),
+but restoration itself is driven purely by =original_path=.
+
+* Moving into and out of the trash
+
+Trashing a file *moves* it into =internal/trash/= (a rename, falling back to
+copy-then-delete when the trash sits on a different filesystem than the file —
+possible with an external =.metafolder= location). Restoring moves the blob back
+to =original_path= (or an explicit target) and deletes the entry. Neither step
+touches the data model: if the repo is watched, the reconcile that follows the
+restored file's arrival re-establishes its metadata; nothing is written to the
+event log for a trash or restore. Restoring onto an occupied path is itself an
+overwrite, so it first trashes the occupant (only with =--force=; without it the
+restore is refused).
+
+* Retention
+
+The trash grows without bound until pruned; pruning is the retention mechanism
+(=mf trash prune=, see [[*=mf trash=]]), by age (=-d=), by total size
+(oldest-first until under budget, =-s=), or wholesale (=--all=). There is no
+automatic expiry — a lost byte is worse than a full disk the user can see and
+clear.
+
+* =mf trash=
+
+Manages the repository's trash-bin. Purely a CLI filesystem operation — the
+trash location comes from =GET /repos/:repo= (=internal_dir=); no daemon
+endpoint is involved. This is not v2 (unlike cross-repo sync): rollback already
+routes overwrites through the trash.
+
+#+BEGIN_SRC
+mf trash list
+mf trash restore <id> [--to <path>] [--force]
+mf trash prune (-s <size> | -d <duration> | --all) [--dry-run]
+#+END_SRC
+
+=list= (the group default, so =mf trash= ≡ =mf trash list=) prints one row per
+entry — id, original path, size, age (from =trashed_at=), reason — newest first.
+
+=restore <id>= moves the blob back to its =original_path= (or =--to <path>=) and
+removes the entry. If the target is occupied the restore is refused unless
+=--force=, which trashes the occupant first (=reason=manual=). In a watched
+repo the restored file's arrival is reconciled like any other; nothing is
+written to the event log.
+
+=prune= permanently deletes entries; exactly one selector is required:
+- =-s=/=--size <size>= — delete oldest first until the total is at/under the
+  budget. =<size>= is a human size: a bare integer (bytes) or a number with a
+  =k=/=m=/=g=/=t= suffix (base 1024, case-insensitive; a trailing =b= is
+  allowed, e.g. =100mb=, =1g=, =512k=).
+- =-d=/=--older-than <duration>= — delete entries older than the duration.
+  =<duration>= is =<n><unit>= with unit =y= (365 d), =w=, =d=, =h=, =m= (minute),
+  =s= (e.g. =1y=, =30d=, =12h=).
+- =--all= — empty the trash.
+=--dry-run= lists what would be removed and reclaimed without deleting.

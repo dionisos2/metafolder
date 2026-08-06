@@ -144,7 +144,7 @@ pub fn rollback_run(
     }
 
     // The trash-bin catches any file a `move_file` step would overwrite, so no
-    // byte is ever lost by rollback (spec-sync "The trash-bin").
+    // byte is ever lost by rollback (spec-trash.org).
     let trash = ctx.internal_dir()?;
 
     let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
@@ -853,7 +853,7 @@ mod tests {
     }
 
     // `apply` when the destination is occupied trashes the occupant first, so
-    // its content survives the overwrite (spec-sync "The trash-bin").
+    // its content survives the overwrite (spec-trash.org).
     #[test]
     fn apply_trashes_an_occupied_destination() {
         let tmp = std::env::temp_dir().join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));

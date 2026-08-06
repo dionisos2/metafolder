@@ -1339,7 +1339,7 @@ fn repo_trash(root: &std::path::Path) -> TrashDir {
 
 // `mf trash list/restore/prune` over the real daemon: the CLI discovers the
 // trash via `GET /repos/:repo` (internal_dir) and acts on it — no daemon
-// endpoint is involved (spec-sync "The trash-bin").
+// endpoint is involved (spec-trash.org).
 #[test]
 fn test_trash_list_restore_and_prune() {
     let (repo, root) = init_repo("trash");
