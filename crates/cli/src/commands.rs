@@ -71,6 +71,20 @@ impl Ctx {
         Ok(base)
     }
 
+    /// The repository's trash-bin (`internal/trash/`), located via the
+    /// `internal_dir` the daemon reports in `GET /repos/:repo` (spec-sync
+    /// "The trash-bin"). Pure filesystem — no daemon endpoint is involved.
+    pub(crate) fn internal_dir(&self) -> Result<crate::trash::TrashDir, CliError> {
+        let base = self.repo_base()?;
+        let info = self.client.get(&base, &[])?;
+        let internal = info["internal_dir"]
+            .as_str()
+            .ok_or_else(|| CliError::Op("daemon did not report the repo internal_dir".into()))?;
+        Ok(crate::trash::TrashDir::new(
+            std::path::Path::new(internal).join("trash"),
+        ))
+    }
+
     /// Maps a unique repository name to its UUID via `GET /repos`.
     fn resolve_name(&self, name: &str) -> Result<Uuid, CliError> {
         let repos = self.client.get("/repos", &[])?;
@@ -1076,6 +1090,124 @@ pub fn schema_show(ctx: &Ctx) -> Result<i32, CliError> {
     let resp = ctx.client.get(&format!("{base}/schema"), &[])?;
     print_pretty(&resp);
     Ok(0)
+}
+
+// ── mf trash ────────────────────────────────────────────────────────────────
+
+use crate::trash::PruneMode;
+
+/// `mf trash list`: one row per entry, newest first.
+pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
+    let dir = ctx.internal_dir()?;
+    let mut entries = dir.entries()?;
+    entries.sort_by_key(|e| std::cmp::Reverse(e.trashed_at)); // newest first
+    if entries.is_empty() {
+        println!("The trash is empty.");
+        return Ok(0);
+    }
+    for e in &entries {
+        println!(
+            "{}  {:>9}  {:>10}  {:<8}  {}",
+            e.id,
+            format_size(e.size),
+            format_age(e.trashed_at),
+            e.reason.as_str(),
+            e.original_path,
+        );
+    }
+    Ok(0)
+}
+
+/// `mf trash restore <id> [--to <path>] [--force]`.
+pub fn trash_restore(
+    ctx: &Ctx,
+    id: &str,
+    to: Option<&Path>,
+    force: bool,
+) -> Result<i32, CliError> {
+    let dir = ctx.internal_dir()?;
+    let restored = dir.restore(id, to, force)?;
+    println!("restored {}", restored.display());
+    Ok(0)
+}
+
+/// `mf trash prune (-s|-d|--all) [--dry-run]`.
+pub fn trash_prune(ctx: &Ctx, mode: PruneMode, dry_run: bool) -> Result<i32, CliError> {
+    let dir = ctx.internal_dir()?;
+    let removed = dir.prune(mode, dry_run)?;
+    let reclaimed: u64 = removed.iter().map(|e| e.size).sum();
+    if dry_run {
+        for e in &removed {
+            println!("would remove {}  {}", format_size(e.size), e.original_path);
+        }
+        println!(
+            "{} entrie(s), {} would be reclaimed (dry-run).",
+            removed.len(),
+            format_size(reclaimed)
+        );
+    } else {
+        println!(
+            "removed {} entrie(s), {} reclaimed.",
+            removed.len(),
+            format_size(reclaimed)
+        );
+    }
+    Ok(0)
+}
+
+/// Human-readable byte count (base 1024, one decimal above KiB).
+fn format_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
+    let mut v = bytes as f64;
+    let mut i = 0;
+    while v >= 1024.0 && i < UNITS.len() - 1 {
+        v /= 1024.0;
+        i += 1;
+    }
+    if i == 0 {
+        format!("{bytes}{}", UNITS[0])
+    } else {
+        format!("{v:.1}{}", UNITS[i])
+    }
+}
+
+/// Coarse "how long ago" from a unix-ms timestamp.
+fn format_age(trashed_at: i64) -> String {
+    let ms = (metafolder_core::date::now_ms() - trashed_at).max(0);
+    let secs = ms / 1000;
+    let (n, unit) = if secs < 60 {
+        (secs, "s")
+    } else if secs < 3600 {
+        (secs / 60, "m")
+    } else if secs < 86_400 {
+        (secs / 3600, "h")
+    } else {
+        (secs / 86_400, "d")
+    };
+    format!("{n}{unit} ago")
+}
+
+/// Builds the [`PruneMode`] from the `mf trash prune` selectors, enforcing
+/// exactly one of `-s` / `-d` / `--all`.
+pub fn trash_prune_mode(
+    size: Option<&str>,
+    older_than: Option<&str>,
+    all: bool,
+) -> Result<PruneMode, CliError> {
+    match (size, older_than, all) {
+        (Some(s), None, false) => Ok(PruneMode::MaxSize(crate::trash::parse_size(s)?)),
+        (None, Some(d), false) => {
+            let cutoff = metafolder_core::date::now_ms() - crate::trash::parse_duration(d)?;
+            Ok(PruneMode::OlderThan(cutoff))
+        }
+        (None, None, true) => Ok(PruneMode::All),
+        (None, None, false) => Err(CliError::Usage(
+            "mf trash prune needs one of -s <size>, -d <duration>, or --all".into(),
+        )),
+        _ => Err(CliError::Usage(
+            "mf trash prune: -s, -d and --all are mutually exclusive".into(),
+        )),
+    }
 }
 
 #[cfg(test)]

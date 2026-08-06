@@ -12,6 +12,7 @@ use metafolder_core::date;
 
 use crate::client::CliError;
 use crate::commands::Ctx;
+use crate::trash::{Reason, TrashDir};
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
@@ -142,6 +143,10 @@ pub fn rollback_run(
         eprintln!("Navigating {total} operations.");
     }
 
+    // The trash-bin catches any file a `move_file` step would overwrite, so no
+    // byte is ever lost by rollback (spec-sync "The trash-bin").
+    let trash = ctx.internal_dir()?;
+
     let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
     let mut op = start["op"].clone();
     let mut processed = 0usize;
@@ -151,7 +156,7 @@ pub fn rollback_run(
         while !op.is_null() {
             let op_type = op["op_type"].as_str().unwrap_or("");
             let skip = match op_type {
-                "move_file" => decide_move(&op, &policies, silent)?,
+                "move_file" => decide_move(&op, &policies, &trash, silent)?,
                 // No filesystem action is possible: restore metadata on the
                 // new branch via a restoration op.
                 "file_deleted" | "file_modified" => true,
@@ -182,7 +187,12 @@ pub fn rollback_run(
 
 /// Decides a `move_file` step, executing the `mv` for the apply policy.
 /// Returns whether to `skip` (no filesystem move) when calling `step`.
-fn decide_move(op: &Json, policies: &RollbackPolicies, silent: bool) -> Result<bool, CliError> {
+fn decide_move(
+    op: &Json,
+    policies: &RollbackPolicies,
+    trash: &TrashDir,
+    silent: bool,
+) -> Result<bool, CliError> {
     let from = op["from"].as_str().unwrap_or_default();
     let to = op["to"].as_str().unwrap_or_default();
     let available = std::path::Path::new(from).exists();
@@ -198,6 +208,27 @@ fn decide_move(op: &Json, policies: &RollbackPolicies, silent: bool) -> Result<b
         // not at (spec-event-log "Policies for move_file"; review #6).
         Policy::Apply => {
             if available {
+                // If `to` is occupied, the mv would overwrite it — trash the
+                // occupant first so its content survives (spec-sync "The
+                // trash-bin"). A directory at `to` is not a file we can trash;
+                // refuse rather than clobber it.
+                let dest = std::path::Path::new(to);
+                if dest.is_dir() {
+                    return Err(CliError::Op(format!(
+                        "cannot move {from} -> {to}: a directory occupies the destination"
+                    )));
+                }
+                if dest.exists() {
+                    let entry = trash.trash_file(
+                        dest,
+                        Reason::Rollback,
+                        op["id"].as_i64(),
+                        op["entity_uuid"].as_str().map(str::to_owned),
+                    )?;
+                    if !silent {
+                        eprintln!("trashed {to} (id {}) before overwrite", entry.id);
+                    }
+                }
                 std::fs::rename(from, to)
                     .map_err(|e| CliError::Op(format!("mv {from} -> {to} failed: {e}")))?;
                 if !silent {
@@ -771,6 +802,12 @@ mod tests {
         RollbackPolicies { on_available, on_unavailable }
     }
 
+    fn test_trash() -> TrashDir {
+        TrashDir::new(
+            std::env::temp_dir().join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
+        )
+    }
+
     // `apply` on a gone file: no `mv` is attempted (nothing to move) and the
     // step is a plain `step {}` — the metadata follows the rollback instead of
     // erroring or rewinding to a location the file is not at (review #6).
@@ -781,7 +818,8 @@ mod tests {
         let to = tmp.join("target.txt");
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
 
-        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), true).unwrap();
+        let skip =
+            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &test_trash(), true).unwrap();
         assert!(!skip, "apply must produce a plain step {{}} (no skip)");
         assert!(!to.exists(), "no file should have been created at the target");
     }
@@ -792,7 +830,8 @@ mod tests {
     fn skip_is_available_for_a_gone_file() {
         let from = std::env::temp_dir().join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
         let op = move_op(from.to_str().unwrap(), "/whatever");
-        let skip = decide_move(&op, &policies(Policy::Skip, Policy::Skip), true).unwrap();
+        let skip =
+            decide_move(&op, &policies(Policy::Skip, Policy::Skip), &test_trash(), true).unwrap();
         assert!(skip, "skip must request the rewind even when the file is gone");
     }
 
@@ -806,9 +845,36 @@ mod tests {
         std::fs::write(&from, b"x").unwrap();
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
 
-        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), true).unwrap();
+        let skip =
+            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &test_trash(), true).unwrap();
         assert!(!skip);
         assert!(!from.exists() && to.exists(), "the file should have been moved");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // `apply` when the destination is occupied trashes the occupant first, so
+    // its content survives the overwrite (spec-sync "The trash-bin").
+    #[test]
+    fn apply_trashes_an_occupied_destination() {
+        let tmp = std::env::temp_dir().join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let from = tmp.join("here.txt");
+        let to = tmp.join("victim.txt");
+        std::fs::write(&from, b"source").unwrap();
+        std::fs::write(&to, b"victim-content").unwrap();
+        let trash = test_trash();
+        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
+
+        let skip =
+            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
+        assert!(!skip);
+        assert_eq!(std::fs::read(&to).unwrap(), b"source", "the mv happened");
+        // The victim's bytes are preserved in the trash, not destroyed.
+        let entries = trash.entries().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].reason, Reason::Rollback);
+        let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered")), false).unwrap();
+        assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

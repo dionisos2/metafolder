@@ -55,6 +55,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<LogCommand>,
     },
+    /// Trash-bin: restore or prune files displaced by rollback/sync (default: list)
+    Trash {
+        #[command(subcommand)]
+        command: Option<TrashCommand>,
+    },
     /// Metarecord operations: `mf metarecord [selector] <verb>`
     ///
     /// The selector picks the target metarecord(s) and precedes the verb:
@@ -359,6 +364,38 @@ enum FieldCommand {
 }
 
 #[derive(Subcommand)]
+enum TrashCommand {
+    /// List the trashed files (id, size, age, reason, original path)
+    List,
+    /// Restore a trashed file to its original path (or --to <path>)
+    Restore {
+        /// The trash entry id (from `mf trash list`)
+        id: String,
+        /// Restore to this path instead of the recorded original
+        #[arg(long)]
+        to: Option<PathBuf>,
+        /// If the target exists, trash it first instead of refusing
+        #[arg(long)]
+        force: bool,
+    },
+    /// Permanently delete trashed files (by size, age, or all)
+    Prune {
+        /// Delete oldest-first until the total is under this size (e.g. 100mb, 1g)
+        #[arg(short = 's', long = "size")]
+        size: Option<String>,
+        /// Delete entries older than this duration (e.g. 1y, 30d, 12h)
+        #[arg(short = 'd', long = "older-than")]
+        older_than: Option<String>,
+        /// Empty the trash
+        #[arg(long)]
+        all: bool,
+        /// Show what would be removed without deleting anything
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum GuiCommand {
     /// Print the GUI state (pretty-printed JSON)
     Status,
@@ -561,6 +598,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
         }
         Command::Log { command } => dispatch_log(ctx, command),
+        Command::Trash { command } => dispatch_trash(ctx, command),
         Command::Metarecord { query, id, simplified, verb } => {
             dispatch_metarecord(ctx, query, id, simplified, verb)
         }
@@ -722,6 +760,19 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 }
             }
         },
+    }
+}
+
+fn dispatch_trash(ctx: &Ctx, command: Option<TrashCommand>) -> CmdResult {
+    match command.unwrap_or(TrashCommand::List) {
+        TrashCommand::List => commands::trash_list(ctx),
+        TrashCommand::Restore { id, to, force } => {
+            commands::trash_restore(ctx, &id, to.as_deref(), force)
+        }
+        TrashCommand::Prune { size, older_than, all, dry_run } => {
+            let mode = commands::trash_prune_mode(size.as_deref(), older_than.as_deref(), all)?;
+            commands::trash_prune(ctx, mode, dry_run)
+        }
     }
 }
 

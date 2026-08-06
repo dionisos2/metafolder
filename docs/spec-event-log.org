@@ -316,8 +316,9 @@ Three op types require attention at rollback time:
   location before executing the =mv=. If the file is gone or inaccessible,
   the CLI calls =step= with =skip: true=. If the destination path is
   occupied, the =mv= would overwrite it — the CLI first moves that file to
-  the trash (file content is never destroyed by rollback, as by sync; see
-  [[file:spec-sync.org][spec-sync.org]] "Design principles" — trash design TBD).
+  the trash-bin (file content is never destroyed by rollback, as by sync; see
+  [[file:spec-sync.org][spec-sync.org]] "The trash-bin" for the layout, the manifest, and
+  =mf trash restore=/=prune=).
 - =file_deleted=, =file_modified=: no filesystem action is possible (content
   is gone). The CLI calls =step= with =skip: true= when it does not want
   the metadata left in a stale state.
@@ -891,7 +892,10 @@ unusual but never forbidden):
 - =apply=: the metadata follows the navigation (call =step {}=). When the file
   is present, =mv from to= is executed first; when it is *gone*, no =mv= is
   attempted — the metadata still follows the rollback, keeping the recorded
-  path rather than =Nothing= (a later reconcile corrects it).
+  path rather than =Nothing= (a later reconcile corrects it). If =to= is
+  occupied, the =mv= would overwrite it — the CLI first moves that file to the
+  trash-bin (=reason=rollback=), so no byte is ever lost (see
+  [[file:spec-sync.org][spec-sync.org]] "The trash-bin"; recover it with =mf trash restore=).
 - =skip=: call =step {"skip": true}= without touching the filesystem — the
   metadata is rewound to the file's current recorded location (restoration op,
   see above). Intended for a file that is present but could not be moved; it is

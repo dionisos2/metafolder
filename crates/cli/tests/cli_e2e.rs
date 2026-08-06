@@ -1327,3 +1327,85 @@ fn test_field_by_id_get_set_delete() {
     let entries = get_entries(&repo, &uuid);
     assert_eq!(entries.as_array().unwrap()[0]["fields"].as_array().unwrap().len(), 0);
 }
+
+// ── mf trash ────────────────────────────────────────────────────────────────
+
+use metafolder_cli::trash::{Reason, TrashDir};
+
+/// The repo's `internal/trash/` directory (matches the daemon-reported path).
+fn repo_trash(root: &std::path::Path) -> TrashDir {
+    TrashDir::new(root.join(".metafolder").join("internal").join("trash"))
+}
+
+// `mf trash list/restore/prune` over the real daemon: the CLI discovers the
+// trash via `GET /repos/:repo` (internal_dir) and acts on it — no daemon
+// endpoint is involved (spec-sync "The trash-bin").
+#[test]
+fn test_trash_list_restore_and_prune() {
+    let (repo, root) = init_repo("trash");
+    let trash = repo_trash(&root);
+
+    // Seed the trash as a rollback overwrite would.
+    let victim = root.join("victim.txt");
+    std::fs::write(&victim, b"precious").unwrap();
+    let e1 = trash.trash_file(&victim, Reason::Rollback, Some(7), None).unwrap();
+    let other = root.join("other.txt");
+    std::fs::write(&other, b"stuff").unwrap();
+    trash.trash_file(&other, Reason::Manual, None, None).unwrap();
+    assert!(!victim.exists() && !other.exists(), "both were moved into the trash");
+
+    // list shows both entries with their original names.
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&e1.id), "list shows the entry id");
+    assert!(out.stdout.contains("victim.txt"), "list shows the original path");
+    assert!(out.stdout.contains("other.txt"));
+
+    // restore brings the victim back to its original path and drops the entry.
+    let out = mf(&["-u", &repo, "trash", "restore", &e1.id]);
+    assert_ok(&out);
+    assert_eq!(std::fs::read(&victim).unwrap(), b"precious");
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(!out.stdout.contains(&e1.id), "the restored entry is gone");
+
+    // prune --all empties the rest.
+    let out = mf(&["-u", &repo, "trash", "prune", "--all"]);
+    assert_ok(&out);
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("empty"), "trash is empty after prune --all");
+}
+
+// `mf trash restore` refuses an occupied target unless --force (which trashes
+// the occupant first) — the never-destroy rule applies to restore too.
+#[test]
+fn test_trash_restore_refuses_occupied_without_force() {
+    let (repo, root) = init_repo("trashocc");
+    let trash = repo_trash(&root);
+    let doc = root.join("doc.txt");
+    std::fs::write(&doc, b"old").unwrap();
+    let e = trash.trash_file(&doc, Reason::Manual, None, None).unwrap();
+    std::fs::write(&doc, b"new").unwrap(); // the path is occupied again
+
+    let out = mf(&["-u", &repo, "trash", "restore", &e.id]);
+    assert_eq!(out.code, 1, "an occupied target is refused (Op error)");
+    assert!(out.stderr.contains("already exists"));
+    assert_eq!(std::fs::read(&doc).unwrap(), b"new", "the occupant is untouched");
+
+    let out = mf(&["-u", &repo, "trash", "restore", &e.id, "--force"]);
+    assert_ok(&out);
+    assert_eq!(std::fs::read(&doc).unwrap(), b"old", "the entry is restored");
+    // The occupant ("new") now sits in the trash — nothing was lost.
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(!out.stdout.contains("empty"), "the occupant is now trashed");
+}
+
+// `mf trash prune` with no selector is a usage error before any HTTP call.
+#[test]
+fn test_trash_prune_requires_a_selector() {
+    let (repo, _root) = init_repo("trashsel");
+    let out = mf(&["-u", &repo, "trash", "prune"]);
+    assert_eq!(out.code, 2, "no -s/-d/--all is a usage error");
+}
