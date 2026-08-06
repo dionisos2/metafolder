@@ -284,8 +284,8 @@ choice is the =mf_sync= field:
 - =external= — something outside metafolder owns the content (a git repo, a
   manually-run =rsync=, …): metafolder performs *no* file or directory
   operation. A content or path divergence between the two sides then means
-  the external sync is incomplete and is reported as an error (aggregated —
-  see [[*The run report]]).
+  the external sync is incomplete and is reported as an error (aggregated by
+  subtree in the =run= summary, not one line per file).
 
 =mf_sync= is a reserved config field (=mf_= prefix, needs =force=), set on a
 directory and *inherited* down the =mfr_path= tree exactly like =mf_watch= /
@@ -384,42 +384,93 @@ later run would resurrect as "new".
 
 ** Two-phase sync process
 
-Sync is split into two commands over a *plan artifact* — a file =mf sync
-plan= writes and =mf sync run= consumes:
+Sync is split into two commands over a *plan* that is itself stored as
+metarecords (see [[*The plan repo]]):
 
 1. *Planning* (=mf sync plan=): query both repos, resolve conflicts and
-   ambiguous matches interactively, and write a plan file recording every
+   ambiguous matches interactively, and write the plan — one metarecord per
    operation (linking phase: matches, creations, drops; sync phase:
-   transfers with direction, field propagations, deletions) together with,
-   *for each involved metarecord, the =version= it was read at* — the
-   plan's baseline. The file is human-readable and may be inspected at
-   leisure and hand-edited before running.
+   transfers/moves with direction, field propagations, deletions), each
+   carrying, *for the metarecords it touches, the =version= they were read
+   at* — the plan's baseline. The plan can be browsed and edited with the
+   ordinary =mf= / GUI tooling before running (=mf sync show=).
 
-2. *Execution* (=mf sync run <plan>=): execute each operation whose
-   metarecords are still at their baseline =version=, and *skip* the rest,
-   listing them in the run report. =run= does *not* re-plan: the reviewed
-   (and possibly edited) plan is exactly what executes, minus what has since
-   changed.
+2. *Execution* (=mf sync run=): execute each operation whose metarecords are
+   still at their baseline =version=, *skip* the rest, and delete every
+   operation that succeeded — so the plan repo is left holding exactly what
+   did *not* happen. =run= does *not* re-plan: the reviewed (and possibly
+   edited) plan is exactly what executes, minus what has since changed.
 
 The per-operation baseline check is the freshness guard. Because a version
 number is never reused for a different state (the =next_version= allocator,
 see [[*Version-based change detection]]), a record still at its baseline is in
 the exact state the plan was computed from, so that operation's decisions —
-including a baked conflict resolution — are still valid, and =run= re-reads
-current field values instead of embedding them in the plan (equal version ⇒
+including a resolved conflict — are still valid, and =run= re-reads current
+field values instead of embedding them in the plan (equal version ⇒
 identical fields). A record that changed fails the check: every operation
-touching it is skipped and reported, for a later plan to pick up. The check
-runs on the daemon as the =expected_version= precondition of each write, so
-a concurrent writer that slips between check and write is caught too.
+touching it is skipped, for a later plan to pick up. The check runs on the
+daemon as the =expected_version= precondition of each write, so a concurrent
+writer that slips between check and write is caught too.
 
 This covers *file* changes too: modifying a file bumps its record's =mfr_*=
 version through the watcher, so the baseline no longer matches and the file
 operation is skipped. This is why =run= does *not* suspend the executors —
 they are what keeps versions current (see [[*Why the executor keeps running]]).
 
-After execution, =run= writes its report and recommends =reconcile= to catch
-any residual filesystem drift (e.g. a change inside the executor's sub-second
-quiet-period window).
+After execution, =run= prints a summary, leaves the un-executed operations in
+the plan repo for inspection, and recommends =reconcile= to catch any residual
+filesystem drift (e.g. a change inside the executor's sub-second quiet-period
+window).
+
+** The plan repo
+
+The plan is stored as metarecords in a *dedicated metafolder repo*, so it is
+browsed, filtered and edited with the ordinary =mf= / GUI tooling — the query
+engine, the cache and the panels come for free, which is exactly what a
+reviewable/editable plan needs. (This does not contradict keeping *links*
+out of the data model: links are internal bookkeeping shared by the two main
+repos, whereas the plan is isolated in its own repo and being browsable is
+its whole point.)
+
+*** The repo
+
+A data-only metafolder repo — =mf_watch = false=, no files, only abstract
+metadata metarecords — stored under =internal/= (=plan-<uuid_a>-<uuid_b>/=),
+recreated from scratch by each =mf sync plan= (only the latest plan exists).
+It is *loaded into the daemon* alongside the two synced repos (both are
+necessarily loaded during planning), and marked a *system repo* (a flag in
+its =config.json=) so it is hidden from =mf repo list= unless =--all= is
+passed. Its in-memory cache/index may be dropped right after creation if
+memory is tight; nothing depends on it staying warm.
+
+*** Operations as metarecords
+
+One metarecord per operation, with no =mfr_path= (an abstract entity, as the
+data model already allows for tags/collections/links):
+
+- =plan_kind= (String): =create-link= | =drop-link= | =sync= | =copy= |
+  =move= | =delete=.
+- =plan_a=, =plan_b= (ExternalRef): the touched records in repo A / repo B.
+- =plan_version_a=, =plan_version_b= (Int): the baselines that gate the op.
+- =plan_from= (String, =a= | =b=): the winning/source side for a =sync= /
+  =copy= / =move=; =plan_side= for a =delete=.
+
+A conflict is one =plan_kind = conflict= metarecord *per (link, field)*:
+=plan_field=, the two candidate values, and =plan_resolve= (=a= | =b= |
+=skip=) — the one editable field. Reviewing conflicts is a query
+(=plan_kind = "conflict"=); resolving one is =mf … field set plan_resolve=…=,
+itself logged (and undoable) in the plan repo.
+
+*** Live overlay (=mf sync show=)
+
+Browsing the plan repo directly shows the operations but with *stored*
+references. The sync-specific =mf sync show= adds the live context the
+generic query cannot: it follows each =plan_a= / =plan_b= ExternalRef into
+the (loaded) synced repos to display current paths and values, and compares
+=plan_version_*= to the records' current versions to flag operations that
+will be *skipped* (their baseline no longer matches) — the red/green view.
+Following an ExternalRef across repos is not a generic query feature, so this
+overlay is the one piece the plan repo does not get for free.
 
 ** Sync intentions
 
@@ -702,25 +753,22 @@ listed in [[*HTTP API]].
 ** =mf sync=                                                              :v2:
 
 #+BEGIN_SRC
-mf sync plan <repo_a> <repo_b> --intents <file> [-o <plan>]
-                 [--host <repo>] [--on-conflict <policy>]
-mf sync run  <plan> [-o <report>] [--yes]
+mf sync plan <repo_a> <repo_b> --intents <file> [--host <repo>] [--on-conflict <policy>]
+mf sync show <repo_a> <repo_b> [--conflicts | --files | --summary]
+mf sync run  <repo_a> <repo_b> [--yes]
 #+END_SRC
 
 =<repo_a>= / =<repo_b>= are repo names or UUIDs; their order on the command
 line does not matter (roles are canonical — see [[*Canonical pair order]]).
 Both repositories must be loaded in the same daemon instance (for a remote
-repo: mount it, e.g. over SSHFS, and =mf repo load= it first).
-
-*Files are the default interface.* Both commands persist their output to a
-file, printing only its path (and a short summary) to the console — so a
-plan is never lost after a long series of interactive answers, and a run
-report is never lost in scrollback. =-o= overrides the path; the generated
-default sits in the current directory.
+repo: mount it, e.g. over SSHFS, and =mf repo load= it first). The plan lives
+in a per-pair plan repo (see [[*The plan repo]]), not a file — nothing to clean
+up, and only the latest plan exists.
 
 *** =mf sync plan=
 
-Read-only. Produces the plan file =run= will consume. Steps:
+Read-only w.r.t. the synced repos. Produces the plan repo =show= / =run=
+operate on. Steps:
 
 1. Check that both repos' schemas are identical (abort otherwise — see
    [[*Schemas must be identical]]).
@@ -728,74 +776,59 @@ Read-only. Produces the plan file =run= will consume. Steps:
    =GET …/links=, match unlinked in-scope records (=POST …/candidates=), and
    compute the diffs.
 3. Resolve interactively: =ask= conflicts (per conflicting field name, show
-   the record's path/uuid and the snapshot / A / B multisets; choices: keep
-   A, keep B, skip field, skip link), similar/ambiguous candidates, and the
-   deletion confirmation. Under a non-interactive policy (=--on-conflict
-   skip|prefer:…=, or the intents file's =[conflicts]=) nothing prompts and
-   unconfirmed deletions are omitted.
-4. Write the plan file: the pair, the host (=--host=, default canonical A),
-   and every operation —
-   - linking phase ([[*The linking phase: match or create]]): links to create
-     onto matched records, bare metarecords to create then link, links to
-     drop;
-   - sync phase: deletions to propagate (=missing_a= / =missing_b=), file
-     transfers/moves with direction (=internal= records), field propagations
-     (=ahead_a= / =ahead_b=), the chosen resolution of each conflict, and the
-     content/path divergences on =external= records (reported, not acted on) —
-   each tagged with the *baseline* =version= of every metarecord it touches.
+   the record's path/uuid and the A / B values; choices: keep A, keep B,
+   skip field, skip link), similar/ambiguous candidates, and the deletion
+   confirmation. Under a non-interactive policy (=--on-conflict skip|prefer:…=,
+   or the intents file's =[conflicts]=) nothing prompts and unconfirmed
+   deletions are omitted.
+4. (Re)create the plan repo and write one operation metarecord per action —
+   linking phase (create/drop links, bare-record creations), sync phase
+   (field propagations, transfers/moves with direction, deletions, and the
+   resolved conflicts) — each tagged with its baseline versions (see
+   [[*The plan repo]]).
 
-The file is human-readable and may be inspected and hand-edited before
-running (editing a resolution, dropping an operation, …).
+The plan can then be reviewed and edited with ordinary tooling: =mf sync show=,
+a raw query on the plan repo, the GUI, or =mf … field set plan_resolve=…= to
+change a resolution.
+
+*** =mf sync show=
+
+Renders the current plan with live context: current paths/values of the
+touched records (following the ExternalRefs into the synced repos) and a
+red/green flag on each operation (green = baseline still matches → will run;
+red = a record changed → will be skipped). =--conflicts= / =--files= /
+=--summary= filter the view; the default is a summary plus the reds.
 
 *** =mf sync run=
 
-Takes a plan file, executes what is still valid, and writes a report. Steps:
+Executes the plan, deleting each operation that succeeds. Steps:
 
 1. Re-check that both repos' schemas are identical (abort otherwise).
-2. Confirm ("execute this plan?") unless =--yes=.
+2. Confirm (showing the summary + reds) unless =--yes=.
 3. Execute the *linking phase*: drop out-of-scope links, create the planned
-   links — onto matched records, or onto bare metarecords created for the
-   purpose. An operation whose source record is no longer at its baseline
-   =version= is skipped and recorded in the report.
-4. Execute the *sync phase*, interleaved by batches (=[settings]= in the
-   intents file, recorded in the plan). For each link: propagate all metadata
-   first (field writes with ref translation and =expected_version= set to the
-   plan's baselines, =mf_sync=, the translated =mfr_path=, deletion
-   propagation). Then, only for =internal= records and only if the metadata
-   fully succeeded, perform the file/directory operation (transfer, move,
-   create) and set the target's stat fields to match (see
-   [[*Field coverage and diff semantics]] "Metadata gates the disk"); for
-   =external= records with a content/path divergence, record the error
-   instead. Then =POST …/links/commit=. A rejected write (=409= stale
-   baseline, =400= forest violation) leaves the file untouched and skips the
-   link; a failed transfer skips the link; every skip is recorded.
-5. Write the report (see [[*The run report]]) and recommend =mf reconcile= on
-   both repos.
+   links (onto matched records or freshly-created bare records).
+4. Execute the *sync phase*, interleaved by batches (=[settings]=). For each
+   link: propagate all metadata first (field writes with ref translation and
+   =expected_version= set to the plan's baselines, =mf_sync=, the translated
+   =mfr_path=, deletion propagation). Then, only for =internal= records and
+   only if the metadata fully succeeded, perform the file/directory operation
+   (transfer, move, create — routing any overwrite/delete through the trash)
+   and set the target's stat fields to match (see
+   [[*Field coverage and diff semantics]] "Metadata gates the disk"). Then
+   =POST …/links/commit=.
+5. A rejected write (=409= stale baseline, =400= forest violation) or a failed
+   transfer leaves the file untouched and skips that operation. *Every
+   operation that succeeds is deleted from the plan repo*; the rest remain.
+6. Print a summary (counts of what was done; =external= content/path
+   divergences aggregated by subtree; a pointer to =mf sync show= for the
+   operations left un-executed) and recommend =mf reconcile= on both repos.
 
 Crash mid-run: file transfers are idempotent, committed links are consistent,
-uncommitted links re-detect as changed on the next run (the value-equal rule
-prevents phantom conflicts) — at most one batch of re-work. Metadata is
-always written before its file operation, so a sync-created record exists at
-its path before the file does and the watcher can never duplicate it; a
-crash between the two leaves a stale path that the next run or =reconcile=
-repairs.
-
-*** The run report
-
-Written to a file (see above), grouped so it stays short at any scale —
-*never one line per file*. It contains:
-
-- a summary of what was done (counts: links created/dropped, files
-  transferred/moved/created, fields propagated, deletions);
-- operations *skipped because a metarecord changed since the plan*, grouped
-  by reason with counts and a few examples, so the user knows what a fresh
-  =mf sync plan= will pick up;
-- =external= content/path divergences, *aggregated by subtree/intent* — one
-  line such as "=/projects=: 3841 external files diverge (external sync
-  incomplete)", not one per file, since they almost always share the single
-  cause of an external sync not yet run;
-- per-record =internal= failures (a copy error, a =400= forest violation),
-  which are rarer and individually actionable — grouped by reason.
+un-deleted plan operations simply re-run next time (the value-equal rule
+prevents phantom conflicts). Metadata is always written before its file
+operation, so a sync-created record exists at its path before the file does
+and the watcher can never duplicate it; a crash between the two leaves a
+stale path that the next run or =reconcile= repairs.
 
 *** Utility subcommands
 
@@ -852,7 +885,7 @@ A conflict is a field changed on both sides since the last sync (or differing
 at first sync). Resolution policies:
 
 - =ask= (default) — interactive prompt at =plan= time (see the =plan= flow);
-  the chosen side is baked into the plan file.
+  the chosen side is written into the conflict's =plan_resolve= field.
 - =skip= — leave both sides untouched; the field stays unsynced and will
   conflict again next time.
 - =prefer:<repo>= — take the value from the named repo (name or UUID; never
@@ -860,8 +893,9 @@ at first sync). Resolution policies:
 
 Precedence: =--on-conflict= flag (on =plan=) > =[conflicts.fields]= entry >
 =[conflicts] policy=. A non-interactive =plan= (=--on-conflict skip= or a
-file policy other than =ask=) never prompts; either way the resolution is
-recorded in the plan and can still be hand-edited before =run=.
+file policy other than =ask=) never prompts. Either way the resolution is a
+=plan_resolve= field on the conflict metarecord (see [[*The plan repo]]) and can
+still be changed before =run= (=mf … field set plan_resolve=…=, or in the GUI).
 
 * Open questions
 

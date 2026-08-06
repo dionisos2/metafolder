@@ -136,7 +136,10 @@ POST   /repos/:repo_uuid/unload
 
 *** =GET /repos=
 
-Returns the list of currently loaded repositories.
+Returns the list of currently loaded repositories. *System* repositories
+(=system= flag in their =config.json= — e.g. a cross-repo sync *plan repo*,
+see [[file:spec-sync.org][spec-sync.org]]) are omitted unless =?all=true= is passed; they are
+loaded and usable like any repo, just hidden from the default listing.
 
 Response body:
 #+BEGIN_SRC json
@@ -146,6 +149,7 @@ Response body:
   "name": "...",
   "root": "/path/to/dir",
   "internal_dir": "/path/to/dir/.metafolder/internal",
+  "system": false,
   [...]
   }
   ]
