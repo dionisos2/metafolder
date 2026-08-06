@@ -3,7 +3,7 @@
 //! schema violations) and `CliError` on failure.
 
 use std::io::{IsTerminal as _, Write as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
@@ -1211,13 +1211,33 @@ pub fn trash_restore(
     let info = ctx.repo_info()?;
     let dir = trash_dir_of(&info)?;
     let entry = dir.entry(id)?;
+    let root = info["root"].as_str();
+
+    // Where the file will land (same rule the move uses).
+    let target = to
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(&entry.original_path));
+    let target_free = std::fs::symlink_metadata(&target).is_err();
+
+    // Re-link the associated metarecord to the restored location. When the
+    // target is free we do it *before* the move: the metarecord then already
+    // claims the path, so the watcher's arrival handler finds it tracked
+    // (`resolve` → refresh) and never fingerprint-searches or creates a
+    // duplicate — which matters because a freshly tracked file has no stored
+    // full hash for the fingerprint to match (spec-trash.org). When the target
+    // is occupied we cannot pre-claim it (the occupant's metarecord still holds
+    // the path), so the re-link is best-effort after the move.
+    if target_free {
+        if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
+            relink_after_restore(ctx, Path::new(root), metarecord, &target)?;
+        }
+    }
+
     let restored = dir.restore(id, to, force)?;
     println!("restored {}", restored.display());
 
-    // Re-link the associated metarecord to the restored location (authoritative,
-    // so ambiguous content the watcher's fingerprint could mis-link is handled).
-    if let Some(metarecord) = &entry.metarecord {
-        if let Some(root) = info["root"].as_str() {
+    if !target_free {
+        if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
             relink_after_restore(ctx, Path::new(root), metarecord, &restored)?;
         }
     }

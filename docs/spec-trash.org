@@ -65,18 +65,29 @@ removal; restoring the directory brings the whole subtree back.
 
 Trashing itself never touches the data model — that stays the watcher's job
 (and where watching is off, the frozen metadata is left alone). *Restoring*,
-however, re-links the entry's recorded =metarecord= authoritatively: once the
-file is back, if that metarecord is *orphaned* (its =mfr_path= is =Nothing= or
-absent — the state a deletion leaves), the CLI writes its =mfr_path= back to the
-restored location (a =force= write, since =mfr_path= is reserved). This is
-deterministic where the watcher's fingerprint match would be ambiguous
-(duplicate or empty content). It is a *no-op when the metarecord still carries
-an =mfr_path=* (a watch-off repo never cleared it — nothing to fix, and the
-frozen metadata is respected), and it is skipped with a note when the restored
-path lies outside the repo or its parent directory is untracked. The re-link
-races the watcher's own arrival handling harmlessly: the watcher re-homes the
-same record if it wins, and the tree's uniqueness index rejects any genuine
-double-claim. The restore itself is never blocked by a re-link failure.
+however, re-links the entry's recorded =metarecord= authoritatively: if that
+metarecord is *orphaned* (its =mfr_path= is =Nothing= or absent — the state a
+deletion leaves), the CLI writes its =mfr_path= to the restored location (a
+=force= write, since =mfr_path= is reserved).
+
+Ordering matters, and is the crux of correctness. When the target path is
+*free*, the re-link is done *before* the file is moved into place: the
+metarecord then already claims the path, so when the watcher sees the arrival it
+finds the path tracked (=resolve= → refresh) and neither fingerprint-searches
+nor creates a metarecord. This is what makes restore reliable — a freshly
+tracked file has *no stored full hash*, so the watcher's fingerprint search
+cannot re-home it and would otherwise =create= a *duplicate*. (If the move then
+fails, the metarecord points at a not-yet-present file until the restore is
+retried — no content is lost, the blob stays in the trash.) When the target is
+*occupied*, the path cannot be pre-claimed (the occupant's metarecord still
+holds it), so there the re-link is best-effort after the move and the tree's
+uniqueness index guards against a double-claim.
+
+The re-link is a *no-op when the metarecord still carries an =mfr_path=* (a
+watch-off repo never cleared it — nothing to fix, and the frozen metadata is
+respected), and it is skipped with a note when the restored path lies outside
+the repo or its parent directory is untracked. The restore itself is never
+blocked by a re-link failure.
 
 Restoring onto an occupied path is itself an overwrite, so it first trashes the
 occupant (only with =--force=; without it the restore is refused).
