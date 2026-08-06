@@ -778,9 +778,9 @@ operate on. Steps:
 3. Resolve interactively: =ask= conflicts (per conflicting field name, show
    the record's path/uuid and the A / B values; choices: keep A, keep B,
    skip field, skip link), similar/ambiguous candidates, and the deletion
-   confirmation. Under a non-interactive policy (=--on-conflict skip|prefer:…=,
-   or the intents file's =[conflicts]=) nothing prompts and unconfirmed
-   deletions are omitted.
+   confirmation. When every conflict is covered by a non-interactive
+   =[[conflict]]= rule (=skip=/=prefer=) or =--on-conflict= is given, nothing
+   prompts and unconfirmed deletions are omitted.
 4. (Re)create the plan repo and write one operation metarecord per action —
    linking phase (create/drop links, bare-record creations), sync phase
    (field propagations, transfers/moves with direction, deletions, and the
@@ -865,12 +865,20 @@ or an external tool's is the inherited =mf_sync= field on the record, see
   repo   = "nas"
   query  = 'tag = "image" AND tag = "family"'
 
-  [conflicts]
-  policy = "ask"               # "ask" | "skip" | "prefer:<repo name or uuid>"
+  # Conflict rules, ordered; first match wins. A rule matches a conflicting
+  # (record, field) when its `field` (if given) and its `query` (if given,
+  # tested against either endpoint) both match. A rule with neither is the
+  # default. Replaces the old global policy + per-field tables with one list.
+  [[conflict]]
+  field  = "rating"                    # field-scoped
+  policy = "prefer:laptop"
 
-  [conflicts.fields]           # optional per-field overrides
-  rating   = "prefer:laptop"
-  mfr_path = "skip"
+  [[conflict]]
+  query  = 'mfr_path ->* "/photos"'    # record-scoped (a subtree, a tag, …)
+  policy = "prefer:nas"
+
+  [[conflict]]
+  policy = "ask"                       # default: "ask" | "skip" | "prefer:<repo>"
 
   [settings]                   # optional
   commit-batch-size    = 50    # links per sync-commit call
@@ -882,20 +890,23 @@ or an external tool's is the inherited =mf_sync= field on the record, see
 ** Conflict resolution
 
 A conflict is a field changed on both sides since the last sync (or differing
-at first sync). Resolution policies:
+at first sync). The policy applied to a given =(record, field)= is the *first
+matching* =[[conflict]]= rule in the intents file (see [[*The intents file]]) —
+a rule matches when its optional =field= equals the field name and its
+optional =query= matches either endpoint; a rule with neither is the default.
+The =--on-conflict <policy>= flag on =plan= overrides all rules. Each policy:
 
-- =ask= (default) — interactive prompt at =plan= time (see the =plan= flow);
-  the chosen side is written into the conflict's =plan_resolve= field.
+- =ask= (default) — interactive prompt at =plan= time (see the =plan= flow).
 - =skip= — leave both sides untouched; the field stays unsynced and will
   conflict again next time.
 - =prefer:<repo>= — take the value from the named repo (name or UUID; never
   "a"/"b", which are canonical-order artefacts users should not need).
 
-Precedence: =--on-conflict= flag (on =plan=) > =[conflicts.fields]= entry >
-=[conflicts] policy=. A non-interactive =plan= (=--on-conflict skip= or a
-file policy other than =ask=) never prompts. Either way the resolution is a
-=plan_resolve= field on the conflict metarecord (see [[*The plan repo]]) and can
-still be changed before =run= (=mf … field set plan_resolve=…=, or in the GUI).
+A non-interactive =plan= (every conflict covered by a =skip=/=prefer= rule,
+or =--on-conflict= given) never prompts. Whatever the source, the outcome is
+the =plan_resolve= field on the conflict metarecord (see [[*The plan repo]]) and
+can still be changed before =run= (=mf … field set plan_resolve=…=, or in the
+GUI).
 
 * Open questions
 
