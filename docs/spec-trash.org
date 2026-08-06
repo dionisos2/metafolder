@@ -50,15 +50,18 @@ but restoration itself is driven purely by =original_path=.
 
 * Moving into and out of the trash
 
-Trashing a file *moves* it into =internal/trash/= (a rename, falling back to
+Trashing *moves* the path into =internal/trash/= (a rename, falling back to
 copy-then-delete when the trash sits on a different filesystem than the file —
 possible with an external =.metafolder= location; the fallback carries the
 modification time over, which =fs::copy= does not, so a cross-device round-trip
-keeps the file's timestamp). Only files are trashed: a *directory* is refused
-(the trash holds one blob per file), and a *symlink* is trashed as the link
-itself (the rename moves the link, not its target; its recorded =size= is the
-link's). Restoring moves the blob back to =original_path= (or an explicit
-target) and deletes the entry.
+keeps the file's timestamp). A file, a symlink, or a whole *directory* can be
+trashed: a directory is moved as one blob (which is itself a directory), with
+its subtree intact, and its recorded =size= is the recursive total; a symlink is
+trashed as the link itself (the rename moves the link, not its target; its size
+is the link's). Restoring moves the blob back to =original_path= (or an explicit
+target) and deletes the entry. Trashing a directory naturally cascades: its
+tracked children disappear too, and the watcher records that like any other
+removal; restoring the directory brings the whole subtree back.
 
 Neither step touches the data model, and this is deliberate: metadata is the
 watcher's job. In a watched repo the reconcile that follows the restored file's
@@ -94,15 +97,17 @@ mf trash prune (-s <size> | -d <duration> | --all) [--dry-run]
 #+END_SRC
 
 =list= (the group default, so =mf trash= ≡ =mf trash list=) prints one row per
-entry — id, original path, size, age (from =trashed_at=), reason — newest first.
+entry — id, original path (a trailing =/= marks a directory), size, age (from
+=trashed_at=), reason — newest first.
 
-=-f=/=--file <path>= manually trashes a *tracked* file — a safe delete
-(=reason=manual=, the entry records the file's metarecord). It errors, *before
-moving anything*, if the daemon is unreachable or the path has no metarecord
-(the CLI resolves =path -> mfr_path= metarecord through =POST …/query= with the
-exact-path idiom =mfr_path -> "/parent" AND mfr_path = "name"=, using the
-=root= from =GET /repos/:repo=). In a watched repo the ensuing disappearance is
-recorded as a =file_deleted= like any other; =mf trash restore= brings it back.
+=-f=/=--file <path>= manually trashes a *tracked* file or directory — a safe
+delete (=reason=manual=, the entry records the path's metarecord). It errors,
+*before moving anything*, if the daemon is unreachable or the path has no
+metarecord (the CLI resolves =path -> mfr_path= metarecord through =POST …/query=
+with the exact-path idiom =mfr_path -> "/parent" AND mfr_path = "name"=, using
+the =root= from =GET /repos/:repo=). A directory is trashed whole, its subtree
+included; in a watched repo the ensuing disappearance(s) are recorded as
+=file_deleted= like any other, and =mf trash restore= brings the subtree back.
 =-f= cannot be combined with a subcommand.
 
 The metadata update is the watcher's job, and =mf trash -f= deliberately does

@@ -248,7 +248,7 @@ fn decide_move(
                 // the trash, and the navigation aborts mid-way.
                 if dest.exists() {
                     let entry =
-                        trash.trash_file(dest, Reason::Rollback, op["id"].as_i64(), None)?;
+                        trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None)?;
                     if !silent {
                         eprintln!("trashed {to} (id {}) before overwrite", entry.id);
                     }
@@ -933,6 +933,7 @@ mod tests {
             original_name: "x".into(),
             trashed_at: 0,
             size: 0,
+            is_dir: false,
             reason: Reason::Manual,
             revision: None,
             metarecord: metarecord.map(str::to_owned),

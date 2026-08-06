@@ -900,11 +900,13 @@ unusual but never forbidden):
   occupied by a file, the =mv= would overwrite it — the CLI first moves that
   file to the trash-bin (=reason=rollback=), so no byte is ever lost (see
   [[file:spec-trash.org][spec-trash.org]]; recover it with =mf trash restore=). If =to= is occupied by a
-  *directory* (neither trashable nor overwritable by an =mv=), the CLI skips
-  just this step (=step {"skip": true}=) with a warning rather than aborting the
-  whole navigation. The trash-then-=mv= is not atomic: a rename that fails after
-  trashing leaves =to= empty with its content recoverable from the trash, and
-  the navigation aborts mid-way.
+  *directory*, the CLI skips just this step (=step {"skip": true}=) with a
+  warning rather than aborting: trashing a whole directory (and displacing all
+  its tracked children) to make room for one file is too destructive to do
+  silently during an automated navigation — the user can trash it explicitly
+  with =mf trash -f= first, then rerun. The trash-then-=mv= is not atomic: a
+  rename that fails after trashing leaves =to= empty with its content
+  recoverable from the trash, and the navigation aborts mid-way.
 - =skip=: call =step {"skip": true}= without touching the filesystem — the
   metadata is rewound to the file's current recorded location (restoration op,
   see above). Intended for a file that is present but could not be moved; it is

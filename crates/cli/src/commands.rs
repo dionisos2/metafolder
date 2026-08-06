@@ -1122,7 +1122,7 @@ pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
         CliError::Op(format!("no metarecord is associated with {}", abs.display()))
     })?;
 
-    let entry = trash.trash_file(&abs, Reason::Manual, None, Some(uuid))?;
+    let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid))?;
     println!("trashed {} (id {})", abs.display(), entry.id);
     Ok(0)
 }
@@ -1187,13 +1187,15 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
         return Ok(0);
     }
     for e in &entries {
+        // A trailing "/" marks a directory entry.
+        let path = if e.is_dir { format!("{}/", e.original_path) } else { e.original_path.clone() };
         println!(
             "{}  {:>9}  {:>10}  {:<8}  {}",
             e.id,
             format_size(e.size),
             format_age(e.trashed_at),
             e.reason.as_str(),
-            e.original_path,
+            path,
         );
     }
     Ok(0)

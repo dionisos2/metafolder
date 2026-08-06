@@ -1348,10 +1348,10 @@ fn test_trash_list_restore_and_prune() {
     // Seed the trash as a rollback overwrite would.
     let victim = root.join("victim.txt");
     std::fs::write(&victim, b"precious").unwrap();
-    let e1 = trash.trash_file(&victim, Reason::Rollback, Some(7), None).unwrap();
+    let e1 = trash.trash_path(&victim, Reason::Rollback, Some(7), None).unwrap();
     let other = root.join("other.txt");
     std::fs::write(&other, b"stuff").unwrap();
-    trash.trash_file(&other, Reason::Manual, None, None).unwrap();
+    trash.trash_path(&other, Reason::Manual, None, None).unwrap();
     assert!(!victim.exists() && !other.exists(), "both were moved into the trash");
 
     // list shows both entries with their original names.
@@ -1385,7 +1385,7 @@ fn test_trash_restore_refuses_occupied_without_force() {
     let trash = repo_trash(&root);
     let doc = root.join("doc.txt");
     std::fs::write(&doc, b"old").unwrap();
-    let e = trash.trash_file(&doc, Reason::Manual, None, None).unwrap();
+    let e = trash.trash_path(&doc, Reason::Manual, None, None).unwrap();
     std::fs::write(&doc, b"new").unwrap(); // the path is occupied again
 
     let out = mf(&["-u", &repo, "trash", "restore", &e.id]);
@@ -1467,4 +1467,35 @@ fn test_trash_add_requires_a_running_daemon() {
     );
     assert_eq!(out.code, 1, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
+}
+
+// `mf trash -f <dir>` trashes a whole tracked directory (subtree and all).
+#[test]
+fn test_trash_add_moves_a_directory() {
+    let (repo, root) = init_repo("trashdir");
+    let dir = root.join("folder");
+    std::fs::create_dir_all(dir.join("nested")).unwrap();
+    std::fs::write(dir.join("a.txt"), b"aaa").unwrap();
+    std::fs::write(dir.join("nested/b.txt"), b"bb").unwrap();
+    let uuid = mf(&["-u", &repo, "track", dir.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    let out = mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(!dir.exists(), "the directory was moved into the trash");
+
+    let entries = repo_trash(&root).entries().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert!(entries[0].is_dir, "the entry is a directory");
+    assert_eq!(entries[0].size, 5, "recursive size (3 + 2 bytes)");
+
+    // list marks the directory with a trailing slash.
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("folder/"), "list output: {}", out.stdout);
+
+    // restore brings the whole subtree back.
+    let out = mf(&["-u", &repo, "trash", "restore", &entries[0].id]);
+    assert_ok(&out);
+    assert_eq!(std::fs::read(dir.join("nested/b.txt")).unwrap(), b"bb");
 }

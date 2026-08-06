@@ -35,7 +35,8 @@ impl Reason {
     }
 }
 
-/// One trashed file: the `<id>.json` manifest sitting next to its `<id>` blob.
+/// One trashed path (file, symlink, or directory): the `<id>.json` manifest
+/// sitting next to its `<id>` blob.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrashEntry {
     /// The blob file name (a fresh 32-char lowercase hex UUID).
@@ -46,8 +47,11 @@ pub struct TrashEntry {
     pub original_name: String,
     /// When it was trashed (unix-ms) — drives `prune -d` and list ordering.
     pub trashed_at: i64,
-    /// Size in bytes — drives `prune -s`.
+    /// Size in bytes — drives `prune -s`. For a directory, the recursive total.
     pub size: u64,
+    /// Whether the blob is a directory (the whole subtree was trashed).
+    #[serde(default)]
+    pub is_dir: bool,
     /// The operation that displaced it.
     pub reason: Reason,
     /// Op id that trashed it (rollback), if any.
@@ -96,9 +100,10 @@ impl TrashDir {
             .map_err(|e| CliError::Op(format!("corrupt trash manifest '{id}': {e}")))
     }
 
-    /// Moves `path` into the trash, writing its manifest. The blob is written
-    /// before the manifest, so a manifest on disk always implies its blob.
-    pub fn trash_file(
+    /// Moves `path` (a file, symlink, or whole directory) into the trash,
+    /// writing its manifest. The blob is written before the manifest, so a
+    /// manifest on disk always implies its blob.
+    pub fn trash_path(
         &self,
         path: &Path,
         reason: Reason,
@@ -107,17 +112,17 @@ impl TrashDir {
     ) -> Result<TrashEntry, CliError> {
         // `symlink_metadata` does not follow symlinks — a symlink is trashed as
         // the link itself (rename moves the link, not its target), and its size
-        // reflects the link, matching what is actually moved. Directories are
-        // refused: the trash holds files, one blob each.
+        // reflects the link, matching what is actually moved. A directory is
+        // trashed whole (the blob becomes a directory), its size the recursive
+        // total.
         let meta = std::fs::symlink_metadata(path)
             .map_err(|e| CliError::Op(format!("cannot stat {}: {e}", path.display())))?;
-        if meta.file_type().is_dir() {
-            return Err(CliError::Op(format!(
-                "cannot trash {}: it is a directory (only files can be trashed)",
-                path.display()
-            )));
-        }
-        let size = meta.len();
+        let is_dir = meta.file_type().is_dir();
+        let size = if is_dir {
+            dir_size(path).map_err(|e| CliError::Op(format!("cannot size {}: {e}", path.display())))?
+        } else {
+            meta.len()
+        };
         std::fs::create_dir_all(&self.root)
             .map_err(|e| CliError::Op(format!("cannot create the trash: {e}")))?;
 
@@ -137,6 +142,7 @@ impl TrashDir {
                 .unwrap_or_default(),
             trashed_at: date::now_ms(),
             size,
+            is_dir,
             reason,
             revision,
             metarecord,
@@ -189,7 +195,9 @@ impl TrashDir {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(&entry.original_path));
 
-        if target.exists() {
+        // `symlink_metadata` (not `exists`) so a directory or a broken symlink
+        // at the target counts as an occupant too.
+        if std::fs::symlink_metadata(&target).is_ok() {
             if !force {
                 return Err(CliError::Op(format!(
                     "{} already exists; pass --force to trash it first",
@@ -197,7 +205,7 @@ impl TrashDir {
                 )));
             }
             // Restoring onto an occupant is itself an overwrite — trash it.
-            self.trash_file(&target, Reason::Manual, None, None)?;
+            self.trash_path(&target, Reason::Manual, None, None)?;
         }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -237,22 +245,21 @@ impl TrashDir {
         };
         if !dry_run {
             for e in &selected {
-                // Best-effort: a missing file is already "removed".
-                let _ = std::fs::remove_file(self.blob_path(&e.id));
+                // Best-effort on the blob (a missing one is already "removed");
+                // it may be a file or a whole directory.
+                remove_path(&self.blob_path(&e.id));
                 std::fs::remove_file(self.manifest_path(&e.id)).map_err(|err| {
                     CliError::Op(format!("cannot remove trash entry '{}': {err}", e.id))
                 })?;
             }
-            // `--all` also sweeps orphan blobs — manifest-less files a failed
-            // manifest write (or a half-removed entry) would leave, which
+            // `--all` also sweeps orphan blobs — manifest-less files/dirs a
+            // failed manifest write (or a half-removed entry) would leave, which
             // `entries` never lists. Without this, `list` reports "empty" while
             // they still consume space.
             if mode == PruneMode::All {
                 if let Ok(dir) = std::fs::read_dir(&self.root) {
                     for entry in dir.flatten() {
-                        if entry.path().is_file() {
-                            let _ = std::fs::remove_file(entry.path());
-                        }
+                        remove_path(&entry.path());
                     }
                 }
             }
@@ -261,15 +268,79 @@ impl TrashDir {
     }
 }
 
-/// Moves `from` to `to`, falling back to copy-then-delete across filesystems
-/// (an external `.metafolder` may sit on a different mount than the file).
+/// Moves `from` (a file, symlink, or directory) to `to`, falling back to
+/// copy-then-delete across filesystems (an external `.metafolder` may sit on a
+/// different mount than the file).
 fn move_path(from: &Path, to: &Path) -> io::Result<()> {
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
         // EXDEV (18 on Linux): source and destination are on different mounts,
         // so rename cannot work — copy the bytes over and delete the source.
-        Err(e) if e.raw_os_error() == Some(18) => copy_across(from, to),
+        Err(e) if e.raw_os_error() == Some(18) => {
+            if std::fs::symlink_metadata(from)?.file_type().is_dir() {
+                copy_tree(from, to)?;
+                std::fs::remove_dir_all(from)
+            } else {
+                copy_across(from, to)
+            }
+        }
         Err(e) => Err(e),
+    }
+}
+
+/// Recursively copies the directory `from` to `to` (the cross-device fallback
+/// for a directory blob). Symlinks are recreated as links (unix); regular files
+/// keep their modification time via [`copy_across`]'s sibling logic.
+fn copy_tree(from: &Path, to: &Path) -> io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dst = to.join(entry.file_name());
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else if ft.is_symlink() {
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(std::fs::read_link(&src)?, &dst)?;
+            #[cfg(not(unix))]
+            {
+                std::fs::copy(&src, &dst)?;
+            }
+        } else {
+            std::fs::copy(&src, &dst)?;
+            if let Ok(t) = entry.metadata().and_then(|m| m.modified()) {
+                if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&dst) {
+                    let _ = f.set_modified(t);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Recursive byte size of a directory tree (regular files only; symlinks and
+/// special files count as zero). Best-effort: unreadable entries are skipped.
+fn dir_size(path: &Path) -> io::Result<u64> {
+    let mut total = 0;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let ft = entry.file_type()?;
+        if ft.is_dir() {
+            total += dir_size(&entry.path()).unwrap_or(0);
+        } else if ft.is_file() {
+            total += entry.metadata().map(|m| m.len()).unwrap_or(0);
+        }
+    }
+    Ok(total)
+}
+
+/// Best-effort removal of a blob that may be a file or a whole directory.
+fn remove_path(path: &Path) {
+    if std::fs::symlink_metadata(path).map(|m| m.file_type().is_dir()).unwrap_or(false) {
+        let _ = std::fs::remove_dir_all(path);
+    } else {
+        let _ = std::fs::remove_file(path);
     }
 }
 
@@ -416,14 +487,55 @@ mod tests {
     }
 
     #[test]
-    fn trash_file_rejects_a_directory() {
+    fn trash_path_moves_a_whole_directory() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let d = base.join("sub");
+        fs::create_dir_all(d.join("nested")).unwrap();
+        fs::write(d.join("a.txt"), vec![b'a'; 100]).unwrap();
+        fs::write(d.join("nested/b.txt"), vec![b'b'; 50]).unwrap();
+
+        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        assert!(!d.exists(), "the directory was moved into the trash");
+        assert!(entry.is_dir, "the entry is flagged as a directory");
+        assert_eq!(entry.size, 150, "size is the recursive total");
+        // The blob is the directory, with its subtree intact.
+        assert!(trash.blob_path(&entry.id).is_dir());
+        assert_eq!(fs::read(trash.blob_path(&entry.id).join("a.txt")).unwrap().len(), 100);
+        assert_eq!(fs::read(trash.blob_path(&entry.id).join("nested/b.txt")).unwrap().len(), 50);
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn restore_brings_back_a_directory() {
         let base = tmp();
         let trash = TrashDir::new(base.join("trash"));
         let d = base.join("sub");
         fs::create_dir_all(&d).unwrap();
-        let err = trash.trash_file(&d, Reason::Manual, None, None).unwrap_err();
-        assert!(err.message().contains("directory"), "got: {}", err.message());
-        assert!(d.is_dir(), "the directory is left in place");
+        fs::write(d.join("a.txt"), b"payload").unwrap();
+        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        assert!(!d.exists());
+
+        trash.restore(&entry.id, None, false).unwrap();
+        assert!(d.is_dir(), "the directory is back");
+        assert_eq!(fs::read(d.join("a.txt")).unwrap(), b"payload");
+        assert!(trash.entries().unwrap().is_empty());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn prune_removes_a_directory_entry() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let d = base.join("sub");
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("a.txt"), b"x").unwrap();
+        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        assert!(trash.blob_path(&entry.id).is_dir());
+
+        trash.prune(PruneMode::All, false).unwrap();
+        assert!(!trash.blob_path(&entry.id).exists(), "the directory blob is gone");
+        assert!(trash.entries().unwrap().is_empty());
         fs::remove_dir_all(&base).ok();
     }
 
@@ -437,7 +549,7 @@ mod tests {
         let link = base.join("link.txt");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        let entry = trash.trash_file(&link, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&link, Reason::Manual, None, None).unwrap();
         assert!(fs::symlink_metadata(&link).is_err(), "the symlink was moved out");
         assert_eq!(fs::read(&target).unwrap(), b"important", "the target is untouched");
         assert!(
@@ -467,7 +579,7 @@ mod tests {
         fs::write(&file, b"content").unwrap();
 
         let entry = trash
-            .trash_file(&file, Reason::Rollback, Some(101), Some("abc".into()))
+            .trash_path(&file, Reason::Rollback, Some(101), Some("abc".into()))
             .unwrap();
 
         assert!(!file.exists(), "the original file should be gone");
@@ -491,7 +603,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            trash.trash_file(&f, Reason::Manual, None, None).unwrap();
+            trash.trash_path(&f, Reason::Manual, None, None).unwrap();
         }
         assert_eq!(trash.entries().unwrap().len(), 2);
         fs::remove_dir_all(&base).ok();
@@ -503,7 +615,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
         fs::write(&file, b"payload").unwrap();
-        let entry = trash.trash_file(&file, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&file, Reason::Manual, None, None).unwrap();
         assert!(!file.exists());
 
         let restored = trash.restore(&entry.id, None, false).unwrap();
@@ -519,7 +631,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
         fs::write(&file, b"old").unwrap();
-        let entry = trash.trash_file(&file, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&file, Reason::Manual, None, None).unwrap();
         // A different file now occupies the original path.
         fs::write(&file, b"new").unwrap();
 
@@ -542,7 +654,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            trash.trash_file(&f, Reason::Manual, None, None).unwrap();
+            trash.trash_path(&f, Reason::Manual, None, None).unwrap();
         }
         let removed = trash.prune(PruneMode::All, false).unwrap();
         assert_eq!(removed.len(), 2);
@@ -556,7 +668,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let f = base.join("a.txt");
         fs::write(&f, b"x").unwrap();
-        trash.trash_file(&f, Reason::Manual, None, None).unwrap();
+        trash.trash_path(&f, Reason::Manual, None, None).unwrap();
         // An orphan blob: a manifest-less file (as a failed manifest write, or a
         // half-removed entry, would leave). `entries` never sees it.
         fs::write(trash.root.join("deadbeef"), b"leaked").unwrap();
@@ -574,7 +686,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let f = base.join("a.txt");
         fs::write(&f, b"x").unwrap();
-        trash.trash_file(&f, Reason::Manual, None, None).unwrap();
+        trash.trash_path(&f, Reason::Manual, None, None).unwrap();
         let removed = trash.prune(PruneMode::All, true).unwrap();
         assert_eq!(removed.len(), 1);
         assert_eq!(trash.entries().unwrap().len(), 1, "dry-run deletes nothing");
@@ -589,7 +701,7 @@ mod tests {
         for name in ["old.txt", "new.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            ids.push(trash.trash_file(&f, Reason::Manual, None, None).unwrap().id);
+            ids.push(trash.trash_path(&f, Reason::Manual, None, None).unwrap().id);
         }
         set_age(&trash, &ids[0], 1_000);
         set_age(&trash, &ids[1], 5_000);
@@ -611,7 +723,7 @@ mod tests {
         for (i, name) in ["a.txt", "b.txt", "c.txt"].iter().enumerate() {
             let f = base.join(name);
             fs::write(&f, vec![b'x'; 100]).unwrap();
-            let id = trash.trash_file(&f, Reason::Manual, None, None).unwrap().id;
+            let id = trash.trash_path(&f, Reason::Manual, None, None).unwrap().id;
             set_age(&trash, &id, 1_000 * (i as i64 + 1));
             ids.push(id);
         }
@@ -633,7 +745,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            ids.push(trash.trash_file(&f, Reason::Manual, None, None).unwrap().id);
+            ids.push(trash.trash_path(&f, Reason::Manual, None, None).unwrap().id);
         }
         set_age(&trash, &ids[0], 9_000);
         set_age(&trash, &ids[1], 1_000);
