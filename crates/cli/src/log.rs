@@ -921,7 +921,7 @@ mod tests {
         // The entry records the causing revision, but no metarecord — the op's
         // entity_uuid names the moved record, not this displaced occupant.
         assert_eq!(entries[0].metarecord, None);
-        let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered")), false).unwrap();
+        let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered"))).unwrap();
         assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
         std::fs::remove_dir_all(&tmp).ok();
     }

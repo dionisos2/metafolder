@@ -188,30 +188,22 @@ impl TrashDir {
     }
 
     /// Moves the entry's blob back to `to` (or its `original_path`) and removes
-    /// the entry. An occupied target is refused unless `force`, which trashes
-    /// the occupant first. Returns the restored path.
-    pub fn restore(
-        &self,
-        id: &str,
-        to: Option<&Path>,
-        force: bool,
-    ) -> Result<PathBuf, CliError> {
+    /// the entry. An occupied target is refused (never overwritten). Returns the
+    /// restored path.
+    pub fn restore(&self, id: &str, to: Option<&Path>) -> Result<PathBuf, CliError> {
         let entry = self.load_entry(id)?;
         let target = to
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(&entry.original_path));
 
         // `symlink_metadata` (not `exists`) so a directory or a broken symlink
-        // at the target counts as an occupant too.
+        // at the target counts as an occupant too. We never overwrite it:
+        // restore the occupant elsewhere, or trash it explicitly first.
         if std::fs::symlink_metadata(&target).is_ok() {
-            if !force {
-                return Err(CliError::Op(format!(
-                    "{} already exists; pass --force to trash it first",
-                    target.display()
-                )));
-            }
-            // Restoring onto an occupant is itself an overwrite — trash it.
-            self.trash_path(&target, Reason::Manual, None, None)?;
+            return Err(CliError::Op(format!(
+                "{} already exists; restore is refused (move it aside or use --to)",
+                target.display()
+            )));
         }
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
@@ -522,7 +514,7 @@ mod tests {
         let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
         assert!(!d.exists());
 
-        trash.restore(&entry.id, None, false).unwrap();
+        trash.restore(&entry.id, None).unwrap();
         assert!(d.is_dir(), "the directory is back");
         assert_eq!(fs::read(d.join("a.txt")).unwrap(), b"payload");
         assert!(trash.entries().unwrap().is_empty());
@@ -624,7 +616,7 @@ mod tests {
         let entry = trash.trash_path(&file, Reason::Manual, None, None).unwrap();
         assert!(!file.exists());
 
-        let restored = trash.restore(&entry.id, None, false).unwrap();
+        let restored = trash.restore(&entry.id, None).unwrap();
         assert_eq!(restored, file);
         assert_eq!(fs::read(&file).unwrap(), b"payload");
         assert!(trash.entries().unwrap().is_empty(), "the entry should be gone");
@@ -632,7 +624,7 @@ mod tests {
     }
 
     #[test]
-    fn restore_refuses_occupied_target_without_force() {
+    fn restore_refuses_an_occupied_target() {
         let base = tmp();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -641,15 +633,11 @@ mod tests {
         // A different file now occupies the original path.
         fs::write(&file, b"new").unwrap();
 
-        assert!(trash.restore(&entry.id, None, false).is_err());
+        // Restore never overwrites: an occupied target is a hard error, and the
+        // occupant is left untouched (no --force escape hatch).
+        assert!(trash.restore(&entry.id, None).is_err());
         assert_eq!(fs::read(&file).unwrap(), b"new", "the occupant is untouched");
-
-        // With --force the occupant is trashed and the entry restored.
-        trash.restore(&entry.id, None, true).unwrap();
-        assert_eq!(fs::read(&file).unwrap(), b"old");
-        let remaining = trash.entries().unwrap();
-        assert_eq!(remaining.len(), 1, "the occupant is now in the trash");
-        assert_eq!(remaining[0].reason, Reason::Manual);
+        assert_eq!(trash.entries().unwrap().len(), 1, "the entry is still in the trash");
         fs::remove_dir_all(&base).ok();
     }
 

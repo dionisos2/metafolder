@@ -1377,10 +1377,10 @@ fn test_trash_list_restore_and_prune() {
     assert!(out.stdout.contains("empty"), "trash is empty after prune --all");
 }
 
-// `mf trash restore` refuses an occupied target unless --force (which trashes
-// the occupant first) — the never-destroy rule applies to restore too.
+// `mf trash restore` refuses an occupied target outright — no overwrite, no
+// --force escape hatch. The occupant is left untouched and the entry stays.
 #[test]
-fn test_trash_restore_refuses_occupied_without_force() {
+fn test_trash_restore_refuses_an_occupied_target() {
     let (repo, root) = init_repo("trashocc");
     let trash = repo_trash(&root);
     let doc = root.join("doc.txt");
@@ -1390,16 +1390,13 @@ fn test_trash_restore_refuses_occupied_without_force() {
 
     let out = mf(&["-u", &repo, "trash", "restore", &e.id]);
     assert_eq!(out.code, 1, "an occupied target is refused (Op error)");
-    assert!(out.stderr.contains("already exists"));
+    assert!(out.stderr.contains("already exists"), "stderr: {}", out.stderr);
     assert_eq!(std::fs::read(&doc).unwrap(), b"new", "the occupant is untouched");
 
-    let out = mf(&["-u", &repo, "trash", "restore", &e.id, "--force"]);
+    // The entry is still there — restore elsewhere is possible via --to.
+    let out = mf(&["-u", &repo, "trash", "restore", &e.id, "--to", root.join("elsewhere.txt").to_str().unwrap()]);
     assert_ok(&out);
-    assert_eq!(std::fs::read(&doc).unwrap(), b"old", "the entry is restored");
-    // The occupant ("new") now sits in the trash — nothing was lost.
-    let out = mf(&["-u", &repo, "trash", "list"]);
-    assert_ok(&out);
-    assert!(!out.stdout.contains("empty"), "the occupant is now trashed");
+    assert_eq!(std::fs::read(root.join("elsewhere.txt")).unwrap(), b"old");
 }
 
 // `mf trash prune` with no selector is a usage error before any HTTP call.

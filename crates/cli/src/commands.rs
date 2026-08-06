@@ -1201,46 +1201,34 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf trash restore <id> [--to <path>] [--force]`.
-pub fn trash_restore(
-    ctx: &Ctx,
-    id: &str,
-    to: Option<&Path>,
-    force: bool,
-) -> Result<i32, CliError> {
+/// `mf trash restore <id> [--to <path>]`.
+pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliError> {
     let info = ctx.repo_info()?;
     let dir = trash_dir_of(&info)?;
     let entry = dir.entry(id)?;
     let root = info["root"].as_str();
 
-    // Where the file will land (same rule the move uses).
+    // The target is always free (restore refuses an occupied one), so we re-link
+    // the associated metarecord *before* moving the file into place: the
+    // metarecord then already claims the path, so the watcher's arrival handler
+    // finds it tracked (`resolve` → refresh) and never fingerprint-searches or
+    // creates a duplicate — which matters because a freshly tracked file has no
+    // stored full hash for the fingerprint to match (spec-trash.org).
     let target = to
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from(&entry.original_path));
-    let target_free = std::fs::symlink_metadata(&target).is_err();
-
-    // Re-link the associated metarecord to the restored location. When the
-    // target is free we do it *before* the move: the metarecord then already
-    // claims the path, so the watcher's arrival handler finds it tracked
-    // (`resolve` → refresh) and never fingerprint-searches or creates a
-    // duplicate — which matters because a freshly tracked file has no stored
-    // full hash for the fingerprint to match (spec-trash.org). When the target
-    // is occupied we cannot pre-claim it (the occupant's metarecord still holds
-    // the path), so the re-link is best-effort after the move.
-    if target_free {
-        if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
-            relink_after_restore(ctx, Path::new(root), metarecord, &target)?;
-        }
+    if std::fs::symlink_metadata(&target).is_ok() {
+        return Err(CliError::Op(format!(
+            "{} already exists; restore is refused (move it aside or use --to)",
+            target.display()
+        )));
+    }
+    if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
+        relink_after_restore(ctx, Path::new(root), metarecord, &target)?;
     }
 
-    let restored = dir.restore(id, to, force)?;
+    let restored = dir.restore(id, to)?;
     println!("restored {}", restored.display());
-
-    if !target_free {
-        if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
-            relink_after_restore(ctx, Path::new(root), metarecord, &restored)?;
-        }
-    }
     Ok(0)
 }
 
