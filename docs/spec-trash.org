@@ -63,13 +63,20 @@ target) and deletes the entry. Trashing a directory naturally cascades: its
 tracked children disappear too, and the watcher records that like any other
 removal; restoring the directory brings the whole subtree back.
 
-Neither step touches the data model, and this is deliberate: metadata is the
-watcher's job. In a watched repo the reconcile that follows the restored file's
-arrival re-establishes its metadata by *fingerprint* — it re-links the matching
-orphaned metarecord (=mfr_path = Nothing=), or, if the content is ambiguous
-(e.g. duplicate or empty files), may create a new metarecord; the entry's
-recorded =metarecord= is provenance, not used to force the link. Nothing is
-written to the event log for a trash or restore.
+Trashing itself never touches the data model — that stays the watcher's job
+(and where watching is off, the frozen metadata is left alone). *Restoring*,
+however, re-links the entry's recorded =metarecord= authoritatively: once the
+file is back, if that metarecord is *orphaned* (its =mfr_path= is =Nothing= or
+absent — the state a deletion leaves), the CLI writes its =mfr_path= back to the
+restored location (a =force= write, since =mfr_path= is reserved). This is
+deterministic where the watcher's fingerprint match would be ambiguous
+(duplicate or empty content). It is a *no-op when the metarecord still carries
+an =mfr_path=* (a watch-off repo never cleared it — nothing to fix, and the
+frozen metadata is respected), and it is skipped with a note when the restored
+path lies outside the repo or its parent directory is untracked. The re-link
+races the watcher's own arrival handling harmlessly: the watcher re-homes the
+same record if it wins, and the tree's uniqueness index rejects any genuine
+double-claim. The restore itself is never blocked by a re-link failure.
 
 Restoring onto an occupied path is itself an overwrite, so it first trashes the
 occupant (only with =--force=; without it the restore is refused).

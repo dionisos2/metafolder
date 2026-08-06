@@ -1499,3 +1499,30 @@ fn test_trash_add_moves_a_directory() {
     assert_ok(&out);
     assert_eq!(std::fs::read(dir.join("nested/b.txt")).unwrap(), b"bb");
 }
+
+// `mf trash restore` re-links the associated metarecord authoritatively: after
+// the file is back, the orphaned metarecord's mfr_path is restored (H).
+#[test]
+fn test_trash_restore_relinks_the_metarecord() {
+    let (repo, root) = init_repo("trashrelink");
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let file = root.join("sub/file.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
+    assert_ok(&mf(&[
+        "-u", &repo, "metarecord", "-i", &uuid, "field", "unset", "mfr_path", "--force",
+    ]));
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+
+    let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
+    assert_ok(&out);
+    assert_eq!(std::fs::read(&file).unwrap(), b"data");
+    // mfr_path is authoritatively back: `mf path` resolves the original location.
+    let out = mf(&["-u", &repo, "path", &uuid]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("sub/file.txt"), "path output: {}", out.stdout);
+}

@@ -1208,10 +1208,104 @@ pub fn trash_restore(
     to: Option<&Path>,
     force: bool,
 ) -> Result<i32, CliError> {
-    let dir = ctx.internal_dir()?;
+    let info = ctx.repo_info()?;
+    let dir = trash_dir_of(&info)?;
+    let entry = dir.entry(id)?;
     let restored = dir.restore(id, to, force)?;
     println!("restored {}", restored.display());
+
+    // Re-link the associated metarecord to the restored location (authoritative,
+    // so ambiguous content the watcher's fingerprint could mis-link is handled).
+    if let Some(metarecord) = &entry.metarecord {
+        if let Some(root) = info["root"].as_str() {
+            relink_after_restore(ctx, Path::new(root), metarecord, &restored)?;
+        }
+    }
     Ok(0)
+}
+
+/// After a restore, re-link the associated metarecord to the file's location by
+/// writing its `mfr_path` — authoritative, unlike the watcher's fingerprint
+/// re-link. It is a *no-op when the metarecord already has an `mfr_path`* (e.g.
+/// a watch-off repo where the deletion never cleared it — leaving frozen
+/// metadata untouched, spec-trash.org), and it is skipped (with a note) when the
+/// restored path is outside the repo or its parent directory is untracked.
+fn relink_after_restore(
+    ctx: &Ctx,
+    root: &Path,
+    metarecord: &str,
+    restored: &Path,
+) -> Result<(), CliError> {
+    let base = ctx.repo_base()?;
+    let uuid = Uuid::parse_str(metarecord)
+        .map_err(|_| CliError::Op(format!("trash entry has an invalid metarecord '{metarecord}'")))?;
+
+    // Only re-link an *orphaned* metarecord (mfr_path absent or Nothing); one
+    // that still carries an mfr_path is left alone.
+    let rec = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+    let has_mfr_path = rec["fields"].as_array().is_some_and(|fields| {
+        fields.iter().any(|f| {
+            f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing")
+        })
+    });
+    if has_mfr_path {
+        return Ok(());
+    }
+
+    let abs = restored.canonicalize().unwrap_or_else(|_| restored.to_path_buf());
+    let Ok(rel) = abs.strip_prefix(root) else {
+        eprintln!("note: {} is outside the repo; metarecord {metarecord} not re-linked", abs.display());
+        return Ok(());
+    };
+    let comps: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let Some(name) = comps.last().cloned() else {
+        return Ok(());
+    };
+    // Parent metarecord uuid: None for a top-level path, else the tracked parent
+    // directory's metarecord (resolved by the same exact-path query).
+    let parent = if comps.len() == 1 {
+        None
+    } else {
+        match metarecord_at_path(ctx, root, abs.parent().unwrap_or(root))? {
+            Some(hex) => Some(Uuid::parse_str(&hex).map_err(|_| {
+                CliError::Op("daemon returned an invalid parent uuid".into())
+            })?),
+            None => {
+                eprintln!(
+                    "note: parent of {} is untracked; metarecord {metarecord} not re-linked",
+                    abs.display()
+                );
+                return Ok(());
+            }
+        }
+    };
+
+    let value = serde_json::to_value(metafolder_core::metarecord::Value::TreeRef { parent, name })
+        .expect("tree_ref serialization");
+    let body = json!({"value": value, "force": true});
+    match ctx.client.request(
+        "PUT",
+        &format!("{base}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
+        &[],
+        Some(&body),
+    ) {
+        Ok(_) => {
+            eprintln!("re-linked metarecord {metarecord}");
+            Ok(())
+        }
+        // The file is restored regardless; a re-link clash (e.g. the watcher
+        // linked another record to the path first) is only a warning.
+        Err(e) => {
+            eprintln!("note: could not re-link metarecord {metarecord}: {}", e.message());
+            Ok(())
+        }
+    }
 }
 
 /// `mf trash prune (-s|-d|--all) [--dry-run]`.

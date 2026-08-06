@@ -100,6 +100,12 @@ impl TrashDir {
             .map_err(|e| CliError::Op(format!("corrupt trash manifest '{id}': {e}")))
     }
 
+    /// The manifest for `id` (used by callers that re-link the metarecord after
+    /// a restore).
+    pub fn entry(&self, id: &str) -> Result<TrashEntry, CliError> {
+        self.load_entry(id)
+    }
+
     /// Moves `path` (a file, symlink, or whole directory) into the trash,
     /// writing its manifest. The blob is written before the manifest, so a
     /// manifest on disk always implies its blob.
