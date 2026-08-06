@@ -239,6 +239,19 @@ impl TrashDir {
                     CliError::Op(format!("cannot remove trash entry '{}': {err}", e.id))
                 })?;
             }
+            // `--all` also sweeps orphan blobs — manifest-less files a failed
+            // manifest write (or a half-removed entry) would leave, which
+            // `entries` never lists. Without this, `list` reports "empty" while
+            // they still consume space.
+            if mode == PruneMode::All {
+                if let Ok(dir) = std::fs::read_dir(&self.root) {
+                    for entry in dir.flatten() {
+                        if entry.path().is_file() {
+                            let _ = std::fs::remove_file(entry.path());
+                        }
+                    }
+                }
+            }
         }
         Ok(selected)
     }
@@ -471,6 +484,24 @@ mod tests {
         let removed = trash.prune(PruneMode::All, false).unwrap();
         assert_eq!(removed.len(), 2);
         assert!(trash.entries().unwrap().is_empty());
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn prune_all_sweeps_orphan_blobs() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let f = base.join("a.txt");
+        fs::write(&f, b"x").unwrap();
+        trash.trash_file(&f, Reason::Manual, None, None).unwrap();
+        // An orphan blob: a manifest-less file (as a failed manifest write, or a
+        // half-removed entry, would leave). `entries` never sees it.
+        fs::write(trash.root.join("deadbeef"), b"leaked").unwrap();
+        assert_eq!(trash.entries().unwrap().len(), 1, "the orphan is not an entry");
+
+        trash.prune(PruneMode::All, false).unwrap();
+        assert!(trash.entries().unwrap().is_empty());
+        assert!(!trash.root.join("deadbeef").exists(), "prune --all sweeps orphan blobs");
         fs::remove_dir_all(&base).ok();
     }
 

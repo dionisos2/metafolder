@@ -94,6 +94,14 @@ exact-path idiom =mfr_path -> "/parent" AND mfr_path = "name"=, using the
 recorded as a =file_deleted= like any other; =mf trash restore= brings it back.
 =-f= cannot be combined with a subcommand.
 
+The metadata update is the watcher's job, and =mf trash -f= deliberately does
+*not* do it itself: a tracked file is, by construction, watched (=mf_watch= is
+inherited down the =mfr_path= tree), so the watcher records the deletion. Where
+watching has been turned *off* — which is done precisely to freeze the
+metarecords against external file movements — the metadata is intentionally left
+untouched (=mfr_path= stays as recorded); a later reconcile or re-enabled watch
+picks it up. Either way the file's bytes are safe in the trash.
+
 =restore <id>= moves the blob back to its =original_path= (or =--to <path>=) and
 removes the entry. If the target is occupied the restore is refused unless
 =--force=, which trashes the occupant first (=reason=manual=). In a watched
@@ -108,5 +116,7 @@ written to the event log.
 - =-d=/=--older-than <duration>= — delete entries older than the duration.
   =<duration>= is =<n><unit>= with unit =y= (365 d), =w=, =d=, =h=, =m= (minute),
   =s= (e.g. =1y=, =30d=, =12h=).
-- =--all= — empty the trash.
+- =--all= — empty the trash (also sweeping any orphan blobs — manifest-less
+  files a failed manifest write could leave — which the other selectors, keyed
+  on the manifest, never see).
 =--dry-run= lists what would be removed and reclaimed without deleting.

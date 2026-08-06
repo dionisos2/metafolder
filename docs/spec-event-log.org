@@ -893,9 +893,14 @@ unusual but never forbidden):
   is present, =mv from to= is executed first; when it is *gone*, no =mv= is
   attempted — the metadata still follows the rollback, keeping the recorded
   path rather than =Nothing= (a later reconcile corrects it). If =to= is
-  occupied, the =mv= would overwrite it — the CLI first moves that file to the
-  trash-bin (=reason=rollback=), so no byte is ever lost (see
-  [[file:spec-trash.org][spec-trash.org]]; recover it with =mf trash restore=).
+  occupied by a file, the =mv= would overwrite it — the CLI first moves that
+  file to the trash-bin (=reason=rollback=), so no byte is ever lost (see
+  [[file:spec-trash.org][spec-trash.org]]; recover it with =mf trash restore=). If =to= is occupied by a
+  *directory* (neither trashable nor overwritable by an =mv=), the CLI skips
+  just this step (=step {"skip": true}=) with a warning rather than aborting the
+  whole navigation. The trash-then-=mv= is not atomic: a rename that fails after
+  trashing leaves =to= empty with its content recoverable from the trash, and
+  the navigation aborts mid-way.
 - =skip=: call =step {"skip": true}= without touching the filesystem — the
   metadata is rewound to the file's current recorded location (restoration op,
   see above). Intended for a file that is present but could not be moved; it is

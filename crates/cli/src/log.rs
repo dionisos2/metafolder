@@ -208,23 +208,32 @@ fn decide_move(
         // not at (spec-event-log "Policies for move_file"; review #6).
         Policy::Apply => {
             if available {
-                // If `to` is occupied, the mv would overwrite it — trash the
-                // occupant first so its content survives (spec-sync "The
-                // trash-bin"). A directory at `to` is not a file we can trash;
-                // refuse rather than clobber it.
                 let dest = std::path::Path::new(to);
+                // A directory at `to` can be neither trashed (the trash holds
+                // files) nor overwritten by an `mv` (rename would fail). Rather
+                // than abort the whole navigation, skip just this step (the
+                // metadata rewinds, the file stays put) and warn.
                 if dest.is_dir() {
-                    return Err(CliError::Op(format!(
-                        "cannot move {from} -> {to}: a directory occupies the destination"
-                    )));
+                    if !silent {
+                        eprintln!(
+                            "skipped move {from} -> {to}: a directory occupies the destination"
+                        );
+                    }
+                    return Ok(true);
                 }
+                // If `to` is occupied by a file, the mv would overwrite it —
+                // trash the occupant first so its content survives (spec-trash.org).
+                // The occupant's own metarecord is unknown here (the op's
+                // entity_uuid names the *moved* record, not this file), so the
+                // entry records only the causing revision, not a metarecord.
+                //
+                // Note: trash-then-rename is not atomic. If the rename fails
+                // after trashing (e.g. `from` vanished, or a cross-device
+                // from→to), `to` is left empty with its content recoverable in
+                // the trash, and the navigation aborts mid-way.
                 if dest.exists() {
-                    let entry = trash.trash_file(
-                        dest,
-                        Reason::Rollback,
-                        op["id"].as_i64(),
-                        op["entity_uuid"].as_str().map(str::to_owned),
-                    )?;
+                    let entry =
+                        trash.trash_file(dest, Reason::Rollback, op["id"].as_i64(), None)?;
                     if !silent {
                         eprintln!("trashed {to} (id {}) before overwrite", entry.id);
                     }
@@ -873,8 +882,33 @@ mod tests {
         let entries = trash.entries().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].reason, Reason::Rollback);
+        // The entry records the causing revision, but no metarecord — the op's
+        // entity_uuid names the moved record, not this displaced occupant.
+        assert_eq!(entries[0].metarecord, None);
         let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered")), false).unwrap();
         assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    // A directory at the destination cannot be trashed or overwritten: the step
+    // is skipped (metadata rewinds, file stays) rather than aborting the whole
+    // rollback.
+    #[test]
+    fn apply_skips_when_a_directory_occupies_the_destination() {
+        let tmp = std::env::temp_dir().join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+        let from = tmp.join("here.txt");
+        let to = tmp.join("blocking_dir");
+        std::fs::write(&from, b"x").unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        let trash = test_trash();
+        let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
+
+        let skip =
+            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
+        assert!(skip, "a directory destination must skip, not abort");
+        assert!(from.exists() && to.is_dir(), "nothing was moved or trashed");
+        assert!(trash.entries().unwrap().is_empty());
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
