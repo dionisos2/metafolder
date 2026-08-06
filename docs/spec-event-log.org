@@ -321,7 +321,11 @@ Three op types require attention at rollback time:
   =mf trash restore=/=prune=).
 - =file_deleted=, =file_modified=: no filesystem action is possible (content
   is gone). The CLI calls =step= with =skip: true= when it does not want
-  the metadata left in a stale state.
+  the metadata left in a stale state. The content is only genuinely gone,
+  though, when the change did not pass through the trash-bin: if a trash entry
+  records this metarecord (e.g. a prior =mf trash -f=), the CLI surfaces a
+  =mf trash restore= hint so the user can bring it back (it never restores
+  automatically — see [[file:spec-trash.org][spec-trash.org]]).
 
 When =skip: true= is used, the daemon *still applies the step's metadata change*
 (the inverse on a rollback step, the forward action on a redo step — maintaining

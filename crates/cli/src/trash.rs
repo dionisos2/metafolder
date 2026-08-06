@@ -105,15 +105,19 @@ impl TrashDir {
         revision: Option<i64>,
         metarecord: Option<String>,
     ) -> Result<TrashEntry, CliError> {
-        if !path.is_file() {
+        // `symlink_metadata` does not follow symlinks — a symlink is trashed as
+        // the link itself (rename moves the link, not its target), and its size
+        // reflects the link, matching what is actually moved. Directories are
+        // refused: the trash holds files, one blob each.
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|e| CliError::Op(format!("cannot stat {}: {e}", path.display())))?;
+        if meta.file_type().is_dir() {
             return Err(CliError::Op(format!(
-                "cannot trash {}: not a regular file",
+                "cannot trash {}: it is a directory (only files can be trashed)",
                 path.display()
             )));
         }
-        let size = std::fs::metadata(path)
-            .map_err(|e| CliError::Op(format!("cannot stat {}: {e}", path.display())))?
-            .len();
+        let size = meta.len();
         std::fs::create_dir_all(&self.root)
             .map_err(|e| CliError::Op(format!("cannot create the trash: {e}")))?;
 
@@ -270,8 +274,21 @@ fn move_path(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 /// Copy-then-delete, the cross-device fallback for [`move_path`].
+///
+/// `fs::copy` preserves permissions but *not* the modification time, so a
+/// cross-device trash/restore round-trip would otherwise re-stamp the file. We
+/// carry the mtime over best-effort, keeping a restored file's timestamp
+/// truthful (on the same filesystem the rename in [`move_path`] preserves it for
+/// free). A symlink hitting this path is dereferenced by `fs::copy` — the rare
+/// cross-device + symlink combination; same-filesystem moves keep the link.
 fn copy_across(from: &Path, to: &Path) -> io::Result<()> {
+    let mtime = std::fs::symlink_metadata(from).and_then(|m| m.modified());
     std::fs::copy(from, to)?;
+    if let Ok(t) = mtime {
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(to) {
+            let _ = f.set_modified(t);
+        }
+    }
     std::fs::remove_file(from)
 }
 
@@ -382,6 +399,52 @@ mod tests {
         assert!(parse_duration("10").is_err());
         assert!(parse_duration("d").is_err());
         assert!(parse_duration("1x").is_err());
+    }
+
+    #[test]
+    fn copy_across_preserves_mtime() {
+        let dir = tmp();
+        let from = dir.join("a");
+        let to = dir.join("b");
+        fs::write(&from, b"x").unwrap();
+        // A whole-second mtime round-trips on any filesystem.
+        let t = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        fs::OpenOptions::new().write(true).open(&from).unwrap().set_modified(t).unwrap();
+        copy_across(&from, &to).unwrap();
+        assert_eq!(fs::metadata(&to).unwrap().modified().unwrap(), t);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn trash_file_rejects_a_directory() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let d = base.join("sub");
+        fs::create_dir_all(&d).unwrap();
+        let err = trash.trash_file(&d, Reason::Manual, None, None).unwrap_err();
+        assert!(err.message().contains("directory"), "got: {}", err.message());
+        assert!(d.is_dir(), "the directory is left in place");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_file_moves_a_symlink_not_its_target() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let target = base.join("target.txt");
+        fs::write(&target, b"important").unwrap();
+        let link = base.join("link.txt");
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let entry = trash.trash_file(&link, Reason::Manual, None, None).unwrap();
+        assert!(fs::symlink_metadata(&link).is_err(), "the symlink was moved out");
+        assert_eq!(fs::read(&target).unwrap(), b"important", "the target is untouched");
+        assert!(
+            fs::symlink_metadata(trash.blob_path(&entry.id)).unwrap().is_symlink(),
+            "the blob is the symlink itself, not a copy of the target"
+        );
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

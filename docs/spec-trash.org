@@ -52,13 +52,24 @@ but restoration itself is driven purely by =original_path=.
 
 Trashing a file *moves* it into =internal/trash/= (a rename, falling back to
 copy-then-delete when the trash sits on a different filesystem than the file —
-possible with an external =.metafolder= location). Restoring moves the blob back
-to =original_path= (or an explicit target) and deletes the entry. Neither step
-touches the data model: if the repo is watched, the reconcile that follows the
-restored file's arrival re-establishes its metadata; nothing is written to the
-event log for a trash or restore. Restoring onto an occupied path is itself an
-overwrite, so it first trashes the occupant (only with =--force=; without it the
-restore is refused).
+possible with an external =.metafolder= location; the fallback carries the
+modification time over, which =fs::copy= does not, so a cross-device round-trip
+keeps the file's timestamp). Only files are trashed: a *directory* is refused
+(the trash holds one blob per file), and a *symlink* is trashed as the link
+itself (the rename moves the link, not its target; its recorded =size= is the
+link's). Restoring moves the blob back to =original_path= (or an explicit
+target) and deletes the entry.
+
+Neither step touches the data model, and this is deliberate: metadata is the
+watcher's job. In a watched repo the reconcile that follows the restored file's
+arrival re-establishes its metadata by *fingerprint* — it re-links the matching
+orphaned metarecord (=mfr_path = Nothing=), or, if the content is ambiguous
+(e.g. duplicate or empty files), may create a new metarecord; the entry's
+recorded =metarecord= is provenance, not used to force the link. Nothing is
+written to the event log for a trash or restore.
+
+Restoring onto an occupied path is itself an overwrite, so it first trashes the
+occupant (only with =--force=; without it the restore is refused).
 
 * Retention
 

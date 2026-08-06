@@ -12,7 +12,7 @@ use metafolder_core::date;
 
 use crate::client::CliError;
 use crate::commands::Ctx;
-use crate::trash::{Reason, TrashDir};
+use crate::trash::{Reason, TrashDir, TrashEntry};
 
 // ── Target resolution ─────────────────────────────────────────────────────────
 
@@ -144,8 +144,11 @@ pub fn rollback_run(
     }
 
     // The trash-bin catches any file a `move_file` step would overwrite, so no
-    // byte is ever lost by rollback (spec-trash.org).
+    // byte is ever lost by rollback (spec-trash.org). Its entries also let us
+    // point out content that a file_deleted/file_modified step "lost" but that
+    // is in fact recoverable (e.g. from a prior `mf trash -f`).
     let trash = ctx.internal_dir()?;
+    let trash_entries = trash.entries().unwrap_or_default();
 
     let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
     let mut op = start["op"].clone();
@@ -158,8 +161,20 @@ pub fn rollback_run(
             let skip = match op_type {
                 "move_file" => decide_move(&op, &policies, &trash, silent)?,
                 // No filesystem action is possible: restore metadata on the
-                // new branch via a restoration op.
-                "file_deleted" | "file_modified" => true,
+                // new branch via a restoration op. If the record's content sits
+                // in the trash, tell the user how to bring it back (we never
+                // restore automatically — spec-trash.org).
+                "file_deleted" | "file_modified" => {
+                    if !silent {
+                        if let Some(hint) = trash_recovery_hint(
+                            &trash_entries,
+                            op["entity_uuid"].as_str().unwrap_or_default(),
+                        ) {
+                            eprintln!("note: {hint}");
+                        }
+                    }
+                    true
+                }
                 _ => false,
             };
             let step_body = if skip { json!({"skip": true}) } else { json!({}) };
@@ -257,6 +272,27 @@ fn decide_move(
         Policy::Abort => Err(CliError::Op("rollback aborted by move policy".into())),
         Policy::Ask => unreachable!("ask is resolved above"),
     }
+}
+
+/// If the trash holds content for `metarecord` (e.g. a prior `mf trash -f`),
+/// returns the hint to show when its `file_deleted`/`file_modified` step is
+/// skipped — bridging the log's "content gone" assumption with the bytes that
+/// actually survive in the trash (spec-trash.org). `None` when nothing matches.
+fn trash_recovery_hint(entries: &[TrashEntry], metarecord: &str) -> Option<String> {
+    if metarecord.is_empty() {
+        return None;
+    }
+    let ids: Vec<&str> = entries
+        .iter()
+        .filter(|e| e.metarecord.as_deref() == Some(metarecord))
+        .map(|e| e.id.as_str())
+        .collect();
+    (!ids.is_empty()).then(|| {
+        format!(
+            "content for this record is in the trash — recover with: mf trash restore {}",
+            ids.join(" | ")
+        )
+    })
 }
 
 /// Interactive `ask` policy for a `move_file` step.
@@ -888,6 +924,35 @@ mod tests {
         let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered")), false).unwrap();
         assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    fn manual_entry(id: &str, metarecord: Option<&str>) -> TrashEntry {
+        TrashEntry {
+            id: id.into(),
+            original_path: "/x".into(),
+            original_name: "x".into(),
+            trashed_at: 0,
+            size: 0,
+            reason: Reason::Manual,
+            revision: None,
+            metarecord: metarecord.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn trash_recovery_hint_matches_by_metarecord() {
+        let entries = vec![
+            manual_entry("aaa", Some("rec-1")),
+            manual_entry("bbb", None),
+            manual_entry("ccc", Some("rec-1")),
+            manual_entry("ddd", Some("rec-2")),
+        ];
+        // Two entries for rec-1 → both surfaced.
+        let hint = trash_recovery_hint(&entries, "rec-1").unwrap();
+        assert!(hint.contains("aaa") && hint.contains("ccc") && hint.contains("mf trash restore"));
+        // A record with no trashed content, and the empty uuid, yield nothing.
+        assert!(trash_recovery_hint(&entries, "rec-3").is_none());
+        assert!(trash_recovery_hint(&entries, "").is_none());
     }
 
     // A directory at the destination cannot be trashed or overwritten: the step
