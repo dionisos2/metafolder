@@ -55,8 +55,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<LogCommand>,
     },
-    /// Trash-bin: restore or prune files displaced by rollback/sync (default: list)
+    /// Trash-bin: safely trash a file, or restore/prune (default: list)
     Trash {
+        /// Move a tracked file into the trash (errors if it has no metarecord)
+        #[arg(short = 'f', long = "file", value_name = "PATH")]
+        file: Option<PathBuf>,
         #[command(subcommand)]
         command: Option<TrashCommand>,
     },
@@ -598,7 +601,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
         }
         Command::Log { command } => dispatch_log(ctx, command),
-        Command::Trash { command } => dispatch_trash(ctx, command),
+        Command::Trash { file, command } => dispatch_trash(ctx, file, command),
         Command::Metarecord { query, id, simplified, verb } => {
             dispatch_metarecord(ctx, query, id, simplified, verb)
         }
@@ -763,7 +766,15 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
     }
 }
 
-fn dispatch_trash(ctx: &Ctx, command: Option<TrashCommand>) -> CmdResult {
+fn dispatch_trash(ctx: &Ctx, file: Option<PathBuf>, command: Option<TrashCommand>) -> CmdResult {
+    if let Some(path) = file {
+        if command.is_some() {
+            return Err(metafolder_cli::client::CliError::Usage(
+                "mf trash -f <file> cannot be combined with a subcommand".into(),
+            ));
+        }
+        return commands::trash_add(ctx, &path);
+    }
     match command.unwrap_or(TrashCommand::List) {
         TrashCommand::List => commands::trash_list(ctx),
         TrashCommand::Restore { id, to, force } => {

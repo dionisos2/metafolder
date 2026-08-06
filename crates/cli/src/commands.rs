@@ -71,18 +71,19 @@ impl Ctx {
         Ok(base)
     }
 
-    /// The repository's trash-bin (`internal/trash/`), located via the
-    /// `internal_dir` the daemon reports in `GET /repos/:repo` (spec-sync
-    /// "The trash-bin"). Pure filesystem — no daemon endpoint is involved.
-    pub(crate) fn internal_dir(&self) -> Result<crate::trash::TrashDir, CliError> {
+    /// One repository's info (`GET /repos/:repo`: uuid, name, root,
+    /// internal_dir, created_at). Also the CLI's daemon-liveness probe — a
+    /// down daemon surfaces here as a connection error.
+    pub(crate) fn repo_info(&self) -> Result<Json, CliError> {
         let base = self.repo_base()?;
-        let info = self.client.get(&base, &[])?;
-        let internal = info["internal_dir"]
-            .as_str()
-            .ok_or_else(|| CliError::Op("daemon did not report the repo internal_dir".into()))?;
-        Ok(crate::trash::TrashDir::new(
-            std::path::Path::new(internal).join("trash"),
-        ))
+        self.client.get(&base, &[])
+    }
+
+    /// The repository's trash-bin (`internal/trash/`), located via the
+    /// `internal_dir` the daemon reports in `GET /repos/:repo` (spec-trash.org).
+    /// Pure filesystem — no daemon endpoint is involved.
+    pub(crate) fn internal_dir(&self) -> Result<crate::trash::TrashDir, CliError> {
+        trash_dir_of(&self.repo_info()?)
     }
 
     /// Maps a unique repository name to its UUID via `GET /repos`.
@@ -1094,7 +1095,87 @@ pub fn schema_show(ctx: &Ctx) -> Result<i32, CliError> {
 
 // ── mf trash ────────────────────────────────────────────────────────────────
 
-use crate::trash::PruneMode;
+use crate::trash::{PruneMode, Reason, TrashDir};
+
+/// Builds the [`TrashDir`] from a `GET /repos/:repo` info body.
+fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
+    let internal = info["internal_dir"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo internal_dir".into()))?;
+    Ok(TrashDir::new(Path::new(internal).join("trash")))
+}
+
+/// `mf trash -f <path>`: move a tracked file into the trash. Errors if the
+/// daemon is unreachable (via `repo_info`) or the file has no metarecord.
+/// The metarecord check runs *before* the file is moved.
+pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
+    let info = ctx.repo_info()?;
+    let root = info["root"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
+    let trash = trash_dir_of(&info)?;
+
+    let abs = path
+        .canonicalize()
+        .map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
+    let uuid = metarecord_at_path(ctx, Path::new(root), &abs)?.ok_or_else(|| {
+        CliError::Op(format!("no metarecord is associated with {}", abs.display()))
+    })?;
+
+    let entry = trash.trash_file(&abs, Reason::Manual, None, Some(uuid))?;
+    println!("trashed {} (id {})", abs.display(), entry.id);
+    Ok(0)
+}
+
+/// Resolves an on-disk path to the uuid of the metarecord whose `mfr_path`
+/// tracks it, via the exact-path query idiom (spec-query:
+/// `field -> "/parent" AND field = "name"`). `None` when nothing matches.
+/// The relative path is computed by stripping the daemon-reported `root`,
+/// mirroring how reconcile/track record `mfr_path`.
+fn metarecord_at_path(ctx: &Ctx, root: &Path, abs: &Path) -> Result<Option<String>, CliError> {
+    let rel = abs.strip_prefix(root).map_err(|_| {
+        CliError::Usage(format!(
+            "{} is outside the repository root {}",
+            abs.display(),
+            root.display()
+        ))
+    })?;
+    let mut comps = Vec::new();
+    for c in rel.components() {
+        match c {
+            std::path::Component::Normal(n) => comps.push(n.to_string_lossy().into_owned()),
+            _ => {
+                return Err(CliError::Usage(format!(
+                    "unsupported path component in {}",
+                    abs.display()
+                )))
+            }
+        }
+    }
+    let name = comps
+        .last()
+        .cloned()
+        .ok_or_else(|| CliError::Usage("cannot trash the repository root".into()))?;
+    // Parent path: "/a/b" for /a/b/name, or "" (the forest root) for a
+    // top-level file — the format the tree cache's resolve_path expects.
+    let parent = format!("/{}", comps[..comps.len() - 1].join("/"));
+    let parent = if parent == "/" { String::new() } else { parent };
+
+    let base = ctx.repo_base()?;
+    let query = json!({
+        "type": "and",
+        "operands": [
+            {"type": "follows", "field": "mfr_path", "target": parent},
+            {"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": name}},
+        ],
+    });
+    let resp = ctx.client.post(&format!("{base}/query"), &json!({"query": query, "limit": 1}))?;
+    Ok(resp["results"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .map(str::to_owned))
+}
 
 /// `mf trash list`: one row per entry, newest first.
 pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {

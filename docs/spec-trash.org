@@ -76,13 +76,23 @@ endpoint is involved. This is not v2 (unlike cross-repo sync): rollback already
 routes overwrites through the trash.
 
 #+BEGIN_SRC
-mf trash list
+mf trash [list]
+mf trash -f <path>
 mf trash restore <id> [--to <path>] [--force]
 mf trash prune (-s <size> | -d <duration> | --all) [--dry-run]
 #+END_SRC
 
 =list= (the group default, so =mf trash= ≡ =mf trash list=) prints one row per
 entry — id, original path, size, age (from =trashed_at=), reason — newest first.
+
+=-f=/=--file <path>= manually trashes a *tracked* file — a safe delete
+(=reason=manual=, the entry records the file's metarecord). It errors, *before
+moving anything*, if the daemon is unreachable or the path has no metarecord
+(the CLI resolves =path -> mfr_path= metarecord through =POST …/query= with the
+exact-path idiom =mfr_path -> "/parent" AND mfr_path = "name"=, using the
+=root= from =GET /repos/:repo=). In a watched repo the ensuing disappearance is
+recorded as a =file_deleted= like any other; =mf trash restore= brings it back.
+=-f= cannot be combined with a subcommand.
 
 =restore <id>= moves the blob back to its =original_path= (or =--to <path>=) and
 removes the entry. If the target is occupied the restore is refused unless

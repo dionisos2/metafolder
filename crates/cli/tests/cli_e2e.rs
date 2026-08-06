@@ -1409,3 +1409,62 @@ fn test_trash_prune_requires_a_selector() {
     let out = mf(&["-u", &repo, "trash", "prune"]);
     assert_eq!(out.code, 2, "no -s/-d/--all is a usage error");
 }
+
+// `mf trash -f <file>` trashes a tracked file, recording its metarecord; it
+// errors (before touching the file) when the file has no metarecord or the
+// daemon is unreachable.
+#[test]
+fn test_trash_add_moves_a_tracked_file() {
+    let (repo, root) = init_repo("trashadd");
+    let file = root.join("doc.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    let out = mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(!file.exists(), "the file was moved into the trash");
+
+    // The entry records the associated metarecord and reason=manual.
+    let entries = repo_trash(&root).entries().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].reason, Reason::Manual);
+    assert_eq!(entries[0].metarecord.as_deref(), Some(uuid.as_str()));
+
+    let out = mf(&["-u", &repo, "trash", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("doc.txt") && out.stdout.contains("manual"));
+}
+
+#[test]
+fn test_trash_add_rejects_an_untracked_file() {
+    let (repo, root) = init_repo("trashadd_untracked");
+    let file = root.join("loose.txt");
+    std::fs::write(&file, b"x").unwrap();
+
+    let out = mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]);
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("no metarecord"), "stderr: {}", out.stderr);
+    assert!(file.exists(), "the untracked file is left in place");
+}
+
+#[test]
+fn test_trash_add_rejects_a_missing_file() {
+    let (repo, root) = init_repo("trashadd_missing");
+    let out = mf(&["-u", &repo, "trash", "-f", root.join("nope.txt").to_str().unwrap()]);
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+}
+
+#[test]
+fn test_trash_add_requires_a_running_daemon() {
+    // Port 1: nothing listening. The daemon check (repo_info) fails before any
+    // filesystem move is attempted, so the path need not even exist.
+    let out = mf_full(
+        &["-p", "1", "-u", &Uuid::new_v4().as_simple().to_string(), "trash", "-f", "/tmp/whatever"],
+        None,
+        &[],
+        false,
+    );
+    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
+}
