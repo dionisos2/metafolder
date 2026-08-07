@@ -98,9 +98,12 @@ unique; rollback to a label targets the most recent matching revision.
 Reversibility is assessed dynamically at rollback time, not stored statically:
 
 - =create_metarecord= … =delete_field=: always fully reversible (pure metadata).
-- =file_deleted=, =file_modified=: never fully reversible at the filesystem
-  level — the file content is gone. The metadata can still be restored from
-  the snapshot rows, but this results in a stale or misleading =mfr_path=.
+- =file_deleted=, =file_modified=: reversible at the filesystem level *only if
+  the content is in the trash-bin* (the deletion passed through it, e.g.
+  =mf trash -f=) — the CLI then auto-restores the file and the metadata follows.
+  Otherwise the content is gone: the metadata can still be restored from the
+  snapshot rows, but that results in a stale or misleading =mfr_path=, so the
+  step is skipped instead.
 - =file_moved=: reversible if and only if the file still exists at its current
   location at rollback time. If the file has since been deleted or moved again,
   the =mv= cannot be executed and only the metadata can be restored (stale
@@ -319,13 +322,18 @@ Three op types require attention at rollback time:
   the trash-bin (file content is never destroyed by rollback, as by sync; see
   [[file:spec-trash.org][spec-trash.org]] for the layout, the manifest, and
   =mf trash restore=/=prune=).
-- =file_deleted=, =file_modified=: no filesystem action is possible (content
-  is gone). The CLI calls =step= with =skip: true= when it does not want
-  the metadata left in a stale state. The content is only genuinely gone,
-  though, when the change did not pass through the trash-bin: if a trash entry
-  records this metarecord (e.g. a prior =mf trash -f=), the CLI surfaces a
-  =mf trash restore= hint so the user can bring it back (it never restores
-  automatically — see [[file:spec-trash.org][spec-trash.org]]).
+- =file_deleted=, =file_modified=: the content is gone *unless the change
+  passed through the trash-bin*. On an inverse (rollback) step, the CLI looks
+  for a trash entry matching this metarecord and the version the step restores
+  to (=entity_version_before=, exposed on the op — see below); if found, it
+  moves the file back and calls =step {}= (the real inverse restores =mfr_path=
+  and the version), *auto-restoring* the exact deleted content. Otherwise the
+  content is truly gone: the CLI calls =step {"skip": true}= (metadata rewinds)
+  and, if some other content for the record is trashed, prints a
+  =mf trash restore= hint. See [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
+  For this correlation the daemon exposes =entity_version_before= on each
+  *inverse* step's op JSON (omitted on forward/redo steps, so auto-restore never
+  fires while re-applying a deletion).
 
 When =skip: true= is used, the daemon *still applies the step's metadata change*
 (the inverse on a rollback step, the forward action on a redo step — maintaining
@@ -876,9 +884,11 @@ Target forms:
 3. For each operation:
    - =move_file=: checks whether the file exists at =from=, applies the
      relevant policy (see below), then calls =step {}= or =step {"skip":true}=.
-   - =file_deleted=, =file_modified=: always calls =step {"skip": true}= — no
-     filesystem action is possible; the restoration op corrects the metadata
-     on the new branch after rollback completes.
+   - =file_deleted=, =file_modified=: if the trash-bin holds the content this
+     step deleted (matched by metarecord + =entity_version_before=), moves the
+     file back and calls =step {}= (auto-restore); otherwise calls
+     =step {"skip": true}= — no filesystem action is possible and the
+     restoration op corrects the metadata on the new branch.
    - All other types: calls =step {}=.
 4. On completion (=op= is =null=): displays a summary and exits.
 5. On error or user interrupt: calls =POST /rollback/abort= before exiting.

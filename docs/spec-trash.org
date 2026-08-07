@@ -90,6 +90,36 @@ Restore never overwrites: an occupied target is refused outright (no =--force=).
 To bring the entry back anyway, move the occupant aside first, or restore to a
 different location with =--to=.
 
+* Rollback auto-restore
+
+A deletion that went through the trash is *fully reversible by rollback*: the
+log records a =file_deleted=, but the bytes survive in the trash, so rollback
+can put them back. This closes the loop with =mf trash -f= (and, in v2, with
+sync overwrites recorded as =file_modified=).
+
+The correlation is by *metarecord version*, not by timestamp — the version is
+exactly what a rollback restores, so it pins the historical state
+unambiguously even when a record has been trashed several times:
+
+- When =mf trash -f= trashes a path, it records the metarecord's current
+  =version= on the entry (the "file present" version, before the watcher
+  records the deletion, whose =entity_version_before= equals it).
+- During rollback, for a =file_deleted=/=file_modified= inverse step, the CLI
+  looks for a trash entry whose =metarecord= and =version= equal the op's
+  =entity_uuid= and =entity_version_before= (see
+  [[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination"). On a match it moves the file
+  back and lets the daemon apply the real inverse (=step {}=), which restores
+  =mfr_path= and the version to match. With no match the step is skipped as
+  before, plus a =mf trash restore= hint.
+
+The restored file's arrival is buffered by the rollback lock and, once the
+navigation's inverse has re-established =mfr_path=, reconciled as a plain
+refresh — no duplicate, and no reliance on a fingerprint (a freshly tracked
+file has no stored full hash). A concurrent write to the metarecord between the
+trash and the watcher's =file_deleted= would shift =entity_version_before= and
+make the match miss — safe: it degrades to the skip + hint, never a wrong
+restore.
+
 * Retention
 
 The trash grows without bound until pruned; pruning is the retention mechanism

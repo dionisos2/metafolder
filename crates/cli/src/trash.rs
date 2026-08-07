@@ -60,6 +60,12 @@ pub struct TrashEntry {
     /// UUID of the metarecord it belonged to, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metarecord: Option<String>,
+    /// The metarecord's `version` when it was trashed — the state a rollback
+    /// restores to. Lets rollback correlate this entry with the exact
+    /// `file_deleted` it undoes (its `entity_version_before`), rather than by
+    /// timestamp (spec-trash "rollback auto-restore").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<u64>,
 }
 
 /// How `prune` selects entries to delete.
@@ -115,6 +121,7 @@ impl TrashDir {
         reason: Reason,
         revision: Option<i64>,
         metarecord: Option<String>,
+        version: Option<u64>,
     ) -> Result<TrashEntry, CliError> {
         // `symlink_metadata` does not follow symlinks — a symlink is trashed as
         // the link itself (rename moves the link, not its target), and its size
@@ -152,6 +159,7 @@ impl TrashDir {
             reason,
             revision,
             metarecord,
+            version,
         };
         let json = serde_json::to_vec_pretty(&entry)
             .map_err(|e| CliError::Op(format!("cannot serialize the trash manifest: {e}")))?;
@@ -493,7 +501,7 @@ mod tests {
         fs::write(d.join("a.txt"), vec![b'a'; 100]).unwrap();
         fs::write(d.join("nested/b.txt"), vec![b'b'; 50]).unwrap();
 
-        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&d, Reason::Manual, None, None, None).unwrap();
         assert!(!d.exists(), "the directory was moved into the trash");
         assert!(entry.is_dir, "the entry is flagged as a directory");
         assert_eq!(entry.size, 150, "size is the recursive total");
@@ -511,7 +519,7 @@ mod tests {
         let d = base.join("sub");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("a.txt"), b"payload").unwrap();
-        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&d, Reason::Manual, None, None, None).unwrap();
         assert!(!d.exists());
 
         trash.restore(&entry.id, None).unwrap();
@@ -528,7 +536,7 @@ mod tests {
         let d = base.join("sub");
         fs::create_dir_all(&d).unwrap();
         fs::write(d.join("a.txt"), b"x").unwrap();
-        let entry = trash.trash_path(&d, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&d, Reason::Manual, None, None, None).unwrap();
         assert!(trash.blob_path(&entry.id).is_dir());
 
         trash.prune(PruneMode::All, false).unwrap();
@@ -547,7 +555,7 @@ mod tests {
         let link = base.join("link.txt");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        let entry = trash.trash_path(&link, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&link, Reason::Manual, None, None, None).unwrap();
         assert!(fs::symlink_metadata(&link).is_err(), "the symlink was moved out");
         assert_eq!(fs::read(&target).unwrap(), b"important", "the target is untouched");
         assert!(
@@ -577,7 +585,7 @@ mod tests {
         fs::write(&file, b"content").unwrap();
 
         let entry = trash
-            .trash_path(&file, Reason::Rollback, Some(101), Some("abc".into()))
+            .trash_path(&file, Reason::Rollback, Some(101), Some("abc".into()), Some(7))
             .unwrap();
 
         assert!(!file.exists(), "the original file should be gone");
@@ -601,7 +609,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            trash.trash_path(&f, Reason::Manual, None, None).unwrap();
+            trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
         }
         assert_eq!(trash.entries().unwrap().len(), 2);
         fs::remove_dir_all(&base).ok();
@@ -613,7 +621,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
         fs::write(&file, b"payload").unwrap();
-        let entry = trash.trash_path(&file, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&file, Reason::Manual, None, None, None).unwrap();
         assert!(!file.exists());
 
         let restored = trash.restore(&entry.id, None).unwrap();
@@ -629,7 +637,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
         fs::write(&file, b"old").unwrap();
-        let entry = trash.trash_path(&file, Reason::Manual, None, None).unwrap();
+        let entry = trash.trash_path(&file, Reason::Manual, None, None, None).unwrap();
         // A different file now occupies the original path.
         fs::write(&file, b"new").unwrap();
 
@@ -648,7 +656,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            trash.trash_path(&f, Reason::Manual, None, None).unwrap();
+            trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
         }
         let removed = trash.prune(PruneMode::All, false).unwrap();
         assert_eq!(removed.len(), 2);
@@ -662,7 +670,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let f = base.join("a.txt");
         fs::write(&f, b"x").unwrap();
-        trash.trash_path(&f, Reason::Manual, None, None).unwrap();
+        trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
         // An orphan blob: a manifest-less file (as a failed manifest write, or a
         // half-removed entry, would leave). `entries` never sees it.
         fs::write(trash.root.join("deadbeef"), b"leaked").unwrap();
@@ -680,7 +688,7 @@ mod tests {
         let trash = TrashDir::new(base.join("trash"));
         let f = base.join("a.txt");
         fs::write(&f, b"x").unwrap();
-        trash.trash_path(&f, Reason::Manual, None, None).unwrap();
+        trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
         let removed = trash.prune(PruneMode::All, true).unwrap();
         assert_eq!(removed.len(), 1);
         assert_eq!(trash.entries().unwrap().len(), 1, "dry-run deletes nothing");
@@ -695,7 +703,7 @@ mod tests {
         for name in ["old.txt", "new.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            ids.push(trash.trash_path(&f, Reason::Manual, None, None).unwrap().id);
+            ids.push(trash.trash_path(&f, Reason::Manual, None, None, None).unwrap().id);
         }
         set_age(&trash, &ids[0], 1_000);
         set_age(&trash, &ids[1], 5_000);
@@ -717,7 +725,7 @@ mod tests {
         for (i, name) in ["a.txt", "b.txt", "c.txt"].iter().enumerate() {
             let f = base.join(name);
             fs::write(&f, vec![b'x'; 100]).unwrap();
-            let id = trash.trash_path(&f, Reason::Manual, None, None).unwrap().id;
+            let id = trash.trash_path(&f, Reason::Manual, None, None, None).unwrap().id;
             set_age(&trash, &id, 1_000 * (i as i64 + 1));
             ids.push(id);
         }
@@ -739,7 +747,7 @@ mod tests {
         for name in ["a.txt", "b.txt"] {
             let f = base.join(name);
             fs::write(&f, b"x").unwrap();
-            ids.push(trash.trash_path(&f, Reason::Manual, None, None).unwrap().id);
+            ids.push(trash.trash_path(&f, Reason::Manual, None, None, None).unwrap().id);
         }
         set_age(&trash, &ids[0], 9_000);
         set_age(&trash, &ids[1], 1_000);

@@ -1122,7 +1122,16 @@ pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
         CliError::Op(format!("no metarecord is associated with {}", abs.display()))
     })?;
 
-    let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid))?;
+    // Record the metarecord's current version — the state a rollback restores to
+    // — so `mf rollback` can later match this entry to the exact deletion it
+    // undoes (spec-trash "rollback auto-restore").
+    let base = ctx.repo_base()?;
+    let parsed = Uuid::parse_str(&uuid)
+        .map_err(|_| CliError::Op("daemon returned an invalid uuid".into()))?;
+    let rec = ctx.client.get(&format!("{base}/metarecords/{}", parsed.as_simple()), &[])?;
+    let version = rec["version"].as_u64();
+
+    let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid), version)?;
     println!("trashed {} (id {})", abs.display(), entry.id);
     Ok(0)
 }

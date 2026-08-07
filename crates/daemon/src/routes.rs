@@ -1016,6 +1016,16 @@ fn action_op_json(
         "op_type": action,
         "entity_uuid": hex(op.entity_uuid),
     });
+    // For an inverse (rollback) step, expose the metarecord version this step
+    // restores to (`entity_version_before`). The CLI matches it against a trash
+    // entry's recorded version to auto-restore the exact file the deletion
+    // displaced (spec-trash "rollback auto-restore"). Omitted on forward (redo)
+    // steps, so auto-restore never fires while re-applying a deletion.
+    if matches!(dir, crate::log::NavDir::Inverse) {
+        if let Some(v) = op.entity_version_before {
+            value["entity_version_before"] = json!(v);
+        }
+    }
     if is_move {
         // Inverse: undo the move (after → before). Forward: redo (before → after).
         let (from_is_new, to_is_new) = match dir {

@@ -1348,10 +1348,10 @@ fn test_trash_list_restore_and_prune() {
     // Seed the trash as a rollback overwrite would.
     let victim = root.join("victim.txt");
     std::fs::write(&victim, b"precious").unwrap();
-    let e1 = trash.trash_path(&victim, Reason::Rollback, Some(7), None).unwrap();
+    let e1 = trash.trash_path(&victim, Reason::Rollback, Some(7), None, None).unwrap();
     let other = root.join("other.txt");
     std::fs::write(&other, b"stuff").unwrap();
-    trash.trash_path(&other, Reason::Manual, None, None).unwrap();
+    trash.trash_path(&other, Reason::Manual, None, None, None).unwrap();
     assert!(!victim.exists() && !other.exists(), "both were moved into the trash");
 
     // list shows both entries with their original names.
@@ -1385,7 +1385,7 @@ fn test_trash_restore_refuses_an_occupied_target() {
     let trash = repo_trash(&root);
     let doc = root.join("doc.txt");
     std::fs::write(&doc, b"old").unwrap();
-    let e = trash.trash_path(&doc, Reason::Manual, None, None).unwrap();
+    let e = trash.trash_path(&doc, Reason::Manual, None, None, None).unwrap();
     std::fs::write(&doc, b"new").unwrap(); // the path is occupied again
 
     let out = mf(&["-u", &repo, "trash", "restore", &e.id]);
@@ -1522,4 +1522,79 @@ fn test_trash_restore_relinks_the_metarecord() {
     let out = mf(&["-u", &repo, "path", &uuid]);
     assert_ok(&out);
     assert!(out.stdout.contains("sub/file.txt"), "path output: {}", out.stdout);
+}
+
+/// Polls `mf <args>` until `pred(stdout)` holds, up to ~10 s. Returns the
+/// matching stdout (trimmed). Panics on timeout.
+fn poll_mf(args: &[&str], pred: impl Fn(&str) -> bool) -> String {
+    for _ in 0..100 {
+        let out = mf(args);
+        if out.code == 0 && pred(out.stdout.trim()) {
+            return out.stdout.trim().to_string();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("timed out polling mf {args:?}");
+}
+
+// `mf trash -f` records the metarecord's current version on the entry, so a
+// later rollback can correlate it (deterministic, no watcher needed here).
+#[test]
+fn test_trash_add_records_the_metarecord_version() {
+    let (repo, root) = init_repo("trashver");
+    let file = root.join("doc.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+
+    // The metarecord's version, straight from the daemon.
+    let rec = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
+    assert_ok(&rec);
+    // `-i … get` prints a one-element array.
+    let version: u64 = serde_json::from_str::<serde_json::Value>(&rec.stdout).unwrap()[0]["version"]
+        .as_u64()
+        .unwrap();
+
+    mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]);
+    let entry = &repo_trash(&root).entries().unwrap()[0];
+    assert_eq!(entry.version, Some(version), "the entry records the metarecord version");
+}
+
+// End to end: in a watched repo, `mf trash -f` produces a file_deleted; a
+// rollback then auto-restores the exact file from the trash (spec-trash
+// "rollback auto-restore").
+#[test]
+fn test_rollback_auto_restores_from_trash() {
+    let (repo, root) = init_repo("rbrestore");
+    // Enable watching on the filesystem root.
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+
+    // Create a file and wait for the watcher to track it.
+    let file = root.join("doc.txt");
+    std::fs::write(&file, b"precious").unwrap();
+    let uuid = poll_mf(
+        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
+        is_hex_uuid,
+    );
+
+    // Trash it; wait for the watcher to record the deletion (mfr_path → Nothing).
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    poll_mf(
+        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
+        |s| s.is_empty(),
+    );
+    assert!(!file.exists(), "the file is in the trash");
+
+    // Roll back the deletion → the file is auto-restored from the trash.
+    let out = mf(&["-u", &repo, "log", "rollback"]);
+    assert_ok(&out);
+    assert_eq!(std::fs::read(&file).unwrap(), b"precious", "the file is back");
+    // The metadata is restored too: the metarecord is at doc.txt again.
+    let back = poll_mf(
+        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
+        |s| s == uuid,
+    );
+    assert_eq!(back, uuid);
+    // The trash entry was consumed.
+    assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
 }

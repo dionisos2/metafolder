@@ -143,6 +143,10 @@ async fn test_start_step_undoes_last_revision() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["op"]["op_type"], "set_field", "{body}");
+    // Inverse steps carry the metarecord version this step restores to, so the
+    // CLI can correlate a trashed file with the exact deletion it undoes
+    // (spec-trash "rollback auto-restore").
+    assert!(body["op"]["entity_version_before"].is_u64(), "{body}");
 
     let (status, body) =
         request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;

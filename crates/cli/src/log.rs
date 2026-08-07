@@ -148,7 +148,7 @@ pub fn rollback_run(
     // point out content that a file_deleted/file_modified step "lost" but that
     // is in fact recoverable (e.g. from a prior `mf trash -f`).
     let trash = ctx.internal_dir()?;
-    let trash_entries = trash.entries().unwrap_or_default();
+    let mut trash_entries = trash.entries().unwrap_or_default();
 
     let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
     let mut op = start["op"].clone();
@@ -160,20 +160,13 @@ pub fn rollback_run(
             let op_type = op["op_type"].as_str().unwrap_or("");
             let skip = match op_type {
                 "move_file" => decide_move(&op, &policies, &trash, silent)?,
-                // No filesystem action is possible: restore metadata on the
-                // new branch via a restoration op. If the record's content sits
-                // in the trash, tell the user how to bring it back (we never
-                // restore automatically — spec-trash.org).
+                // The file's content is only truly gone if the deletion did not
+                // pass through the trash. If a trash entry matches this record
+                // and the version this step restores to, put the file back and
+                // let the daemon apply the real inverse; otherwise skip (the
+                // metadata rewinds) and hint at any recoverable content.
                 "file_deleted" | "file_modified" => {
-                    if !silent {
-                        if let Some(hint) = trash_recovery_hint(
-                            &trash_entries,
-                            op["entity_uuid"].as_str().unwrap_or_default(),
-                        ) {
-                            eprintln!("note: {hint}");
-                        }
-                    }
-                    true
+                    decide_deleted(&op, &trash, &mut trash_entries, silent)?
                 }
                 _ => false,
             };
@@ -248,7 +241,7 @@ fn decide_move(
                 // the trash, and the navigation aborts mid-way.
                 if dest.exists() {
                     let entry =
-                        trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None)?;
+                        trash.trash_path(dest, Reason::Rollback, op["id"].as_i64(), None, None)?;
                     if !silent {
                         eprintln!("trashed {to} (id {}) before overwrite", entry.id);
                     }
@@ -272,6 +265,54 @@ fn decide_move(
         Policy::Abort => Err(CliError::Op("rollback aborted by move policy".into())),
         Policy::Ask => unreachable!("ask is resolved above"),
     }
+}
+
+/// Decides a `file_deleted`/`file_modified` rollback step (spec-trash "rollback
+/// auto-restore"). When the trash holds the content this step's deletion
+/// displaced — matched by the metarecord *and* the version the step restores to
+/// (`entity_version_before`, present only on inverse steps) — the file is put
+/// back and `false` (no skip) is returned so the daemon applies the real inverse
+/// (mfr_path + version). Otherwise the step is skipped (metadata rewinds) and,
+/// if some content for the record is trashed, a recovery hint is printed.
+fn decide_deleted(
+    op: &Json,
+    trash: &TrashDir,
+    entries: &mut Vec<TrashEntry>,
+    silent: bool,
+) -> Result<bool, CliError> {
+    let entity = op["entity_uuid"].as_str().unwrap_or_default();
+
+    if let Some(version) = op["entity_version_before"].as_u64() {
+        if let Some(pos) = entries
+            .iter()
+            .position(|e| e.metarecord.as_deref() == Some(entity) && e.version == Some(version))
+        {
+            let id = entries[pos].id.clone();
+            match trash.restore(&id, None) {
+                Ok(path) => {
+                    entries.remove(pos);
+                    if !silent {
+                        eprintln!("restored {} from the trash", path.display());
+                    }
+                    // Apply the real inverse (`step {}`): the daemon restores
+                    // mfr_path and the version to match the file now in place.
+                    return Ok(false);
+                }
+                // The file is not restorable (e.g. the path is occupied); fall
+                // back to skipping, so the metadata stays truthful.
+                Err(e) if !silent => {
+                    eprintln!("note: could not auto-restore from the trash ({}); skipping", e.message());
+                }
+                Err(_) => {}
+            }
+        }
+    }
+    if !silent {
+        if let Some(hint) = trash_recovery_hint(entries, entity) {
+            eprintln!("note: {hint}");
+        }
+    }
+    Ok(true)
 }
 
 /// If the trash holds content for `metarecord` (e.g. a prior `mf trash -f`),
@@ -937,6 +978,7 @@ mod tests {
             reason: Reason::Manual,
             revision: None,
             metarecord: metarecord.map(str::to_owned),
+            version: None,
         }
     }
 
@@ -954,6 +996,61 @@ mod tests {
         // A record with no trashed content, and the empty uuid, yield nothing.
         assert!(trash_recovery_hint(&entries, "rec-3").is_none());
         assert!(trash_recovery_hint(&entries, "").is_none());
+    }
+
+    fn deleted_op(entity: &str, version_before: Option<u64>) -> Json {
+        let mut op = json!({"op_type": "file_deleted", "entity_uuid": entity});
+        if let Some(v) = version_before {
+            op["entity_version_before"] = json!(v);
+        }
+        op
+    }
+
+    // A file_deleted step whose content is in the trash at the matching version
+    // is auto-restored (no skip); the daemon then applies the real inverse.
+    #[test]
+    fn deleted_step_auto_restores_the_matching_version() {
+        let base = std::env::temp_dir().join(format!("mf_del_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let trash = TrashDir::new(base.join("trash"));
+        let file = base.join("doc.txt");
+        std::fs::write(&file, b"content").unwrap();
+        let e = trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
+        assert!(!file.exists());
+        let mut entries = trash.entries().unwrap();
+
+        // Matching entity + version → restore, no skip, entry consumed.
+        let op = deleted_op("rec-1", Some(4));
+        let skip = decide_deleted(&op, &trash, &mut entries, true).unwrap();
+        assert!(!skip, "a matching trash entry must be auto-restored (step {{}})");
+        assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
+        assert!(entries.is_empty(), "the consumed entry is removed");
+        assert!(trash.entry(&e.id).is_err(), "the manifest is gone");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // A version mismatch (or a forward step with no entity_version_before) does
+    // not restore: the step is skipped and the file stays trashed.
+    #[test]
+    fn deleted_step_skips_on_version_mismatch() {
+        let base = std::env::temp_dir().join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let trash = TrashDir::new(base.join("trash"));
+        let file = base.join("doc.txt");
+        std::fs::write(&file, b"content").unwrap();
+        trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
+        let mut entries = trash.entries().unwrap();
+
+        // Wrong version → skip, entry untouched.
+        let skip = decide_deleted(&deleted_op("rec-1", Some(9)), &trash, &mut entries, true).unwrap();
+        assert!(skip);
+        assert!(!file.exists(), "the file stays in the trash");
+        assert_eq!(entries.len(), 1);
+        // No entity_version_before (forward step) → skip too.
+        let skip = decide_deleted(&deleted_op("rec-1", None), &trash, &mut entries, true).unwrap();
+        assert!(skip);
+        assert_eq!(entries.len(), 1);
+        std::fs::remove_dir_all(&base).ok();
     }
 
     // A directory at the destination cannot be trashed or overwritten: the step
