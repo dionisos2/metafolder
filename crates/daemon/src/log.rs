@@ -1007,7 +1007,17 @@ impl<'c> Writer<'c> {
 
     /// Creates a new metarecord owned by this repository.
     pub fn create_metarecord(&mut self, fields: Vec<Field>) -> Result<MetaRecord> {
-        let uuid = Uuid::new_v4();
+        self.create_metarecord_with_uuid(Uuid::new_v4(), fields)
+    }
+
+    /// Like [`create_metarecord`] but at a caller-supplied UUID (sync
+    /// bare-record creation, spec-sync). The UUID must not already exist — the
+    /// `metarecord` PRIMARY KEY rejects a duplicate.
+    pub fn create_metarecord_with_uuid(
+        &mut self,
+        uuid: Uuid,
+        fields: Vec<Field>,
+    ) -> Result<MetaRecord> {
         for f in &fields {
             self.validate_tree_ref(uuid, &f.name, &f.value)?;
         }

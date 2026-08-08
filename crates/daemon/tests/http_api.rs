@@ -1070,3 +1070,40 @@ async fn test_expected_version_precondition() {
     assert_eq!(got["version"], 1);
     assert_eq!(got["fields"][0]["value"]["value"], 5);
 }
+
+#[tokio::test]
+async fn test_create_metarecord_with_supplied_uuid() {
+    let (app, repo, root) = app_with_repo("supplied_uuid").await;
+    let uuid = Uuid::new_v4().as_simple().to_string();
+
+    // A caller-supplied UUID is honoured (used by sync bare-record creation).
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"uuid": uuid, "fields": [
+            {"name": "tag", "value": {"type": "string", "value": "x"}}
+        ]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "create failed: {body}");
+    assert_eq!(body["uuid"].as_str().unwrap(), uuid);
+
+    // The record is addressable at that exact UUID.
+    let (status, got) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(got["uuid"].as_str().unwrap(), uuid);
+
+    // Re-using an existing UUID is a conflict, not a silent overwrite.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"uuid": uuid, "fields": []})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    std::fs::remove_dir_all(root).unwrap();
+}

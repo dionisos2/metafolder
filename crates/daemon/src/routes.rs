@@ -1986,6 +1986,10 @@ struct CreateBody {
     fields: Vec<Field>,
     #[serde(default)]
     force: bool,
+    /// Optional caller-supplied UUID (sync bare-record creation, spec-sync).
+    /// Rejected with 409 if a metarecord already has it.
+    #[serde(default)]
+    uuid: Option<String>,
 }
 
 async fn create_record_endpoint(
@@ -1995,6 +1999,7 @@ async fn create_record_endpoint(
 ) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
+    let supplied = body.uuid.as_deref().map(parse_uuid).transpose()?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         for field in &body.fields {
@@ -2003,7 +2008,15 @@ async fn create_record_endpoint(
         let mut conn = repo_state.conn.lock_recover();
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         let mut writer = Writer::begin(&mut conn, None)?;
-        let created = writer.create_metarecord(body.fields)?;
+        let created = match supplied {
+            Some(uuid) => {
+                if db::get_version(writer.connection(), uuid)?.is_some() {
+                    return Err(ApiError::conflict(format!("metarecord already exists: {uuid}")));
+                }
+                writer.create_metarecord_with_uuid(uuid, body.fields)?
+            }
+            None => writer.create_metarecord(body.fields)?,
+        };
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
         let tree_touched = writer.touched_tree();
         writer.commit()?;
