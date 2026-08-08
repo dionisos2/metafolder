@@ -156,7 +156,11 @@ enum Command {
 #[derive(Subcommand)]
 enum RepoCommand {
     /// List the loaded repositories (pretty-printed JSON)
-    List,
+    List {
+        /// Also list daemon-internal system repos (e.g. sync plan repos)
+        #[arg(long)]
+        all: bool,
+    },
     /// Initialise a new repository and print its UUID
     Init {
         root: PathBuf,
@@ -404,6 +408,20 @@ enum TrashCommand {
 
 #[derive(Subcommand)]
 enum SyncCommand {
+    /// Compute a sync plan (into a freshly recreated plan repo)
+    Plan {
+        repo_a: String,
+        repo_b: String,
+        /// Path to the TOML intents file (scope + policies)
+        #[arg(long)]
+        intents: PathBuf,
+        /// Repo (of the pair) to host the plan + sync database (default: canonical A)
+        #[arg(long)]
+        host: Option<String>,
+        /// Override every conflict rule: ask | skip | prefer:<repo>
+        #[arg(long = "on-conflict")]
+        on_conflict: Option<String>,
+    },
     /// Print the per-link change/conflict states of a repo pair
     Status {
         /// The two repositories (name or UUID; order does not matter)
@@ -623,8 +641,8 @@ type CmdResult = Result<i32, metafolder_cli::client::CliError>;
 
 fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     match command {
-        Command::Repo { command } => match command.unwrap_or(RepoCommand::List) {
-            RepoCommand::List => commands::repos(ctx),
+        Command::Repo { command } => match command.unwrap_or(RepoCommand::List { all: false }) {
+            RepoCommand::List { all } => commands::repos(ctx, all),
             RepoCommand::Init { root, metafolder } => {
                 commands::init(ctx, &root, metafolder.as_deref())
             }
@@ -680,6 +698,14 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
 
 fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
     match command {
+        SyncCommand::Plan { repo_a, repo_b, intents, host, on_conflict } => sync::plan::run(
+            ctx,
+            &repo_a,
+            &repo_b,
+            &intents,
+            host.as_deref(),
+            on_conflict.as_deref(),
+        ),
         SyncCommand::Status { repo_a, repo_b, json } => {
             sync::status(ctx, &repo_a, &repo_b, json)
         }

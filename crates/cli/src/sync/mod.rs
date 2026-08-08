@@ -10,6 +10,7 @@
 //! `(a, b)` before talking to the daemon.
 
 pub mod intents;
+pub mod plan;
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
@@ -17,8 +18,17 @@ use uuid::Uuid;
 use crate::client::CliError;
 use crate::commands::Ctx;
 
+/// Canonical pair order (spec-sync): the lexicographically smaller UUID is A.
+pub(crate) fn canonical_pair(a: Uuid, b: Uuid) -> (Uuid, Uuid) {
+    if a.as_bytes() < b.as_bytes() {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
 /// Resolves the two positional repo selectors to UUIDs, rejecting a self-pair.
-fn resolve_pair(ctx: &Ctx, repo_a: &str, repo_b: &str) -> Result<(Uuid, Uuid), CliError> {
+pub(crate) fn resolve_pair(ctx: &Ctx, repo_a: &str, repo_b: &str) -> Result<(Uuid, Uuid), CliError> {
     let a = ctx.resolve_repo(repo_a)?;
     let b = ctx.resolve_repo(repo_b)?;
     if a == b {

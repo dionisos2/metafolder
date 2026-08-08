@@ -236,8 +236,10 @@ pub fn load(
     Ok(0)
 }
 
-pub fn repos(ctx: &Ctx) -> Result<i32, CliError> {
-    let resp = ctx.client.get("/repos", &[])?;
+pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
+    let query: &[(&str, String)] =
+        if all { &[("all", "true".to_string())] } else { &[] };
+    let resp = ctx.client.get("/repos", query)?;
     print_pretty(&resp);
     Ok(0)
 }

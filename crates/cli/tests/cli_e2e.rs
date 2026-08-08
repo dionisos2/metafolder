@@ -1664,3 +1664,46 @@ fn test_sync_unlink_with_endpoint_deletes_record() {
     let out = mf(&["-u", &repo_b, "metarecord", "-i", &rec_b, "get"]);
     assert_ok(&out);
 }
+
+// ── Cross-repo sync: mf sync plan (plan-repo lifecycle) ───────────────────────
+
+#[test]
+fn test_sync_plan_creates_hidden_plan_repo() {
+    let (a, _ra) = init_repo("plan_a");
+    let (b, _rb) = init_repo("plan_b");
+    let dir = temp_dir("plan_intents");
+    let intents = dir.join("i.toml");
+    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'mf_watch = true'\n"))
+        .unwrap();
+
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+
+    // The plan repo is hidden from the default listing …
+    let list = mf(&["repo", "list"]);
+    assert_ok(&list);
+    assert!(!list.stdout.contains("plan-"), "plan repo must be hidden: {}", list.stdout);
+
+    // … but visible with --all, as exactly one system repo named plan-<a>-<b>.
+    assert_eq!(count_plan_repos(), 1, "one plan repo listed with --all");
+
+    // Re-running recreates it without error (only the latest plan exists).
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_eq!(count_plan_repos(), 1, "still exactly one plan repo after re-plan");
+}
+
+/// Number of loaded system repos whose name begins with `plan-` (from
+/// `mf repo list --all`).
+fn count_plan_repos() -> usize {
+    let all = mf(&["repo", "list", "--all"]);
+    assert_ok(&all);
+    let repos: serde_json::Value = serde_json::from_str(&all.stdout).expect("repo list json");
+    repos
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter(|r| r["name"].as_str().is_some_and(|n| n.starts_with("plan-")))
+                .count()
+        })
+        .unwrap_or(0)
+}
