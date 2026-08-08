@@ -122,12 +122,16 @@ fn linking_phase(
         if planned_a.contains(&rec_a) {
             continue;
         }
-        let target = pick_target(ctx, a, rec_a, cands.get(&rec_a), &linked_b, &planned_b)?;
-        write_create_link(ctx, plan, a, b, rec_a, target)?;
+        let side_a = existing_side(ctx, a, rec_a)?;
+        let side_b = match pick_target(ctx, a, rec_a, cands.get(&rec_a), &linked_b, &planned_b)? {
+            Endpoint::Existing(rec_b) => {
+                planned_b.insert(rec_b);
+                existing_side(ctx, b, rec_b)?
+            }
+            Endpoint::Bare => bare_side(b),
+        };
+        write_op(ctx, plan, "create-link", side_a, side_b)?;
         planned_a.insert(rec_a);
-        if let Endpoint::Existing(rec_b) = target {
-            planned_b.insert(rec_b);
-        }
         ops += 1;
     }
 
@@ -142,19 +146,15 @@ fn linking_phase(
         if planned_b.contains(&rec_b) {
             continue;
         }
-        let target = pick_target(ctx, b, rec_b, cands.get(&rec_b), &linked_a, &planned_a)?;
-        // `write_create_link` is canonical (rec_a in A, rec_b in B); here the
-        // matched/allocated record is the A endpoint.
-        match target {
+        let side_a = match pick_target(ctx, b, rec_b, cands.get(&rec_b), &linked_a, &planned_a)? {
             Endpoint::Existing(rec_a) => {
-                write_create_link(ctx, plan, a, b, rec_a, Endpoint::Existing(rec_b))?;
                 planned_a.insert(rec_a);
+                existing_side(ctx, a, rec_a)?
             }
-            Endpoint::Bare => {
-                let rec_a = Uuid::new_v4();
-                write_create_link(ctx, plan, a, b, rec_a, Endpoint::Existing(rec_b))?;
-            }
-        }
+            Endpoint::Bare => bare_side(a),
+        };
+        let side_b = existing_side(ctx, b, rec_b)?;
+        write_op(ctx, plan, "create-link", side_a, side_b)?;
         planned_b.insert(rec_b);
         ops += 1;
     }
@@ -166,12 +166,8 @@ fn linking_phase(
                 ctx,
                 plan,
                 "drop-link",
-                a,
-                l.record_a,
-                b,
-                l.record_b,
-                version_or_zero(ctx, a, l.record_a)?,
-                version_or_zero(ctx, b, l.record_b)?,
+                existing_side(ctx, a, l.record_a)?,
+                existing_side(ctx, b, l.record_b)?,
             )?;
             ops += 1;
         }
@@ -221,42 +217,47 @@ fn pick_target(
 }
 
 /// Writes a canonical `create-link` op-metarecord (rec_a in A ↔ endpoint in B).
-fn write_create_link(
-    ctx: &Ctx,
-    plan: &PlanRepo,
-    a: Uuid,
-    b: Uuid,
-    rec_a: Uuid,
-    target_b: Endpoint,
-) -> Result<(), CliError> {
-    let (rec_b, ver_b) = match target_b {
-        Endpoint::Existing(rec_b) => (rec_b, version_or_zero(ctx, b, rec_b)?),
-        // A bare record does not exist yet: baseline 0 = "absent".
-        Endpoint::Bare => (Uuid::new_v4(), 0),
-    };
-    write_op(ctx, plan, "create-link", a, rec_a, b, rec_b, version_or_zero(ctx, a, rec_a)?, ver_b)
+/// One side of a link op: its repo, record, and the `version` the record was
+/// read at (the run-time baseline). `baseline` is `None` for a record that does
+/// not exist yet — a **bare** endpoint the plan is allocating — so no
+/// `plan_version_*` is written for it and `run` creates it (the caller-supplied
+/// -UUID create fails closed if it has since appeared, so no baseline is needed).
+struct Side {
+    repo: Uuid,
+    record: Uuid,
+    baseline: Option<u64>,
 }
 
-/// Writes one op-metarecord into the plan repo.
-#[allow(clippy::too_many_arguments)]
+/// A side onto an existing record, tagged with its current version baseline.
+fn existing_side(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Side, CliError> {
+    Ok(Side { repo, record, baseline: baseline(ctx, repo, record)? })
+}
+
+/// A bare side: a freshly allocated UUID, no baseline (does not exist yet).
+fn bare_side(repo: Uuid) -> Side {
+    Side { repo, record: Uuid::new_v4(), baseline: None }
+}
+
+/// Writes one op-metarecord into the plan repo. `plan_version_*` is emitted only
+/// for a side with a baseline; a bare side carries none.
 fn write_op(
     ctx: &Ctx,
     plan: &PlanRepo,
     kind: &str,
-    a: Uuid,
-    rec_a: Uuid,
-    b: Uuid,
-    rec_b: Uuid,
-    ver_a: u64,
-    ver_b: u64,
+    side_a: Side,
+    side_b: Side,
 ) -> Result<(), CliError> {
-    let fields = json!([
-        {"name": "plan_kind", "value": {"type": "string", "value": kind}},
-        {"name": "plan_a", "value": external_ref(a, rec_a)},
-        {"name": "plan_b", "value": external_ref(b, rec_b)},
-        {"name": "plan_version_a", "value": {"type": "int", "value": ver_a}},
-        {"name": "plan_version_b", "value": {"type": "int", "value": ver_b}},
-    ]);
+    let mut fields = vec![
+        json!({"name": "plan_kind", "value": {"type": "string", "value": kind}}),
+        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
+        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
+    ];
+    if let Some(v) = side_a.baseline {
+        fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
+    }
+    if let Some(v) = side_b.baseline {
+        fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
+    }
     ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
     Ok(())
 }
@@ -368,12 +369,12 @@ fn query_uuids(
     Ok(uuids)
 }
 
-/// The current `version` of a record, or 0 when it does not exist (a missing
-/// baseline the run's `expected_version` treats as "absent").
-fn version_or_zero(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<u64, CliError> {
+/// The current `version` of a record, or `None` when it does not exist (an
+/// absent baseline: nothing to freshness-check, the record is to be created).
+fn baseline(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> {
     match ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[]) {
-        Ok(m) => Ok(m["version"].as_u64().unwrap_or(0)),
-        Err(CliError::Op(_)) => Ok(0),
+        Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
+        Err(CliError::Op(_)) => Ok(None),
         Err(e) => Err(e),
     }
 }

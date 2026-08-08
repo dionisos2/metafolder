@@ -1806,15 +1806,19 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     assert!(endpoints.contains(&rec_a), "existing endpoint present: {endpoints:?}");
     let bare = endpoints.iter().find(|u| **u != rec_a).expect("a bare endpoint");
     assert!(is_hex_uuid(bare), "bare endpoint is a uuid: {bare}");
-    // The bare side carries an absent (0) baseline version.
+    // The bare side carries NO baseline (the record does not exist yet).
     let fields = op["fields"].as_array().unwrap();
-    let bare_is_a = op["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|f| f["name"] == "plan_a" && f["value"]["value"]["metarecord"].as_str() == Some(bare));
+    let bare_is_a =
+        fields.iter().any(|f| f["name"] == "plan_a" && f["value"]["value"]["metarecord"].as_str() == Some(bare));
     let bare_version_field = if bare_is_a { "plan_version_a" } else { "plan_version_b" };
-    let bare_version =
-        fields.iter().find(|f| f["name"] == bare_version_field).unwrap()["value"]["value"].clone();
-    assert_eq!(bare_version, 0, "bare baseline is 0");
+    assert!(
+        !fields.iter().any(|f| f["name"] == bare_version_field),
+        "bare side must have no {bare_version_field}: {op}"
+    );
+    // The existing side does carry its baseline.
+    let existing_version_field = if bare_is_a { "plan_version_b" } else { "plan_version_a" };
+    assert!(
+        fields.iter().any(|f| f["name"] == existing_version_field),
+        "existing side keeps its baseline: {op}"
+    );
 }

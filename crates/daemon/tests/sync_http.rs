@@ -349,5 +349,14 @@ async fn test_candidates_exclude_already_linked() {
         request(&app, "POST", &format!("/sync/{a}/{b}/candidates"), Some(json!({"source": a})))
             .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["candidates"].as_array().unwrap().is_empty(), "linked records excluded: {body}");
+    // The linked record `s` yields no candidate. (Other unlinked records — e.g.
+    // the two repos' roots, which match by their shared empty path — may still
+    // appear; the root is a metarecord like any other.)
+    let sources: Vec<&str> = body["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["source"].as_str().unwrap())
+        .collect();
+    assert!(!sources.contains(&s.as_str()), "a linked record must not be a candidate: {body}");
 }

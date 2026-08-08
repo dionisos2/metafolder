@@ -71,7 +71,7 @@ pub fn candidates(
     let mut by_hash: HashMap<String, Uuid> = HashMap::new();
     let mut by_path: HashMap<String, Uuid> = HashMap::new();
     for uuid in db::all_tracked_metarecords(tgt_conn)? {
-        if linked_tgt.contains(&uuid) || is_forest_root(tgt_conn, uuid)? {
+        if linked_tgt.contains(&uuid) {
             continue;
         }
         let full_hash = first_string(tgt_conn, uuid, "mfr_full_hash")?;
@@ -93,7 +93,7 @@ pub fn candidates(
 
     let mut out = Vec::new();
     for uuid in source {
-        if linked_src.contains(&uuid) || is_forest_root(src_conn, uuid)? {
+        if linked_src.contains(&uuid) {
             continue;
         }
         let full_hash = first_string(src_conn, uuid, "mfr_full_hash")?;
@@ -129,16 +129,6 @@ pub fn candidates(
 
 fn candidate(source: Uuid, target: Uuid, kind: &str, score: f64) -> Json {
     json!({ "source": hex(source), "target": hex(target), "kind": kind, "score": score })
-}
-
-/// Whether a metarecord is the repository's `mfr_path` forest root — the empty
-/// -named anchor at the top of the tree (`find_tree_child(.., None, "")`). Real
-/// files are always children of it (a non-empty name), so the root is the only
-/// such record; it is structural, not content, and never a sync candidate.
-fn is_forest_root(conn: &Connection, uuid: Uuid) -> Result<bool, ApiError> {
-    Ok(db::get_field_rows_named(conn, uuid, "mfr_path")?
-        .into_iter()
-        .any(|r| matches!(r.value, Value::TreeRef { ref name, .. } if name.is_empty())))
 }
 
 /// First `String` value of a field on a metarecord.
