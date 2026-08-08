@@ -20,44 +20,27 @@ use uuid::Uuid;
 struct Oracle {
     conn: Connection,
     cache: TreeCache,
-    db_id: Uuid,
 }
 
 impl Oracle {
     fn new() -> Self {
         let conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false), db_id: Uuid::new_v4() }
+        Self { conn, cache: TreeCache::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
-        self.create_in(self.db_id, fields)
-    }
-
-    fn create_in(&mut self, db_id: Uuid, fields: Vec<Field>) -> Uuid {
-        let mut w = Writer::begin(&mut self.conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let m = w.create_metarecord(fields).unwrap();
         w.commit().unwrap();
         m.uuid
     }
 
-    /// Makes `uuid` a link metarecord by adding a second owning repository, so
-    /// it drops out of the exclusively-owned universe. A direct insert (no log)
-    /// suffices for the fixture: both engines read `metarecord_db` directly.
-    fn add_owner(&mut self, uuid: Uuid, db_id: Uuid) {
-        self.conn
-            .execute(
-                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
-                rusqlite::params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(db_id)],
-            )
-            .unwrap();
-    }
-
     /// Asserts the bitmap index agrees with the SQL engine on `q`.
     fn check(&mut self, q: &Query) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
         let (mut sql, _) =
-            query_exec::execute(&self.conn, &mut self.cache, self.db_id, q, &[], None, None)
+            query_exec::execute(&self.conn, &mut self.cache, q, &[], None, None)
                 .unwrap();
         let mut got = index.to_uuids(&index.evaluate(q).unwrap());
         sql.sort();
@@ -68,7 +51,7 @@ impl Oracle {
     /// Asserts the bitmap index agrees with the SQL engine on the *ordered*,
     /// limited result of `q` (comparison is order-sensitive — a `Vec`, not a set).
     fn check_sorted(&mut self, q: &Query, by: &[(&str, bool)], limit: Option<usize>) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
         let sql_keys: Vec<SortKey> = by
             .iter()
             .map(|(f, asc)| SortKey {
@@ -79,7 +62,6 @@ impl Oracle {
         let (sql, _) = query_exec::execute(
             &self.conn,
             &mut self.cache,
-            self.db_id,
             q,
             &sql_keys,
             limit,
@@ -94,20 +76,20 @@ impl Oracle {
 
     /// Asserts the index `count` matches the SQL `COUNT`.
     fn check_count(&mut self, q: &Query) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
-        let sql = query_exec::count(&self.conn, &mut self.cache, self.db_id, q).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
+        let sql = query_exec::count(&self.conn, &mut self.cache, q).unwrap();
         assert_eq!(index.count(q).unwrap() as usize, sql, "count divergence on {q:?}");
     }
 
     /// Asserts the in-memory field catalog agrees with the SQL
     /// `distinct_field_names` — unfiltered and for each value type present.
     fn check_catalog(&mut self) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
-        let sql = db::distinct_field_names(&self.conn, self.db_id, None).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
+        let sql = db::distinct_field_names(&self.conn, None).unwrap();
         assert_eq!(index.field_catalog(None), sql, "catalog divergence (unfiltered)");
         let types: std::collections::BTreeSet<&str> = sql.iter().map(|(_, t)| t.as_str()).collect();
         for ty in types {
-            let sql = db::distinct_field_names(&self.conn, self.db_id, Some(ty)).unwrap();
+            let sql = db::distinct_field_names(&self.conn, Some(ty)).unwrap();
             assert_eq!(index.field_catalog(Some(ty)), sql, "catalog divergence (?type={ty})");
         }
     }
@@ -115,7 +97,7 @@ impl Oracle {
     /// Walks both engines page by page through the whole sorted result and
     /// asserts every page (and thus the partitioning) is identical.
     fn check_paginated(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
         let sql_keys: Vec<SortKey> = by
             .iter()
             .map(|(f, asc)| SortKey {
@@ -145,7 +127,6 @@ impl Oracle {
             let (page, next) = query_exec::execute(
                 &self.conn,
                 &mut self.cache,
-                self.db_id,
                 q,
                 &sql_keys,
                 Some(limit),
@@ -169,7 +150,7 @@ impl Oracle {
     /// GUI's real scenario (browse a subtree, paginate by a sort key). The SQL
     /// engine resolves paths itself, so it takes the query unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
-        let index = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let index = RepoIndex::build(&self.conn).unwrap();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
         let mut roots = PathRoots::new();
@@ -208,7 +189,6 @@ impl Oracle {
             let (page, next) = query_exec::execute(
                 &self.conn,
                 &mut self.cache,
-                self.db_id,
                 q,
                 &sql_keys,
                 Some(limit),
@@ -311,22 +291,6 @@ fn three_valued_present_absent_overlap() {
     o.check(&unknown("rating"));
 }
 
-#[test]
-fn universe_excludes_link_metarecords() {
-    // A link metarecord (two owners) is outside the exclusively-owned universe,
-    // so it must never appear — including in IsUnknown's complement.
-    let mut o = Oracle::new();
-    let own = o.create(vec![Field::new("rating", Value::Int(5))]);
-    let link = o.create(vec![Field::new("rating", Value::Int(7))]);
-    o.add_owner(link, Uuid::new_v4());
-    let _ = (own, link);
-
-    o.check(&present("rating"));
-    o.check(&absent("rating"));
-    o.check(&unknown("rating"));
-    o.check(&unknown("never_used"));
-}
-
 // ── Field catalog (GET /repos/:repo/fields) ─────────────────────────────────
 
 #[test]
@@ -346,11 +310,6 @@ fn field_catalog_matches_sql() {
         tref("loc", None, "root"),
         Field::new("note", Value::Nothing),
     ]);
-    // A link metarecord introducing a field name absent from the owned set: it
-    // must not leak into the catalog (universe isolation).
-    let link = o.create(vec![Field::new("link_only", s("x"))]);
-    o.add_owner(link, Uuid::new_v4());
-
     o.check_catalog();
 }
 
@@ -361,15 +320,15 @@ fn field_catalog_drops_field_when_last_value_removed() {
     // but keeps the key, so the catalog must gate on non-emptiness).
     let mut o = Oracle::new();
     let m = o.create(vec![Field::new("rating", Value::Int(5))]);
-    let mut index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let mut index = RepoIndex::build(&o.conn).unwrap();
     assert_eq!(index.field_catalog(None), vec![("rating".to_string(), "int".to_string())]);
 
-    let mut w = Writer::begin(&mut o.conn, o.db_id, None).unwrap();
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
     w.set_field(m, "rating", Value::Nothing).unwrap();
     w.commit().unwrap();
-    index.refresh(&o.conn, o.db_id).unwrap();
+    index.refresh(&o.conn).unwrap();
 
-    let sql = db::distinct_field_names(&o.conn, o.db_id, None).unwrap();
+    let sql = db::distinct_field_names(&o.conn, None).unwrap();
     assert!(sql.is_empty(), "SQL reference no longer lists the field");
     assert_eq!(index.field_catalog(None), sql, "catalog must drop the emptied field");
 }
@@ -656,16 +615,16 @@ fn reverse_tree_follows_path_target_matches_sql() {
             if let Some(uuid) = o.cache.resolve_path(&o.conn, "loc", path).unwrap() {
                 roots.insert(("loc".to_string(), path.to_string()), uuid);
             }
-            let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+            let index = RepoIndex::build(&o.conn).unwrap();
 
             let (mut sql, _) =
-                query_exec::execute(&o.conn, &mut o.cache, o.db_id, &q, &[], None, None).unwrap();
+                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
             let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "path divergence on {q:?}");
 
-            let sql_count = query_exec::count(&o.conn, &mut o.cache, o.db_id, &q).unwrap();
+            let sql_count = query_exec::count(&o.conn, &mut o.cache, &q).unwrap();
             assert_eq!(
                 index.count_with_roots(&q, &roots).unwrap() as usize,
                 sql_count,
@@ -814,20 +773,20 @@ fn keyset_pagination_is_stable_under_insertion() {
     let idx_keys = [SortBy { field: "rate".into(), ascending: true }];
     let sql_keys = [SortKey { field: "rate".into(), order: SortOrder::Asc }];
 
-    let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let index = RepoIndex::build(&o.conn).unwrap();
     let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
     let (_s1, scur) = query_exec::execute(
-        &o.conn, &mut o.cache, o.db_id, &q, &sql_keys, Some(2), None,
+        &o.conn, &mut o.cache, &q, &sql_keys, Some(2), None,
     )
     .unwrap();
 
     // Insert a row (rate 15) that sorts within the already-returned region.
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
 
-    let index2 = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let index2 = RepoIndex::build(&o.conn).unwrap();
     let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
     let (sp2, _) = query_exec::execute(
-        &o.conn, &mut o.cache, o.db_id, &q, &sql_keys, Some(2), scur.as_deref(),
+        &o.conn, &mut o.cache, &q, &sql_keys, Some(2), scur.as_deref(),
     )
     .unwrap();
 
@@ -838,7 +797,7 @@ fn keyset_pagination_is_stable_under_insertion() {
 #[test]
 fn cursor_is_bound_to_query_and_sort() {
     let o = sortable();
-    let index = RepoIndex::build(&o.conn, o.db_id).unwrap();
+    let index = RepoIndex::build(&o.conn).unwrap();
     let by_rate = [SortBy { field: "rate".into(), ascending: true }];
     let (_p, next) = index.evaluate_page(&present("all"), &by_rate, Some(2), None).unwrap();
     let cursor = next.expect("more pages");

@@ -171,7 +171,7 @@ async fn query_resolve_tree(
         let conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
@@ -236,8 +236,8 @@ async fn list_fields(
             .unwrap_or_default();
         let mut index_guard = repo_state.index.lock_recover();
         match index_guard.as_mut() {
-            Some(index) => index.refresh(&conn, repo_uuid)?,
-            None => *index_guard = Some(crate::index::RepoIndex::build(&conn, repo_uuid)?),
+            Some(index) => index.refresh(&conn)?,
+            None => *index_guard = Some(crate::index::RepoIndex::build(&conn)?),
         }
         let data = index_guard.as_ref().expect("index built above").field_catalog(None);
         drop(index_guard);
@@ -333,7 +333,7 @@ where
     with_repo(state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
         let tree_touched = writer.touched_tree();
@@ -900,7 +900,7 @@ async fn rollback(
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
         let resolved = crate::log::resolve_target(&conn, &target)?;
-        let result = crate::log::navigate(&mut conn, repo_uuid, resolved)?;
+        let result = crate::log::navigate(&mut conn, resolved)?;
         // Navigation rewrites tree positions arbitrarily: rebuild the cache
         // from the new state (keeps it complete; `populate` clears first).
         repo_state.lock_cache().populate(&conn)?;
@@ -1149,7 +1149,7 @@ async fn rollback_step(
 
         let done = {
             let mut conn = repo_state.conn.lock_recover();
-            let new_head = crate::log::coordinated_step(&mut conn, repo_uuid, target, skip)?;
+            let new_head = crate::log::coordinated_step(&mut conn, target, skip)?;
             // The step rewrote tree positions arbitrarily: rebuild the cache
             // from the new state (keeps it complete; `populate` clears first).
             repo_state.lock_cache().populate(&conn)?;
@@ -1254,10 +1254,10 @@ async fn check_schema(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
         let uuids = match &body.query {
-            None => db::list_entries(&conn, repo_uuid)?,
+            None => db::list_entries(&conn)?,
             Some(query) => {
                 let mut cache = repo_state.lock_cache();
-                query_exec::execute(&conn, &mut cache, repo_uuid, query, &[], None, None)?.0
+                query_exec::execute(&conn, &mut cache, query, &[], None, None)?.0
             }
         };
         let guard = repo_state.schema.lock_recover();
@@ -1443,7 +1443,7 @@ async fn track(
             )));
         }
         let untracked = [Field::new("mf_watch", Value::Bool(false))];
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let uuid = crate::reconcile::create_record_for(
             &mut writer,
             &mut cache,
@@ -1499,7 +1499,7 @@ async fn run_query(
         let task = repo_state.tasks.start(TaskKind::Query);
         repo_state.tasks.mark_running(task);
         repo_state.tasks.set_progress(task, "querying", None, None);
-        let outcome = run_query_inner(repo_state, repo_uuid, &body, task);
+        let outcome = run_query_inner(repo_state, &body, task);
         // A cancel request interrupts the SQLite statement, surfacing here as an
         // error: record the task as `cancelled` (not `failed`) and report it as
         // a 409 to the waiting client.
@@ -1534,7 +1534,6 @@ fn run_query_filter(
     repo_state: &RepoState,
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
-    repo_uuid: Uuid,
     body: &QueryBody,
 ) -> Result<QueryPage, ApiError> {
     // Reject ill-defined comparisons upfront, before choosing an engine, so the
@@ -1566,8 +1565,8 @@ fn run_query_filter(
     match index_guard.as_mut() {
         // Already built: bring it up to the current HEAD (incrementally when the
         // delta is a forward extension, else an internal full rebuild).
-        Some(index) => index.refresh(conn, repo_uuid)?,
-        None => *index_guard = Some(crate::index::RepoIndex::build(conn, repo_uuid)?),
+        Some(index) => index.refresh(conn)?,
+        None => *index_guard = Some(crate::index::RepoIndex::build(conn)?),
     }
     let index = index_guard.as_ref().expect("index built above");
 
@@ -1584,7 +1583,6 @@ fn run_query_filter(
             let (uuids, next_cursor) = query_exec::execute(
                 conn,
                 cache,
-                repo_uuid,
                 &body.query,
                 &body.sort,
                 body.limit,
@@ -1592,7 +1590,7 @@ fn run_query_filter(
             )?;
             let total = body
                 .count
-                .then(|| query_exec::count(conn, cache, repo_uuid, &body.query))
+                .then(|| query_exec::count(conn, cache, &body.query))
                 .transpose()?;
             Ok((uuids, next_cursor, total))
         }
@@ -1601,7 +1599,6 @@ fn run_query_filter(
 
 fn run_query_inner(
     repo_state: &RepoState,
-    repo_uuid: Uuid,
     body: &QueryBody,
     task: Uuid,
 ) -> Result<Response, ApiError> {
@@ -1618,7 +1615,7 @@ fn run_query_inner(
         repo_state.tasks.set_canceller(task, Box::new(move || handle.interrupt()));
         let mut cache = repo_state.lock_cache();
         let (uuids, next_cursor, total) =
-            run_query_filter(repo_state, &conn, &mut cache, repo_uuid, body)?;
+            run_query_filter(repo_state, &conn, &mut cache, body)?;
         drop(cache);
 
         let results: Vec<serde_json::Value> = match &body.select {
@@ -1704,10 +1701,10 @@ async fn batch_set(
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         for uuid in &uuids {
             writer.set_field_multi(*uuid, &body.name, rows.clone())?;
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
@@ -1739,10 +1736,10 @@ async fn batch_append(
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         for uuid in &uuids {
             writer.append_field(*uuid, &body.name, value.clone())?;
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
@@ -1775,10 +1772,10 @@ async fn batch_remove(
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let mut changed = 0usize;
         for uuid in &uuids {
             if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
@@ -1821,10 +1818,10 @@ async fn batch_unset(
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let mut changed = 0usize;
         for uuid in &uuids {
             if writer.delete_fields_named(*uuid, &body.name)? > 0 {
@@ -1875,7 +1872,7 @@ async fn retype_field(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let summary = writer.retype_field(&name, to)?;
         let tree_touched = writer.touched_tree();
         writer.commit()?;
@@ -1911,10 +1908,10 @@ async fn delete_by_query(
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
         let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, repo_uuid, &body.query, &[], None, None)?;
+            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;
         }
@@ -1951,7 +1948,7 @@ async fn create_record_endpoint(
         }
         let mut conn = repo_state.conn.lock_recover();
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         let created = writer.create_metarecord(body.fields)?;
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
         let tree_touched = writer.touched_tree();
@@ -1989,7 +1986,7 @@ async fn delete_record_endpoint(
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         writer.delete_metarecord(uuid)?;
         let tree_touched = writer.touched_tree();
         writer.commit()?;
@@ -2190,7 +2187,7 @@ async fn patch_field_by_id(
         check_writable(&old.name, body.force)?;
         check_writable(&new_name, body.force)?;
 
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         writer.rename_field(uuid, id, &new_name, new_value)?;
         validate_schema(
             repo_state,
@@ -2223,7 +2220,7 @@ async fn delete_field_by_id(
         let row = db::get_field_row_by_id(&conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         check_writable(&row.name, force)?;
-        let mut writer = Writer::begin(&mut conn, repo_uuid, None)?;
+        let mut writer = Writer::begin(&mut conn, None)?;
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
         let tree_touched = writer.touched_tree();

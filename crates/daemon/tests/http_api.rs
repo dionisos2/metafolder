@@ -277,7 +277,7 @@ async fn test_create_get_delete_metarecord() {
     .await;
     let uuid = created["uuid"].as_str().unwrap();
     assert_eq!(created["version"], 0);
-    assert_eq!(created["db_ids"][0].as_str().unwrap(), repo);
+    assert!(created.get("db_ids").is_none(), "db_ids is removed from the wire form");
     assert_eq!(created["fields"].as_array().unwrap().len(), 3);
     assert!(created["fields"][0]["id"].is_i64(), "fields must carry their row id");
 

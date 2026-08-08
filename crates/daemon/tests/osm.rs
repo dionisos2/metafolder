@@ -14,18 +14,17 @@ use uuid::Uuid;
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
-    db_id: Uuid,
 }
 
 impl Fixture {
     fn new() -> Self {
         let conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false), db_id: Uuid::new_v4() }
+        Self { conn, cache: TreeCache::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let m = w.create_metarecord(fields).unwrap();
         w.commit().unwrap();
         m.uuid
@@ -41,13 +40,13 @@ impl Fixture {
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, self.db_id, query, &[], None, None)
+            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
                 .unwrap();
         uuids
     }
 
     fn run_result(&mut self, query: &Query) -> Result<Vec<Uuid>, metafolder_daemon::error::ApiError> {
-        query_exec::execute(&self.conn, &mut self.cache, self.db_id, query, &[], None, None)
+        query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
             .map(|(uuids, _)| uuids)
     }
 }

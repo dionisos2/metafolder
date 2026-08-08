@@ -23,14 +23,13 @@ fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf) {
     let root = temp_dir(prefix);
     let opened = repo::init_repository(&root, None, None).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
-    let db_id = repo_state.config.repo_uuid;
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
         db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();
     }
@@ -56,7 +55,7 @@ fn field_value(repo: &RepoState, uuid: Uuid, name: &str) -> Option<Value> {
 
 fn set_field(repo: &RepoState, uuid: Uuid, name: &str, value: Value) {
     let mut conn = repo.conn.lock().unwrap();
-    let mut w = Writer::begin(&mut conn, repo.config.repo_uuid, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(uuid, name, value).unwrap();
     w.commit().unwrap();
 }

@@ -257,7 +257,7 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.
     let mut revisions_from_restore = 0;
-    revisions_from_restore += flush_restorations(&mut conn, &mut cache, repo.config.repo_uuid)?;
+    revisions_from_restore += flush_restorations(&mut conn, &mut cache)?;
 
     let (events, max_id) = load_pending(&conn)?;
     if events.is_empty() {
@@ -286,12 +286,11 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     let work = (|| -> Result<usize> {
         let mut revisions = 0;
         for (_, group) in groups {
-            let writer = Writer::begin(&mut conn, repo.config.repo_uuid, None)?;
+            let writer = Writer::begin(&mut conn, None)?;
             let mut apply = Apply {
                 writer,
                 cache: &mut cache,
                 root: &repo.config.root,
-                db_id: repo.config.repo_uuid,
             };
             for ev in group {
                 apply.apply(ev)?;
@@ -325,7 +324,7 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
 /// Replays restoration ops left by skipped coordinated-rollback steps as a
 /// single revision (spec-event-log "skip"), then deletes them. The tree cache
 /// is cleared afterwards because `mfr_path` restorations move tree positions.
-fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache, db_id: Uuid) -> Result<usize> {
+fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<usize> {
     let mut stmt = conn.prepare(
         "SELECT id, op_type, path, from_path, to_path FROM pending_operation
          WHERE op_type LIKE 'restore_%' ORDER BY id",
@@ -347,7 +346,7 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache, db_id: Uuid)
         Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
     };
 
-    let mut writer = Writer::begin(conn, db_id, None)?;
+    let mut writer = Writer::begin(conn, None)?;
     for (_, op_type, path, from_path, to_path) in &rows {
         let entity = parse_uuid(path.as_deref().context("restoration op missing entity")?)?;
         match op_type.as_str() {
@@ -388,7 +387,6 @@ struct Apply<'a, 'c> {
     writer: Writer<'c>,
     cache: &'a mut TreeCache,
     root: &'a Path,
-    db_id: Uuid,
 }
 
 impl Apply<'_, '_> {
@@ -537,7 +535,7 @@ impl Apply<'_, '_> {
     /// size pre-filter, then partial hash, then a stored full hash must
     /// confirm identity (spec watcher `Rename(To)` semantics).
     fn find_orphan_match(&mut self, abs: &Path, size: i64) -> Result<Option<Uuid>> {
-        let candidates = db::find_orphans_by_size(self.writer.connection(), self.db_id, size)?;
+        let candidates = db::find_orphans_by_size(self.writer.connection(), size)?;
         if candidates.is_empty() {
             return Ok(None);
         }

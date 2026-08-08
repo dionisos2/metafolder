@@ -16,7 +16,6 @@ use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
 use rusqlite::Connection;
-use uuid::Uuid;
 
 /// Deterministic, reproducible pseudo-random (no Math.random / clock).
 fn prng(i: u64) -> u64 {
@@ -30,14 +29,13 @@ fn s(v: &str) -> Value {
 
 /// Populates a fresh repo with `dirs` directory metarecords forming a tree and
 /// `files` file metarecords, each carrying ~5 fields (loc/kind/rate/size/added),
-/// mirroring a real reconciled repository. Returns (conn, db_id).
-fn build_repo(dirs: usize, files: usize) -> (Connection, Uuid) {
+/// mirroring a real reconciled repository. Returns the connection.
+fn build_repo(dirs: usize, files: usize) -> Connection {
     const FANOUT: usize = 8;
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
-    let db_id = Uuid::new_v4();
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut dir_uuids = Vec::with_capacity(dirs);
     for k in 0..dirs {
         let parent = if k == 0 { None } else { Some(dir_uuids[(k - 1) / FANOUT]) };
@@ -65,7 +63,7 @@ fn build_repo(dirs: usize, files: usize) -> (Connection, Uuid) {
         .unwrap();
     }
     w.commit().unwrap();
-    (conn, db_id)
+    conn
 }
 
 fn follows_t(field: &str, cond: Query) -> Query {
@@ -100,10 +98,10 @@ fn battery() -> Vec<(&'static str, Query)> {
 
 fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     let n = dirs + files;
-    let (conn, db_id) = build_repo(dirs, files);
+    let conn = build_repo(dirs, files);
 
     let t = Instant::now();
-    let index = RepoIndex::build(&conn, db_id).unwrap();
+    let index = RepoIndex::build(&conn).unwrap();
     let build_ms = t.elapsed().as_secs_f64() * 1e3;
     let mem_mb = index.approx_serialized_bytes() as f64 / (1024.0 * 1024.0);
     // Rough sort-rep memory: ~56 B per entry (u32 key + enum value + map overhead).
@@ -127,7 +125,7 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     for (name, q) in battery() {
         let t = Instant::now();
         let (mut sql, _) =
-            query_exec::execute(&conn, &mut cache, db_id, &q, &[], None, None).unwrap();
+            query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
         let sql_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
@@ -169,7 +167,7 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
                 order: if asc { SortOrder::Asc } else { SortOrder::Desc },
             }];
             let t = Instant::now();
-            let (sql, _) = query_exec::execute(&conn, &mut cache, db_id, &q, &sql_keys, Some(100), None)
+            let (sql, _) = query_exec::execute(&conn, &mut cache, &q, &sql_keys, Some(100), None)
                 .unwrap();
             let sql_ms = t.elapsed().as_secs_f64() * 1e3;
             assert_eq!(got, sql, "sorted divergence at scale on {name}");

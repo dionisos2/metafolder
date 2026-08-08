@@ -17,7 +17,6 @@ use uuid::Uuid;
 
 struct Repo {
     conn: Connection,
-    db_id: Uuid,
     index: RepoIndex,
 }
 
@@ -25,9 +24,8 @@ impl Repo {
     fn new() -> Self {
         let conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        let db_id = Uuid::new_v4();
-        let index = RepoIndex::build(&conn, db_id).unwrap();
-        Self { conn, db_id, index }
+        let index = RepoIndex::build(&conn).unwrap();
+        Self { conn, index }
     }
 
     /// Runs a write closure in one revision, then refreshes the index
@@ -36,16 +34,16 @@ impl Repo {
     where
         F: FnOnce(&mut Writer) -> R,
     {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let out = f(&mut w);
         w.commit().unwrap();
-        self.index.refresh(&self.conn, self.db_id).unwrap();
+        self.index.refresh(&self.conn).unwrap();
         self.assert_consistent();
         out
     }
 
     fn assert_consistent(&self) {
-        let fresh = RepoIndex::build(&self.conn, self.db_id).unwrap();
+        let fresh = RepoIndex::build(&self.conn).unwrap();
         for q in battery() {
             assert_eq!(set(&self.index, &q), set(&fresh, &q), "evaluate divergence on {q:?}");
             assert_eq!(
@@ -264,7 +262,7 @@ fn incremental_rollback_falls_back_to_rebuild() {
 
     // Move HEAD back to the checkpoint: built_at_head is now a descendant of
     // HEAD, not an ancestor → forward_delta returns None → rebuild.
-    metafolder_daemon::log::navigate(&mut r.conn, r.db_id, checkpoint).unwrap();
-    r.index.refresh(&r.conn, r.db_id).unwrap();
+    metafolder_daemon::log::navigate(&mut r.conn, checkpoint).unwrap();
+    r.index.refresh(&r.conn).unwrap();
     r.assert_consistent();
 }

@@ -118,7 +118,7 @@ pub fn init_repository(
 
     let mut conn = db::open_database(&internal_dir.join(DB_FILE))?;
     db::init_schema(&conn)?;
-    create_root_entry(&mut conn, &config)?;
+    create_root_entry(&mut conn)?;
 
     let case_insensitive = probe_case_insensitive(&internal_dir);
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
@@ -140,7 +140,7 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 
 /// Creates the filesystem root metarecord: `mfr_path` root TreeRef, directory
 /// type, tracking disabled (opt-in), default ignore patterns.
-fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {
+fn create_root_entry(conn: &mut Connection) -> Result<()> {
     let mut fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: String::new() }),
         Field::new("mfr_type", Value::String("dir".to_string())),
@@ -149,7 +149,7 @@ fn create_root_entry(conn: &mut Connection, config: &RepoConfig) -> Result<()> {
     for pattern in DEFAULT_IGNORE_PATTERNS {
         fields.push(Field::new("mf_ignore", Value::String(pattern.to_string())));
     }
-    let mut writer = Writer::begin(conn, config.repo_uuid, None)?;
+    let mut writer = Writer::begin(conn, None)?;
     writer.create_metarecord(fields)?;
     writer.commit()
 }

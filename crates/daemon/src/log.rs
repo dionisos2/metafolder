@@ -392,7 +392,6 @@ pub struct RetypeSummary {
 /// the path up to the LCA, forward operations down to the target.
 pub fn navigate(
     conn: &mut rusqlite::Connection,
-    db_id: Uuid,
     target: Option<i64>,
 ) -> Result<NavResult> {
     let previous_head = get_head(conn)?;
@@ -409,13 +408,10 @@ pub fn navigate(
     let (unapply, apply): (Vec<i64>, Vec<i64>) = match (previous_head, target) {
         (None, None) => (vec![], vec![]),
         (Some(head), None) => {
-            // Empty state: every data row of this repository is removed.
+            // Empty state: every data row of this repository is removed (one repo
+            // per database file, so the whole `metarecord` table goes).
             let unapplied = ancestry(&tx, head)?.len();
-            tx.execute(
-                "DELETE FROM metarecord WHERE uuid IN
-                     (SELECT metarecord_uuid FROM metarecord_db WHERE db_id = ?1)",
-                params![db::uuid_to_bytes(db_id)],
-            )?;
+            tx.execute("DELETE FROM metarecord", [])?;
             // One repo per database file, so emptying it clears the whole FTS index.
             tx.execute("DELETE FROM field_text", [])?;
             tx.execute("UPDATE log_head SET op_id = NULL WHERE singleton = 1", [])?;
@@ -448,11 +444,11 @@ pub fn navigate(
 
     for op_id in &unapply {
         let op = get_op(&tx, *op_id)?.context("operation vanished during navigation")?;
-        apply_inverse(&tx, db_id, &op)?;
+        apply_inverse(&tx, &op)?;
     }
     for op_id in &apply {
         let op = get_op(&tx, *op_id)?.context("operation vanished during navigation")?;
-        apply_forward(&tx, db_id, &op)?;
+        apply_forward(&tx, &op)?;
     }
     tx.execute("UPDATE log_head SET op_id = ?1 WHERE singleton = 1", params![target])?;
     tx.commit()?;
@@ -533,7 +529,6 @@ pub fn nav_path(
 /// released — spec-event-log "skip").
 pub fn coordinated_step(
     conn: &mut rusqlite::Connection,
-    db_id: Uuid,
     target: Option<i64>,
     skip: bool,
 ) -> Result<Option<i64>> {
@@ -548,11 +543,11 @@ pub fn coordinated_step(
     }
     let new_head = match dir {
         NavDir::Inverse => {
-            apply_inverse(&tx, db_id, &op)?;
+            apply_inverse(&tx, &op)?;
             op.parent_id
         }
         NavDir::Forward => {
-            apply_forward(&tx, db_id, &op)?;
+            apply_forward(&tx, &op)?;
             Some(op.id)
         }
     };
@@ -625,7 +620,7 @@ fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Re
 
 /// Undoes one operation (spec-event-log "Inverse operations"). Field rows
 /// are restored with their original primary keys.
-fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
+fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
@@ -641,10 +636,6 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
                     db::uuid_to_bytes(entity),
                     op.entity_version_before.unwrap_or(0) as i64
                 ],
-            )?;
-            tx.execute(
-                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
-                params![db::uuid_to_bytes(entity), db::uuid_to_bytes(db_id)],
             )?;
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -690,17 +681,13 @@ fn apply_inverse(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
 }
 
 /// Replays one operation forward (redo).
-fn apply_forward(tx: &Transaction<'_>, db_id: Uuid, op: &OpRow) -> Result<()> {
+fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
             tx.execute(
                 "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
                 params![db::uuid_to_bytes(entity)],
-            )?;
-            tx.execute(
-                "INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)",
-                params![db::uuid_to_bytes(entity), db::uuid_to_bytes(db_id)],
             )?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -906,7 +893,6 @@ const FLUSH_THRESHOLD: usize = 4096;
 /// in bulk, in batches of [`FLUSH_THRESHOLD`] operations.
 pub struct Writer<'c> {
     tx: Transaction<'c>,
-    db_id: Uuid,
     rev_id: i64,
     /// Parent of the next operation to flush: HEAD as of `begin`, then the
     /// last flushed operation.
@@ -925,7 +911,6 @@ impl<'c> Writer<'c> {
     /// Opens a transaction and creates the revision row.
     pub fn begin(
         conn: &'c mut rusqlite::Connection,
-        db_id: Uuid,
         label: Option<String>,
     ) -> Result<Self> {
         let tx = conn.transaction()?;
@@ -938,7 +923,6 @@ impl<'c> Writer<'c> {
         let rev_id = tx.last_insert_rowid();
         Ok(Self {
             tx,
-            db_id,
             rev_id,
             chain_head: head,
             flushed: 0,
@@ -999,9 +983,6 @@ impl<'c> Writer<'c> {
         self.tx
             .prepare_cached("INSERT INTO metarecord (uuid, version) VALUES (?1, 0)")?
             .execute(params![db::uuid_to_bytes(uuid)])?;
-        self.tx
-            .prepare_cached("INSERT INTO metarecord_db (metarecord_uuid, db_id) VALUES (?1, ?2)")?
-            .execute(params![db::uuid_to_bytes(uuid), db::uuid_to_bytes(self.db_id)])?;
 
         let mut after = Vec::with_capacity(fields.len());
         let mut out_fields = Vec::with_capacity(fields.len());
@@ -1015,7 +996,7 @@ impl<'c> Writer<'c> {
         }
 
         self.log_op(OpType::CreateRecord, uuid, None, None, vec![], after)?;
-        Ok(MetaRecord { uuid, db_ids: vec![self.db_id], version: 0, fields: out_fields })
+        Ok(MetaRecord { uuid, version: 0, fields: out_fields })
     }
 
     /// Deletes a metarecord and all its rows.
@@ -1023,8 +1004,8 @@ impl<'c> Writer<'c> {
         let version = db::get_version(&self.tx, uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         let before = db::get_field_rows(&self.tx, uuid)?;
-        // CASCADE removes field and metarecord_db rows; field_text has no FK, so
-        // drop its entries first (while the field rows still resolve the ids).
+        // CASCADE removes the field rows; field_text has no FK, so drop its
+        // entries first (while the field rows still resolve the ids).
         db::delete_field_text_by_metarecord(&self.tx, uuid)?;
         self.tx
             .execute("DELETE FROM metarecord WHERE uuid = ?1", params![db::uuid_to_bytes(uuid)])?;
@@ -1058,12 +1039,7 @@ impl<'c> Writer<'c> {
             out_fields.push(Field { id: Some(id), ..f });
         }
         self.log_op(OpType::SetRecord, uuid, None, Some(version_before), before, after)?;
-        Ok(MetaRecord {
-            uuid,
-            db_ids: vec![self.db_id],
-            version: version_before + 1,
-            fields: out_fields,
-        })
+        Ok(MetaRecord { uuid, version: version_before + 1, fields: out_fields })
     }
 
     /// Replaces all rows for `(uuid, name)` with a single value.

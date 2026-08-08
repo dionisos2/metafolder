@@ -24,7 +24,6 @@ fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf, Uuid) {
     let root = temp_dir(prefix);
     let opened = repo::init_repository(&root, None, None).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
-    let db_id = repo_state.config.repo_uuid;
 
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();
@@ -32,7 +31,7 @@ fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf, Uuid) {
     };
     {
         let mut conn = repo_state.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
         w.commit().unwrap();
     }
@@ -285,7 +284,7 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
     let full = metafolder_daemon::fingerprint::full_hash(&root.join("song.mp3")).unwrap();
     {
         let mut conn = repo.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, repo.config.repo_uuid, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(uuid, "mfr_partial_hash", Value::String(partial)).unwrap();
         w.set_field(uuid, "mfr_full_hash", Value::String(full)).unwrap();
         w.commit().unwrap();
@@ -335,7 +334,7 @@ fn test_modify_data_refreshes_and_invalidates_hashes() {
     let uuid = resolve(&repo, "/m.txt").unwrap();
     {
         let mut conn = repo.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, repo.config.repo_uuid, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(uuid, "mfr_partial_hash", Value::String("aaaa".into())).unwrap();
         w.set_field(uuid, "mfr_full_hash", Value::String("bbbb".into())).unwrap();
         w.commit().unwrap();
@@ -518,7 +517,7 @@ fn test_skip_move_restores_actual_location_on_replay() {
     let target = undo_last_target(&repo);
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, repo.config.repo_uuid, target, true).unwrap();
+        log::coordinated_step(&mut conn, target, true).unwrap();
     }
     repo.cache.lock().unwrap().clear();
     assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata reverted to old location");
@@ -550,7 +549,7 @@ fn test_skip_delete_rerecords_deletion_on_replay() {
     let target = undo_last_target(&repo);
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, repo.config.repo_uuid, target, true).unwrap();
+        log::coordinated_step(&mut conn, target, true).unwrap();
     }
     repo.cache.lock().unwrap().clear();
     assert_eq!(resolve(&repo, "/a.txt"), Some(uuid), "metadata restored");

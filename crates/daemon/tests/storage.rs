@@ -14,13 +14,9 @@ fn test_conn() -> Connection {
     conn
 }
 
-fn repo_id() -> Uuid {
-    Uuid::new_v4()
-}
-
 /// Creates an entry through a single-use Writer and returns it.
-fn create(conn: &mut Connection, db_id: Uuid, fields: Vec<Field>) -> metafolder_core::metarecord::MetaRecord {
-    let mut w = Writer::begin(conn, db_id, None).unwrap();
+fn create(conn: &mut Connection, fields: Vec<Field>) -> metafolder_core::metarecord::MetaRecord {
+    let mut w = Writer::begin(conn, None).unwrap();
     let m = w.create_metarecord(fields).unwrap();
     w.commit().unwrap();
     m
@@ -45,8 +41,7 @@ fn query_plan(conn: &Connection, sql: &str) -> String {
 fn test_field_first_write_establishes_type() {
     // The first non-Nothing write of a name succeeds and fixes its type.
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+    let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
     let got = db::get_metarecord(&conn, m.uuid).unwrap().unwrap();
     assert_eq!(got.get("rating"), Some(&Value::Int(5)));
 }
@@ -55,10 +50,9 @@ fn test_field_first_write_establishes_type() {
 fn test_field_rejects_conflicting_value_type() {
     // Once `rating` is an Int repo-wide, a String write to it is rejected (400).
     let mut conn = test_conn();
-    let db_id = repo_id();
-    create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+    create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .set_field(Uuid::new_v4(), "rating", Value::String("five".into()))
         .unwrap_err();
@@ -72,8 +66,7 @@ fn test_field_rejects_conflicting_value_type() {
 fn test_field_rejects_conflicting_type_within_one_create() {
     // Two rows of the same name with different types in a single create are rejected.
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .create_metarecord(vec![
             Field::new("tag", Value::String("a".into())),
@@ -87,10 +80,9 @@ fn test_field_rejects_conflicting_type_within_one_create() {
 fn test_field_allows_nothing_against_any_type() {
     // Nothing is absence, not a type: it coexists with the established type.
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
+    let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(m.uuid, "rating", Value::Nothing).unwrap();
     w.commit().unwrap();
 }
@@ -100,10 +92,9 @@ fn test_field_type_unlocks_when_empty() {
     // With no non-Nothing rows left, the name's type is unestablished again and a
     // new (different) type may be written.
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("note", Value::Int(1))]);
+    let m = create(&mut conn, vec![Field::new("note", Value::Int(1))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(m.uuid, "note", Value::Nothing).unwrap(); // clears the Int row
     w.set_field(m.uuid, "note", Value::String("now text".into())).unwrap();
     w.commit().unwrap();
@@ -115,10 +106,9 @@ fn test_field_type_unlocks_within_one_revision() {
     // mid-revision unlocks its type, so a later different-type write succeeds in
     // the *same* Writer.
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("note", Value::Int(1))]);
+    let m = create(&mut conn, vec![Field::new("note", Value::Int(1))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(m.uuid, "note", Value::Int(2)).unwrap(); // caches "int"
     w.set_field(m.uuid, "note", Value::Nothing).unwrap(); // clears → must drop cache
     w.set_field(m.uuid, "note", Value::String("text".into())).unwrap(); // now allowed
@@ -132,18 +122,16 @@ fn test_field_type_unlocks_within_one_revision() {
 fn test_retype_field_converts_rolls_back_and_relocks() {
     use metafolder_core::metarecord::FieldType;
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m1 = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(3))]);
+    let m1 = create(&mut conn, vec![Field::new("rating", Value::Int(3))]);
     // Nothing coexists and must survive the retype untouched.
     let m2 = create(
         &mut conn,
-        db_id,
         vec![Field::new("rating", Value::Int(5)), Field::new("rating", Value::Nothing)],
     );
 
     let head_before = metafolder_daemon::log::get_head(&conn).unwrap();
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("rating", FieldType::String).unwrap();
     w.commit().unwrap();
     assert_eq!(summary.converted, 2, "both Int rows convert; the Nothing row is skipped");
@@ -156,12 +144,12 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
     assert!(g2.get_all("rating").contains(&&Value::Nothing), "Nothing preserved");
 
     // The field is now String repo-wide: a conflicting Int write is rejected.
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     assert!(w.set_field(m1.uuid, "rating", Value::Int(9)).is_err());
     drop(w);
 
     // Rollback to before the retype restores the original Int values exactly.
-    metafolder_daemon::log::navigate(&mut conn, db_id, head_before).unwrap();
+    metafolder_daemon::log::navigate(&mut conn, head_before).unwrap();
     let g1 = db::get_metarecord(&conn, m1.uuid).unwrap().unwrap();
     assert_eq!(g1.get("rating"), Some(&Value::Int(3)));
 }
@@ -170,11 +158,10 @@ fn test_retype_field_converts_rolls_back_and_relocks() {
 fn test_retype_field_records_fallbacks() {
     use metafolder_core::metarecord::FieldType;
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let good = create(&mut conn, db_id, vec![Field::new("code", Value::String("42".into()))]);
-    let bad = create(&mut conn, db_id, vec![Field::new("code", Value::String("oops".into()))]);
+    let good = create(&mut conn, vec![Field::new("code", Value::String("42".into()))]);
+    let bad = create(&mut conn, vec![Field::new("code", Value::String("oops".into()))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("code", FieldType::Int).unwrap();
     w.commit().unwrap();
 
@@ -191,14 +178,13 @@ fn test_retype_string_to_reference_types() {
     use metafolder_core::metarecord::FieldType;
     use uuid::Uuid;
     let mut conn = test_conn();
-    let db_id = repo_id();
     let target = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
     let hex = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
 
     // String → Ref: a valid hex uuid parses; junk falls back to Nothing.
-    let good = create(&mut conn, db_id, vec![Field::new("link", Value::String(hex.into()))]);
-    let bad = create(&mut conn, db_id, vec![Field::new("link", Value::String("nope".into()))]);
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let good = create(&mut conn, vec![Field::new("link", Value::String(hex.into()))]);
+    let bad = create(&mut conn, vec![Field::new("link", Value::String("nope".into()))]);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("link", FieldType::Ref).unwrap();
     w.commit().unwrap();
     assert_eq!(summary.converted, 2);
@@ -211,17 +197,15 @@ fn test_retype_string_to_reference_types() {
 fn test_retype_string_to_tree_ref_validates_forest() {
     use metafolder_core::metarecord::FieldType;
     let mut conn = test_conn();
-    let db_id = repo_id();
     // A root form "/tags" is always valid; a parented form whose parent does not
     // exist violates the forest and is demoted to Nothing (not an abort).
-    let root = create(&mut conn, db_id, vec![Field::new("cat", Value::String("/tags".into()))]);
+    let root = create(&mut conn, vec![Field::new("cat", Value::String("/tags".into()))]);
     let orphan = create(
         &mut conn,
-        db_id,
         vec![Field::new("cat", Value::String("8f3a2b1c4d5e6f708192a3b4c5d6e7f8/leaf".into()))],
     );
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let summary = w.retype_field("cat", FieldType::TreeRef).unwrap();
     w.commit().unwrap();
 
@@ -277,26 +261,21 @@ fn test_field_name_predicate_seeks_not_scans() {
 
 #[test]
 fn test_metarecord_listing_keyset_avoids_temp_sort() {
-    // The paginated listing seeks by (db_id, metarecord_uuid) and reads rows
-    // already ordered; without that composite index every page materialises the
-    // whole repo and sorts it in a temp b-tree.
+    // The paginated listing seeks the `metarecord` primary key and reads rows
+    // already ordered; the keyset cursor must not force a temp b-tree sort.
     let conn = test_conn();
     // The shape `list_entries_page` emits for a subsequent page (cursor present).
     let plan = query_plan(
         &conn,
-        "SELECT m1.metarecord_uuid FROM metarecord_db m1 \
-         WHERE m1.db_id = x'00' AND m1.metarecord_uuid > x'01' \
-           AND (SELECT COUNT(*) FROM metarecord_db m2 \
-                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1 \
-         ORDER BY m1.metarecord_uuid LIMIT 500",
-    );
-    assert!(
-        plan.contains("idx_metarecord_db_uuid"),
-        "listing should use idx_metarecord_db_uuid, plan was: {plan}"
+        "SELECT uuid FROM metarecord WHERE uuid > x'01' ORDER BY uuid LIMIT 500",
     );
     assert!(
         !plan.contains("TEMP B-TREE"),
         "listing should not sort via a temp b-tree, plan was: {plan}"
+    );
+    assert!(
+        plan.contains("SEARCH") && !plan.contains("SCAN"),
+        "listing should seek (not scan) the metarecord primary key, plan was: {plan}"
     );
 }
 
@@ -313,7 +292,6 @@ fn test_init_schema_creates_all_tables() {
         .unwrap();
     for expected in [
         "metarecord",
-        "metarecord_db",
         "field",
         "revision",
         "operation",
@@ -337,19 +315,16 @@ fn test_log_head_starts_null() {
 #[test]
 fn test_tree_unique_index_rejects_duplicate_position() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let root = create(
         &mut conn,
-        db_id,
         vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
     );
     create(
         &mut conn,
-        db_id,
         vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() })],
     );
     // Same (field_name, parent, name) again must fail.
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .create_metarecord(vec![Field::new(
             "mfr_path",
@@ -368,11 +343,9 @@ fn test_tree_unique_index_rejects_duplicate_position() {
 #[test]
 fn test_all_value_types_roundtrip() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let target = create(&mut conn, db_id, vec![Field::new("label", Value::String("t".into()))]);
+    let target = create(&mut conn, vec![Field::new("label", Value::String("t".into()))]);
     let root = create(
         &mut conn,
-        db_id,
         vec![Field::new("parent", Value::TreeRef { parent: None, name: "tag1".into() })],
     );
     let repo2 = Uuid::new_v4();
@@ -392,11 +365,10 @@ fn test_all_value_types_roundtrip() {
         Field::new("j", Value::RefBase(repo2)),
         Field::new("k", Value::ExternalRef { repo: repo2, metarecord: target.uuid }),
     ];
-    let created = create(&mut conn, db_id, fields.clone());
+    let created = create(&mut conn, fields.clone());
 
     let got = db::get_metarecord(&conn, created.uuid).unwrap().expect("entry must exist");
     assert_eq!(got.uuid, created.uuid);
-    assert_eq!(got.db_ids, vec![db_id]);
     assert_eq!(got.fields.len(), fields.len());
     for (orig, ret) in fields.iter().zip(got.fields.iter()) {
         assert_eq!(orig.name, ret.name);
@@ -412,16 +384,14 @@ fn test_get_record_returns_none_for_unknown_uuid() {
 }
 
 #[test]
-fn test_list_records_filters_by_db_id_and_sorts_by_uuid() {
+fn test_list_records_sorts_by_uuid() {
     let mut conn = test_conn();
-    let db1 = repo_id();
-    let db2 = repo_id();
-    let e1 = create(&mut conn, db1, vec![]);
-    let e2 = create(&mut conn, db1, vec![]);
-    let _other = create(&mut conn, db2, vec![]);
+    let e1 = create(&mut conn, vec![]);
+    let e2 = create(&mut conn, vec![]);
+    let e3 = create(&mut conn, vec![]);
 
-    let got = db::list_entries(&conn, db1).unwrap();
-    let mut expected = vec![e1.uuid, e2.uuid];
+    let got = db::list_entries(&conn).unwrap();
+    let mut expected = vec![e1.uuid, e2.uuid, e3.uuid];
     expected.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     assert_eq!(got, expected);
 }
@@ -431,9 +401,7 @@ fn test_list_records_filters_by_db_id_and_sorts_by_uuid() {
 #[test]
 fn test_create_record_initial_state() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("rating", Value::Int(5))]);
-    assert_eq!(m.db_ids, vec![db_id]);
+    let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
     assert_eq!(m.version, 0);
     assert_eq!(m.fields.len(), 1);
     assert!(m.fields[0].id.is_some());
@@ -442,7 +410,7 @@ fn test_create_record_initial_state() {
 #[test]
 fn test_create_record_writes_log() {
     let mut conn = test_conn();
-    let m = create(&mut conn, repo_id(), vec![Field::new("rating", Value::Int(5))]);
+    let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
 
     let (op_type, entity, parent_id, seq): (String, Vec<u8>, Option<i64>, i64) = conn
         .query_row(
@@ -479,17 +447,15 @@ fn test_create_record_writes_log() {
 #[test]
 fn test_set_field_replaces_multimap_and_bumps_version() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let m = create(
         &mut conn,
-        db_id,
         vec![
             Field::new("tag", Value::String("jazz".into())),
             Field::new("tag", Value::String("live".into())),
         ],
     );
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(m.uuid, "tag", Value::String("blues".into())).unwrap();
     w.commit().unwrap();
 
@@ -529,7 +495,7 @@ fn test_set_field_replaces_multimap_and_bumps_version() {
 #[test]
 fn test_set_field_on_unknown_record_fails() {
     let mut conn = test_conn();
-    let mut w = Writer::begin(&mut conn, repo_id(), None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     assert!(w.set_field(Uuid::new_v4(), "rating", Value::Int(1)).is_err());
 }
 
@@ -538,10 +504,9 @@ fn test_set_field_on_unknown_record_fails() {
 #[test]
 fn test_append_field_keeps_existing_rows() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![Field::new("tag", Value::String("jazz".into()))]);
+    let m = create(&mut conn, vec![Field::new("tag", Value::String("jazz".into()))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.append_field(m.uuid, "tag", Value::String("live".into())).unwrap();
     w.commit().unwrap();
 
@@ -553,10 +518,8 @@ fn test_append_field_keeps_existing_rows() {
 #[test]
 fn test_replace_field_keeps_field_id() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let m = create(
         &mut conn,
-        db_id,
         vec![
             Field::new("tag", Value::String("jazz".into())),
             Field::new("tag", Value::String("live".into())),
@@ -564,7 +527,7 @@ fn test_replace_field_keeps_field_id() {
     );
     let target_id = m.fields[0].id.unwrap();
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.replace_field(m.uuid, target_id, Value::String("blues".into())).unwrap();
     w.commit().unwrap();
 
@@ -577,11 +540,10 @@ fn test_replace_field_keeps_field_id() {
 #[test]
 fn test_replace_field_rejects_foreign_field_id() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m1 = create(&mut conn, db_id, vec![Field::new("a", Value::Int(1))]);
-    let m2 = create(&mut conn, db_id, vec![Field::new("a", Value::Int(2))]);
+    let m1 = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    let m2 = create(&mut conn, vec![Field::new("a", Value::Int(2))]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w.replace_field(m1.uuid, m2.fields[0].id.unwrap(), Value::Int(3)).unwrap_err();
     assert!(err.to_string().contains("not found"), "unexpected error: {err}");
 }
@@ -589,10 +551,8 @@ fn test_replace_field_rejects_foreign_field_id() {
 #[test]
 fn test_delete_field_removes_single_row() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let m = create(
         &mut conn,
-        db_id,
         vec![
             Field::new("tag", Value::String("jazz".into())),
             Field::new("tag", Value::String("live".into())),
@@ -600,7 +560,7 @@ fn test_delete_field_removes_single_row() {
     );
     let target_id = m.fields[0].id.unwrap();
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_field(m.uuid, target_id).unwrap();
     w.commit().unwrap();
 
@@ -614,14 +574,12 @@ fn test_delete_field_removes_single_row() {
 #[test]
 fn test_delete_record_removes_everything_and_snapshots_before() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let m = create(
         &mut conn,
-        db_id,
         vec![Field::new("a", Value::Int(1)), Field::new("b", Value::Int(2))],
     );
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_metarecord(m.uuid).unwrap();
     w.commit().unwrap();
 
@@ -634,14 +592,14 @@ fn test_delete_record_removes_everything_and_snapshots_before() {
         )
         .unwrap();
     assert_eq!(n_fields, 0);
-    let n_db: i64 = conn
+    let n_rec: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM metarecord_db WHERE metarecord_uuid = ?1",
+            "SELECT COUNT(*) FROM metarecord WHERE uuid = ?1",
             [m.uuid.as_bytes().to_vec()],
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(n_db, 0);
+    assert_eq!(n_rec, 0);
 
     let op_id: i64 = conn
         .query_row("SELECT id FROM operation WHERE op_type = 'delete_metarecord'", [], |r| r.get(0))
@@ -661,10 +619,9 @@ fn test_delete_record_removes_everything_and_snapshots_before() {
 #[test]
 fn test_multiple_ops_in_one_revision_chain() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![]);
+    let m = create(&mut conn, vec![]);
 
-    let mut w = Writer::begin(&mut conn, db_id, Some("batch".into())).unwrap();
+    let mut w = Writer::begin(&mut conn, Some("batch".into())).unwrap();
     w.set_field(m.uuid, "a", Value::Int(1)).unwrap();
     w.set_field(m.uuid, "b", Value::Int(2)).unwrap();
     w.set_field(m.uuid, "c", Value::Int(3)).unwrap();
@@ -709,10 +666,9 @@ fn test_large_revision_chain_across_bulk_chunks() {
     // and HEAD must stay correct across both kinds of boundary.
     const N: i64 = 5000;
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![]);
+    let m = create(&mut conn, vec![]);
 
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     for i in 0..N {
         w.set_field(m.uuid, &format!("f{i}"), Value::Int(i)).unwrap();
     }
@@ -756,9 +712,8 @@ fn test_large_revision_chain_across_bulk_chunks() {
 #[test]
 fn test_ancestry_detects_cycle() {
     let mut conn = test_conn();
-    let db_id = repo_id();
-    let m = create(&mut conn, db_id, vec![]);
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let m = create(&mut conn, vec![]);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.set_field(m.uuid, "a", Value::Int(1)).unwrap();
     w.set_field(m.uuid, "b", Value::Int(2)).unwrap();
     w.commit().unwrap();
@@ -785,16 +740,15 @@ fn test_prune_reclaims_disk_space() {
     let path = dir.join("db.sqlite");
     let mut conn = db::open_database(&path).unwrap();
     db::init_schema(&conn).unwrap();
-    let db_id = repo_id();
 
     // One large revision (sizeable snapshots), then a tiny HEAD revision.
     let payload = "x".repeat(4096);
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     for _ in 0..256 {
         w.create_metarecord(vec![Field::new("payload", Value::String(payload.clone()))]).unwrap();
     }
     w.commit().unwrap();
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.create_metarecord(vec![]).unwrap();
     w.commit().unwrap();
 
@@ -823,7 +777,7 @@ fn test_prune_reclaims_disk_space() {
 #[test]
 fn test_empty_writer_leaves_no_revision() {
     let mut conn = test_conn();
-    let w = Writer::begin(&mut conn, repo_id(), None).unwrap();
+    let w = Writer::begin(&mut conn, None).unwrap();
     w.commit().unwrap();
     let n: i64 = conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0)).unwrap();
     assert_eq!(n, 0);
@@ -832,9 +786,8 @@ fn test_empty_writer_leaves_no_revision() {
 #[test]
 fn test_dropped_writer_rolls_back() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     {
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.create_metarecord(vec![Field::new("a", Value::Int(1))]).unwrap();
         // No commit: dropped here.
     }
@@ -847,7 +800,7 @@ fn test_dropped_writer_rolls_back() {
 #[test]
 fn test_tree_ref_parent_must_exist() {
     let mut conn = test_conn();
-    let mut w = Writer::begin(&mut conn, repo_id(), None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .create_metarecord(vec![Field::new(
             "mfr_path",
@@ -860,10 +813,9 @@ fn test_tree_ref_parent_must_exist() {
 #[test]
 fn test_tree_ref_parent_must_have_same_tree_field() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     // Parent exists but has no 'mfr_path' TreeRef field.
-    let parent = create(&mut conn, db_id, vec![Field::new("label", Value::String("p".into()))]);
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let parent = create(&mut conn, vec![Field::new("label", Value::String("p".into()))]);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .create_metarecord(vec![Field::new(
             "mfr_path",
@@ -876,19 +828,16 @@ fn test_tree_ref_parent_must_have_same_tree_field() {
 #[test]
 fn test_tree_ref_cycle_rejected() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let a = create(
         &mut conn,
-        db_id,
         vec![Field::new("parent", Value::TreeRef { parent: None, name: "a".into() })],
     );
     let b = create(
         &mut conn,
-        db_id,
         vec![Field::new("parent", Value::TreeRef { parent: Some(a.uuid), name: "b".into() })],
     );
     // Re-pointing a under b would create a cycle a → b → a.
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .set_field(a.uuid, "parent", Value::TreeRef { parent: Some(b.uuid), name: "a".into() })
         .unwrap_err();
@@ -898,13 +847,11 @@ fn test_tree_ref_cycle_rejected() {
 #[test]
 fn test_tree_ref_self_parent_rejected() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     let a = create(
         &mut conn,
-        db_id,
         vec![Field::new("parent", Value::TreeRef { parent: None, name: "a".into() })],
     );
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let err = w
         .set_field(a.uuid, "parent", Value::TreeRef { parent: Some(a.uuid), name: "a".into() })
         .unwrap_err();
@@ -914,9 +861,8 @@ fn test_tree_ref_self_parent_rejected() {
 #[test]
 fn test_tree_ref_depth_limit() {
     let mut conn = test_conn();
-    let db_id = repo_id();
     // Build a chain of exactly 1000 nodes (depth 1000): root is depth 1.
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
         .create_metarecord(vec![Field::new("parent", Value::TreeRef { parent: None, name: "n1".into() })])
         .unwrap();

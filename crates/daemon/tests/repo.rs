@@ -188,8 +188,7 @@ fn test_load_migrates_legacy_table_names() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute_batch(
         "ALTER TABLE metarecord RENAME TO metadata;
-         ALTER TABLE metarecord_db RENAME TO metadata_db;
-         ALTER TABLE metadata_db RENAME COLUMN metarecord_uuid TO metadata_uuid;
+         CREATE TABLE metadata_db (metadata_uuid BLOB NOT NULL, db_id BLOB NOT NULL);
          ALTER TABLE field RENAME COLUMN metarecord_uuid TO metadata_uuid;
          UPDATE operation SET op_type = 'create_entry' WHERE op_type = 'create_metarecord';
          UPDATE operation SET op_type = 'delete_entry' WHERE op_type = 'delete_metarecord';",
@@ -236,8 +235,7 @@ fn test_load_migrates_record_era_table_names() {
     let conn = rusqlite::Connection::open(&db_path).unwrap();
     conn.execute_batch(
         "ALTER TABLE metarecord RENAME TO record;
-         ALTER TABLE metarecord_db RENAME TO record_db;
-         ALTER TABLE record_db RENAME COLUMN metarecord_uuid TO record_uuid;
+         CREATE TABLE record_db (record_uuid BLOB NOT NULL, db_id BLOB NOT NULL);
          ALTER TABLE field RENAME COLUMN metarecord_uuid TO record_uuid;
          UPDATE operation SET op_type = 'create_record' WHERE op_type = 'create_metarecord';
          UPDATE operation SET op_type = 'delete_record' WHERE op_type = 'delete_metarecord';",

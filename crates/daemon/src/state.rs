@@ -161,7 +161,7 @@ impl RepoState {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
             return;
         }
-        match crate::index::RepoIndex::build_reported(&conn, self.config.repo_uuid, &|done, total| {
+        match crate::index::RepoIndex::build_reported(&conn, &|done, total| {
             progress("index", Some(done), Some(total));
         }) {
             Ok(index) => *self.index.lock_recover() = Some(index),

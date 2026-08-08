@@ -109,11 +109,10 @@ pub struct RepoIndex {
 }
 
 impl RepoIndex {
-    /// Builds the index from a single pass over the universe's field rows.
-    /// Link metarecords (shared ownership) are excluded by construction: only
-    /// the exclusively-owned set (`db::list_entries`) is interned and scanned.
-    pub fn build(conn: &Connection, db_id: Uuid) -> anyhow::Result<RepoIndex> {
-        Self::build_reported(conn, db_id, &|_, _| {})
+    /// Builds the index from a single pass over the repository's field rows
+    /// (every metarecord — one repository per database file).
+    pub fn build(conn: &Connection) -> anyhow::Result<RepoIndex> {
+        Self::build_reported(conn, &|_, _| {})
     }
 
     /// [`Self::build`] reporting progress as `(done, total)` metarecords scanned,
@@ -121,13 +120,12 @@ impl RepoIndex {
     /// and once at completion.
     pub fn build_reported(
         conn: &Connection,
-        db_id: Uuid,
         progress: &dyn Fn(u64, u64),
     ) -> anyhow::Result<RepoIndex> {
         let built_at_head = db::current_head(conn)?;
         let mut registry = IdRegistry::new();
         let mut universe = RoaringBitmap::new();
-        for uuid in db::list_entries(conn, db_id)? {
+        for uuid in db::list_entries(conn)? {
             universe.insert(registry.intern(uuid));
         }
 
@@ -194,7 +192,7 @@ impl RepoIndex {
     /// DB state. Anything else (a rollback / prune that rewrote history, an
     /// unrecognised op, or `built_at_head` no longer on the chain) triggers a
     /// full rebuild, which is always correct.
-    pub fn refresh(&mut self, conn: &Connection, db_id: Uuid) -> anyhow::Result<()> {
+    pub fn refresh(&mut self, conn: &Connection) -> anyhow::Result<()> {
         let head = db::current_head(conn)?;
         if head == self.built_at_head {
             return Ok(());
@@ -211,7 +209,7 @@ impl RepoIndex {
                 self.apply_ops(conn, &delta)?;
                 self.built_at_head = head;
             }
-            _ => *self = Self::build(conn, db_id)?,
+            _ => *self = Self::build(conn)?,
         }
         Ok(())
     }

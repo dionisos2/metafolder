@@ -12,7 +12,6 @@ use uuid::Uuid;
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
-    db_id: Uuid,
     root: Uuid,
 }
 
@@ -22,8 +21,7 @@ impl Fixture {
     fn new(watch: bool) -> Self {
         let mut conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        let db_id = Uuid::new_v4();
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         let root = w
             .create_metarecord(vec![
                 Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
@@ -33,7 +31,7 @@ impl Fixture {
             .unwrap()
             .uuid;
         w.commit().unwrap();
-        Self { conn, cache: TreeCache::new(false), db_id, root }
+        Self { conn, cache: TreeCache::new(false), root }
     }
 
     fn entry(&mut self, parent: Uuid, name: &str, extra: Vec<Field>) -> Uuid {
@@ -42,7 +40,7 @@ impl Fixture {
             Value::TreeRef { parent: Some(parent), name: name.into() },
         )];
         fields.extend(extra);
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let uuid = w.create_metarecord(fields).unwrap().uuid;
         w.commit().unwrap();
         uuid
@@ -83,8 +81,7 @@ fn test_default_patterns_ignore_metafolder_and_hidden() {
     // config directory and any hidden (dot-prefixed) entry are excluded.
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
-    let db_id = Uuid::new_v4();
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     let mut fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
         Field::new("mf_watch", Value::Bool(true)),
@@ -155,8 +152,7 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     // A repository whose root entry carries no mf_watch at all.
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
-    let db_id = Uuid::new_v4();
-    let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
     w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
         .unwrap();
     w.commit().unwrap();

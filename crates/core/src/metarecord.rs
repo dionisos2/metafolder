@@ -345,24 +345,28 @@ impl Field {
 /// The fundamental unit of the system. Files, tags, relations — everything is
 /// a metarecord.
 ///
-/// `db_ids` normally contains the single owning repository UUID; two UUIDs
-/// mean a link metarecord shared between repositories. `version` is a monotonic
+/// A metarecord belongs to the repository whose database holds it (one database
+/// per repository); ownership is implicit, not a field. `version` is a monotonic
 /// write counter managed exclusively by the daemon.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MetaRecord {
     #[serde(with = "hex_uuid")]
     pub uuid: MetaRecordId,
-    #[serde(with = "hex_uuid_vec")]
-    pub db_ids: Vec<DatabaseId>,
     pub version: u64,
     pub fields: Vec<Field>,
 }
 
+impl Default for MetaRecord {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetaRecord {
-    pub fn new(db_id: DatabaseId) -> Self {
+    /// A fresh metarecord with a new random UUID, version 0, and no fields.
+    pub fn new() -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            db_ids: vec![db_id],
             version: 0,
             fields: Vec::new(),
         }
@@ -664,23 +668,21 @@ mod tests {
     #[test]
     fn test_record_json_format() {
         let uuid = Uuid::parse_str("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8").unwrap();
-        let db_id = Uuid::parse_str("47ab0000-0000-0000-0000-000000000001").unwrap();
         let m = MetaRecord {
             uuid,
-            db_ids: vec![db_id],
             version: 3,
             fields: vec![Field { id: Some(43), name: "rating".into(), value: Value::Int(5) }],
         };
         let json = serde_json::to_string(&m).unwrap();
         assert_eq!(
             json,
-            r#"{"uuid":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8","db_ids":["47ab0000000000000000000000000001"],"version":3,"fields":[{"id":43,"name":"rating","value":{"type":"int","value":5}}]}"#
+            r#"{"uuid":"8f3a2b1c4d5e6f708192a3b4c5d6e7f8","version":3,"fields":[{"id":43,"name":"rating","value":{"type":"int","value":5}}]}"#
         );
     }
 
     #[test]
     fn test_record_roundtrip() {
-        let mut m = MetaRecord::new(Uuid::new_v4());
+        let mut m = MetaRecord::new();
         m.version = 7;
         m.fields.push(Field::new("tag", Value::String("jazz".into())));
         m.fields.push(Field::new("tag", Value::String("live".into())));
@@ -692,7 +694,7 @@ mod tests {
     // ── MetaRecord: accessors ──────────────────────────────────────────────────
 
     fn make_metarecord() -> MetaRecord {
-        let mut e = MetaRecord::new(Uuid::new_v4());
+        let mut e = MetaRecord::new();
         e.fields.push(Field::new("path", Value::String("/music/a.mp3".into())));
         e.fields.push(Field::new("tag", Value::String("jazz".into())));
         e.fields.push(Field::new("tag", Value::String("live".into())));
@@ -722,11 +724,9 @@ mod tests {
 
     #[test]
     fn test_new_record_defaults() {
-        let db_id = Uuid::new_v4();
-        let e1 = MetaRecord::new(db_id);
-        let e2 = MetaRecord::new(db_id);
+        let e1 = MetaRecord::new();
+        let e2 = MetaRecord::new();
         assert_ne!(e1.uuid, e2.uuid);
-        assert_eq!(e1.db_ids, vec![db_id]);
         assert_eq!(e1.version, 0);
     }
 }

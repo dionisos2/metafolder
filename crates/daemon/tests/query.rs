@@ -13,22 +13,17 @@ use uuid::Uuid;
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
-    db_id: Uuid,
 }
 
 impl Fixture {
     fn new() -> Self {
         let conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false), db_id: Uuid::new_v4() }
+        Self { conn, cache: TreeCache::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
-        self.create_in(self.db_id, fields)
-    }
-
-    fn create_in(&mut self, db_id: Uuid, fields: Vec<Field>) -> Uuid {
-        let mut w = Writer::begin(&mut self.conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let m = w.create_metarecord(fields).unwrap();
         w.commit().unwrap();
         m.uuid
@@ -36,14 +31,14 @@ impl Fixture {
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, self.db_id, query, &[], None, None)
+            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
                 .unwrap();
         uuids
     }
 
     fn run_sorted(&mut self, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, self.db_id, query, sort, None, None)
+            query_exec::execute(&self.conn, &mut self.cache, query, sort, None, None)
                 .unwrap();
         uuids
     }
@@ -279,7 +274,6 @@ fn test_comparison_with_nothing_is_rejected() {
     let err = query_exec::execute(
         &f.conn,
         &mut f.cache,
-        f.db_id,
         &Query::Eq { field: "rating".into(), value: Value::Nothing },
         &[],
         None,
@@ -347,7 +341,7 @@ fn test_oversized_query_is_rejected() {
             .map(|_| Query::IsPresent { field: "rating".into() })
             .collect(),
     };
-    let err = query_exec::execute(&f.conn, &mut f.cache, f.db_id, &huge, &[], None, None)
+    let err = query_exec::execute(&f.conn, &mut f.cache, &huge, &[], None, None)
         .unwrap_err();
     assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
     // A normal small query is unaffected.
@@ -357,7 +351,7 @@ fn test_oversized_query_is_rejected() {
             Query::IsAbsent { field: "rating".into() },
         ],
     };
-    assert!(query_exec::execute(&f.conn, &mut f.cache, f.db_id, &ok, &[], None, None).is_ok());
+    assert!(query_exec::execute(&f.conn, &mut f.cache, &ok, &[], None, None).is_ok());
 }
 
 #[test]
@@ -371,14 +365,14 @@ fn test_wide_combinator_is_rejected_with_clear_message() {
     // MAX_QUERY_NODES, so this is the combinator check firing, not the size one.)
     let over =
         Query::Or { operands: (0..=query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
-    let err = query_exec::execute(&f.conn, &mut f.cache, f.db_id, &over, &[], None, None)
+    let err = query_exec::execute(&f.conn, &mut f.cache, &over, &[], None, None)
         .unwrap_err();
     assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
 
     // Exactly the limit compiles and runs in SQLite.
     let at_limit =
         Query::Or { operands: (0..query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
-    assert!(query_exec::execute(&f.conn, &mut f.cache, f.db_id, &at_limit, &[], None, None).is_ok());
+    assert!(query_exec::execute(&f.conn, &mut f.cache, &at_limit, &[], None, None).is_ok());
 }
 
 // ── Combinators ───────────────────────────────────────────────────────────────
@@ -408,16 +402,6 @@ fn test_and_or_not() {
 }
 
 // ── Repository isolation ──────────────────────────────────────────────────────
-
-#[test]
-fn test_other_repo_entries_are_excluded() {
-    let mut f = Fixture::new();
-    let mine = f.create(vec![Field::new("tag", s("jazz"))]);
-    let other_repo = Uuid::new_v4();
-    let _other = f.create_in(other_repo, vec![Field::new("tag", s("jazz"))]);
-
-    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("jazz") }), vec![mine]);
-}
 
 // ── Matches ───────────────────────────────────────────────────────────────────
 
@@ -449,7 +433,6 @@ fn test_matches_invalid_regex_is_rejected() {
     let res = query_exec::execute(
         &f.conn,
         &mut f.cache,
-        f.db_id,
         &Query::Matches { field: "title".into(), pattern: "[unclosed".into() },
         &[],
         None,
@@ -884,7 +867,6 @@ fn test_pagination_with_sort_covers_all_without_duplicates() {
         let (page, next) = query_exec::execute(
             &f.conn,
             &mut f.cache,
-            f.db_id,
             &all,
             &sort,
             Some(5),
@@ -908,7 +890,7 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
     }
     let all = Query::Eq { field: "k".into(), value: s("x") };
     let (_, cursor) =
-        query_exec::execute(&f.conn, &mut f.cache, f.db_id, &all, &[sort_asc("n")], Some(2), None)
+        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_asc("n")], Some(2), None)
             .unwrap();
     let cursor = cursor.unwrap();
 
@@ -916,7 +898,6 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
     let err = query_exec::execute(
         &f.conn,
         &mut f.cache,
-        f.db_id,
         &all,
         &[sort_desc("n")],
         Some(2),

@@ -15,12 +15,11 @@ use uuid::Uuid;
 
 /// Builds a repo with a file record moved from `/a.txt` to `/b.txt`, returning
 /// (repo, root_uuid, record_uuid, create_op_id, move_op_id).
-fn setup_move(prefix: &str) -> (Arc<RepoState>, Uuid, i64, i64) {
+fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
     let root = std::env::temp_dir().join(format!("metafolder_cskip_{prefix}_{}", Uuid::new_v4()));
     std::fs::create_dir_all(&root).unwrap();
     let opened = repo::init_repository(&root, None, None).unwrap();
     let repo = Arc::new(RepoState::from_opened(opened));
-    let db_id = repo.config.repo_uuid;
 
     let root_uuid = {
         let conn = repo.conn.lock().unwrap();
@@ -30,7 +29,7 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, Uuid, i64, i64) {
     // create the record at /a.txt
     let record = {
         let mut conn = repo.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         let m = w
             .create_metarecord(vec![Field::new(
                 "mfr_path",
@@ -47,7 +46,7 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, Uuid, i64, i64) {
     // move it to /b.txt (a file_moved op: before=/a.txt is_new=0, after=/b.txt is_new=1)
     {
         let mut conn = repo.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, db_id, None).unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field_as(
             OpType::FileMoved,
             record,
@@ -59,7 +58,7 @@ fn setup_move(prefix: &str) -> (Arc<RepoState>, Uuid, i64, i64) {
     }
     let move_op_id = log::get_head(&repo.conn.lock().unwrap()).unwrap().unwrap();
 
-    (repo, db_id, create_op_id, move_op_id)
+    (repo, create_op_id, move_op_id)
 }
 
 /// The single enqueued `restore_set_path` name component (the rewind target).
@@ -75,13 +74,13 @@ fn restoration_name(repo: &RepoState) -> String {
 
 #[test]
 fn forward_skip_rewinds_to_the_pre_move_location() {
-    let (repo, db_id, create_op, move_op) = setup_move("forward");
+    let (repo, create_op, move_op) = setup_move("forward");
 
     // Roll back the move, then redo it forward with skip.
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::navigate(&mut conn, db_id, Some(create_op)).unwrap();
-        log::coordinated_step(&mut conn, db_id, Some(move_op), true).unwrap();
+        log::navigate(&mut conn, Some(create_op)).unwrap();
+        log::coordinated_step(&mut conn, Some(move_op), true).unwrap();
     }
 
     // The forward step applied the post-move location (/b.txt); the rewind must
@@ -93,12 +92,12 @@ fn forward_skip_rewinds_to_the_pre_move_location() {
 
 #[test]
 fn inverse_skip_rewinds_to_the_current_location() {
-    let (repo, db_id, create_op, move_op) = setup_move("inverse");
+    let (repo, create_op, move_op) = setup_move("inverse");
 
     // HEAD is at the move; roll it back one step with skip.
     {
         let mut conn = repo.conn.lock().unwrap();
-        log::coordinated_step(&mut conn, db_id, Some(create_op), true).unwrap();
+        log::coordinated_step(&mut conn, Some(create_op), true).unwrap();
     }
     let _ = move_op;
 

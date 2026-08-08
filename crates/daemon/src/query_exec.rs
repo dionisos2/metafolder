@@ -149,12 +149,11 @@ fn validate_comparison(value: &Value, ordered: bool) -> Result<(), ApiError> {
 pub fn count(
     conn: &Connection,
     cache: &mut TreeCache,
-    db_id: Uuid,
     query: &Query,
 ) -> Result<usize, ApiError> {
     check_query_size(query)?;
     validate_query(query)?;
-    let mut compiler = Compiler::new(conn, cache, db_id);
+    let mut compiler = Compiler::new(conn, cache);
     let last = compiler.compile_node(query)?;
     let Compiler { ctes, params, .. } = compiler;
     let cte_sql: Vec<String> =
@@ -174,7 +173,6 @@ pub fn count(
 pub fn execute(
     conn: &Connection,
     cache: &mut TreeCache,
-    db_id: Uuid,
     query: &Query,
     sort: &[SortKey],
     limit: Option<usize>,
@@ -189,12 +187,11 @@ pub fn execute(
     // The cursor is bound to the exact (query, sort) pair that produced it.
     let hash = pagination::context_hash(&[
         "query",
-        &db_id.as_simple().to_string(),
         &serde_json::to_string(query).map_err(|e| ApiError::internal(e.to_string()))?,
         &serde_json::to_string(sort).map_err(|e| ApiError::internal(e.to_string()))?,
     ]);
 
-    let mut compiler = Compiler::new(conn, cache, db_id);
+    let mut compiler = Compiler::new(conn, cache);
     let last = compiler.compile_node(query)?;
     let Compiler { mut ctes, mut params, .. } = compiler;
 
@@ -499,27 +496,21 @@ impl CmpOp {
 struct Compiler<'a> {
     conn: &'a Connection,
     cache: &'a mut TreeCache,
-    db_id: Uuid,
     ctes: Vec<(String, String)>,
     params: Vec<SqlValue>,
     counter: usize,
 }
 
 impl<'a> Compiler<'a> {
-    /// The `_repo` CTE (declared first, so its parameter binds first) holds
-    /// the universe: metarecords owned exclusively by the current repository.
-    /// It both isolates results and serves as the complement base for `Not`.
-    fn new(conn: &'a Connection, cache: &'a mut TreeCache, db_id: Uuid) -> Self {
+    /// The `_repo` CTE (declared first) holds the universe: every metarecord of
+    /// the repository (one repository per database file). It both isolates
+    /// results and serves as the complement base for `Not`.
+    fn new(conn: &'a Connection, cache: &'a mut TreeCache) -> Self {
         let ctes = vec![(
             "_repo".to_string(),
-            "SELECT m1.metarecord_uuid AS uuid FROM metarecord_db m1 \
-             WHERE m1.db_id = ? \
-               AND (SELECT COUNT(*) FROM metarecord_db m2 \
-                    WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1"
-                .to_string(),
+            "SELECT uuid FROM metarecord".to_string(),
         )];
-        let params = vec![SqlValue::Blob(db::uuid_to_bytes(db_id))];
-        Self { conn, cache, db_id, ctes, params, counter: 0 }
+        Self { conn, cache, ctes, params: Vec::new(), counter: 0 }
     }
 
     /// Runs a sub-query on its own (a fresh compiler and statement) and
@@ -527,7 +518,7 @@ impl<'a> Compiler<'a> {
     /// Used by the hybrid `FollowsTransitive` execution, whose tree-cache
     /// walk needs the root set before SQL generation.
     fn execute_condition(&mut self, cond: &Query) -> Result<Vec<Uuid>, ApiError> {
-        let mut sub = Compiler::new(self.conn, self.cache, self.db_id);
+        let mut sub = Compiler::new(self.conn, self.cache);
         let last = sub.compile_node(cond)?;
         let Compiler { ctes, params, .. } = sub;
         let cte_sql: Vec<String> =

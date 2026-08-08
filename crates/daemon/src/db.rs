@@ -131,7 +131,7 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
     // this back-fill.
     let tables: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master \
-         WHERE type = 'table' AND name IN ('metarecord_db', 'field')",
+         WHERE type = 'table' AND name IN ('metarecord', 'field')",
         [],
         |r| r.get(0),
     )?;
@@ -139,8 +139,7 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
         return Ok(());
     }
     conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_metarecord_db_uuid ON metarecord_db(db_id, metarecord_uuid);
-         CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
+        "CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
     )
     .context("Failed to ensure performance indexes")?;
     Ok(())
@@ -205,12 +204,10 @@ fn migrate_legacy_table_names(conn: &Connection) -> Result<()> {
         conn.execute_batch(&format!(
             "BEGIN;
              ALTER TABLE {table} RENAME TO metarecord;
-             ALTER TABLE {table_db} RENAME TO metarecord_db;
-             ALTER TABLE metarecord_db RENAME COLUMN {uuid_col} TO metarecord_uuid;
+             DROP TABLE {table_db};
              ALTER TABLE field RENAME COLUMN {uuid_col} TO metarecord_uuid;
              DROP INDEX IF EXISTS idx_metadata_db;
              DROP INDEX IF EXISTS idx_record_db;
-             CREATE INDEX IF NOT EXISTS idx_metarecord_db ON metarecord_db(db_id);
              DROP INDEX IF EXISTS idx_field_entry;
              DROP INDEX IF EXISTS idx_field_record;
              CREATE INDEX IF NOT EXISTS idx_field_metarecord ON field(metarecord_uuid, field_name);
@@ -240,17 +237,6 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
             version  INTEGER NOT NULL DEFAULT 0     -- bumped on every field write
         );
-
-        -- One row per owning repository (usually one; two for link metarecords).
-        CREATE TABLE metarecord_db (
-            metarecord_uuid  BLOB NOT NULL REFERENCES metarecord(uuid) ON DELETE CASCADE,
-            db_id          BLOB NOT NULL,
-            PRIMARY KEY (metarecord_uuid, db_id)
-        );
-        CREATE INDEX idx_metarecord_db ON metarecord_db(db_id);
-        -- Keyset pagination of the listing: seek by (db_id, metarecord_uuid) and
-        -- read rows already ordered, instead of sorting the whole repo per page.
-        CREATE INDEX idx_metarecord_db_uuid ON metarecord_db(db_id, metarecord_uuid);
 
         CREATE TABLE field (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -357,19 +343,12 @@ pub fn get_metarecord(conn: &Connection, uuid: Uuid) -> Result<Option<MetaRecord
     let Some(version) = get_version(conn, uuid)? else {
         return Ok(None);
     };
-    let mut stmt =
-        conn.prepare("SELECT db_id FROM metarecord_db WHERE metarecord_uuid = ?1 ORDER BY db_id")?;
-    let db_ids = stmt
-        .query_map(params![uuid_to_bytes(uuid)], |r| r.get::<_, Vec<u8>>(0))?
-        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
-        .collect::<Result<Vec<Uuid>>>()?;
-
     let fields = get_field_rows(conn, uuid)?
         .into_iter()
         .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
         .collect();
 
-    Ok(Some(MetaRecord { uuid, db_ids, version, fields }))
+    Ok(Some(MetaRecord { uuid, version, fields }))
 }
 
 /// Returns the version counter of a metarecord, or None if it does not exist.
@@ -485,18 +464,11 @@ fn collect_field_rows<'a>(
     .collect()
 }
 
-/// All metarecord UUIDs owned exclusively by `db_id`, sorted by UUID byte order.
-/// Link metarecords (several owners) are excluded, as mandated by spec-data-model.
-pub fn list_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
-    let mut stmt = conn.prepare(
-        "SELECT m1.metarecord_uuid FROM metarecord_db m1
-         WHERE m1.db_id = ?1
-           AND (SELECT COUNT(*) FROM metarecord_db m2
-                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1
-         ORDER BY m1.metarecord_uuid",
-    )?;
+/// All metarecord UUIDs of this repository, sorted by UUID byte order.
+pub fn list_entries(conn: &Connection) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare("SELECT uuid FROM metarecord ORDER BY uuid")?;
     let uuids = stmt
-        .query_map(params![uuid_to_bytes(db_id)], |r| r.get::<_, Vec<u8>>(0))?
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
         .collect::<Result<Vec<Uuid>>>()?;
     Ok(uuids)
@@ -504,14 +476,13 @@ pub fn list_entries(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
 
 /// All metarecords of this repository holding an `mfr_path` TreeRef (i.e. with
 /// a known tree position, stale or not).
-pub fn all_tracked_metarecords(conn: &Connection, db_id: Uuid) -> Result<Vec<Uuid>> {
+pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT f.metarecord_uuid FROM field f
-         JOIN metarecord_db md ON md.metarecord_uuid = f.metarecord_uuid AND md.db_id = ?1
-         WHERE f.field_name = 'mfr_path' AND f.value_type = 'tree_ref'",
+        "SELECT DISTINCT metarecord_uuid FROM field
+         WHERE field_name = 'mfr_path' AND value_type = 'tree_ref'",
     )?;
     let uuids = stmt
-        .query_map(params![uuid_to_bytes(db_id)], |r| r.get::<_, Vec<u8>>(0))?
+        .query_map([], |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
         .collect::<Result<Vec<Uuid>>>()?;
     Ok(uuids)
@@ -519,16 +490,15 @@ pub fn all_tracked_metarecords(conn: &Connection, db_id: Uuid) -> Result<Vec<Uui
 
 /// Orphaned metarecords of this repository (`mfr_path` = Nothing) whose stored
 /// `mfr_size` matches. First step of the fingerprint cascade.
-pub fn find_orphans_by_size(conn: &Connection, db_id: Uuid, size: i64) -> Result<Vec<Uuid>> {
+pub fn find_orphans_by_size(conn: &Connection, size: i64) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
         "SELECT p.metarecord_uuid FROM field p
-         JOIN metarecord_db md ON md.metarecord_uuid = p.metarecord_uuid AND md.db_id = ?1
          JOIN field s ON s.metarecord_uuid = p.metarecord_uuid
-              AND s.field_name = 'mfr_size' AND s.value_type = 'int' AND s.value_int = ?2
+              AND s.field_name = 'mfr_size' AND s.value_type = 'int' AND s.value_int = ?1
          WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'",
     )?;
     let uuids = stmt
-        .query_map(params![uuid_to_bytes(db_id), size], |r| r.get::<_, Vec<u8>>(0))?
+        .query_map(params![size], |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
         .collect::<Result<Vec<Uuid>>>()?;
     Ok(uuids)
@@ -538,25 +508,17 @@ pub fn find_orphans_by_size(conn: &Connection, db_id: Uuid, size: i64) -> Result
 /// `limit` rows, sorted by UUID byte order (keyset pagination).
 pub fn list_entries_page(
     conn: &Connection,
-    db_id: Uuid,
     after: Option<Uuid>,
     limit: usize,
 ) -> Result<Vec<Uuid>> {
     // Conditional keyset: the cursor predicate is omitted on the first page so
-    // the (db_id, metarecord_uuid) index can seek directly. Folding it into a
-    // single `(?2 IS NULL OR uuid > ?2)` would defeat the seek (the OR forces a
-    // scan from the start of the db_id partition on every page).
-    let after_clause = if after.is_some() { "AND m1.metarecord_uuid > ?3" } else { "" };
-    let sql = format!(
-        "SELECT m1.metarecord_uuid FROM metarecord_db m1
-         WHERE m1.db_id = ?1 {after_clause}
-           AND (SELECT COUNT(*) FROM metarecord_db m2
-                WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1
-         ORDER BY m1.metarecord_uuid LIMIT ?2"
-    );
+    // the primary-key index seeks directly. Folding it into a single
+    // `(?2 IS NULL OR uuid > ?2)` would defeat the seek (the OR forces a full
+    // scan on every page).
+    let after_clause = if after.is_some() { "WHERE uuid > ?2" } else { "" };
+    let sql = format!("SELECT uuid FROM metarecord {after_clause} ORDER BY uuid LIMIT ?1");
     let mut stmt = conn.prepare(&sql)?;
-    let mut sql_params: Vec<rusqlite::types::Value> =
-        vec![uuid_to_bytes(db_id).into(), (limit as i64).into()];
+    let mut sql_params: Vec<rusqlite::types::Value> = vec![(limit as i64).into()];
     if let Some(after) = after {
         sql_params.push(uuid_to_bytes(after).into());
     }
@@ -628,42 +590,31 @@ pub fn tree_children(
     Ok(children)
 }
 
-/// The distinct `(field_name, value_type)` pairs present on the metarecords
-/// owned exclusively by `db_id`, optionally restricted to a single value type
-/// (e.g. `"tree_ref"`, `"ref"`). `Nothing` rows are excluded — they record an
-/// explicit absence, not a usable field value. A field name has a single
-/// non-`Nothing` value type repository-wide, so it appears at most once.
-/// Ordered by name then type for a stable response.
+/// The distinct `(field_name, value_type)` pairs present in this repository,
+/// optionally restricted to a single value type (e.g. `"tree_ref"`, `"ref"`).
+/// `Nothing` rows are excluded — they record an explicit absence, not a usable
+/// field value. A field name has a single non-`Nothing` value type
+/// repository-wide, so it appears at most once. Ordered by name then type for a
+/// stable response.
 ///
 /// `GET /repos/:repo/fields` is served from the in-memory index
 /// (`RepoIndex::field_catalog`) instead — this SQL form is the equivalence
 /// oracle (`tests/index_oracle.rs`) and the scan-based fallback definition.
-///
-/// The repository-isolation sub-select mirrors the `_repo` universe CTE of the
-/// query engine (`query_exec::Compiler::new`): only metarecords whose sole
-/// owner is this repository.
 pub fn distinct_field_names(
     conn: &Connection,
-    db_id: Uuid,
     type_filter: Option<&str>,
 ) -> Result<Vec<(String, String)>> {
-    let type_clause = if type_filter.is_some() { "AND f.value_type = ?2" } else { "" };
+    let type_clause = if type_filter.is_some() { "AND value_type = ?1" } else { "" };
     let sql = format!(
-        "SELECT DISTINCT f.field_name, f.value_type FROM field f
-         WHERE f.value_type != 'nothing' {type_clause}
-           AND f.metarecord_uuid IN (
-             SELECT m1.metarecord_uuid FROM metarecord_db m1
-             WHERE m1.db_id = ?1
-               AND (SELECT COUNT(*) FROM metarecord_db m2
-                    WHERE m2.metarecord_uuid = m1.metarecord_uuid) = 1)
-         ORDER BY f.field_name, f.value_type"
+        "SELECT DISTINCT field_name, value_type FROM field
+         WHERE value_type != 'nothing' {type_clause}
+         ORDER BY field_name, value_type"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let db_bytes = uuid_to_bytes(db_id);
     let map = |r: &rusqlite::Row| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?));
     let rows = match type_filter {
-        Some(t) => stmt.query_map(params![db_bytes, t], map)?.collect::<rusqlite::Result<Vec<_>>>(),
-        None => stmt.query_map(params![db_bytes], map)?.collect::<rusqlite::Result<Vec<_>>>(),
+        Some(t) => stmt.query_map(params![t], map)?.collect::<rusqlite::Result<Vec<_>>>(),
+        None => stmt.query_map([], map)?.collect::<rusqlite::Result<Vec<_>>>(),
     }?;
     Ok(rows)
 }

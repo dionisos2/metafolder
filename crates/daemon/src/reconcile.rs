@@ -138,8 +138,7 @@ pub fn reconcile_full_reported(
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
-    let db_id = repo.config.repo_uuid;
-    let mut writer = Writer::begin(&mut conn, db_id, None)?;
+    let mut writer = Writer::begin(&mut conn, None)?;
     let mut result = ReconcileResult::default();
 
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
@@ -180,7 +179,7 @@ pub fn reconcile_full_reported(
     // Step 1 — orphaned metarecords: tree position no longer present on disk.
     // (Checked against the disk directly, so that files that merely became
     // ineligible are not mistaken for orphans.) Determinate "scan" phase.
-    let tracked = db::all_tracked_metarecords(writer.connection(), db_id)?;
+    let tracked = db::all_tracked_metarecords(writer.connection())?;
     let scan_total = tracked.len() as u64;
     reporter.progress("scan", Some(0), Some(scan_total));
     let mut orphans: Vec<(Uuid, String)> = Vec::new();
@@ -431,7 +430,6 @@ pub fn reconcile_metarecord_reported(
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
-    let db_id = repo.config.repo_uuid;
 
     if db::get_version(&conn, uuid)?.is_none() {
         return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
@@ -442,7 +440,7 @@ pub fn reconcile_metarecord_reported(
         )));
     };
 
-    let mut writer = Writer::begin(&mut conn, db_id, None)?;
+    let mut writer = Writer::begin(&mut conn, None)?;
     let mut result = ReconcileResult::default();
 
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,

@@ -20,18 +20,17 @@ use uuid::Uuid;
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
-    db_id: Uuid,
 }
 
 impl Fixture {
     fn new() -> Self {
         let conn = db::open_in_memory().unwrap();
         db::init_schema(&conn).unwrap();
-        Self { conn, cache: TreeCache::new(false), db_id: Uuid::new_v4() }
+        Self { conn, cache: TreeCache::new(false) }
     }
 
     fn create(&mut self, fields: Vec<Field>) -> Uuid {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let m = w.create_metarecord(fields).unwrap();
         w.commit().unwrap();
         m.uuid
@@ -40,26 +39,26 @@ impl Fixture {
     fn matches(&mut self, field: &str, pattern: &str) -> Vec<Uuid> {
         let q = Query::Matches { field: field.into(), pattern: pattern.into() };
         let (mut uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, self.db_id, &q, &[], None, None)
+            query_exec::execute(&self.conn, &mut self.cache, &q, &[], None, None)
                 .unwrap();
         uuids.sort();
         uuids
     }
 
     fn set_field(&mut self, uuid: Uuid, name: &str, value: Value) {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         w.set_field(uuid, name, value).unwrap();
         w.commit().unwrap();
     }
 
     fn append_field(&mut self, uuid: Uuid, name: &str, value: Value) {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         w.append_field(uuid, name, value).unwrap();
         w.commit().unwrap();
     }
 
     fn delete_record(&mut self, uuid: Uuid) {
-        let mut w = Writer::begin(&mut self.conn, self.db_id, None).unwrap();
+        let mut w = Writer::begin(&mut self.conn, None).unwrap();
         w.delete_metarecord(uuid).unwrap();
         w.commit().unwrap();
     }
@@ -69,7 +68,7 @@ impl Fixture {
     }
 
     fn rollback_to(&mut self, target: Option<i64>) {
-        metafolder_daemon::log::navigate(&mut self.conn, self.db_id, target).unwrap();
+        metafolder_daemon::log::navigate(&mut self.conn, target).unwrap();
     }
 }
 
