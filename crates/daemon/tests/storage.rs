@@ -934,3 +934,104 @@ fn test_op_type_string_roundtrip() {
     assert_eq!(OpType::CreateRecord.as_str(), "create_metarecord");
     assert!(OpType::parse("bogus").is_none());
 }
+
+// ── next_version allocator (spec-data-model) ────────────────────────────────
+
+use metafolder_daemon::log;
+
+/// The value a field write assigns, read back from the row.
+fn set_field(conn: &mut Connection, uuid: Uuid, name: &str, v: Value) {
+    let mut w = Writer::begin(conn, None).unwrap();
+    w.set_field(uuid, name, v).unwrap();
+    w.commit().unwrap();
+}
+
+#[test]
+fn test_next_version_gaps_after_rollback() {
+    // A version number is never reused for a different state: after rolling back
+    // and writing again, the new write gets a fresh number, not the one the
+    // rolled-back write had.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(0));
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // -> version 1
+    let head_v1 = log::get_head(&conn).unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // -> version 2
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(2));
+
+    log::navigate(&mut conn, head_v1).unwrap(); // roll back to the version-1 state
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(3)); // fresh write must get 3, not 2
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+}
+
+#[test]
+fn test_entity_version_after_recorded() {
+    // Every operation records the version it produced; on a linear chain it is
+    // exactly entity_version_before + 1.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+    set_field(&mut conn, m.uuid, "a", Value::Int(1));
+
+    let (before, after): (Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT entity_version_before, entity_version_after FROM operation \
+             WHERE op_type = 'set_field'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(before, Some(0));
+    assert_eq!(after, Some(1));
+}
+
+#[test]
+fn test_redo_restores_stored_after_version_across_a_gap() {
+    // After a rollback gap, a write's assigned version is not before + 1; redoing
+    // that write must land on the exact number it assigned (entity_version_after),
+    // not the recomputed before + 1.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // v1
+    let head_v1 = log::get_head(&conn).unwrap();
+    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // v2, next_version now 3
+
+    log::navigate(&mut conn, head_v1).unwrap(); // back to v1 (next_version still 3)
+    set_field(&mut conn, m.uuid, "a", Value::Int(3)); // v3 (before=1, after=3 — a gap)
+    let head_v3 = log::get_head(&conn).unwrap();
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+
+    log::navigate(&mut conn, head_v1).unwrap(); // roll the v3 write back
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(1));
+    log::navigate(&mut conn, head_v3).unwrap(); // redo it: must restore 3, not 2
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+}
+
+#[test]
+fn test_recreate_metarecord_recomputes_next_version() {
+    // Navigating across a delete recreates the record; its next_version must
+    // resume above every version it ever held, so a later fresh write cannot
+    // reuse a number an earlier state already used.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![]);
+    set_field(&mut conn, m.uuid, "a", Value::Int(1)); // v1
+    set_field(&mut conn, m.uuid, "a", Value::Int(2)); // v2, next_version now 3
+    let head_v2 = log::get_head(&conn).unwrap();
+
+    {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.delete_metarecord(m.uuid).unwrap(); // record gone (allocator gone with it)
+        w.commit().unwrap();
+    }
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), None);
+
+    log::navigate(&mut conn, head_v2).unwrap(); // undo the delete: record restored at v2
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(2));
+
+    set_field(&mut conn, m.uuid, "a", Value::Int(9)); // must get 3, not reuse 1
+    assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
+}

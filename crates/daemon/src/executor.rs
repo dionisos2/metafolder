@@ -577,6 +577,27 @@ impl Apply<'_, '_> {
         let Ok(stat) = fs_meta::stat_fields(&self.abs(rel)) else {
             return Ok(());
         };
+        let new_of = |name: &str| stat.iter().find(|f| f.name == name).map(|f| f.value.clone());
+        // Idempotent: when the stored stat already matches the file and the hashes
+        // are already cleared, produce no operation (no version bump). This
+        // suppresses a watcher echo of a change the daemon itself just recorded —
+        // e.g. a cross-repo sync file operation (spec-sync "Suppressing sync's own
+        // echoes"), and a crash replay (spec-file-tracking).
+        let unchanged = {
+            let conn = self.writer.connection();
+            let stored = |name: &str| -> Option<Value> {
+                db::get_field_rows_named(conn, uuid, name)
+                    .ok()
+                    .and_then(|rows| rows.into_iter().map(|r| r.value).find(|v| !matches!(v, Value::Nothing)))
+            };
+            stored("mfr_size") == new_of("mfr_size")
+                && stored("mfr_mtime") == new_of("mfr_mtime")
+                && stored("mfr_partial_hash").is_none()
+                && stored("mfr_full_hash").is_none()
+        };
+        if unchanged {
+            return Ok(());
+        }
         for field in stat {
             if matches!(field.name.as_str(), "mfr_size" | "mfr_mtime") {
                 self.writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;

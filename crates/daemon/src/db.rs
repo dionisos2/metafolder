@@ -92,9 +92,65 @@ pub fn open_database(path: &Path) -> Result<Connection> {
     configure_connection(&conn)?;
     migrate_legacy_table_names(&conn)?;
     ensure_pending_tracker_column(&conn)?;
+    ensure_next_version_column(&conn)?;
+    ensure_entity_version_after_column(&conn)?;
     ensure_perf_indexes(&conn)?;
     ensure_field_text(&conn)?;
     Ok(conn)
+}
+
+/// Adds `metarecord.next_version` (the per-record monotonic version allocator,
+/// spec-data-model) to databases created before it existed. Back-fills each
+/// existing row to `version + 1`: legacy databases have no rollback gaps
+/// encoded, so the current version is the correct allocator high-water mark.
+/// Idempotent; a no-op on fresh databases and on ones with no `metarecord` yet.
+fn ensure_next_version_column(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'metarecord'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(());
+    }
+    let has_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('metarecord') WHERE name = 'next_version'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_column == 0 {
+        conn.execute_batch(
+            "ALTER TABLE metarecord ADD COLUMN next_version INTEGER NOT NULL DEFAULT 1;
+             UPDATE metarecord SET next_version = version + 1;",
+        )
+        .context("Failed to add metarecord.next_version column")?;
+    }
+    Ok(())
+}
+
+/// Adds `operation.entity_version_after` to databases created before it existed.
+/// Left NULL on existing rows: forward (redo) application falls back to
+/// `entity_version_before + 1` for NULL, exactly the pre-migration behaviour.
+/// Idempotent; a no-op on fresh databases and on ones with no `operation` yet.
+fn ensure_entity_version_after_column(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'operation'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(());
+    }
+    let has_column: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('operation') WHERE name = 'entity_version_after'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_column == 0 {
+        conn.execute("ALTER TABLE operation ADD COLUMN entity_version_after INTEGER", [])
+            .context("Failed to add operation.entity_version_after column")?;
+    }
+    Ok(())
 }
 
 /// Adds `pending_operation.tracker` to databases created before it existed, so
@@ -234,8 +290,9 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         "
         -- ── Data tables (spec-data-model) ───────────────────────────────────
         CREATE TABLE metarecord (
-            uuid     BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
-            version  INTEGER NOT NULL DEFAULT 0     -- bumped on every field write
+            uuid         BLOB    PRIMARY KEY NOT NULL,  -- 16-byte UUID
+            version      INTEGER NOT NULL DEFAULT 0,    -- current version (from next_version)
+            next_version INTEGER NOT NULL DEFAULT 1     -- monotonic allocator; never restored
         );
 
         CREATE TABLE field (
@@ -287,6 +344,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             op_type               TEXT    NOT NULL,
             entity_uuid           BLOB    NOT NULL,
             entity_version_before INTEGER,
+            entity_version_after  INTEGER,
             field_name            TEXT
         );
         CREATE INDEX idx_operation_parent ON operation(parent_id);

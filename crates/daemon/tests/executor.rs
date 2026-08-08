@@ -563,3 +563,40 @@ fn test_skip_delete_rerecords_deletion_on_replay() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── Idempotent refresh (spec-sync echo suppression) ─────────────────────────
+
+#[test]
+fn test_modify_data_on_unchanged_file_is_idempotent() {
+    // A Modify(Data) event for a file whose stat did not change (e.g. the
+    // watcher's echo of a change the daemon itself just recorded) must produce
+    // no operation and no version bump — the executor's data refresh is
+    // idempotent (spec-sync "Suppressing sync's own echoes").
+    let (repo, root, _) = setup("idempotent_refresh");
+    write_file(&root, "a.txt", b"hello");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    let uuid = resolve(&repo, "/a.txt").expect("file tracked after create");
+    let v0 = {
+        let conn = repo.conn.lock().unwrap();
+        db::get_version(&conn, uuid).unwrap()
+    };
+
+    // The file is untouched on disk; its stored stat already matches.
+    enqueue(&repo, &[FsEvent::ModifyData("/a.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    let v1 = {
+        let conn = repo.conn.lock().unwrap();
+        db::get_version(&conn, uuid).unwrap()
+    };
+    assert_eq!(v0, v1, "an unchanged file must not bump the version");
+    assert_eq!(
+        count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_modified'"),
+        0,
+        "no file_modified operation for an unchanged file"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

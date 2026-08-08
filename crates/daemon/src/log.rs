@@ -80,6 +80,10 @@ pub struct OpRow {
     pub op_type: String,
     pub entity_uuid: Uuid,
     pub entity_version_before: Option<u64>,
+    /// The version the entity held *after* this op. Redo restores it exactly;
+    /// `None` on pre-migration rows, where forward application falls back to
+    /// `entity_version_before + 1`.
+    pub entity_version_after: Option<u64>,
     pub field_name: Option<String>,
 }
 
@@ -88,7 +92,8 @@ pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
 }
 
 const OP_COLUMNS: &str =
-    "id, parent_id, rev_id, seq, op_type, entity_uuid, entity_version_before, field_name";
+    "id, parent_id, rev_id, seq, op_type, entity_uuid, entity_version_before, \
+     entity_version_after, field_name";
 
 fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
     let entity: Vec<u8> = row.get(5)?;
@@ -101,7 +106,8 @@ fn row_to_op(row: &rusqlite::Row<'_>) -> rusqlite::Result<(OpRow, Vec<u8>)> {
             op_type: row.get(4)?,
             entity_uuid: Uuid::nil(), // patched by the caller from the blob
             entity_version_before: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
-            field_name: row.get(7)?,
+            entity_version_after: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+            field_name: row.get(8)?,
         },
         entity,
     ))
@@ -182,7 +188,7 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
     let mut stmt = conn.prepare_cached(&format!(
         "{ANCESTRY_CTE}
          SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
-                o.entity_version_before, o.field_name
+                o.entity_version_before, o.entity_version_after, o.field_name
          FROM chain c JOIN operation o ON o.id = c.id
          ORDER BY c.depth"
     ))?;
@@ -618,6 +624,23 @@ fn restore_version(tx: &Transaction<'_>, uuid: Uuid, version: Option<u64>) -> Re
     Ok(())
 }
 
+/// The `next_version` allocator value to give a metarecord being *re-created* by
+/// navigation (its row, and thus its allocator, had been deleted): one past the
+/// highest version the record ever held across the whole log, so a subsequent
+/// fresh write can never reuse a number an earlier state already used
+/// (spec-data-model "next_version"). `floor` is the version being restored.
+fn recompute_next_version(tx: &Transaction<'_>, uuid: Uuid, floor: u64) -> Result<u64> {
+    let max_seen: Option<i64> = tx.query_row(
+        "SELECT MAX(v) FROM (
+             SELECT entity_version_before AS v FROM operation WHERE entity_uuid = ?1
+             UNION ALL
+             SELECT entity_version_after FROM operation WHERE entity_uuid = ?1)",
+        params![db::uuid_to_bytes(uuid)],
+        |r| r.get(0),
+    )?;
+    Ok(floor.max(max_seen.unwrap_or(0) as u64) + 1)
+}
+
 /// Undoes one operation (spec-event-log "Inverse operations"). Field rows
 /// are restored with their original primary keys.
 fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
@@ -630,12 +653,11 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             )?;
         }
         "delete_metarecord" => {
+            let version = op.entity_version_before.unwrap_or(0);
+            let next = recompute_next_version(tx, entity, version)?;
             tx.execute(
-                "INSERT INTO metarecord (uuid, version) VALUES (?1, ?2)",
-                params![
-                    db::uuid_to_bytes(entity),
-                    op.entity_version_before.unwrap_or(0) as i64
-                ],
+                "INSERT INTO metarecord (uuid, version, next_version) VALUES (?1, ?2, ?3)",
+                params![db::uuid_to_bytes(entity), version as i64, next as i64],
             )?;
             for row in snapshots(tx, op.id, 0)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -680,14 +702,22 @@ fn apply_inverse(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
     Ok(())
 }
 
+/// The version an op restores on *forward* (redo) application: the stored
+/// after-version, falling back to `before + 1` for pre-migration rows (which
+/// carry no after-version but never sit across a rollback gap).
+fn forward_version(op: &OpRow) -> Option<u64> {
+    op.entity_version_after.or(op.entity_version_before.map(|v| v + 1))
+}
+
 /// Replays one operation forward (redo).
 fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
     let entity = op.entity_uuid;
     match op.op_type.as_str() {
         "create_metarecord" => {
+            let next = recompute_next_version(tx, entity, 0)?;
             tx.execute(
-                "INSERT INTO metarecord (uuid, version) VALUES (?1, 0)",
-                params![db::uuid_to_bytes(entity)],
+                "INSERT INTO metarecord (uuid, version, next_version) VALUES (?1, 0, ?2)",
+                params![db::uuid_to_bytes(entity), next as i64],
             )?;
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
@@ -707,7 +737,7 @@ fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before.map(|v| v + 1))?;
+            restore_version(tx, entity, forward_version(op))?;
         }
         "set_field" | "file_deleted" | "file_moved" | "file_modified" => {
             let field = op.field_name.as_deref().context("set-shaped op without field_name")?;
@@ -716,19 +746,19 @@ fn apply_forward(tx: &Transaction<'_>, op: &OpRow) -> Result<()> {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before.map(|v| v + 1))?;
+            restore_version(tx, entity, forward_version(op))?;
         }
         "append_field" => {
             for row in snapshots(tx, op.id, 1)? {
                 db::insert_field_row(tx, entity, &row.name, &row.value, Some(row.id))?;
             }
-            restore_version(tx, entity, op.entity_version_before.map(|v| v + 1))?;
+            restore_version(tx, entity, forward_version(op))?;
         }
         "delete_field" => {
             for row in snapshots(tx, op.id, 0)? {
                 tx.execute("DELETE FROM field WHERE id = ?1", params![row.id])?;
             }
-            restore_version(tx, entity, op.entity_version_before.map(|v| v + 1))?;
+            restore_version(tx, entity, forward_version(op))?;
         }
         "unknown" => anyhow::bail!("cannot navigate across an 'unknown' operation (op {})", op.id),
         other => anyhow::bail!("unsupported op_type '{other}' in the log"),
@@ -875,6 +905,7 @@ struct PendingOp {
     entity: Uuid,
     field_name: Option<String>,
     version_before: Option<u64>,
+    version_after: Option<u64>,
     before: Vec<FieldRow>,
     after: Vec<FieldRow>,
 }
@@ -1302,12 +1333,18 @@ impl<'c> Writer<'c> {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    /// Increments `metadata.version` and returns the value before the bump.
+    /// Assigns the entity its next version from the per-metarecord `next_version`
+    /// allocator (never reused, even across rollback gaps — spec-data-model), and
+    /// returns the value *before* the bump. The assigned (after) version is read
+    /// back by `log_op` from the row itself.
     fn bump_version(&self, uuid: Uuid) -> Result<u64> {
         let before = db::get_version(&self.tx, uuid)?
             .ok_or_else(|| DomainError::NotFound(format!("Metarecord not found: {uuid}")))?;
         self.tx
-            .prepare_cached("UPDATE metarecord SET version = version + 1 WHERE uuid = ?1")?
+            .prepare_cached(
+                "UPDATE metarecord SET version = next_version, next_version = next_version + 1 \
+                 WHERE uuid = ?1",
+            )?
             .execute(params![db::uuid_to_bytes(uuid)])?;
         Ok(before)
     }
@@ -1334,11 +1371,16 @@ impl<'c> Writer<'c> {
         before: Vec<FieldRow>,
         after: Vec<FieldRow>,
     ) -> Result<()> {
+        // The entity's current version (read after the data change) is the value
+        // this op assigned; redo restores it exactly. `None` when the op removed
+        // the metarecord (delete): there is no forward version to restore.
+        let version_after = db::get_version(&self.tx, entity)?;
         self.pending.push(PendingOp {
             op_type,
             entity,
             field_name: field_name.map(str::to_string),
             version_before,
+            version_after,
             before,
             after,
         });
@@ -1386,6 +1428,7 @@ impl<'c> Writer<'c> {
                 Sql::Text(op.op_type.as_str().to_string()),
                 Sql::Blob(db::uuid_to_bytes(op.entity)),
                 op.version_before.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
+                op.version_after.map_or(Sql::Null, |v| Sql::Integer(v as i64)),
                 op.field_name.clone().map_or(Sql::Null, Sql::Text),
             ]);
             for (is_new, rows) in [(0, &op.before), (1, &op.after)] {
@@ -1412,8 +1455,8 @@ impl<'c> Writer<'c> {
             &self.tx,
             "INSERT INTO operation
                  (id, parent_id, rev_id, seq, op_type, entity_uuid,
-                  entity_version_before, field_name)",
-            8,
+                  entity_version_before, entity_version_after, field_name)",
+            9,
             &op_rows,
         )?;
         bulk_insert(
