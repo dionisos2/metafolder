@@ -26,7 +26,7 @@ fn test_init_seeds_default_schema_when_configured() {
     std::fs::write(&src, schema).unwrap();
 
     let state = AppState::new().with_seed_schema(Some(src));
-    state.init_repo(&root, None, None).unwrap();
+    state.init_repo(&root, None, None, false).unwrap();
 
     let copied = root.join(".metafolder/schema.json");
     assert!(copied.exists(), "schema.json must be seeded");
@@ -41,7 +41,7 @@ fn test_init_without_seed_has_no_schema() {
     // Without a configured default schema, init leaves the repo schema-less.
     let root = temp_dir("noseed");
     let state = AppState::new();
-    state.init_repo(&root, None, None).unwrap();
+    state.init_repo(&root, None, None, false).unwrap();
     assert!(!root.join(".metafolder/schema.json").exists());
     std::fs::remove_dir_all(&root).unwrap();
 }
@@ -49,7 +49,7 @@ fn test_init_without_seed_has_no_schema() {
 #[test]
 fn test_init_creates_structure_and_root_metarecord() {
     let root = temp_dir("init");
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
 
     assert!(root.join(".metafolder/config.json").exists());
     assert!(root.join(".metafolder/internal/db.sqlite").exists());
@@ -91,7 +91,7 @@ fn test_init_creates_structure_and_root_metarecord() {
 #[test]
 fn test_init_with_explicit_name_overrides_the_derived_one() {
     let root = temp_dir("init_named");
-    let opened = repo::init_repository(&root, None, Some("My Music")).unwrap();
+    let opened = repo::init_repository(&root, None, Some("My Music"), false).unwrap();
     assert_eq!(opened.config.name, "My Music");
     drop(opened);
     std::fs::remove_dir_all(root).unwrap();
@@ -100,9 +100,9 @@ fn test_init_with_explicit_name_overrides_the_derived_one() {
 #[test]
 fn test_init_fails_when_already_initialised() {
     let root = temp_dir("reinit");
-    let first = repo::init_repository(&root, None, None).unwrap();
+    let first = repo::init_repository(&root, None, None, false).unwrap();
     drop(first);
-    let err = repo::init_repository(&root, None, None).unwrap_err();
+    let err = repo::init_repository(&root, None, None, false).unwrap_err();
     assert!(err.to_string().contains("already"), "unexpected error: {err}");
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -110,7 +110,7 @@ fn test_init_fails_when_already_initialised() {
 #[test]
 fn test_init_fails_when_root_missing() {
     let missing = std::env::temp_dir().join(format!("metafolder_missing_{}", Uuid::new_v4()));
-    assert!(repo::init_repository(&missing, None, None).is_err());
+    assert!(repo::init_repository(&missing, None, None, false).is_err());
 }
 
 #[test]
@@ -118,7 +118,7 @@ fn test_init_with_external_metafolder() {
     let root = temp_dir("ext_root");
     let meta = temp_dir("ext_meta").join("meta");
 
-    let opened = repo::init_repository(&root, Some(&meta), None).unwrap();
+    let opened = repo::init_repository(&root, Some(&meta), None, false).unwrap();
     assert!(meta.join("config.json").exists());
     assert!(meta.join("internal/db.sqlite").exists());
     assert!(!root.join(".metafolder").exists());
@@ -136,7 +136,7 @@ fn test_init_with_external_metafolder() {
 #[test]
 fn test_load_standard_form_restores_uuid() {
     let root = temp_dir("load");
-    let created = repo::init_repository(&root, None, None).unwrap();
+    let created = repo::init_repository(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -149,7 +149,7 @@ fn test_load_standard_form_restores_uuid() {
 #[test]
 fn test_load_migrates_legacy_db_layout() {
     let root = temp_dir("migrate");
-    let created = repo::init_repository(&root, None, None).unwrap();
+    let created = repo::init_repository(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -178,7 +178,7 @@ fn test_load_migrates_legacy_db_layout() {
 #[test]
 fn test_load_migrates_legacy_table_names() {
     let root = temp_dir("sql_migrate");
-    let created = repo::init_repository(&root, None, None).unwrap();
+    let created = repo::init_repository(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -225,7 +225,7 @@ fn test_load_migrates_legacy_table_names() {
 #[test]
 fn test_load_migrates_record_era_table_names() {
     let root = temp_dir("sql_migrate_rec");
-    let created = repo::init_repository(&root, None, None).unwrap();
+    let created = repo::init_repository(&root, None, None, false).unwrap();
     let uuid = created.config.repo_uuid;
     drop(created);
 
@@ -271,7 +271,7 @@ fn test_load_fails_when_no_repository() {
 #[test]
 fn test_exclusive_lock_blocks_second_connection() {
     let root = temp_dir("lock");
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
 
     // The first connection holds an EXCLUSIVE lock (it has already written);
     // a second connection must not be able to read or write.
@@ -288,7 +288,7 @@ fn test_exclusive_lock_blocks_second_connection() {
 #[test]
 fn test_case_sensitivity_probe() {
     let root = temp_dir("case");
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     // Standard Linux filesystems (ext4, tmpfs) are case-sensitive; on other
     // platforms the probe may legitimately return true.
     #[cfg(target_os = "linux")]
@@ -310,7 +310,7 @@ fn test_case_sensitivity_probe() {
 fn test_config_exists_helper() {
     let root = temp_dir("exists");
     assert!(!RepoConfig::exists(&root.join(".metafolder")));
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     assert!(RepoConfig::exists(&root.join(".metafolder")));
     drop(opened);
     std::fs::remove_dir_all(root).unwrap();
@@ -323,7 +323,7 @@ fn test_unload_refused_while_a_task_is_in_flight() {
 
     let root = temp_dir("unload_task");
     let state = AppState::new();
-    let uuid = state.init_repo(&root, None, None).unwrap();
+    let uuid = state.init_repo(&root, None, None, false).unwrap();
 
     // A running reconcile task blocks the unload.
     let task = state.repo(uuid).unwrap().tasks.start(TaskKind::Reconcile);
@@ -348,7 +348,7 @@ fn test_unload_refused_during_rollback_navigation() {
 
     let root = temp_dir("unload_rb");
     let state = AppState::new();
-    let uuid = state.init_repo(&root, None, None).unwrap();
+    let uuid = state.init_repo(&root, None, None, false).unwrap();
 
     // Simulate an in-progress coordinated rollback navigation.
     *state.repo(uuid).unwrap().rollback_lock.lock().unwrap() = Some(RollbackLock { target: None });

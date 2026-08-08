@@ -79,6 +79,7 @@ pub fn init_repository(
     root: &Path,
     metafolder: Option<&Path>,
     name: Option<&str>,
+    system: bool,
 ) -> Result<OpenedRepo> {
     let root = root.canonicalize().map_err(|e| {
         DomainError::BadRequest(format!(
@@ -113,7 +114,8 @@ pub fn init_repository(
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "repository".to_string()),
     };
-    let config = RepoConfig::new(root, name);
+    let mut config = RepoConfig::new(root, name);
+    config.system = system;
     config.write(&metafolder_dir)?;
 
     let mut conn = db::open_database(&internal_dir.join(DB_FILE))?;

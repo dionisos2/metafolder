@@ -103,7 +103,7 @@ fn test_unknown_top_level_key_is_an_error() {
 #[test]
 fn test_apply_loads_listed_repos() {
     let root = temp_dir("cfg_apply_repo");
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_uuid = opened.config.repo_uuid;
     drop(opened); // release the exclusive lock
 
@@ -125,7 +125,7 @@ fn test_apply_loads_listed_repos() {
 #[test]
 fn test_apply_warns_on_failure_and_loads_the_rest() {
     let root = temp_dir("cfg_apply_partial");
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     drop(opened);
 
     let state = AppState::new();

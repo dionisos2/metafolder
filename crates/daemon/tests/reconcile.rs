@@ -21,7 +21,7 @@ fn temp_dir(prefix: &str) -> PathBuf {
 
 fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf) {
     let root = temp_dir(prefix);
-    let opened = repo::init_repository(&root, None, None).unwrap();
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
     let root_uuid = {
         let conn = repo_state.conn.lock().unwrap();

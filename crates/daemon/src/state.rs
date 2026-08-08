@@ -245,8 +245,9 @@ impl AppState {
         root: &Path,
         metafolder: Option<&Path>,
         name: Option<&str>,
+        system: bool,
     ) -> Result<Uuid, ApiError> {
-        let opened = repo::init_repository(root, metafolder, name)?;
+        let opened = repo::init_repository(root, metafolder, name, system)?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
         // Seed the per-repo schema from the shipped default (best-effort),

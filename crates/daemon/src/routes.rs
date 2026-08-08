@@ -518,6 +518,10 @@ struct InitBody {
     metafolder: Option<PathBuf>,
     #[serde(default)]
     name: Option<String>,
+    /// Create a daemon-internal repository (e.g. a sync plan repo, spec-sync):
+    /// hidden from `GET /repos` unless `?all=true`.
+    #[serde(default)]
+    system: bool,
 }
 
 async fn init_repo(
@@ -528,7 +532,7 @@ async fn init_repo(
     // An empty/whitespace name falls back to the directory-derived default.
     let name = body.name.filter(|n| !n.trim().is_empty());
     let uuid = tokio::task::spawn_blocking(move || {
-        state.init_repo(&body.root, body.metafolder.as_deref(), name.as_deref())
+        state.init_repo(&body.root, body.metafolder.as_deref(), name.as_deref(), body.system)
     })
     .await
     .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))??;
