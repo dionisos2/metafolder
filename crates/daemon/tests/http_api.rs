@@ -1029,3 +1029,44 @@ async fn test_direct_resolve_tree_one_record() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── expected_version (conditional writes, spec-data-model) ──────────────────
+
+#[tokio::test]
+async fn test_expected_version_precondition() {
+    let (app, repo, _root) = app_with_repo("expected_version").await;
+    let m = create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
+    let uuid = m["uuid"].as_str().unwrap().to_string();
+    let base = format!("/repos/{repo}/metarecords/{uuid}");
+
+    // The freshly created record is at version 0.
+    let (status, got) = request(&app, "GET", &base, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(got["version"], 0);
+
+    // Mismatched precondition → 409, and nothing is written.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("{base}/fields/rating?expected_version=99"),
+        Some(json!({"value": {"type": "int", "value": 5}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (_, got) = request(&app, "GET", &base, None).await;
+    assert_eq!(got["version"], 0, "a rejected write must not bump the version");
+    assert_eq!(got["fields"][0]["value"]["value"], 1, "value unchanged after 409");
+
+    // Matching precondition → the write goes through and bumps the version.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("{base}/fields/rating?expected_version=0"),
+        Some(json!({"value": {"type": "int", "value": 5}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, got) = request(&app, "GET", &base, None).await;
+    assert_eq!(got["version"], 1);
+    assert_eq!(got["fields"][0]["value"]["value"], 5);
+}

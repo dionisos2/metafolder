@@ -314,17 +314,23 @@ fn validate_schema(
     }
 }
 
-/// Shared scaffold for the single-metarecord write handlers (`patch`,
-/// `append`, `replace`, `delete`): runs on the blocking pool, gates on
-/// repository writability, opens a logged [`Writer`], lets `write` resolve the
-/// touched field name(s) and perform the mutation, then runs schema delta
-/// validation over those names and commits. Returns the resulting metarecord
-/// (handlers that answer 204 simply discard it). A validation failure or any
-/// closure error drops the Writer, rolling the whole write back.
-async fn write_record<F>(
+/// Shared scaffold for the single-metarecord write handlers (`patch`, `append`,
+/// `replace`, `delete`): runs on the blocking pool, gates on repository
+/// writability, opens a logged [`Writer`], lets `write` resolve the touched
+/// field name(s) and perform the mutation, then runs schema delta validation
+/// over those names and commits. Returns the resulting metarecord (handlers that
+/// answer 204 simply discard it). A validation failure or any closure error
+/// drops the Writer, rolling the whole write back.
+///
+/// With an optional optimistic-concurrency precondition (spec-data-model
+/// "Conditional writes"): when `expected_version` is given and the metarecord's
+/// current version differs, the write is rejected with `409` (nothing written,
+/// no revision), fenced by the transaction's exclusive lock.
+async fn write_record_checked<F>(
     state: &AppState,
     repo_uuid: Uuid,
     uuid: Uuid,
+    expected_version: Option<u64>,
     write: F,
 ) -> Result<MetaRecord, ApiError>
 where
@@ -334,6 +340,7 @@ where
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
         let mut writer = Writer::begin(&mut conn, None)?;
+        ensure_version(writer.connection(), uuid, expected_version)?;
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
         let tree_touched = writer.touched_tree();
@@ -346,6 +353,33 @@ where
         metarecord_response(&conn, uuid)
     })
     .await
+}
+
+/// The optional `?expected_version=` optimistic-concurrency query parameter on
+/// single-record write endpoints.
+#[derive(serde::Deserialize, Default)]
+struct ExpectedVersion {
+    expected_version: Option<u64>,
+}
+
+/// 409 (no revision written) when `expected` is given and the metarecord's
+/// current version differs — the optimistic-concurrency precondition used by
+/// cross-repo sync propagation (spec-data-model "Conditional writes").
+fn ensure_version(
+    conn: &rusqlite::Connection,
+    uuid: Uuid,
+    expected: Option<u64>,
+) -> Result<(), ApiError> {
+    if let Some(expected) = expected {
+        let current = db::get_version(conn, uuid)?;
+        if current != Some(expected) {
+            return Err(ApiError::conflict(format!(
+                "expected_version {expected} but current is {}",
+                current.map_or("absent".to_string(), |v| v.to_string())
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// 404 unless the metarecord exists. Shared by the write handlers that target
@@ -363,12 +397,22 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
-        "repos": state.list_repos().len(),
+        "repos": state.list_repos(false).len(),
     }))
 }
 
-async fn list_repos(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
-    Json(serde_json::to_value(state.list_repos()).expect("repo list serialization"))
+/// The optional `?all=true` query parameter on `GET /repos` (include system repos).
+#[derive(serde::Deserialize, Default)]
+struct ListReposParams {
+    #[serde(default)]
+    all: bool,
+}
+
+async fn list_repos(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ListReposParams>,
+) -> Json<serde_json::Value> {
+    Json(serde_json::to_value(state.list_repos(params.all)).expect("repo list serialization"))
 }
 
 /// `GET /repos/:repo` — one loaded repository's info (404 if not loaded).
@@ -1977,6 +2021,7 @@ async fn get_record_endpoint(
 async fn delete_record_endpoint(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
+    Query(ev): Query<ExpectedVersion>,
 ) -> Result<StatusCode, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
@@ -1987,6 +2032,7 @@ async fn delete_record_endpoint(
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
         let mut writer = Writer::begin(&mut conn, None)?;
+        ensure_version(writer.connection(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let tree_touched = writer.touched_tree();
         writer.commit()?;
@@ -2041,13 +2087,14 @@ async fn get_record_field(
 async fn set_record_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid, name)): Path<(String, String, String)>,
+    Query(ev): Query<ExpectedVersion>,
     payload: Result<Json<RecordFieldBody>, JsonRejection>,
 ) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     let rows = resolved_values(body.value, body.values)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&name, body.force)?;
         ensure_exists(writer.connection(), uuid)?;
         writer.set_field_multi(uuid, &name, rows)?;
@@ -2062,12 +2109,13 @@ async fn set_record_field(
 async fn unset_record_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid, name)): Path<(String, String, String)>,
+    Query(ev): Query<ExpectedVersion>,
     payload: Option<Json<ForceBody>>,
 ) -> Result<StatusCode, ApiError> {
     let force = payload.map(|Json(b)| b.force).unwrap_or(false);
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&name, force)?;
         ensure_exists(writer.connection(), uuid)?;
         writer.delete_fields_named(uuid, &name)?;
@@ -2090,12 +2138,13 @@ struct SetRecordBody {
 async fn put_metarecord(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
+    Query(ev): Query<ExpectedVersion>,
     payload: Result<Json<SetRecordBody>, JsonRejection>,
 ) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         for field in &body.fields {
             check_writable(&field.name, body.force)?;
         }
@@ -2111,13 +2160,14 @@ async fn put_metarecord(
 async fn append_field(
     State(state): State<Arc<AppState>>,
     Path((repo, uuid)): Path<(String, String)>,
+    Query(ev): Query<ExpectedVersion>,
     payload: Result<Json<SetFieldBody>, JsonRejection>,
 ) -> Result<Json<MetaRecord>, ApiError> {
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     let value = single_value(body.value, body.values)?;
-    write_record(&state, repo_uuid, uuid, move |writer| {
+    write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&body.name, body.force)?;
         ensure_exists(writer.connection(), uuid)?;
         writer.append_field(uuid, &body.name, value)?;

@@ -114,7 +114,7 @@ fn test_apply_loads_listed_repos() {
     };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
-    let repos = state.list_repos();
+    let repos = state.list_repos(false);
     assert_eq!(repos.len(), 1);
     assert_eq!(repos[0].repo_uuid, repo_uuid);
 
@@ -139,7 +139,7 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
     let warnings = daemon_config::apply(&state, config);
     assert_eq!(warnings.len(), 1);
     assert!(warnings[0].contains("/nonexistent/metafolder/repo"));
-    assert_eq!(state.list_repos().len(), 1, "the valid repo is still loaded");
+    assert_eq!(state.list_repos(false).len(), 1, "the valid repo is still loaded");
 
     drop(state);
     std::fs::remove_dir_all(root).unwrap();

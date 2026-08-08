@@ -104,6 +104,7 @@ impl RepoState {
             root: self.config.root.clone(),
             internal_dir: self.internal_dir(),
             created_at: self.config.created_at,
+            system: self.config.system,
         }
     }
 
@@ -214,6 +215,9 @@ pub struct RepoInfo {
     /// clients can flag it without guessing the metafolder location.
     pub internal_dir: PathBuf,
     pub created_at: u64,
+    /// A daemon-internal repository (spec-sync plan repo), hidden from the
+    /// default `GET /repos` listing.
+    pub system: bool,
 }
 
 impl AppState {
@@ -379,9 +383,12 @@ impl AppState {
             .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))
     }
 
-    pub fn list_repos(&self) -> Vec<RepoInfo> {
+    /// Loaded repositories, sorted by UUID. `include_system` keeps daemon-internal
+    /// repos (spec-sync plan repos) that are otherwise hidden.
+    pub fn list_repos(&self, include_system: bool) -> Vec<RepoInfo> {
         let repos = self.repos.lock_recover();
-        let mut infos: Vec<RepoInfo> = repos.values().map(|r| r.info()).collect();
+        let mut infos: Vec<RepoInfo> =
+            repos.values().map(|r| r.info()).filter(|i| include_system || !i.system).collect();
         infos.sort_by_key(|i| i.repo_uuid);
         infos
     }

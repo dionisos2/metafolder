@@ -159,3 +159,24 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     let mut cache = TreeCache::new(false);
     assert!(!is_eligible(&conn, &mut cache, "/file.txt").unwrap());
 }
+
+// ── mf_sync inheritance (spec-sync) ─────────────────────────────────────────
+
+#[test]
+fn test_mf_sync_inherits_with_nearest_ancestor_override() {
+    use metafolder_daemon::eligibility::resolve_mf_sync;
+    let mut f = Fixture::new(true);
+    // /projects is external (a git repo); /projects/build is metafolder-managed
+    // again (e.g. .gitignore'd); /other has no marker.
+    let projects = f.entry(f.root, "projects", vec![Field::new("mf_sync", Value::String("external".into()))]);
+    let build = f.entry(projects, "build", vec![Field::new("mf_sync", Value::String("internal".into()))]);
+    let _src = f.entry(projects, "src", vec![]);
+    let _other = f.entry(f.root, "other", vec![]);
+    let _ = build;
+
+    let of = |f: &mut Fixture, p: &str| resolve_mf_sync(&f.conn, &mut f.cache, p).unwrap();
+    assert_eq!(of(&mut f, "/projects"), "external");
+    assert_eq!(of(&mut f, "/projects/src/main.rs"), "external", "inherited from /projects");
+    assert_eq!(of(&mut f, "/projects/build/out.o"), "internal", "nearest ancestor wins");
+    assert_eq!(of(&mut f, "/other/x"), "internal", "absent everywhere ⇒ internal");
+}

@@ -42,21 +42,8 @@ pub fn is_eligible_cached(
     rel_path: &str,
     ec: &mut EligibilityCache,
 ) -> Result<bool> {
-    let comps: Vec<&str> = rel_path.split('/').collect();
-    // Prefixes from the root down: "" for the root, then "/a", "/a/b", …
-    let prefixes: Vec<String> = (0..comps.len()).map(|i| comps[..=i].join("/")).collect();
-
-    // Metarecords existing along the path. A TreeRef child requires its parent
-    // metarecord, so the chain stops at the first unresolved prefix.
-    let mut chain: Vec<(usize, Uuid)> = Vec::new();
-    for (i, prefix) in prefixes.iter().enumerate() {
-        match cache.resolve_path(conn, "mfr_path", prefix)? {
-            Some(uuid) => chain.push((i, uuid)),
-            None => break,
-        }
-    }
-
-    let full_idx = prefixes.len() - 1;
+    let full_idx = rel_path.split('/').count() - 1;
+    let chain = ancestor_chain(conn, cache, rel_path)?;
     // The path's own metarecord, when it already exists.
     let own_entry: Option<Uuid> =
         chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
@@ -98,6 +85,42 @@ pub fn is_eligible_cached(
         return Ok(true);
     }
     Ok(true)
+}
+
+/// The metarecords existing along `rel_path`, as `(component_index, uuid)` from
+/// the root down. A TreeRef child requires its parent metarecord, so the chain
+/// stops at the first unresolved prefix. `rel_path` is repo-root-relative,
+/// `/`-separated, leading slash; `""` is the root.
+fn ancestor_chain(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    rel_path: &str,
+) -> Result<Vec<(usize, Uuid)>> {
+    let comps: Vec<&str> = rel_path.split('/').collect();
+    // Prefixes from the root down: "" for the root, then "/a", "/a/b", …
+    let prefixes: Vec<String> = (0..comps.len()).map(|i| comps[..=i].join("/")).collect();
+    let mut chain: Vec<(usize, Uuid)> = Vec::new();
+    for (i, prefix) in prefixes.iter().enumerate() {
+        match cache.resolve_path(conn, "mfr_path", prefix)? {
+            Some(uuid) => chain.push((i, uuid)),
+            None => break,
+        }
+    }
+    Ok(chain)
+}
+
+/// The effective `mf_sync` mode of the record at `rel_path` (spec-sync): the
+/// value of the nearest ancestor (including the record itself) that defines
+/// `mf_sync`, defaulting to `internal` when none does. `external` means an
+/// external tool owns the content; anything else (incl. absent) is `internal`.
+pub fn resolve_mf_sync(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<String> {
+    let chain = ancestor_chain(conn, cache, rel_path)?;
+    for (_, uuid) in chain.iter().rev() {
+        if let Some(v) = string_fields(conn, *uuid, "mf_sync")?.into_iter().next() {
+            return Ok(if v == "external" { v } else { "internal".to_string() });
+        }
+    }
+    Ok("internal".to_string())
 }
 
 /// Cached `mf_watch` of a metarecord.
