@@ -60,7 +60,7 @@ SQLite transaction, so link state is always internally consistent — no
 replication, no repair protocol. The trade-off is redundancy: if the file is
 lost or corrupted, the pair's sync state is gone and the next sync starts
 over as a first sync (divergent fields resurface as immediate conflicts;
-identical fields re-link silently via candidates).
+records at the same TreeRef identity re-link silently).
 
 A repo may participate in any number of pairs, each with its own sync
 database. Only the pair being synced is ever opened; sync state adds no
@@ -301,13 +301,20 @@ a normal metadata conflict resolved at plan time.
 
 *** The metadata diff
 
-=mfr_*= fields (except =mfr_path=) are *excluded* from the snapshot, the
-diff, and propagation. They are stat- and content-derived: each repo
-describes its own file (=mfr_size=, =mfr_mtime=, hashes), so propagating them
-would ping-pong forever. Any version bump they cause (a stat-only change) is
-absorbed by the empty-effective-diff rule above. All other fields — user
-data, and reserved =mf_*= (including =mf_sync=) written with =force= — are
-propagated as ordinary field writes.
+=mfr_*= fields are *excluded* from the snapshot, the diff, and propagation,
+with two carve-outs: =mfr_path= (the file's position, synced) and
+=mfr_permissions= (the file's mode). The rest are stat- and content-derived:
+each repo describes its own file (=mfr_size=, =mfr_mtime=, hashes), so
+propagating them would ping-pong forever, and any version bump they cause (a
+stat-only change) is absorbed by the empty-effective-diff rule above.
+=mfr_permissions= *is* synced (constraint: an =internal= file must end up with
+the same mode on both sides): it participates in the diff and is applied to
+the target file by =chmod= — so a mode change propagates even without a
+content change. Ownership (=mfr_uid=/=mfr_gid=) is *not* synced: =chown= needs
+privilege and uid/gid rarely mean the same thing across machines, so owner and
+group stay local. All non-=mfr_= fields — user data, and reserved =mf_*=
+(including =mf_sync=) written with =force= — are propagated as ordinary field
+writes.
 
 Fields form a multi-map: the diff compares, per field *name*, the full
 *multiset* of values (after ref translation on the B side). Propagation
@@ -502,50 +509,91 @@ The union of the entries is the scope. It maintains the link set:
 
 *** The linking phase: match or create
 
-For each in-scope source record without a link, the CLI looks for a match
-on the target side (=POST …/candidates=):
+A metarecord's cross-repo identity is its *TreeRef fields*: the =tree_ref=
+-valued fields it carries, each occupying a unique position in its forest
+(the =(field_name, parent, name)= UNIQUE index, spec-schema). A file has one
+such field, =mfr_path=; a tag/collection node has its forest field
+(e.g. =tag=); an abstract record may have none. **Content hashes are not used
+for matching** — a moved file is recognised by its path, not its bytes. This
+is deliberately uniform (no file/non-file special case); the cost is that a
+file moved on *one* side before it was ever linked is matched by its new
+path, not recognised as the same bytes, so it may be duplicated at first sync
+(a real duplicate the user fixes in one repo, propagated next sync).
 
-- an *exact* match — same content (=mfr_full_hash=) for a file, same
-  reconstructed path for a directory — is linked automatically;
-- failing that, a *similar* record — the four-signal similarity score of
-  spec-file-tracking "File Similarity" (already used by reconcile), computed
-  across the two repos, at or above =similarity-threshold= — is proposed:
-  linked after interactive confirmation, skipped in a non-interactive run;
-- no match, and the record is =internal= → a *bare* metarecord (no fields at
-  all) is created on the target side, and its UUID is used to create the
-  link. Nothing else happens at this point.
-- no match, and the record is =external= → the record cannot be created
-  (metafolder owns no content there): the external tool should have provided
-  it. This is reported as an error and no link is made.
+Matching keys on the *reconstructed path* of each identity field — portable
+across repos (the =name= components are identical; only the local parent UUID
+differs), and 1:1 by construction (one metarecord per forest position), so
+path matching is never ambiguous. For each in-scope source record without a
+link, by the number of identity TreeRef fields:
+
+- **None** — no positional identity (e.g. a deleted-file tombstone,
+  =mfr_path = Nothing=, on both sides). Matching falls back to a heuristic:
+  a target record whose *sync-relevant* fields (all fields except the
+  excluded =mfr_*=, see [[*The metadata diff]]) form the same multiset is
+  linked — but only when unambiguous (exactly one such record on each side).
+  Ambiguous or absent → no link (create / leave for =mf sync link=). This
+  heuristic is intentionally minimal and may be refined later.
+
+- **One** field =F= at path =P= (the common case). The record links to the
+  target-side record at position =P= in forest =F=. If none exists there, a
+  record is created at =P=: its parent is resolved by path, or created
+  recursively top-down, so the ancestor chain exists first. Parents are *not*
+  themselves linked (they may be out of scope) — a created ancestor is a bare
+  node carrying only its TreeRef.
+
+- **Several** fields ={(Fi, Pi)}=. Compute, for each, the target-side record
+  occupying position =Pi= in forest =Fi= (∅ when free). Let =E= be the
+  distinct non-empty occupants.
+  - =|E| ≥ 2= — the identities map to *different* target records → *type-2
+    incoherence*: =mf sync plan= aborts and lists the offending records and
+    positions.
+  - =|E| = 1=, occupant =T= — for each field whose =Pi= is free, =T= must not
+    already occupy a *different* position in =Fi=; if it does, that is a
+    *type-1 incoherence* (abort). Otherwise link to =T=, and any missing
+    =Fi = Pi= is added to =T= by ordinary field propagation in the sync phase.
+  - =|E| = 0= — no position occupied → one record is created, placed at all
+    =Pi=.
+  Occupancies are computed first and =|E| ≥ 2= is tested *before* the
+  per-field type-1 check. An abort leaves no partial plan; the report names
+  each problematic pair for manual resolution.
+
+A record with no match *and* =internal= yields a *bare* metarecord (no fields)
+on the target, whose UUID creates the link; if =external=, it cannot be
+created (metafolder owns no content there) and the failure is reported.
 
 Sync-created records are bare: *everything* — the file itself (content
 transfer), =mfr_path= (file placement, directories top-down), every field,
 references included — arrives through the sync phase that follows (the new
 link's first sync, union semantics). By then the linking phase has
 completed the link table, so Ref/TreeRef translation has every mapping it
-will ever have: a reference that still has no translation points at a
-record genuinely out of sync scope and is skipped with a warning
-([[*Ref translation during sync]]). This ordering is what makes
+will ever have ([[*Ref translation during sync]]). This ordering is what makes
 reference-carrying creations well-defined — there is never a moment where a
 new record must guess a target-side UUID.
 
-Links are 1:1, so matching is too: when several source records match the
-same target record (duplicate content), the group is ambiguous and never
-auto-linked — it is prompted for, or resolved manually with =mf sync link=.
-Once linked, a record keeps its link by UUID whatever moves or renames
-happen — path divergence is an ordinary =mfr_path= change or conflict.
+Links are 1:1. Once linked, a record keeps its link by UUID whatever moves or
+renames happen — path divergence is then an ordinary =mfr_path= change or
+conflict.
 
 ** Ref translation during sync
 
-=Ref= and =TreeRef= fields store local UUIDs. When propagating such a value,
-the CLI translates it through the link table: for =Ref=, the target-repo
-UUID of the linked metarecord; for =TreeRef=, the parent UUID is translated
-and =value_name= is written as-is (portable); =Nothing= needs no
-translation. The linking phase runs first and sync-created records start
-minimal ([[*The linking phase: match or create]]), so the link table is
-complete at translation time: a missing translation means the referenced
-metarecord is genuinely out of sync scope — the field is skipped with a
-warning.
+=Ref= and =TreeRef= fields store local UUIDs; =value_name= (TreeRef) is
+portable and written as-is, and =Nothing= needs no translation.
+
+- =Ref= is translated through the *link table*: the target-repo UUID of the
+  linked metarecord. A =Ref= to a record out of sync scope (no link) has no
+  translation and the field is skipped with a warning.
+
+- =TreeRef= translates its *parent* **link-first, path-fallback**: if the
+  parent is linked, use the link (this follows the parent through any rename);
+  otherwise resolve the parent by its reconstructed *path* in the target
+  forest, creating the ancestor chain top-down if absent (=find-or-create=).
+  Path resolution is what lets =tag = "musique/jazz"= link and propagate even
+  when its =musique= parent is out of scope and unlinked; the two agree
+  whenever the parent is linked *and* unmoved. A created ancestor is a bare
+  node (its TreeRef only). Because forest positions are unique, find-or-create
+  never duplicates a node, and a position that turns out to be occupied by a
+  different record at run time is a forest violation (=400=), skipped and
+  reported.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
@@ -662,28 +710,21 @@ be loaded (=404= otherwise).
   (deletion propagation helper — see [[*Metarecord deletion propagation]] for
   the normative order). Returns ={ "deleted": true }=.
 
-- =POST /sync/:repo/:repo/candidates= — find link targets for unlinked
-  source records (the linking phase's matcher). Read-only. Body:
+- =POST /sync/:repo/:repo/candidates= — the linking phase's *heuristic*
+  matcher, for source records with **no TreeRef identity** only (e.g.
+  deleted-file tombstones; see [[*The linking phase: match or create]]).
+  TreeRef-identity records are matched by the CLI by reconstructed path
+  (=…/metarecords/:uuid/fields/:name/resolve-tree= + an exact-path query) —
+  1:1 and exact, needing no heuristic. Read-only, stored values only. Body:
   #+BEGIN_SRC json
-  { "source": "<repo uuid>",
-    "records": [ "<uuid>", … ] | null,
-    "threshold": 0.7 | null }
+  { "source": "<repo uuid>", "records": [ "<uuid>", … ] | null }
   #+END_SRC
-  =records= =null= means every unlinked metarecord of the source repo. For
-  each source record, at most the best unlinked target-side match is
-  returned: exact content (stored =mfr_full_hash=; confidence ="full"=),
-  exact reconstructed path (confidence ="path"=), or — only when
-  =threshold= is given — the best similarity-scored candidate at or above
-  it (the four-signal score + MinHash banding of spec-file-tracking "File
-  Similarity"; confidence ="similar"=). No hashing is performed; stored
-  values only, and paths come from the database, which may be stale
-  relative to the filesystem (reconcile deliberately leaves stale TreeRefs
-  in place).
+  =records= =null= means every unlinked no-TreeRef metarecord of the source.
+  For each, an unlinked target-side record whose *sync-relevant* fields (all
+  except the excluded =mfr_*=, see [[*The metadata diff]]) form the same
+  multiset is returned — only when unambiguous (exactly one on each side).
   #+BEGIN_SRC json
-  { "candidates": [ { "source": "…", "target": "…",
-                      "confidence": "full" | "path" | "similar",
-                      "score": 0.87,
-                      "path_source": "/x/y", "path_target": "/x/y" } ] }
+  { "candidates": [ { "source": "…", "target": "…" } ] }
   #+END_SRC
 
 - =GET /sync/:repo/:repo/status= — the per-link change/conflict state:
@@ -774,14 +815,17 @@ operate on. Steps:
 1. Check that both repos' schemas are identical (abort otherwise — see
    [[*Schemas must be identical]]).
 2. Evaluate each intent query on its source repo, fetch =GET …/status= and
-   =GET …/links=, match unlinked in-scope records (=POST …/candidates=), and
-   compute the diffs.
+   =GET …/links=, and match unlinked in-scope records by TreeRef identity
+   (reconstructed path; the no-identity heuristic via =POST …/candidates=).
+   A multi-TreeRef *incoherence* (see [[*The linking phase: match or create]])
+   aborts the plan with a report of the offending records. Then compute the
+   diffs.
 3. Resolve interactively: =ask= conflicts (per conflicting field name, show
    the record's path/uuid and the A / B values; choices: keep A, keep B,
-   skip field, skip link), similar/ambiguous candidates, and the deletion
-   confirmation. When every conflict is covered by a non-interactive
-   =[[conflict]]= rule (=skip=/=prefer=) or =--on-conflict= is given, nothing
-   prompts and unconfirmed deletions are omitted.
+   skip field, skip link) and the deletion confirmation. When every conflict
+   is covered by a non-interactive =[[conflict]]= rule (=skip=/=prefer=) or
+   =--on-conflict= is given, nothing prompts and unconfirmed deletions are
+   omitted.
 4. (Re)create the plan repo and write one operation metarecord per action —
    linking phase (create/drop links, bare-record creations), sync phase
    (field propagations, transfers/moves with direction, deletions, and the
@@ -839,8 +883,8 @@ mf sync link   <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]
 mf sync unlink <repo_a> <repo_b> <link_uuid> [--with-endpoint a|b]
 #+END_SRC
 
-=link=/=unlink= are the manual escape hatch for similar or ambiguous
-candidates.
+=link=/=unlink= are the manual escape hatch for ambiguous matches and
+multi-TreeRef incoherences that abort =plan=.
 
 ** The intents file
 
@@ -884,9 +928,11 @@ or an external tool's is the inherited =mf_sync= field on the record, see
   [settings]                   # optional
   commit-batch-size    = 50    # links per sync-commit call
   transfer-batch-size  = 20    # file transfers between metadata batches
-  similarity-threshold = 0.7   # enable similar-record matching in the linking
-                               # phase (absent: exact matches only)
 #+END_SRC
+
+Matching is exact (TreeRef identity by path, 1:1); there is no similarity
+threshold. The no-identity heuristic (see [[*The linking phase: match or
+create]]) may grow tuning knobs here later.
 
 ** Conflict resolution
 
