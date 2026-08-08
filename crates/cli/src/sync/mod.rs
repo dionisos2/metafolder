@@ -9,6 +9,8 @@
 //! module maps the user's positional `(repo_a, repo_b)` order to canonical
 //! `(a, b)` before talking to the daemon.
 
+pub mod intents;
+
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
