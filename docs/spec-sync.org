@@ -564,11 +564,12 @@ created (metafolder owns no content there) and the failure is reported.
 Sync-created records are bare: *everything* — the file itself (content
 transfer), =mfr_path= (file placement, directories top-down), every field,
 references included — arrives through the sync phase that follows (the new
-link's first sync, union semantics). By then the linking phase has
-completed the link table, so Ref/TreeRef translation has every mapping it
-will ever have ([[*Ref translation during sync]]). This ordering is what makes
-reference-carrying creations well-defined — there is never a moment where a
-new record must guess a target-side UUID.
+link's first sync, union semantics). The linking phase also **closes the scope
+over references**: every =Ref=/=TreeRef= target reachable from an in-scope
+record is materialised on the target side (see [[*Ref translation during
+sync]]). By then the link table and placements are complete, so translation
+has every mapping it will ever have — reference-carrying propagation is
+well-defined, never guessing a target-side UUID.
 
 Links are 1:1. Once linked, a record keeps its link by UUID whatever moves or
 renames happen — path divergence is then an ordinary =mfr_path= change or
@@ -576,24 +577,40 @@ conflict.
 
 ** Ref translation during sync
 
-=Ref= and =TreeRef= fields store local UUIDs; =value_name= (TreeRef) is
-portable and written as-is, and =Nothing= needs no translation.
+=Ref= and =TreeRef= fields store local UUIDs; a TreeRef =value_name= is
+portable and written as-is, and =Nothing= needs no translation. Translation
+maps a referenced record to its target-repo counterpart:
 
-- =Ref= is translated through the *link table*: the target-repo UUID of the
-  linked metarecord. A =Ref= to a record out of sync scope (no link) has no
-  translation and the field is skipped with a warning.
+- =Ref= → the *linked* target-repo record.
+- =TreeRef= *parent* → **link-first, path-fallback**: use the parent's link
+  when it is linked (this follows the parent through any rename); otherwise the
+  target-forest record at the parent's reconstructed *path*. The two agree when
+  the parent is linked and unmoved. This is what lets =tag = "musique/jazz"=
+  translate even when its =musique= parent is out of scope and unlinked.
 
-- =TreeRef= translates its *parent* **link-first, path-fallback**: if the
-  parent is linked, use the link (this follows the parent through any rename);
-  otherwise resolve the parent by its reconstructed *path* in the target
-  forest, creating the ancestor chain top-down if absent (=find-or-create=).
-  Path resolution is what lets =tag = "musique/jazz"= link and propagate even
-  when its =musique= parent is out of scope and unlinked; the two agree
-  whenever the parent is linked *and* unmoved. A created ancestor is a bare
-  node (its TreeRef only). Because forest positions are unique, find-or-create
-  never duplicates a node, and a position that turns out to be occupied by a
-  different record at run time is a forest violation (=400=), skipped and
-  reported.
+A referenced record out of sync scope has no counterpart at first. Rather than
+drop the field, the linking phase **materialises** the referenced record on the
+target side — the *referential closure* of the scope — so every reachable
+reference is translatable. Materialisation is *by identity* (see
+[[*The linking phase: match or create]]) and links only when there is nothing
+to re-match on:
+
+- referenced record **with a TreeRef identity** → =find-or-create= at its
+  reconstructed path (ancestor chain top-down), **not linked**: it re-links by
+  path if it later enters scope, so a link would be redundant;
+- referenced record **with no identity** (abstract) → a **bare** record is
+  created and **linked** to the original — the link is the only memory of the
+  correspondence. It is not field-synced (out of scope); should it later enter
+  scope, the existing link means it is synced, never duplicated.
+
+This runs in the linking phase, before any translation, so the link table and
+all placements are complete when the sync phase translates. It is bounded: a
+bare record is empty, so it has no further references to close over; an
+identity record pulls only its ancestor chain; cycles terminate because
+materialisation reuses an existing link/placement before creating. Forest
+positions being unique, find-or-create never duplicates, and a position found
+occupied by a different record at run time is a forest violation (=400=),
+skipped and reported.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
