@@ -131,13 +131,14 @@ fn candidate(source: Uuid, target: Uuid, kind: &str, score: f64) -> Json {
     json!({ "source": hex(source), "target": hex(target), "kind": kind, "score": score })
 }
 
-/// Whether a metarecord is a forest root (its `mfr_path` TreeRef has no parent).
-/// Roots are the repositories' structural anchors, not content, so they are
-/// never proposed as sync candidates.
+/// Whether a metarecord is the repository's `mfr_path` forest root — the empty
+/// -named anchor at the top of the tree (`find_tree_child(.., None, "")`). Real
+/// files are always children of it (a non-empty name), so the root is the only
+/// such record; it is structural, not content, and never a sync candidate.
 fn is_forest_root(conn: &Connection, uuid: Uuid) -> Result<bool, ApiError> {
     Ok(db::get_field_rows_named(conn, uuid, "mfr_path")?
         .into_iter()
-        .any(|r| matches!(r.value, Value::TreeRef { parent: None, .. })))
+        .any(|r| matches!(r.value, Value::TreeRef { ref name, .. } if name.is_empty())))
 }
 
 /// First `String` value of a field on a metarecord.

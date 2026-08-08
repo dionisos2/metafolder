@@ -138,7 +138,7 @@ fn parse_spec(spec: &str) -> Result<(String, Json), CliError> {
 
 /// Expands simplified-language text to the normal DSL (pure, client-side via
 /// the shared grammar in core — never a daemon round-trip; spec-query).
-fn expand_simplified(text: &str) -> Result<String, CliError> {
+pub(crate) fn expand_simplified(text: &str) -> Result<String, CliError> {
     let grammar = metafolder_core::simplified::load::load().map_err(CliError::Op)?;
     let now_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

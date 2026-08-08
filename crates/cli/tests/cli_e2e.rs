@@ -1684,26 +1684,137 @@ fn test_sync_plan_creates_hidden_plan_repo() {
     assert_ok(&list);
     assert!(!list.stdout.contains("plan-"), "plan repo must be hidden: {}", list.stdout);
 
-    // … but visible with --all, as exactly one system repo named plan-<a>-<b>.
-    assert_eq!(count_plan_repos(), 1, "one plan repo listed with --all");
+    // … but visible with --all, as exactly one system repo for this pair.
+    // (The shared daemon may hold other pairs' plan repos, so scope by name.)
+    let name = plan_name(&a, &b);
+    assert_eq!(count_repos_named(&name), 1, "one plan repo for this pair");
 
     // Re-running recreates it without error (only the latest plan exists).
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
-    assert_eq!(count_plan_repos(), 1, "still exactly one plan repo after re-plan");
+    assert_eq!(count_repos_named(&name), 1, "still exactly one plan repo after re-plan");
 }
 
-/// Number of loaded system repos whose name begins with `plan-` (from
-/// `mf repo list --all`).
-fn count_plan_repos() -> usize {
+/// The plan repo name for a pair (canonical order = sorted simple-hex UUIDs).
+fn plan_name(a: &str, b: &str) -> String {
+    let (lo, hi) = if a < b { (a, b) } else { (b, a) };
+    format!("plan-{lo}-{hi}")
+}
+
+/// Number of loaded repos (system included) with the given exact name.
+fn count_repos_named(name: &str) -> usize {
     let all = mf(&["repo", "list", "--all"]);
     assert_ok(&all);
     let repos: serde_json::Value = serde_json::from_str(&all.stdout).expect("repo list json");
     repos
         .as_array()
-        .map(|a| {
-            a.iter()
-                .filter(|r| r["name"].as_str().is_some_and(|n| n.starts_with("plan-")))
-                .count()
-        })
+        .map(|a| a.iter().filter(|r| r["name"].as_str() == Some(name)).count())
         .unwrap_or(0)
+}
+
+/// Extracts the `plan repo: <uuid>` line printed by `mf sync plan`.
+fn plan_repo_uuid(out: &Out) -> String {
+    out.stdout
+        .lines()
+        .find_map(|l| l.strip_prefix("plan repo: "))
+        .expect("plan should print 'plan repo: <uuid>'")
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn test_sync_plan_exact_match_writes_create_link() {
+    let (a, _ra) = init_repo("plan_ex_a");
+    let (b, _rb) = init_repo("plan_ex_b");
+    // A tracked, in-scope record in A, and its exact-hash twin in B.
+    let rec_a = create_metarecord(
+        &a,
+        &["tag:string=sync", "mfr_path:tree_ref=/song.mp3", "mfr_full_hash:string=HASH", "--force"],
+    );
+    let rec_b = create_metarecord(
+        &b,
+        &["mfr_path:tree_ref=/renamed.mp3", "mfr_full_hash:string=HASH", "--force"],
+    );
+
+    let dir = temp_dir("plan_ex_intents");
+    let intents = dir.join("i.toml");
+    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"sync\"'\n"))
+        .unwrap();
+
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 1"), "one create-link op: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+
+    // The plan repo holds one create-link op referencing both endpoints.
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let ops = ops.as_array().unwrap();
+    assert_eq!(ops.len(), 1, "one create-link op: {}", got.stdout);
+    // plan_a/plan_b are canonical roles; assert the endpoint pair as a set.
+    let endpoints = op_endpoints(&ops[0]);
+    assert!(
+        endpoints.contains(&rec_a) && endpoints.contains(&rec_b),
+        "op must link both records: {endpoints:?}"
+    );
+    // No link was actually created — plan is read-only w.r.t. the synced repos.
+    let status = mf(&["sync", "status", &a, &b]);
+    assert!(status.stderr.contains("no links") || status.stdout.trim().is_empty());
+}
+
+/// The two endpoint metarecord UUIDs of a plan op (`plan_a`, `plan_b`).
+fn op_endpoints(op: &serde_json::Value) -> Vec<String> {
+    let fields = op["fields"].as_array().unwrap();
+    ["plan_a", "plan_b"]
+        .iter()
+        .filter_map(|name| {
+            fields
+                .iter()
+                .find(|f| f["name"] == *name)?
+                .get("value")?["value"]["metarecord"]
+                .as_str()
+                .map(String::from)
+        })
+        .collect()
+}
+
+#[test]
+fn test_sync_plan_no_match_allocates_bare_record() {
+    let (a, _ra) = init_repo("plan_bare_a");
+    let (b, _rb) = init_repo("plan_bare_b");
+    // In scope in A, with no counterpart in B → a bare record must be allocated.
+    let rec_a = create_metarecord(
+        &a,
+        &["tag:string=sync", "mfr_path:tree_ref=/lonely.mp3", "mfr_full_hash:string=UNIQUE", "--force"],
+    );
+    let dir = temp_dir("plan_bare_intents");
+    let intents = dir.join("i.toml");
+    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"sync\"'\n"))
+        .unwrap();
+
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 1"), "one create-link (bare) op: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let op = ops.as_array().unwrap()[0].clone();
+    // One endpoint is the existing record; the other is a fresh bare UUID.
+    let endpoints = op_endpoints(&op);
+    assert!(endpoints.contains(&rec_a), "existing endpoint present: {endpoints:?}");
+    let bare = endpoints.iter().find(|u| **u != rec_a).expect("a bare endpoint");
+    assert!(is_hex_uuid(bare), "bare endpoint is a uuid: {bare}");
+    // The bare side carries an absent (0) baseline version.
+    let fields = op["fields"].as_array().unwrap();
+    let bare_is_a = op["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["name"] == "plan_a" && f["value"]["value"]["metarecord"].as_str() == Some(bare));
+    let bare_version_field = if bare_is_a { "plan_version_a" } else { "plan_version_b" };
+    let bare_version =
+        fields.iter().find(|f| f["name"] == bare_version_field).unwrap()["value"]["value"].clone();
+    assert_eq!(bare_version, 0, "bare baseline is 0");
 }
