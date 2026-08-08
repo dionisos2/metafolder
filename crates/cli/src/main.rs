@@ -14,6 +14,7 @@ use clap::{Parser, Subcommand};
 use metafolder_cli::commands::{self, Ctx};
 use metafolder_cli::gui::{self, GuiCtx};
 use metafolder_cli::log;
+use metafolder_cli::sync;
 
 #[derive(Parser)]
 #[command(name = "mf", about = "metafolder CLI — thin client over the daemon HTTP API")]
@@ -143,6 +144,12 @@ enum Command {
         gui_url: Option<String>,
         #[command(subcommand)]
         command: GuiCommand,
+    },
+    /// Cross-repo synchronisation (spec-sync). Repos are named positionally;
+    /// their order does not matter (roles are canonical).
+    Sync {
+        #[command(subcommand)]
+        command: SyncCommand,
     },
 }
 
@@ -396,6 +403,41 @@ enum TrashCommand {
 }
 
 #[derive(Subcommand)]
+enum SyncCommand {
+    /// Print the per-link change/conflict states of a repo pair
+    Status {
+        /// The two repositories (name or UUID; order does not matter)
+        repo_a: String,
+        repo_b: String,
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+    /// Manually link a record of repo_a to a record of repo_b
+    Link {
+        repo_a: String,
+        repo_b: String,
+        /// Record UUID in repo_a
+        uuid_a: String,
+        /// Record UUID in repo_b
+        uuid_b: String,
+        /// Repo (of the pair) to host the sync database when created first
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// Remove a link (optionally deleting one endpoint record first)
+    Unlink {
+        repo_a: String,
+        repo_b: String,
+        /// The link UUID (from `mf sync status`)
+        link: String,
+        /// Also delete the endpoint record in `a` (repo_a) or `b` (repo_b)
+        #[arg(long = "with-endpoint", value_parser = ["a", "b"])]
+        with_endpoint: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
 enum GuiCommand {
     /// Print the GUI state (pretty-printed JSON)
     Status,
@@ -632,6 +674,21 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             SchemaCommand::Show => commands::schema_show(ctx),
         },
         Command::Gui { gui_url, command } => dispatch_gui(gui_url, command),
+        Command::Sync { command } => dispatch_sync(ctx, command),
+    }
+}
+
+fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
+    match command {
+        SyncCommand::Status { repo_a, repo_b, json } => {
+            sync::status(ctx, &repo_a, &repo_b, json)
+        }
+        SyncCommand::Link { repo_a, repo_b, uuid_a, uuid_b, host } => {
+            sync::link(ctx, &repo_a, &repo_b, &uuid_a, &uuid_b, host.as_deref())
+        }
+        SyncCommand::Unlink { repo_a, repo_b, link, with_endpoint } => {
+            sync::unlink(ctx, &repo_a, &repo_b, &link, with_endpoint.as_deref())
+        }
     }
 }
 

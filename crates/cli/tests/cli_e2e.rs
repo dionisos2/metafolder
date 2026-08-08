@@ -1598,3 +1598,69 @@ fn test_rollback_auto_restores_from_trash() {
     // The trash entry was consumed.
     assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
 }
+
+// ── Cross-repo sync: utility subcommands (spec-sync "Utility subcommands") ─────
+
+#[test]
+fn test_sync_link_status_unlink_roundtrip() {
+    let (repo_a, _ra) = init_repo("synca");
+    let (repo_b, _rb) = init_repo("syncb");
+    let rec_a = create_metarecord(&repo_a, &["tag:string=x"]);
+    let rec_b = create_metarecord(&repo_b, &["tag:string=y"]);
+
+    // Link the two records (URL/positional order need not be canonical).
+    let out = mf(&["sync", "link", &repo_a, &repo_b, &rec_a, &rec_b]);
+    assert_ok(&out);
+    let link = out.stdout.trim().to_string();
+    assert!(is_hex_uuid(&link), "link should print the link uuid, got: '{}'", out.stdout);
+
+    // status lists the link in the never-synced state.
+    let out = mf(&["sync", "status", &repo_a, &repo_b]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&link), "status should list the link: {}", out.stdout);
+    assert!(out.stdout.contains("never_synced"), "state: {}", out.stdout);
+
+    // status --json exposes the structured per-link states.
+    let out = mf(&["sync", "status", &repo_b, &repo_a, "--json"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).expect("json");
+    assert_eq!(body["links"][0]["state"], "never_synced");
+
+    // unlink removes it.
+    let out = mf(&["sync", "unlink", &repo_a, &repo_b, &link]);
+    assert_ok(&out);
+    let out = mf(&["sync", "status", &repo_a, &repo_b]);
+    assert_ok(&out);
+    assert!(!out.stdout.contains(&link), "the link is gone: {}", out.stdout);
+}
+
+#[test]
+fn test_sync_link_missing_record_errors() {
+    let (repo_a, _ra) = init_repo("synce_a");
+    let (repo_b, _rb) = init_repo("synce_b");
+    let rec_a = create_metarecord(&repo_a, &["tag:string=x"]);
+    let ghost = Uuid::new_v4().as_simple().to_string();
+    let out = mf(&["sync", "link", &repo_a, &repo_b, &rec_a, &ghost]);
+    assert_eq!(out.code, 1, "missing endpoint is an Op error: {}", out.stderr);
+}
+
+#[test]
+fn test_sync_unlink_with_endpoint_deletes_record() {
+    let (repo_a, _ra) = init_repo("syncw_a");
+    let (repo_b, _rb) = init_repo("syncw_b");
+    let rec_a = create_metarecord(&repo_a, &["tag:string=x"]);
+    let rec_b = create_metarecord(&repo_b, &["tag:string=y"]);
+    let out = mf(&["sync", "link", &repo_a, &repo_b, &rec_a, &rec_b]);
+    assert_ok(&out);
+    let link = out.stdout.trim().to_string();
+
+    // Drop the link plus the endpoint record in the first-named repo.
+    let out = mf(&["sync", "unlink", &repo_a, &repo_b, &link, "--with-endpoint", "a"]);
+    assert_ok(&out);
+    // rec_a is gone …
+    let out = mf(&["-u", &repo_a, "metarecord", "-i", &rec_a, "get"]);
+    assert_eq!(out.code, 1, "record A should be deleted: {}{}", out.stdout, out.stderr);
+    // … rec_b remains.
+    let out = mf(&["-u", &repo_b, "metarecord", "-i", &rec_b, "get"]);
+    assert_ok(&out);
+}

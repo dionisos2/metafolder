@@ -8,6 +8,7 @@ pub mod config;
 pub mod fieldspec;
 pub mod gui;
 pub mod log;
+pub mod sync;
 pub mod trash;
 
 // The query DSL parser lives in core (shared with the GUI); re-exported so

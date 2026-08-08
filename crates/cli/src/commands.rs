@@ -86,6 +86,16 @@ impl Ctx {
         trash_dir_of(&self.repo_info()?)
     }
 
+    /// Resolves a repository selector — a UUID or a unique loaded name — to its
+    /// UUID. Used by `mf sync`, where the two repos are positional arguments
+    /// rather than the global `-n`/`-u` selector.
+    pub(crate) fn resolve_repo(&self, sel: &str) -> Result<Uuid, CliError> {
+        match Uuid::parse_str(sel) {
+            Ok(uuid) => Ok(uuid),
+            Err(_) => self.resolve_name(sel),
+        }
+    }
+
     /// Maps a unique repository name to its UUID via `GET /repos`.
     fn resolve_name(&self, name: &str) -> Result<Uuid, CliError> {
         let repos = self.client.get("/repos", &[])?;
