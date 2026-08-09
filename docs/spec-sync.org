@@ -301,16 +301,19 @@ a normal metadata conflict resolved at plan time.
 
 *** The metadata diff
 
-The *field diff* — the compare-and-write mechanism — operates on **user data
-and reserved =mf_*= fields** (=mf_sync= included, written with =force=) only.
-No =mfr_*= field is ever *written*: they are stat- and content-derived, so
-each repo re-derives its own and a write would just ping-pong (a stat-only
-version bump is absorbed by the empty-effective-diff rule above). The =mfr_*=
-values that *can* be made equal are equalized by **disk operations** instead
-(see [[*Content operations]]), each comparing the two endpoints to decide what
-to do:
+The *field diff* — the compare-and-write mechanism — writes **user data,
+reserved =mf_*= fields** (=mf_sync= included, written with =force=) *and*
+=mfr_path= (the translated TreeRef — a file's logical position is genuine
+metadata, and writing it first is what lets a sync-created record exist at its
+path before the file arrives). Every *other* =mfr_*= field is never written:
+they are stat- and content-derived, so each repo re-derives its own and a write
+would just ping-pong (a stat-only version bump is absorbed by the
+empty-effective-diff rule above). The =mfr_*= values that *can* be made equal
+are equalized by **disk operations** instead (see [[*Content operations]]), each
+comparing the two endpoints to decide what to do:
 
-- =mfr_path= → a placement or move;
+- =mfr_path= change → also a file =move= (the field write above records the new
+  position; the move relocates the file to match);
 - content signatures (=mfr_full_hash=, falling back to =mfr_partial_hash= +
   =mfr_size=), =mfr_type=, =mfr_symlink_target= → a transfer / mkdir / symlink;
 - =mfr_permissions= → a =chmod= (a mode change equalizes even without a
@@ -468,20 +471,41 @@ memory is tight; nothing depends on it staying warm.
 *** Operations as metarecords
 
 One metarecord per operation, with no =mfr_path= (an abstract entity, as the
-data model already allows for tags/collections/links):
+data model already allows for tags/collections/links). A single changed link
+produces **one op per aspect** — clean =plan_kind= semantics, and each aspect
+independently reviewable and skippable:
 
-- =plan_kind= (String): =create-link= | =drop-link= | =sync= | =copy= |
-  =move= | =delete=.
+- =plan_kind= (String): =create-link= | =drop-link= | =sync= | =copy= | =move=
+  | =chmod= | =delete=.
 - =plan_a=, =plan_b= (ExternalRef): the touched records in repo A / repo B.
 - =plan_version_a=, =plan_version_b= (Int): the baselines that gate the op.
-- =plan_from= (String, =a= | =b=): the winning/source side for a =sync= /
-  =copy= / =move=; =plan_side= for a =delete=.
+- =plan_from= (String, =a= | =b=): the source side for a =copy= / =chmod=;
+  =plan_side= for a =delete=.
+
+The kinds:
+
+- =sync= — the link's **metadata phase**: propagate the user + =mf_*= fields
+  *and* the translated =mfr_path=. Stores *no* field values — the run re-reads
+  the current state (equal version ⇒ identical state) and recomputes the
+  per-field direction; only its baselines gate it.
+- =copy= — a content transfer (=plan_from= = source).
+- =move= — relocate the target file to the =mfr_path= the =sync= wrote.
+- =chmod= — set the target mode to =plan_from='s (best-effort: applied where the
+  filesystem supports it, a no-op otherwise).
+- =delete= — a propagated deletion (=plan_side=).
+
+So a renamed file is a =sync= + a =move=; a re-permissioned one a =sync= + a
+=chmod=; a moved-and-rechmod'd one all three. "Metadata gates the disk"
+([[*Field coverage and diff semantics]]) is enforced by ordering at run — every
+=sync= first, then the disk ops, then =delete=, then commit.
 
 A conflict is one =plan_kind = conflict= metarecord *per (link, field)*:
 =plan_field=, the two candidate values, and =plan_resolve= (=a= | =b= |
 =skip=) — the one editable field. Reviewing conflicts is a query
 (=plan_kind = "conflict"=); resolving one is =mf … field set plan_resolve=…=,
-itself logged (and undoable) in the plan repo.
+itself logged (and undoable) in the plan repo. The link's =sync= op consumes
+its conflict metarecords' =plan_resolve= for the conflicting fields and
+recomputes the rest.
 
 *** Live overlay (=mf sync show=)
 
@@ -858,9 +882,9 @@ operate on. Steps:
    =--on-conflict= is given, nothing prompts and unconfirmed deletions are
    omitted.
 4. (Re)create the plan repo and write one operation metarecord per action —
-   linking phase (create/drop links, bare-record creations), sync phase
-   (field propagations, transfers/moves with direction, deletions, and the
-   resolved conflicts) — each tagged with its baseline versions (see
+   linking phase (=create-link= / =drop-link=), sync phase (one =sync= per link
+   plus its =copy= / =move= / =chmod= / =delete= aspects, and a =conflict= per
+   conflicting (link, field)) — each tagged with its baseline versions (see
    [[*The plan repo]]).
 
 The plan can then be reviewed and edited with ordinary tooling: =mf sync show=,
@@ -883,15 +907,17 @@ Executes the plan, deleting each operation that succeeds. Steps:
 2. Confirm (showing the summary + reds) unless =--yes=.
 3. Execute the *linking phase*: drop out-of-scope links, create the planned
    links (onto matched records or freshly-created bare records).
-4. Execute the *sync phase*, interleaved by batches (=[settings]=). For each
-   link: propagate all metadata first (field writes with ref translation and
-   =expected_version= set to the plan's baselines, =mf_sync=, the translated
-   =mfr_path=, deletion propagation). Then, only for =internal= records and
-   only if the metadata fully succeeded, perform the file/directory operation
-   (transfer, move, create — routing any overwrite/delete through the trash)
-   and set the target's stat fields to match (see
-   [[*Field coverage and diff semantics]] "Metadata gates the disk"). Then
-   =POST …/links/commit=.
+4. Execute the *sync phase*, interleaved by batches (=[settings]=). Ordered by
+   op kind so metadata gates the disk (see [[*Field coverage and diff semantics]]):
+   first every =sync= op — the metadata phase (field writes with ref
+   translation, =mf_sync=, the translated =mfr_path=; =expected_version= set to
+   the plan's baselines; conflicting fields taken from their =conflict= ops'
+   =plan_resolve=, the rest recomputed from the re-read current state). Then,
+   only for =internal= records and only where the =sync= succeeded, the disk ops
+   — =copy= (transfer), =move= (relocate to the written =mfr_path=), =chmod=
+   (best-effort mode) — routing any overwrite through the trash and setting the
+   target's stat fields to match. Then =delete= ops (endpoint metarecord first,
+   then the link — the normative order). Then =POST …/links/commit=.
 5. A rejected write (=409= stale baseline, =400= forest violation) or a failed
    transfer leaves the file untouched and skips that operation. *Every
    operation that succeeds is deleted from the plan repo*; the rest remain.
