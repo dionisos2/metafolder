@@ -47,6 +47,7 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliE
     let mut done = 0usize;
     let mut skipped = 0usize;
     let mut synced_links: Vec<(Uuid, Uuid)> = Vec::new();
+    let mut divergences: Vec<String> = Vec::new();
 
     for order in ["create-link", "sync", "copy", "move", "chmod", "delete"] {
         for op in ops.iter().filter(|o| o.kind == order) {
@@ -67,6 +68,10 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliE
                     prune_op(ctx, &plan_base, op.plan_uuid)?;
                     done += 1;
                 }
+                Outcome::External(path) => {
+                    divergences.push(path);
+                    prune_op(ctx, &plan_base, op.plan_uuid)?;
+                }
                 Outcome::Skipped(why) => {
                     eprintln!("skipped {} op: {why}", op.kind);
                     skipped += 1;
@@ -85,14 +90,35 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliE
     }
 
     println!("done: {done}  skipped: {skipped}");
+    report_divergences(&divergences);
     println!("run `mf reconcile` on both repositories to catch any residual drift");
     Ok(0)
+}
+
+/// Prints external-record content/path divergences, aggregated by subtree (the
+/// top-level path component) — never one line per file (spec-sync).
+fn report_divergences(paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    let mut by_subtree: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for p in paths {
+        let subtree = p.trim_start_matches('/').split('/').next().unwrap_or("").to_string();
+        *by_subtree.entry(format!("/{subtree}")).or_default() += 1;
+    }
+    eprintln!("external divergences (the external tool should reconcile these):");
+    for (subtree, n) in by_subtree {
+        eprintln!("  {n} under {subtree}");
+    }
 }
 
 /// The outcome of executing one op.
 enum Outcome {
     Done,
     Skipped(String),
+    /// The endpoint is `external`: no file operation ran; the diverging path is
+    /// reported (aggregated by subtree) — the external tool should reconcile it.
+    External(String),
 }
 
 /// One parsed op-metarecord from the plan repo.
@@ -345,6 +371,12 @@ fn exec_copy(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
         Some("b") => (op.b, op.rec_b, op.a, op.rec_a),
         _ => return Ok(Outcome::Skipped("copy op has no plan_from".into())),
     };
+    // An external target's content is owned by an outside tool: no transfer, the
+    // divergence (the copy was planned because content differs) is reported.
+    if is_external(ctx, tgt_repo, tgt_rec)? {
+        let path = mfr_path_of(ctx, tgt_repo, tgt_rec)?.unwrap_or_default();
+        return Ok(Outcome::External(path));
+    }
     let (Some(src_abs), Some(tgt_abs)) =
         (abs_path(ctx, src_repo, src_rec)?, abs_path(ctx, tgt_repo, tgt_rec)?)
     else {
@@ -377,6 +409,10 @@ fn exec_chmod(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
         Some("b") => (op.b, op.rec_b, op.a, op.rec_a),
         _ => return Ok(Outcome::Skipped("chmod op has no plan_from".into())),
     };
+    if is_external(ctx, tgt_repo, tgt_rec)? {
+        let path = mfr_path_of(ctx, tgt_repo, tgt_rec)?.unwrap_or_default();
+        return Ok(Outcome::External(path));
+    }
     let Some(tgt_abs) = abs_path(ctx, tgt_repo, tgt_rec)? else {
         return Ok(Outcome::Skipped("target has no path".into()));
     };
@@ -578,6 +614,13 @@ fn put_field(
     let body = json!({"value": value, "force": true});
     ctx.client.request("PUT", &path, &query, Some(&body))?;
     Ok(())
+}
+
+/// Whether a record's effective `mf_sync` mode is `external` (its content is
+/// owned by an outside tool — metafolder does no file operation for it).
+fn is_external(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
+    let m = ctx.client.get(&format!("/repos/{}/metarecords/{}/mf-sync", repo.as_simple(), record.as_simple()), &[])?;
+    Ok(m["mf_sync"] == "external")
 }
 
 fn version_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<u64>, CliError> {

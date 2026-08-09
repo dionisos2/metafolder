@@ -2250,3 +2250,61 @@ fn test_sync_run_resync_propagates_field() {
     let tag = m[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "tag");
     assert_eq!(tag.and_then(|f| f["value"]["value"].as_str()), Some("jazz"), "tag propagated: {}", got.stdout);
 }
+
+/// A record's first value for `field` (as a string), or None.
+fn field_value_of(repo: &str, uuid: &str, field: &str) -> Option<String> {
+    let got = mf(&["-u", repo, "metarecord", "-i", uuid, "get", "--select", "*"]);
+    assert_ok(&got);
+    let m: serde_json::Value = serde_json::from_str(&got.stdout).ok()?;
+    m[0]["fields"]
+        .as_array()?
+        .iter()
+        .find(|f| f["name"] == field)
+        .and_then(|f| f["value"]["value"].as_str())
+        .map(String::from)
+}
+
+#[test]
+fn test_sync_run_applies_conflict_resolution() {
+    // After a first sync, both sides change the same field → conflict resolved by
+    // --on-conflict prefer:<repo_a>, so repo_a's value wins on both sides at run.
+    let a = tracked_repo("cfr_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("cfr_b", &[("doc.txt", b"x")]);
+    let intents = write_intents("cfr", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
+    assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
+
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap(), "--on-conflict", &format!("prefer:{a}")]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // repo_a's value (jazz) wins on both sides.
+    assert_eq!(field_value_of(&a, &xa, "tag").as_deref(), Some("jazz"), "A keeps jazz");
+    assert_eq!(field_value_of(&b, &xb, "tag").as_deref(), Some("jazz"), "B took jazz");
+}
+
+#[test]
+fn test_sync_run_external_divergence_reported() {
+    // A file to create where the target subtree is external → metafolder writes no
+    // file; the metadata still syncs and the divergence is reported.
+    let a = tracked_repo("ext_a", &[("doc.txt", b"aaa")]);
+    let b = tracked_repo("ext_b", &[]);
+    let b_root = mf(&["-u", &b, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &b, "metarecord", "-i", &b_root, "field", "set", "mf_sync:string=external", "--force"]));
+
+    let intents = write_intents("ext", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    let out = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&out);
+
+    // The divergence is reported (aggregated), and no file was written in B …
+    assert!(out.stderr.contains("external divergences"), "reported: {}", out.stderr);
+    assert!(!repo_root_of(&b).join("doc.txt").exists(), "external file not created by metafolder");
+    // … but the metadata record was placed (metadata syncs normally).
+    let rec_b = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert!(is_hex_uuid(&rec_b), "record placed in B: {rec_b}");
+}
