@@ -450,9 +450,79 @@ fn exec_copy(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     Ok(Outcome::Done)
 }
 
-/// Relocates the target file to the `mfr_path` the sync op wrote (TODO).
-fn exec_move(_ctx: &Ctx, _op: &Op) -> Result<Outcome, CliError> {
-    Ok(Outcome::Skipped("move execution not yet implemented".into()))
+/// Relocates a file whose position diverged: the side that changed (vs the
+/// snapshot's `mfr_path`) wins; the other's file moves to match and its
+/// `mfr_path` is updated. Any occupant of the destination is trashed.
+fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
+    if let Some(why) = stale(ctx, op)? {
+        return Ok(Outcome::Skipped(why));
+    }
+    let (Some(pa), Some(pb)) = (mfr_path_of(ctx, op.a, op.rec_a)?, mfr_path_of(ctx, op.b, op.rec_b)?) else {
+        return Ok(Outcome::Skipped("an endpoint has no path".into()));
+    };
+    if pa == pb {
+        return Ok(Outcome::Done); // already aligned (a prior run)
+    }
+    // Winner = the side whose path changed since the snapshot; the loser moves.
+    let base = snapshot_mfr_path(ctx, op.a, op.b, op.rec_a, op.rec_b)?;
+    let a_won = Some(&pa) != base.as_ref();
+    let (winner_path, loser_repo, loser_rec, loser_path) = if a_won {
+        (pa, op.b, op.rec_b, pb)
+    } else {
+        (pb, op.a, op.rec_a, pa)
+    };
+    if is_external(ctx, loser_repo, loser_rec)? {
+        return Ok(Outcome::External(loser_path));
+    }
+    let root = repo_root(ctx, loser_repo)?;
+    let old_abs = root.join(loser_path.trim_start_matches('/'));
+    let new_abs = root.join(winner_path.trim_start_matches('/'));
+    if old_abs.exists() {
+        relocate(ctx, loser_repo, &old_abs, &new_abs)?;
+    }
+    // Update the loser's mfr_path to the winner's position.
+    if let Some(tree) = mfr_path_tree_for(ctx, loser_repo, &winner_path)? {
+        put_field(ctx, loser_repo, loser_rec, "mfr_path", &tree, None)?;
+    }
+    Ok(Outcome::Done)
+}
+
+/// Moves a file (rename, cross-device copy fallback); any destination occupant
+/// and the cross-device source go to the trash — nothing is destroyed.
+fn relocate(ctx: &Ctx, repo: Uuid, old: &std::path::Path, new: &std::path::Path) -> Result<(), CliError> {
+    if let Some(p) = new.parent() {
+        std::fs::create_dir_all(p).map_err(|e| CliError::Op(format!("cannot create {}: {e}", p.display())))?;
+    }
+    if new.exists() {
+        target_trash(ctx, repo)?.trash_path(new, Reason::Sync, None, None, None)?;
+    }
+    if std::fs::rename(old, new).is_err() {
+        std::fs::copy(old, new).map_err(|e| CliError::Op(format!("cannot copy to {}: {e}", new.display())))?;
+        target_trash(ctx, repo)?.trash_path(old, Reason::Sync, None, None, None)?;
+    }
+    Ok(())
+}
+
+/// The link snapshot's stored `mfr_path` (the common path at the last sync).
+fn snapshot_mfr_path(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<Option<String>, CliError> {
+    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
+    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let uuid = links["links"].as_array().and_then(|ls| {
+        ls.iter()
+            .find(|l| {
+                l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
+                    && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
+            })
+            .and_then(|l| l["uuid"].as_str())
+            .map(String::from)
+    });
+    let Some(uuid) = uuid else { return Ok(None) };
+    let body = ctx.client.get(&format!("{prefix}/links/{uuid}"), &[])?;
+    Ok(body["snapshot"]
+        .as_array()
+        .and_then(|s| s.iter().find(|e| e["name"] == "mfr_path"))
+        .and_then(|e| e["value"]["value"].as_str())
+        .map(String::from))
 }
 
 /// Sets the target file's mode to the source's `mfr_permissions` (best-effort:
@@ -553,11 +623,16 @@ fn commit_link(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<
     };
     let va = version_of(ctx, a, rec_a)?.unwrap_or(0);
     let vb = version_of(ctx, b, rec_b)?.unwrap_or(0);
-    let snapshot: Vec<Json> = syncable_fields(ctx, a, rec_a)?
+    let mut snapshot: Vec<Json> = syncable_fields(ctx, a, rec_a)?
         .into_iter()
         .filter(|(_, v)| v["type"] != "ref")
         .map(|(name, value)| json!({"name": name, "value": value}))
         .collect();
+    // Record the common path too (as a portable string) — the move op's direction
+    // baseline. Kept out of the field diff (which skips mfr_* names).
+    if let Some(path) = mfr_path_of(ctx, a, rec_a)? {
+        snapshot.push(json!({"name": "mfr_path", "value": {"type": "string", "value": path}}));
+    }
     ctx.client.post(
         &format!("{prefix}/links/commit"),
         &json!({"commits": [{"link": link_uuid, "version_a": va, "version_b": vb, "snapshot": snapshot}]}),
@@ -575,12 +650,18 @@ fn translate_mfr_path(
     target_repo: Uuid,
     source_record: Uuid,
 ) -> Result<Option<Json>, CliError> {
-    let Some(path) = mfr_path_of(ctx, source_repo, source_record)? else {
-        return Ok(None);
-    };
+    match mfr_path_of(ctx, source_repo, source_record)? {
+        Some(path) => mfr_path_tree_for(ctx, target_repo, &path),
+        None => Ok(None),
+    }
+}
+
+/// The target-repo `mfr_path` TreeRef value placing a record at `path` (parent
+/// found-or-created top-down). `None` for the forest root (not placed by sync).
+fn mfr_path_tree_for(ctx: &Ctx, target_repo: Uuid, path: &str) -> Result<Option<Json>, CliError> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        return Ok(None); // the forest root itself, not placed by sync
+        return Ok(None);
     }
     let (parent_path, name) = match trimmed.rsplit_once('/') {
         Some((p, n)) => (format!("/{p}"), n.to_string()),

@@ -2330,3 +2330,26 @@ fn test_sync_run_translates_ref() {
     assert_eq!(author.as_deref(), Some(person_b.as_str()), "author ref translated to person_b");
     assert_ne!(person_b, person_a, "distinct local uuids");
 }
+
+#[test]
+fn test_sync_run_moves_diverged_file() {
+    // Two files linked across different paths (a.txt ↔ b.txt) — the state after a
+    // rename. Never synced → A wins; run moves the canonical-B file and record to
+    // the canonical-A path. Nothing is destroyed.
+    let a = tracked_repo("mvrun_a", &[("a.txt", b"content")]);
+    let b = tracked_repo("mvrun_b", &[("b.txt", b"content")]);
+    let xa = query_one(&a, "mfr_path = \"a.txt\"");
+    let xb = query_one(&b, "mfr_path = \"b.txt\"");
+    assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
+
+    let intents = write_intents("mvrun", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // The winner is the canonical-A record's path; both records/files converge there.
+    let winner = if a < b { "a.txt" } else { "b.txt" };
+    assert_eq!(query_one(&a, &format!("mfr_path = \"{winner}\"")), xa, "A at winner path");
+    assert_eq!(query_one(&b, &format!("mfr_path = \"{winner}\"")), xb, "B moved to winner path");
+    assert!(repo_root_of(&a).join(winner).exists(), "A file at winner path");
+    assert!(repo_root_of(&b).join(winner).exists(), "B file at winner path");
+}
