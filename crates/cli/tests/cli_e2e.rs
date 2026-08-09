@@ -1813,7 +1813,8 @@ fn test_sync_plan_no_match_allocates_bare_record() {
 
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
-    assert!(out.stdout.contains("operations: 1"), "one create-link (bare) op: {}", out.stdout);
+    // A bare link → a create-link plus a sync op (the bare record must be placed).
+    assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
@@ -1855,15 +1856,14 @@ fn test_sync_plan_closes_over_no_identity_ref_target() {
     let intents = write_intents("clos", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
-    // Two links: X↔X_B (by path) and person↔bare (referential closure).
-    assert!(out.stdout.contains("operations: 2"), "expected 2 ops: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
+    // Two links: X↔X_B (by path) and person↔bare (referential closure).
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
-    assert_eq!(ops.len(), 2);
+    assert_eq!(ops.len(), 2, "two create-link ops");
     // One op links `person` to a freshly allocated bare record.
     let person_op = ops
         .iter()
@@ -1913,7 +1913,8 @@ fn test_sync_plan_case0_ambiguous_stays_bare() {
     let intents = write_intents("case0amb", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"dup\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
-    assert!(out.stdout.contains("operations: 1"), "one op: {}", out.stdout);
+    // Bare link (ambiguous → no match) → create-link + sync.
+    assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
     assert_ok(&got);
@@ -1923,4 +1924,42 @@ fn test_sync_plan_case0_ambiguous_stays_bare() {
     assert!(endpoints.contains(&rec_a));
     let other = endpoints.iter().find(|u| **u != rec_a).unwrap();
     assert!(is_hex_uuid(other));
+}
+
+#[test]
+fn test_sync_plan_writes_sync_op_on_field_diff() {
+    // Same file (matched by path) but a user field on one side only → a `sync`
+    // op propagates it, alongside the create-link.
+    let a = tracked_repo("syncop_a", &[("doc.txt", b"same")]);
+    let b = tracked_repo("syncop_b", &[("doc.txt", b"same")]);
+    let x = query_one(&a, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", "tag:string=jazz"]));
+
+    let intents = write_intents("syncop", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+
+    // Exactly one sync op, referencing the linked pair.
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    assert_eq!(ops.as_array().unwrap().len(), 1, "one sync op: {}", got.stdout);
+    assert!(op_endpoints(&ops.as_array().unwrap()[0]).contains(&x));
+}
+
+#[test]
+fn test_sync_plan_no_sync_op_when_fields_equal() {
+    // Matched files with no user-field difference → no sync op (only create-link).
+    let a = tracked_repo("nosync_a", &[("doc.txt", b"aaa")]);
+    let b = tracked_repo("nosync_b", &[("doc.txt", b"aaa")]);
+    let intents = write_intents("nosync", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 1"), "only create-link: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get"]);
+    assert_ok(&got);
+    assert!(got.stdout.trim().is_empty(), "no sync op: {}", got.stdout);
 }

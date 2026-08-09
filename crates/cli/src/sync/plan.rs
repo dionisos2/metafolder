@@ -64,26 +64,27 @@ pub fn run(
 
     let plan = recreate_plan_repo(ctx, a, b, host_uuid)?;
 
-    let ops = linking_phase(ctx, a, b, &plan, &intents)?;
+    let (link_ops, new_links) = linking_phase(ctx, a, b, &plan, &intents)?;
+    let sync_ops = sync_phase(ctx, &plan, &new_links)?;
 
-    // The sync phase (field diffs, conflicts, transfers, deletions) layers on
-    // next; the linking phase already writes create-link / drop-link ops.
+    // Content transfers, moves, chmod, deletions and conflicts layer on next.
     println!("plan repo: {}", plan.uuid.as_simple());
-    println!("operations: {ops}");
+    println!("operations: {}", link_ops + sync_ops);
     Ok(0)
 }
 
 /// The linking phase (spec-sync "Two-phase sync process"): from the scope,
 /// create the links that must exist (matching an existing record, or a freshly
 /// UUID-allocated bare record) and drop the links that fell out of scope.
-/// Returns the number of op-metarecords written.
+/// Returns the number of link op-metarecords written and the newly created
+/// links (for the sync phase to diff).
 fn linking_phase(
     ctx: &Ctx,
     a: Uuid,
     b: Uuid,
     plan: &PlanRepo,
     intents: &Intents,
-) -> Result<usize, CliError> {
+) -> Result<(usize, Vec<(Side, Side)>), CliError> {
     // Scope: each intent runs on its source repo; its result joins that side.
     let mut scope_a: HashSet<Uuid> = HashSet::new();
     let mut scope_b: HashSet<Uuid> = HashSet::new();
@@ -192,15 +193,66 @@ fn linking_phase(
         }
     }
 
-    // No incoherence aborted us: commit the plan.
+    // No incoherence aborted us: commit the link ops.
     let ops = creates.len() + drops.len();
+    let new_links = creates.clone();
     for (sa, sb) in creates {
         write_op(ctx, plan, "create-link", sa, sb)?;
     }
     for (sa, sb) in drops {
         write_op(ctx, plan, "drop-link", sa, sb)?;
     }
+    Ok((ops, new_links))
+}
+
+/// The sync phase's metadata step (spec-sync): for each newly created link that
+/// has something to propagate, write a `sync` op — the metadata-phase marker. It
+/// stores no values (the run re-reads the current state); its baselines gate it.
+/// A link with a bare endpoint always needs one (the bare record must be placed
+/// and populated); a fully-matched link needs one only when a syncable field
+/// differs. Content/move/chmod/delete/conflict ops layer on next.
+fn sync_phase(ctx: &Ctx, plan: &PlanRepo, new_links: &[(Side, Side)]) -> Result<usize, CliError> {
+    let mut ops = 0;
+    for (side_a, side_b) in new_links {
+        if needs_sync(ctx, side_a, side_b)? {
+            write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
+            ops += 1;
+        }
+    }
     Ok(ops)
+}
+
+/// Whether a link needs a metadata `sync` op: always when either endpoint is
+/// bare (must be placed/populated), otherwise when the two endpoints' syncable
+/// fields differ.
+fn needs_sync(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError> {
+    if side_a.baseline.is_none() || side_b.baseline.is_none() {
+        return Ok(true);
+    }
+    let fa = syncable_fields(ctx, side_a.repo, side_a.record)?;
+    let fb = syncable_fields(ctx, side_b.repo, side_b.record)?;
+    Ok(fa != fb)
+}
+
+/// A record's *syncable* fields — everything the field diff writes: user data,
+/// `mf_*`, and references, but not `mfr_*` and not `tree_ref` positions (those
+/// are handled by placement/move). Refs are compared by local UUID here (a
+/// coarse check: a spurious `sync` op the run finds is empty is harmless).
+fn syncable_fields(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, Json)>, CliError> {
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    let mut out: Vec<(String, Json)> = Vec::new();
+    for f in m["fields"].as_array().cloned().unwrap_or_default() {
+        let Some(name) = f["name"].as_str() else { continue };
+        if name.starts_with("mfr_") || f["value"]["type"] == "tree_ref" {
+            continue;
+        }
+        out.push((name.to_string(), f["value"].clone()));
+    }
+    out.sort_by(|x, y| (x.0.as_str(), x.1.to_string()).cmp(&(y.0.as_str(), y.1.to_string())));
+    Ok(out)
 }
 
 /// The other-side endpoint decision for an in-scope record (spec-sync "The
@@ -453,6 +505,7 @@ fn incoherence(record: Uuid, occ: &[(String, String, Option<Uuid>)], why: &str) 
 /// not exist yet — a **bare** endpoint the plan is allocating — so no
 /// `plan_version_*` is written for it and `run` creates it (the caller-supplied
 /// -UUID create fails closed if it has since appeared, so no baseline is needed).
+#[derive(Clone)]
 struct Side {
     repo: Uuid,
     record: Uuid,
