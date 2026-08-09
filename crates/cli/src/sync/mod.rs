@@ -1,61 +1,98 @@
-//! `mf sync` — cross-repo synchronisation (spec-sync "* CLI"). This module
-//! implements the utility subcommands (`status`, `link`, `unlink`), thin
-//! clients over the daemon's `/sync/:a/:b/…` primitives. The orchestration
-//! subcommands (`plan`, `show`, `run`) build on top of these.
+//! `mf sync` — cross-repo synchronisation (spec-sync "* CLI").
 //!
-//! The two repositories are named positionally and in any order; the daemon
-//! canonicalises the pair (the lexicographically smaller UUID is repo A). The
-//! `link`/`unlink` payloads, however, speak in **canonical roles**, so this
-//! module maps the user's positional `(repo_a, repo_b)` order to canonical
-//! `(a, b)` before talking to the daemon.
+//! The orchestration lives in [`metafolder_core::sync`] (shared with the GUI).
+//! This module is the **CLI adapter**: it wires the daemon HTTP client and an
+//! interactive [`Prompter`] into a [`SyncCtx`], calls core, and formats the
+//! returned reports to the CLI's text output.
 
-pub mod intents;
 pub mod plan;
 pub mod run;
 
-use serde_json::{json, Value as Json};
+use serde_json::Value as Json;
+
+use metafolder_core::sync::{self as core_sync, DaemonClient, Prompter, SyncCtx, SyncError};
 use uuid::Uuid;
 
-use crate::client::CliError;
+use crate::client::{CliError, Client};
 use crate::commands::Ctx;
 
-/// Canonical pair order (spec-sync): the lexicographically smaller UUID is A.
-pub(crate) fn canonical_pair(a: Uuid, b: Uuid) -> (Uuid, Uuid) {
-    if a.as_bytes() < b.as_bytes() {
-        (a, b)
-    } else {
-        (b, a)
+impl From<SyncError> for CliError {
+    fn from(e: SyncError) -> Self {
+        match e {
+            SyncError::Usage(m) => CliError::Usage(m),
+            SyncError::Op(m) => CliError::Op(m),
+        }
     }
 }
 
-/// Resolves the two positional repo selectors to UUIDs, rejecting a self-pair.
-pub(crate) fn resolve_pair(ctx: &Ctx, repo_a: &str, repo_b: &str) -> Result<(Uuid, Uuid), CliError> {
-    let a = ctx.resolve_repo(repo_a)?;
-    let b = ctx.resolve_repo(repo_b)?;
-    if a == b {
-        return Err(CliError::Usage("the two repositories must differ".into()));
+/// The daemon HTTP client, exposed to core as a [`DaemonClient`]. Maps the CLI's
+/// error class onto core's (the message is preserved).
+impl DaemonClient for Client {
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Json>,
+    ) -> Result<Json, SyncError> {
+        Client::request(self, method, path, query, body).map_err(|e| match e {
+            CliError::Usage(m) => SyncError::Usage(m),
+            CliError::Op(m) => SyncError::Op(m),
+        })
     }
-    Ok((a, b))
 }
 
-/// Whether the first positional repo is the canonical repo A of the pair.
-fn positional_a_is_canonical_a(a: Uuid, b: Uuid) -> bool {
-    a.as_bytes() < b.as_bytes()
+/// The interactive prompter: conflict `ask` and the `run` confirmation read from
+/// stdin (a non-TTY / EOF resolves to skip / no); warnings go to stderr.
+pub struct CliPrompter;
+
+impl Prompter for CliPrompter {
+    fn resolve_conflict(&self, field: &str, rec_a: Uuid, rec_b: Uuid) -> Result<String, SyncError> {
+        eprint!(
+            "conflict on '{field}' ({} / {}): keep [a]/[b]/[s]kip? ",
+            rec_a.as_simple(),
+            rec_b.as_simple()
+        );
+        std::io::Write::flush(&mut std::io::stderr()).ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| SyncError::Op(format!("cannot read the conflict reply: {e}")))?;
+        Ok(match answer.trim().to_ascii_lowercase().as_str() {
+            "a" => "a",
+            "b" => "b",
+            _ => "skip",
+        }
+        .into())
+    }
+
+    fn confirm(&self, message: &str) -> Result<bool, SyncError> {
+        use std::io::Write as _;
+        eprint!("{message}");
+        std::io::stderr().flush().ok();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| SyncError::Op(format!("cannot read the confirmation: {e}")))?;
+        let answer = answer.trim().to_ascii_lowercase();
+        Ok(answer == "y" || answer == "yes")
+    }
+
+    fn warn(&self, message: &str) {
+        eprintln!("{message}");
+    }
 }
 
-fn parse_record(sel: &str) -> Result<Uuid, CliError> {
-    Uuid::parse_str(sel).map_err(|_| CliError::Usage(format!("invalid record UUID: '{sel}'")))
-}
-
-/// `/sync/:a/:b` URL prefix (order is irrelevant — the daemon canonicalises).
-fn pair_prefix(a: Uuid, b: Uuid) -> String {
-    format!("/sync/{}/{}", a.as_simple(), b.as_simple())
+/// Builds the core orchestration context from the CLI `Ctx` and a prompter.
+pub(crate) fn sync_ctx<'a>(ctx: &'a Ctx, prompter: &'a dyn Prompter) -> SyncCtx<'a> {
+    SyncCtx { client: &ctx.client, prompter, page_size: ctx.page_size }
 }
 
 /// `mf sync status <repo_a> <repo_b>` — print each link's change/conflict state.
 pub fn status(ctx: &Ctx, repo_a: &str, repo_b: &str, json_out: bool) -> Result<i32, CliError> {
-    let (a, b) = resolve_pair(ctx, repo_a, repo_b)?;
-    let body = ctx.client.get(&format!("{}/status", pair_prefix(a, b)), &[])?;
+    let prompter = CliPrompter;
+    let sctx = sync_ctx(ctx, &prompter);
+    let body = core_sync::status(&sctx, repo_a, repo_b)?;
     if json_out {
         println!("{}", serde_json::to_string_pretty(&body).unwrap_or_default());
         return Ok(0);
@@ -75,8 +112,8 @@ pub fn status(ctx: &Ctx, repo_a: &str, repo_b: &str, json_out: bool) -> Result<i
     Ok(0)
 }
 
-/// `mf sync link <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]` — link a
-/// record of `repo_a` to a record of `repo_b`; prints the new link UUID.
+/// `mf sync link <repo_a> <repo_b> <uuid_a> <uuid_b> [--host <repo>]` — prints
+/// the new link UUID.
 pub fn link(
     ctx: &Ctx,
     repo_a: &str,
@@ -85,31 +122,15 @@ pub fn link(
     uuid_b: &str,
     host: Option<&str>,
 ) -> Result<i32, CliError> {
-    let (a, b) = resolve_pair(ctx, repo_a, repo_b)?;
-    let rec_pos_a = parse_record(uuid_a)?;
-    let rec_pos_b = parse_record(uuid_b)?;
-    // Map positional (repo_a→uuid_a, repo_b→uuid_b) onto canonical roles.
-    let (record_a, record_b) = if positional_a_is_canonical_a(a, b) {
-        (rec_pos_a, rec_pos_b)
-    } else {
-        (rec_pos_b, rec_pos_a)
-    };
-    let mut body = json!({
-        "record_a": record_a.as_simple().to_string(),
-        "record_b": record_b.as_simple().to_string(),
-    });
-    if let Some(h) = host {
-        let host_uuid = ctx.resolve_repo(h)?;
-        body["host"] = json!(host_uuid.as_simple().to_string());
-    }
-    let resp = ctx.client.post(&format!("{}/links", pair_prefix(a, b)), &body)?;
-    println!("{}", resp["uuid"].as_str().unwrap_or_default());
+    let prompter = CliPrompter;
+    let sctx = sync_ctx(ctx, &prompter);
+    let uuid = core_sync::link(&sctx, repo_a, repo_b, uuid_a, uuid_b, host)?;
+    println!("{}", uuid.as_simple());
     Ok(0)
 }
 
-/// `mf sync unlink <repo_a> <repo_b> <link> [--with-endpoint a|b]` — remove a
-/// link, optionally deleting the endpoint record in `a` (=repo_a) or `b`
-/// (=repo_b) first. The positional side is translated to the canonical side.
+/// `mf sync unlink <repo_a> <repo_b> <link> [--with-endpoint a|b]` — prints the
+/// removed link UUID.
 pub fn unlink(
     ctx: &Ctx,
     repo_a: &str,
@@ -117,26 +138,9 @@ pub fn unlink(
     link: &str,
     with_endpoint: Option<&str>,
 ) -> Result<i32, CliError> {
-    let (a, b) = resolve_pair(ctx, repo_a, repo_b)?;
-    let link_uuid =
-        Uuid::parse_str(link).map_err(|_| CliError::Usage(format!("invalid link UUID: '{link}'")))?;
-    let mut query: Vec<(&str, String)> = Vec::new();
-    if let Some(side) = with_endpoint {
-        query.push(("with_endpoint", canonical_side(side, a, b)));
-    }
-    let path = format!("{}/links/{}", pair_prefix(a, b), link_uuid.as_simple());
-    let _: Json = ctx.client.request("DELETE", &path, &query, None)?;
-    println!("{}", link_uuid.as_simple());
+    let prompter = CliPrompter;
+    let sctx = sync_ctx(ctx, &prompter);
+    let uuid = core_sync::unlink(&sctx, repo_a, repo_b, link, with_endpoint)?;
+    println!("{}", uuid.as_simple());
     Ok(0)
-}
-
-/// Translates a positional endpoint side (`a` = repo_a, `b` = repo_b) into the
-/// canonical side the daemon expects.
-fn canonical_side(positional: &str, a: Uuid, b: Uuid) -> String {
-    let a_is_canon = positional_a_is_canonical_a(a, b);
-    let canon = match (positional, a_is_canon) {
-        ("a", true) | ("b", false) => "a",
-        _ => "b",
-    };
-    canon.to_string()
 }

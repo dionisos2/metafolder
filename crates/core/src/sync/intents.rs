@@ -5,7 +5,7 @@
 
 use serde::Deserialize;
 
-use crate::client::CliError;
+use super::SyncError as CliError;
 
 /// A parsed intents file.
 #[derive(Debug, Deserialize)]
