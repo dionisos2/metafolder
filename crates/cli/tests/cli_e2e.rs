@@ -1721,37 +1721,62 @@ fn plan_repo_uuid(out: &Out) -> String {
         .to_string()
 }
 
+/// Inits a repo, writes `files` (relative path → bytes), enables tracking on the
+/// root and reconciles, so file records get realistic `mfr_path` children.
+/// Returns the repo uuid.
+fn tracked_repo(prefix: &str, files: &[(&str, &[u8])]) -> String {
+    let (repo, root) = init_repo(prefix);
+    for (rel, content) in files {
+        let p = root.join(rel);
+        if let Some(parent) = p.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(&p, content).unwrap();
+    }
+    // A fresh repo has one entry: the filesystem root.
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    repo
+}
+
+/// The single uuid matching a DSL query in a repo (asserts exactly one).
+fn query_one(repo: &str, dsl: &str) -> String {
+    let out = mf(&["-u", repo, "metarecord", "-q", dsl, "get"]);
+    assert_ok(&out);
+    let uuids: Vec<&str> = out.stdout.split_whitespace().collect();
+    assert_eq!(uuids.len(), 1, "expected one match for {dsl:?}, got: {}", out.stdout);
+    uuids[0].to_string()
+}
+
+/// Writes an intents TOML to a fresh temp file; returns its path.
+fn write_intents(prefix: &str, content: &str) -> PathBuf {
+    let path = temp_dir(prefix).join("intents.toml");
+    std::fs::write(&path, content).unwrap();
+    path
+}
+
 #[test]
 fn test_sync_plan_exact_match_writes_create_link() {
-    let (a, _ra) = init_repo("plan_ex_a");
-    let (b, _rb) = init_repo("plan_ex_b");
-    // A tracked, in-scope record in A, and its exact-hash twin in B.
-    let rec_a = create_metarecord(
-        &a,
-        &["tag:string=sync", "mfr_path:tree_ref=/song.mp3", "mfr_full_hash:string=HASH", "--force"],
-    );
-    let rec_b = create_metarecord(
-        &b,
-        &["mfr_path:tree_ref=/renamed.mp3", "mfr_full_hash:string=HASH", "--force"],
-    );
+    // Same relative path on both sides, *different bytes* — so a match can only
+    // be by TreeRef identity (path), never by content.
+    let a = tracked_repo("plan_ex_a", &[("song.mp3", b"aaa")]);
+    let b = tracked_repo("plan_ex_b", &[("song.mp3", b"bbb")]);
+    let rec_a = query_one(&a, "mfr_path = \"song.mp3\"");
+    let rec_b = query_one(&b, "mfr_path = \"song.mp3\"");
 
-    let dir = temp_dir("plan_ex_intents");
-    let intents = dir.join("i.toml");
-    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"sync\"'\n"))
-        .unwrap();
-
+    let intents = write_intents("plan_ex", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     assert!(out.stdout.contains("operations: 1"), "one create-link op: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
-    // The plan repo holds one create-link op referencing both endpoints.
+    // The plan repo holds one create-link op linking both file records by path.
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
     assert_eq!(ops.len(), 1, "one create-link op: {}", got.stdout);
-    // plan_a/plan_b are canonical roles; assert the endpoint pair as a set.
     let endpoints = op_endpoints(&ops[0]);
     assert!(
         endpoints.contains(&rec_a) && endpoints.contains(&rec_b),
@@ -1780,17 +1805,11 @@ fn op_endpoints(op: &serde_json::Value) -> Vec<String> {
 
 #[test]
 fn test_sync_plan_no_match_allocates_bare_record() {
-    let (a, _ra) = init_repo("plan_bare_a");
-    let (b, _rb) = init_repo("plan_bare_b");
-    // In scope in A, with no counterpart in B → a bare record must be allocated.
-    let rec_a = create_metarecord(
-        &a,
-        &["tag:string=sync", "mfr_path:tree_ref=/lonely.mp3", "mfr_full_hash:string=UNIQUE", "--force"],
-    );
-    let dir = temp_dir("plan_bare_intents");
-    let intents = dir.join("i.toml");
-    std::fs::write(&intents, format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"sync\"'\n"))
-        .unwrap();
+    // In scope in A, with no counterpart at the same path in B → bare record.
+    let a = tracked_repo("plan_bare_a", &[("lonely.mp3", b"x")]);
+    let b = tracked_repo("plan_bare_b", &[]);
+    let rec_a = query_one(&a, "mfr_path = \"lonely.mp3\"");
+    let intents = write_intents("plan_bare", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
 
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);

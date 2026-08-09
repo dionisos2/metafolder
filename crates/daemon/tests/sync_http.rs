@@ -1,8 +1,9 @@
 //! Integration tests for the cross-repo sync HTTP primitives (spec-sync "HTTP
 //! API"): two repositories loaded on one daemon, driven through the Axum router
 //! with `oneshot`. Covers canonical pair ordering, link CRUD, the `status`
-//! truth table, batched commit + snapshot round-trip, `candidates` matching, and
-//! endpoint-coupled deletion.
+//! truth table, batched commit + snapshot round-trip, and endpoint-coupled
+//! deletion. (Matching is now CLI-side by TreeRef identity — see the CLI
+//! `sync plan` tests — so there is no daemon matcher to exercise here.)
 
 use std::path::PathBuf;
 
@@ -78,26 +79,6 @@ async fn create(app: &Router, repo: &str, fields: Value) -> Value {
     body
 }
 
-/// The mfr_path forest root uuid of a repo.
-async fn root_uuid(app: &Router, repo: &str) -> String {
-    let (status, body) =
-        request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
-    assert_eq!(status, StatusCode::OK);
-    body[0]["uuid"].as_str().unwrap().to_string()
-}
-
-/// A tracked file record: mfr_path `/<name>` plus the given optional full hash.
-async fn file_record(app: &Router, repo: &str, name: &str, hash: Option<&str>) -> String {
-    let root = root_uuid(app, repo).await;
-    let mut fields = vec![json!({
-        "name": "mfr_path",
-        "value": {"type": "tree_ref", "value": {"parent": root, "name": name}}
-    })];
-    if let Some(h) = hash {
-        fields.push(json!({"name": "mfr_full_hash", "value": {"type": "string", "value": h}}));
-    }
-    create(app, repo, json!(fields)).await["uuid"].as_str().unwrap().to_string()
-}
 
 // ── Pair ordering and link CRUD ──────────────────────────────────────────────
 
@@ -300,63 +281,4 @@ async fn test_delete_link_with_endpoint_deletes_record_first() {
     // Record A is untouched.
     let (status, _) = request(&app, "GET", &format!("/repos/{a}/metarecords/{ra}"), None).await;
     assert_eq!(status, StatusCode::OK);
-}
-
-// ── candidates ───────────────────────────────────────────────────────────────
-
-#[tokio::test]
-async fn test_candidates_full_and_path() {
-    let app = app();
-    let (a, _ar, b, _br) = two_repos(&app).await;
-
-    // Full-hash pair: same hash, different names.
-    let s_full = file_record(&app, &a, "one.mp3", Some("HASH")).await;
-    let t_full = file_record(&app, &b, "renamed.mp3", Some("HASH")).await;
-    // Path pair: same reconstructed path, no hash.
-    let s_path = file_record(&app, &a, "same.mp3", None).await;
-    let t_path = file_record(&app, &b, "same.mp3", None).await;
-
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/sync/{a}/{b}/candidates"),
-        Some(json!({"source": a})),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "candidates failed: {body}");
-    let cands = body["candidates"].as_array().unwrap();
-
-    let by_source = |src: &str| -> Value {
-        cands.iter().find(|c| c["source"] == src).cloned().unwrap_or(Value::Null)
-    };
-    let full = by_source(&s_full);
-    assert_eq!(full["target"], t_full);
-    assert_eq!(full["kind"], "full");
-    let path = by_source(&s_path);
-    assert_eq!(path["target"], t_path);
-    assert_eq!(path["kind"], "path");
-}
-
-#[tokio::test]
-async fn test_candidates_exclude_already_linked() {
-    let app = app();
-    let (a, _ar, b, _br) = two_repos(&app).await;
-    let s = file_record(&app, &a, "x.mp3", Some("H")).await;
-    let t = file_record(&app, &b, "y.mp3", Some("H")).await;
-    make_link(&app, &a, &b, &s, &t).await;
-
-    let (status, body) =
-        request(&app, "POST", &format!("/sync/{a}/{b}/candidates"), Some(json!({"source": a})))
-            .await;
-    assert_eq!(status, StatusCode::OK);
-    // The linked record `s` yields no candidate. (Other unlinked records — e.g.
-    // the two repos' roots, which match by their shared empty path — may still
-    // appear; the root is a metarecord like any other.)
-    let sources: Vec<&str> = body["candidates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["source"].as_str().unwrap())
-        .collect();
-    assert!(!sources.contains(&s.as_str()), "a linked record must not be a candidate: {body}");
 }

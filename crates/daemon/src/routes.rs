@@ -94,7 +94,6 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/sync/:a/:b/links", get(sync_list_links).post(sync_create_link))
         .route("/sync/:a/:b/links/:link", get(sync_get_link).delete(sync_delete_link))
         .route("/sync/:a/:b/links/commit", post(sync_commit))
-        .route("/sync/:a/:b/candidates", post(sync_candidates))
         .route("/sync/:a/:b/status", get(sync_status))
         .with_state(state)
 }
@@ -2659,63 +2658,3 @@ async fn sync_commit(
     .await
 }
 
-/// `POST /sync/:a/:b/candidates` — find link targets for unlinked source records
-/// (spec-sync "candidates"). Matches on stored values only, no hashing.
-async fn sync_candidates(
-    State(state): State<Arc<AppState>>,
-    Path((a, b)): Path<(String, String)>,
-    payload: Result<Json<CandidatesBody>, JsonRejection>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let Json(body) = payload?;
-    with_pair(&state, &a, &b, move |repo_a, repo_b| {
-        let source = parse_uuid(&body.source)?;
-        let ra = repo_a.config.repo_uuid;
-        let rb = repo_b.config.repo_uuid;
-        // Source is one of the pair; the other side is the target. `src_side`
-        // is the source's canonical role, so linked-record filtering picks the
-        // right column.
-        let (src, tgt, src_side) = if source == ra {
-            (repo_a, repo_b, sync::Side::A)
-        } else if source == rb {
-            (repo_b, repo_a, sync::Side::B)
-        } else {
-            return Err(ApiError::bad_request("source must be one of the pair"));
-        };
-        // Records already linked in this pair are excluded from matching.
-        let (linked_src, linked_tgt) = match open_pair_db(repo_a, repo_b, None)? {
-            None => (Default::default(), Default::default()),
-            Some(db) => {
-                let links = sync::list_links(&db.conn)?;
-                let (a_set, b_set): (std::collections::HashSet<_>, std::collections::HashSet<_>) =
-                    (links.iter().map(|l| l.record_a).collect(), links.iter().map(|l| l.record_b).collect());
-                match src_side {
-                    sync::Side::A => (a_set, b_set),
-                    sync::Side::B => (b_set, a_set),
-                }
-            }
-        };
-        let records = match &body.records {
-            Some(rs) => Some(rs.iter().map(|r| parse_uuid(r)).collect::<Result<Vec<_>, _>>()?),
-            None => None,
-        };
-        let cands = crate::sync_match::candidates(
-            src,
-            tgt,
-            &linked_src,
-            &linked_tgt,
-            records.as_deref(),
-            body.threshold,
-        )?;
-        Ok(Json(json!({ "candidates": cands })))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
-pub struct CandidatesBody {
-    pub source: String,
-    #[serde(default)]
-    pub records: Option<Vec<String>>,
-    #[serde(default)]
-    pub threshold: Option<f64>,
-}

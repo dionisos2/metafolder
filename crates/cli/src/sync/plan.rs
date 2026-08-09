@@ -4,8 +4,7 @@
 //! — intents parsing, pair/host resolution, the schema-identity gate, and the
 //! plan-repo lifecycle — onto which the scope/diff/conflict phases are layered.
 
-use std::collections::{HashMap, HashSet};
-use std::io::Write as _;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
@@ -107,116 +106,228 @@ fn linking_phase(
     let links = get_links(ctx, a, b)?;
     let linked_a: HashSet<Uuid> = links.iter().map(|l| l.record_a).collect();
     let linked_b: HashSet<Uuid> = links.iter().map(|l| l.record_b).collect();
-    let threshold = intents.settings.similarity_threshold;
 
-    let mut ops = 0usize;
-    // Records already spoken for by a planned link, so the reverse-direction pass
-    // and bare allocation never double-link them.
+    // Compute every decision first, then write: a multi-TreeRef incoherence
+    // aborts the plan with no partial ops (spec-sync). A record already spoken
+    // for by a planned link is skipped, so the reverse pass never double-links.
+    let mut creates: Vec<(Side, Side)> = Vec::new();
     let mut planned_a: HashSet<Uuid> = HashSet::new();
     let mut planned_b: HashSet<Uuid> = HashSet::new();
 
-    // Pass 1 — drive from A: every unlinked in-scope A record gets a B endpoint.
-    let unlinked_a: Vec<Uuid> = scope_a.iter().copied().filter(|u| !linked_a.contains(u)).collect();
-    let cands = candidate_index(ctx, a, b, a, &unlinked_a, threshold)?;
-    for &rec_a in &unlinked_a {
-        if planned_a.contains(&rec_a) {
+    // Pass 1 — from A into B.
+    let mut scope_a_v: Vec<Uuid> = scope_a.iter().copied().collect();
+    scope_a_v.sort();
+    for rec_a in scope_a_v {
+        if linked_a.contains(&rec_a) || planned_a.contains(&rec_a) {
             continue;
         }
         let side_a = existing_side(ctx, a, rec_a)?;
-        let side_b = match pick_target(ctx, a, rec_a, cands.get(&rec_a), &linked_b, &planned_b)? {
-            Endpoint::Existing(rec_b) => {
+        let side_b = match resolve_link(ctx, a, b, rec_a, &linked_b, &planned_b)? {
+            LinkDecision::To(rec_b) => {
                 planned_b.insert(rec_b);
                 existing_side(ctx, b, rec_b)?
             }
-            Endpoint::Bare => bare_side(b),
+            LinkDecision::Create => bare_side(b),
+            LinkDecision::Skip => continue,
         };
-        write_op(ctx, plan, "create-link", side_a, side_b)?;
         planned_a.insert(rec_a);
-        ops += 1;
+        creates.push((side_a, side_b));
     }
 
-    // Pass 2 — drive from B: unlinked in-scope B records not yet used as targets.
-    let unlinked_b: Vec<Uuid> = scope_b
-        .iter()
-        .copied()
-        .filter(|u| !linked_b.contains(u) && !planned_b.contains(u))
-        .collect();
-    let cands = candidate_index(ctx, a, b, b, &unlinked_b, threshold)?;
-    for &rec_b in &unlinked_b {
-        if planned_b.contains(&rec_b) {
+    // Pass 2 — from B into A (records not already used as a Pass-1 target).
+    let mut scope_b_v: Vec<Uuid> = scope_b.iter().copied().collect();
+    scope_b_v.sort();
+    for rec_b in scope_b_v {
+        if linked_b.contains(&rec_b) || planned_b.contains(&rec_b) {
             continue;
         }
-        let side_a = match pick_target(ctx, b, rec_b, cands.get(&rec_b), &linked_a, &planned_a)? {
-            Endpoint::Existing(rec_a) => {
+        let side_b = existing_side(ctx, b, rec_b)?;
+        let side_a = match resolve_link(ctx, b, a, rec_b, &linked_a, &planned_a)? {
+            LinkDecision::To(rec_a) => {
                 planned_a.insert(rec_a);
                 existing_side(ctx, a, rec_a)?
             }
-            Endpoint::Bare => bare_side(a),
+            LinkDecision::Create => bare_side(a),
+            LinkDecision::Skip => continue,
         };
-        let side_b = existing_side(ctx, b, rec_b)?;
-        write_op(ctx, plan, "create-link", side_a, side_b)?;
         planned_b.insert(rec_b);
-        ops += 1;
+        creates.push((side_a, side_b));
     }
 
-    // Drop links whose neither endpoint remains in scope.
+    // Drops: links whose neither endpoint remains in scope.
+    let mut drops: Vec<(Side, Side)> = Vec::new();
     for l in &links {
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
-            write_op(
-                ctx,
-                plan,
-                "drop-link",
-                existing_side(ctx, a, l.record_a)?,
-                existing_side(ctx, b, l.record_b)?,
-            )?;
-            ops += 1;
+            drops.push((existing_side(ctx, a, l.record_a)?, existing_side(ctx, b, l.record_b)?));
         }
     }
 
+    // No incoherence aborted us: commit the plan.
+    let ops = creates.len() + drops.len();
+    for (sa, sb) in creates {
+        write_op(ctx, plan, "create-link", sa, sb)?;
+    }
+    for (sa, sb) in drops {
+        write_op(ctx, plan, "drop-link", sa, sb)?;
+    }
     Ok(ops)
 }
 
-/// A resolved link endpoint on the other side of a candidate.
-#[derive(Clone, Copy)]
-enum Endpoint {
-    /// Link onto this existing record.
-    Existing(Uuid),
-    /// No usable match — create a bare record (UUID allocated by the caller).
-    Bare,
+/// The other-side endpoint decision for an in-scope record (spec-sync "The
+/// linking phase").
+enum LinkDecision {
+    /// Link onto this existing target-side record.
+    To(Uuid),
+    /// Create a target-side record (bare here; placed/filled by the sync phase).
+    Create,
+    /// Leave unlinked (a defensive skip, reported).
+    Skip,
 }
 
-/// Chooses the other-side endpoint for `record` (in `source_repo`) from its best
-/// candidate: exact matches auto-link; a `similar` match prompts; an unusable or
-/// already-taken candidate falls back to a bare record.
-fn pick_target(
+/// Resolves an in-scope `record` (in `source_repo`) to its counterpart in
+/// `target_repo` by *TreeRef identity* — the reconstructed path of each of its
+/// `tree_ref` fields (spec-sync). Returns [`LinkDecision`], or aborts the plan
+/// on a multi-TreeRef incoherence.
+fn resolve_link(
     ctx: &Ctx,
     source_repo: Uuid,
+    target_repo: Uuid,
     record: Uuid,
-    candidate: Option<&Candidate>,
-    linked_other: &HashSet<Uuid>,
-    planned_other: &HashSet<Uuid>,
-) -> Result<Endpoint, CliError> {
-    let Some(c) = candidate else {
-        return Ok(Endpoint::Bare);
-    };
-    if linked_other.contains(&c.target) || planned_other.contains(&c.target) {
-        return Ok(Endpoint::Bare);
+    linked_target: &HashSet<Uuid>,
+    planned_target: &HashSet<Uuid>,
+) -> Result<LinkDecision, CliError> {
+    let ids = identity_paths(ctx, source_repo, record)?;
+    if ids.is_empty() {
+        // TODO(sync): no-TreeRef records — match by equal field multiset (the
+        // case-0 heuristic, spec-sync). For now a bare record is created.
+        return Ok(LinkDecision::Create);
     }
-    if c.kind == "similar" {
-        let path = record_path(ctx, source_repo, record).unwrap_or_else(|| record.as_simple().to_string());
-        let ok = prompt(&format!(
-            "similar match ({:.2}) for {path}: link to {}? [y/N] ",
-            c.score,
-            c.target.as_simple()
-        ))?;
-        if !ok {
-            return Ok(Endpoint::Bare);
+
+    // Occupant of each identity position on the target side.
+    let mut occ: Vec<(String, String, Option<Uuid>)> = Vec::with_capacity(ids.len());
+    for (field, path) in &ids {
+        occ.push((field.clone(), path.clone(), record_at_path(ctx, target_repo, field, path)?));
+    }
+    let mut existing: Vec<Uuid> = occ.iter().filter_map(|(_, _, o)| *o).collect();
+    existing.sort();
+    existing.dedup();
+
+    if existing.len() >= 2 {
+        return Err(incoherence(record, &occ, "its TreeRef identities map to different target records"));
+    }
+    if let Some(&t) = existing.first() {
+        if linked_target.contains(&t) || planned_target.contains(&t) {
+            // Path positions are 1:1, so this is not expected; stay safe.
+            eprintln!("warning: {} resolves to an already-linked record; skipped", record.as_simple());
+            return Ok(LinkDecision::Skip);
         }
+        // Type-1: a free position must not force T out of one it already holds.
+        let t_ids = identity_paths(ctx, target_repo, t)?;
+        for (field, path, o) in &occ {
+            if o.is_none() && t_ids.iter().any(|(tf, tp)| tf == field && tp != path) {
+                return Err(incoherence(
+                    record,
+                    &occ,
+                    "the target already occupies a different position in one of these forests",
+                ));
+            }
+        }
+        return Ok(LinkDecision::To(t));
     }
-    Ok(Endpoint::Existing(c.target))
+    // No position occupied → create (the sync phase places it at every path).
+    Ok(LinkDecision::Create)
 }
 
-/// Writes a canonical `create-link` op-metarecord (rec_a in A ↔ endpoint in B).
+/// A record's identity: `(field_name, reconstructed_path)` for each of its
+/// `tree_ref` fields (a field with several positions contributes several).
+fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, String)>, CliError> {
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    let mut fields: Vec<String> = Vec::new();
+    for f in m["fields"].as_array().cloned().unwrap_or_default() {
+        if f["value"]["type"] == "tree_ref" {
+            if let Some(name) = f["name"].as_str() {
+                if !fields.iter().any(|n| n == name) {
+                    fields.push(name.to_string());
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for field in fields {
+        let resp = ctx.client.get(
+            &format!(
+                "/repos/{}/metarecords/{}/fields/{}/resolve-tree",
+                repo.as_simple(),
+                record.as_simple(),
+                field
+            ),
+            &[],
+        )?;
+        for p in resp["paths"].as_array().cloned().unwrap_or_default() {
+            if let Some(path) = p.as_str() {
+                out.push((field.clone(), path.to_string()));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The record occupying position `path` in `repo`'s `field` forest, via the
+/// exact-path query idiom (=field -> "/parent" AND field = "name"=). The root
+/// (empty path) is resolved through the forest-roots endpoint.
+fn record_at_path(
+    ctx: &Ctx,
+    repo: Uuid,
+    field: &str,
+    path: &str,
+) -> Result<Option<Uuid>, CliError> {
+    let trimmed = path.trim_matches('/');
+    if trimmed.is_empty() {
+        let roots =
+            ctx.client.get(&format!("/repos/{}/tree/roots", repo.as_simple()), &[("field", field.to_string())])?;
+        return Ok(roots
+            .as_array()
+            .and_then(|a| a.iter().find(|r| r["name"] == ""))
+            .and_then(|r| r["uuid"].as_str())
+            .and_then(|s| Uuid::parse_str(s).ok()));
+    }
+    let (parent, name) = match trimmed.rsplit_once('/') {
+        Some((p, n)) => (format!("/{p}"), n.to_string()),
+        None => (String::new(), trimmed.to_string()),
+    };
+    let query = json!({"type": "and", "operands": [
+        {"type": "follows", "field": field, "target": parent},
+        {"type": "eq", "field": field, "value": {"type": "string", "value": name}},
+    ]});
+    let resp =
+        ctx.client.post(&format!("/repos/{}/query", repo.as_simple()), &json!({"query": query, "limit": 1}))?;
+    Ok(resp["results"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|v| v.as_str())
+        .and_then(|s| Uuid::parse_str(s).ok()))
+}
+
+/// Builds the plan-aborting incoherence error for a record (spec-sync
+/// "multi-TreeRef incoherence").
+fn incoherence(record: Uuid, occ: &[(String, String, Option<Uuid>)], why: &str) -> CliError {
+    let positions: Vec<String> = occ
+        .iter()
+        .map(|(f, p, o)| match o {
+            Some(t) => format!("{f}={p} → {}", t.as_simple()),
+            None => format!("{f}={p} → (free)"),
+        })
+        .collect();
+    CliError::Op(format!(
+        "sync plan aborted: metarecord {} is incoherent — {why} [{}]",
+        record.as_simple(),
+        positions.join(", ")
+    ))
+}
+
 /// One side of a link op: its repo, record, and the `version` the record was
 /// read at (the run-time baseline). `baseline` is `None` for a record that does
 /// not exist yet — a **bare** endpoint the plan is allocating — so no
@@ -289,52 +400,6 @@ fn get_links(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<Vec<LinkRow>, CliError> {
     Ok(out)
 }
 
-/// A candidate match returned by the daemon (spec-sync "candidates").
-struct Candidate {
-    target: Uuid,
-    kind: String,
-    score: f64,
-}
-
-/// Best candidate per source record (the daemon returns at most one per source).
-fn candidate_index(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    source: Uuid,
-    records: &[Uuid],
-    threshold: Option<f64>,
-) -> Result<HashMap<Uuid, Candidate>, CliError> {
-    if records.is_empty() {
-        return Ok(HashMap::new());
-    }
-    let mut body = json!({
-        "source": source.as_simple().to_string(),
-        "records": records.iter().map(|u| u.as_simple().to_string()).collect::<Vec<_>>(),
-    });
-    if let Some(t) = threshold {
-        body["threshold"] = json!(t);
-    }
-    let resp = ctx.client.post(&format!("/sync/{}/{}/candidates", a.as_simple(), b.as_simple()), &body)?;
-    let mut map = HashMap::new();
-    for c in resp["candidates"].as_array().cloned().unwrap_or_default() {
-        if let (Some(src), Some(tgt)) = (
-            c["source"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
-            c["target"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
-        ) {
-            map.insert(
-                src,
-                Candidate {
-                    target: tgt,
-                    kind: c["kind"].as_str().unwrap_or_default().to_string(),
-                    score: c["score"].as_f64().unwrap_or(0.0),
-                },
-            );
-        }
-    }
-    Ok(map)
-}
-
 /// Evaluates a DSL (or simplified) query on `repo`, returning the matching UUIDs.
 fn query_uuids(
     ctx: &Ctx,
@@ -377,29 +442,6 @@ fn baseline(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> 
         Err(CliError::Op(_)) => Ok(None),
         Err(e) => Err(e),
     }
-}
-
-/// A record's `mfr_path` for prompt display (best-effort).
-fn record_path(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Option<String> {
-    let m = ctx
-        .client
-        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[])
-        .ok()?;
-    m["fields"].as_array()?.iter().find_map(|f| {
-        (f["name"] == "mfr_path").then(|| f["value"]["value"]["name"].as_str().map(String::from))?
-    })
-}
-
-/// A y/N prompt on stderr; a non-TTY (EOF) reads as "no".
-fn prompt(message: &str) -> Result<bool, CliError> {
-    eprint!("{message}");
-    std::io::stderr().flush().ok();
-    let mut answer = String::new();
-    std::io::stdin()
-        .read_line(&mut answer)
-        .map_err(|e| CliError::Op(format!("cannot read the prompt reply: {e}")))?;
-    let answer = answer.trim().to_ascii_lowercase();
-    Ok(answer == "y" || answer == "yes")
 }
 
 /// Aborts unless both repos report the same schema.

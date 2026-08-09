@@ -20,7 +20,6 @@ pub mod schema;
 pub mod similarity;
 pub mod state;
 pub mod sync;
-pub mod sync_match;
 pub mod tasks;
 pub mod tree_cache;
 pub mod watcher;
