@@ -2225,3 +2225,28 @@ fn test_sync_run_propagates_deletion() {
     let status = mf(&["sync", "status", &a, &b]);
     assert!(status.stderr.contains("no links") || status.stdout.trim().is_empty(), "link removed");
 }
+
+#[test]
+fn test_sync_run_resync_propagates_field() {
+    // First sync links the pair and commits a snapshot; then a field added on A
+    // propagates to B on the next plan+run (re-sync direction).
+    let a = tracked_repo("rerun_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("rerun_b", &[("doc.txt", b"x")]);
+    let intents = write_intents("rerun", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // Add a field on A, re-plan, re-run.
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // B's record now carries tag=jazz.
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let got = mf(&["-u", &b, "metarecord", "-i", &xb, "get", "--select", "*"]);
+    assert_ok(&got);
+    let m: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let tag = m[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "tag");
+    assert_eq!(tag.and_then(|f| f["value"]["value"].as_str()), Some("jazz"), "tag propagated: {}", got.stdout);
+}

@@ -18,6 +18,9 @@ use crate::trash::{Reason, TrashDir};
 use super::plan::{check_schemas_identical, find_repo_by_name, mfr_path_of, record_at_path, syncable_fields};
 use super::{canonical_pair, resolve_pair};
 
+/// A record's (or snapshot's) fields as value multisets keyed by name.
+type ByName = std::collections::HashMap<String, Vec<Json>>;
+
 /// Runs `mf sync run`.
 pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliError> {
     let (pos_a, pos_b) = resolve_pair(ctx, repo_a, repo_b)?;
@@ -182,31 +185,156 @@ fn exec_create_link(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
 /// Propagates a link's metadata: for a first sync (one bare endpoint), the source
 /// side's syncable fields plus its translated `mfr_path`. Re-sync direction and
 /// conflict application layer on next.
-fn exec_sync(ctx: &Ctx, op: &Op, _ops: &[Op]) -> Result<Outcome, CliError> {
-    let (src_repo, src_rec, tgt_repo, tgt_rec) = match (op.ver_a, op.ver_b) {
-        (Some(_), None) => (op.a, op.rec_a, op.b, op.rec_b),
-        (None, Some(_)) => (op.b, op.rec_b, op.a, op.rec_a),
-        // Re-sync of two existing records: full direction/conflict handling is a
-        // follow-up; skip for now rather than propagate wrongly.
-        (Some(_), Some(_)) => return Ok(Outcome::Skipped("re-sync propagation not yet implemented".into())),
-        (None, None) => return Ok(Outcome::Skipped("both endpoints bare".into())),
-    };
+fn exec_sync(ctx: &Ctx, op: &Op, ops: &[Op]) -> Result<Outcome, CliError> {
     if let Some(why) = stale(ctx, op)? {
         return Ok(Outcome::Skipped(why));
     }
+    match (op.ver_a, op.ver_b) {
+        // First sync: one endpoint is bare → propagate the source wholesale and
+        // place the record at its translated path.
+        (Some(_), None) => sync_bare(ctx, op.a, op.rec_a, op.b, op.rec_b),
+        (None, Some(_)) => sync_bare(ctx, op.b, op.rec_b, op.a, op.rec_a),
+        // Re-sync: three-way diff, per-field direction, conflicts by plan_resolve.
+        (Some(_), Some(_)) => sync_resync(ctx, op, ops),
+        (None, None) => Ok(Outcome::Skipped("both endpoints bare".into())),
+    }
+}
 
-    // Propagate the source's syncable scalar/mf_* fields (refs deferred).
+/// First-sync propagation: the source's syncable (non-ref) fields plus its
+/// translated `mfr_path` onto the bare target.
+fn sync_bare(ctx: &Ctx, src_repo: Uuid, src_rec: Uuid, tgt_repo: Uuid, tgt_rec: Uuid) -> Result<Outcome, CliError> {
     for (name, value) in syncable_fields(ctx, src_repo, src_rec)? {
         if value["type"] == "ref" {
             continue; // TODO: ref translation at run
         }
         put_field(ctx, tgt_repo, tgt_rec, &name, &value, None)?;
     }
-    // Place the record: write its translated mfr_path (so the file can arrive).
     if let Some(tree) = translate_mfr_path(ctx, src_repo, tgt_repo, src_rec)? {
         put_field(ctx, tgt_repo, tgt_rec, "mfr_path", &tree, None)?;
     }
     Ok(Outcome::Done)
+}
+
+/// Re-sync propagation: three-way diff of the two existing records against the
+/// link's snapshot. A one-sided change propagates; a both-sided change is a
+/// conflict resolved by the link's `conflict` op (`plan_resolve`). Refs deferred.
+fn sync_resync(ctx: &Ctx, op: &Op, ops: &[Op]) -> Result<Outcome, CliError> {
+    let (snap_a, snap_b) = link_snapshot(ctx, op.a, op.b, op.rec_a, op.rec_b)?;
+    let by_a = scalar_by_name(ctx, op.a, op.rec_a)?;
+    let by_b = scalar_by_name(ctx, op.b, op.rec_b)?;
+
+    let mut names: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+    names.extend(by_a.keys());
+    names.extend(by_b.keys());
+    for name in names {
+        let av = by_a.get(name);
+        let bv = by_b.get(name);
+        if av == bv {
+            continue;
+        }
+        let a_changed = av != snap_a.get(name);
+        let b_changed = bv != snap_b.get(name);
+        if a_changed && b_changed {
+            match conflict_resolve(ops, op.rec_a, op.rec_b, name).as_deref() {
+                Some("a") => set_field_multi(ctx, op.b, op.rec_b, name, av)?,
+                Some("b") => set_field_multi(ctx, op.a, op.rec_a, name, bv)?,
+                _ => {} // skip
+            }
+        } else if a_changed {
+            set_field_multi(ctx, op.b, op.rec_b, name, av)?;
+        } else {
+            set_field_multi(ctx, op.a, op.rec_a, name, bv)?;
+        }
+    }
+    Ok(Outcome::Done)
+}
+
+/// A record's syncable fields by name, excluding refs (translation deferred).
+fn scalar_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<ByName, CliError> {
+    let mut map = super::plan::syncable_by_name(ctx, repo, record)?;
+    map.retain(|_, values| values.iter().all(|v| v["type"] != "ref"));
+    Ok(map)
+}
+
+/// The link's snapshot as A- and B-perspective (non-ref) value multisets by name.
+fn link_snapshot(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    rec_a: Uuid,
+    rec_b: Uuid,
+) -> Result<(ByName, ByName), CliError> {
+    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
+    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let link = links["links"].as_array().and_then(|ls| {
+        ls.iter().find(|l| {
+            l["record_a"].as_str() == Some(&rec_a.as_simple().to_string())
+                && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
+        })
+    });
+    let (mut sa, mut sb): (ByName, ByName) =
+        Default::default();
+    if let Some(uuid) = link.and_then(|l| l["uuid"].as_str()) {
+        let body = ctx.client.get(&format!("{prefix}/links/{uuid}"), &[])?;
+        for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
+            let Some(name) = e["name"].as_str() else { continue };
+            if e["value"]["type"] == "ref" || name.starts_with("mfr_") {
+                continue;
+            }
+            sa.entry(name.to_string()).or_default().push(e["value"].clone());
+            sb.entry(name.to_string()).or_default().push(e["value"].clone());
+        }
+    }
+    for v in sa.values_mut() {
+        v.sort_by_key(|x| x.to_string());
+    }
+    for v in sb.values_mut() {
+        v.sort_by_key(|x| x.to_string());
+    }
+    Ok((sa, sb))
+}
+
+/// The `plan_resolve` of the `conflict` op for `(rec_a, rec_b, field)`, if any.
+fn conflict_resolve(ops: &[Op], rec_a: Uuid, rec_b: Uuid, field: &str) -> Option<String> {
+    ops.iter()
+        .find(|o| {
+            o.kind == "conflict"
+                && o.rec_a == rec_a
+                && o.rec_b == rec_b
+                && o.field.as_deref() == Some(field)
+        })
+        .and_then(|o| o.resolve.clone())
+}
+
+/// Sets a record's `name` field to the value multiset `values` (`None`/empty →
+/// unset): replace with the first value, then append the rest.
+fn set_field_multi(
+    ctx: &Ctx,
+    repo: Uuid,
+    record: Uuid,
+    name: &str,
+    values: Option<&Vec<Json>>,
+) -> Result<(), CliError> {
+    match values.filter(|v| !v.is_empty()) {
+        None => {
+            ctx.client.request(
+                "DELETE",
+                &format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name),
+                &[],
+                None,
+            )?;
+        }
+        Some(vals) => {
+            put_field(ctx, repo, record, name, &vals[0], None)?;
+            for v in &vals[1..] {
+                ctx.client.post(
+                    &format!("/repos/{}/metarecords/{}/fields", repo.as_simple(), record.as_simple()),
+                    &json!({"name": name, "value": v, "force": true}),
+                )?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Transfers a file's content from the `plan_from` side to the other, routing any

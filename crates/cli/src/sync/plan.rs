@@ -435,7 +435,7 @@ fn existing_syncable(ctx: &Ctx, side: &Side) -> Result<HashMap<String, Vec<Json>
 }
 
 /// A record's syncable fields grouped by name into a sorted value multiset.
-fn syncable_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<HashMap<String, Vec<Json>>, CliError> {
+pub(crate) fn syncable_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<HashMap<String, Vec<Json>>, CliError> {
     let mut map: HashMap<String, Vec<Json>> = HashMap::new();
     for (name, value) in syncable_fields(ctx, repo, record)? {
         map.entry(name).or_default().push(value);
