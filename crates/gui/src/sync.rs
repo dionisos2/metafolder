@@ -270,6 +270,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn gui_prompter_is_non_interactive() {
+        let p = GuiPrompter::default();
+        // Conflicts are left unresolved (skip) for `plan_resolve` editing.
+        assert_eq!(p.resolve_conflict("field", Uuid::nil(), Uuid::nil()).unwrap(), "skip");
+        // The run confirmation is implicit — the panel already confirmed.
+        assert!(p.confirm("run 5 operation(s)?").unwrap());
+        // Warnings are collected for the panel rather than printed.
+        p.warn("first");
+        p.warn("second");
+        assert_eq!(p.warnings.into_inner().unwrap(), vec!["first", "second"]);
+    }
+
+    #[test]
     fn plan_json_shape() {
         let uuid = Uuid::from_bytes([0xab; 16]);
         let v = plan_json(PlanReport { plan_uuid: uuid, operations: 3 }, vec!["w".into()]);

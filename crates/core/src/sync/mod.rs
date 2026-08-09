@@ -266,6 +266,266 @@ pub fn unlink(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    /// A prompter that never interacts (for op tests that never hit a prompt).
+    struct NoopPrompter;
+    impl Prompter for NoopPrompter {
+        fn resolve_conflict(&self, _: &str, _: Uuid, _: Uuid) -> Result<String, SyncError> {
+            Ok("skip".into())
+        }
+        fn confirm(&self, _: &str) -> Result<bool, SyncError> {
+            Ok(true)
+        }
+        fn warn(&self, _: &str) {}
+    }
+
+    /// A recorded outgoing request.
+    #[derive(Clone)]
+    struct RecordedCall {
+        method: String,
+        path: String,
+        query: Vec<(String, String)>,
+        body: Option<Json>,
+    }
+
+    /// Answers a request from its `(method, path)` — the mock's response source.
+    type Responder = Box<dyn Fn(&str, &str) -> Result<Json, SyncError>>;
+
+    /// A `DaemonClient` that records every request and answers from a closure.
+    struct MockClient {
+        calls: RefCell<Vec<RecordedCall>>,
+        responder: Responder,
+    }
+
+    impl MockClient {
+        fn new(responder: impl Fn(&str, &str) -> Result<Json, SyncError> + 'static) -> Self {
+            Self { calls: RefCell::new(Vec::new()), responder: Box::new(responder) }
+        }
+        fn calls(&self) -> Vec<RecordedCall> {
+            self.calls.borrow().clone()
+        }
+    }
+
+    impl DaemonClient for MockClient {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            query: &[(&str, String)],
+            body: Option<&Json>,
+        ) -> Result<Json, SyncError> {
+            self.calls.borrow_mut().push(RecordedCall {
+                method: method.to_string(),
+                path: path.to_string(),
+                query: query.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(),
+                body: body.cloned(),
+            });
+            (self.responder)(method, path)
+        }
+    }
+
+    fn ctx<'a>(client: &'a MockClient, prompter: &'a NoopPrompter) -> SyncCtx<'a> {
+        SyncCtx { client, prompter, page_size: 500 }
+    }
+
+    /// The all-zero UUID sorts before the all-ff UUID, so `lo` is canonical A.
+    fn lo() -> Uuid {
+        Uuid::from_bytes([0x00; 16])
+    }
+    fn hi() -> Uuid {
+        Uuid::from_bytes([0xff; 16])
+    }
+
+    #[test]
+    fn resolve_repo_passes_through_a_uuid_without_a_request() {
+        let client = MockClient::new(|_, _| panic!("no request expected for a UUID selector"));
+        let prompter = NoopPrompter;
+        let c = ctx(&client, &prompter);
+        assert_eq!(c.resolve_repo(&lo().as_simple().to_string()).unwrap(), lo());
+        assert!(client.calls().is_empty());
+    }
+
+    #[test]
+    fn resolve_repo_maps_a_unique_name_via_get_repos() {
+        let u = Uuid::from_bytes([0x11; 16]);
+        let client = MockClient::new(move |_, path| {
+            assert_eq!(path, "/repos");
+            Ok(json!([{ "name": "music", "repo_uuid": u.as_simple().to_string() }]))
+        });
+        let prompter = NoopPrompter;
+        assert_eq!(ctx(&client, &prompter).resolve_repo("music").unwrap(), u);
+    }
+
+    #[test]
+    fn resolve_repo_rejects_missing_and_ambiguous_names() {
+        let dup = json!([
+            { "name": "dup", "repo_uuid": Uuid::from_bytes([1; 16]).as_simple().to_string() },
+            { "name": "dup", "repo_uuid": Uuid::from_bytes([2; 16]).as_simple().to_string() },
+        ]);
+        let client = MockClient::new(move |_, _| Ok(dup.clone()));
+        let prompter = NoopPrompter;
+        let c = ctx(&client, &prompter);
+        assert!(matches!(c.resolve_repo("nope"), Err(SyncError::Op(_))));
+        let err = c.resolve_repo("dup").unwrap_err();
+        assert!(err.message().contains("several"), "{}", err.message());
+    }
+
+    #[test]
+    fn resolve_pair_rejects_a_self_pair() {
+        let client = MockClient::new(|_, _| Ok(Json::Null));
+        let prompter = NoopPrompter;
+        let sel = lo().as_simple().to_string();
+        let err = resolve_pair(&ctx(&client, &prompter), &sel, &sel).unwrap_err();
+        assert!(err.is_usage());
+        assert!(err.message().contains("must differ"));
+    }
+
+    /// Extracts the single recorded `POST …/links` body.
+    fn link_body(calls: &[RecordedCall]) -> Json {
+        calls
+            .iter()
+            .find(|c| c.method == "POST" && c.path.ends_with("/links"))
+            .and_then(|c| c.body.clone())
+            .expect("a POST /links call")
+    }
+
+    #[test]
+    fn link_keeps_canonical_roles_when_repo_a_is_canonical_a() {
+        let rec_x = Uuid::from_bytes([0xaa; 16]);
+        let rec_y = Uuid::from_bytes([0xbb; 16]);
+        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let prompter = NoopPrompter;
+        // repo_a = lo (canonical A): positional order is already canonical.
+        link(
+            &ctx(&client, &prompter),
+            &lo().as_simple().to_string(),
+            &hi().as_simple().to_string(),
+            &rec_x.as_simple().to_string(),
+            &rec_y.as_simple().to_string(),
+            None,
+        )
+        .unwrap();
+        let body = link_body(&client.calls());
+        assert_eq!(body["record_a"], rec_x.as_simple().to_string());
+        assert_eq!(body["record_b"], rec_y.as_simple().to_string());
+        assert!(body.get("host").is_none());
+    }
+
+    #[test]
+    fn link_swaps_roles_when_repo_a_is_canonical_b() {
+        let rec_x = Uuid::from_bytes([0xaa; 16]);
+        let rec_y = Uuid::from_bytes([0xbb; 16]);
+        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let prompter = NoopPrompter;
+        // repo_a = hi (canonical B): uuid_a is the B record, uuid_b the A record.
+        link(
+            &ctx(&client, &prompter),
+            &hi().as_simple().to_string(),
+            &lo().as_simple().to_string(),
+            &rec_x.as_simple().to_string(),
+            &rec_y.as_simple().to_string(),
+            None,
+        )
+        .unwrap();
+        let body = link_body(&client.calls());
+        assert_eq!(body["record_a"], rec_y.as_simple().to_string(), "uuid_b is canonical A");
+        assert_eq!(body["record_b"], rec_x.as_simple().to_string(), "uuid_a is canonical B");
+    }
+
+    #[test]
+    fn link_includes_a_resolved_host() {
+        let host = Uuid::from_bytes([0xcc; 16]);
+        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let prompter = NoopPrompter;
+        link(
+            &ctx(&client, &prompter),
+            &lo().as_simple().to_string(),
+            &hi().as_simple().to_string(),
+            &Uuid::from_bytes([0xaa; 16]).as_simple().to_string(),
+            &Uuid::from_bytes([0xbb; 16]).as_simple().to_string(),
+            Some(&host.as_simple().to_string()),
+        )
+        .unwrap();
+        assert_eq!(link_body(&client.calls())["host"], host.as_simple().to_string());
+    }
+
+    #[test]
+    fn unlink_translates_the_positional_endpoint_side() {
+        let link_uuid = Uuid::from_bytes([9; 16]);
+        // repo_a = hi (canonical B): a positional "a" endpoint is canonical "b".
+        let client = MockClient::new(|_, _| Ok(Json::Null));
+        let prompter = NoopPrompter;
+        unlink(
+            &ctx(&client, &prompter),
+            &hi().as_simple().to_string(),
+            &lo().as_simple().to_string(),
+            &link_uuid.as_simple().to_string(),
+            Some("a"),
+        )
+        .unwrap();
+        let calls = client.calls();
+        let del = calls.iter().find(|c| c.method == "DELETE").expect("a DELETE call");
+        assert_eq!(del.query, vec![("with_endpoint".to_string(), "b".to_string())]);
+    }
+
+    #[test]
+    fn show_reports_no_plan_when_the_pair_has_no_plan_repo() {
+        // `GET /repos?all=true` lists no `plan-<a>-<b>` repo for the pair.
+        let client = MockClient::new(|_, path| {
+            assert_eq!(path, "/repos");
+            Ok(json!([]))
+        });
+        let prompter = NoopPrompter;
+        let report = crate::sync::run::show(
+            &ctx(&client, &prompter),
+            &lo().as_simple().to_string(),
+            &hi().as_simple().to_string(),
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(report, crate::sync::run::ShowReport::NoPlan));
+    }
+
+    #[test]
+    fn show_reports_empty_when_the_plan_repo_has_no_ops() {
+        let plan = Uuid::from_bytes([0x5a; 16]);
+        let name = format!("plan-{}-{}", lo().as_simple(), hi().as_simple());
+        let client = MockClient::new(move |method, path| {
+            if path == "/repos" {
+                return Ok(json!([{ "name": name, "repo_uuid": plan.as_simple().to_string() }]));
+            }
+            if method == "POST" && path.contains("/query") {
+                return Ok(json!({ "results": [] }));
+            }
+            panic!("unexpected {method} {path}");
+        });
+        let prompter = NoopPrompter;
+        let report = crate::sync::run::show(
+            &ctx(&client, &prompter),
+            &lo().as_simple().to_string(),
+            &hi().as_simple().to_string(),
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(matches!(report, crate::sync::run::ShowReport::Empty));
+    }
+
+    #[test]
+    fn status_returns_the_raw_status_body() {
+        let body = json!({ "links": [{ "uuid": "x", "state": "never_synced" }] });
+        let expected = body.clone();
+        let client = MockClient::new(move |method, path| {
+            assert_eq!(method, "GET");
+            assert!(path.ends_with("/status"), "path = {path}");
+            Ok(body.clone())
+        });
+        let prompter = NoopPrompter;
+        let got = status(&ctx(&client, &prompter), &lo().as_simple().to_string(), &hi().as_simple().to_string()).unwrap();
+        assert_eq!(got, expected);
+    }
 
     #[test]
     fn canonical_pair_orders_by_uuid_bytes() {

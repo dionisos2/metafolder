@@ -923,3 +923,35 @@ fn extref(fields: &[Json], name: &str) -> Option<(Uuid, Uuid)> {
     let record = Uuid::parse_str(v["metarecord"].as_str()?).ok()?;
     Some((repo, record))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::aggregate_divergences;
+
+    #[test]
+    fn aggregate_divergences_is_empty_for_no_paths() {
+        assert!(aggregate_divergences(&[]).is_empty());
+    }
+
+    #[test]
+    fn aggregate_divergences_groups_by_top_level_subtree_and_sorts() {
+        let paths = vec![
+            "/photos/2020/a.jpg".to_string(),
+            "photos/2021/b.jpg".to_string(), // leading slash is optional
+            "/docs/readme.md".to_string(),
+        ];
+        // Two under /photos (leading slash normalised), one under /docs; sorted.
+        assert_eq!(
+            aggregate_divergences(&paths),
+            vec![("/docs".to_string(), 1), ("/photos".to_string(), 2)],
+        );
+    }
+
+    #[test]
+    fn aggregate_divergences_uses_the_first_component_as_the_subtree() {
+        // A single-component path is its own subtree (not lumped under "/").
+        assert_eq!(aggregate_divergences(&["/loose".to_string()]), vec![("/loose".to_string(), 1)]);
+        // A bare "/" (or "") degenerates to the "/" subtree.
+        assert_eq!(aggregate_divergences(&["/".to_string()]), vec![("/".to_string(), 1)]);
+    }
+}
