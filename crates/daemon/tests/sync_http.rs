@@ -282,3 +282,49 @@ async fn test_delete_link_with_endpoint_deletes_record_first() {
     let (status, _) = request(&app, "GET", &format!("/repos/{a}/metarecords/{ra}"), None).await;
     assert_eq!(status, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn test_mf_sync_endpoint() {
+    let app = app();
+    let (a, _ar) = init_repo(&app, "mfsync").await;
+    let root = root_uuid_of(&app, &a).await;
+
+    // A directory marked mf_sync = external, and a file under it.
+    let dir = create(
+        &app,
+        &a,
+        json!([
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": root, "name": "ext"}}},
+            {"name": "mf_sync", "value": {"type": "string", "value": "external"}}
+        ]),
+    )
+    .await["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let file = create(
+        &app,
+        &a,
+        json!([{"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": dir, "name": "f.txt"}}}]),
+    )
+    .await["uuid"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // The file inherits external; a bare record (no mfr_path) is internal.
+    let (status, body) = request(&app, "GET", &format!("/repos/{a}/metarecords/{file}/mf-sync"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["mf_sync"], "external");
+
+    let bare = create(&app, &a, json!([{"name": "tag", "value": {"type": "string", "value": "x"}}])).await
+        ["uuid"].as_str().unwrap().to_string();
+    let (_, body) = request(&app, "GET", &format!("/repos/{a}/metarecords/{bare}/mf-sync"), None).await;
+    assert_eq!(body["mf_sync"], "internal");
+}
+
+/// The mfr_path forest root uuid of a repo.
+async fn root_uuid_of(app: &Router, repo: &str) -> String {
+    let (_, body) = request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    body[0]["uuid"].as_str().unwrap().to_string()
+}

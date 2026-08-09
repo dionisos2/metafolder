@@ -54,6 +54,7 @@ pub fn build(state: Arc<AppState>) -> Router {
             "/repos/:repo/metarecords/:uuid/fields/:name/resolve-tree",
             get(resolve_record_field_tree),
         )
+        .route("/repos/:repo/metarecords/:uuid/mf-sync", get(get_record_mf_sync))
         .route(
             "/repos/:repo/fields/:id",
             get(get_field_by_id).patch(patch_field_by_id).delete(delete_field_by_id),
@@ -200,6 +201,34 @@ async fn resolve_record_field_tree(
         let mut cache = repo_state.lock_cache();
         let paths = cache.paths_of(&conn, &name, uuid)?;
         Ok(Json(json!({ "paths": paths })))
+    })
+    .await
+}
+
+/// `GET /repos/:repo/metarecords/:uuid/mf-sync`: the record's effective
+/// `mf_sync` mode (spec-sync) — `external` when an external tool owns its
+/// content, else `internal`. Resolved from the record's `mfr_path` position
+/// (inherited like `mf_watch`); a record with no `mfr_path` is `internal`.
+async fn get_record_mf_sync(
+    State(state): State<Arc<AppState>>,
+    Path((repo, uuid)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let uuid = parse_uuid(&uuid)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let paths = cache.paths_of(&conn, "mfr_path", uuid)?;
+        let mode = match paths.first() {
+            // `paths_of` omits the leading slash; `resolve_mf_sync` (eligibility)
+            // wants it (`""` = root, `/a/b` = nested).
+            Some(p) => {
+                let rel = if p.is_empty() { String::new() } else { format!("/{p}") };
+                crate::eligibility::resolve_mf_sync(&conn, &mut cache, &rel)?
+            }
+            None => "internal".to_string(),
+        };
+        Ok(Json(json!({ "mf_sync": mode })))
     })
     .await
 }
