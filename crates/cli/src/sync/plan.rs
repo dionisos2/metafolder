@@ -117,7 +117,7 @@ fn linking_phase(
     // Pass 1 — from A into B.
     let mut scope_a_v: Vec<Uuid> = scope_a.iter().copied().collect();
     scope_a_v.sort();
-    for rec_a in scope_a_v {
+    for &rec_a in &scope_a_v {
         if linked_a.contains(&rec_a) || planned_a.contains(&rec_a) {
             continue;
         }
@@ -137,7 +137,7 @@ fn linking_phase(
     // Pass 2 — from B into A (records not already used as a Pass-1 target).
     let mut scope_b_v: Vec<Uuid> = scope_b.iter().copied().collect();
     scope_b_v.sort();
-    for rec_b in scope_b_v {
+    for &rec_b in &scope_b_v {
         if linked_b.contains(&rec_b) || planned_b.contains(&rec_b) {
             continue;
         }
@@ -152,6 +152,36 @@ fn linking_phase(
         };
         planned_b.insert(rec_b);
         creates.push((side_a, side_b));
+    }
+
+    // Referential closure (spec-sync): every in-scope, to-be-synced record's
+    // `ref` targets must be translatable. A target that is out of scope, has no
+    // TreeRef identity, and is not yet linked is materialised on the other side
+    // (bare + link) — the link is the only memory of the correspondence. Identity
+    // targets need nothing here: the run resolves them by path at translation.
+    for &rec in &scope_a_v {
+        if !(linked_a.contains(&rec) || planned_a.contains(&rec)) {
+            continue; // skipped record → not synced
+        }
+        for y in ref_targets(ctx, a, rec)? {
+            if linked_a.contains(&y) || planned_a.contains(&y) || !identity_paths(ctx, a, y)?.is_empty() {
+                continue;
+            }
+            creates.push((existing_side(ctx, a, y)?, bare_side(b)));
+            planned_a.insert(y);
+        }
+    }
+    for &rec in &scope_b_v {
+        if !(linked_b.contains(&rec) || planned_b.contains(&rec)) {
+            continue;
+        }
+        for y in ref_targets(ctx, b, rec)? {
+            if linked_b.contains(&y) || planned_b.contains(&y) || !identity_paths(ctx, b, y)?.is_empty() {
+                continue;
+            }
+            creates.push((bare_side(a), existing_side(ctx, b, y)?));
+            planned_b.insert(y);
+        }
     }
 
     // Drops: links whose neither endpoint remains in scope.
@@ -269,6 +299,25 @@ fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, St
         for p in resp["paths"].as_array().cloned().unwrap_or_default() {
             if let Some(path) = p.as_str() {
                 out.push((field.clone(), path.to_string()));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The target UUIDs of a record's `ref`-valued fields (for referential closure).
+fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    let mut out = Vec::new();
+    for f in m["fields"].as_array().cloned().unwrap_or_default() {
+        if f["value"]["type"] == "ref" {
+            if let Some(u) = f["value"]["value"].as_str().and_then(|s| Uuid::parse_str(s).ok()) {
+                if !out.contains(&u) {
+                    out.push(u);
+                }
             }
         }
     }

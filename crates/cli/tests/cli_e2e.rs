@@ -1841,3 +1841,35 @@ fn test_sync_plan_no_match_allocates_bare_record() {
         "existing side keeps its baseline: {op}"
     );
 }
+
+#[test]
+fn test_sync_plan_closes_over_no_identity_ref_target() {
+    // A file X (in scope) refs an abstract, out-of-scope, identity-less record.
+    let a = tracked_repo("clos_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("clos_b", &[("doc.txt", b"y")]);
+    let x = query_one(&a, "mfr_path = \"doc.txt\"");
+    let person = create_metarecord(&a, &["name:string=alice"]); // no tree_ref → no identity
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", &format!("author:ref={person}")]));
+
+    // Scope selects files only → `person` is out of scope.
+    let intents = write_intents("clos", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    // Two links: X↔X_B (by path) and person↔bare (referential closure).
+    assert!(out.stdout.contains("operations: 2"), "expected 2 ops: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let ops = ops.as_array().unwrap();
+    assert_eq!(ops.len(), 2);
+    // One op links `person` to a freshly allocated bare record.
+    let person_op = ops
+        .iter()
+        .find(|o| op_endpoints(o).contains(&person))
+        .expect("a link for the referenced record");
+    let endpoints = op_endpoints(person_op);
+    let bare = endpoints.iter().find(|u| **u != person).expect("bare counterpart");
+    assert!(is_hex_uuid(bare) && *bare != person);
+}
