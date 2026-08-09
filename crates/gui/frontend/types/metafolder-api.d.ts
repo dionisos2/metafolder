@@ -210,6 +210,50 @@ declare namespace Metafolder {
     append(repo: string, zone: string, entry: string): Promise<void>;
   }
 
+  /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
+   *  orchestration, driven through the sync Tauri commands. Repos are named
+   *  positionally (name or UUID), order-independent. `plan`/`run` run
+   *  non-interactively — conflicts are left unresolved for `plan_resolve`
+   *  editing in the plan repo. */
+  interface Sync {
+    /** The raw `/status` body: `{ links: [{ uuid, state }, …] }`. */
+    status(repoA: string, repoB: string): Promise<Record<string, unknown>>;
+    /** Links two records; returns the new link UUID. */
+    link(
+      repoA: string,
+      repoB: string,
+      uuidA: string,
+      uuidB: string,
+      host?: string,
+    ): Promise<{ uuid: string }>;
+    /** Removes a link (optionally deleting endpoint `a`/`b` first). */
+    unlink(
+      repoA: string,
+      repoB: string,
+      link: string,
+      withEndpoint?: string,
+    ): Promise<{ uuid: string }>;
+    /** Recomputes the plan from an intents file; returns the plan repo UUID,
+     *  the op count and any warnings. */
+    plan(
+      repoA: string,
+      repoB: string,
+      intentsPath: string,
+      host?: string,
+      onConflict?: string,
+    ): Promise<{ plan_uuid: string; operations: number; warnings: string[] }>;
+    /** Executes the plan (always confirmed): `{ status, done, skipped,
+     *  divergences, warnings }`. */
+    run(repoA: string, repoB: string): Promise<Record<string, unknown>>;
+    /** The live red/green overlay of the current plan. */
+    show(
+      repoA: string,
+      repoB: string,
+      conflicts: boolean,
+      files: boolean,
+    ): Promise<Record<string, unknown>>;
+  }
+
   interface StatusBar {
     message(text: string, timeoutMs?: number | null): Promise<void>;
     /** Accepts an Error or anything stringifiable. */
@@ -270,6 +314,7 @@ declare namespace Metafolder {
     ): Promise<unknown>;
     readonly fs: Fs;
     readonly trash: Trash;
+    readonly sync: Sync;
     readonly history: History;
     readonly statusBar: StatusBar;
     readonly messages: Messages;

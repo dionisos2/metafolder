@@ -38,6 +38,52 @@ function setup() {
   return { instance, api, invoke, dispatch, registerHandler, onCommandsChanged, addDefaultMenuItems, visibilityGate };
 }
 
+describe('panel api — sync', () => {
+  test('each sync method maps to its Tauri command with the right args', async () => {
+    const { api, invoke } = setup();
+
+    await api.sync.status('a', 'b');
+    expect(invoke).toHaveBeenCalledWith('sync_status', { repoA: 'a', repoB: 'b' });
+
+    await api.sync.link('a', 'b', 'ua', 'ub', 'a');
+    expect(invoke).toHaveBeenCalledWith('sync_link', {
+      repoA: 'a',
+      repoB: 'b',
+      uuidA: 'ua',
+      uuidB: 'ub',
+      host: 'a',
+    });
+
+    await api.sync.unlink('a', 'b', 'lnk');
+    expect(invoke).toHaveBeenCalledWith('sync_unlink', {
+      repoA: 'a',
+      repoB: 'b',
+      link: 'lnk',
+      withEndpoint: undefined,
+    });
+
+    await api.sync.plan('a', 'b', '/tmp/intents.toml', undefined, 'skip');
+    expect(invoke).toHaveBeenCalledWith('sync_plan', {
+      repoA: 'a',
+      repoB: 'b',
+      intentsPath: '/tmp/intents.toml',
+      host: undefined,
+      onConflict: 'skip',
+    });
+
+    await api.sync.run('a', 'b');
+    expect(invoke).toHaveBeenCalledWith('sync_run', { repoA: 'a', repoB: 'b' });
+
+    await api.sync.show('a', 'b', true, false);
+    expect(invoke).toHaveBeenCalledWith('sync_show', {
+      repoA: 'a',
+      repoB: 'b',
+      conflicts: true,
+      files: false,
+    });
+  });
+});
+
 describe('panel api — identity', () => {
   test('exposes the panel context via getters', () => {
     const { api } = setup();

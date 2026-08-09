@@ -23,6 +23,7 @@ pub mod server;
 pub mod shell_exec;
 pub mod state;
 pub mod style_watcher;
+pub mod sync;
 pub mod thumbnails;
 pub mod trash;
 pub mod undo;
@@ -440,6 +441,12 @@ pub fn run(options: Options) {
             commands::expand_query,
             commands::grammar_source,
             reconcile::reconcile_run,
+            sync::sync_status,
+            sync::sync_link,
+            sync::sync_unlink,
+            sync::sync_plan,
+            sync::sync_run,
+            sync::sync_show,
             trash::trash_list,
             trash::trash_selected_metarecord,
             trash::trash_restore,

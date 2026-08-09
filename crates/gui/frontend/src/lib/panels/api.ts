@@ -383,6 +383,34 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
     },
 
+    /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
+     *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
+     *  non-interactively (conflicts are left for `plan_resolve` editing). */
+    sync: {
+      status: (repoA: string, repoB: string) =>
+        invoke('sync_status', { repoA, repoB }) as Promise<Record<string, unknown>>,
+      link: (repoA: string, repoB: string, uuidA: string, uuidB: string, host?: string) =>
+        invoke('sync_link', { repoA, repoB, uuidA, uuidB, host }) as Promise<{ uuid: string }>,
+      unlink: (repoA: string, repoB: string, link: string, withEndpoint?: string) =>
+        invoke('sync_unlink', { repoA, repoB, link, withEndpoint }) as Promise<{ uuid: string }>,
+      plan: (
+        repoA: string,
+        repoB: string,
+        intentsPath: string,
+        host?: string,
+        onConflict?: string,
+      ) =>
+        invoke('sync_plan', { repoA, repoB, intentsPath, host, onConflict }) as Promise<{
+          plan_uuid: string;
+          operations: number;
+          warnings: string[];
+        }>,
+      run: (repoA: string, repoB: string) =>
+        invoke('sync_run', { repoA, repoB }) as Promise<Record<string, unknown>>,
+      show: (repoA: string, repoB: string, conflicts: boolean, files: boolean) =>
+        invoke('sync_show', { repoA, repoB, conflicts, files }) as Promise<Record<string, unknown>>,
+    },
+
     /** Per-repo input history (spec-gui "Input history") — GUI-side files
      *  under `.metafolder/gui/history/<zone>`; the store behind the shared
      *  `attachHistory` helper (`/__history.js`). */
