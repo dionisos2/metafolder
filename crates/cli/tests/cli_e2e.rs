@@ -2094,3 +2094,32 @@ fn test_sync_plan_move_op_on_diverged_path() {
     assert_eq!(ops.as_array().unwrap().len(), 1, "one move op: {}", got.stdout);
     assert!(op_endpoints(&ops.as_array().unwrap()[0]).contains(&xa));
 }
+
+#[test]
+fn test_sync_plan_delete_op_on_deleted_endpoint() {
+    // A linked record deleted on side A → a delete op removing the surviving B.
+    let a = tracked_repo("del_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("del_b", &[("doc.txt", b"x")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
+    // Delete A's metarecord.
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
+
+    // Scope selects the surviving side (B).
+    let intents = write_intents("del", &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"delete\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let ops = ops.as_array().unwrap();
+    assert_eq!(ops.len(), 1, "one delete op: {}", got.stdout);
+    // plan_side names the surviving side (repo b, where xb lives) in canonical terms.
+    let expect_side = if a < b { "b" } else { "a" };
+    let side = ops[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_side").unwrap();
+    assert_eq!(side["value"]["value"], expect_side);
+    assert!(op_endpoints(&ops[0]).contains(&xb), "references the survivor");
+}

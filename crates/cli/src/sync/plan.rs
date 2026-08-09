@@ -207,22 +207,33 @@ fn linking_phase(
     // scope later includes it again — never dropped. Links with a deleted
     // endpoint are left for deletion propagation (A4), not re-synced here.
     let mut existing: Vec<ExistingLink> = Vec::new();
+    // Deletion propagation: an in-scope link with exactly one endpoint deleted →
+    // a `delete` op removing the *surviving* side (plan_side). Non-destructive:
+    // the run trashes the file and logs the metarecord deletion.
+    let mut deletes: Vec<(Side, Side, &'static str)> = Vec::new();
     for l in &links {
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
             continue;
         }
         let side_a = existing_side(ctx, a, l.record_a)?;
         let side_b = existing_side(ctx, b, l.record_b)?;
-        if side_a.baseline.is_some() && side_b.baseline.is_some() {
-            existing.push(ExistingLink { side_a, side_b, link: l.uuid });
+        match (side_a.baseline.is_some(), side_b.baseline.is_some()) {
+            (true, true) => existing.push(ExistingLink { side_a, side_b, link: l.uuid }),
+            // B was deleted → delete the surviving A; and vice versa.
+            (true, false) => deletes.push((side_a, side_b, "a")),
+            (false, true) => deletes.push((side_a, side_b, "b")),
+            (false, false) => {} // both gone → link cleanup, deferred
         }
     }
 
-    // No incoherence aborted us: commit the link ops.
-    let op_count = creates.len();
+    // No incoherence aborted us: commit the link and delete ops.
+    let op_count = creates.len() + deletes.len();
     let new_links = creates.clone();
     for (sa, sb) in creates {
         write_op(ctx, plan, "create-link", sa, sb)?;
+    }
+    for (sa, sb, side) in deletes {
+        write_delete_op(ctx, plan, sa, sb, side)?;
     }
     Ok(LinkingResult { op_count, new_links, existing })
 }
@@ -868,6 +879,32 @@ fn write_op_from(
     }
     if let Some(f) = from {
         fields.push(json!({"name": "plan_from", "value": {"type": "string", "value": f}}));
+    }
+    ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
+    Ok(())
+}
+
+/// Writes a `delete` op (spec-sync "Metarecord deletion propagation"):
+/// `plan_side` (=a= | =b=) is the surviving side to delete. Non-destructive —
+/// the run trashes the file and the metarecord deletion is logged/rollback-able.
+fn write_delete_op(
+    ctx: &Ctx,
+    plan: &PlanRepo,
+    side_a: Side,
+    side_b: Side,
+    side: &str,
+) -> Result<(), CliError> {
+    let mut fields = vec![
+        json!({"name": "plan_kind", "value": {"type": "string", "value": "delete"}}),
+        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
+        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
+        json!({"name": "plan_side", "value": {"type": "string", "value": side}}),
+    ];
+    if let Some(v) = side_a.baseline {
+        fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
+    }
+    if let Some(v) = side_b.baseline {
+        fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
     }
     ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
     Ok(())
