@@ -447,9 +447,8 @@ fn syncable_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<HashMap<Strin
 }
 
 /// Resolves a conflicting field to a winning side (=a= | =b= | =skip=), by
-/// =--on-conflict=, else the first matching field-scoped =[[conflict]]= rule,
-/// else an interactive prompt (=ask=; a non-TTY reads as =skip=).
-/// (Query-scoped rules are not yet supported.)
+/// =--on-conflict=, else the first matching =[[conflict]]= rule, else an
+/// interactive prompt (=ask=; a non-TTY reads as =skip=).
 #[allow(clippy::too_many_arguments)]
 fn resolve_conflict(
     ctx: &Ctx,
@@ -463,12 +462,7 @@ fn resolve_conflict(
 ) -> Result<String, CliError> {
     let policy = match on_conflict {
         Some(oc) => intents::parse_policy(oc)?,
-        None => intents
-            .conflict
-            .iter()
-            .filter(|r| r.query.is_none() && r.field.as_deref().map(|f| f == field).unwrap_or(true))
-            .find_map(|r| r.parsed_policy().ok())
-            .unwrap_or(intents::Policy::Ask),
+        None => matching_policy(ctx, a, b, side_a, side_b, field, intents)?,
     };
     match policy {
         intents::Policy::Skip => Ok("skip".into()),
@@ -484,6 +478,50 @@ fn resolve_conflict(
         }
         intents::Policy::Ask => Ok(prompt_conflict(field, side_a.record, side_b.record)?),
     }
+}
+
+/// The policy of the first matching `[[conflict]]` rule (spec-sync "Conflict
+/// resolution"), else `Ask`. A rule matches when its `field` (if any) equals the
+/// conflicting field name *and* its `query` (if any) matches either endpoint.
+fn matching_policy(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    side_a: &Side,
+    side_b: &Side,
+    field: &str,
+    intents: &Intents,
+) -> Result<intents::Policy, CliError> {
+    for rule in &intents.conflict {
+        if rule.field.as_deref().is_some_and(|f| f != field) {
+            continue;
+        }
+        if let Some(q) = &rule.query {
+            let hit = record_matches_query(ctx, a, side_a.record, q)?
+                || record_matches_query(ctx, b, side_b.record, q)?;
+            if !hit {
+                continue;
+            }
+        }
+        return rule.parsed_policy();
+    }
+    Ok(intents::Policy::Ask)
+}
+
+/// Whether `record` in `repo` matches the DSL `query` (a conflict rule's
+/// `query`), via `query AND uuid_in([record])`.
+fn record_matches_query(ctx: &Ctx, repo: Uuid, record: Uuid, query: &str) -> Result<bool, CliError> {
+    let ir = dsl::parse_query(query)
+        .map_err(|e| CliError::Usage(format!("invalid [[conflict]] rule query: {e}")))?;
+    let combined = json!({"type": "and", "operands": [
+        serde_json::to_value(&ir).expect("query serialization"),
+        {"type": "uuid_in", "uuids": [record.as_simple().to_string()]},
+    ]});
+    let resp = ctx.client.post(
+        &format!("/repos/{}/query", repo.as_simple()),
+        &json!({"query": combined, "limit": 1}),
+    )?;
+    Ok(resp["results"].as_array().is_some_and(|a| !a.is_empty()))
 }
 
 /// Prompt for a conflicting field; a non-TTY (EOF) resolves to =skip=.

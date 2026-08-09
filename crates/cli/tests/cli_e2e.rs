@@ -2123,3 +2123,34 @@ fn test_sync_plan_delete_op_on_deleted_endpoint() {
     assert_eq!(side["value"]["value"], expect_side);
     assert!(op_endpoints(&ops[0]).contains(&xb), "references the survivor");
 }
+
+#[test]
+fn test_sync_plan_conflict_query_scoped_rule() {
+    // A [[conflict]] rule scoped by a query (matching one endpoint) resolves the
+    // conflict without --on-conflict.
+    let a = tracked_repo("cq_a", &[("doc.txt", b"same")]);
+    let b = tracked_repo("cq_b", &[("doc.txt", b"same")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
+    assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
+
+    // Rule: for records matching `tag = "jazz"` (A's side), prefer repo A.
+    let content = format!(
+        "[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n\n[[conflict]]\nquery = 'tag = \"jazz\"'\npolicy = 'prefer:{a}'\n"
+    );
+    let intents = write_intents("cq", &content);
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let ops = ops.as_array().unwrap();
+    assert_eq!(ops.len(), 1, "one conflict op: {}", got.stdout);
+    // Resolved to repo_a's canonical side (which holds "jazz").
+    let expect_side = if a < b { "a" } else { "b" };
+    let f = |name: &str| ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned();
+    assert_eq!(f("plan_resolve").unwrap()["value"]["value"], expect_side);
+}
