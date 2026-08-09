@@ -301,22 +301,30 @@ a normal metadata conflict resolved at plan time.
 
 *** The metadata diff
 
-=mfr_*= fields are *excluded* from the snapshot, the diff, and propagation,
-with two carve-outs: =mfr_path= (the file's position, synced) and
-=mfr_permissions= (the file's mode). The rest are stat- and content-derived:
-each repo describes its own file (=mfr_size=, =mfr_mtime=, hashes), so
-propagating them would ping-pong forever, and any version bump they cause (a
-stat-only change) is absorbed by the empty-effective-diff rule above.
-=mfr_permissions= *is* synced (constraint: an =internal= file must end up with
-the same mode on both sides): it participates in the diff and is applied to
-the target file by =chmod= — so a mode change propagates even without a
-content change. Ownership (=mfr_uid=/=mfr_gid=) is *not* synced: =chown= needs
-privilege and uid/gid rarely mean the same thing across machines, so owner and
-group stay local. All non-=mfr_= fields — user data, and reserved =mf_*=
-(including =mf_sync=) written with =force= — are propagated as ordinary field
-writes.
+The *field diff* — the compare-and-write mechanism — operates on **user data
+and reserved =mf_*= fields** (=mf_sync= included, written with =force=) only.
+No =mfr_*= field is ever *written*: they are stat- and content-derived, so
+each repo re-derives its own and a write would just ping-pong (a stat-only
+version bump is absorbed by the empty-effective-diff rule above). The =mfr_*=
+values that *can* be made equal are equalized by **disk operations** instead
+(see [[*Content operations]]), each comparing the two endpoints to decide what
+to do:
 
-Fields form a multi-map: the diff compares, per field *name*, the full
+- =mfr_path= → a placement or move;
+- content signatures (=mfr_full_hash=, falling back to =mfr_partial_hash= +
+  =mfr_size=), =mfr_type=, =mfr_symlink_target= → a transfer / mkdir / symlink;
+- =mfr_permissions= → a =chmod= (a mode change equalizes even without a
+  content change).
+
+The signatures need this dedicated comparison, not a naïve per-field diff: a
+hash may be un-computed on one side, which a value diff would read as a change
+and transfer for nothing. The genuinely un-equalizable fields — =mfr_uid=,
+=mfr_gid= (no =chown=: privilege, and uid/gid are not portable), =mfr_mtime=
+(a copy stamps "now"), =mfr_btime= (set by the filesystem at creation) — are
+ignored entirely; owner, group and timestamps stay local. So after a sync a
+linked pair is field-equal in *everything* except those four.
+
+Fields form a multi-map: the field diff compares, per field *name*, the full
 *multiset* of values (after ref translation on the B side). Propagation
 replaces the target's whole row set for that name (set semantics, not
 append). A field name absent on one side and present in the snapshot is a
@@ -332,22 +340,28 @@ immediate conflict, resolved by policy before the first sync-commit.
 
 *** Content operations (=internal= records only)
 
-- *File content*: the stored content signatures (=mfr_full_hash=, falling
-  back to =mfr_partial_hash= + =mfr_size=) of the two endpoints are compared;
-  if they differ, a transfer is planned from the changed side (for a content
-  conflict — both sides changed — the conflict policy chooses the direction,
-  like any conflicting field). A record present on one side only is created
-  on the other (bare metarecord + transfer/mkdir). A transfer that would
-  overwrite existing bytes trashes them first (see [[*Design principles]]).
+These equalize the =mfr_*= values the field diff does not write. Each compares
+the two endpoints and, after the disk operation, the target re-derives the
+field from its own stat — nothing is field-written.
+
+- *File content* (=mfr_full_hash= with =mfr_partial_hash= + =mfr_size=
+  fallback), plus =mfr_type= and =mfr_symlink_target=: if the signatures
+  differ, a transfer / mkdir / symlink is planned from the changed side (for a
+  content conflict — both sides changed — the conflict policy chooses the
+  direction, like any conflicting field). A record present on one side only is
+  created on the other (bare metarecord + transfer/mkdir). A transfer that
+  would overwrite existing bytes trashes them first (see [[*Design principles]]).
 - =mfr_path=: a placement (onto a sync-created record) or a move/rename of a
   linked file or directory. Path operations are applied top-down (parents
   before children); a translated TreeRef whose parent is missing or orphaned
   is rejected by forest validation (=400=), skipped and reported.
+- =mfr_permissions=: a =chmod= to the changed side's mode. Ownership and
+  timestamps (=mfr_uid=/=mfr_gid=/=mfr_mtime=/=mfr_btime=) are never touched.
 
 For an =external= record none of the above runs: no transfer, no
-create/mkdir, no move. Instead, a content or path *difference* between the
-two sides is recorded as an error in the report (the external tool should
-have reconciled it). Metadata still syncs normally.
+create/mkdir, no move, no chmod. Instead, a content, path or mode *difference*
+between the two sides is recorded as an error in the report (the external tool
+should have reconciled it). Metadata still syncs normally.
 
 *Metadata gates the disk.* An =internal= record's file/directory operation is
 performed only *after* its metadata propagation — every field write,
