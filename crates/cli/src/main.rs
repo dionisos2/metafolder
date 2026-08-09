@@ -422,6 +422,14 @@ enum SyncCommand {
         #[arg(long = "on-conflict")]
         on_conflict: Option<String>,
     },
+    /// Execute the current plan (mutating the two repos), then prune succeeded ops
+    Run {
+        repo_a: String,
+        repo_b: String,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
     /// Print the per-link change/conflict states of a repo pair
     Status {
         /// The two repositories (name or UUID; order does not matter)
@@ -706,6 +714,7 @@ fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
             host.as_deref(),
             on_conflict.as_deref(),
         ),
+        SyncCommand::Run { repo_a, repo_b, yes } => sync::run::run(ctx, &repo_a, &repo_b, yes),
         SyncCommand::Status { repo_a, repo_b, json } => {
             sync::status(ctx, &repo_a, &repo_b, json)
         }

@@ -11,6 +11,7 @@
 
 pub mod intents;
 pub mod plan;
+pub mod run;
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;

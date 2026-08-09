@@ -320,7 +320,7 @@ fn needs_move(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError>
 }
 
 /// A record's reconstructed `mfr_path` (its first position), or `None`.
-fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
+pub(crate) fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
     let resp = ctx.client.get(
         &format!("/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree", repo.as_simple(), record.as_simple()),
         &[],
@@ -604,7 +604,7 @@ fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
 /// `mf_*`, and references, but not `mfr_*` and not `tree_ref` positions (those
 /// are handled by placement/move). Refs are compared by local UUID here (a
 /// coarse check: a spurious `sync` op the run finds is empty is harmless).
-fn syncable_fields(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, Json)>, CliError> {
+pub(crate) fn syncable_fields(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, Json)>, CliError> {
     let m = ctx.client.get(
         &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
         &[],
@@ -816,7 +816,7 @@ fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliErro
 /// The record occupying position `path` in `repo`'s `field` forest, via the
 /// exact-path query idiom (=field -> "/parent" AND field = "name"=). The root
 /// (empty path) is resolved through the forest-roots endpoint.
-fn record_at_path(
+pub(crate) fn record_at_path(
     ctx: &Ctx,
     repo: Uuid,
     field: &str,
@@ -1022,7 +1022,7 @@ fn baseline(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> 
 }
 
 /// Aborts unless both repos report the same schema.
-fn check_schemas_identical(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<(), CliError> {
+pub(crate) fn check_schemas_identical(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<(), CliError> {
     let sa = ctx.client.get(&format!("/repos/{}/schema", a.as_simple()), &[])?;
     let sb = ctx.client.get(&format!("/repos/{}/schema", b.as_simple()), &[])?;
     if sa != sb {
@@ -1090,7 +1090,7 @@ fn plan_repo_dir(ctx: &Ctx, host: Uuid, name: &str) -> Result<PathBuf, CliError>
 }
 
 /// The UUID of a loaded repo (system repos included) with the given name.
-fn find_repo_by_name(ctx: &Ctx, name: &str) -> Result<Option<Uuid>, CliError> {
+pub(crate) fn find_repo_by_name(ctx: &Ctx, name: &str) -> Result<Option<Uuid>, CliError> {
     let repos = ctx.client.get("/repos", &[("all", "true".to_string())])?;
     let found = repos
         .as_array()

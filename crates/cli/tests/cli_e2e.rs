@@ -2154,3 +2154,45 @@ fn test_sync_plan_conflict_query_scoped_rule() {
     let f = |name: &str| ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned();
     assert_eq!(f("plan_resolve").unwrap()["value"]["value"], expect_side);
 }
+
+#[test]
+fn test_sync_run_creates_file_in_target() {
+    // plan then run: a file present only in A is materialised in B (record + bytes).
+    let a = tracked_repo("run_a", &[("hello.txt", b"world")]);
+    let b = tracked_repo("run_b", &[]);
+    let intents = write_intents("run", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+
+    let out = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&out);
+
+    // B now has a metarecord at hello.txt …
+    let rec_b = query_one(&b, "mfr_path = \"hello.txt\"");
+    assert!(is_hex_uuid(&rec_b), "B has a record at hello.txt: {rec_b}");
+    // … and the file on disk with the right content.
+    let root_b = repo_root_of(&b);
+    let content = std::fs::read(root_b.join("hello.txt")).expect("file exists in B");
+    assert_eq!(content, b"world", "content transferred");
+
+    // The link is now in sync, and a second run does nothing.
+    let status = mf(&["sync", "status", &a, &b]);
+    assert!(status.stdout.contains("in_sync"), "link in sync: {}", status.stdout);
+    let again = mf(&["sync", "run", &a, &b, "--yes"]);
+    assert_ok(&again);
+    assert!(again.stdout.contains("nothing to run"), "second run is a no-op: {}", again.stdout);
+}
+
+/// The filesystem root of a loaded repo (from `mf repo list`).
+fn repo_root_of(repo: &str) -> PathBuf {
+    let list = mf(&["repo", "list", "--all"]);
+    assert_ok(&list);
+    let repos: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
+    let root = repos
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["repo_uuid"] == repo)
+        .and_then(|r| r["root"].as_str())
+        .expect("repo root");
+    PathBuf::from(root)
+}
