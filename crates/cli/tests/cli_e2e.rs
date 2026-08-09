@@ -2196,3 +2196,32 @@ fn repo_root_of(repo: &str) -> PathBuf {
         .expect("repo root");
     PathBuf::from(root)
 }
+
+#[test]
+fn test_sync_run_propagates_deletion() {
+    // A linked record deleted in A → run trashes B's file and removes B's record
+    // and the link. Nothing is destroyed (the file lands in B's trash).
+    let a = tracked_repo("rundel_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("rundel_b", &[("doc.txt", b"x")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
+
+    let intents = write_intents("rundel", &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // B's record is gone …
+    let got = mf(&["-u", &b, "metarecord", "-i", &xb, "get"]);
+    assert_eq!(got.code, 1, "B's record deleted: {}{}", got.stdout, got.stderr);
+    // … the file is off disk but in the trash (not destroyed) …
+    let root_b = repo_root_of(&b);
+    assert!(!root_b.join("doc.txt").exists(), "file removed from B");
+    let trash = mf(&["-u", &b, "trash", "list"]);
+    assert_ok(&trash);
+    assert!(trash.stdout.contains("sync"), "file is in the trash (reason sync): {}", trash.stdout);
+    // … and the link is gone.
+    let status = mf(&["sync", "status", &a, &b]);
+    assert!(status.stderr.contains("no links") || status.stdout.trim().is_empty(), "link removed");
+}

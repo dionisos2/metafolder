@@ -275,10 +275,48 @@ fn mfr_permissions_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<Stri
     }))
 }
 
-/// Propagates a deletion: trash the surviving file, delete its metarecord and the
-/// link (TODO).
-fn exec_delete(_ctx: &Ctx, _a: Uuid, _b: Uuid, _op: &Op) -> Result<Outcome, CliError> {
-    Ok(Outcome::Skipped("delete execution not yet implemented".into()))
+/// Propagates a deletion (spec-sync, normative order): trash the surviving file,
+/// then delete its metarecord (logged) and the link. Non-destructive.
+fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError> {
+    let side = op.side.as_deref().unwrap_or("");
+    let (repo, record) = match side {
+        "a" => (op.a, op.rec_a),
+        "b" => (op.b, op.rec_b),
+        _ => return Ok(Outcome::Skipped("delete op has no plan_side".into())),
+    };
+    if let Some(why) = stale(ctx, op)? {
+        return Ok(Outcome::Skipped(why));
+    }
+    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
+    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let link_uuid = links["links"].as_array().and_then(|ls| {
+        ls.iter()
+            .find(|l| {
+                l["record_a"].as_str() == Some(&op.rec_a.as_simple().to_string())
+                    && l["record_b"].as_str() == Some(&op.rec_b.as_simple().to_string())
+            })
+            .and_then(|l| l["uuid"].as_str())
+            .map(String::from)
+    });
+    let Some(link_uuid) = link_uuid else {
+        return Ok(Outcome::Skipped("link already gone".into()));
+    };
+    // Trash the surviving file (nothing is destroyed — trash prune is the only
+    // real deleter).
+    if let Some(abs) = abs_path(ctx, repo, record)? {
+        if abs.exists() {
+            target_trash(ctx, repo)?.trash_path(&abs, Reason::Sync, None, None, None)?;
+        }
+    }
+    // Delete the endpoint metarecord (logged/rollbackable) then the link, in one
+    // call (the daemon's normative-order helper).
+    ctx.client.request(
+        "DELETE",
+        &format!("{prefix}/links/{link_uuid}"),
+        &[("with_endpoint", side.to_string())],
+        None,
+    )?;
+    Ok(Outcome::Done)
 }
 
 /// Commits a link: records its endpoints' current versions and a snapshot of the
@@ -444,7 +482,7 @@ fn target_trash(ctx: &Ctx, repo: Uuid) -> Result<TrashDir, CliError> {
     let internal = info["internal_dir"]
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report internal_dir".into()))?;
-    Ok(TrashDir::new(internal))
+    Ok(TrashDir::new(std::path::Path::new(internal).join("trash")))
 }
 
 fn prune_op(ctx: &Ctx, plan_base: &str, plan_uuid: Uuid) -> Result<(), CliError> {
