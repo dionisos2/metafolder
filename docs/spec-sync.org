@@ -414,7 +414,7 @@ metarecords (see [[*The plan repo]]):
 
 1. *Planning* (=mf sync plan=): query both repos, resolve conflicts and
    ambiguous matches interactively, and write the plan — one metarecord per
-   operation (linking phase: matches, creations, drops; sync phase:
+   operation (linking phase: matches and creations; sync phase:
    transfers/moves with direction, field propagations, deletions), each
    carrying, *for the metarecords it touches, the =version= they were read
    at* — the plan's baseline. The plan can be browsed and edited with the
@@ -535,15 +535,18 @@ laptop:  mfr_path ->* "/projects"
 nas:     tag = "image" AND tag = "family"
 #+END_SRC
 
-The union of the entries is the scope. It maintains the link set:
+The union of the entries is the scope. It drives the link set:
 
 - an in-scope source record with no link → link it (see
   [[*The linking phase: match or create]]);
-- a link neither of whose endpoints is in any intent scope → drop the link
-  (never the records);
-- every remaining link is then synchronised — the sync phase, i.e. the
-  change-detection/propagation machinery above driven by the =mf sync= flow
-  (see [[*CLI]]).
+- an existing link with at least one endpoint in scope → synchronised by the
+  sync phase (the change-detection/propagation machinery above);
+- a link neither of whose endpoints is in any intent scope → **left
+  untouched**. Links are persistent state: an out-of-scope link is *not*
+  dropped (it is kept in the sync database in case a later scope includes its
+  records again), merely not processed this run. Links are removed only by
+  explicit =mf sync unlink= or by deletion propagation (see [[*Metarecord
+  deletion propagation]]).
 
 *** The linking phase: match or create
 
@@ -882,8 +885,8 @@ operate on. Steps:
    =--on-conflict= is given, nothing prompts and unconfirmed deletions are
    omitted.
 4. (Re)create the plan repo and write one operation metarecord per action —
-   linking phase (=create-link= / =drop-link=), sync phase (one =sync= per link
-   plus its =copy= / =move= / =chmod= / =delete= aspects, and a =conflict= per
+   linking phase (=create-link=), sync phase (one =sync= per link plus its
+   =copy= / =move= / =chmod= / =delete= aspects, and a =conflict= per
    conflicting (link, field)) — each tagged with its baseline versions (see
    [[*The plan repo]]).
 
@@ -905,8 +908,8 @@ Executes the plan, deleting each operation that succeeds. Steps:
 
 1. Re-check that both repos' schemas are identical (abort otherwise).
 2. Confirm (showing the summary + reds) unless =--yes=.
-3. Execute the *linking phase*: drop out-of-scope links, create the planned
-   links (onto matched records or freshly-created bare records).
+3. Execute the *linking phase*: create the planned links (onto matched records
+   or freshly-created bare records).
 4. Execute the *sync phase*, interleaved by batches (=[settings]=). Ordered by
    op kind so metadata gates the disk (see [[*Field coverage and diff semantics]]):
    first every =sync= op — the metadata phase (field writes with ref

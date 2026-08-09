@@ -2038,3 +2038,30 @@ fn test_sync_plan_resyncs_existing_link() {
     assert_eq!(ops.as_array().unwrap().len(), 1, "one re-sync op: {}", syncs.stdout);
     assert!(op_endpoints(&ops.as_array().unwrap()[0]).contains(&xa));
 }
+
+#[test]
+fn test_sync_plan_keeps_out_of_scope_link() {
+    // An existing link whose endpoints are out of the current scope is left
+    // untouched (persistent state) — never dropped.
+    let a = tracked_repo("keep_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("keep_b", &[("doc.txt", b"x")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let out = mf(&["sync", "link", &a, &b, &xa, &xb]);
+    assert_ok(&out);
+    let link = out.stdout.trim().to_string();
+
+    // A scope that matches nothing → the doc.txt link is out of scope.
+    let intents = write_intents("keep", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"none\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    // No drop-link op, and the link is still in the sync database.
+    let drops = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"drop-link\"", "get"]);
+    assert_ok(&drops);
+    assert!(drops.stdout.trim().is_empty(), "no drop-link op: {}", drops.stdout);
+    let status = mf(&["sync", "status", &a, &b]);
+    assert_ok(&status);
+    assert!(status.stdout.contains(&link), "the link is kept: {}", status.stdout);
+}

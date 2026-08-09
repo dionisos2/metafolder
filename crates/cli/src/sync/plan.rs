@@ -75,9 +75,9 @@ pub fn run(
 
 /// The linking phase (spec-sync "Two-phase sync process"): from the scope,
 /// create the links that must exist (matching an existing record, or a freshly
-/// UUID-allocated bare record) and drop the links that fell out of scope.
-/// Returns the number of link op-metarecords written and the newly created
-/// links (for the sync phase to diff).
+/// UUID-allocated bare record) and pick up the in-scope existing links for a
+/// re-sync. Out-of-scope existing links are left untouched (persistent state),
+/// never dropped. Returns the link ops written plus the links to diff.
 /// An existing link kept for a re-sync: both endpoints and the link UUID (to
 /// read its snapshot).
 struct ExistingLink {
@@ -201,14 +201,14 @@ fn linking_phase(
         }
     }
 
-    // Existing links: dropped when neither endpoint is in scope; otherwise kept
-    // for a re-sync (diff vs snapshot). Links with a deleted endpoint are left
-    // for deletion propagation (A4), not re-synced here.
-    let mut drops: Vec<(Side, Side)> = Vec::new();
+    // Existing links: only those *in scope* (an endpoint selected) are picked up,
+    // for a re-sync (diff vs snapshot). A link whose neither endpoint is in scope
+    // is left untouched in the sync database — persistent state, in case the
+    // scope later includes it again — never dropped. Links with a deleted
+    // endpoint are left for deletion propagation (A4), not re-synced here.
     let mut existing: Vec<ExistingLink> = Vec::new();
     for l in &links {
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
-            drops.push((existing_side(ctx, a, l.record_a)?, existing_side(ctx, b, l.record_b)?));
             continue;
         }
         let side_a = existing_side(ctx, a, l.record_a)?;
@@ -219,13 +219,10 @@ fn linking_phase(
     }
 
     // No incoherence aborted us: commit the link ops.
-    let op_count = creates.len() + drops.len();
+    let op_count = creates.len();
     let new_links = creates.clone();
     for (sa, sb) in creates {
         write_op(ctx, plan, "create-link", sa, sb)?;
-    }
-    for (sa, sb) in drops {
-        write_op(ctx, plan, "drop-link", sa, sb)?;
     }
     Ok(LinkingResult { op_count, new_links, existing })
 }
