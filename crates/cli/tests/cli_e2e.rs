@@ -1873,3 +1873,54 @@ fn test_sync_plan_closes_over_no_identity_ref_target() {
     let bare = endpoints.iter().find(|u| **u != person).expect("bare counterpart");
     assert!(is_hex_uuid(bare) && *bare != person);
 }
+
+#[test]
+fn test_sync_plan_case0_field_equality_links() {
+    // No-identity records (no tree_ref) with equal fields link by the case-0
+    // heuristic — the typical tombstone-style match.
+    let (a, _ar) = init_repo("case0_a");
+    let (b, _br) = init_repo("case0_b");
+    let rec_a = create_metarecord(&a, &["tag:string=alice", "rating:int=5"]);
+    let rec_b = create_metarecord(&b, &["tag:string=alice", "rating:int=5"]);
+    // A distractor in B with different fields must not match.
+    create_metarecord(&b, &["tag:string=bob"]);
+
+    let intents = write_intents("case0", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"alice\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 1"), "one field-equality link: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let endpoints = op_endpoints(&ops.as_array().unwrap()[0]);
+    assert!(
+        endpoints.contains(&rec_a) && endpoints.contains(&rec_b),
+        "must link the two field-equal records: {endpoints:?}"
+    );
+}
+
+#[test]
+fn test_sync_plan_case0_ambiguous_stays_bare() {
+    // Two identical B candidates → ambiguous → no field match → bare record.
+    let (a, _ar) = init_repo("case0amb_a");
+    let (b, _br) = init_repo("case0amb_b");
+    let rec_a = create_metarecord(&a, &["tag:string=dup"]);
+    create_metarecord(&b, &["tag:string=dup"]);
+    create_metarecord(&b, &["tag:string=dup"]);
+
+    let intents = write_intents("case0amb", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"dup\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("operations: 1"), "one op: {}", out.stdout);
+    let plan = plan_repo_uuid(&out);
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let endpoints = op_endpoints(&ops.as_array().unwrap()[0]);
+    // rec_a is linked to a fresh bare record, not to either ambiguous candidate.
+    assert!(endpoints.contains(&rec_a));
+    let other = endpoints.iter().find(|u| **u != rec_a).unwrap();
+    assert!(is_hex_uuid(other));
+}

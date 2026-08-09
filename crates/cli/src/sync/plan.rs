@@ -228,9 +228,12 @@ fn resolve_link(
 ) -> Result<LinkDecision, CliError> {
     let ids = identity_paths(ctx, source_repo, record)?;
     if ids.is_empty() {
-        // TODO(sync): no-TreeRef records — match by equal field multiset (the
-        // case-0 heuristic, spec-sync). For now a bare record is created.
-        return Ok(LinkDecision::Create);
+        // No TreeRef identity → the case-0 heuristic: link to an unambiguous
+        // field-equal target, else create a bare record (spec-sync).
+        return Ok(match match_by_fields(ctx, source_repo, target_repo, record, linked_target, planned_target)? {
+            Some(t) => LinkDecision::To(t),
+            None => LinkDecision::Create,
+        });
     }
 
     // Occupant of each identity position on the target side.
@@ -303,6 +306,74 @@ fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, St
         }
     }
     Ok(out)
+}
+
+/// The case-0 heuristic (spec-sync "The linking phase"): for a no-identity
+/// `record`, the unambiguous target-side record with the *same* sync-relevant
+/// field multiset (excluded `mfr_*` and reference-typed values ignored), or
+/// `None` when there is no match, several matches, or no distinguishing fields.
+fn match_by_fields(
+    ctx: &Ctx,
+    source_repo: Uuid,
+    target_repo: Uuid,
+    record: Uuid,
+    linked_target: &HashSet<Uuid>,
+    planned_target: &HashSet<Uuid>,
+) -> Result<Option<Uuid>, CliError> {
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}", source_repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    let sig = field_signature(&m);
+    if sig.is_empty() {
+        return Ok(None);
+    }
+    // Query the target for records carrying every signature field, then keep the
+    // ones with an *exact* signature (no extra fields), no identity, unlinked.
+    let operands: Vec<Json> = sig
+        .iter()
+        .map(|(name, value)| json!({"type": "eq", "field": name, "value": value}))
+        .collect();
+    let query = json!({"type": "and", "operands": operands});
+    let resp = ctx.client.post(
+        &format!("/repos/{}/query", target_repo.as_simple()),
+        &json!({"query": query, "select": "*", "limit": 50}),
+    )?;
+    let mut matches = Vec::new();
+    for r in resp["results"].as_array().cloned().unwrap_or_default() {
+        let Some(uuid) = r["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+            continue;
+        };
+        if linked_target.contains(&uuid) || planned_target.contains(&uuid) {
+            continue;
+        }
+        let has_tree_ref =
+            r["fields"].as_array().is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
+        if has_tree_ref || field_signature(&r) != sig {
+            continue;
+        }
+        matches.push(uuid);
+    }
+    Ok((matches.len() == 1).then(|| matches[0]))
+}
+
+/// A record's sync-relevant field signature: `(name, value_json)` for each field
+/// that is not `mfr_*` and not reference-typed, sorted for comparison.
+fn field_signature(m: &Json) -> Vec<(String, Json)> {
+    let mut sig: Vec<(String, Json)> = Vec::new();
+    for f in m["fields"].as_array().cloned().unwrap_or_default() {
+        let Some(name) = f["name"].as_str() else { continue };
+        if name.starts_with("mfr_") {
+            continue;
+        }
+        let vtype = f["value"]["type"].as_str().unwrap_or_default();
+        if matches!(vtype, "ref" | "tree_ref" | "refbase" | "externalref" | "nothing") {
+            continue;
+        }
+        sig.push((name.to_string(), f["value"].clone()));
+    }
+    sig.sort_by(|x, y| (x.0.as_str(), x.1.to_string()).cmp(&(y.0.as_str(), y.1.to_string())));
+    sig
 }
 
 /// The target UUIDs of a record's `ref`-valued fields (for referential closure).
