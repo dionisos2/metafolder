@@ -2,7 +2,7 @@
 // (spec-gui "metarecord-detail panel type").
 
 import { byId, el, formatValue, valueEl } from '/__ui.js';
-import { showMenu } from '/__menu.js';
+import { copyText, showMenu } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createTypePicker, parseRawValue, widgetFor, createPickRunner } from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
@@ -822,11 +822,22 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "metarecord-detail").
 
-  // Right-click menu: send this metarecord's file to the trash (spec-trash.org).
-  // The command confirms and reads `selected_metarecord` (which is `current`).
-  metafolder.contextMenu.addDefaultItems(() =>
-    current ? [{ label: 'Trash file', action: () => void commands.invoke('metarecord:trash') }] : [],
-  );
+  // Right-click menu: operations on the displayed metarecord (`current`). Copy
+  // is side-effect-free; the mutating commands read `selected_metarecord`
+  // (which is `current`) and confirm before acting (spec-trash.org).
+  metafolder.contextMenu.addDefaultItems(() => {
+    const record = current;
+    if (!record) return [];
+    return [
+      { label: 'Copy UUID', action: () => void copyText(record.uuid) },
+      {
+        label: 'Enable tracking & reconcile',
+        action: () => void commands.invoke('metarecord:watch-reconcile'),
+      },
+      { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
+      { label: 'Trash file', action: () => void commands.invoke('metarecord:trash') },
+    ];
+  });
 
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) return;

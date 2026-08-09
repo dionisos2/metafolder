@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
   clampPosition,
+  copyText,
   hasOpenMenu,
   installContextMenuSuppression,
   installDefaultContextMenu,
@@ -374,6 +375,22 @@ describe('installDefaultContextMenu', () => {
     menu.uninstall();
     rightClick(target());
     expect(menuElement()).toBeNull();
+  });
+});
+
+describe('copyText', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  test('writes the text to the clipboard (panels reuse it for Copy UUID)', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(window.navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+    });
+    await copyText('deadbeef');
+    expect(writeText).toHaveBeenCalledWith('deadbeef');
   });
 });
 

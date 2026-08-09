@@ -2,6 +2,7 @@
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
 import { byId, el, fields, qs, thumbnail } from '/__ui.js';
+import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
@@ -944,14 +945,46 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "metarecord-list").
 
-  // Right-click menu: send the cursor's file to the trash (spec-trash.org).
-  // The command reads `selected_metarecord` (kept in sync by the cursor) and
-  // confirms before moving anything.
-  metafolder.contextMenu.addDefaultItems(() =>
-    metarecords[cursorIndex]
-      ? [{ label: 'Trash file', action: () => void commands.invoke('metarecord:trash') }]
-      : [],
-  );
+  let picking = false; // true while this list is open as a value picker
+
+  /** The `metarecords` index of the row/card under a context-menu event, or
+   *  -1 when the click missed a row (header, empty space).
+   *  @param {MouseEvent} event */
+  function rowIndexFromEvent(event) {
+    const node = event.target instanceof Element ? event.target : null;
+    if (!node) return -1;
+    const tr = node.closest('tr.row');
+    if (tr) return [...rows.children].indexOf(tr);
+    const card = node.closest('.card');
+    if (card) return [...grid.children].indexOf(card);
+    return -1;
+  }
+
+  // Right-click menu: acts on the row under the pointer. The clicked row
+  // becomes the cursor first, so every action targets it rather than whatever
+  // the keyboard cursor last sat on — `metarecord:trash`/`pick:confirm` read
+  // `selected_metarecord`, which the cursor keeps in sync. All actions confirm
+  // where they mutate anything.
+  metafolder.contextMenu.addDefaultItems((event) => {
+    const index = rowIndexFromEvent(event);
+    if (index >= 0 && index !== cursorIndex) void setCursor(index);
+    const target = metarecords[index >= 0 ? index : cursorIndex];
+    if (!target) return [];
+    /** @type {Metafolder.MenuItem[]} */
+    const items = [];
+    if (picking) {
+      items.push({
+        label: 'Pick this metarecord',
+        action: () => void commands.invoke('pick:confirm'),
+      });
+    }
+    items.push(
+      { label: 'Open in other panel', action: () => void openSelected() },
+      { label: 'Copy UUID', action: () => void copyText(target.uuid) },
+      { label: 'Trash file', action: () => void commands.invoke('metarecord:trash') },
+    );
+    return items;
+  });
 
   let pickFocused = false; // focus the finder once when opened as a picker
 
@@ -981,7 +1014,9 @@ export async function mount(root, metafolder) {
     if (repo !== null) {
       // Warm the field catalog so the finder can auto-detect osm/osmd per field.
       await cache.fetchFields(repo).catch(() => {});
-      if (!pickFocused && (await workspace.get('pick_request'))) {
+      const pickRequest = await workspace.get('pick_request');
+      picking = !!pickRequest; // arms the "Pick this metarecord" context item
+      if (!pickFocused && pickRequest) {
         pickFocused = true;
         finderInput.focus();
         queryRan = true; // a value picker needs rows to pick from

@@ -254,8 +254,9 @@ export function installContextMenuSuppression(target = window) {
   });
 }
 
-/** @param {string} text */
-function copyText(text) {
+/** Copies `text` to the clipboard; panels reuse it for "Copy UUID".
+ *  @param {string} text */
+export function copyText(text) {
   if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
   // Non-secure-context fallback: execCommand needs a live selection, and
   // opening the menu may have cleared the original one.
