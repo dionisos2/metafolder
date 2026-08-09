@@ -1813,8 +1813,8 @@ fn test_sync_plan_no_match_allocates_bare_record() {
 
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
-    // A bare *file* link → create-link + sync (placement) + copy (content).
-    assert!(out.stdout.contains("operations: 3"), "create-link + sync + copy: {}", out.stdout);
+    // A bare *file* link → create-link + sync (placement) + copy (content) + chmod (mode).
+    assert!(out.stdout.contains("operations: 4"), "create-link + sync + copy + chmod: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
     // A copy op sources the content from the existing side (plan_from = a|b).
@@ -1826,6 +1826,13 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     assert!(op_endpoints(&copy[0]).contains(&rec_a), "copy references the source file");
     let from = copy[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_from");
     assert!(from.is_some(), "copy op records plan_from: {}", cp.stdout);
+    // And a chmod op, from the same source side, to set the new file's mode.
+    let chm = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"chmod\"", "get", "--select", "*"]);
+    assert_ok(&chm);
+    let chmods: serde_json::Value = serde_json::from_str(&chm.stdout).unwrap();
+    assert_eq!(chmods.as_array().unwrap().len(), 1, "one chmod op: {}", chm.stdout);
+    let cfrom = chmods.as_array().unwrap()[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_from");
+    assert!(cfrom.is_some(), "chmod op records plan_from: {}", chm.stdout);
 
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
     assert_ok(&got);

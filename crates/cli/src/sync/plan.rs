@@ -280,7 +280,11 @@ fn sync_link(
     }
     if let Some(from) = needs_copy(ctx, side_a, side_b)? {
         write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
-        ops += 1;
+        // The freshly created file also takes the source's mode (best-effort at
+        // run). TODO: permission-only divergence on an existing link needs a
+        // baseline for direction — deferred.
+        write_op_from(ctx, plan, "chmod", side_a.clone(), side_b.clone(), Some(from))?;
+        ops += 2;
     }
     // Position: two linked records whose reconstructed `mfr_path` diverged → the
     // target file must move to match (the sync op writes the new path). At first
