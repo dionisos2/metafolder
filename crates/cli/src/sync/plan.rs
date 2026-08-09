@@ -218,8 +218,38 @@ fn sync_phase(ctx: &Ctx, plan: &PlanRepo, new_links: &[(Side, Side)]) -> Result<
             write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
             ops += 1;
         }
+        // Content: a bare file endpoint receives the existing side's bytes (a
+        // `copy`). Two existing files with differing content is a content
+        // conflict, handled later; here only the first-sync/creation case.
+        if let Some(from) = needs_copy(ctx, side_a, side_b)? {
+            write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
+            ops += 1;
+        }
     }
     Ok(ops)
+}
+
+/// The source side (=a= | =b=) of a content transfer, when one is needed: a bare
+/// endpoint whose existing counterpart is a file. `None` otherwise (both exist —
+/// deferred content-conflict handling — or the existing side is not a file).
+fn needs_copy(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Option<&'static str>, CliError> {
+    let (from, source) = match (side_a.baseline.is_none(), side_b.baseline.is_none()) {
+        (true, false) => ("b", side_b),
+        (false, true) => ("a", side_a),
+        _ => return Ok(None),
+    };
+    Ok(is_file(ctx, source.repo, source.record)?.then_some(from))
+}
+
+/// Whether a record is a file (=mfr_type = "file"=) — i.e. has content to transfer.
+fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    Ok(m["fields"].as_array().is_some_and(|fs| {
+        fs.iter().any(|f| f["name"] == "mfr_type" && f["value"]["value"] == "file")
+    }))
 }
 
 /// Whether a link needs a metadata `sync` op: always when either endpoint is
@@ -524,12 +554,19 @@ fn bare_side(repo: Uuid) -> Side {
 
 /// Writes one op-metarecord into the plan repo. `plan_version_*` is emitted only
 /// for a side with a baseline; a bare side carries none.
-fn write_op(
+fn write_op(ctx: &Ctx, plan: &PlanRepo, kind: &str, side_a: Side, side_b: Side) -> Result<(), CliError> {
+    write_op_from(ctx, plan, kind, side_a, side_b, None)
+}
+
+/// Like [`write_op`] but also records `plan_from` (=a= | =b=) — the source side
+/// of a `copy` / `chmod`.
+fn write_op_from(
     ctx: &Ctx,
     plan: &PlanRepo,
     kind: &str,
     side_a: Side,
     side_b: Side,
+    from: Option<&str>,
 ) -> Result<(), CliError> {
     let mut fields = vec![
         json!({"name": "plan_kind", "value": {"type": "string", "value": kind}}),
@@ -541,6 +578,9 @@ fn write_op(
     }
     if let Some(v) = side_b.baseline {
         fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
+    }
+    if let Some(f) = from {
+        fields.push(json!({"name": "plan_from", "value": {"type": "string", "value": f}}));
     }
     ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
     Ok(())

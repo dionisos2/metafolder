@@ -1813,9 +1813,19 @@ fn test_sync_plan_no_match_allocates_bare_record() {
 
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
-    // A bare link → a create-link plus a sync op (the bare record must be placed).
-    assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
+    // A bare *file* link → create-link + sync (placement) + copy (content).
+    assert!(out.stdout.contains("operations: 3"), "create-link + sync + copy: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
+
+    // A copy op sources the content from the existing side (plan_from = a|b).
+    let cp = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"copy\"", "get", "--select", "*"]);
+    assert_ok(&cp);
+    let copies: serde_json::Value = serde_json::from_str(&cp.stdout).unwrap();
+    let copy = copies.as_array().unwrap();
+    assert_eq!(copy.len(), 1, "one copy op: {}", cp.stdout);
+    assert!(op_endpoints(&copy[0]).contains(&rec_a), "copy references the source file");
+    let from = copy[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_from");
+    assert!(from.is_some(), "copy op records plan_from: {}", cp.stdout);
 
     let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
     assert_ok(&got);
