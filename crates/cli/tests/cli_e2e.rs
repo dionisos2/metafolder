@@ -1973,3 +1973,40 @@ fn test_sync_plan_no_sync_op_when_fields_equal() {
     assert_ok(&got);
     assert!(got.stdout.trim().is_empty(), "no sync op: {}", got.stdout);
 }
+
+#[test]
+fn test_sync_plan_conflict_resolved_by_on_conflict() {
+    // Matched files, same field with different values on each side → a conflict,
+    // resolved non-interactively by --on-conflict prefer:<repo_a>.
+    let a = tracked_repo("conf_a", &[("doc.txt", b"same")]);
+    let b = tracked_repo("conf_b", &[("doc.txt", b"same")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
+    assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
+
+    let intents = write_intents("conf", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap(), "--on-conflict", &format!("prefer:{a}")]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    // One conflict op on `tag`, resolved to a canonical side, with both values.
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    let ops = ops.as_array().unwrap();
+    assert_eq!(ops.len(), 1, "one conflict op: {}", got.stdout);
+    let f = |name: &str| ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned();
+    assert_eq!(f("plan_field").unwrap()["value"]["value"], "tag");
+    // prefer:repo_a → resolved to repo_a's canonical side (plan_a/plan_b are canonical).
+    let expect_side = if a < b { "a" } else { "b" };
+    let resolve = f("plan_resolve").unwrap()["value"]["value"].as_str().unwrap().to_string();
+    assert_eq!(resolve, expect_side);
+    // The resolved (repo_a) side holds "jazz"; the other holds "rock".
+    let fields = ops[0]["fields"].as_array().unwrap();
+    let val = |name: &str| fields.iter().filter(|x| x["name"] == name).map(|x| x["value"]["value"].clone()).collect::<Vec<_>>();
+    let (resolved_field, other_field) =
+        if resolve == "a" { ("plan_value_a", "plan_value_b") } else { ("plan_value_b", "plan_value_a") };
+    assert_eq!(val(resolved_field), vec!["jazz"], "repo_a's value wins");
+    assert_eq!(val(other_field), vec!["rock"]);
+}

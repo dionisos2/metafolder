@@ -4,7 +4,7 @@
 //! — intents parsing, pair/host resolution, the schema-identity gate, and the
 //! plan-repo lifecycle — onto which the scope/diff/conflict phases are layered.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value as Json};
@@ -65,7 +65,7 @@ pub fn run(
     let plan = recreate_plan_repo(ctx, a, b, host_uuid)?;
 
     let (link_ops, new_links) = linking_phase(ctx, a, b, &plan, &intents)?;
-    let sync_ops = sync_phase(ctx, &plan, &new_links)?;
+    let sync_ops = sync_phase(ctx, a, b, &plan, &new_links, &intents, on_conflict)?;
 
     // Content transfers, moves, chmod, deletions and conflicts layer on next.
     println!("plan repo: {}", plan.uuid.as_simple());
@@ -211,11 +211,26 @@ fn linking_phase(
 /// A link with a bare endpoint always needs one (the bare record must be placed
 /// and populated); a fully-matched link needs one only when a syncable field
 /// differs. Content/move/chmod/delete/conflict ops layer on next.
-fn sync_phase(ctx: &Ctx, plan: &PlanRepo, new_links: &[(Side, Side)]) -> Result<usize, CliError> {
+fn sync_phase(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    plan: &PlanRepo,
+    new_links: &[(Side, Side)],
+    intents: &Intents,
+    on_conflict: Option<&str>,
+) -> Result<usize, CliError> {
     let mut ops = 0;
     for (side_a, side_b) in new_links {
         if needs_sync(ctx, side_a, side_b)? {
             write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
+            ops += 1;
+        }
+        // Fields present on both sides with different values → a conflict per
+        // field, resolved by policy and written as its own op.
+        for c in field_conflicts(ctx, side_a, side_b)? {
+            let resolve = resolve_conflict(ctx, a, b, side_a, side_b, &c.field, intents, on_conflict)?;
+            write_conflict_op(ctx, plan, side_a.clone(), side_b.clone(), &c, &resolve)?;
             ops += 1;
         }
         // Content: a bare file endpoint receives the existing side's bytes (a
@@ -227,6 +242,138 @@ fn sync_phase(ctx: &Ctx, plan: &PlanRepo, new_links: &[(Side, Side)]) -> Result<
         }
     }
     Ok(ops)
+}
+
+/// A field in conflict: present on both endpoints with different value multisets.
+struct FieldConflict {
+    field: String,
+    values_a: Vec<Json>,
+    values_b: Vec<Json>,
+}
+
+/// The syncable fields in conflict between two *existing* endpoints (a bare side
+/// has nothing, so no conflict — union semantics).
+fn field_conflicts(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Vec<FieldConflict>, CliError> {
+    if side_a.baseline.is_none() || side_b.baseline.is_none() {
+        return Ok(Vec::new());
+    }
+    let by_a = syncable_by_name(ctx, side_a.repo, side_a.record)?;
+    let by_b = syncable_by_name(ctx, side_b.repo, side_b.record)?;
+    let mut out = Vec::new();
+    for (name, va) in &by_a {
+        if let Some(vb) = by_b.get(name) {
+            if va != vb {
+                out.push(FieldConflict { field: name.clone(), values_a: va.clone(), values_b: vb.clone() });
+            }
+        }
+    }
+    out.sort_by(|x, y| x.field.cmp(&y.field));
+    Ok(out)
+}
+
+/// A record's syncable fields grouped by name into a sorted value multiset.
+fn syncable_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<HashMap<String, Vec<Json>>, CliError> {
+    let mut map: HashMap<String, Vec<Json>> = HashMap::new();
+    for (name, value) in syncable_fields(ctx, repo, record)? {
+        map.entry(name).or_default().push(value);
+    }
+    for values in map.values_mut() {
+        values.sort_by_key(|v| v.to_string());
+    }
+    Ok(map)
+}
+
+/// Resolves a conflicting field to a winning side (=a= | =b= | =skip=), by
+/// =--on-conflict=, else the first matching field-scoped =[[conflict]]= rule,
+/// else an interactive prompt (=ask=; a non-TTY reads as =skip=).
+/// (Query-scoped rules are not yet supported.)
+#[allow(clippy::too_many_arguments)]
+fn resolve_conflict(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    side_a: &Side,
+    side_b: &Side,
+    field: &str,
+    intents: &Intents,
+    on_conflict: Option<&str>,
+) -> Result<String, CliError> {
+    let policy = match on_conflict {
+        Some(oc) => intents::parse_policy(oc)?,
+        None => intents
+            .conflict
+            .iter()
+            .filter(|r| r.query.is_none() && r.field.as_deref().map(|f| f == field).unwrap_or(true))
+            .find_map(|r| r.parsed_policy().ok())
+            .unwrap_or(intents::Policy::Ask),
+    };
+    match policy {
+        intents::Policy::Skip => Ok("skip".into()),
+        intents::Policy::Prefer(repo) => {
+            let r = ctx.resolve_repo(&repo)?;
+            if r == a {
+                Ok("a".into())
+            } else if r == b {
+                Ok("b".into())
+            } else {
+                Err(CliError::Usage(format!("prefer:{repo} is not one of the pair")))
+            }
+        }
+        intents::Policy::Ask => Ok(prompt_conflict(field, side_a.record, side_b.record)?),
+    }
+}
+
+/// Prompt for a conflicting field; a non-TTY (EOF) resolves to =skip=.
+fn prompt_conflict(field: &str, rec_a: Uuid, rec_b: Uuid) -> Result<String, CliError> {
+    eprint!(
+        "conflict on '{field}' ({} / {}): keep [a]/[b]/[s]kip? ",
+        rec_a.as_simple(),
+        rec_b.as_simple()
+    );
+    std::io::Write::flush(&mut std::io::stderr()).ok();
+    let mut answer = String::new();
+    std::io::stdin()
+        .read_line(&mut answer)
+        .map_err(|e| CliError::Op(format!("cannot read the conflict reply: {e}")))?;
+    Ok(match answer.trim().to_ascii_lowercase().as_str() {
+        "a" => "a",
+        "b" => "b",
+        _ => "skip",
+    }
+    .into())
+}
+
+/// Writes a `conflict` op-metarecord (spec-sync "The plan repo"): `plan_field`,
+/// the two candidate value multisets, and the editable `plan_resolve`.
+fn write_conflict_op(
+    ctx: &Ctx,
+    plan: &PlanRepo,
+    side_a: Side,
+    side_b: Side,
+    c: &FieldConflict,
+    resolve: &str,
+) -> Result<(), CliError> {
+    let mut fields = vec![
+        json!({"name": "plan_kind", "value": {"type": "string", "value": "conflict"}}),
+        json!({"name": "plan_a", "value": external_ref(side_a.repo, side_a.record)}),
+        json!({"name": "plan_b", "value": external_ref(side_b.repo, side_b.record)}),
+        json!({"name": "plan_field", "value": {"type": "string", "value": c.field}}),
+        json!({"name": "plan_resolve", "value": {"type": "string", "value": resolve}}),
+    ];
+    if let Some(v) = side_a.baseline {
+        fields.push(json!({"name": "plan_version_a", "value": {"type": "int", "value": v}}));
+    }
+    if let Some(v) = side_b.baseline {
+        fields.push(json!({"name": "plan_version_b", "value": {"type": "int", "value": v}}));
+    }
+    for v in &c.values_a {
+        fields.push(json!({"name": "plan_value_a", "value": v}));
+    }
+    for v in &c.values_b {
+        fields.push(json!({"name": "plan_value_b", "value": v}));
+    }
+    ctx.client.post(&format!("{}/metarecords", plan.base), &json!({"fields": fields}))?;
+    Ok(())
 }
 
 /// The source side (=a= | =b=) of a content transfer, when one is needed: a bare
