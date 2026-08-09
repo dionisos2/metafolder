@@ -80,13 +80,20 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<i32, CliE
         }
     }
 
-    // Commit every link that got a metadata sync (records its new baselines and
-    // snapshot); prune the consumed conflict ops.
+    // Commit every link that got a metadata sync in one batched call (records
+    // their new baselines and snapshots); prune the consumed conflict ops.
+    let mut commits = Vec::new();
     for (rec_a, rec_b) in &synced_links {
-        commit_link(ctx, a, b, *rec_a, *rec_b)?;
+        if let Some(entry) = commit_entry(ctx, a, b, *rec_a, *rec_b)? {
+            commits.push(entry);
+        }
         for op in ops.iter().filter(|o| o.kind == "conflict" && o.rec_a == *rec_a && o.rec_b == *rec_b) {
             prune_op(ctx, &plan_base, op.plan_uuid)?;
         }
+    }
+    if !commits.is_empty() {
+        let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
+        ctx.client.post(&format!("{prefix}/links/commit"), &json!({"commits": commits}))?;
     }
 
     println!("done: {done}  skipped: {skipped}");
@@ -607,9 +614,10 @@ fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError
     Ok(Outcome::Done)
 }
 
-/// Commits a link: records its endpoints' current versions and a snapshot of the
-/// synced (scalar) fields, so future syncs diff against it.
-fn commit_link(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<(), CliError> {
+/// One commit-batch entry for a synced link: its UUID, its endpoints' current
+/// versions, and a snapshot of the synced (scalar) fields plus the common path
+/// (the move op's direction baseline). `None` when the link is missing.
+fn commit_entry(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<Option<Json>, CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
     let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
     let link = links["links"].as_array().and_then(|ls| {
@@ -619,7 +627,7 @@ fn commit_link(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<
         })
     });
     let Some(link_uuid) = link.and_then(|l| l["uuid"].as_str()) else {
-        return Ok(()); // link missing (e.g. skipped) — nothing to commit
+        return Ok(None); // link missing (e.g. skipped) — nothing to commit
     };
     let va = version_of(ctx, a, rec_a)?.unwrap_or(0);
     let vb = version_of(ctx, b, rec_b)?.unwrap_or(0);
@@ -628,16 +636,10 @@ fn commit_link(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<
         .filter(|(_, v)| v["type"] != "ref")
         .map(|(name, value)| json!({"name": name, "value": value}))
         .collect();
-    // Record the common path too (as a portable string) — the move op's direction
-    // baseline. Kept out of the field diff (which skips mfr_* names).
     if let Some(path) = mfr_path_of(ctx, a, rec_a)? {
         snapshot.push(json!({"name": "mfr_path", "value": {"type": "string", "value": path}}));
     }
-    ctx.client.post(
-        &format!("{prefix}/links/commit"),
-        &json!({"commits": [{"link": link_uuid, "version_a": va, "version_b": vb, "snapshot": snapshot}]}),
-    )?;
-    Ok(())
+    Ok(Some(json!({"link": link_uuid, "version_a": va, "version_b": vb, "snapshot": snapshot})))
 }
 
 // ── translation ─────────────────────────────────────────────────────────────
