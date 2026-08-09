@@ -2010,3 +2010,31 @@ fn test_sync_plan_conflict_resolved_by_on_conflict() {
     assert_eq!(val(resolved_field), vec!["jazz"], "repo_a's value wins");
     assert_eq!(val(other_field), vec!["rock"]);
 }
+
+#[test]
+fn test_sync_plan_resyncs_existing_link() {
+    // A pre-existing link (as if from a prior sync) is re-synced, not recreated.
+    let a = tracked_repo("resync_a", &[("doc.txt", b"same")]);
+    let b = tracked_repo("resync_b", &[("doc.txt", b"same")]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
+    // A user field appears on A only since the link was made.
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=x"]));
+
+    let intents = write_intents("resync", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    // No new link — the pair was already linked.
+    let creates = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get"]);
+    assert_ok(&creates);
+    assert!(creates.stdout.trim().is_empty(), "no create-link: {}", creates.stdout);
+    // One re-sync op for the existing link.
+    let syncs = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
+    assert_ok(&syncs);
+    let ops: serde_json::Value = serde_json::from_str(&syncs.stdout).unwrap();
+    assert_eq!(ops.as_array().unwrap().len(), 1, "one re-sync op: {}", syncs.stdout);
+    assert!(op_endpoints(&ops.as_array().unwrap()[0]).contains(&xa));
+}

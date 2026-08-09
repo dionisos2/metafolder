@@ -64,12 +64,12 @@ pub fn run(
 
     let plan = recreate_plan_repo(ctx, a, b, host_uuid)?;
 
-    let (link_ops, new_links) = linking_phase(ctx, a, b, &plan, &intents)?;
-    let sync_ops = sync_phase(ctx, a, b, &plan, &new_links, &intents, on_conflict)?;
+    let linked = linking_phase(ctx, a, b, &plan, &intents)?;
+    let sync_ops = sync_phase(ctx, a, b, &plan, &linked, &intents, on_conflict)?;
 
-    // Content transfers, moves, chmod, deletions and conflicts layer on next.
+    // Moves, chmod and deletions layer on next.
     println!("plan repo: {}", plan.uuid.as_simple());
-    println!("operations: {}", link_ops + sync_ops);
+    println!("operations: {}", linked.op_count + sync_ops);
     Ok(0)
 }
 
@@ -78,13 +78,29 @@ pub fn run(
 /// UUID-allocated bare record) and drop the links that fell out of scope.
 /// Returns the number of link op-metarecords written and the newly created
 /// links (for the sync phase to diff).
+/// An existing link kept for a re-sync: both endpoints and the link UUID (to
+/// read its snapshot).
+struct ExistingLink {
+    side_a: Side,
+    side_b: Side,
+    link: Uuid,
+}
+
+/// The linking phase's output: the ops written plus the links the sync phase
+/// must diff — newly created (first sync, union) and surviving existing ones.
+struct LinkingResult {
+    op_count: usize,
+    new_links: Vec<(Side, Side)>,
+    existing: Vec<ExistingLink>,
+}
+
 fn linking_phase(
     ctx: &Ctx,
     a: Uuid,
     b: Uuid,
     plan: &PlanRepo,
     intents: &Intents,
-) -> Result<(usize, Vec<(Side, Side)>), CliError> {
+) -> Result<LinkingResult, CliError> {
     // Scope: each intent runs on its source repo; its result joins that side.
     let mut scope_a: HashSet<Uuid> = HashSet::new();
     let mut scope_b: HashSet<Uuid> = HashSet::new();
@@ -185,16 +201,25 @@ fn linking_phase(
         }
     }
 
-    // Drops: links whose neither endpoint remains in scope.
+    // Existing links: dropped when neither endpoint is in scope; otherwise kept
+    // for a re-sync (diff vs snapshot). Links with a deleted endpoint are left
+    // for deletion propagation (A4), not re-synced here.
     let mut drops: Vec<(Side, Side)> = Vec::new();
+    let mut existing: Vec<ExistingLink> = Vec::new();
     for l in &links {
         if !scope_a.contains(&l.record_a) && !scope_b.contains(&l.record_b) {
             drops.push((existing_side(ctx, a, l.record_a)?, existing_side(ctx, b, l.record_b)?));
+            continue;
+        }
+        let side_a = existing_side(ctx, a, l.record_a)?;
+        let side_b = existing_side(ctx, b, l.record_b)?;
+        if side_a.baseline.is_some() && side_b.baseline.is_some() {
+            existing.push(ExistingLink { side_a, side_b, link: l.uuid });
         }
     }
 
     // No incoherence aborted us: commit the link ops.
-    let ops = creates.len() + drops.len();
+    let op_count = creates.len() + drops.len();
     let new_links = creates.clone();
     for (sa, sb) in creates {
         write_op(ctx, plan, "create-link", sa, sb)?;
@@ -202,73 +227,171 @@ fn linking_phase(
     for (sa, sb) in drops {
         write_op(ctx, plan, "drop-link", sa, sb)?;
     }
-    Ok((ops, new_links))
+    Ok(LinkingResult { op_count, new_links, existing })
 }
 
-/// The sync phase's metadata step (spec-sync): for each newly created link that
-/// has something to propagate, write a `sync` op — the metadata-phase marker. It
-/// stores no values (the run re-reads the current state); its baselines gate it.
-/// A link with a bare endpoint always needs one (the bare record must be placed
-/// and populated); a fully-matched link needs one only when a syncable field
-/// differs. Content/move/chmod/delete/conflict ops layer on next.
+/// The sync phase (spec-sync): for each link to sync — newly created (union) or
+/// an existing one (three-way diff vs its snapshot) — write the metadata `sync`
+/// op, a `conflict` op per conflicting field, and a `copy` for a bare file.
 fn sync_phase(
     ctx: &Ctx,
     a: Uuid,
     b: Uuid,
     plan: &PlanRepo,
-    new_links: &[(Side, Side)],
+    linked: &LinkingResult,
     intents: &Intents,
     on_conflict: Option<&str>,
 ) -> Result<usize, CliError> {
     let mut ops = 0;
-    for (side_a, side_b) in new_links {
-        if needs_sync(ctx, side_a, side_b)? {
-            write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
-            ops += 1;
-        }
-        // Fields present on both sides with different values → a conflict per
-        // field, resolved by policy and written as its own op.
-        for c in field_conflicts(ctx, side_a, side_b)? {
-            let resolve = resolve_conflict(ctx, a, b, side_a, side_b, &c.field, intents, on_conflict)?;
-            write_conflict_op(ctx, plan, side_a.clone(), side_b.clone(), &c, &resolve)?;
-            ops += 1;
-        }
-        // Content: a bare file endpoint receives the existing side's bytes (a
-        // `copy`). Two existing files with differing content is a content
-        // conflict, handled later; here only the first-sync/creation case.
-        if let Some(from) = needs_copy(ctx, side_a, side_b)? {
-            write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
-            ops += 1;
-        }
+    for (side_a, side_b) in &linked.new_links {
+        ops += sync_link(ctx, a, b, plan, side_a, side_b, None, intents, on_conflict)?;
+    }
+    for el in &linked.existing {
+        let snapshot = fetch_snapshot(ctx, a, b, el.link)?;
+        ops += sync_link(ctx, a, b, plan, &el.side_a, &el.side_b, Some(&snapshot), intents, on_conflict)?;
     }
     Ok(ops)
 }
 
-/// A field in conflict: present on both endpoints with different value multisets.
+/// The sync-phase ops for one link. `snapshot` is `None` for a first sync
+/// (union) and `Some` for a re-sync (three-way diff).
+#[allow(clippy::too_many_arguments)]
+fn sync_link(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    plan: &PlanRepo,
+    side_a: &Side,
+    side_b: &Side,
+    snapshot: Option<&Snapshot>,
+    intents: &Intents,
+    on_conflict: Option<&str>,
+) -> Result<usize, CliError> {
+    let mut ops = 0;
+    let diff = link_diff(ctx, side_a, side_b, snapshot)?;
+    // A bare endpoint must be placed/populated even when the existing side has no
+    // syncable field; otherwise a `sync` op is written only on a real change.
+    let bare = side_a.baseline.is_none() || side_b.baseline.is_none();
+    if bare || diff.changed {
+        write_op(ctx, plan, "sync", side_a.clone(), side_b.clone())?;
+        ops += 1;
+    }
+    for c in diff.conflicts {
+        let resolve = resolve_conflict(ctx, a, b, side_a, side_b, &c.field, intents, on_conflict)?;
+        write_conflict_op(ctx, plan, side_a.clone(), side_b.clone(), &c, &resolve)?;
+        ops += 1;
+    }
+    if let Some(from) = needs_copy(ctx, side_a, side_b)? {
+        write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
+        ops += 1;
+    }
+    Ok(ops)
+}
+
+/// The snapshot of a link, as per-name value multisets in each perspective.
+struct Snapshot {
+    a: HashMap<String, Vec<Json>>,
+    b: HashMap<String, Vec<Json>>,
+}
+
+/// Reads a link's snapshot (`GET …/links/:link`), building the A- and
+/// B-perspective value multisets of its syncable fields.
+fn fetch_snapshot(ctx: &Ctx, a: Uuid, b: Uuid, link: Uuid) -> Result<Snapshot, CliError> {
+    let body = ctx.client.get(
+        &format!("/sync/{}/{}/links/{}", a.as_simple(), b.as_simple(), link.as_simple()),
+        &[],
+    )?;
+    let (mut sa, mut sb): (HashMap<String, Vec<Json>>, HashMap<String, Vec<Json>>) = Default::default();
+    for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
+        let Some(name) = e["name"].as_str() else { continue };
+        if name.starts_with("mfr_") || e["value"]["type"] == "tree_ref" {
+            continue;
+        }
+        let va = e["value"].clone();
+        // A ref's B-perspective is stored as a bare uuid; re-wrap it as {type,value}.
+        let vb = if e["value_b"].is_null() {
+            va.clone()
+        } else {
+            json!({"type": e["value"]["type"], "value": e["value_b"]})
+        };
+        sa.entry(name.to_string()).or_default().push(va);
+        sb.entry(name.to_string()).or_default().push(vb);
+    }
+    for v in sa.values_mut() {
+        v.sort_by_key(|x| x.to_string());
+    }
+    for v in sb.values_mut() {
+        v.sort_by_key(|x| x.to_string());
+    }
+    Ok(Snapshot { a: sa, b: sb })
+}
+
+/// A field in conflict: changed on both sides to different value multisets.
 struct FieldConflict {
     field: String,
     values_a: Vec<Json>,
     values_b: Vec<Json>,
 }
 
-/// The syncable fields in conflict between two *existing* endpoints (a bare side
-/// has nothing, so no conflict — union semantics).
-fn field_conflicts(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Vec<FieldConflict>, CliError> {
-    if side_a.baseline.is_none() || side_b.baseline.is_none() {
-        return Ok(Vec::new());
-    }
-    let by_a = syncable_by_name(ctx, side_a.repo, side_a.record)?;
-    let by_b = syncable_by_name(ctx, side_b.repo, side_b.record)?;
-    let mut out = Vec::new();
-    for (name, va) in &by_a {
-        if let Some(vb) = by_b.get(name) {
-            if va != vb {
-                out.push(FieldConflict { field: name.clone(), values_a: va.clone(), values_b: vb.clone() });
-            }
+/// The result of diffing a link's two endpoints (three-way against the snapshot).
+struct LinkDiff {
+    /// Any field changed → the link needs a metadata `sync` op.
+    changed: bool,
+    conflicts: Vec<FieldConflict>,
+}
+
+/// Three-way field diff of a link. Per syncable field name: `a_changed` iff A's
+/// multiset differs from the snapshot's A-perspective (idem B). One side changed
+/// → propagate; both changed to different values → conflict; both to the same →
+/// in sync. A `None` snapshot is empty, so this reduces to union (first sync).
+fn link_diff(
+    ctx: &Ctx,
+    side_a: &Side,
+    side_b: &Side,
+    snapshot: Option<&Snapshot>,
+) -> Result<LinkDiff, CliError> {
+    let by_a = existing_syncable(ctx, side_a)?;
+    let by_b = existing_syncable(ctx, side_b)?;
+    let empty = HashMap::new();
+    let (snap_a, snap_b) = snapshot.map(|s| (&s.a, &s.b)).unwrap_or((&empty, &empty));
+
+    let mut names: std::collections::BTreeSet<&String> = std::collections::BTreeSet::new();
+    names.extend(by_a.keys());
+    names.extend(by_b.keys());
+    names.extend(snap_a.keys());
+    names.extend(snap_b.keys());
+
+    let mut changed = false;
+    let mut conflicts = Vec::new();
+    for name in names {
+        let av = by_a.get(name);
+        let bv = by_b.get(name);
+        // The sides already agree → nothing to do (regardless of the snapshot).
+        if av == bv {
+            continue;
+        }
+        changed = true;
+        // They disagree: a one-sided change propagates; both diverged from the
+        // snapshot → a conflict.
+        let a_changed = av != snap_a.get(name);
+        let b_changed = bv != snap_b.get(name);
+        if a_changed && b_changed {
+            conflicts.push(FieldConflict {
+                field: name.clone(),
+                values_a: av.cloned().unwrap_or_default(),
+                values_b: bv.cloned().unwrap_or_default(),
+            });
         }
     }
-    out.sort_by(|x, y| x.field.cmp(&y.field));
-    Ok(out)
+    Ok(LinkDiff { changed, conflicts })
+}
+
+/// A side's syncable fields by name, or empty when the side is bare.
+fn existing_syncable(ctx: &Ctx, side: &Side) -> Result<HashMap<String, Vec<Json>>, CliError> {
+    if side.baseline.is_none() {
+        return Ok(HashMap::new());
+    }
+    syncable_by_name(ctx, side.repo, side.record)
 }
 
 /// A record's syncable fields grouped by name into a sorted value multiset.
@@ -397,18 +520,6 @@ fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
     Ok(m["fields"].as_array().is_some_and(|fs| {
         fs.iter().any(|f| f["name"] == "mfr_type" && f["value"]["value"] == "file")
     }))
-}
-
-/// Whether a link needs a metadata `sync` op: always when either endpoint is
-/// bare (must be placed/populated), otherwise when the two endpoints' syncable
-/// fields differ.
-fn needs_sync(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError> {
-    if side_a.baseline.is_none() || side_b.baseline.is_none() {
-        return Ok(true);
-    }
-    let fa = syncable_fields(ctx, side_a.repo, side_a.record)?;
-    let fb = syncable_fields(ctx, side_b.repo, side_b.record)?;
-    Ok(fa != fb)
 }
 
 /// A record's *syncable* fields — everything the field diff writes: user data,
@@ -742,6 +853,7 @@ fn external_ref(repo: Uuid, metarecord: Uuid) -> Json {
 
 /// One row of a repo pair's link table.
 struct LinkRow {
+    uuid: Uuid,
     record_a: Uuid,
     record_b: Uuid,
 }
@@ -750,11 +862,12 @@ fn get_links(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<Vec<LinkRow>, CliError> {
     let body = ctx.client.get(&format!("/sync/{}/{}/links", a.as_simple(), b.as_simple()), &[])?;
     let mut out = Vec::new();
     for l in body["links"].as_array().cloned().unwrap_or_default() {
-        if let (Some(ra), Some(rb)) = (
+        if let (Some(u), Some(ra), Some(rb)) = (
+            l["uuid"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
             l["record_a"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
             l["record_b"].as_str().and_then(|s| Uuid::parse_str(s).ok()),
         ) {
-            out.push(LinkRow { record_a: ra, record_b: rb });
+            out.push(LinkRow { uuid: u, record_a: ra, record_b: rb });
         }
     }
     Ok(out)
