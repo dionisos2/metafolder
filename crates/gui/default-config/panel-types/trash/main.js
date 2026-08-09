@@ -5,7 +5,8 @@
 
 import { byId, el } from '/__ui.js';
 
-/** Human-readable byte count (base 1024, one decimal above KiB). */
+/** Human-readable byte count (base 1024, one decimal above KiB).
+ *  @param {number} bytes */
 export function formatSize(bytes) {
   const units = ['B', 'K', 'M', 'G', 'T'];
   let v = bytes;
@@ -17,7 +18,8 @@ export function formatSize(bytes) {
   return i === 0 ? `${bytes}${units[0]}` : `${v.toFixed(1)}${units[i]}`;
 }
 
-/** Coarse "how long ago" from a unix-ms timestamp. */
+/** Coarse "how long ago" from a unix-ms timestamp.
+ *  @param {number} trashedAt @param {number} [now] */
 export function formatAge(trashedAt, now = Date.now()) {
   const secs = Math.max(0, Math.floor((now - trashedAt) / 1000));
   if (secs < 60) return `${secs}s ago`;
