@@ -282,7 +282,35 @@ fn sync_link(
         write_op_from(ctx, plan, "copy", side_a.clone(), side_b.clone(), Some(from))?;
         ops += 1;
     }
+    // Position: two linked records whose reconstructed `mfr_path` diverged → the
+    // target file must move to match (the sync op writes the new path). At first
+    // sync a matched pair shares its path, so this only fires on a re-sync.
+    if needs_move(ctx, side_a, side_b)? {
+        write_op(ctx, plan, "move", side_a.clone(), side_b.clone())?;
+        ops += 1;
+    }
     Ok(ops)
+}
+
+/// Whether a link's two endpoints occupy different `mfr_path` positions (both
+/// existing) → a file move is needed. The run derives the direction and moves
+/// the target file to the `mfr_path` the `sync` op wrote.
+fn needs_move(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError> {
+    if side_a.baseline.is_none() || side_b.baseline.is_none() {
+        return Ok(false);
+    }
+    let pa = mfr_path_of(ctx, side_a.repo, side_a.record)?;
+    let pb = mfr_path_of(ctx, side_b.repo, side_b.record)?;
+    Ok(matches!((pa, pb), (Some(x), Some(y)) if x != y))
+}
+
+/// A record's reconstructed `mfr_path` (its first position), or `None`.
+fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
+    let resp = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
+    Ok(resp["paths"].as_array().and_then(|a| a.first()).and_then(|p| p.as_str()).map(String::from))
 }
 
 /// The snapshot of a link, as per-name value multisets in each perspective.

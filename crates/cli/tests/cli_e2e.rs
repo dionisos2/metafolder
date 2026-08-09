@@ -2065,3 +2065,25 @@ fn test_sync_plan_keeps_out_of_scope_link() {
     assert_ok(&status);
     assert!(status.stdout.contains(&link), "the link is kept: {}", status.stdout);
 }
+
+#[test]
+fn test_sync_plan_move_op_on_diverged_path() {
+    // Two linked files whose positions diverge (a.txt ↔ b.txt) → a move op. This
+    // is the state after a rename on one side, or a manual cross-path link.
+    let a = tracked_repo("move_a", &[("a.txt", b"content")]);
+    let b = tracked_repo("move_b", &[("b.txt", b"content")]);
+    let xa = query_one(&a, "mfr_path = \"a.txt\"");
+    let xb = query_one(&b, "mfr_path = \"b.txt\"");
+    assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
+
+    let intents = write_intents("move", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
+    assert_ok(&out);
+    let plan = plan_repo_uuid(&out);
+
+    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"move\"", "get", "--select", "*"]);
+    assert_ok(&got);
+    let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
+    assert_eq!(ops.as_array().unwrap().len(), 1, "one move op: {}", got.stdout);
+    assert!(op_endpoints(&ops.as_array().unwrap()[0]).contains(&xa));
+}
