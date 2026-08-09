@@ -80,6 +80,7 @@ Built-in panel types:
 | =repos=          | Repository list, init, load, unload, per-repo running tasks   |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
+| =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
 | =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
 
 Users can add custom panel types by creating a new directory under
@@ -701,6 +702,7 @@ Behaviours:
 | =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
+| =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |

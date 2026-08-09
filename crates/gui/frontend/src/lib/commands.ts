@@ -384,6 +384,26 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });
       return true;
+    case 'metarecord:trash': {
+      // Send the selected metarecord's file to the trash (spec-trash.org).
+      // Reversible (restore from the trash panel), but confirmed anyway since
+      // it is bound to a bare Delete key.
+      if (!ws) return true;
+      const selected = await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' });
+      if (!selected || typeof selected !== 'object') {
+        await status('no metarecord is selected');
+        return true;
+      }
+      if (!window.confirm("Send the selected metarecord's file to the trash?")) return true;
+      // The Rust command posts its own success/error status; swallow the
+      // rejection so the error is not surfaced twice.
+      try {
+        await invoke('trash_selected_metarecord', { wsId: ws });
+      } catch {
+        /* already reported to the status bar */
+      }
+      return true;
+    }
     case 'log:undo':
       if (ws) await invoke('log_navigate', { wsId: ws, redo: false });
       return true;

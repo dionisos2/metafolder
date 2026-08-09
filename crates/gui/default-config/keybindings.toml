@@ -76,6 +76,7 @@
 "s w" = { command = "panel:set-type workspace-info" }
 "s t" = { command = "panel:set-type treeref" }
 "s e" = { command = "panel:set-type ref-list" }
+"s b" = { command = "panel:set-type trash" }
 "s p" = { command = "panel:set-type help" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
@@ -99,6 +100,7 @@
   { command = "treeref:next", when = "treeref" },
   { command = "ref-list:next", when = "ref-list" },
   { command = "log:next", when = "log" },
+  { command = "trash:next", when = "trash" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "up" = [
@@ -109,6 +111,7 @@
   { command = "treeref:prev", when = "treeref" },
   { command = "ref-list:prev", when = "ref-list" },
   { command = "log:prev", when = "log" },
+  { command = "trash:prev", when = "trash" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -119,6 +122,7 @@
   { command = "treeref:next", when = "treeref" },
   { command = "ref-list:next", when = "ref-list" },
   { command = "log:next", when = "log" },
+  { command = "trash:next", when = "trash" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "k" = [
@@ -127,6 +131,7 @@
   { command = "treeref:prev", when = "treeref" },
   { command = "ref-list:prev", when = "ref-list" },
   { command = "log:prev", when = "log" },
+  { command = "trash:prev", when = "trash" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -157,6 +162,7 @@
   { command = "treeref:descend", when = "treeref" },
   { command = "ref-list:open", when = "ref-list" },
   { command = "log:toggle-ops", when = "log" },
+  { command = "trash:restore", when = "trash" },
   { command = "metarecord:field-edit", when = "metarecord-detail" },
 ]
 
@@ -177,6 +183,19 @@
   { command = "treeref:refresh", when = "treeref" },
   { command = "ref-list:refresh", when = "ref-list" },
   { command = "file-manager:refresh", when = "file-manager" },
+  { command = "trash:refresh", when = "trash" },
+]
+
+# Delete: send the selected metarecord's file to the trash (spec-trash.org),
+# from any panel that carries a selection. In the trash panel itself, Delete
+# permanently removes the highlighted entry. All are confirmed.
+"delete" = [
+  { command = "metarecord:trash", when = "metarecord-list" },
+  { command = "metarecord:trash", when = "metarecord-detail" },
+  { command = "metarecord:trash", when = "file-manager" },
+  { command = "metarecord:trash", when = "treeref" },
+  { command = "metarecord:trash", when = "ref-list" },
+  { command = "trash:delete", when = "trash" },
 ]
 
 # metarecord-list: selection, finder, query editing.

@@ -822,6 +822,12 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "metarecord-detail").
 
+  // Right-click menu: send this metarecord's file to the trash (spec-trash.org).
+  // The command confirms and reads `selected_metarecord` (which is `current`).
+  metafolder.contextMenu.addDefaultItems(() =>
+    current ? [{ label: 'Trash file', action: () => void commands.invoke('metarecord:trash') }] : [],
+  );
+
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) return;
     // The discard was confirmed (or nothing was in progress): drop any add in

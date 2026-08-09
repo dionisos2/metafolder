@@ -944,6 +944,15 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "metarecord-list").
 
+  // Right-click menu: send the cursor's file to the trash (spec-trash.org).
+  // The command reads `selected_metarecord` (kept in sync by the cursor) and
+  // confirms before moving anything.
+  metafolder.contextMenu.addDefaultItems(() =>
+    metarecords[cursorIndex]
+      ? [{ label: 'Trash file', action: () => void commands.invoke('metarecord:trash') }]
+      : [],
+  );
+
   let pickFocused = false; // focus the finder once when opened as a picker
 
   async function start() {

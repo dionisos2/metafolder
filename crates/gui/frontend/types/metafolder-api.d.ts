@@ -177,6 +177,32 @@ declare namespace Metafolder {
     homeDir(): Promise<string>;
   }
 
+  /** One entry in a repository's trash-bin (spec-trash.org). */
+  interface TrashEntry {
+    id: string;
+    original_path: string;
+    original_name: string;
+    trashed_at: number;
+    size: number;
+    is_dir: boolean;
+    reason: 'rollback' | 'sync' | 'manual';
+    revision?: number | null;
+    metarecord?: string | null;
+    version?: number | null;
+  }
+
+  /** Repository trash-bin (spec-trash.org): filesystem operations shared with
+   *  the CLI, driven through the trash Tauri commands. No daemon endpoint. */
+  interface Trash {
+    list(repo: string): Promise<TrashEntry[]>;
+    /** Restores an entry to its original path; returns that path. */
+    restore(repo: string, id: string): Promise<string>;
+    /** Permanently deletes a single entry. */
+    remove(repo: string, id: string): Promise<void>;
+    /** Empties the whole trash; returns the number of entries removed. */
+    empty(repo: string): Promise<number>;
+  }
+
   /** Per-repo input history (spec-gui "Input history"): GUI-side files under
    *  `.metafolder/gui/history/<zone>`. The store behind `attachHistory`. */
   interface History {
@@ -243,6 +269,7 @@ declare namespace Metafolder {
       options?: { when?: string; textInput?: boolean; focus?: string },
     ): Promise<unknown>;
     readonly fs: Fs;
+    readonly trash: Trash;
     readonly history: History;
     readonly statusBar: StatusBar;
     readonly messages: Messages;

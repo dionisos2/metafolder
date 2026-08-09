@@ -9,11 +9,14 @@ that would overwrite or delete a file — rollback today (see
 [[file:spec-sync.org][spec-sync.org]], v2). It guarantees no byte is ever lost: the destroyed content is
 set aside, and the user decides later whether to bring it back or discard it.
 
-The trash-bin is filesystem state managed *entirely by the CLI* (the daemon
-never touches files); it lives under =internal/=, excluded from tracking like
-=db.sqlite=. The daemon's only involvement is exposing the repo's =internal_dir=
-in =GET /repos/:repo= so the CLI can locate it without guessing the
-=.metafolder= location.
+The trash-bin is filesystem state managed *entirely by the clients* — the CLI
+and the GUI (the daemon never touches files); it lives under =internal/=,
+excluded from tracking like =db.sqlite=. The daemon's only involvement is
+exposing the repo's =internal_dir= in =GET /repos/:repo= so a client can locate
+it without guessing the =.metafolder= location. The shared filesystem layer
+(=TrashDir=: locate, move, list, restore, prune) lives in =crates/core=
+(=metafolder_core::trash=); each client adds its own glue (resolving a
+metarecord to a path, re-linking after a restore).
 
 Restoration is always an explicit act (=mf trash restore=), never automatic: an
 operation only ever *moves victims into* the trash, and the log/navigation are
@@ -183,3 +186,28 @@ as a plain refresh, and nothing is written to the event log.
   files a failed manifest write could leave — which the other selectors, keyed
   on the manifest, never see).
 =--dry-run= lists what would be removed and reclaimed without deleting.
+
+* GUI
+
+The GUI exposes the same trash-bin (spec-gui.org), driving the shared
+=metafolder_core::trash= layer through Tauri commands (=trash_list=,
+=trash_selected_metarecord=, =trash_restore=, =trash_remove=, =trash_empty=);
+like the CLI it locates =internal_dir=/=root= through =GET /repos/:repo= and
+re-links a restored metarecord through the daemon — there is still *no daemon
+trash endpoint*.
+
+- *Send to the trash* — the =metarecord:trash= command (a shell builtin) sends
+  the workspace's =selected_metarecord='s file to the trash (=reason=manual=,
+  recording the metarecord and its current =version=, exactly like =mf trash
+  -f=). It is bound to =Delete= in every panel that carries a selection
+  (=metarecord-list=, =metarecord-detail=, =file-manager=, =treeref=,
+  =ref-list=) and offered as a *Trash file* context-menu item in the metarecord
+  panels. Because =Delete= is a bare key, the action is *confirmed* even though
+  it is reversible. The metadata update is still the watcher's job (as for =mf
+  trash -f=): the file's bytes are safe regardless.
+
+- *trash panel* (=panel:set-type trash=, default =s b=) — lists the entries
+  (name, size, age, reason, path), newest first, and offers *Restore* (=Enter=;
+  re-links the metarecord before moving the file back, as the CLI does),
+  *Delete* one entry permanently (=Delete=), and *Empty trash* — the two
+  destructive actions confirmed. Prune by size/age is CLI-only.

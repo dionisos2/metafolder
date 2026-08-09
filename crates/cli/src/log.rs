@@ -301,7 +301,7 @@ fn decide_deleted(
                 // The file is not restorable (e.g. the path is occupied); fall
                 // back to skipping, so the metadata stays truthful.
                 Err(e) if !silent => {
-                    eprintln!("note: could not auto-restore from the trash ({}); skipping", e.message());
+                    eprintln!("note: could not auto-restore from the trash ({e}); skipping");
                 }
                 Err(_) => {}
             }

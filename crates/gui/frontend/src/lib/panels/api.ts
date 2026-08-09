@@ -373,6 +373,16 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       homeDir: () => invoke('fs_home_dir') as Promise<string>,
     },
 
+    /** Repository trash-bin (spec-trash.org): filesystem operations shared with
+     *  the CLI, driven through the trash Tauri commands (no daemon endpoint). */
+    trash: {
+      list: (repo: string) => invoke('trash_list', { repo }) as Promise<Metafolder.TrashEntry[]>,
+      restore: (repo: string, id: string) =>
+        invoke('trash_restore', { repo, id }) as Promise<string>,
+      remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
+      empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
+    },
+
     /** Per-repo input history (spec-gui "Input history") — GUI-side files
      *  under `.metafolder/gui/history/<zone>`; the store behind the shared
      *  `attachHistory` helper (`/__history.js`). */

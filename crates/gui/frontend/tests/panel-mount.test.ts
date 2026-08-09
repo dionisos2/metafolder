@@ -93,6 +93,7 @@ function stubApi(panelType: string) {
     commands: { register: async () => null, invoke: () => null },
     addKeybinding: async () => null,
     fs: { readDir: async () => [], stat: async () => ({}), homeDir: async () => '/home/user' },
+    trash: { list: async () => [], restore: async () => '', remove: async () => {}, empty: async () => 0 },
     history: { read: async () => [], append: async () => {} },
     statusBar: { message: async () => {}, error: async () => {} },
     messages: { list: async () => [], append: async () => {}, onAppend: noop },

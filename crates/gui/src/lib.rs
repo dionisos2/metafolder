@@ -24,6 +24,7 @@ pub mod shell_exec;
 pub mod state;
 pub mod style_watcher;
 pub mod thumbnails;
+pub mod trash;
 pub mod undo;
 
 use command_registry::CommandRegistry;
@@ -100,6 +101,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("daemon:set-url", "Change the daemon URL", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
+        ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
         ("answer:send", "Resolve the pending script input wait", true),
@@ -438,6 +440,11 @@ pub fn run(options: Options) {
             commands::expand_query,
             commands::grammar_source,
             reconcile::reconcile_run,
+            trash::trash_list,
+            trash::trash_selected_metarecord,
+            trash::trash_restore,
+            trash::trash_remove,
+            trash::trash_empty,
             undo::log_navigate,
             commands::answer_send,
             commands::pick_start,

@@ -9,3 +9,4 @@ pub mod progress;
 pub mod query;
 pub mod simplified;
 pub mod sync;
+pub mod trash;

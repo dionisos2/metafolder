@@ -186,6 +186,18 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('post_status', { wsId: 'ws-1', text: 'hi', kind: 'info', timeoutMs: 3000 });
   });
 
+  test('trash routes to the trash commands', async () => {
+    const { api, invoke } = setup();
+    await api.trash.list('r1');
+    expect(invoke).toHaveBeenCalledWith('trash_list', { repo: 'r1' });
+    await api.trash.restore('r1', 'id1');
+    expect(invoke).toHaveBeenCalledWith('trash_restore', { repo: 'r1', id: 'id1' });
+    await api.trash.remove('r1', 'id1');
+    expect(invoke).toHaveBeenCalledWith('trash_remove', { repo: 'r1', id: 'id1' });
+    await api.trash.empty('r1');
+    expect(invoke).toHaveBeenCalledWith('trash_empty', { repo: 'r1' });
+  });
+
   test('messages.onAppend fires on pushMessageAppended', () => {
     const { api, instance } = setup();
     const listener = vi.fn();

@@ -1,0 +1,103 @@
+<!doctype html>
+<!-- Built-in panel type: trash-bin — list, restore, delete and empty the
+     repository trash (spec-trash.org "GUI"). Filesystem operations shared with
+     the CLI; no daemon endpoint. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>trash</title>
+    <style>
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        font-size: 13px;
+      }
+      #toolbar {
+        display: flex;
+        gap: 6px;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      #entries {
+        flex: 1;
+        overflow-y: auto;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #entries li {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 3px 10px;
+        cursor: default;
+        white-space: nowrap;
+      }
+      #entries li:hover,
+      #entries li.cursor {
+        background: var(--mf-bg-raised, #26262e);
+      }
+      .icon {
+        flex: none;
+      }
+      .name {
+        flex: none;
+        font-weight: 600;
+      }
+      .path {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      .size,
+      .age {
+        flex: none;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .reason {
+        flex: none;
+        color: var(--mf-accent, #4c56c4);
+      }
+      .placeholder {
+        padding: 20px;
+        text-align: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #status-line {
+        padding: 3px 10px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="refresh">Refresh</button>
+      <button id="restore" disabled>Restore (trash:restore)</button>
+      <button id="delete" disabled>Delete (trash:delete)</button>
+      <button id="empty" disabled>Empty trash (trash:empty)</button>
+    </div>
+    <p class="placeholder" id="placeholder">Loading…</p>
+    <ul id="entries" hidden></ul>
+    <div id="status-line"></div>
+  </body>
+</html>
