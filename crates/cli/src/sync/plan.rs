@@ -691,7 +691,7 @@ fn resolve_link(
 
 /// A record's identity: `(field_name, reconstructed_path)` for each of its
 /// `tree_ref` fields (a field with several positions contributes several).
-fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, String)>, CliError> {
+pub(crate) fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, String)>, CliError> {
     let m = ctx.client.get(
         &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
         &[],

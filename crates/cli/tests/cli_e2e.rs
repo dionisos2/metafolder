@@ -2308,3 +2308,25 @@ fn test_sync_run_external_divergence_reported() {
     let rec_b = query_one(&b, "mfr_path = \"doc.txt\"");
     assert!(is_hex_uuid(&rec_b), "record placed in B: {rec_b}");
 }
+
+#[test]
+fn test_sync_run_translates_ref() {
+    // A file X refs an abstract record; both are materialised in B and X_B's ref
+    // is translated to person_B (the linked counterpart), not left dangling.
+    let a = tracked_repo("tref_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("tref_b", &[]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let person_a = create_metarecord(&a, &["name:string=alice"]);
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", &format!("author:ref={person_a}")]));
+
+    let intents = write_intents("tref", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    // B has person (name=alice) and X_B whose author ref points to it.
+    let person_b = query_one(&b, r#"name = "alice""#);
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let author = field_value_of(&b, &xb, "author");
+    assert_eq!(author.as_deref(), Some(person_b.as_str()), "author ref translated to person_b");
+    assert_ne!(person_b, person_a, "distinct local uuids");
+}

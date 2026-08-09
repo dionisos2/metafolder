@@ -218,27 +218,81 @@ fn exec_sync(ctx: &Ctx, op: &Op, ops: &[Op]) -> Result<Outcome, CliError> {
     match (op.ver_a, op.ver_b) {
         // First sync: one endpoint is bare → propagate the source wholesale and
         // place the record at its translated path.
-        (Some(_), None) => sync_bare(ctx, op.a, op.rec_a, op.b, op.rec_b),
-        (None, Some(_)) => sync_bare(ctx, op.b, op.rec_b, op.a, op.rec_a),
+        (Some(_), None) => sync_bare(ctx, op.a, op.b, op.a, op.rec_a, op.b, op.rec_b),
+        (None, Some(_)) => sync_bare(ctx, op.a, op.b, op.b, op.rec_b, op.a, op.rec_a),
         // Re-sync: three-way diff, per-field direction, conflicts by plan_resolve.
         (Some(_), Some(_)) => sync_resync(ctx, op, ops),
         (None, None) => Ok(Outcome::Skipped("both endpoints bare".into())),
     }
 }
 
-/// First-sync propagation: the source's syncable (non-ref) fields plus its
-/// translated `mfr_path` onto the bare target.
-fn sync_bare(ctx: &Ctx, src_repo: Uuid, src_rec: Uuid, tgt_repo: Uuid, tgt_rec: Uuid) -> Result<Outcome, CliError> {
+/// First-sync propagation: the source's syncable fields (refs translated through
+/// the link table, or by identity path) plus its translated `mfr_path` onto the
+/// bare target. `a`/`b` are the canonical pair (for the link table).
+#[allow(clippy::too_many_arguments)]
+fn sync_bare(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    src_repo: Uuid,
+    src_rec: Uuid,
+    tgt_repo: Uuid,
+    tgt_rec: Uuid,
+) -> Result<Outcome, CliError> {
     for (name, value) in syncable_fields(ctx, src_repo, src_rec)? {
-        if value["type"] == "ref" {
-            continue; // TODO: ref translation at run
-        }
-        put_field(ctx, tgt_repo, tgt_rec, &name, &value, None)?;
+        let out = if value["type"] == "ref" {
+            match translate_ref_value(ctx, a, b, src_repo, tgt_repo, &value)? {
+                Some(v) => v,
+                None => {
+                    eprintln!("skipped ref field '{name}': target out of sync scope");
+                    continue;
+                }
+            }
+        } else {
+            value
+        };
+        put_field(ctx, tgt_repo, tgt_rec, &name, &out, None)?;
     }
     if let Some(tree) = translate_mfr_path(ctx, src_repo, tgt_repo, src_rec)? {
         put_field(ctx, tgt_repo, tgt_rec, "mfr_path", &tree, None)?;
     }
     Ok(Outcome::Done)
+}
+
+/// Translates a `ref` field value to the target repo — **link-first**: the linked
+/// counterpart of the referenced record; **path-fallback**: its TreeRef identity
+/// resolved (find-or-create) in the target. `None` when the target is out of
+/// sync scope (no link, no identity).
+fn translate_ref_value(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    src_repo: Uuid,
+    tgt_repo: Uuid,
+    value: &Json,
+) -> Result<Option<Json>, CliError> {
+    let Some(src_target) = value["value"].as_str().and_then(|s| Uuid::parse_str(s).ok()) else {
+        return Ok(None);
+    };
+    // Link-first.
+    let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
+    let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
+    let (src_key, tgt_key) = if src_repo == a { ("record_a", "record_b") } else { ("record_b", "record_a") };
+    let linked = links["links"].as_array().and_then(|ls| {
+        ls.iter()
+            .find(|l| l[src_key].as_str() == Some(&src_target.as_simple().to_string()))
+            .and_then(|l| l[tgt_key].as_str())
+            .and_then(|s| Uuid::parse_str(s).ok())
+    });
+    if let Some(t) = linked {
+        return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
+    }
+    // Path-fallback: the referenced record's TreeRef identity, resolved in target.
+    if let Some((field, path)) = super::plan::identity_paths(ctx, src_repo, src_target)?.into_iter().next() {
+        let t = find_or_create_path(ctx, tgt_repo, &field, &path)?;
+        return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
+    }
+    Ok(None)
 }
 
 /// Re-sync propagation: three-way diff of the two existing records against the
