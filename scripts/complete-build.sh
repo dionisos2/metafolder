@@ -39,4 +39,4 @@ fi
 echo "==> Building the GUI frontend bundle…"
 npm --prefix crates/gui/frontend run build
 
-metafolder-sync-config
+../target/debug/metafolder-sync-config
