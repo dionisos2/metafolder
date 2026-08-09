@@ -2353,3 +2353,38 @@ fn test_sync_run_moves_diverged_file() {
     assert!(repo_root_of(&a).join(winner).exists(), "A file at winner path");
     assert!(repo_root_of(&b).join(winner).exists(), "B file at winner path");
 }
+
+#[test]
+fn test_sync_show_renders_plan_status() {
+    // After a plan, show lists the ops as green (baselines current); changing a
+    // planned record flips its ops to red (will be skipped).
+    let a = tracked_repo("show_a", &[("doc.txt", b"x")]);
+    let b = tracked_repo("show_b", &[]);
+    let intents = write_intents("show", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+
+    // Summary lists the op kinds.
+    let sum = mf(&["sync", "show", &a, &b, "--summary"]);
+    assert_ok(&sum);
+    assert!(sum.stdout.contains("create-link") && sum.stdout.contains("sync") && sum.stdout.contains("copy"),
+        "summary lists kinds: {}", sum.stdout);
+
+    // Default view: nothing changed → all will run.
+    let def = mf(&["sync", "show", &a, &b]);
+    assert_ok(&def);
+    assert!(def.stdout.contains("all operations will run"), "all green: {}", def.stdout);
+
+    // Change the source record → its ops turn red.
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=z"]));
+    let red = mf(&["sync", "show", &a, &b]);
+    assert_ok(&red);
+    assert!(red.stdout.contains("will be skipped") && red.stdout.contains("[skip]"),
+        "reds shown after change: {}", red.stdout);
+
+    // --files shows only disk ops.
+    let files = mf(&["sync", "show", &a, &b, "--files"]);
+    assert_ok(&files);
+    assert!(files.stdout.contains("copy") && !files.stdout.contains("create-link"),
+        "files view: {}", files.stdout);
+}

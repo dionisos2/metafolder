@@ -430,6 +430,20 @@ enum SyncCommand {
         #[arg(long)]
         yes: bool,
     },
+    /// Render the current plan with live red/green status (default: summary + reds)
+    Show {
+        repo_a: String,
+        repo_b: String,
+        /// Only the conflict operations
+        #[arg(long)]
+        conflicts: bool,
+        /// Only the file operations (copy/move/chmod/delete)
+        #[arg(long)]
+        files: bool,
+        /// Only the per-kind counts
+        #[arg(long)]
+        summary: bool,
+    },
     /// Print the per-link change/conflict states of a repo pair
     Status {
         /// The two repositories (name or UUID; order does not matter)
@@ -715,6 +729,9 @@ fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
             on_conflict.as_deref(),
         ),
         SyncCommand::Run { repo_a, repo_b, yes } => sync::run::run(ctx, &repo_a, &repo_b, yes),
+        SyncCommand::Show { repo_a, repo_b, conflicts, files, summary } => {
+            sync::run::show(ctx, &repo_a, &repo_b, conflicts, files, summary)
+        }
         SyncCommand::Status { repo_a, repo_b, json } => {
             sync::status(ctx, &repo_a, &repo_b, json)
         }

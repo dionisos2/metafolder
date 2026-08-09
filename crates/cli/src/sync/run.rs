@@ -119,6 +119,97 @@ fn report_divergences(paths: &[String]) {
     }
 }
 
+/// `mf sync show` (spec-sync "=mf sync show="): renders the current plan with
+/// live context — each op's endpoints followed into the synced repos — and a
+/// red/green flag: green when the baselines still match (will run at `run`), red
+/// when a record changed since planning (will be skipped). `--conflicts` /
+/// `--files` / `--summary` filter; the default is the summary plus the reds.
+pub fn show(
+    ctx: &Ctx,
+    repo_a: &str,
+    repo_b: &str,
+    conflicts: bool,
+    files: bool,
+    summary: bool,
+) -> Result<i32, CliError> {
+    let (pos_a, pos_b) = resolve_pair(ctx, repo_a, repo_b)?;
+    let (a, b) = canonical_pair(pos_a, pos_b);
+    let name = format!("plan-{}-{}", a.as_simple(), b.as_simple());
+    let Some(plan_uuid) = find_repo_by_name(ctx, &name)? else {
+        println!("no plan for this pair; run `mf sync plan` first");
+        return Ok(0);
+    };
+    let ops = read_ops(ctx, &format!("/repos/{}", plan_uuid.as_simple()))?;
+    if ops.is_empty() {
+        println!("the plan is empty (nothing to sync)");
+        return Ok(0);
+    }
+
+    // A filtered listing: each matching op with its live status.
+    if conflicts || files {
+        let keep = |k: &str| if conflicts { k == "conflict" } else { is_file_op(k) };
+        for op in ops.iter().filter(|o| keep(&o.kind)) {
+            let green = stale(ctx, op)?.is_none();
+            println!("{}  {}  {}", flag(green), op.kind, op_context(ctx, op)?);
+        }
+        return Ok(0);
+    }
+
+    // Summary: per-kind counts.
+    let mut counts: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    let mut reds: Vec<(&Op, String)> = Vec::new();
+    for op in &ops {
+        *counts.entry(op.kind.as_str()).or_default() += 1;
+        if let Some(why) = stale(ctx, op)? {
+            reds.push((op, why));
+        }
+    }
+    println!("plan: {} operation(s)", ops.len());
+    for (kind, n) in &counts {
+        println!("  {n:>3} {kind}");
+    }
+    if summary {
+        return Ok(0);
+    }
+
+    // Default: the reds (operations that will be skipped at run).
+    if reds.is_empty() {
+        println!("all operations will run (every baseline is current)");
+    } else {
+        println!("{} will be skipped (records changed since planning):", reds.len());
+        for (op, why) in &reds {
+            println!("  {}  {}  {}  — {why}", flag(false), op.kind, op_context(ctx, op)?);
+        }
+    }
+    Ok(0)
+}
+
+/// The green/red status marker.
+fn flag(green: bool) -> &'static str {
+    if green {
+        "[run] "
+    } else {
+        "[skip]"
+    }
+}
+
+/// Whether a plan_kind is a file (disk) operation.
+fn is_file_op(kind: &str) -> bool {
+    matches!(kind, "copy" | "move" | "chmod" | "delete")
+}
+
+/// A short live description of an op: its record's current path (following the
+/// ExternalRef into the repo), plus the field for a conflict.
+fn op_context(ctx: &Ctx, op: &Op) -> Result<String, CliError> {
+    let path = mfr_path_of(ctx, op.a, op.rec_a)?
+        .or(mfr_path_of(ctx, op.b, op.rec_b)?)
+        .unwrap_or_else(|| op.rec_a.as_simple().to_string());
+    Ok(match &op.field {
+        Some(f) => format!("{path} [{f}]"),
+        None => path,
+    })
+}
+
 /// The outcome of executing one op.
 enum Outcome {
     Done,
