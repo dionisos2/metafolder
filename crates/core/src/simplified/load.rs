@@ -84,6 +84,21 @@ mod tests {
     }
 
     #[test]
+    fn default_grammar_expands_presence_predicates() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        // `?` present, `!?` absent (value is Nothing), `??` unknown (never set).
+        assert_eq!(expand(&g, "path ?").unwrap(), "mfr_path IS PRESENT");
+        assert_eq!(expand(&g, "path !?").unwrap(), "mfr_path IS ABSENT");
+        assert_eq!(expand(&g, "path ??").unwrap(), "mfr_path IS UNKNOWN");
+        // A bare field passes through; combines with other terms.
+        assert_eq!(expand(&g, "tag ?? path !?").unwrap(), "tag IS UNKNOWN AND mfr_path IS ABSENT");
+        // Every expansion is valid normal DSL.
+        for input in ["path ?", "path !?", "path ??"] {
+            crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
+        }
+    }
+
+    #[test]
     fn default_grammar_accepts_explicit_and() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let expected = "a = \"x\" AND b = \"y\"";

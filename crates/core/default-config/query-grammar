@@ -28,6 +28,10 @@ predicate =
   | f:field "<=" n:number   => $f <= $n
   | f:field ">"  n:number   => $f > $n
   | f:field "<"  n:number   => $f < $n
+  # Three-valued presence: `?` present, `!?` absent (value is Nothing), `??`
+  # unknown (field never set). Multi-char forms come first (longest match).
+  | f:field "!?"            => $f IS ABSENT
+  | f:field "??"            => $f IS UNKNOWN
   | f:field "?"             => $f IS PRESENT
   | "under" v:value         => mfr_path ->* {str($v)}
   # Date macros: `modified`/`created` pick the field; relative (younger/older)
