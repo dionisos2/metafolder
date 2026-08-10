@@ -3,7 +3,7 @@
 //! schema violations) and `CliError` on failure.
 
 use std::io::{IsTerminal as _, Write as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
@@ -1097,7 +1097,8 @@ pub fn schema_show(ctx: &Ctx) -> Result<i32, CliError> {
 
 // ── mf trash ────────────────────────────────────────────────────────────────
 
-use crate::trash::{PruneMode, Reason, TrashDir, TrashedNode};
+use crate::trash::{PruneMode, Reason, TrashDir};
+use metafolder_core::trash::DaemonClient as _;
 
 /// Builds the [`TrashDir`] from a `GET /repos/:repo` info body.
 fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
@@ -1105,6 +1106,50 @@ fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo internal_dir".into()))?;
     Ok(TrashDir::new(Path::new(internal).join("trash")))
+}
+
+/// Adapts the CLI's HTTP client to core's `DaemonClient` for the shared trash
+/// re-link glue (`metafolder_core::trash`). The status is not preserved (the
+/// client folds non-2xx into an `Op` message); the glue keys off the message.
+struct TrashDaemon<'a>(&'a Client);
+
+impl metafolder_core::trash::DaemonClient for TrashDaemon<'_> {
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Json>,
+    ) -> Result<Json, metafolder_core::trash::DaemonError> {
+        self.0.request(method, path, &[], body).map_err(|e| {
+            metafolder_core::trash::DaemonError { status: None, message: e.message().to_string() }
+        })
+    }
+}
+
+fn trash_daemon_err(e: metafolder_core::trash::DaemonError) -> CliError {
+    CliError::Op(e.message)
+}
+
+/// The repository uuid (hex) for the current repo, from the resolved base
+/// `"/repos/<uuid>"` — the `repo` argument core's trash glue expects.
+fn repo_id(ctx: &Ctx) -> Result<String, CliError> {
+    Ok(ctx.repo_base()?.trim_start_matches("/repos/").to_string())
+}
+
+/// Repo-relative path (`"a/b"`) of `abs` under `root`, dropping any non-normal
+/// components.
+fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
+    let rel = abs
+        .strip_prefix(root)
+        .map_err(|_| CliError::Op(format!("{} is outside the repository", abs.display())))?;
+    Ok(rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/"))
 }
 
 /// `mf trash -f <path>`: move a tracked file into the trash. Errors if the
@@ -1116,178 +1161,31 @@ pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let trash = trash_dir_of(&info)?;
-
     let abs = path
         .canonicalize()
         .map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
-    let uuid = metarecord_at_path(ctx, Path::new(root), &abs)?.ok_or_else(|| {
-        CliError::Op(format!("no metarecord is associated with {}", abs.display()))
-    })?;
+    let rel = repo_rel(Path::new(root), &abs)?;
 
-    // Record the metarecord's current version — the state a rollback restores to
-    // — so `mf rollback` can later match this entry to the exact deletion it
-    // undoes (spec-trash "rollback auto-restore").
-    let base = ctx.repo_base()?;
-    let parsed = Uuid::parse_str(&uuid)
-        .map_err(|_| CliError::Op("daemon returned an invalid uuid".into()))?;
-    let rec = ctx.client.get(&format!("{base}/metarecords/{}", parsed.as_simple()), &[])?;
+    let repo = repo_id(ctx)?;
+    let client = TrashDaemon(&ctx.client);
+    let uuid = metafolder_core::trash::metarecord_at_path(&client, &repo, &rel)
+        .map_err(trash_daemon_err)?
+        .ok_or_else(|| CliError::Op(format!("no metarecord is associated with {}", abs.display())))?;
+
+    // The top record: its version (for rollback correlation) and the whole
+    // subtree, captured *before* the move while every metarecord is still linked
+    // so a restore can re-link the directory and everything under it.
+    let rec = client
+        .request("GET", &format!("/repos/{repo}/metarecords/{uuid}"), None)
+        .map_err(trash_daemon_err)?;
     let version = rec["version"].as_u64();
-
-    // Capture the whole subtree *before* the move, while every metarecord is
-    // still linked, so a restore can re-link the directory and all its
-    // descendants — not just the top metarecord (spec-trash "Restore").
-    let subtree = capture_subtree(ctx, &base, &rec, Path::new(root), &abs)?;
+    let subtree = metafolder_core::trash::capture_nodes(&client, &repo, &rec, &rel)
+        .map_err(trash_daemon_err)?;
 
     let entry = trash.trash_path(&abs, Reason::Manual, None, Some(uuid), version)?;
     trash.attach_subtree(&entry.id, subtree)?;
     println!("trashed {} (id {})", abs.display(), entry.id);
     Ok(0)
-}
-
-/// Reads a metarecord JSON (`{uuid, fields}`) into a [`TrashedNode`] — its uuid
-/// plus its first `mfr_path` TreeRef — or None when it carries no present
-/// tree_ref `mfr_path`.
-fn subtree_node(record: &Json) -> Option<TrashedNode> {
-    let uuid = record["uuid"].as_str()?;
-    let mfr = record["fields"].as_array()?.iter().find(|f| f["name"] == "mfr_path")?;
-    let value = &mfr["value"];
-    if value["type"].as_str()? != "tree_ref" {
-        return None;
-    }
-    Some(TrashedNode {
-        uuid: uuid.to_string(),
-        parent: value["value"]["parent"].as_str().map(str::to_owned),
-        name: value["value"]["name"].as_str()?.to_string(),
-    })
-}
-
-/// Captures the metarecords of a trashed subtree with their original `mfr_path`
-/// TreeRefs: the target itself (`top`) plus every descendant (empty for a plain
-/// file). Recorded on the trash entry so a restore re-links the whole tree.
-fn capture_subtree(
-    ctx: &Ctx,
-    base: &str,
-    top: &Json,
-    root: &Path,
-    abs: &Path,
-) -> Result<Vec<TrashedNode>, CliError> {
-    let mut nodes = Vec::new();
-    let top_node = subtree_node(top);
-    if let Some(node) = &top_node {
-        nodes.push(node.clone());
-        // Ancestor directory metarecords, up to (but not including) the forest
-        // root. If a parent directory is later trashed too, restoring this
-        // nested item re-links the ancestor so its recreated directory is
-        // tracked by the original metarecord — not left orphaned for the
-        // watcher to duplicate. Live ancestors are skipped at re-link time.
-        nodes.extend(capture_ancestors(ctx, base, node.parent.clone())?);
-    }
-    // Transitive follow of the target's tree path yields every descendant.
-    let rel = abs
-        .strip_prefix(root)
-        .map_err(|_| CliError::Op(format!("{} is outside the repository", abs.display())))?;
-    let comps: Vec<String> = rel
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    let target = format!("/{}", comps.join("/"));
-    let query = json!({"type": "follows_transitive", "field": "mfr_path", "target": target});
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut body = json!({"query": query, "select": ["mfr_path"], "limit": ctx.page_size});
-        if let Some(c) = &cursor {
-            body["cursor"] = json!(c);
-        }
-        let page = ctx.client.post(&format!("{base}/query"), &body)?;
-        for obj in page["results"].as_array().into_iter().flatten() {
-            if let Some(node) = subtree_node(obj) {
-                nodes.push(node);
-            }
-        }
-        match page["next_cursor"].as_str() {
-            Some(c) => cursor = Some(c.to_string()),
-            None => break,
-        }
-    }
-    Ok(nodes)
-}
-
-/// Walks the `mfr_path` parent chain from `parent` upward, capturing each
-/// ancestor directory metarecord's TreeRef. Stops at (and excludes) the forest
-/// root (the node whose parent is `None`). Bounded by the forest depth limit.
-fn capture_ancestors(
-    ctx: &Ctx,
-    base: &str,
-    mut parent: Option<String>,
-) -> Result<Vec<TrashedNode>, CliError> {
-    let mut nodes = Vec::new();
-    for _ in 0..1000 {
-        let Some(uuid) = parent else { break };
-        let parsed = Uuid::parse_str(&uuid)
-            .map_err(|_| CliError::Op("daemon returned an invalid parent uuid".into()))?;
-        let rec = ctx.client.get(&format!("{base}/metarecords/{}", parsed.as_simple()), &[])?;
-        let Some(node) = subtree_node(&rec) else { break };
-        // The forest root (parent = None, name = "") is always live: stop here.
-        if node.parent.is_none() {
-            break;
-        }
-        parent = node.parent.clone();
-        nodes.push(node);
-    }
-    Ok(nodes)
-}
-
-/// Resolves an on-disk path to the uuid of the metarecord whose `mfr_path`
-/// tracks it, via the exact-path query idiom (spec-query:
-/// `field -> "/parent" AND field = "name"`). `None` when nothing matches.
-/// The relative path is computed by stripping the daemon-reported `root`,
-/// mirroring how reconcile/track record `mfr_path`.
-fn metarecord_at_path(ctx: &Ctx, root: &Path, abs: &Path) -> Result<Option<String>, CliError> {
-    let rel = abs.strip_prefix(root).map_err(|_| {
-        CliError::Usage(format!(
-            "{} is outside the repository root {}",
-            abs.display(),
-            root.display()
-        ))
-    })?;
-    let mut comps = Vec::new();
-    for c in rel.components() {
-        match c {
-            std::path::Component::Normal(n) => comps.push(n.to_string_lossy().into_owned()),
-            _ => {
-                return Err(CliError::Usage(format!(
-                    "unsupported path component in {}",
-                    abs.display()
-                )))
-            }
-        }
-    }
-    let name = comps
-        .last()
-        .cloned()
-        .ok_or_else(|| CliError::Usage("cannot trash the repository root".into()))?;
-    // Parent path: "/a/b" for /a/b/name, or "" (the forest root) for a
-    // top-level file — the format the tree cache's resolve_path expects.
-    let parent = format!("/{}", comps[..comps.len() - 1].join("/"));
-    let parent = if parent == "/" { String::new() } else { parent };
-
-    let base = ctx.repo_base()?;
-    let query = json!({
-        "type": "and",
-        "operands": [
-            {"type": "follows", "field": "mfr_path", "target": parent},
-            {"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": name}},
-        ],
-    });
-    let resp = ctx.client.post(&format!("{base}/query"), &json!({"query": query, "limit": 1}))?;
-    Ok(resp["results"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|v| v.as_str())
-        .map(str::to_owned))
 }
 
 /// `mf trash list`: one row per entry, newest first.
@@ -1325,200 +1223,19 @@ pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     // *before* re-linking, so we don't re-link a metarecord to a path a refused
     // restore never fills. Re-linking happens before the move so the metarecord
     // already claims the path and the watcher sees a refresh rather than
-    // fingerprint-searching or creating a duplicate (a freshly tracked file has
-    // no stored full hash to match, spec-trash.org).
-    let target = PathBuf::from(&entry.original_path);
+    // fingerprint-searching or creating a duplicate (spec-trash.org).
     dir.preflight_restore(id)?;
-    if !entry.subtree.is_empty() {
-        // The whole subtree was recorded at trash time: re-link every node to
-        // its original TreeRef (the directory and all its descendants).
-        relink_subtree(ctx, &entry.subtree)?;
-    } else if let (Some(metarecord), Some(root)) = (&entry.metarecord, root) {
-        // A pre-subtree entry (or a plain single file): fall back to the
-        // path-resolving re-link of the one recorded metarecord.
-        relink_after_restore(ctx, Path::new(root), metarecord, &target)?;
-    }
+    let rel = root
+        .and_then(|r| Path::new(&entry.original_path).strip_prefix(r).ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| entry.original_name.clone());
+    let repo = repo_id(ctx)?;
+    metafolder_core::trash::restore_relink(&TrashDaemon(&ctx.client), &repo, &entry, &rel)
+        .map_err(trash_daemon_err)?;
 
     let restored = dir.restore(id)?;
     println!("restored {}", restored.display());
     Ok(0)
-}
-
-/// Whether a re-link error is a benign "this link cannot be made right now"
-/// case to skip (leaving the node orphaned for the watcher to re-track), as
-/// opposed to a genuine failure to surface. Two forest rejections qualify:
-/// the tree position is already held by another metarecord (`idx_field_tree`),
-/// or the recorded parent is no longer a live forest node (deleted, or its own
-/// re-link was skipped) — `validate_tree_ref`'s "invalid TreeRef parent".
-fn is_benign_relink_error(err: &CliError) -> bool {
-    matches!(err, CliError::Op(msg)
-        if msg.contains("already occupied") || msg.contains("invalid TreeRef parent"))
-}
-
-/// Re-links every metarecord of a trashed subtree to its recorded `mfr_path`
-/// TreeRef (authoritative), so the directory and all its descendants return to
-/// where they were. Each node is re-linked only if it is still orphaned
-/// (`mfr_path` absent or Nothing), leaving a metarecord reused since the
-/// trashing untouched. A node whose tree position is already taken by another
-/// metarecord is skipped (that metarecord will track the restored bytes); any
-/// other write failure is surfaced rather than silently swallowed.
-fn relink_subtree(ctx: &Ctx, subtree: &[TrashedNode]) -> Result<(), CliError> {
-    let base = ctx.repo_base()?;
-    // Parent-before-child: a child re-linked before its parent (still orphaned)
-    // is rejected by the forest validation and left orphaned.
-    for node in metafolder_core::trash::relink_order(subtree) {
-        let node = &node;
-        let uuid = Uuid::parse_str(&node.uuid)
-            .map_err(|_| CliError::Op("trash entry has an invalid subtree uuid".into()))?;
-        // The metarecord may be gone (deleted while trashed): skip it, the
-        // watcher makes a fresh one. Re-link only an orphaned metarecord.
-        let Ok(rec) = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[]) else {
-            continue;
-        };
-        if has_present_mfr_path(&rec) {
-            continue;
-        }
-        let parent = node
-            .parent
-            .as_deref()
-            .map(Uuid::parse_str)
-            .transpose()
-            .map_err(|_| CliError::Op("trash entry has an invalid parent uuid".into()))?;
-        let value = serde_json::to_value(metafolder_core::metarecord::Value::TreeRef {
-            parent,
-            name: node.name.clone(),
-        })
-        .expect("tree_ref serialization");
-        let body = json!({"value": value, "force": true});
-        if let Err(e) = ctx.client.request(
-            "PUT",
-            &format!("{base}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
-            &[],
-            Some(&body),
-        ) {
-            if !is_benign_relink_error(&e) {
-                return Err(e); // a genuine failure, not the expected conflict
-            }
-            // else: another metarecord already holds this path — leave m orphaned.
-        }
-    }
-    Ok(())
-}
-
-/// Whether a metarecord body carries a present `mfr_path` (a tree_ref, not
-/// `Nothing` and not absent).
-fn has_present_mfr_path(record: &Json) -> bool {
-    record["fields"].as_array().is_some_and(|fields| {
-        fields
-            .iter()
-            .any(|f| f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing"))
-    })
-}
-
-/// The filesystem root metarecord's uuid: the `mfr_path` forest root whose name
-/// is `""` (created by repo init). Every top-level file hangs off it — reconcile
-/// starts `ensure_parent_metarecords` there — so a restore must re-link a
-/// top-level file under it, never under the root sentinel (`parent = None`),
-/// which would forge a second forest root.
-fn repo_root_metarecord(ctx: &Ctx) -> Result<Uuid, CliError> {
-    let base = ctx.repo_base()?;
-    let roots = ctx
-        .client
-        .get(&format!("{base}/tree/roots"), &[("field", "mfr_path".to_string())])?;
-    let hex = roots
-        .as_array()
-        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
-        .and_then(|r| r["uuid"].as_str())
-        .ok_or_else(|| CliError::Op("repository has no filesystem root metarecord".into()))?;
-    Uuid::parse_str(hex).map_err(|_| CliError::Op("daemon returned an invalid root uuid".into()))
-}
-
-/// After a restore, re-link the one recorded metarecord to the file's location
-/// by writing its `mfr_path` — authoritative, unlike the watcher's fingerprint
-/// re-link. It is a *no-op when the metarecord already has an `mfr_path`* (e.g.
-/// a watch-off repo where the deletion never cleared it — leaving frozen
-/// metadata untouched, spec-trash.org), and it is skipped (with a note) when the
-/// restored path is outside the repo or its parent directory is untracked. Used
-/// only for pre-subtree entries; new entries re-link via [`relink_subtree`].
-fn relink_after_restore(
-    ctx: &Ctx,
-    root: &Path,
-    metarecord: &str,
-    restored: &Path,
-) -> Result<(), CliError> {
-    let base = ctx.repo_base()?;
-    let uuid = Uuid::parse_str(metarecord)
-        .map_err(|_| CliError::Op(format!("trash entry has an invalid metarecord '{metarecord}'")))?;
-
-    // Only re-link an *orphaned* metarecord (mfr_path absent or Nothing); one
-    // that still carries an mfr_path is left alone. A gone metarecord (deleted
-    // while trashed) is simply skipped — the watcher makes a fresh one.
-    let Ok(rec) = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[]) else {
-        return Ok(());
-    };
-    let has_mfr_path = rec["fields"].as_array().is_some_and(|fields| {
-        fields.iter().any(|f| {
-            f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing")
-        })
-    });
-    if has_mfr_path {
-        return Ok(());
-    }
-
-    let abs = restored.canonicalize().unwrap_or_else(|_| restored.to_path_buf());
-    let Ok(rel) = abs.strip_prefix(root) else {
-        eprintln!("note: {} is outside the repo; metarecord {metarecord} not re-linked", abs.display());
-        return Ok(());
-    };
-    let comps: Vec<String> = rel
-        .components()
-        .filter_map(|c| match c {
-            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
-            _ => None,
-        })
-        .collect();
-    let Some(name) = comps.last().cloned() else {
-        return Ok(());
-    };
-    // Parent metarecord uuid: the filesystem root metarecord for a top-level
-    // path (matching reconcile), else the tracked parent directory's metarecord
-    // (resolved by the same exact-path query).
-    let parent = if comps.len() == 1 {
-        Some(repo_root_metarecord(ctx)?)
-    } else {
-        match metarecord_at_path(ctx, root, abs.parent().unwrap_or(root))? {
-            Some(hex) => Some(Uuid::parse_str(&hex).map_err(|_| {
-                CliError::Op("daemon returned an invalid parent uuid".into())
-            })?),
-            None => {
-                eprintln!(
-                    "note: parent of {} is untracked; metarecord {metarecord} not re-linked",
-                    abs.display()
-                );
-                return Ok(());
-            }
-        }
-    };
-
-    let value = serde_json::to_value(metafolder_core::metarecord::Value::TreeRef { parent, name })
-        .expect("tree_ref serialization");
-    let body = json!({"value": value, "force": true});
-    match ctx.client.request(
-        "PUT",
-        &format!("{base}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
-        &[],
-        Some(&body),
-    ) {
-        Ok(_) => {
-            eprintln!("re-linked metarecord {metarecord}");
-            Ok(())
-        }
-        // Another metarecord already holds this path (e.g. the watcher linked
-        // one first): expected and benign — it will track the restored bytes.
-        Err(e) if is_benign_relink_error(&e) => Ok(()),
-        // Anything else is a genuine failure: surface it, don't hide it.
-        Err(e) => Err(e),
-    }
 }
 
 /// `mf trash prune (-s|-d|--all) [--dry-run]`.

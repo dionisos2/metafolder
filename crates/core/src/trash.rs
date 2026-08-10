@@ -15,8 +15,10 @@
 
 use crate::date;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value as Json};
 use std::io;
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 /// A trash operation that failed. A thin string wrapper so clients can map it
 /// onto their own error types (the CLI's `CliError::Op`, a GUI command's
@@ -571,10 +573,358 @@ fn copy_across(from: &Path, to: &Path) -> io::Result<()> {
     std::fs::remove_file(from)
 }
 
+// ── Daemon-side re-link orchestration ────────────────────────────────────────
+//
+// The filesystem layer above is pure, but trashing/restoring a *tracked* path
+// also talks to the daemon: capture the metarecords to re-link at trash time,
+// then re-link them at restore time. That client glue used to be duplicated in
+// the CLI and the GUI; it now lives here behind a small synchronous
+// `DaemonClient` trait — one implementation, one place for its edge cases —
+// mirroring how `core::sync` shares its orchestration.
+
+/// A daemon HTTP failure surfaced to the re-link glue. `status` is the HTTP
+/// status when there was a response (None for a transport failure); `message`
+/// is the daemon's `{"error": …}` text (or a transport description).
+#[derive(Debug, Clone)]
+pub struct DaemonError {
+    pub status: Option<u16>,
+    pub message: String,
+}
+
+impl DaemonError {
+    /// A non-HTTP failure raised by the glue itself (a malformed uuid, …).
+    fn local(message: impl Into<String>) -> Self {
+        Self { status: None, message: message.into() }
+    }
+}
+
+/// The minimal, synchronous daemon HTTP surface the re-link glue needs. The CLI
+/// implements it over its `ureq` client; the GUI over a blocking `ureq` adapter
+/// run off the async runtime — exactly as `core::sync` does.
+pub trait DaemonClient {
+    /// Sends a request; `Ok(body)` on 2xx, `Err` (carrying the status) otherwise.
+    fn request(&self, method: &str, path: &str, body: Option<&Json>) -> Result<Json, DaemonError>;
+
+    fn get(&self, path: &str) -> Result<Json, DaemonError> {
+        self.request("GET", path, None)
+    }
+    fn post(&self, path: &str, body: &Json) -> Result<Json, DaemonError> {
+        self.request("POST", path, Some(body))
+    }
+    fn put(&self, path: &str, body: &Json) -> Result<Json, DaemonError> {
+        self.request("PUT", path, Some(body))
+    }
+}
+
+/// Reads a metarecord JSON (`{uuid, fields}`) into a [`TrashedNode`] — its uuid
+/// plus its first `mfr_path` TreeRef — or None when it has no present tree_ref.
+fn subtree_node(record: &Json) -> Option<TrashedNode> {
+    let uuid = record["uuid"].as_str()?;
+    let mfr = record["fields"].as_array()?.iter().find(|f| f["name"] == "mfr_path")?;
+    let value = &mfr["value"];
+    if value["type"].as_str()? != "tree_ref" {
+        return None;
+    }
+    Some(TrashedNode {
+        uuid: uuid.to_string(),
+        parent: value["value"]["parent"].as_str().map(str::to_owned),
+        name: value["value"]["name"].as_str()?.to_string(),
+    })
+}
+
+/// Whether a metarecord body carries a present `mfr_path` (a tree_ref, not
+/// `Nothing` and not absent).
+fn has_present_mfr_path(record: &Json) -> bool {
+    record["fields"].as_array().is_some_and(|fields| {
+        fields
+            .iter()
+            .any(|f| f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing"))
+    })
+}
+
+/// The non-empty components of a repo-relative path (`"a/b/c"` → `["a","b","c"]`).
+fn path_components(rel: &str) -> Vec<&str> {
+    rel.split('/').filter(|c| !c.is_empty()).collect()
+}
+
+/// Walks the `mfr_path` parent chain from `parent` upward, capturing each
+/// ancestor directory metarecord's TreeRef; stops at (and excludes) the forest
+/// root (the node whose parent is `None`). Bounded by the forest depth limit.
+fn capture_ancestors(
+    client: &dyn DaemonClient,
+    repo: &str,
+    mut parent: Option<String>,
+) -> Result<Vec<TrashedNode>, DaemonError> {
+    let mut nodes = Vec::new();
+    for _ in 0..1000 {
+        let Some(uuid) = parent else { break };
+        let rec = client.get(&format!("/repos/{repo}/metarecords/{uuid}"))?;
+        let Some(node) = subtree_node(&rec) else { break };
+        if node.parent.is_none() {
+            break; // the forest root is always live
+        }
+        parent = node.parent.clone();
+        nodes.push(node);
+    }
+    Ok(nodes)
+}
+
+/// Captures the metarecords to record on a trash entry so a restore can re-link
+/// the whole tree: the target `top` (a metarecord JSON `{uuid, fields}` at repo-
+/// relative path `rel`), its ancestor directories, and its descendants. Empty
+/// when `top` carries no present `mfr_path`.
+pub fn capture_nodes(
+    client: &dyn DaemonClient,
+    repo: &str,
+    top: &Json,
+    rel: &str,
+) -> Result<Vec<TrashedNode>, DaemonError> {
+    let mut nodes = Vec::new();
+    let Some(top_node) = subtree_node(top) else { return Ok(nodes) };
+    nodes.push(top_node.clone());
+    // Ancestors, so restoring this item re-links its parent directories if they
+    // were trashed too; live ancestors are skipped at re-link time.
+    nodes.extend(capture_ancestors(client, repo, top_node.parent.clone())?);
+    // Descendants: a transitive follow of the target's tree path.
+    let target = format!("/{}", path_components(rel).join("/"));
+    let query = json!({"type": "follows_transitive", "field": "mfr_path", "target": target});
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({"query": query, "select": ["mfr_path"], "limit": 500});
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let page = client.post(&format!("/repos/{repo}/query"), &body)?;
+        for obj in page["results"].as_array().into_iter().flatten() {
+            if let Some(node) = subtree_node(obj) {
+                nodes.push(node);
+            }
+        }
+        match page["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    Ok(nodes)
+}
+
+/// Resolves a repo-relative path to the uuid of the metarecord whose `mfr_path`
+/// tracks it (the exact-path query idiom `field -> "/parent" AND field =
+/// "name"`). `None` when nothing matches or `rel` is the root.
+pub fn metarecord_at_path(
+    client: &dyn DaemonClient,
+    repo: &str,
+    rel: &str,
+) -> Result<Option<String>, DaemonError> {
+    let comps = path_components(rel);
+    let Some(name) = comps.last().copied() else { return Ok(None) };
+    let parent = if comps.len() == 1 {
+        String::new() // the forest root
+    } else {
+        format!("/{}", comps[..comps.len() - 1].join("/"))
+    };
+    let query = json!({
+        "type": "and",
+        "operands": [
+            {"type": "follows", "field": "mfr_path", "target": parent},
+            {"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": name}},
+        ],
+    });
+    let resp = client.post(&format!("/repos/{repo}/query"), &json!({"query": query, "limit": 1}))?;
+    Ok(resp["results"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(Json::as_str)
+        .map(str::to_owned))
+}
+
+/// The filesystem root metarecord's uuid: the `mfr_path` forest root named `""`.
+/// Every top-level file hangs off it (reconcile starts there), so a top-level
+/// restore must re-link under it, not under the root sentinel.
+fn repo_root_metarecord(client: &dyn DaemonClient, repo: &str) -> Result<Uuid, DaemonError> {
+    let roots = client.get(&format!("/repos/{repo}/tree/roots?field=mfr_path"))?;
+    let hex = roots
+        .as_array()
+        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
+        .and_then(|r| r["uuid"].as_str())
+        .ok_or_else(|| DaemonError::local("repository has no filesystem root metarecord"))?;
+    Uuid::parse_str(hex).map_err(|_| DaemonError::local("daemon returned an invalid root uuid"))
+}
+
+/// Whether a re-link error is a benign "this link cannot be made right now" case
+/// to skip (leaving the node orphaned for the watcher to re-track): the tree
+/// position is already held by another metarecord ("already occupied"), or the
+/// recorded parent is no longer a live forest node ("invalid TreeRef parent").
+/// Anything else is a genuine failure to surface.
+fn is_benign_relink_error(err: &DaemonError) -> bool {
+    err.message.contains("already occupied") || err.message.contains("invalid TreeRef parent")
+}
+
+/// The JSON `mfr_path` field value for a TreeRef `{parent, name}`.
+fn tree_ref_value(parent: Option<Uuid>, name: &str) -> Json {
+    serde_json::to_value(crate::metarecord::Value::TreeRef { parent, name: name.to_string() })
+        .expect("tree_ref serialization")
+}
+
+/// Re-links every metarecord of a trashed subtree to its recorded TreeRef,
+/// parent-before-child ([`relink_order`]). Skips a node that is gone, still
+/// linked, or whose link can't be made (a benign forest rejection); surfaces
+/// anything else.
+fn relink_subtree(
+    client: &dyn DaemonClient,
+    repo: &str,
+    subtree: &[TrashedNode],
+) -> Result<(), DaemonError> {
+    for node in relink_order(subtree) {
+        let base = format!("/repos/{repo}/metarecords/{}", node.uuid);
+        // A gone metarecord (deleted while trashed) is skipped — the watcher
+        // makes a fresh one. Re-link only an orphaned metarecord.
+        let Ok(rec) = client.get(&base) else { continue };
+        if has_present_mfr_path(&rec) {
+            continue;
+        }
+        let parent = match &node.parent {
+            Some(p) => Some(
+                Uuid::parse_str(p).map_err(|_| DaemonError::local("invalid subtree parent uuid"))?,
+            ),
+            None => None,
+        };
+        let body = json!({"value": tree_ref_value(parent, &node.name), "force": true});
+        if let Err(e) = client.put(&format!("{base}/fields/mfr_path"), &body) {
+            if !is_benign_relink_error(&e) {
+                return Err(e);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Fallback re-link for a pre-subtree entry: re-link the single `metarecord`
+/// (if still orphaned) to the restored repo-relative path `rel`, resolving its
+/// parent like reconcile does. A benign forest rejection is skipped.
+fn relink_after_restore(
+    client: &dyn DaemonClient,
+    repo: &str,
+    metarecord: &str,
+    rel: &str,
+) -> Result<(), DaemonError> {
+    let Ok(rec) = client.get(&format!("/repos/{repo}/metarecords/{metarecord}")) else {
+        return Ok(()); // gone: the watcher re-tracks
+    };
+    if has_present_mfr_path(&rec) {
+        return Ok(());
+    }
+    let comps = path_components(rel);
+    let Some(name) = comps.last().copied() else { return Ok(()) };
+    let parent = if comps.len() == 1 {
+        Some(repo_root_metarecord(client, repo)?)
+    } else {
+        match metarecord_at_path(client, repo, &comps[..comps.len() - 1].join("/"))? {
+            Some(hex) => Some(
+                Uuid::parse_str(&hex)
+                    .map_err(|_| DaemonError::local("daemon returned an invalid parent uuid"))?,
+            ),
+            None => return Ok(()), // parent untracked — leave it unlinked
+        }
+    };
+    let body = json!({"value": tree_ref_value(parent, name), "force": true});
+    match client.put(&format!("/repos/{repo}/metarecords/{metarecord}/fields/mfr_path"), &body) {
+        Ok(_) => Ok(()),
+        Err(e) if is_benign_relink_error(&e) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Re-links a restored entry's metarecords: the whole subtree when recorded,
+/// else the single-`metarecord` fallback resolved from the restored repo-
+/// relative path `rel`. Called *before* the blob is moved into place, so the
+/// metarecords already claim their paths and the watcher sees a plain refresh.
+pub fn restore_relink(
+    client: &dyn DaemonClient,
+    repo: &str,
+    entry: &TrashEntry,
+    rel: &str,
+) -> Result<(), DaemonError> {
+    if !entry.subtree.is_empty() {
+        relink_subtree(client, repo, &entry.subtree)
+    } else if let Some(metarecord) = &entry.metarecord {
+        relink_after_restore(client, repo, metarecord, rel)
+    } else {
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    /// A `DaemonClient` returning canned responses by the first matching
+    /// `"METHOD /path"` substring rule.
+    struct Mock {
+        rules: Vec<(&'static str, Result<Json, DaemonError>)>,
+    }
+    impl DaemonClient for Mock {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            _body: Option<&Json>,
+        ) -> Result<Json, DaemonError> {
+            let key = format!("{method} {path}");
+            for (m, r) in &self.rules {
+                if key.contains(m) {
+                    return r.clone();
+                }
+            }
+            Ok(json!({"results": [], "fields": []}))
+        }
+    }
+
+    fn entry_with_subtree(subtree: Vec<TrashedNode>) -> TrashEntry {
+        TrashEntry {
+            id: "1".into(),
+            original_path: "/x".into(),
+            original_name: "x".into(),
+            trashed_at: 0,
+            size: 0,
+            is_dir: false,
+            reason: Reason::Manual,
+            revision: None,
+            metarecord: None,
+            version: None,
+            subtree,
+        }
+    }
+
+    #[test]
+    fn restore_relink_skips_benign_forest_rejections_but_surfaces_others() {
+        let node = TrashedNode { uuid: "0a".into(), parent: None, name: "f".into() };
+        let entry = entry_with_subtree(vec![node]);
+        let orphan = json!({"uuid": "0a", "fields": []}); // no present mfr_path
+        let put = |msg: &'static str, status| {
+            Mock { rules: vec![("GET ", Ok(orphan.clone())), ("PUT ", Err(DaemonError { status: Some(status), message: msg.into() }))] }
+        };
+        // Both benign forest rejections are skipped (Ok).
+        assert!(restore_relink(&put("tree position already occupied for field 'mfr_path'", 400), "r", &entry, "f").is_ok());
+        assert!(restore_relink(&put("invalid TreeRef parent x: no such metarecord", 400), "r", &entry, "f").is_ok());
+        // A genuine error is surfaced.
+        assert!(restore_relink(&put("database is locked", 500), "r", &entry, "f").is_err());
+    }
+
+    #[test]
+    fn capture_nodes_gathers_the_target_and_its_descendants() {
+        let top = json!({"uuid": "top", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": null, "name": "A"}}}]});
+        let child = json!({"uuid": "c", "fields": [
+            {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "top", "name": "b"}}}]});
+        let mock = Mock {
+            rules: vec![("POST /repos/r/query", Ok(json!({"results": [child], "next_cursor": null})))],
+        };
+        let uuids: Vec<String> =
+            capture_nodes(&mock, "r", &top, "A").unwrap().into_iter().map(|n| n.uuid).collect();
+        assert!(uuids.contains(&"top".to_string()) && uuids.contains(&"c".to_string()));
+    }
 
     fn tmp() -> PathBuf {
         let p = std::env::temp_dir()
