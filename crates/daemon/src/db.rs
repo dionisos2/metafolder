@@ -902,7 +902,11 @@ pub(crate) fn insert_field_row(
     explicit_id: Option<i64>,
 ) -> Result<i64> {
     let map_unique = |err: rusqlite::Error| -> anyhow::Error {
-        if err.to_string().contains("idx_field_tree") {
+        // The tree index `idx_field_tree` is the only UNIQUE constraint on
+        // `value_name`; SQLite names the *columns* (not the index) in the error,
+        // so match on the distinguishing column rather than the index name.
+        let message = err.to_string();
+        if message.contains("UNIQUE constraint failed") && message.contains("value_name") {
             DomainError::BadRequest(format!("tree position already occupied for field '{name}'"))
                 .into()
         } else {

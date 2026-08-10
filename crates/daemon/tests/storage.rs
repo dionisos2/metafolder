@@ -331,10 +331,12 @@ fn test_tree_unique_index_rejects_duplicate_position() {
             Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() },
         )])
         .unwrap_err();
+    // The raw SQLite UNIQUE error must be mapped to the clean domain message
+    // (a 400), not leak as an internal error — SQLite names the columns, not the
+    // index, so the mapping keys off `value_name`.
     assert!(
-        err.to_string().to_lowercase().contains("occupied")
-            || err.to_string().to_lowercase().contains("unique"),
-        "unexpected error: {err}"
+        err.to_string().to_lowercase().contains("occupied"),
+        "expected the mapped 'tree position already occupied' error, got: {err}"
     );
 }
 
