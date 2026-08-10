@@ -428,13 +428,104 @@ impl Apply<'_, '_> {
     }
 
     fn apply_create(&mut self, rel: &str) -> Result<()> {
+        if !self.create_or_refresh(rel)? {
+            return Ok(()); // Ineligible: nothing created, nothing to descend into.
+        }
+        if self.is_dir(rel) {
+            self.scan_dir(rel)?;
+        }
+        Ok(())
+    }
+
+    /// Scans a newly-tracked directory subtree and ingests everything already
+    /// inside it. A directory pasted or moved in wholesale arrives as a single
+    /// Create for the directory, but inotify's recursive watch is only
+    /// registered *after* the directory exists — anything already inside it
+    /// never fires its own event (the classic recursive-watch race). Children
+    /// are ingested with arrival semantics (`ingest_arrival`), so a moved-in
+    /// subtree reuses orphaned metarecords by fingerprint rather than
+    /// duplicating them. Idempotent with any child events that did fire.
+    fn scan_dir(&mut self, rel: &str) -> Result<()> {
+        let mut stack = vec![rel.to_string()];
+        while let Some(dir) = stack.pop() {
+            let entries = match std::fs::read_dir(self.abs(&dir)) {
+                Ok(entries) => entries,
+                Err(_) => continue, // Vanished mid-scan; a reconcile can catch up.
+            };
+            for entry in entries.flatten() {
+                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                    continue; // Non-UTF-8 name: skip (a reconcile can handle it).
+                };
+                let child = format!("{dir}/{name}");
+                // Descend into an eligible subdirectory to reach its own
+                // contents; an ignored one (and its whole subtree) is skipped.
+                if self.ingest_arrival(&child)? && self.is_dir(&child) {
+                    stack.push(child);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Creates or refreshes the metarecord for a single path (no orphan
+    /// matching). Returns whether the path was eligible — the caller uses this
+    /// to decide whether to descend into a directory.
+    fn create_or_refresh(&mut self, rel: &str) -> Result<bool> {
         if !self.eligible(rel)? {
-            return Ok(());
+            return Ok(false);
+        }
+        match self.resolve(rel)? {
+            // Already tracked (e.g. replay after crash, or a delivered child
+            // event): refresh instead.
+            Some(existing) => self.refresh_data(existing, rel)?,
+            None => self.create_record(rel)?,
+        }
+        Ok(true)
+    }
+
+    /// Per-path arrival ingest (no subtree scan): refresh a known path, else
+    /// reuse an orphaned metarecord when a full-hash fingerprint confirms
+    /// identity (files only), otherwise create. Returns whether the path was
+    /// eligible.
+    fn ingest_arrival(&mut self, rel: &str) -> Result<bool> {
+        if !self.eligible(rel)? {
+            return Ok(false);
         }
         if let Some(existing) = self.resolve(rel)? {
-            // Already tracked (e.g. replay after crash): refresh instead.
-            return self.refresh_data(existing, rel);
+            self.refresh_data(existing, rel)?;
+            return Ok(true);
         }
+        let abs = self.abs(rel);
+        // lstat: a symlink is `is_file() == false`, so the fingerprint-based
+        // orphan search below is skipped and the target is never read.
+        let Ok(meta) = std::fs::symlink_metadata(&abs) else {
+            return Ok(true); // Vanished before the flush.
+        };
+        if meta.is_file() {
+            if let Some(orphan) = self.find_orphan_match(&abs, meta.len() as i64)? {
+                let parent = self.ensure_parents(rel)?;
+                let (_, name) = Self::split_parent(rel);
+                self.writer.set_field_as(
+                    OpType::FileMoved,
+                    orphan,
+                    "mfr_path",
+                    Value::TreeRef { parent: Some(parent), name: name.to_string() },
+                )?;
+                self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
+                // Refresh the stat-derived fields at the new location.
+                for field in fs_meta::stat_fields(&abs)? {
+                    self.writer.set_field_as(OpType::FileModified, orphan, &field.name, field.value)?;
+                }
+                return Ok(true);
+            }
+        }
+        self.create_record(rel)?;
+        Ok(true)
+    }
+
+    /// Creates a fresh metarecord for `rel`: its `mfr_path` TreeRef plus the
+    /// stat-derived fields. A no-op if the path vanished before the flush.
+    fn create_record(&mut self, rel: &str) -> Result<()> {
         let Ok(stat) = fs_meta::stat_fields(&self.abs(rel)) else {
             return Ok(()); // The file disappeared before the flush.
         };
@@ -448,6 +539,12 @@ impl Apply<'_, '_> {
         let created = self.writer.create_metarecord(fields)?;
         self.cache.apply_insert("mfr_path", Some(parent), name, created.uuid);
         Ok(())
+    }
+
+    /// Whether `rel` is a directory on disk (not following symlinks: a symlink
+    /// to a directory is not descended into).
+    fn is_dir(&self, rel: &str) -> bool {
+        std::fs::symlink_metadata(self.abs(rel)).map(|m| m.is_dir()).unwrap_or(false)
     }
 
     /// `Remove` / `Rename(From)`: the metarecord is preserved, `mfr_path` becomes
@@ -490,45 +587,18 @@ impl Apply<'_, '_> {
         Ok(())
     }
 
-    /// `Rename(To)`: the file arrived from outside. Reuse an orphaned metarecord
-    /// when a full-hash fingerprint confirms identity, otherwise create.
+    /// `Rename(To)`: a path arrived from outside. Reuse an orphaned metarecord
+    /// when a full-hash fingerprint confirms identity, otherwise create; a
+    /// directory also has its existing contents scanned (the recursive-watch
+    /// race — see [`Self::scan_dir`]).
     fn apply_arrival(&mut self, rel: &str) -> Result<()> {
-        if !self.eligible(rel)? {
+        if !self.ingest_arrival(rel)? {
             return Ok(());
         }
-        if let Some(existing) = self.resolve(rel)? {
-            return self.refresh_data(existing, rel);
+        if self.is_dir(rel) {
+            self.scan_dir(rel)?;
         }
-        let abs = self.abs(rel);
-        // lstat: a symlink is `is_file() == false`, so the fingerprint-based
-        // orphan search below is skipped and the target is never read.
-        let Ok(meta) = std::fs::symlink_metadata(&abs) else {
-            return Ok(());
-        };
-        if meta.is_file() {
-            if let Some(orphan) = self.find_orphan_match(&abs, meta.len() as i64)? {
-                let parent = self.ensure_parents(rel)?;
-                let (_, name) = Self::split_parent(rel);
-                self.writer.set_field_as(
-                    OpType::FileMoved,
-                    orphan,
-                    "mfr_path",
-                    Value::TreeRef { parent: Some(parent), name: name.to_string() },
-                )?;
-                self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
-                // Refresh the stat-derived fields at the new location.
-                for field in fs_meta::stat_fields(&abs)? {
-                    self.writer.set_field_as(
-                        OpType::FileModified,
-                        orphan,
-                        &field.name,
-                        field.value,
-                    )?;
-                }
-                return Ok(());
-            }
-        }
-        self.apply_create(rel)
+        Ok(())
     }
 
     /// Fingerprint search among orphaned metarecords (`mfr_path` = Nothing):

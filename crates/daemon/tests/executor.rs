@@ -134,6 +134,30 @@ fn test_create_creates_missing_parent_metarecords() {
 }
 
 #[test]
+fn test_create_directory_scans_its_existing_contents() {
+    // The classic inotify recursive-watch race: a directory pasted in wholesale
+    // arrives as one Create for the directory, but its contents already existed
+    // before a recursive watch could be registered, so their own events are
+    // lost. The executor must scan a newly-created directory and track what is
+    // already inside it (spec-file-tracking "File Watcher").
+    let (repo, root, _) = setup("dirscan");
+    write_file(&root, "backup/a.txt", b"a");
+    write_file(&root, "backup/sub/b.txt", b"bb");
+    // Only the top directory's Create is delivered — the children events are lost.
+    enqueue(&repo, &[FsEvent::Create("/backup".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    assert!(resolve(&repo, "/backup").is_some(), "the directory itself");
+    let a = resolve(&repo, "/backup/a.txt").expect("top-level child tracked");
+    assert_eq!(field_value(&repo, a, "mfr_size"), Some(Value::Int(1)));
+    assert!(resolve(&repo, "/backup/sub").is_some(), "nested dir tracked");
+    let b = resolve(&repo, "/backup/sub/b.txt").expect("nested child tracked");
+    assert_eq!(field_value(&repo, b, "mfr_size"), Some(Value::Int(2)));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_ineligible_paths_are_ignored() {
     let (repo, root, _) = setup("ignored");
     write_file(&root, ".git/config", b"x");
