@@ -63,6 +63,31 @@ impl Client {
         query: &[(&str, String)],
         body: Option<&Json>,
     ) -> Result<Json, CliError> {
+        self.send(method, path, query, body).map_err(|(_, message)| CliError::Op(message))
+    }
+
+    /// Like [`Self::request`] but preserving the HTTP status, for callers that
+    /// classify an error by status rather than message (the shared trash
+    /// re-link glue's `DaemonClient`).
+    pub fn request_daemon(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Json>,
+    ) -> Result<Json, metafolder_core::trash::DaemonError> {
+        self.send(method, path, &[], body)
+            .map_err(|(status, message)| metafolder_core::trash::DaemonError { status, message })
+    }
+
+    /// The raw request: `Ok(body)` on 2xx, else `Err((status, message))` — the
+    /// HTTP status (None on transport failure) and the daemon's error text.
+    fn send(
+        &self,
+        method: &str,
+        path: &str,
+        query: &[(&str, String)],
+        body: Option<&Json>,
+    ) -> Result<Json, (Option<u16>, String)> {
         let url = format!("{}{}", self.base, path);
         let mut req = self.agent.request(method, &url);
         if let Some(token) = &self.token {
@@ -83,10 +108,10 @@ impl Client {
                     .as_str()
                     .map(str::to_string)
                     .unwrap_or_else(|| format!("{} returned HTTP {code}", self.peer));
-                Err(CliError::Op(message))
+                Err((Some(code), message))
             }
             Err(ureq::Error::Transport(t)) => {
-                Err(CliError::Op(format!("cannot reach the {} at {}: {t}", self.peer, self.base)))
+                Err((None, format!("cannot reach the {} at {}: {t}", self.peer, self.base)))
             }
         }
     }

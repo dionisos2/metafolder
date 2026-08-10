@@ -1109,8 +1109,8 @@ fn trash_dir_of(info: &Json) -> Result<TrashDir, CliError> {
 }
 
 /// Adapts the CLI's HTTP client to core's `DaemonClient` for the shared trash
-/// re-link glue (`metafolder_core::trash`). The status is not preserved (the
-/// client folds non-2xx into an `Op` message); the glue keys off the message.
+/// re-link glue (`metafolder_core::trash`), preserving the HTTP status so the
+/// glue can classify a benign forest rejection by status.
 struct TrashDaemon<'a>(&'a Client);
 
 impl metafolder_core::trash::DaemonClient for TrashDaemon<'_> {
@@ -1120,9 +1120,7 @@ impl metafolder_core::trash::DaemonClient for TrashDaemon<'_> {
         path: &str,
         body: Option<&Json>,
     ) -> Result<Json, metafolder_core::trash::DaemonError> {
-        self.0.request(method, path, &[], body).map_err(|e| {
-            metafolder_core::trash::DaemonError { status: None, message: e.message().to_string() }
-        })
+        self.0.request_daemon(method, path, body)
     }
 }
 

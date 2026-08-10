@@ -752,12 +752,14 @@ fn repo_root_metarecord(client: &dyn DaemonClient, repo: &str) -> Result<Uuid, D
 }
 
 /// Whether a re-link error is a benign "this link cannot be made right now" case
-/// to skip (leaving the node orphaned for the watcher to re-track): the tree
-/// position is already held by another metarecord ("already occupied"), or the
-/// recorded parent is no longer a live forest node ("invalid TreeRef parent").
-/// Anything else is a genuine failure to surface.
+/// to skip (leaving the node orphaned for the watcher to re-track). During a
+/// faithful re-link (writing back a previously-valid TreeRef with `force`) the
+/// only 400 the daemon returns is a forest rejection — the position is already
+/// held by another metarecord, or the recorded parent is no longer a live node.
+/// So classify by status: a 400 is benign, anything else (5xx, transport) is a
+/// genuine failure to surface — no coupling to the daemon's error wording.
 fn is_benign_relink_error(err: &DaemonError) -> bool {
-    err.message.contains("already occupied") || err.message.contains("invalid TreeRef parent")
+    err.status == Some(400)
 }
 
 /// The JSON `mfr_path` field value for a TreeRef `{parent, name}`.
