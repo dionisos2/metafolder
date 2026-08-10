@@ -293,35 +293,52 @@ impl TrashDir {
     }
 
     /// Moves the entry's blob back to `to` (or its `original_path`) and removes
-    /// the entry. An occupied target is refused (never overwritten). Returns the
-    /// restored path.
+    /// the entry. A free target is filled directly. An occupied target is
+    /// refused — **except** a directory blob onto an existing directory, which
+    /// is *merged* (the directory is a container, not data): entries the target
+    /// lacks are moved in and shared subdirectories are merged recursively, but
+    /// no existing leaf is ever overwritten (a collision refuses the whole
+    /// restore before moving anything). Returns the restored path.
     pub fn restore(&self, id: &str, to: Option<&Path>) -> Result<PathBuf, TrashError> {
         let entry = self.load_entry(id)?;
         let target = to
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from(&entry.original_path));
+        let blob = self.blob_path(id);
 
-        // `symlink_metadata` (not `exists`) so a directory or a broken symlink
-        // at the target counts as an occupant too. We never overwrite it:
-        // restore the occupant elsewhere, or trash it explicitly first.
-        if std::fs::symlink_metadata(&target).is_ok() {
-            return Err(TrashError(format!(
-                "{} already exists; restore is refused (move it aside or use --to)",
-                target.display()
-            )));
+        match plan_restore(&blob, &target)? {
+            RestoreAction::Fresh => {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        TrashError(format!("cannot create {}: {e}", parent.display()))
+                    })?;
+                }
+                move_path(&blob, &target).map_err(|e| {
+                    TrashError(format!("cannot restore to {}: {e}", target.display()))
+                })?;
+            }
+            RestoreAction::Merge => {
+                merge_move(&blob, &target)
+                    .map_err(|e| TrashError(format!("cannot merge into {}: {e}", target.display())))?;
+                let _ = std::fs::remove_dir(&blob); // emptied by the merge
+            }
         }
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                TrashError(format!("cannot create {}: {e}", parent.display()))
-            })?;
-        }
-        move_path(&self.blob_path(id), &target).map_err(|e| {
-            TrashError(format!("cannot restore to {}: {e}", target.display()))
-        })?;
         // The blob is gone; drop the manifest to complete the removal.
         std::fs::remove_file(self.manifest_path(id))
             .map_err(|e| TrashError(format!("cannot remove the trash manifest: {e}")))?;
         Ok(target)
+    }
+
+    /// Whether [`Self::restore`] can proceed to `to` (or the entry's original
+    /// path): `Ok` for a free target or a mergeable directory, `Err` for an
+    /// occupied target that would be overwritten. Lets a client validate (and
+    /// re-link the metarecord) before calling `restore`, without moving bytes.
+    pub fn preflight_restore(&self, id: &str, to: Option<&Path>) -> Result<(), TrashError> {
+        let entry = self.load_entry(id)?;
+        let target = to
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from(&entry.original_path));
+        plan_restore(&self.blob_path(id), &target).map(|_| ())
     }
 
     /// Permanently deletes a single entry (its blob and manifest). A missing
@@ -383,6 +400,84 @@ impl TrashDir {
         }
         Ok(selected)
     }
+}
+
+/// How [`TrashDir::restore`] should place a blob at its target.
+enum RestoreAction {
+    /// The target is free: move the blob straight in.
+    Fresh,
+    /// A directory blob onto an existing directory: merge the contents.
+    Merge,
+}
+
+/// Decides whether restoring `blob` to `target` is a fresh move, a directory
+/// merge, or refused. `symlink_metadata` (not `exists`) so a directory or a
+/// broken symlink at the target counts as an occupant. A merge is allowed only
+/// when both sides are directories and no leaf would be overwritten (checked
+/// up-front, so a conflict refuses before a single byte moves).
+fn plan_restore(blob: &Path, target: &Path) -> Result<RestoreAction, TrashError> {
+    let Ok(target_meta) = std::fs::symlink_metadata(target) else {
+        return Ok(RestoreAction::Fresh); // free target
+    };
+    let blob_is_dir = std::fs::symlink_metadata(blob).map(|m| m.is_dir()).unwrap_or(false);
+    if blob_is_dir && target_meta.is_dir() {
+        detect_merge_conflict(blob, target)?;
+        return Ok(RestoreAction::Merge);
+    }
+    Err(TrashError(format!(
+        "{} already exists; restore is refused (move it aside or use --to)",
+        target.display()
+    )))
+}
+
+/// Errors if merging directory `src` into directory `dst` would overwrite any
+/// existing entry: a leaf (file, symlink, …) on either side that collides with
+/// an existing entry is a conflict; two directories at the same path are not —
+/// they merge, so the check recurses into them.
+fn detect_merge_conflict(src: &Path, dst: &Path) -> Result<(), TrashError> {
+    let entries = std::fs::read_dir(src)
+        .map_err(|e| TrashError(format!("cannot read {}: {e}", src.display())))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| TrashError(format!("cannot read {}: {e}", src.display())))?;
+        let child = dst.join(entry.file_name());
+        let Ok(dst_meta) = std::fs::symlink_metadata(&child) else {
+            continue; // dst lacks it — the merge just moves it in
+        };
+        let src_is_dir = entry
+            .file_type()
+            .map_err(|e| TrashError(format!("cannot stat {}: {e}", entry.path().display())))?
+            .is_dir();
+        if src_is_dir && dst_meta.is_dir() {
+            detect_merge_conflict(&entry.path(), &child)?;
+        } else {
+            return Err(TrashError(format!(
+                "{} already exists; restore is refused (would overwrite)",
+                child.display()
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Moves each entry of `src` into `dst`, filling the gaps and merging shared
+/// subdirectories recursively. Assumes [`detect_merge_conflict`] already
+/// cleared it, so no existing leaf is overwritten. Emptied subdirectories of
+/// `src` are removed as it goes.
+fn merge_move(src: &Path, dst: &Path) -> io::Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() && std::fs::symlink_metadata(&to).is_ok() {
+            // Shared subdirectory (both exist, verified dirs): merge into it.
+            merge_move(&from, &to)?;
+            let _ = std::fs::remove_dir(&from); // now emptied
+        } else {
+            // dst lacks it: move the whole file/symlink/subtree over.
+            move_path(&from, &to)?;
+        }
+    }
+    Ok(())
 }
 
 /// Moves `from` (a file, symlink, or directory) to `to`, falling back to
@@ -511,6 +606,67 @@ mod tests {
         copy_across(&from, &to).unwrap();
         assert_eq!(fs::metadata(&to).unwrap().modified().unwrap(), t);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn restore_merges_a_directory_into_an_existing_one() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let dir = base.join("A");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("c.txt"), b"c").unwrap();
+        fs::write(dir.join("sub/d.txt"), b"d").unwrap();
+        let entry = trash.trash_path(&dir, Reason::Manual, None, None, None).unwrap();
+        assert!(!dir.exists());
+
+        // The directory is recreated meanwhile with a different file (as a
+        // partial restore of its contents would leave it).
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("b.txt"), b"b").unwrap();
+
+        // Restore merges the blob's contents into the existing directory.
+        let restored = trash.restore(&entry.id, None).unwrap();
+        assert_eq!(restored, dir);
+        assert_eq!(fs::read(dir.join("b.txt")).unwrap(), b"b"); // pre-existing kept
+        assert_eq!(fs::read(dir.join("c.txt")).unwrap(), b"c"); // restored
+        assert_eq!(fs::read(dir.join("sub/d.txt")).unwrap(), b"d"); // merged subdir
+        assert!(trash.entry(&entry.id).is_err(), "the entry is consumed");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn restore_refuses_a_directory_merge_that_would_overwrite_a_file() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let dir = base.join("A");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("c.txt"), b"original").unwrap();
+        let entry = trash.trash_path(&dir, Reason::Manual, None, None, None).unwrap();
+
+        // Recreate with a colliding file at the same path.
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("c.txt"), b"different").unwrap();
+
+        let err = trash.restore(&entry.id, None).unwrap_err();
+        assert!(err.0.contains("already exists"), "got: {}", err.0);
+        // Nothing was overwritten and the entry survives for another try.
+        assert_eq!(fs::read(dir.join("c.txt")).unwrap(), b"different");
+        assert!(trash.entry(&entry.id).is_ok(), "the entry survives a refused restore");
+        fs::remove_dir_all(&base).ok();
+    }
+
+    #[test]
+    fn restore_still_refuses_a_file_onto_an_occupied_target() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let f = base.join("f.txt");
+        fs::write(&f, b"trashed").unwrap();
+        let entry = trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
+        fs::write(&f, b"occupant").unwrap();
+        let err = trash.restore(&entry.id, None).unwrap_err();
+        assert!(err.0.contains("already exists"), "got: {}", err.0);
+        assert_eq!(fs::read(&f).unwrap(), b"occupant", "not overwritten");
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

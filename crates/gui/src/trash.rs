@@ -414,17 +414,13 @@ pub async fn trash_restore(
     let dir = trash_dir(&internal);
     let entry = dir.entry(&id).map_err(|e| e.0)?;
 
-    // The target is always free (restore refuses an occupied one), so re-link
-    // the metarecord *before* moving the file into place (spec-trash): the
-    // metarecord then already claims the path, so the watcher sees a plain
-    // refresh rather than fingerprint-searching or creating a duplicate.
+    // Check the restore can proceed (a free target, or a mergeable directory)
+    // before re-linking, so we don't re-link a metarecord to a path a refused
+    // restore never fills. Re-linking happens before the move so the metarecord
+    // already claims the path and the watcher sees a plain refresh rather than
+    // fingerprint-searching or creating a duplicate (spec-trash).
     let target = PathBuf::from(&entry.original_path);
-    if std::fs::symlink_metadata(&target).is_ok() {
-        return Err(format!(
-            "{} already exists; restore is refused (move it aside first)",
-            target.display()
-        ));
-    }
+    dir.preflight_restore(&id, None).map_err(|e| e.0)?;
     if !entry.subtree.is_empty() {
         // The whole subtree was recorded at trash time: re-link every node to
         // its original TreeRef (the directory and all its descendants).

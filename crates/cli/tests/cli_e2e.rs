@@ -1543,6 +1543,31 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     );
 }
 
+// Restoring a directory whose target already exists merges the blob's contents
+// into it (a directory is a container, not data) instead of refusing — the
+// dead-end when part of a directory was restored first (spec-trash "Restore").
+#[test]
+fn test_trash_restore_merges_a_directory_into_an_existing_one() {
+    let (repo, root) = init_repo("trashmerge");
+    let dir = root.join("A");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("c.txt"), b"c").unwrap();
+    assert_ok(&mf(&["-u", &repo, "track", dir.join("c.txt").to_str().unwrap()]));
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    assert!(!dir.exists(), "the directory moved into the trash");
+    // The directory is recreated meanwhile with a different file (as a partial
+    // restore of a file inside it would leave it).
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("b.txt"), b"b").unwrap();
+
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
+    assert_ok(&out); // no longer a dead-end
+    assert_eq!(std::fs::read(dir.join("b.txt")).unwrap(), b"b", "pre-existing kept");
+    assert_eq!(std::fs::read(dir.join("c.txt")).unwrap(), b"c", "restored into it");
+}
+
 // `mf trash restore` re-links the associated metarecord authoritatively: after
 // the file is back, the orphaned metarecord's mfr_path is restored (H).
 #[test]
