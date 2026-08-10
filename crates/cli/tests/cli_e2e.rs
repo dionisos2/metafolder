@@ -1524,6 +1524,47 @@ fn test_trash_restore_relinks_the_metarecord() {
     assert!(out.stdout.contains("sub/file.txt"), "path output: {}", out.stdout);
 }
 
+// Regression: restoring a *top-level* file (directly in the repo root) must
+// re-link its metarecord under the filesystem root metarecord — exactly as
+// reconcile does (`ensure_parent_metarecords` starts from the root) — not with
+// parent = None, which forges a second forest root and leaves the file to be
+// re-tracked as a duplicate.
+#[test]
+fn test_trash_restore_relinks_a_top_level_file() {
+    let (repo, root) = init_repo("trashrelinktop");
+    let file = root.join("top.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    // The filesystem root metarecord (the only directory) is the expected parent.
+    let root_uuid =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&root_uuid), "one dir (the fs root), got: {root_uuid}");
+
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
+    assert_ok(&mf(&[
+        "-u", &repo, "metarecord", "-i", &uuid, "field", "unset", "mfr_path", "--force",
+    ]));
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &entry_id]));
+    assert_eq!(std::fs::read(&file).unwrap(), b"data");
+
+    // mfr_path is back, and its parent is the fs root metarecord — not None.
+    let rec = get_entries(&repo, &uuid);
+    let obj = rec.get(0).unwrap_or(&rec);
+    let fields = obj["fields"].as_array().expect("fields array");
+    let mfr_path = fields.iter().find(|f| f["name"] == "mfr_path").expect("mfr_path present");
+    assert_eq!(
+        mfr_path["value"]["value"]["parent"].as_str(),
+        Some(root_uuid.as_str()),
+        "top-level restore must re-link under the fs root, got {}",
+        mfr_path["value"],
+    );
+}
+
 /// Polls `mf <args>` until `pred(stdout)` holds, up to ~10 s. Returns the
 /// matching stdout (trimmed). Panics on timeout.
 fn poll_mf(args: &[&str], pred: impl Fn(&str) -> bool) -> String {

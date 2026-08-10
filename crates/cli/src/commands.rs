@@ -1249,6 +1249,24 @@ pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliE
 /// a watch-off repo where the deletion never cleared it — leaving frozen
 /// metadata untouched, spec-trash.org), and it is skipped (with a note) when the
 /// restored path is outside the repo or its parent directory is untracked.
+/// The filesystem root metarecord's uuid: the `mfr_path` forest root whose name
+/// is `""` (created by repo init). Every top-level file hangs off it — reconcile
+/// starts `ensure_parent_metarecords` there — so a restore must re-link a
+/// top-level file under it, never under the root sentinel (`parent = None`),
+/// which would forge a second forest root.
+fn repo_root_metarecord(ctx: &Ctx) -> Result<Uuid, CliError> {
+    let base = ctx.repo_base()?;
+    let roots = ctx
+        .client
+        .get(&format!("{base}/tree/roots"), &[("field", "mfr_path".to_string())])?;
+    let hex = roots
+        .as_array()
+        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
+        .and_then(|r| r["uuid"].as_str())
+        .ok_or_else(|| CliError::Op("repository has no filesystem root metarecord".into()))?;
+    Uuid::parse_str(hex).map_err(|_| CliError::Op("daemon returned an invalid root uuid".into()))
+}
+
 fn relink_after_restore(
     ctx: &Ctx,
     root: &Path,
@@ -1286,10 +1304,11 @@ fn relink_after_restore(
     let Some(name) = comps.last().cloned() else {
         return Ok(());
     };
-    // Parent metarecord uuid: None for a top-level path, else the tracked parent
-    // directory's metarecord (resolved by the same exact-path query).
+    // Parent metarecord uuid: the filesystem root metarecord for a top-level
+    // path (matching reconcile), else the tracked parent directory's metarecord
+    // (resolved by the same exact-path query).
     let parent = if comps.len() == 1 {
-        None
+        Some(repo_root_metarecord(ctx)?)
     } else {
         match metarecord_at_path(ctx, root, abs.parent().unwrap_or(root))? {
             Some(hex) => Some(Uuid::parse_str(&hex).map_err(|_| {

@@ -131,6 +131,23 @@ async fn metarecord_at_path(
         .map(str::to_owned))
 }
 
+/// The filesystem root metarecord's uuid: the `mfr_path` forest root whose name
+/// is `""` (created by repo init). Every top-level file hangs off it — reconcile
+/// starts `ensure_parent_metarecords` there — so a top-level restore must
+/// re-link under it, never under the root sentinel (`parent = None`), which
+/// would forge a second forest root.
+async fn repo_root_metarecord(daemon: &DaemonProxy, repo: &str) -> Result<Uuid, String> {
+    let response = daemon
+        .request("GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None)
+        .await?;
+    let hex = response.body
+        .as_array()
+        .and_then(|rs| rs.iter().find(|r| r["name"].as_str() == Some("")))
+        .and_then(|r| r["uuid"].as_str())
+        .ok_or("repository has no filesystem root metarecord")?;
+    Uuid::parse_str(hex).map_err(|_| "daemon returned an invalid root uuid".to_string())
+}
+
 /// After a restore, re-link the associated metarecord to `restored` by writing
 /// its `mfr_path` (authoritative, mirroring the CLI's `relink_after_restore`).
 /// A no-op when the metarecord still has an `mfr_path`, or when the path/parent
@@ -161,7 +178,10 @@ async fn relink_after_restore(
         return Ok(());
     };
     let parent = if comps.len() == 1 {
-        None
+        // Top-level file: its parent is the filesystem root metarecord, exactly
+        // as reconcile assigns it — not None, which would forge a second forest
+        // root and leave the file to be re-tracked as a duplicate.
+        Some(repo_root_metarecord(daemon, repo).await?)
     } else {
         match metarecord_at_path(daemon, repo, root, restored.parent().unwrap_or(Path::new(root)))
             .await?
