@@ -6,7 +6,7 @@
 //! metarecord after a restore.
 
 use crate::commands::App;
-use crate::daemon_proxy::DaemonProxy;
+use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
 use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry, TrashedNode};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
@@ -244,7 +244,8 @@ async fn capture_subtree(
 /// Re-links every metarecord of a trashed subtree to its recorded `mfr_path`
 /// TreeRef, so the directory and all its descendants return to where they were.
 /// A node still carrying an `mfr_path` (reused since the trashing) is left
-/// alone; PUT failures are swallowed (the bytes are restored regardless).
+/// alone, and a node whose tree position is already held by another metarecord
+/// is skipped; any other write failure is surfaced rather than swallowed.
 async fn relink_subtree(
     daemon: &DaemonProxy,
     repo: &str,
@@ -274,21 +275,38 @@ async fn relink_subtree(
             name: node.name.clone(),
         })
         .map_err(|e| e.to_string())?;
-        let _ = daemon
+        let response = daemon
             .request(
                 "PUT",
                 &format!("/repos/{repo}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
                 Some(json!({"value": value, "force": true})),
             )
-            .await;
+            .await?;
+        check_relink(&response)?; // skip the expected conflict, surface anything else
     }
     Ok(())
 }
 
+/// Interprets a `PUT …/mfr_path` re-link response: `Ok` on success or on the
+/// expected "tree position already occupied" conflict (benign — another
+/// metarecord already holds the path and will track the restored bytes); `Err`
+/// on any other failure, so a genuine problem is surfaced rather than hidden.
+fn check_relink(response: &ProxyResponse) -> Result<(), String> {
+    if (200..300).contains(&response.status) {
+        return Ok(());
+    }
+    let message = response.body["error"].as_str().unwrap_or("");
+    if message.contains("already occupied") {
+        return Ok(());
+    }
+    Err(format!("re-link failed (HTTP {}): {message}", response.status))
+}
+
 /// After a restore, re-link the associated metarecord to `restored` by writing
 /// its `mfr_path` (authoritative, mirroring the CLI's `relink_after_restore`).
-/// A no-op when the metarecord still has an `mfr_path`, or when the path/parent
-/// is untracked; PUT failures are swallowed (the file is restored regardless).
+/// A no-op when the metarecord still has an `mfr_path`, when it is gone, or when
+/// the path/parent is untracked; the expected "position already taken" conflict
+/// is skipped, and any other write failure is surfaced.
 async fn relink_after_restore(
     daemon: &DaemonProxy,
     repo: &str,
@@ -333,15 +351,14 @@ async fn relink_after_restore(
     let uuid = Uuid::parse_str(metarecord).map_err(|_| "invalid metarecord uuid")?;
     let value = serde_json::to_value(metafolder_core::metarecord::Value::TreeRef { parent, name })
         .map_err(|e| e.to_string())?;
-    // Best-effort: a re-link clash is not fatal, the bytes are already back.
-    let _ = daemon
+    let response = daemon
         .request(
             "PUT",
             &format!("/repos/{repo}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
             Some(json!({"value": value, "force": true})),
         )
-        .await;
-    Ok(())
+        .await?;
+    check_relink(&response) // skip the expected conflict, surface anything else
 }
 
 /// `GET /repos/:repo/metarecords/:uuid`, erroring unless 200.

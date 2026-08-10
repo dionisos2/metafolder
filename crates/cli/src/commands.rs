@@ -1346,12 +1346,20 @@ pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliE
     Ok(0)
 }
 
+/// Whether a re-link error is the expected "another metarecord already holds
+/// this tree position" conflict (the daemon's `idx_field_tree` rejection) — a
+/// benign case to skip, as opposed to a genuine failure to surface.
+fn is_tree_position_taken(err: &CliError) -> bool {
+    matches!(err, CliError::Op(msg) if msg.contains("already occupied"))
+}
+
 /// Re-links every metarecord of a trashed subtree to its recorded `mfr_path`
 /// TreeRef (authoritative), so the directory and all its descendants return to
 /// where they were. Each node is re-linked only if it is still orphaned
 /// (`mfr_path` absent or Nothing), leaving a metarecord reused since the
-/// trashing untouched. Best-effort per node: a clash is not fatal — the bytes
-/// are restored regardless.
+/// trashing untouched. A node whose tree position is already taken by another
+/// metarecord is skipped (that metarecord will track the restored bytes); any
+/// other write failure is surfaced rather than silently swallowed.
 fn relink_subtree(ctx: &Ctx, subtree: &[TrashedNode]) -> Result<(), CliError> {
     let base = ctx.repo_base()?;
     // Parent-before-child: a child re-linked before its parent (still orphaned)
@@ -1380,12 +1388,17 @@ fn relink_subtree(ctx: &Ctx, subtree: &[TrashedNode]) -> Result<(), CliError> {
         })
         .expect("tree_ref serialization");
         let body = json!({"value": value, "force": true});
-        let _ = ctx.client.request(
+        if let Err(e) = ctx.client.request(
             "PUT",
             &format!("{base}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
             &[],
             Some(&body),
-        );
+        ) {
+            if !is_tree_position_taken(&e) {
+                return Err(e); // a genuine failure, not the expected conflict
+            }
+            // else: another metarecord already holds this path — leave m orphaned.
+        }
     }
     Ok(())
 }
@@ -1498,12 +1511,11 @@ fn relink_after_restore(
             eprintln!("re-linked metarecord {metarecord}");
             Ok(())
         }
-        // The file is restored regardless; a re-link clash (e.g. the watcher
-        // linked another record to the path first) is only a warning.
-        Err(e) => {
-            eprintln!("note: could not re-link metarecord {metarecord}: {}", e.message());
-            Ok(())
-        }
+        // Another metarecord already holds this path (e.g. the watcher linked
+        // one first): expected and benign — it will track the restored bytes.
+        Err(e) if is_tree_position_taken(&e) => Ok(()),
+        // Anything else is a genuine failure: surface it, don't hide it.
+        Err(e) => Err(e),
     }
 }
 

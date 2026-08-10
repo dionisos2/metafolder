@@ -1543,6 +1543,36 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     );
 }
 
+// When another metarecord already holds the restored item's tree position, the
+// re-link conflict is expected and skipped (that metarecord tracks the bytes) —
+// the restore still succeeds rather than failing on the constraint error.
+#[test]
+fn test_trash_restore_skips_a_taken_tree_position() {
+    let (repo, root) = init_repo("trashtaken");
+    let file = root.join("A.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let m1 = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+
+    // Orphan the original, then let a *different* metarecord claim A.txt's slot.
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &m1, "field", "unset", "mfr_path", "--force"]));
+    let root_uuid =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    let m2 = create_metarecord(&repo, &["label:string=other"]);
+    assert_ok(&mf(&[
+        "-u", &repo, "metarecord", "-i", &m2, "field", "set",
+        &format!("mfr_path:tree_ref={root_uuid}/A.txt"), "--force",
+    ]));
+
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
+    assert_ok(&out); // the conflict is skipped, not a hard error
+    assert_eq!(std::fs::read(&file).unwrap(), b"data");
+    // m1 stays orphaned (skipped); m2 keeps the position.
+    assert_ne!(mf(&["-u", &repo, "path", &m1]).code, 0, "m1 left orphaned");
+    assert!(mf(&["-u", &repo, "path", &m2]).stdout.contains("A.txt"), "m2 keeps the slot");
+}
+
 // Restoring an entry whose recorded metarecord was deleted meanwhile (e.g. the
 // user swept orphans) must still bring the bytes back — re-linking a gone
 // metarecord is simply skipped (the watcher makes a fresh one), not an error.
