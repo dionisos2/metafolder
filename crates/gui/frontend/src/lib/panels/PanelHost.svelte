@@ -8,6 +8,7 @@
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, SlotId } from '../types';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
+  import { scopedProvider } from '../../../../panel-shim/menu.js';
 
   let layer = $state<HTMLElement | null>(null);
 
@@ -62,7 +63,12 @@
         dispatch,
         registerHandler: (name, handler) => panelHandlers.set(`${key}|${name}`, handler),
         onCommandsChanged: () => void refreshCommands(),
-        addDefaultMenuItems,
+        // Scope this panel's provider to its own host: the default menu is
+        // shell-wide, so without this every mounted panel instance (each tab's
+        // list, plus the detail panel's overlapping items) would pile its
+        // items into any right-click.
+        addDefaultMenuItems: (provider) =>
+          addDefaultMenuItems(scopedProvider(host, provider)),
       },
       {
         wsId,

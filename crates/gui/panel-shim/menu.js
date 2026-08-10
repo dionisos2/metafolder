@@ -269,6 +269,24 @@ export function copyText(text) {
 }
 
 /**
+ * Wraps a panel's menu-item `provider` so it only contributes when the
+ * right-click happened inside that panel. Every panel registers its provider
+ * on the one shell-wide default menu, so without this scope a click would
+ * merge the items of *every* mounted panel instance (each tab's list, and the
+ * detail panel's overlapping Copy/Trash) into one menu. `host` is the panel's
+ * Shadow-DOM host element: a composed contextmenu event fired inside the
+ * panel has it in its `composedPath`, one fired anywhere else does not.
+ *
+ * @template T
+ * @param {EventTarget} host the panel's Shadow-DOM host element
+ * @param {(event: MouseEvent) => T[]} provider
+ * @returns {(event: MouseEvent) => T[]}
+ */
+export function scopedProvider(host, provider) {
+  return (event) => (event.composedPath().includes(host) ? provider(event) : []);
+}
+
+/**
  * Installs the default context menu (spec-gui "Context menus"): right-click
  * anywhere that is not an editable text field and where no more specific
  * menu opened shows Copy (the selection, captured at open time) and the

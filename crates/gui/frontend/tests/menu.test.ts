@@ -8,6 +8,7 @@ import {
   hasOpenMenu,
   installContextMenuSuppression,
   installDefaultContextMenu,
+  scopedProvider,
   showMenu,
 } from '../../panel-shim/menu.js';
 
@@ -375,6 +376,25 @@ describe('installDefaultContextMenu', () => {
     menu.uninstall();
     rightClick(target());
     expect(menuElement()).toBeNull();
+  });
+});
+
+describe('scopedProvider', () => {
+  test('only contributes items when the host is in the event path', () => {
+    const host = document.createElement('div');
+    const other = document.createElement('div');
+    const inner = [{ label: 'Copy UUID' }];
+    const provider = vi.fn().mockReturnValue(inner);
+    const scoped = scopedProvider(host, provider);
+
+    const inside = { composedPath: () => [host, document.body] } as unknown as MouseEvent;
+    expect(scoped(inside)).toBe(inner);
+    expect(provider).toHaveBeenCalledWith(inside);
+
+    provider.mockClear();
+    const outside = { composedPath: () => [other, document.body] } as unknown as MouseEvent;
+    expect(scoped(outside)).toEqual([]);
+    expect(provider).not.toHaveBeenCalled(); // the wrapped provider never runs
   });
 });
 
