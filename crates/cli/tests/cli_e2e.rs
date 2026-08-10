@@ -1543,6 +1543,26 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     );
 }
 
+// Restoring an entry whose recorded metarecord was deleted meanwhile (e.g. the
+// user swept orphans) must still bring the bytes back — re-linking a gone
+// metarecord is simply skipped (the watcher makes a fresh one), not an error.
+#[test]
+fn test_trash_restore_tolerates_a_deleted_metarecord() {
+    let (repo, root) = init_repo("trashgone");
+    let file = root.join("f.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    // The user deletes the (now stale) metarecord.
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "delete"]));
+
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    let out = mf(&["-u", &repo, "trash", "restore", &entry_id]);
+    assert_ok(&out); // not a hard error just because the metarecord is gone
+    assert_eq!(std::fs::read(&file).unwrap(), b"data");
+}
+
 // Restoring a nested file whose parent directory was *also* trashed re-links
 // the original ancestor directory metarecords too (captured at trash time), so
 // the recreated parent directory is tracked by the original metarecord rather

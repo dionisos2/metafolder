@@ -1360,7 +1360,11 @@ fn relink_subtree(ctx: &Ctx, subtree: &[TrashedNode]) -> Result<(), CliError> {
         let node = &node;
         let uuid = Uuid::parse_str(&node.uuid)
             .map_err(|_| CliError::Op("trash entry has an invalid subtree uuid".into()))?;
-        let rec = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+        // The metarecord may be gone (deleted while trashed): skip it, the
+        // watcher makes a fresh one. Re-link only an orphaned metarecord.
+        let Ok(rec) = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[]) else {
+            continue;
+        };
         if has_present_mfr_path(&rec) {
             continue;
         }
@@ -1432,8 +1436,11 @@ fn relink_after_restore(
         .map_err(|_| CliError::Op(format!("trash entry has an invalid metarecord '{metarecord}'")))?;
 
     // Only re-link an *orphaned* metarecord (mfr_path absent or Nothing); one
-    // that still carries an mfr_path is left alone.
-    let rec = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
+    // that still carries an mfr_path is left alone. A gone metarecord (deleted
+    // while trashed) is simply skipped — the watcher makes a fresh one.
+    let Ok(rec) = ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[]) else {
+        return Ok(());
+    };
     let has_mfr_path = rec["fields"].as_array().is_some_and(|fields| {
         fields.iter().any(|f| {
             f["name"] == "mfr_path" && f["value"]["type"].as_str() != Some("nothing")

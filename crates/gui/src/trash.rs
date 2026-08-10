@@ -255,7 +255,11 @@ async fn relink_subtree(
     for node in metafolder_core::trash::relink_order(subtree) {
         let node = &node;
         let uuid = Uuid::parse_str(&node.uuid).map_err(|_| "invalid subtree uuid")?;
-        let record = repo_info_metarecord(daemon, repo, &node.uuid).await?;
+        // The metarecord may be gone (deleted while trashed): skip it, the
+        // watcher makes a fresh one. Re-link only an orphaned metarecord.
+        let Ok(record) = repo_info_metarecord(daemon, repo, &node.uuid).await else {
+            continue;
+        };
         if has_mfr_path(&record) {
             continue;
         }
@@ -292,8 +296,11 @@ async fn relink_after_restore(
     metarecord: &str,
     restored: &Path,
 ) -> Result<(), String> {
-    let record = repo_info_metarecord(daemon, repo, metarecord).await?;
-    // Only re-link an orphaned metarecord (mfr_path absent or Nothing).
+    // A gone metarecord (deleted while trashed) is skipped — the watcher makes
+    // a fresh one. Only re-link an orphaned metarecord (mfr_path absent/Nothing).
+    let Ok(record) = repo_info_metarecord(daemon, repo, metarecord).await else {
+        return Ok(());
+    };
     if has_mfr_path(&record) {
         return Ok(());
     }
