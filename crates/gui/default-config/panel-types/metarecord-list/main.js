@@ -683,12 +683,15 @@ export async function mount(root, metafolder) {
 
   // Each operation maps to its batch endpoint and a confirmation verb.
   // `valueless` ops (unset) act on the field name alone — no value widget.
-  /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean}>} */
+  // `noField` ops (delete) act on the matched metarecords themselves — no field
+  // name, no value; the response counts `deleted` rather than `updated`.
+  /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean}>} */
   const BULK_OPS = {
     set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
     append: { path: 'query/fields/append', verb: 'Append', prep: 'to' },
     remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
     unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
+    delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
   };
 
   // Value picker (spec-gui "Value picker") for the bulk-set value widget.
@@ -707,13 +710,18 @@ export async function mount(root, metafolder) {
   const bulkTypePicker = createTypePicker(byId(root, 'bulk-type'), 'string', setBulkWidget);
   setBulkWidget(bulkTypePicker.get());
 
-  // Hide the type picker + value row for value-less ops (unset).
+  // Hide the type picker + value row for value-less ops (unset, delete), and
+  // the field-name input + force checkbox for ops that take no field (delete).
   const bulkValueRow = byId(root, 'bulk-value-row');
   const bulkTypeBtn = byId(root, 'bulk-type');
+  const bulkForceLabel = byId(root, 'bulk-force-label');
   function syncBulkOpUi() {
-    const valueless = (BULK_OPS[bulkOp.value] ?? BULK_OPS.set).valueless === true;
-    bulkValueRow.hidden = valueless;
-    bulkTypeBtn.hidden = valueless;
+    const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
+    const noField = op.noField === true;
+    bulkValueRow.hidden = op.valueless === true;
+    bulkTypeBtn.hidden = op.valueless === true || noField;
+    bulkName.hidden = noField;
+    bulkForceLabel.hidden = noField;
   }
   bulkOp.addEventListener('change', syncBulkOpUi);
   syncBulkOpUi();
@@ -721,7 +729,8 @@ export async function mount(root, metafolder) {
   function openBulkForm() {
     bulkError.textContent = '';
     bulkForm.classList.add('open');
-    bulkName.focus();
+    syncBulkOpUi();
+    if (!bulkName.hidden) bulkName.focus();
   }
 
   /** Counts the metarecords the current query matches (for the confirmation). */
@@ -742,14 +751,44 @@ export async function mount(root, metafolder) {
     try {
       if (!repo) throw new Error('no active repository');
       const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
+      // Bulk actions target the effective (finder-filtered) set — you act on
+      // what you see.
+      const effQ = effectiveQuery();
+      const n = await countMatches();
+
+      if (op.noField) {
+        // Delete the matched metarecords themselves. This removes the
+        // metarecords; any associated files stay on disk (untracked). Confirm
+        // with the count since it is not undoable from the UI.
+        if (n === 0) {
+          void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
+          return;
+        }
+        if (
+          !confirm(
+            `Delete ${n} metarecord${n === 1 ? '' : 's'}? This removes the metarecords ` +
+              `(any files stay on disk).`,
+          )
+        )
+          return;
+        const resp = /** @type {{deleted?: number}} */ (
+          await daemon.call('POST', `/repos/${repo}/${op.path}`, { query: effQ ?? MATCH_ALL })
+        );
+        const deleted = resp.deleted ?? 0;
+        bulkForm.classList.remove('open');
+        void statusBar.message(
+          `Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`,
+          statusMessageMs,
+        );
+        await workspace.set('metarecords:dirty', Date.now());
+        return;
+      }
+
       const name = bulkName.value.trim();
       if (!name) throw new Error('field name is required');
       const force = name.startsWith('mfr_') || bulkForce.checked;
-      const n = await countMatches();
       if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
-      // Value-less ops (unset) act on the name alone. Bulk edits target the
-      // effective (finder-filtered) set — you act on what you see.
-      const effQ = effectiveQuery();
+      // Value-less ops (unset) act on the name alone.
       const widget = bulkWidget;
       if (!op.valueless && !widget) throw new Error('no value widget');
       const body =
