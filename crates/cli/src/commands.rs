@@ -1314,8 +1314,8 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// `mf trash restore <id> [--to <path>]`.
-pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliError> {
+/// `mf trash restore <id>`.
+pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     let info = ctx.repo_info()?;
     let dir = trash_dir_of(&info)?;
     let entry = dir.entry(id)?;
@@ -1327,10 +1327,8 @@ pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliE
     // already claims the path and the watcher sees a refresh rather than
     // fingerprint-searching or creating a duplicate (a freshly tracked file has
     // no stored full hash to match, spec-trash.org).
-    let target = to
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(&entry.original_path));
-    dir.preflight_restore(id, to)?;
+    let target = PathBuf::from(&entry.original_path);
+    dir.preflight_restore(id)?;
     if !entry.subtree.is_empty() {
         // The whole subtree was recorded at trash time: re-link every node to
         // its original TreeRef (the directory and all its descendants).
@@ -1341,7 +1339,7 @@ pub fn trash_restore(ctx: &Ctx, id: &str, to: Option<&Path>) -> Result<i32, CliE
         relink_after_restore(ctx, Path::new(root), metarecord, &target)?;
     }
 
-    let restored = dir.restore(id, to)?;
+    let restored = dir.restore(id)?;
     println!("restored {}", restored.display());
     Ok(0)
 }

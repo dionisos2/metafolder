@@ -1393,10 +1393,11 @@ fn test_trash_restore_refuses_an_occupied_target() {
     assert!(out.stderr.contains("already exists"), "stderr: {}", out.stderr);
     assert_eq!(std::fs::read(&doc).unwrap(), b"new", "the occupant is untouched");
 
-    // The entry is still there — restore elsewhere is possible via --to.
-    let out = mf(&["-u", &repo, "trash", "restore", &e.id, "--to", root.join("elsewhere.txt").to_str().unwrap()]);
+    // The entry survives the refusal; moving the occupant aside lets it restore.
+    std::fs::remove_file(&doc).unwrap();
+    let out = mf(&["-u", &repo, "trash", "restore", &e.id]);
     assert_ok(&out);
-    assert_eq!(std::fs::read(root.join("elsewhere.txt")).unwrap(), b"old");
+    assert_eq!(std::fs::read(&doc).unwrap(), b"old");
 }
 
 // `mf trash prune` with no selector is a usage error before any HTTP call.

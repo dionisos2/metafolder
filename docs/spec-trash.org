@@ -89,9 +89,12 @@ respected), and it is skipped with a note when the restored path lies outside
 the repo or its parent directory is untracked. The restore itself is never
 blocked by a re-link failure.
 
-Restore never overwrites: an occupied target is refused outright (no =--force=).
-To bring the entry back anyway, move the occupant aside first, or restore to a
-different location with =--to=.
+Restore never overwrites a file: an occupied target is refused outright (no
+=--force=) — *except* a directory blob onto an existing directory, which is
+*merged* (contents the target lacks are moved in, shared subdirectories merge
+recursively; a leaf that would overwrite an existing file refuses the whole
+restore up front). To bring a file back over an occupied path, move the occupant
+aside first.
 
 * Rollback auto-restore
 
@@ -141,7 +144,7 @@ routes overwrites through the trash.
 #+BEGIN_SRC
 mf trash [list]
 mf trash -f <path>
-mf trash restore <id> [--to <path>]
+mf trash restore <id>
 mf trash prune (-s <size> | -d <duration> | --all) [--dry-run]
 #+END_SRC
 
@@ -167,12 +170,13 @@ metarecords against external file movements — the metadata is intentionally le
 untouched (=mfr_path= stays as recorded); a later reconcile or re-enabled watch
 picks it up. Either way the file's bytes are safe in the trash.
 
-=restore <id>= moves the blob back to its =original_path= (or =--to <path>=) and
-removes the entry. An occupied target is refused outright — never overwritten
-(move the occupant aside, or use =--to=). Because the target is therefore always
-free, the associated metarecord is re-linked *before* the move (see above),
-making restore deterministic; in a watched repo the arrival is then reconciled
-as a plain refresh, and nothing is written to the event log.
+=restore <id>= moves the blob back to its =original_path= and removes the entry.
+An occupied target is refused — never overwritten — except a directory that
+*merges* into an existing directory (move a file occupant aside first). Because
+the target is therefore free (or a mergeable directory), the associated
+metarecords are re-linked *before* the move (see above), making restore
+deterministic; in a watched repo the arrival is then reconciled as a plain
+refresh, and nothing is written to the event log.
 
 =prune= permanently deletes entries; exactly one selector is required:
 - =-s=/=--size <size>= — delete oldest first until the total is at/under the

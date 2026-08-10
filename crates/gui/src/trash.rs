@@ -473,7 +473,7 @@ pub async fn trash_restore(
     // already claims the path and the watcher sees a plain refresh rather than
     // fingerprint-searching or creating a duplicate (spec-trash).
     let target = PathBuf::from(&entry.original_path);
-    dir.preflight_restore(&id, None).map_err(|e| e.0)?;
+    dir.preflight_restore(&id).map_err(|e| e.0)?;
     if !entry.subtree.is_empty() {
         // The whole subtree was recorded at trash time: re-link every node to
         // its original TreeRef (the directory and all its descendants).
@@ -483,7 +483,7 @@ pub async fn trash_restore(
         // path-resolving re-link of the one recorded metarecord.
         relink_after_restore(&app.daemon, &repo, &root, metarecord, &target).await?;
     }
-    let restored = dir.restore(&id, None).map_err(|e| e.0)?;
+    let restored = dir.restore(&id).map_err(|e| e.0)?;
     Ok(restored.display().to_string())
 }
 

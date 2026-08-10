@@ -288,7 +288,7 @@ fn decide_deleted(
             .position(|e| e.metarecord.as_deref() == Some(entity) && e.version == Some(version))
         {
             let id = entries[pos].id.clone();
-            match trash.restore(&id, None) {
+            match trash.restore(&id) {
                 Ok(path) => {
                     entries.remove(pos);
                     if !silent {
@@ -962,7 +962,10 @@ mod tests {
         // The entry records the causing revision, but no metarecord — the op's
         // entity_uuid names the moved record, not this displaced occupant.
         assert_eq!(entries[0].metarecord, None);
-        let blob = trash.restore(&entries[0].id, Some(&tmp.join("recovered"))).unwrap();
+        // The moved source now occupies `to`; move it aside so the victim can
+        // return to its original path, then confirm the preserved bytes.
+        std::fs::remove_file(&to).unwrap();
+        let blob = trash.restore(&entries[0].id).unwrap();
         assert_eq!(std::fs::read(blob).unwrap(), b"victim-content");
         std::fs::remove_dir_all(&tmp).ok();
     }

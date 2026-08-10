@@ -292,18 +292,16 @@ impl TrashDir {
         Ok(out)
     }
 
-    /// Moves the entry's blob back to `to` (or its `original_path`) and removes
-    /// the entry. A free target is filled directly. An occupied target is
-    /// refused — **except** a directory blob onto an existing directory, which
-    /// is *merged* (the directory is a container, not data): entries the target
-    /// lacks are moved in and shared subdirectories are merged recursively, but
-    /// no existing leaf is ever overwritten (a collision refuses the whole
-    /// restore before moving anything). Returns the restored path.
-    pub fn restore(&self, id: &str, to: Option<&Path>) -> Result<PathBuf, TrashError> {
+    /// Moves the entry's blob back to its `original_path` and removes the entry.
+    /// A free target is filled directly. An occupied target is refused —
+    /// **except** a directory blob onto an existing directory, which is *merged*
+    /// (the directory is a container, not data): entries the target lacks are
+    /// moved in and shared subdirectories are merged recursively, but no
+    /// existing leaf is ever overwritten (a collision refuses the whole restore
+    /// before moving anything). Returns the restored path.
+    pub fn restore(&self, id: &str) -> Result<PathBuf, TrashError> {
         let entry = self.load_entry(id)?;
-        let target = to
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(&entry.original_path));
+        let target = PathBuf::from(&entry.original_path);
         let blob = self.blob_path(id);
 
         match plan_restore(&blob, &target)? {
@@ -329,15 +327,13 @@ impl TrashDir {
         Ok(target)
     }
 
-    /// Whether [`Self::restore`] can proceed to `to` (or the entry's original
-    /// path): `Ok` for a free target or a mergeable directory, `Err` for an
-    /// occupied target that would be overwritten. Lets a client validate (and
-    /// re-link the metarecord) before calling `restore`, without moving bytes.
-    pub fn preflight_restore(&self, id: &str, to: Option<&Path>) -> Result<(), TrashError> {
+    /// Whether [`Self::restore`] can proceed to the entry's original path: `Ok`
+    /// for a free target or a mergeable directory, `Err` for an occupied target
+    /// that would be overwritten. Lets a client validate (and re-link the
+    /// metarecord) before calling `restore`, without moving bytes.
+    pub fn preflight_restore(&self, id: &str) -> Result<(), TrashError> {
         let entry = self.load_entry(id)?;
-        let target = to
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from(&entry.original_path));
+        let target = PathBuf::from(&entry.original_path);
         plan_restore(&self.blob_path(id), &target).map(|_| ())
     }
 
@@ -425,7 +421,7 @@ fn plan_restore(blob: &Path, target: &Path) -> Result<RestoreAction, TrashError>
         return Ok(RestoreAction::Merge);
     }
     Err(TrashError(format!(
-        "{} already exists; restore is refused (move it aside or use --to)",
+        "{} already exists; restore is refused (move it aside first)",
         target.display()
     )))
 }
@@ -625,7 +621,7 @@ mod tests {
         fs::write(dir.join("b.txt"), b"b").unwrap();
 
         // Restore merges the blob's contents into the existing directory.
-        let restored = trash.restore(&entry.id, None).unwrap();
+        let restored = trash.restore(&entry.id).unwrap();
         assert_eq!(restored, dir);
         assert_eq!(fs::read(dir.join("b.txt")).unwrap(), b"b"); // pre-existing kept
         assert_eq!(fs::read(dir.join("c.txt")).unwrap(), b"c"); // restored
@@ -647,7 +643,7 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("c.txt"), b"different").unwrap();
 
-        let err = trash.restore(&entry.id, None).unwrap_err();
+        let err = trash.restore(&entry.id).unwrap_err();
         assert!(err.0.contains("already exists"), "got: {}", err.0);
         // Nothing was overwritten and the entry survives for another try.
         assert_eq!(fs::read(dir.join("c.txt")).unwrap(), b"different");
@@ -663,7 +659,7 @@ mod tests {
         fs::write(&f, b"trashed").unwrap();
         let entry = trash.trash_path(&f, Reason::Manual, None, None, None).unwrap();
         fs::write(&f, b"occupant").unwrap();
-        let err = trash.restore(&entry.id, None).unwrap_err();
+        let err = trash.restore(&entry.id).unwrap_err();
         assert!(err.0.contains("already exists"), "got: {}", err.0);
         assert_eq!(fs::read(&f).unwrap(), b"occupant", "not overwritten");
         fs::remove_dir_all(&base).ok();
@@ -756,7 +752,7 @@ mod tests {
         let entry = trash.trash_path(&d, Reason::Manual, None, None, None).unwrap();
         assert!(!d.exists());
 
-        trash.restore(&entry.id, None).unwrap();
+        trash.restore(&entry.id).unwrap();
         assert!(d.is_dir(), "the directory is back");
         assert_eq!(fs::read(d.join("a.txt")).unwrap(), b"payload");
         assert!(trash.entries().unwrap().is_empty());
@@ -858,7 +854,7 @@ mod tests {
         let entry = trash.trash_path(&file, Reason::Manual, None, None, None).unwrap();
         assert!(!file.exists());
 
-        let restored = trash.restore(&entry.id, None).unwrap();
+        let restored = trash.restore(&entry.id).unwrap();
         assert_eq!(restored, file);
         assert_eq!(fs::read(&file).unwrap(), b"payload");
         assert!(trash.entries().unwrap().is_empty(), "the entry should be gone");
@@ -877,7 +873,7 @@ mod tests {
 
         // Restore never overwrites: an occupied target is a hard error, and the
         // occupant is left untouched (no --force escape hatch).
-        assert!(trash.restore(&entry.id, None).is_err());
+        assert!(trash.restore(&entry.id).is_err());
         assert_eq!(fs::read(&file).unwrap(), b"new", "the occupant is untouched");
         assert_eq!(trash.entries().unwrap().len(), 1, "the entry is still in the trash");
         fs::remove_dir_all(&base).ok();

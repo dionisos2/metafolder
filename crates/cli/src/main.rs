@@ -381,13 +381,10 @@ enum FieldCommand {
 enum TrashCommand {
     /// List the trashed files (id, size, age, reason, original path)
     List,
-    /// Restore a trashed file to its original path (or --to <path>)
+    /// Restore a trashed file to its original path
     Restore {
         /// The trash entry id (from `mf trash list`)
         id: String,
-        /// Restore to this path instead of the recorded original
-        #[arg(long)]
-        to: Option<PathBuf>,
     },
     /// Permanently delete trashed files (by size, age, or all)
     Prune {
@@ -883,7 +880,7 @@ fn dispatch_trash(ctx: &Ctx, file: Option<PathBuf>, command: Option<TrashCommand
     }
     match command.unwrap_or(TrashCommand::List) {
         TrashCommand::List => commands::trash_list(ctx),
-        TrashCommand::Restore { id, to } => commands::trash_restore(ctx, &id, to.as_deref()),
+        TrashCommand::Restore { id } => commands::trash_restore(ctx, &id),
         TrashCommand::Prune { size, older_than, all, dry_run } => {
             let mode = commands::trash_prune_mode(size.as_deref(), older_than.as_deref(), all)?;
             commands::trash_prune(ctx, mode, dry_run)
