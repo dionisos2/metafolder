@@ -1574,6 +1574,32 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     assert!(mf(&["-u", &repo, "path", &m2]).stdout.contains("A.txt"), "m2 keeps the slot");
 }
 
+// Restoring a nested file whose *ancestor* metarecord is no longer available
+// (deleted, e.g. by sweeping orphans) must still bring the bytes back: the
+// descendant's re-link fails with "invalid TreeRef parent", which is benign —
+// it is skipped (the watcher re-tracks), not surfaced as a hard error.
+#[test]
+fn test_trash_restore_tolerates_an_unavailable_ancestor() {
+    let (repo, root) = init_repo("trashanc");
+    let dir = root.join("A");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("B.txt"), b"b").unwrap();
+    let b = mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
+    let a = mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&b) && is_hex_uuid(&a));
+
+    // Trash the file (captures ancestor A while live), then delete A's
+    // metarecord and orphan B — as sweeping orphans would.
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a, "delete"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &b, "field", "unset", "mfr_path", "--force"]));
+
+    let id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    let out = mf(&["-u", &repo, "trash", "restore", &id]);
+    assert_ok(&out); // the unavailable parent is skipped, not a hard error
+    assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"b");
+}
+
 // Restoring an entry whose recorded metarecord was deleted meanwhile (e.g. the
 // user swept orphans) must still bring the bytes back — re-linking a gone
 // metarecord is simply skipped (the watcher makes a fresh one), not an error.

@@ -1344,11 +1344,15 @@ pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     Ok(0)
 }
 
-/// Whether a re-link error is the expected "another metarecord already holds
-/// this tree position" conflict (the daemon's `idx_field_tree` rejection) — a
-/// benign case to skip, as opposed to a genuine failure to surface.
-fn is_tree_position_taken(err: &CliError) -> bool {
-    matches!(err, CliError::Op(msg) if msg.contains("already occupied"))
+/// Whether a re-link error is a benign "this link cannot be made right now"
+/// case to skip (leaving the node orphaned for the watcher to re-track), as
+/// opposed to a genuine failure to surface. Two forest rejections qualify:
+/// the tree position is already held by another metarecord (`idx_field_tree`),
+/// or the recorded parent is no longer a live forest node (deleted, or its own
+/// re-link was skipped) — `validate_tree_ref`'s "invalid TreeRef parent".
+fn is_benign_relink_error(err: &CliError) -> bool {
+    matches!(err, CliError::Op(msg)
+        if msg.contains("already occupied") || msg.contains("invalid TreeRef parent"))
 }
 
 /// Re-links every metarecord of a trashed subtree to its recorded `mfr_path`
@@ -1392,7 +1396,7 @@ fn relink_subtree(ctx: &Ctx, subtree: &[TrashedNode]) -> Result<(), CliError> {
             &[],
             Some(&body),
         ) {
-            if !is_tree_position_taken(&e) {
+            if !is_benign_relink_error(&e) {
                 return Err(e); // a genuine failure, not the expected conflict
             }
             // else: another metarecord already holds this path — leave m orphaned.
@@ -1511,7 +1515,7 @@ fn relink_after_restore(
         }
         // Another metarecord already holds this path (e.g. the watcher linked
         // one first): expected and benign — it will track the restored bytes.
-        Err(e) if is_tree_position_taken(&e) => Ok(()),
+        Err(e) if is_benign_relink_error(&e) => Ok(()),
         // Anything else is a genuine failure: surface it, don't hide it.
         Err(e) => Err(e),
     }

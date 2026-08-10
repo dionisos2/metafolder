@@ -287,16 +287,18 @@ async fn relink_subtree(
     Ok(())
 }
 
-/// Interprets a `PUT …/mfr_path` re-link response: `Ok` on success or on the
-/// expected "tree position already occupied" conflict (benign — another
-/// metarecord already holds the path and will track the restored bytes); `Err`
-/// on any other failure, so a genuine problem is surfaced rather than hidden.
+/// Interprets a `PUT …/mfr_path` re-link response: `Ok` on success or on a
+/// benign "this link cannot be made right now" forest rejection — the position
+/// is already held by another metarecord ("already occupied"), or the recorded
+/// parent is no longer a live forest node ("invalid TreeRef parent"). Either
+/// way that node is left orphaned for the watcher to re-track. Any other failure
+/// is surfaced rather than hidden.
 fn check_relink(response: &ProxyResponse) -> Result<(), String> {
     if (200..300).contains(&response.status) {
         return Ok(());
     }
     let message = response.body["error"].as_str().unwrap_or("");
-    if message.contains("already occupied") {
+    if message.contains("already occupied") || message.contains("invalid TreeRef parent") {
         return Ok(());
     }
     Err(format!("re-link failed (HTTP {}): {message}", response.status))
