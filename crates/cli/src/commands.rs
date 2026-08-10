@@ -1172,8 +1172,15 @@ fn capture_subtree(
     abs: &Path,
 ) -> Result<Vec<TrashedNode>, CliError> {
     let mut nodes = Vec::new();
-    if let Some(node) = subtree_node(top) {
-        nodes.push(node);
+    let top_node = subtree_node(top);
+    if let Some(node) = &top_node {
+        nodes.push(node.clone());
+        // Ancestor directory metarecords, up to (but not including) the forest
+        // root. If a parent directory is later trashed too, restoring this
+        // nested item re-links the ancestor so its recreated directory is
+        // tracked by the original metarecord — not left orphaned for the
+        // watcher to duplicate. Live ancestors are skipped at re-link time.
+        nodes.extend(capture_ancestors(ctx, base, node.parent.clone())?);
     }
     // Transitive follow of the target's tree path yields every descendant.
     let rel = abs
@@ -1204,6 +1211,31 @@ fn capture_subtree(
             Some(c) => cursor = Some(c.to_string()),
             None => break,
         }
+    }
+    Ok(nodes)
+}
+
+/// Walks the `mfr_path` parent chain from `parent` upward, capturing each
+/// ancestor directory metarecord's TreeRef. Stops at (and excludes) the forest
+/// root (the node whose parent is `None`). Bounded by the forest depth limit.
+fn capture_ancestors(
+    ctx: &Ctx,
+    base: &str,
+    mut parent: Option<String>,
+) -> Result<Vec<TrashedNode>, CliError> {
+    let mut nodes = Vec::new();
+    for _ in 0..1000 {
+        let Some(uuid) = parent else { break };
+        let parsed = Uuid::parse_str(&uuid)
+            .map_err(|_| CliError::Op("daemon returned an invalid parent uuid".into()))?;
+        let rec = ctx.client.get(&format!("{base}/metarecords/{}", parsed.as_simple()), &[])?;
+        let Some(node) = subtree_node(&rec) else { break };
+        // The forest root (parent = None, name = "") is always live: stop here.
+        if node.parent.is_none() {
+            break;
+        }
+        parent = node.parent.clone();
+        nodes.push(node);
     }
     Ok(nodes)
 }

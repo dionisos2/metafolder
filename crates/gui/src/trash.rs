@@ -167,6 +167,29 @@ fn subtree_node(record: &Value) -> Option<TrashedNode> {
 
 /// Captures the metarecords of a trashed subtree with their original `mfr_path`
 /// TreeRefs — the target (`top`) plus every descendant (empty for a plain file)
+/// Walks the `mfr_path` parent chain from `parent` upward, capturing each
+/// ancestor directory metarecord's TreeRef. Stops at (and excludes) the forest
+/// root (the node whose parent is `None`). Bounded by the forest depth limit.
+async fn capture_ancestors(
+    daemon: &DaemonProxy,
+    repo: &str,
+    mut parent: Option<String>,
+) -> Result<Vec<TrashedNode>, String> {
+    let mut nodes = Vec::new();
+    for _ in 0..1000 {
+        let Some(uuid) = parent else { break };
+        let record = repo_info_metarecord(daemon, repo, &uuid).await?;
+        let Some(node) = subtree_node(&record) else { break };
+        // The forest root (parent = None, name = "") is always live: stop here.
+        if node.parent.is_none() {
+            break;
+        }
+        parent = node.parent.clone();
+        nodes.push(node);
+    }
+    Ok(nodes)
+}
+
 /// — so a restore re-links the whole tree, not just the top metarecord.
 async fn capture_subtree(
     daemon: &DaemonProxy,
@@ -177,6 +200,12 @@ async fn capture_subtree(
 ) -> Result<Vec<TrashedNode>, String> {
     let mut nodes = Vec::new();
     if let Some(node) = subtree_node(top) {
+        // Ancestor directory metarecords, up to (but not including) the forest
+        // root: if a parent directory is later trashed too, restoring this
+        // nested item re-links the ancestor so its recreated directory is
+        // tracked by the original metarecord rather than left orphaned for the
+        // watcher to duplicate. Live ancestors are skipped at re-link time.
+        nodes.extend(capture_ancestors(daemon, repo, node.parent.clone()).await?);
         nodes.push(node);
     }
     let rel = abs

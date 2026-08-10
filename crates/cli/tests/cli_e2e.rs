@@ -1543,6 +1543,52 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     );
 }
 
+// Restoring a nested file whose parent directory was *also* trashed re-links
+// the original ancestor directory metarecords too (captured at trash time), so
+// the recreated parent directory is tracked by the original metarecord rather
+// than left orphaned for the watcher to duplicate (spec-trash "Restore").
+#[test]
+fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
+    let (repo, root) = init_repo("trashancestor");
+    let dir = root.join("A");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("B.txt"), b"b").unwrap();
+    // Track B (ensures the A and B metarecords).
+    let b_uuid = mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
+    let a_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert!(is_hex_uuid(&b_uuid) && is_hex_uuid(&a_uuid));
+
+    // Trash the file (captures its ancestor A while A is still live), then the
+    // directory; orphan both metarecords as the watcher's cascade would.
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &b_uuid, "field", "unset", "mfr_path", "--force"]));
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a_uuid, "field", "unset", "mfr_path", "--force"]));
+    assert!(!dir.exists());
+
+    // Restore the file: the recreated parent directory A is re-linked to the
+    // original A metarecord (its ancestor), not left orphaned.
+    let file_entry = repo_trash(&root)
+        .entries()
+        .unwrap()
+        .into_iter()
+        .find(|e| !e.is_dir)
+        .expect("the file entry")
+        .id;
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &file_entry]));
+    assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"b");
+    assert!(mf(&["-u", &repo, "path", &b_uuid]).stdout.contains("A/B.txt"), "B re-linked");
+    let a_path = mf(&["-u", &repo, "path", &a_uuid]);
+    assert_ok(&a_path);
+    assert!(a_path.stdout.trim().ends_with("/A"), "ancestor A re-linked, got: {}", a_path.stdout);
+}
+
 // Restoring a directory whose target already exists merges the blob's contents
 // into it (a directory is a container, not data) instead of refusing — the
 // dead-end when part of a directory was restored first (spec-trash "Restore").
