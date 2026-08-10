@@ -7,7 +7,7 @@
 
 use crate::commands::App;
 use crate::daemon_proxy::DaemonProxy;
-use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry};
+use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry, TrashedNode};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -148,6 +148,110 @@ async fn repo_root_metarecord(daemon: &DaemonProxy, repo: &str) -> Result<Uuid, 
     Uuid::parse_str(hex).map_err(|_| "daemon returned an invalid root uuid".to_string())
 }
 
+/// Reads a metarecord JSON (`{uuid, fields}`) into a [`TrashedNode`] — its uuid
+/// plus its first `mfr_path` TreeRef — or None when it has no present tree_ref
+/// `mfr_path`.
+fn subtree_node(record: &Value) -> Option<TrashedNode> {
+    let uuid = record["uuid"].as_str()?;
+    let mfr = record["fields"].as_array()?.iter().find(|f| f["name"] == "mfr_path")?;
+    let value = &mfr["value"];
+    if value["type"].as_str()? != "tree_ref" {
+        return None;
+    }
+    Some(TrashedNode {
+        uuid: uuid.to_string(),
+        parent: value["value"]["parent"].as_str().map(str::to_owned),
+        name: value["value"]["name"].as_str()?.to_string(),
+    })
+}
+
+/// Captures the metarecords of a trashed subtree with their original `mfr_path`
+/// TreeRefs — the target (`top`) plus every descendant (empty for a plain file)
+/// — so a restore re-links the whole tree, not just the top metarecord.
+async fn capture_subtree(
+    daemon: &DaemonProxy,
+    repo: &str,
+    top: &Value,
+    root: &str,
+    abs: &Path,
+) -> Result<Vec<TrashedNode>, String> {
+    let mut nodes = Vec::new();
+    if let Some(node) = subtree_node(top) {
+        nodes.push(node);
+    }
+    let rel = abs
+        .strip_prefix(root)
+        .map_err(|_| format!("{} is outside the repository", abs.display()))?;
+    let comps: Vec<String> = rel
+        .components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(n) => Some(n.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+    let target = format!("/{}", comps.join("/"));
+    let query = json!({"type": "follows_transitive", "field": "mfr_path", "target": target});
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({"query": query, "select": ["mfr_path"], "limit": 500});
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let response =
+            daemon.request("POST", &format!("/repos/{repo}/query"), Some(body)).await?;
+        for obj in response.body["results"].as_array().into_iter().flatten() {
+            if let Some(node) = subtree_node(obj) {
+                nodes.push(node);
+            }
+        }
+        match response.body["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    Ok(nodes)
+}
+
+/// Re-links every metarecord of a trashed subtree to its recorded `mfr_path`
+/// TreeRef, so the directory and all its descendants return to where they were.
+/// A node still carrying an `mfr_path` (reused since the trashing) is left
+/// alone; PUT failures are swallowed (the bytes are restored regardless).
+async fn relink_subtree(
+    daemon: &DaemonProxy,
+    repo: &str,
+    subtree: &[TrashedNode],
+) -> Result<(), String> {
+    // Parent-before-child: a child re-linked before its parent (still orphaned)
+    // is rejected by the forest validation and left orphaned.
+    for node in metafolder_core::trash::relink_order(subtree) {
+        let node = &node;
+        let uuid = Uuid::parse_str(&node.uuid).map_err(|_| "invalid subtree uuid")?;
+        let record = repo_info_metarecord(daemon, repo, &node.uuid).await?;
+        if has_mfr_path(&record) {
+            continue;
+        }
+        let parent = node
+            .parent
+            .as_deref()
+            .map(Uuid::parse_str)
+            .transpose()
+            .map_err(|_| "invalid subtree parent uuid")?;
+        let value = serde_json::to_value(metafolder_core::metarecord::Value::TreeRef {
+            parent,
+            name: node.name.clone(),
+        })
+        .map_err(|e| e.to_string())?;
+        let _ = daemon
+            .request(
+                "PUT",
+                &format!("/repos/{repo}/metarecords/{}/fields/mfr_path", uuid.as_simple()),
+                Some(json!({"value": value, "force": true})),
+            )
+            .await;
+    }
+    Ok(())
+}
+
 /// After a restore, re-link the associated metarecord to `restored` by writing
 /// its `mfr_path` (authoritative, mirroring the CLI's `relink_after_restore`).
 /// A no-op when the metarecord still has an `mfr_path`, or when the path/parent
@@ -279,16 +383,21 @@ async fn trash_selected_inner(app: &Arc<App>, ws_id: &str) -> Result<String, Str
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| rel.clone());
 
-    // Record the metarecord's current version so a later rollback can correlate
-    // this entry with the exact deletion it undoes (spec-trash).
-    let version = repo_info_metarecord(&app.daemon, &repo, &uuid)
-        .await
-        .ok()
-        .and_then(|r| r["version"].as_u64());
+    // The metarecord's current version (for rollback correlation, spec-trash)
+    // and its whole subtree, captured *before* the move while every metarecord
+    // is still linked, so a restore re-links the directory and all its
+    // descendants — not just the top metarecord.
+    let record = repo_info_metarecord(&app.daemon, &repo, &uuid).await.ok();
+    let version = record.as_ref().and_then(|r| r["version"].as_u64());
+    let subtree = match &record {
+        Some(rec) => capture_subtree(&app.daemon, &repo, rec, &root, &abs).await.unwrap_or_default(),
+        None => Vec::new(),
+    };
 
-    trash_dir(&internal)
+    let entry = trash_dir(&internal)
         .trash_path(&abs, Reason::Manual, None, Some(uuid), version)
         .map_err(|e| e.0)?;
+    trash_dir(&internal).attach_subtree(&entry.id, subtree).map_err(|e| e.0)?;
     Ok(name)
 }
 
@@ -316,7 +425,13 @@ pub async fn trash_restore(
             target.display()
         ));
     }
-    if let Some(metarecord) = &entry.metarecord {
+    if !entry.subtree.is_empty() {
+        // The whole subtree was recorded at trash time: re-link every node to
+        // its original TreeRef (the directory and all its descendants).
+        relink_subtree(&app.daemon, &repo, &entry.subtree).await?;
+    } else if let Some(metarecord) = &entry.metarecord {
+        // A pre-subtree entry (or a plain single file): fall back to the
+        // path-resolving re-link of the one recorded metarecord.
         relink_after_restore(&app.daemon, &repo, &root, metarecord, &target).await?;
     }
     let restored = dir.restore(&id, None).map_err(|e| e.0)?;

@@ -979,6 +979,7 @@ mod tests {
             revision: None,
             metarecord: metarecord.map(str::to_owned),
             version: None,
+            subtree: Vec::new(),
         }
     }
 

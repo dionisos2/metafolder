@@ -82,6 +82,68 @@ pub struct TrashEntry {
     /// timestamp (spec-trash "rollback auto-restore").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<u64>,
+    /// The metarecords this trashing displaced, each with its original
+    /// `mfr_path` TreeRef, so a restore re-links the whole subtree (the trashed
+    /// directory and everything under it), not only the top metarecord. Empty
+    /// for entries written before this field existed, or for an untracked blob
+    /// (a rollback/sync overwrite): the restore then falls back to the single
+    /// `metarecord`. Populated by the clients via [`TrashDir::attach_subtree`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub subtree: Vec<TrashedNode>,
+}
+
+/// One metarecord displaced by a trashing, with its original `mfr_path` TreeRef.
+/// A directory trashing orphans its whole subtree (the watcher cascades
+/// `Nothing`); recording each node lets a restore re-link the *entire* tree
+/// exactly where it was, not just the top metarecord (spec-trash "Restore").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TrashedNode {
+    /// Metarecord uuid (32-char lowercase hex).
+    pub uuid: String,
+    /// Parent metarecord uuid in the `mfr_path` forest; None for a forest root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// The TreeRef name (the path component).
+    pub name: String,
+}
+
+/// Orders a trashed subtree parent-before-child, so re-linking each node finds
+/// its parent already back in the forest. The daemon's forest validation
+/// rejects a TreeRef whose parent is not a live node, so a child written before
+/// its parent (the parent still orphaned) would be refused and left orphaned —
+/// which is exactly what happens when the capture query returns descendants in
+/// an arbitrary order. Nodes whose parent lies outside the subtree (the top of
+/// the trashed tree) come first. A node whose parent cannot be reached (a
+/// corrupt manifest, or a cycle) is appended last rather than dropped.
+pub fn relink_order(subtree: &[TrashedNode]) -> Vec<TrashedNode> {
+    use std::collections::HashSet;
+    let in_subtree: HashSet<&str> = subtree.iter().map(|n| n.uuid.as_str()).collect();
+    let mut placed: HashSet<&str> = HashSet::new();
+    let mut ordered: Vec<TrashedNode> = Vec::with_capacity(subtree.len());
+    let mut remaining: Vec<&TrashedNode> = subtree.iter().collect();
+    while !remaining.is_empty() {
+        let before = remaining.len();
+        let mut next: Vec<&TrashedNode> = Vec::new();
+        for node in remaining {
+            let parent_ready = match &node.parent {
+                None => true,
+                Some(p) => !in_subtree.contains(p.as_str()) || placed.contains(p.as_str()),
+            };
+            if parent_ready {
+                placed.insert(node.uuid.as_str());
+                ordered.push(node.clone());
+            } else {
+                next.push(node);
+            }
+        }
+        if next.len() == before {
+            // No progress (a missing parent or a cycle): emit the rest as-is.
+            ordered.extend(next.into_iter().cloned());
+            break;
+        }
+        remaining = next;
+    }
+    ordered
 }
 
 /// How `prune` selects entries to delete.
@@ -176,12 +238,31 @@ impl TrashDir {
             revision,
             metarecord,
             version,
+            subtree: Vec::new(),
         };
         let json = serde_json::to_vec_pretty(&entry)
             .map_err(|e| TrashError(format!("cannot serialize the trash manifest: {e}")))?;
         std::fs::write(self.manifest_path(&id), json)
             .map_err(|e| TrashError(format!("cannot write the trash manifest: {e}")))?;
         Ok(entry)
+    }
+
+    /// Records the trashed subtree on an existing entry (its metarecords and
+    /// their original `mfr_path` TreeRefs) by rewriting the manifest. Called by
+    /// the clients right after [`Self::trash_path`] for a tracked file or
+    /// directory, so a restore can re-link the whole tree. An empty subtree is a
+    /// no-op (the entry keeps its single `metarecord` fallback).
+    pub fn attach_subtree(&self, id: &str, subtree: Vec<TrashedNode>) -> Result<(), TrashError> {
+        if subtree.is_empty() {
+            return Ok(());
+        }
+        let mut entry = self.load_entry(id)?;
+        entry.subtree = subtree;
+        let json = serde_json::to_vec_pretty(&entry)
+            .map_err(|e| TrashError(format!("cannot serialize the trash manifest: {e}")))?;
+        std::fs::write(self.manifest_path(id), json)
+            .map_err(|e| TrashError(format!("cannot write the trash manifest: {e}")))?;
+        Ok(())
     }
 
     /// All entries, oldest first.
@@ -430,6 +511,63 @@ mod tests {
         copy_across(&from, &to).unwrap();
         assert_eq!(fs::metadata(&to).unwrap().modified().unwrap(), t);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn relink_order_places_parents_before_children() {
+        let node = |u: &str, p: Option<&str>| TrashedNode {
+            uuid: u.into(),
+            parent: p.map(str::to_owned),
+            name: u.into(),
+        };
+        // Given in child-first order; the top's parent (`root`) is outside the set.
+        let subtree = vec![
+            node("b", Some("nested")),
+            node("nested", Some("dir")),
+            node("dir", Some("root")),
+        ];
+        let ordered: Vec<String> = relink_order(&subtree).into_iter().map(|n| n.uuid).collect();
+        // Every node appears after its parent.
+        assert_eq!(ordered, vec!["dir", "nested", "b"]);
+    }
+
+    #[test]
+    fn relink_order_keeps_every_node_even_with_a_missing_parent() {
+        let node = |u: &str, p: Option<&str>| TrashedNode {
+            uuid: u.into(),
+            parent: p.map(str::to_owned),
+            name: u.into(),
+        };
+        // "orphan"'s parent is neither outside the set nor present in it.
+        let subtree = vec![node("orphan", Some("gone")), node("top", None)];
+        let ordered: Vec<String> = relink_order(&subtree).into_iter().map(|n| n.uuid).collect();
+        assert_eq!(ordered.len(), 2, "no node is dropped");
+        assert!(ordered.contains(&"top".to_string()) && ordered.contains(&"orphan".to_string()));
+    }
+
+    #[test]
+    fn attach_subtree_records_nodes_and_survives_reload() {
+        let base = tmp();
+        let trash = TrashDir::new(base.join("trash"));
+        let f = base.join("f.txt");
+        fs::write(&f, b"x").unwrap();
+        let entry = trash.trash_path(&f, Reason::Manual, None, Some("top".into()), None).unwrap();
+        assert!(entry.subtree.is_empty(), "fresh entry has no subtree yet");
+
+        let nodes = vec![
+            TrashedNode { uuid: "top".into(), parent: Some("root".into()), name: "dir".into() },
+            TrashedNode { uuid: "child".into(), parent: Some("top".into()), name: "a.txt".into() },
+        ];
+        trash.attach_subtree(&entry.id, nodes.clone()).unwrap();
+
+        // Reloaded from disk: the subtree round-trips.
+        let reloaded = trash.entry(&entry.id).unwrap();
+        assert_eq!(reloaded.subtree, nodes);
+
+        // An empty subtree is a no-op (keeps the recorded one).
+        trash.attach_subtree(&entry.id, vec![]).unwrap();
+        assert_eq!(trash.entry(&entry.id).unwrap().subtree, nodes);
+        fs::remove_dir_all(&base).ok();
     }
 
     #[test]

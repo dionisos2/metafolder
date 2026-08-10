@@ -9,7 +9,7 @@ use crate::client::CliError;
 
 // The shared filesystem core: locating, moving, listing, restoring and pruning
 // the trash blobs. Re-exported so `crate::trash::TrashDir` etc. keep resolving.
-pub use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry, TrashError};
+pub use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry, TrashError, TrashedNode};
 
 impl From<TrashError> for CliError {
     fn from(e: TrashError) -> Self {

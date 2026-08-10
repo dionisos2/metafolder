@@ -1497,6 +1497,52 @@ fn test_trash_add_moves_a_directory() {
     assert_eq!(std::fs::read(dir.join("nested/b.txt")).unwrap(), b"bb");
 }
 
+// Restoring a trashed *directory* re-links its whole subtree, not just the top
+// metarecord: every orphaned descendant is put back where it was (spec-trash),
+// so no metarecord is left orphaned and no duplicate is created.
+#[test]
+fn test_trash_restore_relinks_a_directory_subtree() {
+    let (repo, root) = init_repo("trashdirsubtree");
+    let dir = root.join("folder");
+    std::fs::create_dir_all(dir.join("nested")).unwrap();
+    std::fs::write(dir.join("nested/b.txt"), b"bb").unwrap();
+    // Track the whole subtree (folder, nested, b.txt): track ensures parents.
+    let b_uuid = mf(&["-u", &repo, "track", dir.join("nested/b.txt").to_str().unwrap()])
+        .stdout
+        .trim()
+        .to_string();
+    assert!(is_hex_uuid(&b_uuid));
+
+    // Trash the directory (captures the subtree), then orphan every subtree
+    // metarecord as the watcher's delete cascade would (descendants first, then
+    // the directory, so the transitive query still resolves).
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    assert_ok(&mf(&[
+        "-u", &repo, "metarecord", "-q", "mfr_path ->* \"/folder\"", "field", "unset", "mfr_path",
+        "--force",
+    ]));
+    assert_ok(&mf(&[
+        "-u", &repo, "metarecord", "-q", "mfr_path = \"folder\"", "field", "unset", "mfr_path",
+        "--force",
+    ]));
+    // The descendant is now orphaned (no resolvable path).
+    assert_ne!(mf(&["-u", &repo, "path", &b_uuid]).code, 0, "b.txt is orphaned before restore");
+
+    let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &entry_id]));
+    assert_eq!(std::fs::read(dir.join("nested/b.txt")).unwrap(), b"bb");
+
+    // The *original* descendant metarecord is re-linked at its old location — not
+    // left orphaned, and not replaced by a fresh duplicate.
+    let out = mf(&["-u", &repo, "path", &b_uuid]);
+    assert_ok(&out);
+    assert!(
+        out.stdout.contains("folder/nested/b.txt"),
+        "the subtree metarecord must be re-linked, got: {}",
+        out.stdout,
+    );
+}
+
 // `mf trash restore` re-links the associated metarecord authoritatively: after
 // the file is back, the orphaned metarecord's mfr_path is restored (H).
 #[test]
