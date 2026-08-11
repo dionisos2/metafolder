@@ -86,6 +86,96 @@ export function filterCompletions(completions: string[], draft: string): string[
   ).map((c) => c.name);
 }
 
+// ── Interactive command arguments (spec-gui "Command") ─────────────────
+// A command may declare its arguments; each carries lazily-evaluated
+// functions (never read at registration) that receive the arguments already
+// collected. When a command is invoked with fewer parameters than declared,
+// the command input collects the missing tail one at a time.
+
+export interface ArgSpec {
+  /** Argument name (for the request, diagnostics). */
+  name: string;
+  /** The prompt text shown in the command input. */
+  prompt: (prior: string[]) => string | Promise<string>;
+  /** A pre-filled, editable value (e.g. the current value of the field being
+   *  edited). A function, not a constant, so it reads live state at prompt
+   *  time. */
+  initial?: (prior: string[]) => string | Promise<string>;
+  /** The candidate list offered by the input's autocomplete (filtered
+   *  client-side like command names). `partial` is the current draft, so a
+   *  future dynamic mode can narrow on it; the v1 completions ignore it. */
+  complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
+}
+
+/** One argument's fully-resolved prompt, handed to the prompt driver. */
+export interface ArgPromptRequest {
+  argName: string;
+  prompt: string;
+  initial: string;
+  completions: string[];
+}
+
+/** Drives one interactive argument prompt; resolves to the entered string,
+ *  or null when the user cancels (Escape). */
+export type ArgPromptFn = (request: ArgPromptRequest) => Promise<string | null>;
+
+// Frontend-side registry of declared argument specs, keyed by command name.
+// The Rust `CommandDef` only lists names/labels; the arg functions are live
+// JS and stay here (module-global, like `panelDispatch`/`editingTarget`).
+const argSpecs = new Map<string, ArgSpec[]>();
+
+/** Declares (or, with an empty list, clears) a command's argument spec.
+ *  Re-registration replaces the previous spec (panels re-register on
+ *  reload). */
+export function registerArgs(name: string, args: ArgSpec[]): void {
+  if (args.length === 0) argSpecs.delete(name);
+  else argSpecs.set(name, args);
+}
+
+export function argSpecFor(name: string): ArgSpec[] | undefined {
+  return argSpecs.get(name);
+}
+
+/** Test hook: drop every registered arg spec. */
+export function clearArgSpecs(): void {
+  argSpecs.clear();
+}
+
+/**
+ * Assembles a command's full argument list from the inline-`provided` prefix,
+ * gathering any missing trailing arguments through `promptFn`. The last
+ * declared argument absorbs extra inline tokens (joined by space), matching
+ * CLI behaviour (`args.slice(n).join(' ')`). Each spec function receives the
+ * arguments already collected. Returns null if the user cancels (Escape) at
+ * any argument.
+ */
+export async function collectArgs(
+  specs: ArgSpec[],
+  provided: string[],
+  promptFn: ArgPromptFn,
+): Promise<string[] | null> {
+  const result: string[] = [];
+  for (let i = 0; i < specs.length; i++) {
+    const isLast = i === specs.length - 1;
+    if (i < provided.length) {
+      // Inline-provided: the last declared argument absorbs the remaining
+      // tokens so a value may contain spaces without quoting.
+      result.push(isLast ? provided.slice(i).join(' ') : provided[i]);
+      continue;
+    }
+    const spec = specs[i];
+    const answer = await promptFn({
+      argName: spec.name,
+      prompt: await spec.prompt(result),
+      initial: spec.initial ? await spec.initial(result) : '',
+      completions: spec.complete ? await spec.complete('', result) : [],
+    });
+    if (answer === null) return null;
+    result.push(answer);
+  }
+  return result;
+}
+
 // ── Editing target ─────────────────────────────────────────────────────
 // The focused text input registers handlers for the editing:* commands
 // (which fire with text-input = true keybindings).

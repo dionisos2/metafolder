@@ -256,6 +256,24 @@ invocation is echoed to the workspace [[*Message view][message panel]] as
 (=editing:*=, =command-input:activate=) register with =log: false= so
 keystroke-level actions do not flood the log.
 
+A command may *declare its arguments*. Each declared argument carries up to
+three functions, all evaluated *lazily* when the argument is asked for (never
+at registration) and all receiving the arguments already collected so far: a
+=prompt= (the text shown in the command input), an optional =initial= (a
+pre-filled, editable value — e.g. the current value of the field being
+edited), and an optional =complete= (the candidate list offered by the
+input's autocomplete). Because =initial= is a function and not a constant, it
+can read live state at the moment of the prompt. When a command with declared
+arguments is invoked with fewer parameters than declared (from a keybinding,
+the command input, or =POST /gui/command=), the command input collects the
+missing arguments one at a time: for each, it shows the =prompt=, pre-fills
+=initial=, offers =complete= (filtered like command suggestions), and waits.
+=Escape= at any point abandons the whole invocation. Parameters supplied
+inline skip their prompt, so a fully-specified invocation
+(=metarecord:edit-field-value tag musique/jazz=) runs without prompting — the
+interactive collection is a fallback for the missing tail, not a separate
+mode.
+
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
@@ -395,6 +413,19 @@ which the GUI was launched. Running it switches the focused slot to the
 already visible in the workspace. In invocation strings (keybindings,
 =POST /gui/command=) a shell command is still written with the =!= prefix:
 the mode split is a UI affordance, not a wire-format change.
+
+*** Interactive command arguments (command mode)
+
+When the invoked command declares arguments (see [[*Command]]) and the typed
+line supplies fewer than declared, the input does not error: it collects the
+missing arguments in order, reusing the same prompt/autocomplete machinery as
+a script's =POST /gui/prompt= — the prompt character shows the argument's
+=prompt= text, the field is pre-filled with its =initial= value, and the
+suggestion list offers =complete='s candidates filtered like command names.
+=Enter= accepts the current argument and advances to the next; =Escape=
+abandons the whole invocation. Only one prompt owns the input at a time: an
+interactive argument collection and a script prompt are mutually exclusive
+(whichever holds the input makes the other refuse to start).
 
 *** Bash completion (bash mode)
 

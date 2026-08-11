@@ -2,12 +2,18 @@
 // filtering (lib/commands.ts). Dispatch itself talks to Tauri and is
 // exercised in the running app.
 
-import { describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test, vi } from 'vitest';
 import {
+  type ArgPromptRequest,
+  type ArgSpec,
+  argSpecFor,
+  clearArgSpecs,
+  collectArgs,
   filterCommands,
   filterCompletions,
   needsMessagePanel,
   parseInvocation,
+  registerArgs,
   resolveSubmission,
   shortcutsFor,
   shouldLogCommand,
@@ -209,6 +215,118 @@ describe('filterCompletions', () => {
   test('space-separated terms match fuzzily, in order', () => {
     expect(filterCompletions(tags, 'ja be')).toEqual(['jazz/bebop']);
     expect(filterCompletions(tags, 'be ja')).toEqual([]);
+  });
+});
+
+describe('argSpecs registry', () => {
+  afterEach(() => clearArgSpecs());
+
+  const spec = (name: string): ArgSpec => ({ name, prompt: () => `${name}?` });
+
+  test('registered args are retrievable by command name', () => {
+    const args = [spec('field'), spec('value')];
+    registerArgs('metarecord:edit-field-value', args);
+    expect(argSpecFor('metarecord:edit-field-value')).toEqual(args);
+  });
+
+  test('unknown command has no arg spec', () => {
+    expect(argSpecFor('never:registered')).toBeUndefined();
+  });
+
+  test('re-registration replaces the previous spec (panel reload)', () => {
+    registerArgs('p:cmd', [spec('a')]);
+    registerArgs('p:cmd', [spec('b'), spec('c')]);
+    expect(argSpecFor('p:cmd')?.map((a) => a.name)).toEqual(['b', 'c']);
+  });
+
+  test('registering an empty arg list clears the spec', () => {
+    registerArgs('p:cmd', [spec('a')]);
+    registerArgs('p:cmd', []);
+    expect(argSpecFor('p:cmd')).toBeUndefined();
+  });
+});
+
+describe('collectArgs', () => {
+  // A prompt driver that returns scripted answers in order, recording every
+  // request it was shown. A `null` in the script models the user pressing
+  // Escape.
+  function scriptedPrompt(answers: (string | null)[]) {
+    const requests: ArgPromptRequest[] = [];
+    let i = 0;
+    const fn = vi.fn(async (request: ArgPromptRequest) => {
+      requests.push(request);
+      return answers[i++] ?? null;
+    });
+    return { fn, requests };
+  }
+
+  const value = (): ArgSpec => ({
+    name: 'value',
+    prompt: (prior) => `New value for ${prior[0]}?`,
+    initial: (prior) => `current-${prior[0]}`,
+    complete: (_partial, prior) => [`${prior[0]}/a`, `${prior[0]}/b`],
+  });
+  const field = (): ArgSpec => ({
+    name: 'field',
+    prompt: () => 'Which field?',
+    complete: () => ['tag', 'rating'],
+  });
+
+  test('all arguments supplied inline: no prompting', async () => {
+    const { fn } = scriptedPrompt([]);
+    const result = await collectArgs([field(), value()], ['tag', 'jazz'], fn);
+    expect(result).toEqual(['tag', 'jazz']);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('a missing trailing argument is prompted with resolved prompt/initial/completions', async () => {
+    const { fn, requests } = scriptedPrompt(['musique/jazz']);
+    const result = await collectArgs([field(), value()], ['tag'], fn);
+    expect(result).toEqual(['tag', 'musique/jazz']);
+    expect(requests).toEqual([
+      {
+        argName: 'value',
+        prompt: 'New value for tag?',
+        initial: 'current-tag',
+        completions: ['tag/a', 'tag/b'],
+      },
+    ]);
+  });
+
+  test('all arguments missing are prompted in order, prior args accumulating', async () => {
+    const { fn, requests } = scriptedPrompt(['tag', 'musique/jazz']);
+    const result = await collectArgs([field(), value()], [], fn);
+    expect(result).toEqual(['tag', 'musique/jazz']);
+    // The second request's prompt/initial/completions saw the first answer.
+    expect(requests[0].prompt).toBe('Which field?');
+    expect(requests[1]).toEqual({
+      argName: 'value',
+      prompt: 'New value for tag?',
+      initial: 'current-tag',
+      completions: ['tag/a', 'tag/b'],
+    });
+  });
+
+  test('Escape (null) abandons the whole invocation and stops prompting', async () => {
+    const { fn } = scriptedPrompt([null]);
+    const result = await collectArgs([field(), value()], [], fn);
+    expect(result).toBeNull();
+    // Only the first argument was ever prompted.
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  test('the last declared argument absorbs extra inline tokens (joined by space)', async () => {
+    const { fn } = scriptedPrompt([]);
+    const result = await collectArgs([field(), value()], ['tag', 'musique', 'jazz'], fn);
+    expect(result).toEqual(['tag', 'musique jazz']);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test('absent initial/complete yield empty initial and no completions', async () => {
+    const bare: ArgSpec = { name: 'x', prompt: () => 'X?' };
+    const { fn, requests } = scriptedPrompt(['v']);
+    await collectArgs([bare], [], fn);
+    expect(requests[0]).toEqual({ argName: 'x', prompt: 'X?', initial: '', completions: [] });
   });
 });
 
