@@ -83,20 +83,22 @@ fn test_paths_of_root_level_value() {
 
 #[test]
 fn test_paths_of_multi_map() {
-    // A metarecord at two positions in the same forest (e.g. hardlinks).
+    // A metarecord at two positions in the same forest. `mfr_path` is
+    // single-valued (one path per metarecord), so a genuinely multi-positioned
+    // field is a user tree_ref like a tag's `path`; the resolution is generic.
     let mut conn = test_conn();
-    let root = tree_entry(&mut conn, "mfr_path", None, "");
-    let dir = tree_entry(&mut conn, "mfr_path", Some(root), "dir");
+    let root = tree_entry(&mut conn, "path", None, "");
+    let dir = tree_entry(&mut conn, "path", Some(root), "dir");
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let m = w
         .create_metarecord(vec![
-            Field::new("mfr_path", Value::TreeRef { parent: Some(root), name: "a.txt".into() }),
-            Field::new("mfr_path", Value::TreeRef { parent: Some(dir), name: "b.txt".into() }),
+            Field::new("path", Value::TreeRef { parent: Some(root), name: "a.txt".into() }),
+            Field::new("path", Value::TreeRef { parent: Some(dir), name: "b.txt".into() }),
         ])
         .unwrap();
     w.commit().unwrap();
     let mut cache = TreeCache::new(false);
-    let mut paths = cache.paths_of(&conn, "mfr_path", m.uuid).unwrap();
+    let mut paths = cache.paths_of(&conn, "path", m.uuid).unwrap();
     paths.sort();
     assert_eq!(paths.iter().map(String::as_str).collect::<Vec<_>>(), vec!["a.txt", "dir/b.txt"]);
 }

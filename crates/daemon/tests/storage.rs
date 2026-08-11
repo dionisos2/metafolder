@@ -340,6 +340,44 @@ fn test_tree_unique_index_rejects_duplicate_position() {
     );
 }
 
+#[test]
+fn test_mfr_path_is_single_valued() {
+    let mut conn = test_conn();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let file = create(
+        &mut conn,
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() },
+        )],
+    );
+
+    // Appending a second mfr_path is rejected — a metarecord tracks one path.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let err = w
+        .append_field(
+            file.uuid,
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: "b.mp3".into() },
+        )
+        .unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("single-valued"), "got: {err}");
+    drop(w);
+
+    // Creating a metarecord with two mfr_path fields is likewise rejected.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let err = w
+        .create_metarecord(vec![
+            Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "x".into() }),
+            Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "y".into() }),
+        ])
+        .unwrap_err();
+    assert!(err.to_string().to_lowercase().contains("single-valued"), "got: {err}");
+}
+
 // ── Value encoding roundtrip through the field table ──────────────────────────
 
 #[test]

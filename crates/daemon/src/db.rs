@@ -198,6 +198,14 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
         "CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
     )
     .context("Failed to ensure performance indexes")?;
+    // Back-fill the single-mfr_path invariant on existing databases too.
+    // Best-effort: a repo that predates it with a duplicate mfr_path keeps
+    // opening (the index simply is not created until the duplicate is resolved).
+    let _ = conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_mfr_path_single ON field(metarecord_uuid) \
+         WHERE field_name = 'mfr_path'",
+        [],
+    );
     Ok(())
 }
 
@@ -317,6 +325,11 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             WHERE value_type IN ('ref', 'externalref');
         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
             WHERE value_type = 'tree_ref';
+        -- A metarecord tracks at most one filesystem path: `mfr_path` is
+        -- single-valued (distinct files get distinct metarecords). Enforced at
+        -- the storage layer so every write path is covered at once.
+        CREATE UNIQUE INDEX idx_mfr_path_single ON field(metarecord_uuid)
+            WHERE field_name = 'mfr_path';
 
         -- Trigram full-text index over the textual field columns, to pre-filter
         -- MATCHES (regex) before the REGEXP scan (spec-query \"MATCHES via FTS5\").
@@ -902,13 +915,21 @@ pub(crate) fn insert_field_row(
     explicit_id: Option<i64>,
 ) -> Result<i64> {
     let map_unique = |err: rusqlite::Error| -> anyhow::Error {
-        // The tree index `idx_field_tree` is the only UNIQUE constraint on
-        // `value_name`; SQLite names the *columns* (not the index) in the error,
-        // so match on the distinguishing column rather than the index name.
+        // SQLite names the *columns* (not the index) in a UNIQUE-constraint
+        // error, so key off the distinguishing column: `value_name` is the tree
+        // index (`idx_field_tree`), `metarecord_uuid` the single-mfr_path index.
         let message = err.to_string();
-        if message.contains("UNIQUE constraint failed") && message.contains("value_name") {
+        if !message.contains("UNIQUE constraint failed") {
+            return err.into();
+        }
+        if message.contains("value_name") {
             DomainError::BadRequest(format!("tree position already occupied for field '{name}'"))
                 .into()
+        } else if message.contains("metarecord_uuid") {
+            DomainError::BadRequest(
+                "mfr_path is single-valued: a metarecord tracks at most one path".into(),
+            )
+            .into()
         } else {
             err.into()
         }
