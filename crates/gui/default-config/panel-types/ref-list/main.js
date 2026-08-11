@@ -6,6 +6,7 @@
 
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import { createSelect } from '/__select.js';
 import { refListQuery } from './queries.js';
 
 const PAGE_DEFAULT = 100;
@@ -40,8 +41,25 @@ export async function mount(root, metafolder) {
   /** @type {Map<string, string>} repo -> absolute root path (for selected_paths) */
   const repoRoots = new Map();
 
-  const fieldSelect = byId(root, 'field', HTMLSelectElement);
-  const modeSelect = byId(root, 'mode', HTMLSelectElement);
+  // `fetchPage` is a hoisted function declaration, so onChange can name it here.
+  const fieldSelect = createSelect(byId(root, 'field'), {
+    placeholder: 'no ref field',
+    onChange: (v) => {
+      refField = v;
+      void fetchPage(true);
+    },
+  });
+  const modeSelect = createSelect(byId(root, 'mode'), {
+    value: 'exact',
+    options: [
+      { value: 'exact', label: 'exact' },
+      { value: 'descendants', label: '+ descendants' },
+    ],
+    onChange: (v) => {
+      mode = v === 'descendants' ? 'descendants' : 'exact';
+      void fetchPage(true);
+    },
+  });
   const targetLine = byId(root, 'target');
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
@@ -79,10 +97,11 @@ export async function mount(root, metafolder) {
     const names = list.map((f) => f.name);
     if (refField === null && names.length > 0) refField = names[0];
     if (refField !== null && !names.includes(refField)) names.unshift(refField);
-    fieldSelect.replaceChildren(
-      ...names.map((name) => el('option', { value: name, selected: name === refField }, name)),
+    fieldSelect.setOptions(
+      names.map((name) => ({ value: name })),
+      refField,
     );
-    fieldSelect.disabled = names.length === 0;
+    fieldSelect.element.toggleAttribute('disabled', names.length === 0);
   }
 
   // ── Fetch ─────────────────────────────────────────────────────────────────
@@ -220,14 +239,6 @@ export async function mount(root, metafolder) {
   });
   const detachScroll = pager.attach(listingElement);
 
-  fieldSelect.addEventListener('change', () => {
-    refField = fieldSelect.value;
-    void fetchPage(true);
-  });
-  modeSelect.addEventListener('change', () => {
-    mode = modeSelect.value === 'descendants' ? 'descendants' : 'exact';
-    void fetchPage(true);
-  });
   byId(root, 'refresh').addEventListener('click', () => void refresh());
 
   async function refresh() {
@@ -259,7 +270,7 @@ export async function mount(root, metafolder) {
     label: 'Ref list: toggle between exact and + descendants',
     handler: () => {
       mode = mode === 'descendants' ? 'exact' : 'descendants';
-      modeSelect.value = mode;
+      modeSelect.setValue(mode);
       void fetchPage(true);
     },
   });
@@ -273,7 +284,7 @@ export async function mount(root, metafolder) {
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     target = /** @type {Target|null} */ ((await workspace.get('selected_treeref')) ?? null);
-    modeSelect.value = mode;
+    modeSelect.setValue(mode);
     await loadFields();
     await fetchPage(true);
   }

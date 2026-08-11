@@ -3,6 +3,7 @@
 
 import { byId, el, qsa } from '/__ui.js';
 import { createPickRunner } from '/__value-widget.js';
+import { createSelect } from '/__select.js';
 
 /**
  * A loaded repository, as `GET /repos` lists it.
@@ -55,6 +56,20 @@ export async function mount(root, metafolder) {
   const initForm = byId(root, 'init-form', HTMLFormElement);
   const loadForm = byId(root, 'load-form', HTMLFormElement);
   const retypeForm = byId(root, 'retype-form', HTMLFormElement);
+  const retypeType = createSelect(byId(root, 'retype-type'), {
+    value: 'string',
+    options: [
+      'string',
+      'int',
+      'float',
+      'bool',
+      'datetime',
+      'ref',
+      'tree_ref',
+      'externalref',
+      'refbase',
+    ].map((t) => ({ value: t })),
+  });
   /** @type {string|null} repo uuid the retype form acts on */
   let retypeTarget = null;
 
@@ -305,7 +320,7 @@ export async function mount(root, metafolder) {
     const errorElement = byId(root, 'retype-error');
     errorElement.textContent = '';
     const name = byId(root, 'retype-name', HTMLInputElement).value.trim();
-    const to = byId(root, 'retype-type', HTMLSelectElement).value;
+    const to = retypeType.get() ?? 'string';
     if (!name || !retypeTarget) return;
     try {
       // Count the metarecords carrying the field, to describe the change.

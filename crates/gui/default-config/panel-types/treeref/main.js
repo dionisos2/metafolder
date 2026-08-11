@@ -6,6 +6,7 @@
 
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import { createSelect } from '/__select.js';
 import { childrenQuery, treeNameOf } from './queries.js';
 
 const PAGE_DEFAULT = 200;
@@ -38,7 +39,16 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let loading = false;
 
-  const fieldSelect = byId(root, 'field', HTMLSelectElement);
+  // `fetchChildren` is a hoisted function declaration, so onChange can name it.
+  const fieldSelect = createSelect(byId(root, 'field'), {
+    value: field,
+    options: [{ value: field }],
+    onChange: (v) => {
+      field = v;
+      stack = [];
+      void fetchChildren(true);
+    },
+  });
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
   const breadcrumb = byId(root, 'breadcrumb');
@@ -63,8 +73,9 @@ export async function mount(root, metafolder) {
     const names = list.map((f) => f.name);
     // The current field stays selectable even if the list is momentarily empty.
     if (!names.includes(field)) names.unshift(field);
-    fieldSelect.replaceChildren(
-      ...names.map((name) => el('option', { value: name, selected: name === field }, name)),
+    fieldSelect.setOptions(
+      names.map((name) => ({ value: name })),
+      field,
     );
   }
 
@@ -219,11 +230,6 @@ export async function mount(root, metafolder) {
   });
   const detachScroll = pager.attach(listingElement);
 
-  fieldSelect.addEventListener('change', () => {
-    field = fieldSelect.value;
-    stack = [];
-    void fetchChildren(true);
-  });
   byId(root, 'root').addEventListener('click', gotoRoot);
   byId(root, 'up').addEventListener('click', goUp);
   byId(root, 'refresh').addEventListener('click', () => void refresh());
@@ -273,10 +279,10 @@ export async function mount(root, metafolder) {
     if (repo === null) {
       placeholderElement.hidden = false;
       placeholderElement.textContent = 'No active repository.';
-      fieldSelect.disabled = true;
+      fieldSelect.element.toggleAttribute('disabled', true);
       return;
     }
-    fieldSelect.disabled = false;
+    fieldSelect.element.toggleAttribute('disabled', false);
     // A value picker (spec-gui "Value picker") can seed the field to explore.
     const seedField = await workspace.get('treeref:field');
     if (typeof seedField === 'string' && seedField) field = seedField;

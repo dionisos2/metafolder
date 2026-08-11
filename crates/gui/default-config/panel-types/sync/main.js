@@ -4,6 +4,7 @@
 // metafolder.sync (the shared core::sync orchestration; no shell).
 
 import { byId, el } from '/__ui.js';
+import { createSelect } from '/__select.js';
 
 /** Canonical plan-repo name for a pair (spec-sync: smaller UUID is A). The
  *  32-hex simple form sorts identically to the UUID bytes.
@@ -32,8 +33,18 @@ export function mount(root, metafolder) {
   const { sync, daemon, query, workspace, commands, statusBar } = metafolder;
   const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
 
-  const repoA = byId(root, 'repo-a', HTMLSelectElement);
-  const repoB = byId(root, 'repo-b', HTMLSelectElement);
+  // `onPairChange` is a hoisted function declaration, so onChange can name it.
+  const repoA = createSelect(byId(root, 'repo-a'), {
+    placeholder: 'repo A',
+    onChange: () => void onPairChange(),
+  });
+  const repoB = createSelect(byId(root, 'repo-b'), {
+    placeholder: 'repo B',
+    onChange: () => void onPairChange(),
+  });
+  /** @typedef {ReturnType<typeof createSelect>} Select */
+  /** @param {Select} select the selected repo uuid, or '' when none */
+  const uuidOf = (select) => select.get() ?? '';
   const intentsInput = byId(root, 'intents', HTMLInputElement);
   const statusBtn = byId(root, 'status-btn', HTMLButtonElement);
   const planBtn = byId(root, 'plan-btn', HTMLButtonElement);
@@ -50,7 +61,7 @@ export function mount(root, metafolder) {
   let busy = false;
 
   function pairOk() {
-    return Boolean(repoA.value && repoB.value && repoA.value !== repoB.value);
+    return Boolean(uuidOf(repoA) && uuidOf(repoB) && uuidOf(repoA) !== uuidOf(repoB));
   }
 
   /** @param {boolean} on */
@@ -86,18 +97,21 @@ export function mount(root, metafolder) {
     );
     const active = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     fillSelect(repoA, active ?? (repos[0]?.uuid ?? null));
-    const other = repos.find((r) => r.uuid !== repoA.value)?.uuid ?? null;
+    const other = repos.find((r) => r.uuid !== uuidOf(repoA))?.uuid ?? null;
     fillSelect(repoB, other);
     await discoverPlanRepo();
     setBusy(false);
   }
 
-  /** @param {HTMLSelectElement} select @param {string|null} selected */
+  /** @param {Select} select @param {string|null} selected */
   function fillSelect(select, selected) {
-    select.replaceChildren(
-      ...repos.map((r) => el('option', { value: r.uuid }, r.name || r.uuid)),
+    // setOptions keeps `selected` when it is present (else clears to the
+    // placeholder) and does not fire onChange — matching the old programmatic
+    // `select.value = …`, which never triggered a change event either.
+    select.setOptions(
+      repos.map((r) => ({ value: r.uuid, label: r.name || r.uuid })),
+      selected,
     );
-    if (selected && repos.some((r) => r.uuid === selected)) select.value = selected;
   }
 
   /** Find the (hidden, system) plan repo for the current pair, if it exists. */
@@ -106,7 +120,7 @@ export function mount(root, metafolder) {
     if (!pairOk()) return;
     try {
       const all = await daemon.call('GET', '/repos?all=true');
-      const name = planRepoName(repoA.value, repoB.value);
+      const name = planRepoName(uuidOf(repoA), uuidOf(repoB));
       const found = (Array.isArray(all) ? all : []).find(
         (/** @type {{ name?: string }} */ r) => r.name === name,
       );
@@ -123,7 +137,7 @@ export function mount(root, metafolder) {
     setBusy(true);
     try {
       const body = /** @type {{ links?: { uuid?: string, state?: string }[] }} */ (
-        await sync.status(repoA.value, repoB.value)
+        await sync.status(uuidOf(repoA), uuidOf(repoB))
       );
       renderStatus(body.links ?? []);
     } catch (error) {
@@ -139,7 +153,7 @@ export function mount(root, metafolder) {
     setBusy(true);
     setStatus('Planning…');
     try {
-      const report = await sync.plan(repoA.value, repoB.value, intentsInput.value.trim());
+      const report = await sync.plan(uuidOf(repoA), uuidOf(repoB), intentsInput.value.trim());
       await discoverPlanRepo();
       setStatus(`Plan: ${report.operations} operation(s)${report.warnings.length ? ` · ${report.warnings.length} warning(s)` : ''}`);
       await renderPlan(report);
@@ -156,7 +170,7 @@ export function mount(root, metafolder) {
     setBusy(true);
     try {
       const report = /** @type {Record<string, unknown>} */ (
-        await sync.show(repoA.value, repoB.value, false, false)
+        await sync.show(uuidOf(repoA), uuidOf(repoB), false, false)
       );
       renderShow(report);
       await renderConflicts();
@@ -174,7 +188,7 @@ export function mount(root, metafolder) {
     setStatus('Running…');
     try {
       const report = /** @type {{ status: string, done: number, skipped: number, divergences: { subtree: string, count: number }[], warnings: string[] }} */ (
-        await sync.run(repoA.value, repoB.value)
+        await sync.run(uuidOf(repoA), uuidOf(repoB))
       );
       renderRun(report);
       const summary =
@@ -196,9 +210,9 @@ export function mount(root, metafolder) {
 
   // ── rendering ───────────────────────────────────────────────────────────
 
-  /** @param {HTMLSelectElement} select */
+  /** @param {Select} select */
   function label(select) {
-    return repos.find((r) => r.uuid === select.value)?.name || select.value;
+    return repos.find((r) => r.uuid === uuidOf(select))?.name || uuidOf(select);
   }
 
   /** @param {{ uuid?: string, state?: string }[]} links */
@@ -232,7 +246,7 @@ export function mount(root, metafolder) {
     // Layer the live overlay and the conflict editor beneath the summary.
     if (report.operations > 0) {
       const overlay = /** @type {Record<string, unknown>} */ (
-        await sync.show(repoA.value, repoB.value, false, false)
+        await sync.show(uuidOf(repoA), uuidOf(repoB), false, false)
       );
       view.append(...showNodes(overlay));
       await renderConflicts(true);
@@ -336,18 +350,23 @@ export function mount(root, metafolder) {
 
   /** @param {{ uuid: string, field: string, a: string, b: string, resolve: string }} c */
   function conflictRow(c) {
-    const select = el('select', {}, ...['skip', 'a', 'b'].map((v) => el('option', { value: v }, v)));
-    if (select instanceof HTMLSelectElement) select.value = ['skip', 'a', 'b'].includes(c.resolve) ? c.resolve : 'skip';
-    const save = el('button', {
-      onclick: () => void saveResolve(c.uuid, select instanceof HTMLSelectElement ? select.value : 'skip'),
-    }, 'Save');
+    const button = el('button', { type: 'button' });
+    const select = createSelect(button, {
+      value: ['skip', 'a', 'b'].includes(c.resolve) ? c.resolve : 'skip',
+      options: ['skip', 'a', 'b'].map((v) => ({ value: v })),
+    });
+    const save = el(
+      'button',
+      { onclick: () => void saveResolve(c.uuid, select.get() ?? 'skip') },
+      'Save',
+    );
     return el(
       'div',
       { class: 'conflict' },
       el('span', { class: 'field' }, c.field),
       el('span', { class: 'val' }, `A: ${c.a}`),
       el('span', { class: 'val' }, `B: ${c.b}`),
-      select,
+      button,
       save,
     );
   }
@@ -389,8 +408,6 @@ export function mount(root, metafolder) {
 
   // ── wiring ──────────────────────────────────────────────────────────────
 
-  repoA.addEventListener('change', () => void onPairChange());
-  repoB.addEventListener('change', () => void onPairChange());
   intentsInput.addEventListener('input', () => setBusy(busy));
   statusBtn.addEventListener('click', () => void doStatus());
   planBtn.addEventListener('click', () => void doPlan());
@@ -399,9 +416,9 @@ export function mount(root, metafolder) {
 
   async function onPairChange() {
     // Keep B different from A.
-    if (repoB.value === repoA.value) {
-      const other = repos.find((r) => r.uuid !== repoA.value)?.uuid;
-      if (other) repoB.value = other;
+    if (uuidOf(repoB) === uuidOf(repoA)) {
+      const other = repos.find((r) => r.uuid !== uuidOf(repoA))?.uuid;
+      if (other) repoB.setValue(other);
     }
     await discoverPlanRepo();
     setBusy(false);

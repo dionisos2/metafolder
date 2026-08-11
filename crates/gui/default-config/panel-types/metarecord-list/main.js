@@ -6,6 +6,7 @@ import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
+import { createSelect } from '/__select.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
@@ -124,7 +125,18 @@ export async function mount(root, metafolder) {
   const normalError = byId(root, 'normal-error');
   const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
   const bulkForm = byId(root, 'bulk-form');
-  const bulkOp = byId(root, 'bulk-op', HTMLSelectElement);
+  // `syncBulkOpUi` is a hoisted function declaration, so onChange can name it here.
+  const bulkOp = createSelect(byId(root, 'bulk-op'), {
+    value: 'set',
+    options: [
+      { value: 'set', label: 'Set (replace all rows)' },
+      { value: 'append', label: 'Append (add a row)' },
+      { value: 'remove', label: 'Remove (delete matching rows)' },
+      { value: 'unset', label: 'Unset (remove the field)' },
+      { value: 'delete', label: 'Delete metarecords' },
+    ],
+    onChange: () => syncBulkOpUi(),
+  });
   const bulkName = byId(root, 'bulk-name', HTMLInputElement);
   const bulkValueSlot = byId(root, 'bulk-value');
   const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
@@ -716,14 +728,13 @@ export async function mount(root, metafolder) {
   const bulkTypeBtn = byId(root, 'bulk-type');
   const bulkForceLabel = byId(root, 'bulk-force-label');
   function syncBulkOpUi() {
-    const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
+    const op = BULK_OPS[bulkOp.get() ?? 'set'] ?? BULK_OPS.set;
     const noField = op.noField === true;
     bulkValueRow.hidden = op.valueless === true;
     bulkTypeBtn.hidden = op.valueless === true || noField;
     bulkName.hidden = noField;
     bulkForceLabel.hidden = noField;
   }
-  bulkOp.addEventListener('change', syncBulkOpUi);
   syncBulkOpUi();
 
   function openBulkForm() {
@@ -757,7 +768,7 @@ export async function mount(root, metafolder) {
     bulkError.textContent = '';
     try {
       if (!repo) throw new Error('no active repository');
-      const op = BULK_OPS[bulkOp.value] ?? BULK_OPS.set;
+      const op = BULK_OPS[bulkOp.get() ?? 'set'] ?? BULK_OPS.set;
       // Bulk actions target the effective (finder-filtered) set — you act on
       // what you see.
       const effQ = effectiveQuery();

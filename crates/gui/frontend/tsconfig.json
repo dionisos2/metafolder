@@ -20,7 +20,8 @@
       "/__finder.js": ["../panel-shim/finder.js"],
       "/__history.js": ["../panel-shim/history.js"],
       "/__help.js": ["../panel-shim/help.js"],
-      "/__coalesce.js": ["../panel-shim/coalesce.js"]
+      "/__coalesce.js": ["../panel-shim/coalesce.js"],
+      "/__select.js": ["../panel-shim/select.js"]
     }
   },
   "include": ["src", "tests", "types", "../panel-shim", "../default-config/panel-types"]

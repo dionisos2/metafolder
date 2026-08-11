@@ -87,6 +87,36 @@ option {
   color: #000000;
 }
 
+/* Themed drop-down button (panel-shim/select.js, replacing the native
+ * <select> whose WebKitGTK popup can't be themed). Styled here so every
+ * panel's control is consistent and beats the black `button` rule above. */
+.mf-select {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  background: var(--mf-bg);
+  color: var(--mf-fg);
+  border: 1px solid var(--mf-fg-dim);
+  border-radius: 3px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+.mf-select:hover:not(:disabled) {
+  border-color: var(--mf-accent);
+}
+.mf-select:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.mf-select-unset .mf-select-label {
+  color: var(--mf-fg-dim);
+}
+.mf-select-chevron {
+  font-size: 0.7em;
+  opacity: 0.8;
+}
+
 /* Entry references rendered as clickable links (/__ui.js valueEl). */
 a.ref-link {
   color: var(--mf-accent);

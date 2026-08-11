@@ -35,6 +35,7 @@ const FINDER_JS: &str = include_str!("../../panel-shim/finder.js");
 const HISTORY_JS: &str = include_str!("../../panel-shim/history.js");
 const HELP_JS: &str = include_str!("../../panel-shim/help.js");
 const COALESCE_JS: &str = include_str!("../../panel-shim/coalesce.js");
+const SELECT_JS: &str = include_str!("../../panel-shim/select.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -62,6 +63,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__history.js", get(|| async { javascript(HISTORY_JS) }))
         .route("/__help.js", get(|| async { javascript(HELP_JS) }))
         .route("/__coalesce.js", get(|| async { javascript(COALESCE_JS) }))
+        .route("/__select.js", get(|| async { javascript(SELECT_JS) }))
         .route(
             "/__style.css",
             get(|axum::extract::State(state): axum::extract::State<ServerState>| async move {
