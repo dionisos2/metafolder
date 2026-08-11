@@ -54,10 +54,19 @@ export const store = $state({
     helpCursorActive: false,
     configOpen: false,
     configInfo: null as ConfigInfo | null,
-    /// Non-null while a script's POST /gui/prompt waits for the input.
+    /// Non-null while a prompt waits for the input — a script's
+    /// POST /gui/prompt or an interactive command-argument collection.
     promptText: null as string | null,
     /// Completions offered by the active prompt's autocomplete.
     promptCompletions: [] as string[],
+    /// Pre-filled, editable draft for the active prompt (an argument's
+    /// `initial` value). Empty for script prompts.
+    promptInitial: '',
+    /// When set, the active prompt is resolved *in the frontend* (an
+    /// interactive argument collection) by calling this with the entered
+    /// text, or null on cancel — instead of the Rust `prompt_resolve`
+    /// (script prompts). Mutually exclusive: only one prompt owns the input.
+    promptResolver: null as ((value: string | null) => void) | null,
     /// Non-null while a key sequence is pending (shell or panel matcher):
     /// the typed prefix and the bindings that can still complete it.
     pendingKeys: null as {

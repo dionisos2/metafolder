@@ -299,6 +299,27 @@ function shellExpandDeps(ws: string | null): ExpandDeps {
   };
 }
 
+/**
+ * Prompt driver for interactive argument collection: opens the command input
+ * as a frontend-resolved prompt (spec-gui "Interactive command arguments")
+ * and resolves to the entered text, or null on Escape. Refuses (null) when a
+ * prompt already owns the input — an interactive collection and a script
+ * prompt are mutually exclusive.
+ */
+async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
+  if (store.ui.promptText !== null || store.ui.promptResolver !== null) {
+    await status('the command input is busy with another prompt');
+    return null;
+  }
+  return new Promise<string | null>((resolve) => {
+    store.ui.promptResolver = resolve;
+    store.ui.promptText = request.prompt;
+    store.ui.promptCompletions = request.completions;
+    store.ui.promptInitial = request.initial;
+    store.ui.commandInputFocusTick += 1;
+  });
+}
+
 /** Outcome of a dispatch, reported back to `POST /gui/command` waiters. */
 export type DispatchResult = { ok: true } | { ok: false; error: string };
 
@@ -326,15 +347,29 @@ export async function dispatch(invocation: string): Promise<DispatchResult> {
     return { ok: true };
   }
 
-  const { name, args } = parsed;
+  const { name } = parsed;
+  let { args } = parsed;
   const ws = focusedWs();
+
+  // Interactive arguments (spec-gui "Command"): a command declaring arguments
+  // invoked with fewer than declared collects the missing tail through the
+  // command input. Escape (null) abandons the whole invocation silently.
+  const specs = argSpecFor(name);
+  if (specs) {
+    const collected = await collectArgs(specs, args, promptForArg);
+    if (collected === null) return { ok: true };
+    args = collected;
+  }
+
   if (ws) store.lastCommand[ws] = name;
 
   // Echo the invocation to the message panel (unless the command opts out,
   // e.g. the basic editing primitives). Awaited so it lands before any
-  // output the command itself appends.
+  // output the command itself appends. Interactively-collected arguments are
+  // reassembled so the echo reflects what actually ran.
   if (ws && shouldLogCommand(store.commands, name)) {
-    await invoke('append_message', { wsId: ws, text: `> ${invocation.trim()}` });
+    const echo = [name, ...args].join(' ').trim();
+    await invoke('append_message', { wsId: ws, text: `> ${echo}` });
   }
 
   try {

@@ -80,9 +80,12 @@
     }
   });
 
-  // Pick up drafts injected by commands (e.g. bare `tab:rename`).
+  // Pick up drafts injected by commands (e.g. bare `tab:rename`). Suspended
+  // while a prompt owns the input, so an interactive argument's pre-filled
+  // `initial` value is not clobbered by a stale workspace draft.
   $effect(() => {
     const ws = currentWs;
+    if (store.ui.promptText !== null) return;
     if (ws !== null && store.inputDrafts[ws] !== undefined && !focused && mode === 'command') {
       draft = store.inputDrafts[ws];
     }
@@ -96,6 +99,12 @@
       mode = target;
       draft = (currentWs !== null && draftsOf(target)[currentWs]) || '';
       bashCandidates = [];
+      selectedIndex = 0;
+    }
+    // A frontend prompt (interactive argument collection) pre-fills its
+    // editable `initial` value, overriding the restored draft.
+    if (store.ui.promptText !== null && store.ui.promptResolver !== null) {
+      draft = store.ui.promptInitial;
       selectedIndex = 0;
     }
     element?.focus();
@@ -225,12 +234,23 @@
     selectedIndex = 0;
   }
 
-  function cancelPrompt() {
-    if (store.ui.promptText === null) return;
-    // A dismissed script prompt resolves as "cancel".
-    void invoke('prompt_resolve', { confirm: false, text: null });
+  /** Resolves the active prompt and clears its state. A frontend argument
+   *  collection (promptResolver) is resolved locally; a script prompt goes to
+   *  Rust (prompt_resolve). Cancel → the collector aborts / the script sees
+   *  "cancel". */
+  function resolvePrompt(confirm: boolean, text: string | null) {
+    const resolver = store.ui.promptResolver;
     store.ui.promptText = null;
     store.ui.promptCompletions = [];
+    store.ui.promptInitial = '';
+    store.ui.promptResolver = null;
+    if (resolver) resolver(confirm ? (text ?? '') : null);
+    else void invoke('prompt_resolve', { confirm, text: confirm ? text : null });
+  }
+
+  function cancelPrompt() {
+    if (store.ui.promptText === null) return;
+    resolvePrompt(false, null);
   }
 
   function unfocus() {
@@ -261,11 +281,11 @@
     const ws = currentWs;
     if (ws !== null) draftsOf(mode)[ws] = '';
     if (store.ui.promptText !== null) {
-      // Script prompt (POST /gui/prompt): confirm with the typed text.
-      store.ui.promptText = null;
-      store.ui.promptCompletions = [];
+      // Prompt (script POST /gui/prompt or interactive argument collection):
+      // confirm with the typed text. The resolver routes it to Rust or to the
+      // frontend collector, which then prompts for the next argument (if any).
       element?.blur();
-      await invoke('prompt_resolve', { confirm: true, text: input });
+      resolvePrompt(true, input);
       return;
     }
     element?.blur();
