@@ -733,6 +733,13 @@ export async function mount(root, metafolder) {
     if (!bulkName.hidden) bulkName.focus();
   }
 
+  // Clicking "Edit / delete on query" again (or re-invoking the command) closes
+  // the form when it is already open, rather than re-opening it.
+  function toggleBulkForm() {
+    if (bulkForm.classList.contains('open')) bulkForm.classList.remove('open');
+    else openBulkForm();
+  }
+
   /** Counts the metarecords the current query matches (for the confirmation). */
   async function countMatches() {
     const result = /** @type {{total?: number|null}} */ (
@@ -971,7 +978,7 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:bulk-edit', {
     label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
     reveal: true,
-    handler: () => openBulkForm(),
+    handler: () => toggleBulkForm(),
   });
   void commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',
@@ -987,15 +994,17 @@ export async function mount(root, metafolder) {
   let picking = false; // true while this list is open as a value picker
 
   /** The `metarecords` index of the row/card under a context-menu event, or
-   *  -1 when the click missed a row (header, empty space).
+   *  -1 when the click missed a row (header, empty space). The event is handled
+   *  at the shell `window`, where `event.target` is retargeted to the panel's
+   *  Shadow-DOM host — so the real clicked node is found through
+   *  `composedPath()`, which still crosses the boundary.
    *  @param {MouseEvent} event */
   function rowIndexFromEvent(event) {
-    const node = event.target instanceof Element ? event.target : null;
-    if (!node) return -1;
-    const tr = node.closest('tr.row');
-    if (tr) return [...rows.children].indexOf(tr);
-    const card = node.closest('.card');
-    if (card) return [...grid.children].indexOf(card);
+    for (const node of event.composedPath()) {
+      if (!(node instanceof Element)) continue;
+      if (node.matches('tr.row')) return [...rows.children].indexOf(node);
+      if (node.matches('.card')) return [...grid.children].indexOf(node);
+    }
     return -1;
   }
 
@@ -1017,8 +1026,18 @@ export async function mount(root, metafolder) {
         action: () => void commands.invoke('pick:confirm'),
       });
     }
+    items.push({
+      label: 'Open in panel metarecord-detail',
+      action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
+    });
+    // Only offer the file panel when the metarecord actually has a linked file.
+    if (pathsOf(target).length > 0) {
+      items.push({
+        label: 'Open in panel file',
+        action: () => void commands.invoke('panel:reveal-other file'),
+      });
+    }
     items.push(
-      { label: 'Open in other panel', action: () => void openSelected() },
       { label: 'Copy UUID', action: () => void copyText(target.uuid) },
       { label: 'Trash file', action: () => void commands.invoke('metarecord:trash') },
     );

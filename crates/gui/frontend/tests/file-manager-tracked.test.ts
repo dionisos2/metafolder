@@ -4,7 +4,7 @@
 // thousands of tracked files only queries the slice the user can see.
 
 import { describe, expect, test, vi } from 'vitest';
-import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter, filterHidden } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -71,6 +71,35 @@ describe('entriesFooter', () => {
 
   test('the shown count is clamped to the total', () => {
     expect(entriesFooter(250, 3)).toBe('3/3 entries');
+  });
+});
+
+describe('syntheticRows', () => {
+  test('a plain directory gets both "." and ".."', () => {
+    expect(syntheticRows('/data/repo/music', '/data/repo', true).map((e) => e.name)).toEqual([
+      '.',
+      '..',
+    ]);
+  });
+
+  test('".." points at the parent directory', () => {
+    const rows = syntheticRows('/data/repo/music', '/data/repo', true);
+    expect(rows[1]).toEqual({ name: '..', path: '/data/repo', is_dir: true });
+  });
+
+  test('at the repo root with the constraint on, ".." is omitted', () => {
+    expect(syntheticRows('/data/repo', '/data/repo', true).map((e) => e.name)).toEqual(['.']);
+  });
+
+  test('at the repo root but unconstrained, ".." is kept', () => {
+    expect(syntheticRows('/data/repo', '/data/repo', false).map((e) => e.name)).toEqual([
+      '.',
+      '..',
+    ]);
+  });
+
+  test('without an active repo (null root), ".." is always kept', () => {
+    expect(syntheticRows('/data/repo', null, true).map((e) => e.name)).toEqual(['.', '..']);
   });
 });
 

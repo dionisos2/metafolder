@@ -12,6 +12,7 @@ import {
   isWithin,
   entriesFooter,
   filterHidden,
+  syntheticRows,
 } from './tracked.js';
 
 // Render the directory in windows of this many rows (plus more on scroll), so
@@ -43,8 +44,12 @@ export async function mount(root, metafolder) {
   let internalDir = null;
   /** @type {string|null} */
   let currentDir = null;
-  /** @type {Entry[]} "." and ".." then the directory's entries */
+  /** @type {Entry[]} the synthetic rows ("." / "..") then the directory's entries */
   let listing = [];
+  // How many synthetic rows lead `listing` (2 with "." and "..", 1 when ".." is
+  // dropped at the constrained repo root) — the footer subtracts these to count
+  // the directory's real entries.
+  let syntheticCount = 2;
   let rendered = 0; // number of `listing` rows currently in the DOM (windowed)
   let cursorIndex = -1;
   let constrainToRoot = true;
@@ -135,11 +140,9 @@ export async function mount(root, metafolder) {
       await statusBar.error(error, statusMessageMs);
       return;
     }
-    listing = [
-      { name: '.', path: dir, is_dir: true },
-      { name: '..', path: parentDir(dir), is_dir: true },
-      ...filterHidden(items, showHidden),
-    ];
+    const synthetic = syntheticRows(dir, repoRoot, constrainToRoot);
+    syntheticCount = synthetic.length;
+    listing = [...synthetic, ...filterHidden(items, showHidden)];
     currentDir = dir;
     trackedPaths = new Map();
     cursorIndex = -1;
@@ -188,10 +191,10 @@ export async function mount(root, metafolder) {
       }),
     );
 
-    // Footer count excludes the synthetic "." and ".." rows, so it reflects
+    // Footer count excludes the synthetic "." / ".." rows, so it reflects
     // the directory's actual entries (mirrors metarecord-list).
-    const total = Math.max(0, listing.length - 2);
-    const shown = Math.max(0, Math.min(rendered, listing.length) - 2);
+    const total = Math.max(0, listing.length - syntheticCount);
+    const shown = Math.max(0, Math.min(rendered, listing.length) - syntheticCount);
     statusLine.textContent = entriesFooter(shown, total);
   }
 
@@ -320,9 +323,15 @@ export async function mount(root, metafolder) {
     },
   });
 
-  constrainBox.addEventListener('change', () => {
-    constrainToRoot = constrainBox.checked;
-  });
+  // Re-list the current directory so the ".." row (dis)appears immediately when
+  // the constraint is toggled at the repo root.
+  /** @param {boolean} checked */
+  async function setConstrain(checked) {
+    constrainToRoot = checked;
+    constrainBox.checked = checked;
+    if (currentDir !== null) await open(currentDir);
+  }
+  constrainBox.addEventListener('change', () => void setConstrain(constrainBox.checked));
   // Re-list the current directory so the dot-entries (dis)appear immediately.
   /** @param {boolean} shown */
   async function setShowHidden(shown) {
@@ -351,10 +360,7 @@ export async function mount(root, metafolder) {
   });
   void commands.register('file-manager:toggle-root', {
     label: 'File manager: toggle the root constraint',
-    handler: () => {
-      constrainBox.checked = !constrainBox.checked;
-      constrainToRoot = constrainBox.checked;
-    },
+    handler: () => setConstrain(!constrainToRoot),
   });
   void commands.register('file-manager:toggle-hidden', {
     label: 'File manager: show/hide hidden files (dot-entries)',

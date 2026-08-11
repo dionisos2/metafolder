@@ -37,6 +37,23 @@ export function filterHidden(items, showHidden) {
   return showHidden ? items : items.filter((item) => !item.name.startsWith('.'));
 }
 
+// The synthetic navigation rows prepended to a directory listing: "." (the
+// directory itself) is always present; ".." (its parent) is present too —
+// except at the repo root while the root constraint is on, where going up is
+// blocked, so the row would only mislead (spec-gui "file-manager panel type").
+// `repoRoot` is null when no repo is active (free disk browsing), and then
+// ".." is always kept.
+/**
+ * @param {string} dir @param {string|null} repoRoot @param {boolean} constrainToRoot
+ * @returns {Entry[]}
+ */
+export function syntheticRows(dir, repoRoot, constrainToRoot) {
+  /** @type {Entry} */
+  const self = { name: '.', path: dir, is_dir: true };
+  if (constrainToRoot && repoRoot !== null && dir === repoRoot) return [self];
+  return [self, { name: '..', path: parentDir(dir), is_dir: true }];
+}
+
 // Parent directory of an absolute path; the filesystem root is its own
 // parent (as on Linux, where /.. is /).
 /** @param {string} path */
