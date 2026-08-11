@@ -3,6 +3,7 @@
   import { dispatch } from '../lib/commands';
   import { focusedWs, slotPayload, store, workspaceById } from '../lib/store.svelte';
   import type { SlotId } from '../lib/types';
+  import { showMenu } from '../../../panel-shim/menu.js';
 
   // `chrome` is false in fullscreen, where only the panel body is shown.
   let { id, chrome = true }: { id: SlotId; chrome?: boolean } = $props();
@@ -22,19 +23,36 @@
     if (!isFocused) await invoke('focus_slot', { slot: id });
   }
 
-  async function setType(event: Event) {
-    const select = event.currentTarget as HTMLSelectElement;
-    const panelType = select.value;
+  async function setType(panelType: string) {
+    if (panelType === payload.panel_type) return; // no-op re-pick
     try {
       await invoke('panel_set_type', { slot: id, panelType });
     } catch (error) {
-      // Rejection (e.g. same type in both slots): restore + status.
-      select.value = payload.panel_type ?? '';
+      // Rejection (e.g. same type in both slots): report it (no widget state to
+      // restore — the header just keeps showing the current type).
       const ws = focusedWs();
       if (ws) {
         await invoke('post_status', { wsId: ws, text: String(error), kind: 'error', timeoutMs: 5000 });
       }
     }
+  }
+
+  // Custom dropdown (replacing the native <select>, whose popup WebKitGTK draws
+  // itself and cannot be themed): the shared HTML menu from panel-shim, so it
+  // carries the app theme, keyboard navigation, typeahead and our scrollbar.
+  async function openTypeMenu(event: MouseEvent) {
+    event.stopPropagation();
+    if (payload.workspace_id === null) return;
+    if (!isFocused) await invoke('focus_slot', { slot: id });
+    const current = payload.panel_type;
+    const items: Metafolder.MenuItem[] = store.panelTypes.map((name) => ({
+      // A trailing ✓ marks the current type; kept trailing so the menu's
+      // prefix typeahead still matches on the plain name.
+      label: name === current ? `${name} ✓` : name,
+      action: () => void setType(name),
+    }));
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    await showMenu(items, { x: rect.left, y: rect.bottom + 2 });
   }
 </script>
 
@@ -42,20 +60,17 @@
 <section class="slot" class:focused={isFocused} onclick={focusMe} data-slot={id}>
   {#if chrome}
     <header class="slot-header" data-help-topic="layout">
-    <select
+    <button
+      type="button"
       class="panel-type"
+      class:unset={payload.panel_type === null}
       data-help-topic="panel-type"
-      value={payload.panel_type ?? ''}
-      onchange={setType}
+      onclick={openTypeMenu}
       disabled={payload.workspace_id === null}
     >
-      {#if payload.panel_type === null}
-        <option value="" disabled>choose a panel…</option>
-      {/if}
-      {#each store.panelTypes as name (name)}
-        <option value={name}>{name}</option>
-      {/each}
-    </select>
+      <span class="panel-type-label">{payload.panel_type ?? 'choose a panel…'}</span>
+      <span class="panel-type-chevron" aria-hidden="true">▾</span>
+    </button>
     <span class="header-right">
       <span class="repo-indicator" title="active repository">
         {#if workspace?.active_repo}
@@ -130,11 +145,30 @@
     flex: none;
   }
   .panel-type {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
     font: inherit;
     background: var(--mf-bg, #1e1e24);
     color: var(--mf-fg, #d8d8e0);
     border: 1px solid var(--mf-fg-dim, #8a8a96);
     border-radius: 3px;
+    padding: 1px 6px;
+    cursor: pointer;
+  }
+  .panel-type:hover:not(:disabled) {
+    border-color: var(--mf-accent, #4c56c4);
+  }
+  .panel-type:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+  .panel-type.unset .panel-type-label {
+    color: var(--mf-fg-dim, #8a8a96);
+  }
+  .panel-type-chevron {
+    font-size: 0.7em;
+    opacity: 0.8;
   }
   .header-right {
     display: inline-flex;
