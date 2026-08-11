@@ -25,6 +25,42 @@ body {
   font-family: var(--mf-font);
 }
 
+/* Scrollbars: the WebKit defaults are thin and nearly invisible on the dark
+ * theme. Make them noticeably wider with a clearly contrasting thumb — this
+ * reaches every scrollable list, in the shell and in every panel's shadow
+ * root (the stylesheet is adopted there too). Note: a native <select>'s open
+ * options popup is drawn by WebKitGTK, not the page, so its scrollbar is not
+ * reachable from here. */
+::-webkit-scrollbar {
+  width: 14px;
+  height: 14px;
+}
+::-webkit-scrollbar-track {
+  background: var(--mf-bg);
+}
+::-webkit-scrollbar-thumb {
+  /* The 4px track-coloured border insets the thumb so it reads as a rounded
+   * pill with breathing room, and min-height keeps it grabbable on very long
+   * lists. */
+  background: #6b6b80;
+  border: 4px solid var(--mf-bg);
+  border-radius: 8px;
+  min-height: 40px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mf-accent);
+}
+::-webkit-scrollbar-corner {
+  background: var(--mf-bg);
+}
+
+/* Firefox / the standard properties, for completeness (WebKitGTK honours the
+ * -webkit- pseudo-elements above; these are a harmless fallback). */
+* {
+  scrollbar-width: auto;
+  scrollbar-color: #6b6b80 var(--mf-bg);
+}
+
 /* WebKitGTK renders closed selects with the native (light) widget and
  * ignores CSS backgrounds on them, which puts themed white text on a
  * white box: disable the native appearance so the CSS theme really
