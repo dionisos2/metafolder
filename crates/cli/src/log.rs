@@ -4,6 +4,7 @@
 //! endpoints. Target resolution (`--id`, `--timestamp`, `<label>`, or the
 //! implicit previous revision) is shared by rollback and prune.
 
+use std::collections::HashSet;
 use std::io::Write as _;
 
 use serde_json::{json, Value as Json};
@@ -149,6 +150,9 @@ pub fn rollback_run(
     // is in fact recoverable (e.g. from a prior `mf trash -f`).
     let trash = ctx.internal_dir()?;
     let mut trash_entries = trash.entries().unwrap_or_default();
+    // Metarecords whose content a directory blob has already brought back this
+    // rollback, so their own file_deleted steps apply the inverse, not skip.
+    let mut restored: HashSet<String> = HashSet::new();
 
     let start = ctx.client.post(&format!("{base}/rollback/start"), &body)?;
     let mut op = start["op"].clone();
@@ -166,7 +170,7 @@ pub fn rollback_run(
                 // let the daemon apply the real inverse; otherwise skip (the
                 // metadata rewinds) and hint at any recoverable content.
                 "file_deleted" | "file_modified" => {
-                    decide_deleted(&op, &trash, &mut trash_entries, silent)?
+                    decide_deleted(&op, &trash, &mut trash_entries, &mut restored, silent)?
                 }
                 _ => false,
             };
@@ -278,33 +282,53 @@ fn decide_deleted(
     op: &Json,
     trash: &TrashDir,
     entries: &mut Vec<TrashEntry>,
+    restored: &mut HashSet<String>,
     silent: bool,
 ) -> Result<bool, CliError> {
     let entity = op["entity_uuid"].as_str().unwrap_or_default();
 
-    if let Some(version) = op["entity_version_before"].as_u64() {
-        if let Some(pos) = entries
-            .iter()
-            .position(|e| e.metarecord.as_deref() == Some(entity) && e.version == Some(version))
-        {
-            let id = entries[pos].id.clone();
-            match trash.restore(&id) {
-                Ok(path) => {
-                    entries.remove(pos);
-                    if !silent {
-                        eprintln!("restored {} from the trash", path.display());
-                    }
-                    // Apply the real inverse (`step {}`): the daemon restores
-                    // mfr_path and the version to match the file now in place.
-                    return Ok(false);
+    // Content already brought back by a directory blob restored earlier in this
+    // rollback: the file is on disk, so apply the real inverse — don't skip.
+    if restored.contains(entity) {
+        return Ok(false);
+    }
+
+    // A trash entry covers this entity when it *is* the entry's metarecord (at
+    // the version this step restores to — the precise per-file correlation), or
+    // the entity is a *descendant* recorded in the entry's subtree (a trashed
+    // directory). Restoring the directory blob brings back the whole subtree's
+    // content at once, whichever order the cascade's ops are navigated in.
+    let version = op["entity_version_before"].as_u64();
+    let pos = entries.iter().position(|e| {
+        let is_top = e.metarecord.as_deref() == Some(entity)
+            && version.is_some_and(|v| e.version == Some(v));
+        let is_descendant =
+            e.metarecord.as_deref() != Some(entity) && e.subtree.iter().any(|n| n.uuid == entity);
+        is_top || is_descendant
+    });
+    if let Some(pos) = pos {
+        let id = entries[pos].id.clone();
+        let covered: Vec<String> = entries[pos].subtree.iter().map(|n| n.uuid.clone()).collect();
+        match trash.restore(&id) {
+            Ok(path) => {
+                entries.remove(pos);
+                // Every metarecord the blob restored is now recoverable, so
+                // their file_deleted steps apply the real inverse too.
+                restored.extend(covered);
+                restored.insert(entity.to_string());
+                if !silent {
+                    eprintln!("restored {} from the trash", path.display());
                 }
-                // The file is not restorable (e.g. the path is occupied); fall
-                // back to skipping, so the metadata stays truthful.
-                Err(e) if !silent => {
-                    eprintln!("note: could not auto-restore from the trash ({e}); skipping");
-                }
-                Err(_) => {}
+                // Apply the real inverse (`step {}`): the daemon restores
+                // mfr_path and the version to match the file now in place.
+                return Ok(false);
             }
+            // The file is not restorable (e.g. the path is occupied); fall back
+            // to skipping, so the metadata stays truthful.
+            Err(e) if !silent => {
+                eprintln!("note: could not auto-restore from the trash ({e}); skipping");
+            }
+            Err(_) => {}
         }
     }
     if !silent {
@@ -1025,7 +1049,7 @@ mod tests {
 
         // Matching entity + version → restore, no skip, entry consumed.
         let op = deleted_op("rec-1", Some(4));
-        let skip = decide_deleted(&op, &trash, &mut entries, true).unwrap();
+        let skip = decide_deleted(&op, &trash, &mut entries, &mut HashSet::new(), true).unwrap();
         assert!(!skip, "a matching trash entry must be auto-restored (step {{}})");
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the consumed entry is removed");
@@ -1046,12 +1070,12 @@ mod tests {
         let mut entries = trash.entries().unwrap();
 
         // Wrong version → skip, entry untouched.
-        let skip = decide_deleted(&deleted_op("rec-1", Some(9)), &trash, &mut entries, true).unwrap();
+        let skip = decide_deleted(&deleted_op("rec-1", Some(9)), &trash, &mut entries, &mut HashSet::new(), true).unwrap();
         assert!(skip);
         assert!(!file.exists(), "the file stays in the trash");
         assert_eq!(entries.len(), 1);
         // No entity_version_before (forward step) → skip too.
-        let skip = decide_deleted(&deleted_op("rec-1", None), &trash, &mut entries, true).unwrap();
+        let skip = decide_deleted(&deleted_op("rec-1", None), &trash, &mut entries, &mut HashSet::new(), true).unwrap();
         assert!(skip);
         assert_eq!(entries.len(), 1);
         std::fs::remove_dir_all(&base).ok();

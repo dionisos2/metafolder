@@ -1834,6 +1834,42 @@ fn test_rollback_auto_restores_from_trash() {
     assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
 }
 
+// Rolling back a trashed *directory* must restore the whole subtree's
+// metarecords, not just the top one. The bytes come back via the trash, and the
+// metarecords are restored by the rollback itself (navigation — no new
+// revision); a descendant left orphaned would be re-tracked as a duplicate.
+#[test]
+fn test_rollback_restores_a_trashed_directory_subtree() {
+    let (repo, root) = init_repo("rbdir");
+    let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+
+    // A directory with a nested file; wait for both to be tracked.
+    let dir = root.join("A");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("B.txt"), b"bee").unwrap();
+    let b_uuid = poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], is_hex_uuid);
+    let a_uuid = poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"], is_hex_uuid);
+
+    // Trash the directory; wait for the watcher to cascade the deletion.
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
+    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], |s| s.is_empty());
+    assert!(!dir.exists(), "the directory is in the trash");
+
+    // Roll back the deletion.
+    assert_ok(&mf(&["-u", &repo, "log", "rollback"]));
+    assert_eq!(std::fs::read(dir.join("B.txt")).unwrap(), b"bee", "the nested file is back");
+
+    // The top directory *and* the nested file are restored to the SAME original
+    // metarecords — the descendant is not left orphaned/duplicated.
+    let a_back = mf(&["-u", &repo, "path", &a_uuid]);
+    assert_ok(&a_back);
+    assert!(a_back.stdout.trim().ends_with("/A"), "A restored: {}", a_back.stdout);
+    let b_back = mf(&["-u", &repo, "path", &b_uuid]);
+    assert_ok(&b_back);
+    assert!(b_back.stdout.contains("A/B.txt"), "the descendant metarecord is restored: {}", b_back.stdout);
+}
+
 // ── Cross-repo sync: utility subcommands (spec-sync "Utility subcommands") ─────
 
 #[test]
