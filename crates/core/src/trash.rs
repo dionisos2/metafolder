@@ -14,6 +14,7 @@
 //! core: locating, moving, listing, restoring and pruning the blobs.
 
 use crate::date;
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as Json};
 use std::io;
@@ -49,6 +50,15 @@ impl Reason {
             Reason::Rollback => "rollback",
             Reason::Sync => "sync",
             Reason::Manual => "manual",
+        }
+    }
+
+    /// Parses the `reason` TEXT column back (an unknown value reads as `Manual`).
+    fn from_db(s: &str) -> Self {
+        match s {
+            "rollback" => Reason::Rollback,
+            "sync" => Reason::Sync,
+            _ => Reason::Manual,
         }
     }
 }
@@ -159,7 +169,12 @@ pub enum PruneMode {
     MaxSize(u64),
 }
 
-/// Handle on a repository's `internal/trash/` directory.
+/// The trash index database file, alongside the blobs under the trash dir.
+const INDEX_DB: &str = "index.sqlite";
+
+/// Handle on a repository's `internal/trash/` directory: a small dedicated
+/// SQLite index (`index.sqlite`) recording the entries, with each trashed file's
+/// bytes kept beside it as an on-disk blob `<id>`.
 pub struct TrashDir {
     root: PathBuf,
 }
@@ -174,27 +189,65 @@ impl TrashDir {
         self.root.join(id)
     }
 
-    fn manifest_path(&self, id: &str) -> PathBuf {
-        self.root.join(format!("{id}.json"))
+    fn db_path(&self) -> PathBuf {
+        self.root.join(INDEX_DB)
     }
 
-    fn load_entry(&self, id: &str) -> Result<TrashEntry, TrashError> {
-        let path = self.manifest_path(id);
-        let bytes = std::fs::read(&path)
-            .map_err(|e| TrashError(format!("no trash entry '{id}': {e}")))?;
-        serde_json::from_slice(&bytes)
-            .map_err(|e| TrashError(format!("corrupt trash manifest '{id}': {e}")))
+    /// Opens the trash index, creating the directory, the database and its
+    /// schema on demand. Used by every write.
+    fn open(&self) -> Result<Connection, TrashError> {
+        std::fs::create_dir_all(&self.root)
+            .map_err(|e| TrashError(format!("cannot create the trash: {e}")))?;
+        let conn =
+            Connection::open(self.db_path()).map_err(|e| sqlite_err("open the trash index", e))?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             PRAGMA busy_timeout = 3000;
+             CREATE TABLE IF NOT EXISTS entry (
+                 id            TEXT PRIMARY KEY,
+                 original_path TEXT NOT NULL,
+                 original_name TEXT NOT NULL,
+                 trashed_at    INTEGER NOT NULL,
+                 size          INTEGER NOT NULL,
+                 is_dir        INTEGER NOT NULL,
+                 reason        TEXT NOT NULL,
+                 revision      INTEGER,
+                 metarecord    TEXT,
+                 version       INTEGER
+             );
+             CREATE TABLE IF NOT EXISTS node (
+                 entry_id TEXT NOT NULL REFERENCES entry(id) ON DELETE CASCADE,
+                 uuid     TEXT NOT NULL,
+                 parent   TEXT,
+                 name     TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_node_entry ON node(entry_id);",
+        )
+        .map_err(|e| sqlite_err("initialise the trash index", e))?;
+        Ok(conn)
     }
 
-    /// The manifest for `id` (used by callers that re-link the metarecord after
-    /// a restore).
+    /// Opens the index only if it already exists, so reads on a never-created
+    /// trash return empty/absent without materialising a stray database.
+    fn open_existing(&self) -> Result<Option<Connection>, TrashError> {
+        if !self.db_path().exists() {
+            return Ok(None);
+        }
+        self.open().map(Some)
+    }
+
+    /// The entry `id` (with its subtree); used by callers that re-link the
+    /// metarecords after a restore.
     pub fn entry(&self, id: &str) -> Result<TrashEntry, TrashError> {
-        self.load_entry(id)
+        let conn =
+            self.open_existing()?.ok_or_else(|| TrashError(format!("no trash entry '{id}'")))?;
+        load_entry(&conn, id)?.ok_or_else(|| TrashError(format!("no trash entry '{id}'")))
     }
 
-    /// Moves `path` (a file, symlink, or whole directory) into the trash,
-    /// writing its manifest. The blob is written before the manifest, so a
-    /// manifest on disk always implies its blob.
+    /// Moves `path` (a file, symlink, or whole directory) into the trash and
+    /// records it. The blob is moved before the row is written, so a row always
+    /// implies its blob; a later index failure only ever leaks an (unindexed)
+    /// blob, swept by `prune --all`.
     pub fn trash_path(
         &self,
         path: &Path,
@@ -205,9 +258,8 @@ impl TrashDir {
     ) -> Result<TrashEntry, TrashError> {
         // `symlink_metadata` does not follow symlinks — a symlink is trashed as
         // the link itself (rename moves the link, not its target), and its size
-        // reflects the link, matching what is actually moved. A directory is
-        // trashed whole (the blob becomes a directory), its size the recursive
-        // total.
+        // reflects the link. A directory is trashed whole (the blob is itself a
+        // directory), its size the recursive total.
         let meta = std::fs::symlink_metadata(path)
             .map_err(|e| TrashError(format!("cannot stat {}: {e}", path.display())))?;
         let is_dir = meta.file_type().is_dir();
@@ -216,13 +268,9 @@ impl TrashDir {
         } else {
             meta.len()
         };
-        std::fs::create_dir_all(&self.root)
-            .map_err(|e| TrashError(format!("cannot create the trash: {e}")))?;
+        let conn = self.open()?; // creates the trash dir + index
 
         let id = uuid::Uuid::new_v4().as_simple().to_string();
-        // Move the bytes first: once the blob exists the content is safe, so a
-        // later manifest-write failure only ever leaks an (indexless) blob —
-        // it never loses data.
         move_path(path, &self.blob_path(&id))
             .map_err(|e| TrashError(format!("cannot move {} into the trash: {e}", path.display())))?;
 
@@ -242,56 +290,97 @@ impl TrashDir {
             version,
             subtree: Vec::new(),
         };
-        let json = serde_json::to_vec_pretty(&entry)
-            .map_err(|e| TrashError(format!("cannot serialize the trash manifest: {e}")))?;
-        std::fs::write(self.manifest_path(&id), json)
-            .map_err(|e| TrashError(format!("cannot write the trash manifest: {e}")))?;
+        conn.execute(
+            "INSERT INTO entry
+             (id, original_path, original_name, trashed_at, size, is_dir, reason, revision, metarecord, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                entry.id,
+                entry.original_path,
+                entry.original_name,
+                entry.trashed_at,
+                entry.size as i64,
+                entry.is_dir as i64,
+                entry.reason.as_str(),
+                entry.revision,
+                entry.metarecord,
+                entry.version.map(|v| v as i64),
+            ],
+        )
+        .map_err(|e| sqlite_err("record the trash entry", e))?;
         Ok(entry)
     }
 
-    /// Records the trashed subtree on an existing entry (its metarecords and
-    /// their original `mfr_path` TreeRefs) by rewriting the manifest. Called by
-    /// the clients right after [`Self::trash_path`] for a tracked file or
-    /// directory, so a restore can re-link the whole tree. An empty subtree is a
-    /// no-op (the entry keeps its single `metarecord` fallback).
+    /// Records the trashed subtree (its metarecords and their original
+    /// `mfr_path` TreeRefs) on an existing entry, so a restore can re-link the
+    /// whole tree. Called by the clients right after [`Self::trash_path`]. An
+    /// empty subtree is a no-op (the entry keeps its single `metarecord`).
     pub fn attach_subtree(&self, id: &str, subtree: Vec<TrashedNode>) -> Result<(), TrashError> {
         if subtree.is_empty() {
             return Ok(());
         }
-        let mut entry = self.load_entry(id)?;
-        entry.subtree = subtree;
-        let json = serde_json::to_vec_pretty(&entry)
-            .map_err(|e| TrashError(format!("cannot serialize the trash manifest: {e}")))?;
-        std::fs::write(self.manifest_path(id), json)
-            .map_err(|e| TrashError(format!("cannot write the trash manifest: {e}")))?;
-        Ok(())
+        let mut conn = self.open()?;
+        let tx = conn.transaction().map_err(|e| sqlite_err("begin", e))?;
+        let exists = tx
+            .query_row("SELECT 1 FROM entry WHERE id = ?1", [id], |_| Ok(()))
+            .optional()
+            .map_err(|e| sqlite_err("read the trash entry", e))?
+            .is_some();
+        if !exists {
+            return Err(TrashError(format!("no trash entry '{id}'")));
+        }
+        tx.execute("DELETE FROM node WHERE entry_id = ?1", [id])
+            .map_err(|e| sqlite_err("clear the subtree", e))?;
+        {
+            let mut stmt = tx
+                .prepare("INSERT INTO node (entry_id, uuid, parent, name) VALUES (?1, ?2, ?3, ?4)")
+                .map_err(|e| sqlite_err("prepare", e))?;
+            for n in &subtree {
+                stmt.execute(params![id, n.uuid, n.parent, n.name])
+                    .map_err(|e| sqlite_err("record the subtree", e))?;
+            }
+        }
+        tx.commit().map_err(|e| sqlite_err("commit", e))
     }
 
     /// All entries, oldest first.
     pub fn entries(&self) -> Result<Vec<TrashEntry>, TrashError> {
-        let mut out = Vec::new();
-        let dir = match std::fs::read_dir(&self.root) {
-            Ok(d) => d,
-            // A trash that was never created is simply empty.
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(TrashError(format!("cannot read the trash: {e}"))),
+        let Some(conn) = self.open_existing()? else {
+            return Ok(Vec::new());
         };
-        for entry in dir {
-            let entry = entry.map_err(|e| TrashError(format!("cannot read the trash: {e}")))?;
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                // Skip a manifest we cannot parse rather than failing the whole
-                // listing (an orphan blob has no manifest and is ignored too).
-                if let Ok(e) = self.load_entry(stem) {
-                    out.push(e);
-                }
+        let mut stmt = conn
+            .prepare(&format!("SELECT {ENTRY_COLS} FROM entry ORDER BY trashed_at"))
+            .map_err(|e| sqlite_err("prepare", e))?;
+        let mut entries: Vec<TrashEntry> = stmt
+            .query_map([], row_to_entry)
+            .map_err(|e| sqlite_err("read the trash", e))?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|e| sqlite_err("read the trash", e))?;
+
+        // Group every node by entry in one pass, avoiding a query per entry.
+        let mut nodes_stmt = conn
+            .prepare("SELECT entry_id, uuid, parent, name FROM node")
+            .map_err(|e| sqlite_err("prepare", e))?;
+        let mut by_entry: std::collections::HashMap<String, Vec<TrashedNode>> =
+            std::collections::HashMap::new();
+        let rows = nodes_stmt
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    TrashedNode { uuid: r.get(1)?, parent: r.get(2)?, name: r.get(3)? },
+                ))
+            })
+            .map_err(|e| sqlite_err("read the trash", e))?;
+        for row in rows {
+            let (entry_id, node) = row.map_err(|e| sqlite_err("read the trash", e))?;
+            by_entry.entry(entry_id).or_default().push(node);
+        }
+        for e in &mut entries {
+            if let Some(nodes) = by_entry.remove(&e.id) {
+                e.subtree = nodes;
             }
         }
-        out.sort_by_key(|e| e.trashed_at);
-        Ok(out)
+        Ok(entries)
     }
 
     /// Moves the entry's blob back to its `original_path` and removes the entry.
@@ -302,7 +391,7 @@ impl TrashDir {
     /// existing leaf is ever overwritten (a collision refuses the whole restore
     /// before moving anything). Returns the restored path.
     pub fn restore(&self, id: &str) -> Result<PathBuf, TrashError> {
-        let entry = self.load_entry(id)?;
+        let entry = self.entry(id)?;
         let target = PathBuf::from(&entry.original_path);
         let blob = self.blob_path(id);
 
@@ -323,34 +412,36 @@ impl TrashDir {
                 let _ = std::fs::remove_dir(&blob); // emptied by the merge
             }
         }
-        // The blob is gone; drop the manifest to complete the removal.
-        std::fs::remove_file(self.manifest_path(id))
-            .map_err(|e| TrashError(format!("cannot remove the trash manifest: {e}")))?;
+        // The blob is gone; drop the entry row (cascading its nodes).
+        self.open()?
+            .execute("DELETE FROM entry WHERE id = ?1", [id])
+            .map_err(|e| sqlite_err("remove the trash entry", e))?;
         Ok(target)
     }
 
     /// Whether [`Self::restore`] can proceed to the entry's original path: `Ok`
     /// for a free target or a mergeable directory, `Err` for an occupied target
     /// that would be overwritten. Lets a client validate (and re-link the
-    /// metarecord) before calling `restore`, without moving bytes.
+    /// metarecords) before calling `restore`, without moving bytes.
     pub fn preflight_restore(&self, id: &str) -> Result<(), TrashError> {
-        let entry = self.load_entry(id)?;
+        let entry = self.entry(id)?;
         let target = PathBuf::from(&entry.original_path);
         plan_restore(&self.blob_path(id), &target).map(|_| ())
     }
 
-    /// Permanently deletes a single entry (its blob and manifest). A missing
-    /// blob is tolerated (already gone); a missing manifest is an error, so a
-    /// bad id is reported rather than silently ignored.
+    /// Permanently deletes a single entry (its blob and index row). A missing
+    /// blob is tolerated (already gone); a bad id is reported.
     pub fn remove(&self, id: &str) -> Result<(), TrashError> {
-        // Fail fast on a bad id before touching anything.
-        let manifest = self.manifest_path(id);
-        if std::fs::symlink_metadata(&manifest).is_err() {
+        let conn =
+            self.open_existing()?.ok_or_else(|| TrashError(format!("no trash entry '{id}'")))?;
+        let removed = conn
+            .execute("DELETE FROM entry WHERE id = ?1", [id])
+            .map_err(|e| sqlite_err("remove the trash entry", e))?;
+        if removed == 0 {
             return Err(TrashError(format!("no trash entry '{id}'")));
         }
         remove_path(&self.blob_path(id));
-        std::fs::remove_file(&manifest)
-            .map_err(|e| TrashError(format!("cannot remove trash entry '{id}': {e}")))
+        Ok(())
     }
 
     /// Deletes the entries selected by `mode` (oldest-first for `MaxSize`).
@@ -375,29 +466,79 @@ impl TrashDir {
                 removed
             }
         };
-        if !dry_run {
+        if !dry_run && !selected.is_empty() {
+            let conn = self.open()?;
             for e in &selected {
                 // Best-effort on the blob (a missing one is already "removed");
                 // it may be a file or a whole directory.
                 remove_path(&self.blob_path(&e.id));
-                std::fs::remove_file(self.manifest_path(&e.id)).map_err(|err| {
-                    TrashError(format!("cannot remove trash entry '{}': {err}", e.id))
-                })?;
+                conn.execute("DELETE FROM entry WHERE id = ?1", [&e.id])
+                    .map_err(|err| sqlite_err("remove the trash entry", err))?;
             }
-            // `--all` also sweeps orphan blobs — manifest-less files/dirs a
-            // failed manifest write (or a half-removed entry) would leave, which
-            // `entries` never lists. Without this, `list` reports "empty" while
-            // they still consume space.
-            if mode == PruneMode::All {
-                if let Ok(dir) = std::fs::read_dir(&self.root) {
-                    for entry in dir.flatten() {
-                        remove_path(&entry.path());
+        }
+        // `--all` also sweeps orphan blobs — indexless files/dirs a failed
+        // record (or a half-removed entry) would leave, which `entries` never
+        // lists. Everything under the trash dir except the index database is a
+        // blob, so with every row gone the rest is orphan.
+        if !dry_run && mode == PruneMode::All {
+            if let Ok(dir) = std::fs::read_dir(&self.root) {
+                for entry in dir.flatten() {
+                    if entry.file_name().to_string_lossy().starts_with(INDEX_DB) {
+                        continue; // the index database and its journal
                     }
+                    remove_path(&entry.path());
                 }
             }
         }
         Ok(selected)
     }
+}
+
+/// The `entry` columns in the order [`row_to_entry`] reads them.
+const ENTRY_COLS: &str =
+    "id, original_path, original_name, trashed_at, size, is_dir, reason, revision, metarecord, version";
+
+/// Reads one `entry` row (columns in [`ENTRY_COLS`] order) into a [`TrashEntry`]
+/// with an empty subtree (the caller fills it).
+fn row_to_entry(r: &rusqlite::Row) -> rusqlite::Result<TrashEntry> {
+    Ok(TrashEntry {
+        id: r.get(0)?,
+        original_path: r.get(1)?,
+        original_name: r.get(2)?,
+        trashed_at: r.get(3)?,
+        size: r.get::<_, i64>(4)? as u64,
+        is_dir: r.get::<_, i64>(5)? != 0,
+        reason: Reason::from_db(&r.get::<_, String>(6)?),
+        revision: r.get(7)?,
+        metarecord: r.get(8)?,
+        version: r.get::<_, Option<i64>>(9)?.map(|v| v as u64),
+        subtree: Vec::new(),
+    })
+}
+
+/// Loads the entry `id` (with its subtree), or `None` if it does not exist.
+fn load_entry(conn: &Connection, id: &str) -> Result<Option<TrashEntry>, TrashError> {
+    let mut entry = conn
+        .query_row(&format!("SELECT {ENTRY_COLS} FROM entry WHERE id = ?1"), [id], row_to_entry)
+        .optional()
+        .map_err(|e| sqlite_err("read the trash entry", e))?;
+    if let Some(e) = &mut entry {
+        let mut stmt = conn
+            .prepare("SELECT uuid, parent, name FROM node WHERE entry_id = ?1")
+            .map_err(|err| sqlite_err("prepare", err))?;
+        e.subtree = stmt
+            .query_map([id], |r| {
+                Ok(TrashedNode { uuid: r.get(0)?, parent: r.get(1)?, name: r.get(2)? })
+            })
+            .map_err(|err| sqlite_err("read the subtree", err))?
+            .collect::<rusqlite::Result<_>>()
+            .map_err(|err| sqlite_err("read the subtree", err))?;
+    }
+    Ok(entry)
+}
+
+fn sqlite_err(action: &str, e: rusqlite::Error) -> TrashError {
+    TrashError(format!("cannot {action}: {e}"))
 }
 
 /// How [`TrashDir::restore`] should place a blob at its target.
@@ -937,9 +1078,10 @@ mod tests {
 
     /// Rewrites an entry's `trashed_at` in place (test control over age).
     fn set_age(dir: &TrashDir, id: &str, at: i64) {
-        let mut e = dir.load_entry(id).unwrap();
-        e.trashed_at = at;
-        fs::write(dir.manifest_path(id), serde_json::to_vec(&e).unwrap()).unwrap();
+        dir.open()
+            .unwrap()
+            .execute("UPDATE entry SET trashed_at = ?1 WHERE id = ?2", params![at, id])
+            .unwrap();
     }
 
     #[test]
@@ -1177,8 +1319,8 @@ mod tests {
         assert_eq!(entry.size, 7);
         assert_eq!(entry.reason, Reason::Rollback);
         assert_eq!(entry.revision, Some(101));
-        // The manifest round-trips.
-        let loaded = trash.load_entry(&entry.id).unwrap();
+        // The entry round-trips through the index.
+        let loaded = trash.entry(&entry.id).unwrap();
         assert_eq!(loaded.id, entry.id);
         assert_eq!(loaded.metarecord.as_deref(), Some("abc"));
         fs::remove_dir_all(&base).ok();

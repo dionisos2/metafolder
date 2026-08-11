@@ -24,32 +24,46 @@ never coupled to it.
 
 * Layout
 
-: .metafolder/internal/trash/<id>        -- the trashed file's bytes (the blob)
-: .metafolder/internal/trash/<id>.json    -- the entry's manifest
+: .metafolder/internal/trash/<id>          -- the trashed file's bytes (the blob)
+: .metafolder/internal/trash/index.sqlite  -- the entry index (dedicated database)
 
 =<id>= is a fresh 32-char lowercase hex UUID (collision-free; the blob carries
-no extension — the original name is in the manifest). The blob is written
-*before* its manifest, so a manifest on disk always implies its blob is present;
-=list= enumerates =*.json=. One directory, flat, no per-reason subdirectories.
+no extension — the original name lives in the index). One directory, flat, no
+per-reason subdirectories. Everything under it except =index.sqlite= (and its
+journal) is a blob.
 
-The manifest (=<id>.json=) records everything =restore= and =prune= need:
+The index is a small **dedicated** SQLite database (not the daemon's
+exclusively-locked =db.sqlite=): the trash is pure client state (CLI and GUI),
+so this DB is opened directly by them, short-lived, one connection per
+operation. SQLite buys locking against concurrent =mf trash=, atomic writes,
+indexed lookup, corruption resistance, and queryable prune (by size/age without
+reading every entry) — cheap to adopt pre-distribution. Two tables:
 
-#+BEGIN_SRC json
-{
-  "id":            "<32-hex>",
-  "original_path": "/abs/path/the/file/was/at",
-  "original_name": "basename.ext",
-  "trashed_at":    1733500000000,          // unix-ms — prune -d, and list order
-  "size":          12345,                   // bytes — prune -s
-  "reason":        "rollback",              // rollback | sync | manual
-  "revision":      101,                     // op id that trashed it, or null
-  "metarecord":    "<32-hex-uuid>"          // the record it belonged to, or null
-}
+#+BEGIN_SRC sql
+CREATE TABLE entry (
+  id TEXT PRIMARY KEY,            -- <32-hex>; the blob file name
+  original_path TEXT,            -- absolute path the file was at (restore target)
+  original_name TEXT,            -- basename, for display
+  trashed_at INTEGER,            -- unix-ms — prune -d and list order
+  size INTEGER,                  -- bytes (recursive total for a directory) — prune -s
+  is_dir INTEGER,                -- the blob is a directory (a whole subtree)
+  reason TEXT,                   -- rollback | sync | manual
+  revision INTEGER,              -- op id that trashed it, or NULL
+  metarecord TEXT,               -- the record it belonged to, or NULL
+  version INTEGER                -- the record's version when trashed (rollback correlation)
+);
+CREATE TABLE node (              -- the trashed subtree: one row per metarecord
+  entry_id TEXT REFERENCES entry(id) ON DELETE CASCADE,
+  uuid TEXT, parent TEXT, name TEXT  -- its original mfr_path TreeRef
+);
 #+END_SRC
 
-=reason=/=revision=/=metarecord= are provenance: they let the user correlate a
-trashed version with the operation that displaced it (e.g. which rollback step),
-but restoration itself is driven purely by =original_path=.
+The blob is moved *before* the row is written, so a row always implies its blob;
+an index failure only ever leaks an unindexed blob, swept by =prune --all=.
+=reason=/=revision=/=metarecord=/=version= are provenance: they let the user (and
+rollback) correlate a trashed version with the operation that displaced it, but
+restoration itself is driven purely by =original_path=. The =node= rows let a
+restore re-link the *whole* trashed subtree (see "Restore").
 
 * Moving into and out of the trash
 
