@@ -79,6 +79,7 @@ impl Inner {
             messages: Vec::new(),
             last_panel: Default::default(),
             ready_panels: Default::default(),
+            split: false,
         });
         id
     }
@@ -129,19 +130,49 @@ impl Inner {
         Ok(())
     }
 
-    /// Assigns a workspace to both slots at once, preserving each slot's
-    /// visibility (a hidden slot stays hidden, just remembers the new
-    /// workspace). Keyboard navigation uses this so the two panels never end
-    /// up on different workspaces without an explicit action (a tab click or
-    /// a dedicated command). The focused slot is assigned first, so it keeps
-    /// its preferred panel type and the other slot pairs with it.
+    /// Assigns a workspace to both slots at once. The focused slot is assigned
+    /// first (so it keeps its preferred panel type and the other slot pairs
+    /// with it) and is always shown; the other slot follows the workspace's
+    /// remembered panel count (`split`) — a workspace left split reopens its
+    /// second panel, one left single keeps the other slot hidden (it still
+    /// remembers its workspace). Keyboard navigation uses this so the two
+    /// panels never end up on different workspaces without an explicit action
+    /// (a tab click or a dedicated command). See [`record_split`](Self::record_split).
     fn assign_both(&mut self, ws_id: &str) -> Result<(), String> {
-        for slot_id in [self.focused, self.focused.other()] {
-            let was_visible = self.slot(slot_id).visible;
-            self.assign(ws_id, slot_id)?;
-            self.slot_mut(slot_id).visible = was_visible;
-        }
+        let split = self.workspace(ws_id)?.split;
+        let focused = self.focused;
+        self.assign(ws_id, focused)?; // `assign` shows the focused slot
+        let other = focused.other();
+        self.assign(ws_id, other)?;
+        self.slot_mut(other).visible = split;
         Ok(())
+    }
+
+    /// Records the focused workspace's panel count (`split`) when that
+    /// workspace *owns the window*: it fills the focused slot and the other
+    /// slot is either hidden or shows the same workspace. A mixed layout (the
+    /// two slots on different workspaces) owns nothing and records nothing, so
+    /// each workspace keeps the count it last had on its own. Consumed by
+    /// [`assign_both`](Self::assign_both) when navigation brings a workspace
+    /// back (spec-gui "Per-workspace panel count").
+    fn record_split(&mut self) {
+        let focused = self.focused;
+        let Some(ws_id) = self.slot(focused).workspace.clone() else {
+            return;
+        };
+        if !self.slot(focused).visible {
+            return;
+        }
+        let other = self.slot(focused.other());
+        let other_same =
+            other.visible && other.workspace.as_deref() == Some(ws_id.as_str());
+        // The workspace owns the window when it is alone (other hidden) or
+        // paired with itself; a different workspace next to it records nothing.
+        if other_same || !other.visible {
+            if let Ok(ws) = self.workspace_mut(&ws_id) {
+                ws.split = other_same;
+            }
+        }
     }
 
     fn layout_view(&self) -> LayoutView {
@@ -436,6 +467,7 @@ impl GuiState {
     pub fn tab_assign(&self, ws_id: &str, slot: SlotId) -> Result<(), String> {
         self.mutate(|inner| {
             inner.assign(ws_id, slot)?;
+            inner.record_split();
             Ok(((), Emit::LAYOUT))
         })
     }
@@ -538,6 +570,7 @@ impl GuiState {
                     }
                 },
             }
+            inner.record_split();
             Ok(((), Emit { workspaces: created, layout: true }))
         })
     }
@@ -547,6 +580,7 @@ impl GuiState {
         self.mutate(|inner| {
             let other = inner.focused.other();
             inner.slot_mut(other).visible = false;
+            inner.record_split();
             Ok(((), Emit::LAYOUT))
         })
     }
@@ -573,6 +607,7 @@ impl GuiState {
             if inner.focused == slot_id && inner.slot(slot_id.other()).visible {
                 inner.focused = slot_id.other();
             }
+            inner.record_split();
             ((), Emit::LAYOUT)
         })
     }
@@ -1147,10 +1182,14 @@ mod tests {
         state.panel_split().unwrap(); // both slots on ws-1
         let id = state.tab_new(Some("repo-1".into()));
         let layout = state.layout();
+        // Both slots follow the new workspace (so a later split shows it, not a
+        // stale one)...
         assert_eq!(layout.left.workspace_id.as_deref(), Some(id.as_str()));
         assert_eq!(layout.right.workspace_id.as_deref(), Some(id.as_str()));
+        // ...but a new workspace defaults to a single panel, even when the
+        // window was split.
         assert!(layout.left.visible);
-        assert!(layout.right.visible);
+        assert!(!layout.right.visible);
     }
 
     #[test]
@@ -1386,6 +1425,74 @@ mod tests {
         assert!(state.panel_ready("ws-1", "repos"));
         assert!(!state.panel_ready("ws-1", "metarecord-list"));
         assert!(state.set_panel_ready("ws-99", "repos").is_err());
+    }
+
+    // ── Per-workspace panel count ────────────────────────────────────────
+
+    #[test]
+    fn test_workspace_restores_its_panel_count_on_navigation() {
+        let (_, state) = state();
+        let ws2 = state.tab_new(Some("repo-1".into())); // ws-2, single
+        let ws3 = state.tab_new(Some("repo-1".into())); // ws-3, single, focused
+        // Split ws-3 into two panels.
+        state.panel_split().unwrap();
+        assert!(state.layout().right.visible);
+
+        // Navigate to ws-2 (left single): the second panel closes.
+        state.tab_goto(2).unwrap();
+        assert!(!state.layout().right.visible);
+        assert_eq!(state.layout().left.workspace_id.as_deref(), Some(ws2.as_str()));
+
+        // Back to ws-3: its second panel is restored.
+        state.tab_goto(3).unwrap();
+        let layout = state.layout();
+        assert!(layout.right.visible);
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(ws3.as_str()));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some(ws3.as_str()));
+    }
+
+    #[test]
+    fn test_unsplit_makes_the_workspace_reopen_single() {
+        let (_, state) = state();
+        state.tab_new(Some("repo-1".into())); // ws-2, focused
+        state.panel_split().unwrap(); // two panels
+        state.panel_unsplit().unwrap(); // back to a single panel
+        // Move away and back: the workspace stays single.
+        state.tab_goto(1).unwrap();
+        state.tab_goto(2).unwrap();
+        assert!(!state.layout().right.visible);
+    }
+
+    #[test]
+    fn test_closing_a_panel_makes_the_workspace_reopen_single() {
+        let (_, state) = state();
+        state.tab_new(Some("repo-1".into())); // ws-2, focused
+        state.panel_split().unwrap(); // two panels
+        // Close the right panel via its × button (hide_slot).
+        state.hide_slot(SlotId::Right);
+        assert!(!state.layout().right.visible);
+        // The workspace now reopens single.
+        state.tab_goto(1).unwrap();
+        state.tab_goto(2).unwrap();
+        assert!(!state.layout().right.visible);
+    }
+
+    #[test]
+    fn test_mixed_layout_does_not_record_a_split() {
+        let (_, state) = state();
+        let ws2 = state.tab_new(Some("repo-1".into())); // ws-2, focused left, single
+        // Right-click a tab: assign ws-1 to the non-focused right slot → the
+        // two slots show different workspaces (a mixed, two-panel layout).
+        state.tab_assign("ws-1", SlotId::Right).unwrap();
+        let layout = state.layout();
+        assert!(layout.left.visible && layout.right.visible);
+        assert_eq!(layout.left.workspace_id.as_deref(), Some(ws2.as_str()));
+        assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
+
+        // A mixed layout owns nothing, so ws-2 kept its single-panel memory.
+        state.tab_goto(1).unwrap(); // both slots to ws-1
+        state.tab_goto(2).unwrap(); // both slots to ws-2
+        assert!(!state.layout().right.visible);
     }
 
     // ── Workspace variables ──────────────────────────────────────────────

@@ -16,6 +16,11 @@ pub struct Workspace {
     pub messages: Vec<MessageEntry>,
     /// Last panel type displayed per slot, restored on re-assignment.
     pub last_panel: HashMap<SlotId, String>,
+    /// Panel count remembered while this workspace owned the window: `true`
+    /// = two panels, `false` = one. Restored by keyboard navigation
+    /// (`assign_both`); recorded by split/unsplit/close while the workspace
+    /// owns the window (spec-gui "Per-workspace panel count").
+    pub split: bool,
     /// Panel types whose iframe finished initializing in this workspace
     /// (GET /gui/panels/:slot/view "loading"/"ready").
     pub ready_panels: HashSet<String>,

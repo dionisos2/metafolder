@@ -31,11 +31,12 @@ the scripting HTTP API and the window always agree.
 
 A self-contained state container. Each workspace holds: the state of every
 panel type that has been loaded in it during the session (scroll position,
-query draft, display mode, etc.), the workspace variables, and the status bar
-history. Panel types retain their state for the lifetime of the session —
-switching to a different panel type and back restores the previous state.
-Workspace state is not persisted across sessions; the GUI starts fresh each
-time.
+query draft, display mode, etc.), the workspace variables, the status bar
+history, and its *panel count* — whether it was last shown with one or two
+panels while it owned the window (see [[*Layout and panels]]). Panel types
+retain their state for the lifetime of the session — switching to a different
+panel type and back restores the previous state. Workspace state is not
+persisted across sessions; the GUI starts fresh each time.
 
 The =active_repo= of a workspace is set when the workspace is created and
 cannot be changed. To work with a different repository, a new workspace is
@@ -590,6 +591,21 @@ slot is visible and unsplits when both are — the everyday command; default
 suggestions: =v= for =panel:split-toggle=, =c= for =panel:unsplit=, =o= for
 =panel:focus-next=, =x= for =panel:swap=. The focused slot has a visible indicator (border
 highlight — theme-controlled); focus switches via =panel:focus-next=.
+
+*Per-workspace panel count.* Each workspace remembers whether it was last
+shown with one or two panels, and the navigation commands that move both
+panels together (=tab:goto=, =workspace:next= / =workspace:prev=, and =tab:new=)
+restore that count: returning to a workspace left split reopens its second
+panel, returning to one left single keeps a single panel — the second slot
+still remembers its workspace but stays hidden. A new workspace defaults to a
+single panel. The count is recorded only while the workspace *owns the window*
+— it occupies the focused slot with the other slot hidden or showing the same
+workspace — so =panel:split= / =panel:unsplit= and closing a slot update it,
+while a mixed layout (the two slots on different workspaces, reachable through
+a tab click or the focused-slot =tab:next= / =tab:prev=) records nothing and
+leaves each workspace's remembered count untouched. Only the count is
+per-workspace; the divider width ratio remains window state (see
+[[*Panel slot]]).
 
 Each slot has a thin header bar showing the current panel type name and the
 repo indicator. The header contains a dropdown that lists all available panel
