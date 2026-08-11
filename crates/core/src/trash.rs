@@ -221,7 +221,10 @@ impl TrashDir {
                  parent   TEXT,
                  name     TEXT NOT NULL
              );
-             CREATE INDEX IF NOT EXISTS idx_node_entry ON node(entry_id);",
+             CREATE INDEX IF NOT EXISTS idx_node_entry ON node(entry_id);
+             -- `list` order and `prune -d/-s` both drive off trashed_at, so an
+             -- index lets prune read only its victims, not the whole table.
+             CREATE INDEX IF NOT EXISTS idx_entry_trashed_at ON entry(trashed_at);",
         )
         .map_err(|e| sqlite_err("initialise the trash index", e))?;
         Ok(conn)
@@ -445,29 +448,26 @@ impl TrashDir {
     }
 
     /// Deletes the entries selected by `mode` (oldest-first for `MaxSize`).
-    /// With `dry_run`, nothing is deleted; the selection is still returned.
+    /// With `dry_run`, nothing is deleted; the selection is still returned (with
+    /// empty subtrees — prune neither needs nor loads them). The selection is
+    /// done in SQL, so `prune -d/-s` read only their victims via the
+    /// `trashed_at` index, not the whole trash.
     pub fn prune(&self, mode: PruneMode, dry_run: bool) -> Result<Vec<TrashEntry>, TrashError> {
-        let entries = self.entries()?; // oldest first
-        let selected: Vec<TrashEntry> = match mode {
-            PruneMode::All => entries,
-            PruneMode::OlderThan(cutoff) => {
-                entries.into_iter().filter(|e| e.trashed_at < cutoff).collect()
+        let Some(conn) = self.open_existing()? else {
+            // No index yet: nothing to prune, but `--all` still sweeps blobs.
+            if !dry_run && mode == PruneMode::All {
+                self.sweep_orphan_blobs();
             }
-            PruneMode::MaxSize(budget) => {
-                let mut total: u64 = entries.iter().map(|e| e.size).sum();
-                let mut removed = Vec::new();
-                for e in entries {
-                    if total <= budget {
-                        break;
-                    }
-                    total = total.saturating_sub(e.size);
-                    removed.push(e);
-                }
-                removed
-            }
+            return Ok(Vec::new());
         };
-        if !dry_run && !selected.is_empty() {
-            let conn = self.open()?;
+        let selected: Vec<TrashEntry> = match mode {
+            PruneMode::All => select_entries(&conn, "ORDER BY trashed_at", [])?,
+            PruneMode::OlderThan(cutoff) => {
+                select_entries(&conn, "WHERE trashed_at < ?1 ORDER BY trashed_at", [cutoff])?
+            }
+            PruneMode::MaxSize(budget) => select_over_budget(&conn, budget)?,
+        };
+        if !dry_run {
             for e in &selected {
                 // Best-effort on the blob (a missing one is already "removed");
                 // it may be a file or a whole directory.
@@ -475,23 +475,72 @@ impl TrashDir {
                 conn.execute("DELETE FROM entry WHERE id = ?1", [&e.id])
                     .map_err(|err| sqlite_err("remove the trash entry", err))?;
             }
-        }
-        // `--all` also sweeps orphan blobs — indexless files/dirs a failed
-        // record (or a half-removed entry) would leave, which `entries` never
-        // lists. Everything under the trash dir except the index database is a
-        // blob, so with every row gone the rest is orphan.
-        if !dry_run && mode == PruneMode::All {
-            if let Ok(dir) = std::fs::read_dir(&self.root) {
-                for entry in dir.flatten() {
-                    if entry.file_name().to_string_lossy().starts_with(INDEX_DB) {
-                        continue; // the index database and its journal
-                    }
-                    remove_path(&entry.path());
-                }
+            // `--all` also sweeps orphan blobs — indexless files/dirs a failed
+            // record (or a half-removed entry) would leave, which `entries`
+            // never lists.
+            if mode == PruneMode::All {
+                self.sweep_orphan_blobs();
             }
         }
         Ok(selected)
     }
+
+    /// Removes everything under the trash dir except the index database (and its
+    /// journal): with every entry row gone, the rest are orphan blobs.
+    fn sweep_orphan_blobs(&self) {
+        if let Ok(dir) = std::fs::read_dir(&self.root) {
+            for entry in dir.flatten() {
+                if entry.file_name().to_string_lossy().starts_with(INDEX_DB) {
+                    continue;
+                }
+                remove_path(&entry.path());
+            }
+        }
+    }
+}
+
+/// Loads the `entry` rows matching `tail` (a `WHERE …/ORDER BY …` clause) — with
+/// empty subtrees, which prune does not use.
+fn select_entries(
+    conn: &Connection,
+    tail: &str,
+    params: impl rusqlite::Params,
+) -> Result<Vec<TrashEntry>, TrashError> {
+    let mut stmt = conn
+        .prepare(&format!("SELECT {ENTRY_COLS} FROM entry {tail}"))
+        .map_err(|e| sqlite_err("prepare", e))?;
+    let rows = stmt.query_map(params, row_to_entry).map_err(|e| sqlite_err("read the trash", e))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row.map_err(|e| sqlite_err("read the trash", e))?);
+    }
+    Ok(out)
+}
+
+/// The oldest entries to drop so the trash total falls to `budget`. Reads the
+/// total via an aggregate, then only the oldest victims (stopping once within
+/// budget) rather than the whole table.
+fn select_over_budget(conn: &Connection, budget: u64) -> Result<Vec<TrashEntry>, TrashError> {
+    let mut total = conn
+        .query_row("SELECT COALESCE(SUM(size), 0) FROM entry", [], |r| r.get::<_, i64>(0))
+        .map_err(|e| sqlite_err("size the trash", e))? as u64;
+    if total <= budget {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare(&format!("SELECT {ENTRY_COLS} FROM entry ORDER BY trashed_at"))
+        .map_err(|e| sqlite_err("prepare", e))?;
+    let mut rows = stmt.query([]).map_err(|e| sqlite_err("read the trash", e))?;
+    let mut removed = Vec::new();
+    while total > budget {
+        let Some(row) = rows.next().map_err(|e| sqlite_err("read the trash", e))? else {
+            break;
+        };
+        let e = row_to_entry(row).map_err(|e| sqlite_err("read the trash", e))?;
+        total = total.saturating_sub(e.size);
+        removed.push(e);
+    }
+    Ok(removed)
 }
 
 /// The `entry` columns in the order [`row_to_entry`] reads them.
