@@ -295,10 +295,15 @@ export async function mount(root, metafolder) {
         nextCursor = null;
         orphanCache = new Map();
       }
+      // The query actually run (base + finder clause). Published on every reset
+      // so other panels (e.g. metarecord-detail's bulk field edits) can target
+      // exactly what the list shows — the live finder narrowing included.
+      const effQuery = effectiveQuery() ?? MATCH_ALL;
+      if (reset) await workspace.set('metarecord-list:effective-query', effQuery);
       let result;
       try {
         result = await cache.query(r, {
-          query: effectiveQuery() ?? MATCH_ALL,
+          query: effQuery,
           select: '*',
           limit: pageSize,
           ...(reset && { count: true }), // daemon-side COUNT, no extra pages

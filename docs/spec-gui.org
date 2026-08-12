@@ -1374,7 +1374,10 @@ config (=field:path= / =field:direct=), so it never depends on the async field
 catalog; a bare =field= (no mode) auto-detects from the catalog (=tree_ref= →
 path, else direct). An unknown field just contributes nothing, so a target list
 is always safe. The bulk-edit and the result count operate on this *effective*
-(finder-filtered) query.
+(finder-filtered) query. The panel publishes it (as the query IR actually run)
+in the =metarecord-list:effective-query= workspace variable on every fetch, so
+another panel — the =metarecord-detail= bulk field-edit commands — can target
+exactly what the list shows, the live finder narrowing included.
 
 The searched fields default to =mfr_path:path label:direct name:direct= and are
 overridable per workspace via the =metarecord-list:finder-fields= variable (a

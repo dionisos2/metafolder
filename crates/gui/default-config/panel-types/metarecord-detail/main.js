@@ -1014,9 +1014,10 @@ export async function mount(root, metafolder) {
 
   // ── Bulk field-editing commands (selection / current query) ─────────────
   // These act on the checkbox selection (`selected_metarecords`) when it is
-  // non-empty, else on the current query text (`metarecord-list:query`; empty =
-  // match-all). The live finder narrowing is not part of the published query,
-  // so the query fallback targets the base query only.
+  // non-empty, else on the query the list actually shows — metarecord-list
+  // publishes its *effective* query IR (base query AND the live finder clause)
+  // as `metarecord-list:effective-query`. If that var is absent (the list has
+  // not run), fall back to parsing the base query text.
 
   /** @typedef {{repo: string, query: unknown, count: number|null, desc: string}} BulkTarget */
 
@@ -1058,6 +1059,14 @@ export async function mount(root, metafolder) {
         desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
       };
     }
+    // The query the list actually shows (finder narrowing included).
+    const effective = await workspace.get('metarecord-list:effective-query');
+    if (effective && typeof effective === 'object') {
+      // MATCH_ALL is the "empty query matches all" tautology (deep-equal check).
+      const all = JSON.stringify(effective) === JSON.stringify(MATCH_ALL);
+      return { repo, query: effective, count: null, desc: all ? 'ALL metarecords' : 'the current query' };
+    }
+    // Fallback: the list has not published a query yet — parse its base text.
     const raw = await workspace.get('metarecord-list:query');
     const dsl = typeof raw === 'string' ? raw.trim() : '';
     const query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
