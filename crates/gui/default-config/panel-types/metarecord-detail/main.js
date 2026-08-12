@@ -4,7 +4,14 @@
 import { byId, el, formatValue, valueEl } from '/__ui.js';
 import { copyText, showMenu } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { createTypePicker, parseRawValue, widgetFor, createPickRunner, TYPES } from '/__value-widget.js';
+import {
+  createTypePicker,
+  parseRawValue,
+  widgetFor,
+  createPickRunner,
+  TYPES,
+  MATCH_ALL,
+} from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
 import { createAnnotator } from './annotations.js';
 
@@ -1001,6 +1008,127 @@ export async function mount(root, metafolder) {
         await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
       }
       await load();
+      await dirty();
+    },
+  });
+
+  // ── Bulk field-editing commands (selection / current query) ─────────────
+  // These act on the checkbox selection (`selected_metarecords`) when it is
+  // non-empty, else on the current query text (`metarecord-list:query`; empty =
+  // match-all). The live finder narrowing is not part of the published query,
+  // so the query fallback targets the base query only.
+
+  /** @typedef {{repo: string, query: unknown, count: number|null, desc: string}} BulkTarget */
+
+  /** @param {string|null} repo @returns {Promise<string[]>} */
+  async function catalogFieldNames(repo) {
+    if (!repo) return [];
+    await cache.fetchFields(repo);
+    const cat = cache.readFields(repo);
+    return cat === cache.REFRESH ? [] : cat.map((e) => e.name).sort();
+  }
+
+  /** The value type recorded for `field` in the repo catalog, else `string`.
+   *  @param {string} repo @param {string} field */
+  async function catalogType(repo, field) {
+    await cache.fetchFields(repo);
+    const t = cache.fieldType(repo, field);
+    return t && t !== cache.REFRESH ? t : 'string';
+  }
+
+  /** Value completion for a bulk value arg (repo-wide type lookup).
+   *  @param {string} field */
+  async function bulkValueCompletion(field) {
+    const repo = await repoForAdd();
+    if (!repo) return [];
+    return (await catalogType(repo, field)) === 'tree_ref' ? treePathsForField(repo, field) : [];
+  }
+
+  /** Resolves what a bulk command targets: the explicit checkbox selection, or
+   *  the current query as a fallback. @returns {Promise<BulkTarget>} */
+  async function bulkTarget() {
+    const repo = await repoForAdd();
+    if (!repo) throw new Error('no active repository');
+    const selected = /** @type {string[]} */ ((await workspace.get('selected_metarecords')) ?? []);
+    if (selected.length > 0) {
+      return {
+        repo,
+        query: { type: 'uuid_in', uuids: selected },
+        count: selected.length,
+        desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
+      };
+    }
+    const raw = await workspace.get('metarecord-list:query');
+    const dsl = typeof raw === 'string' ? raw.trim() : '';
+    const query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
+    return { repo, query, count: null, desc: dsl === '' ? 'ALL metarecords' : 'the current query' };
+  }
+
+  /** A broad query-scope bulk write (no explicit selection) is confirmed first.
+   *  @param {BulkTarget} t @param {string} action */
+  function confirmBulk(t, action) {
+    return t.count !== null || confirm(`${action} on ${t.desc}?`);
+  }
+
+  void commands.register('metarecord:bulk-set-field', {
+    label: 'Set a field on the selected metarecords (or current query)',
+    args: [
+      { name: 'field', prompt: () => 'Field to set?', complete: async () => catalogFieldNames(await repoForAdd()) },
+      { name: 'value', prompt: (p) => `Value for "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
+    ],
+    handler: async (field, raw) => {
+      const t = await bulkTarget();
+      if (!confirmBulk(t, `Set "${field}"`)) return;
+      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('POST', `/repos/${t.repo}/query/fields/set`, {
+        query: t.query,
+        name: field,
+        value,
+        ...force,
+      });
+      void statusBar.message(`"${field}" set on ${t.desc}.`, statusMessageMs);
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:bulk-add-field-value', {
+    label: 'Add a field value on the selected metarecords (or current query)',
+    args: [
+      { name: 'field', prompt: () => 'Field to add a value to?', complete: async () => catalogFieldNames(await repoForAdd()) },
+      { name: 'value', prompt: (p) => `Value to add to "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
+    ],
+    handler: async (field, raw) => {
+      const t = await bulkTarget();
+      if (!confirmBulk(t, `Add a value to "${field}"`)) return;
+      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('POST', `/repos/${t.repo}/query/fields/append`, {
+        query: t.query,
+        name: field,
+        value,
+        ...force,
+      });
+      void statusBar.message(`Value added to "${field}" on ${t.desc}.`, statusMessageMs);
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:bulk-remove-field', {
+    label: 'Remove a field from the selected metarecords (or current query)',
+    args: [
+      { name: 'field', prompt: () => 'Field to remove?', complete: async () => catalogFieldNames(await repoForAdd()) },
+    ],
+    handler: async (field) => {
+      const t = await bulkTarget();
+      if (!confirmBulk(t, `Remove "${field}"`)) return;
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('POST', `/repos/${t.repo}/query/fields/unset`, {
+        query: t.query,
+        name: field,
+        ...force,
+      });
+      void statusBar.message(`"${field}" removed from ${t.desc}.`, statusMessageMs);
       await dirty();
     },
   });

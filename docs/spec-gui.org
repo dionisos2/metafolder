@@ -743,6 +743,15 @@ Behaviours:
 | =metarecord:field-edit=   | Edit the field row under the cursor                 |
 | =metarecord:field-delete= | Delete the field row under the cursor               |
 | =metarecord:edit-cancel=  | Cancel the current field edit or add form           |
+| =metarecord:set-field [field] [value]= | Overwrite a field on the current metarecord (all its values) |
+| =metarecord:add-field-value [field] [value]= | Add one value to a field (multi-map) on the current metarecord |
+| =metarecord:edit-field-value [value] [new]= | Edit one value on the current metarecord (select by value) |
+| =metarecord:delete-field-value [value]= | Delete one value on the current metarecord (select by value) |
+| =metarecord:edit-field-name [field] [new-name]= | Rename a field (all its values) on the current metarecord |
+| =metarecord:edit-field-type [field] [type]= | Change a field's type on the current metarecord |
+| =metarecord:bulk-set-field [field] [value]= | Overwrite a field on the selection (or current query) |
+| =metarecord:bulk-add-field-value [field] [value]= | Add a value to a field on the selection (or current query) |
+| =metarecord:bulk-remove-field [field]= | Remove a field from the selection (or current query) |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
 | =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
@@ -868,6 +877,19 @@ fully keyboard-drivable):
   (=metarecord:save=).
 All defaults are =when = metarecord-detail= suggestions (the weakest layer), so
 a user binding overrides them.
+
+Beyond the cursor-driven inline editor, the panel also registers a family of
+*command-input-driven* field operations that need no cursor navigation: they
+declare their arguments (see [[*Command]]), so invoking one from the command
+input collects the field name (or a value to edit, selected among the record's
+current values), the new value and the type through the minibuffer, with
+completion and the current value pre-filled. =TreeRef= values are edited as
+paths (completed against the field's forest, resolved through
+=POST …/tree/resolve-path= on commit). The set is =set-field=,
+=add-field-value=, =edit-field-value=, =delete-field-value=, =edit-field-name=,
+=edit-field-type= on the current metarecord, and =bulk-set-field=,
+=bulk-add-field-value=, =bulk-remove-field= over the checkbox selection
+(=selected_metarecords=) or, when it is empty, the current query.
 
 Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
