@@ -150,6 +150,23 @@ declare namespace Metafolder {
     onChange(key: string, listener: (value: unknown, key?: string) => void): void;
   }
 
+  /** One declared command argument (spec-gui "Command"). Its `prompt`,
+   *  `initial` and `complete` are functions evaluated *lazily* when the
+   *  argument is asked for (never at registration), each receiving the
+   *  arguments already collected — so `initial` can read live state (e.g. the
+   *  current value of a field). When a command is invoked with fewer
+   *  parameters than declared, the command input collects the missing tail. */
+  interface CommandArg {
+    name: string;
+    /** The prompt text shown in the command input. */
+    prompt(prior: string[]): string | Promise<string>;
+    /** A pre-filled, editable value (empty if omitted). */
+    initial?(prior: string[]): string | Promise<string>;
+    /** Autocomplete candidates (filtered client-side like command names).
+     *  `partial` is the current draft; v1 completions ignore it. */
+    complete?(partial: string, prior: string[]): string[] | Promise<string[]>;
+  }
+
   interface CommandOptions {
     label?: string;
     textInput?: boolean;
@@ -158,6 +175,8 @@ declare namespace Metafolder {
     /** Append the invocation to the workspace message log (default true). */
     log?: boolean;
     handler?: (...args: string[]) => unknown;
+    /** Declared arguments, collected interactively when missing. */
+    args?: CommandArg[];
   }
 
   interface Commands {

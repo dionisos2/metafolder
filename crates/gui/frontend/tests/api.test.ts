@@ -3,6 +3,7 @@
 // that the shell-pushed changes reach the panel's registered listeners.
 
 import { describe, expect, test, vi } from 'vitest';
+import { argSpecFor, clearArgSpecs } from '../src/lib/commands';
 import { createPanelApi } from '../src/lib/panels/api';
 
 function setup() {
@@ -192,6 +193,14 @@ describe('panel api — commands & keybindings', () => {
       log: true,
     });
     expect(onCommandsChanged).toHaveBeenCalled();
+  });
+
+  test('register forwards declared args to the interactive-arg registry', () => {
+    const { api } = setup();
+    const args = [{ name: 'field', prompt: () => 'Field?' }];
+    api.commands.register('metarecord:set-field', { label: 'Set', args });
+    expect(argSpecFor('metarecord:set-field')).toBe(args);
+    clearArgSpecs();
   });
 
   test('invoke routes to dispatch', async () => {

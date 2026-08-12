@@ -4,7 +4,7 @@
 import { byId, el, formatValue, valueEl } from '/__ui.js';
 import { copyText, showMenu } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
-import { createTypePicker, parseRawValue, widgetFor, createPickRunner } from '/__value-widget.js';
+import { createTypePicker, parseRawValue, widgetFor, createPickRunner, TYPES } from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
 import { createAnnotator } from './annotations.js';
 
@@ -707,6 +707,303 @@ export async function mount(root, metafolder) {
     if (!isEditing()) return true;
     return confirm('Unsaved changes — discard and switch metarecord?');
   }
+
+  // ── Interactive field-editing commands (spec-gui "Command") ─────────────
+  // Each command drives the whole edit from the command input: its arg specs
+  // supply the completion and the pre-filled value, so no in-panel cursor
+  // navigation is needed. All act on the displayed metarecord (`current`).
+
+  /** @returns {Selection} */
+  function requireCurrent() {
+    if (!current || !metarecord) throw new Error('no metarecord selected');
+    return current;
+  }
+
+  /** Distinct non-Nothing field names on the displayed metarecord. */
+  function recordFieldNames() {
+    /** @type {string[]} */
+    const names = [];
+    for (const f of metarecord?.fields ?? []) {
+      if (f.value.type !== 'nothing' && !names.includes(f.name)) names.push(f.name);
+    }
+    return names;
+  }
+
+  /** Field names offered by set/add: the record's own plus the repo catalog,
+   *  so a not-yet-present field can still be completed (free text allowed). */
+  async function completableFieldNames() {
+    const names = new Set(recordFieldNames());
+    const cur = current;
+    if (cur) {
+      try {
+        await cache.fetchFields(cur.repo);
+        const catalog = cache.readFields(cur.repo);
+        if (catalog !== cache.REFRESH) for (const entry of catalog) names.add(entry.name);
+      } catch {
+        /* offline: the record's own names are enough */
+      }
+    }
+    return [...names].sort();
+  }
+
+  /** Stable "name = value" labels for each non-Nothing row (value selection for
+   *  edit/delete); `rowForLabel` maps one back to its row. */
+  function valueChoices() {
+    return (metarecord?.fields ?? [])
+      .filter((f) => f.value.type !== 'nothing')
+      .map((f) => `${f.name} = ${formatValue(f.value)}`);
+  }
+  /** @param {string} label @returns {Field|null} */
+  function rowForLabel(label) {
+    return (
+      (metarecord?.fields ?? []).find(
+        (f) => f.value.type !== 'nothing' && `${f.name} = ${formatValue(f.value)}` === label,
+      ) ?? null
+    );
+  }
+
+  /** A one-line editable form of a value — the inverse of `parseValueForField`.
+   *  Async: a tree_ref renders as its resolved path.
+   *  @param {string} repo @param {string} uuid @param {string} field
+   *  @param {Metafolder.Value} value */
+  async function rawOfValue(repo, uuid, field, value) {
+    switch (value.type) {
+      case 'nothing':
+        return '';
+      case 'bool':
+        return value.value ? 'true' : 'false';
+      case 'ref':
+      case 'refbase':
+        return String(value.value);
+      case 'tree_ref': {
+        const body = /** @type {{paths?: string[]}} */ (
+          await daemon.call(
+            'GET',
+            `/repos/${repo}/metarecords/${uuid}/fields/${encodeURIComponent(field)}/resolve-tree`,
+          )
+        );
+        return body.paths?.[0] ?? value.value.name;
+      }
+      default:
+        return String(value.value);
+    }
+  }
+
+  /** The value type to apply for `field`: an existing row's type, else the repo
+   *  catalog's, else `string`. @param {string} field */
+  async function fieldTypeOf(field) {
+    const existing = (metarecord?.fields ?? []).find(
+      (f) => f.name === field && f.value.type !== 'nothing',
+    );
+    if (existing) return existing.value.type;
+    const cur = current;
+    if (cur) {
+      const t = cache.fieldType(cur.repo, field);
+      if (t && t !== cache.REFRESH) return t;
+    }
+    return 'string';
+  }
+
+  /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
+   *  `raw` is a PATH, whose parent is resolved to a uuid via /tree/resolve-path.
+   *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
+  async function parseValueForField(repo, field, type, raw) {
+    if (type !== 'tree_ref') return parseRawValue(type, raw);
+    const path = raw.trim();
+    const slash = path.lastIndexOf('/');
+    if (slash === -1) return { type, value: { parent: null, name: path } };
+    const parentPath = path.slice(0, slash);
+    const name = path.slice(slash + 1);
+    const res = /** @type {{uuid: string|null}} */ (
+      await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field, path: parentPath })
+    );
+    if (!res.uuid) throw new Error(`parent path "${parentPath}" does not exist in "${field}"`);
+    return { type, value: { parent: res.uuid, name } };
+  }
+
+  /** Every path in `field`'s forest, for tree_ref value completion (a static
+   *  list filtered client-side; bounded by the forest size). @param {string} repo @param {string} field */
+  async function treePathsForField(repo, field) {
+    const body = /** @type {Record<string, string[]>} */ (
+      await daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+        query: { type: 'is_present', field },
+        field,
+      })
+    );
+    const paths = new Set();
+    for (const list of Object.values(body)) for (const p of list) paths.add(p);
+    return [...paths].sort();
+  }
+
+  /** Value completion for a set/add value arg: tree paths when the field is a
+   *  tree_ref, otherwise nothing. @param {string} field */
+  async function valueCompletionFor(field) {
+    const cur = requireCurrent();
+    return (await fieldTypeOf(field)) === 'tree_ref' ? treePathsForField(cur.repo, field) : [];
+  }
+
+  /** @param {string} prompt */
+  const nameArg = (prompt) => ({ name: 'field', prompt: () => prompt, complete: () => recordFieldNames() });
+
+  void commands.register('metarecord:set-field', {
+    label: 'Set a field on this metarecord (overwrite all its values)',
+    reveal: true,
+    args: [
+      { name: 'field', prompt: () => 'Field to set?', complete: () => completableFieldNames() },
+      {
+        name: 'value',
+        prompt: (p) => `Value for "${p[0]}"?`,
+        initial: async (p) => {
+          const cur = requireCurrent();
+          const rows = (metarecord?.fields ?? []).filter(
+            (f) => f.name === p[0] && f.value.type !== 'nothing',
+          );
+          return rows.length === 1 ? rawOfValue(cur.repo, cur.uuid, p[0], rows[0].value) : '';
+        },
+        complete: (_partial, p) => valueCompletionFor(p[0]),
+      },
+    ],
+    handler: async (field, raw) => {
+      const cur = requireCurrent();
+      const value = await parseValueForField(cur.repo, field, await fieldTypeOf(field), raw);
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
+      await load();
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:add-field-value', {
+    label: 'Add a value to a field on this metarecord (multi-map)',
+    reveal: true,
+    args: [
+      { name: 'field', prompt: () => 'Field to add a value to?', complete: () => completableFieldNames() },
+      {
+        name: 'value',
+        prompt: (p) => `Value to add to "${p[0]}"?`,
+        complete: (_partial, p) => valueCompletionFor(p[0]),
+      },
+    ],
+    handler: async (field, raw) => {
+      const cur = requireCurrent();
+      const value = await parseValueForField(cur.repo, field, await fieldTypeOf(field), raw);
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('POST', api('/fields'), { name: field, value, ...force });
+      await load();
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:edit-field-value', {
+    label: 'Edit one value on this metarecord (select by value)',
+    reveal: true,
+    args: [
+      { name: 'value', prompt: () => 'Which value to edit?', complete: () => valueChoices() },
+      {
+        name: 'new-value',
+        prompt: (p) => {
+          const r = rowForLabel(p[0]);
+          return r ? `New value for "${r.name}"?` : 'New value?';
+        },
+        initial: async (p) => {
+          const cur = requireCurrent();
+          const r = rowForLabel(p[0]);
+          return r ? rawOfValue(cur.repo, cur.uuid, r.name, r.value) : '';
+        },
+        complete: (_partial, p) => {
+          const cur = requireCurrent();
+          const r = rowForLabel(p[0]);
+          return r && r.value.type === 'tree_ref' ? treePathsForField(cur.repo, r.name) : [];
+        },
+      },
+    ],
+    handler: async (label, raw) => {
+      const cur = requireCurrent();
+      const row = rowForLabel(label);
+      if (!row) throw new Error(`no field value matching "${label}"`);
+      const value = await parseValueForField(cur.repo, row.name, row.value.type, raw);
+      const force = isReserved(row.name) ? { force: true } : {};
+      await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
+      await load();
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:delete-field-value', {
+    label: 'Delete one value on this metarecord (select by value)',
+    reveal: true,
+    args: [{ name: 'value', prompt: () => 'Which value to delete?', complete: () => valueChoices() }],
+    handler: async (label) => {
+      const cur = requireCurrent();
+      const row = rowForLabel(label);
+      if (!row) throw new Error(`no field value matching "${label}"`);
+      await daemon.call(
+        'DELETE',
+        `/repos/${cur.repo}/fields/${row.id}`,
+        isReserved(row.name) ? { force: true } : null,
+      );
+      await load();
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:edit-field-name', {
+    label: 'Rename a field on this metarecord (all its values)',
+    reveal: true,
+    args: [
+      nameArg('Field to rename?'),
+      { name: 'new-name', prompt: (p) => `Rename "${p[0]}" to?`, initial: (p) => p[0] },
+    ],
+    handler: async (field, newName) => {
+      const cur = requireCurrent();
+      const rows = (metarecord?.fields ?? []).filter(
+        (f) => f.name === field && f.value.type !== 'nothing',
+      );
+      if (rows.length === 0) throw new Error(`no field "${field}"`);
+      const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
+      for (const r of rows) {
+        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { name: newName, ...force });
+      }
+      await load();
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:edit-field-type', {
+    label: 'Change a field type on this metarecord (all its values)',
+    reveal: true,
+    args: [
+      nameArg('Field to retype?'),
+      {
+        name: 'type',
+        prompt: (p) => `New type for "${p[0]}"?`,
+        initial: (p) => {
+          const r = (metarecord?.fields ?? []).find(
+            (f) => f.name === p[0] && f.value.type !== 'nothing',
+          );
+          return r?.value.type ?? 'string';
+        },
+        complete: () => [...TYPES],
+      },
+    ],
+    handler: async (field, type) => {
+      const cur = requireCurrent();
+      if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
+        throw new Error(`unknown value type "${type}"`);
+      const rows = (metarecord?.fields ?? []).filter(
+        (f) => f.name === field && f.value.type !== 'nothing',
+      );
+      if (rows.length === 0) throw new Error(`no field "${field}"`);
+      const force = isReserved(field) ? { force: true } : {};
+      for (const r of rows) {
+        const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+        const value = await parseValueForField(cur.repo, field, type, raw);
+        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+      }
+      await load();
+      await dirty();
+    },
+  });
 
   // ── Wiring ──────────────────────────────────────────────────────────────
 

@@ -7,6 +7,7 @@
 
 import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
+import { type ArgSpec, registerArgs } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
 import { createCache, type DaemonResponse, type RawFetcher } from './cache';
 
@@ -331,15 +332,20 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     commands: {
       register(
         name: string,
-        { label, reveal, log, handler }: {
+        { label, reveal, log, handler, args }: {
           label?: string;
           textInput?: boolean;
           reveal?: boolean;
           log?: boolean;
           handler?: (...args: string[]) => unknown;
+          args?: ArgSpec[];
         } = {},
       ) {
         if (handler) deps.registerHandler(name, handler);
+        // Declared arguments are collected interactively by the command input
+        // when missing (spec-gui "Command"); the spec functions stay in the
+        // shell realm alongside the panel.
+        if (args) registerArgs(name, args);
         const result = invoke('register_command', {
           panelType: ctx.panelType,
           name,
