@@ -62,6 +62,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/retype", post(retype_field))
         .route("/repos/:repo/fields", get(list_fields))
         .route("/repos/:repo/tree/roots", get(tree_roots))
+        .route("/repos/:repo/tree/resolve-path", post(resolve_tree_path))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/:repo/query", post(run_query))
         .route("/repos/:repo/query/delete", post(delete_by_query))
@@ -229,6 +230,38 @@ async fn get_record_mf_sync(
             None => "internal".to_string(),
         };
         Ok(Json(json!({ "mf_sync": mode })))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ResolvePathBody {
+    #[serde(default = "default_tree_field")]
+    field: String,
+    /// Repo-root-relative path (components split on `/`, no leading slash),
+    /// e.g. `musique/jazz`.
+    path: String,
+}
+
+/// `POST /repos/:repo/tree/resolve-path`: resolves a repo-root-relative path in
+/// the TreeRef `field` (default `mfr_path`) to the uuid of the node at that
+/// path, or `null` when no such node exists. The inverse of `resolve-tree`
+/// (uuid → paths). Used to set a TreeRef value from a path: resolve the parent
+/// path to a uuid, then post `{parent, name}`. Paths are unique within a forest
+/// (sibling names are unique), so at most one node matches. One in-memory
+/// round-trip through the tree cache.
+async fn resolve_tree_path(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<ResolvePathBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let Json(body) = payload?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let uuid = cache.resolve_path(&conn, &body.field, &body.path)?;
+        Ok(Json(json!({ "uuid": uuid.map(hex) })))
     })
     .await
 }

@@ -1030,6 +1030,45 @@ async fn test_direct_resolve_tree_one_record() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[tokio::test]
+async fn test_resolve_tree_path_to_uuid() {
+    // The inverse of resolve-tree: a repo-root-relative path resolves to the
+    // uuid of the node at that path (used to set a TreeRef value from a path).
+    let (app, repo, root) = app_with_repo("resolvepath").await;
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let id = |m: Value| m["uuid"].as_str().unwrap().to_string();
+    let all = id(create_metarecord(&app, &repo, treeref(None, "all")).await);
+    let music = id(create_metarecord(&app, &repo, treeref(Some(&all), "music")).await);
+
+    let resolve = |path: &str| {
+        let app = app.clone();
+        let repo = repo.clone();
+        let body = json!({ "field": "cat", "path": path });
+        async move {
+            request(&app, "POST", &format!("/repos/{repo}/tree/resolve-path"), Some(body)).await
+        }
+    };
+
+    // A nested path resolves to the leaf node's uuid.
+    let (status, body) = resolve("all/music").await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert_eq!(body["uuid"].as_str().unwrap(), music);
+
+    // A root-level path resolves to the root node's uuid.
+    let (_, body) = resolve("all").await;
+    assert_eq!(body["uuid"].as_str().unwrap(), all);
+
+    // An absent path resolves to null (not an error).
+    let (status, body) = resolve("all/nope").await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    assert!(body["uuid"].is_null(), "absent path is null: {body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── expected_version (conditional writes, spec-data-model) ──────────────────
 
 #[tokio::test]
