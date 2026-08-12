@@ -889,7 +889,11 @@ paths (completed against the field's forest, resolved through
 =add-field-value=, =edit-field-value=, =delete-field-value=, =edit-field-name=,
 =edit-field-type= on the current metarecord, and =bulk-set-field=,
 =bulk-add-field-value=, =bulk-remove-field= over the checkbox selection
-(=selected_metarecords=) or, when it is empty, the current query.
+(=selected_metarecords=) or, when it is empty, the current query. The default
+suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
+edit a value, =m d= delete a value, =m n= rename, =m t= retype; =m b s/a/r= for
+the bulk variants), active in both the =metarecord-list= and =metarecord-detail=
+panels so the family is reachable whether the list or the detail is focused.
 
 Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).

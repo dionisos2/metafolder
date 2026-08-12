@@ -211,6 +211,51 @@
 "ctrl+n" = { command = "metarecord:create", when = "metarecord-detail" }
 "ctrl+s" = { command = "metarecord:save", when = "metarecord-detail" }
 
+# Command-input-driven field editing ("m" = metarecord edit; the status bar
+# lists the continuations while the sequence is pending). Bound under BOTH main
+# panels: the "current metarecord" is the highlighted list row (which the detail
+# panel mirrors), and the bulk edits act on the list selection — so the whole
+# family is reachable whether the list or the detail panel is focused. Each
+# command still collects its arguments (field / value / type) in the command
+# input, with completion (see spec-gui "Interactive command arguments").
+# Mnemonics: s=set, a=add, v=value(edit), d=delete, n=name, t=type, b=bulk.
+"m s" = [
+  { command = "metarecord:set-field", when = "metarecord-detail" },
+  { command = "metarecord:set-field", when = "metarecord-list" },
+]
+"m a" = [
+  { command = "metarecord:add-field-value", when = "metarecord-detail" },
+  { command = "metarecord:add-field-value", when = "metarecord-list" },
+]
+"m v" = [
+  { command = "metarecord:edit-field-value", when = "metarecord-detail" },
+  { command = "metarecord:edit-field-value", when = "metarecord-list" },
+]
+"m d" = [
+  { command = "metarecord:delete-field-value", when = "metarecord-detail" },
+  { command = "metarecord:delete-field-value", when = "metarecord-list" },
+]
+"m n" = [
+  { command = "metarecord:edit-field-name", when = "metarecord-detail" },
+  { command = "metarecord:edit-field-name", when = "metarecord-list" },
+]
+"m t" = [
+  { command = "metarecord:edit-field-type", when = "metarecord-detail" },
+  { command = "metarecord:edit-field-type", when = "metarecord-list" },
+]
+"m b s" = [
+  { command = "metarecord:bulk-set-field", when = "metarecord-detail" },
+  { command = "metarecord:bulk-set-field", when = "metarecord-list" },
+]
+"m b a" = [
+  { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" },
+  { command = "metarecord:bulk-add-field-value", when = "metarecord-list" },
+]
+"m b r" = [
+  { command = "metarecord:bulk-remove-field", when = "metarecord-detail" },
+  { command = "metarecord:bulk-remove-field", when = "metarecord-list" },
+]
+
 # file: image zoom controls.
 "plus" = { command = "file:zoom-in", when = "file" }
 "-" = { command = "file:zoom-out", when = "file" }
