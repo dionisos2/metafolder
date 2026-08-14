@@ -83,6 +83,221 @@ opted out per call with =mime: false= in the request body (CLI: =--no-mime=).
 Computation is idempotent — an existing =mfr_mime= is never recomputed, so a
 content change is not reflected until the field is cleared.
 
+** Embedded metadata extraction
+
+Many media formats carry *embedded* metadata describing the content itself —
+an audio file's artist/album/title, an image's capture date/camera/GPS, a
+video's title. Unlike the =mfr_*= stat fields (which describe the filesystem
+entry) these describe the *payload*. The daemon extracts a curated, normalised
+subset into reserved =mfr_meta_*= fields, so they are queryable through the
+ordinary EAV model like any other field.
+
+*** Backend
+
+Extraction is done with **pure-Rust, memory-safe parsers** — no external
+subprocess and no system dependency, mirroring the =infer= choice for MIME:
+
+- audio (=lofty=): ID3v2/ID3v1, Vorbis comments (FLAC/Ogg/Opus), MP4/M4A
+  atoms — tags *and* stream properties (duration, bitrate, sample rate,
+  channels);
+- images (=nom-exif= / an EXIF reader): EXIF/TIFF tags of JPEG, TIFF and
+  common RAW — capture date, camera make/model, orientation, GPS, dimensions;
+- video containers (Matroska/MP4, best-effort): container title and, where
+  cheap, dimensions and duration.
+
+Memory-safety is the reason a subprocess sandbox is *not* required for this in
+the daemon: a crafted file can at worst make a parser panic or return wrong
+values (which the extraction pass catches and treats as "no metadata"), never
+the passive code-execution vector that the C media decoders behind =ffmpeg= /
+the WebView are (those stay confined by the GUI's =bwrap= sandbox — see
+spec-gui "Untrusted media"). A richer =exiftool=/=ffprobe= backend is a
+possible **future extension**, but only once that sandbox machinery is
+available daemon-side; it is explicitly out of scope here.
+
+*** Fields and the source→field mapping
+
+The same *meaning* is spelled differently across formats (a track's performer
+is ID3 =TPE1=, Vorbis =ARTIST=, MP4 =©ART=), and which keys are worth
+extracting is a matter of taste. So the daemon does *not* hard-code the field
+set: extraction is driven by a **user-editable mapping** (see *Configuration*
+below). Each entry names a target field, its =Value= type, and the list of
+native source keys that feed it:
+
+: from = [source key, source key, …]  →  mfr_meta_<name> : <type>
+
+Only a *normalised* set of well-known keys is stored, never the hundreds of raw
+format-specific tags (which would flood the field catalogue and index). The
+extractor collects every =(source key, value)= pair a file provides, then, for
+each mapping entry, writes =mfr_meta_<name>= from the *first* present source
+key in its =from= list. A source whose text cannot be parsed into the entry's
+=type= is skipped (the next source is tried), so a malformed tag never poisons
+a field.
+
+Source-key vocabulary (what may appear in =from=):
+- *audio tags* — the =lofty= normalised item keys (=TrackTitle=,
+  =TrackArtist=, =AlbumTitle=, =AlbumArtist=, =Genre=, =RecordingDate=,
+  =Year=, =TrackNumber=, =DiscNumber=, =Comment=, …), which already unify
+  ID3 / Vorbis / MP4 spellings; an unmapped native tag is also offered under
+  its raw name;
+- *image tags* — EXIF/TIFF tag names (=DateTimeOriginal=, =Make=, =Model=,
+  =Orientation=, =GPSLatitude=, =GPSLongitude=, =Artist=, =Copyright=, …);
+- *stream properties* — computed, not tags, so they are offered under
+  reserved =@=-prefixed synthetic keys: =@duration_ms=, =@bitrate=,
+  =@sample_rate=, =@channels=, =@width=, =@height=.
+
+=DateTime= fields store Unix-ms (via =core::date=); a bare year (e.g. Vorbis
+=DATE 1998=) is normalised to that year's January 1st, 00:00 UTC, and EXIF
+=DateTimeOriginal= to its exact instant. Only keys the file actually provides
+are written; the rest stay in the "unknown" state. Values are the daemon's, so
+all =mfr_meta_*= names are reserved (=mfr_*=): a user write requires =force=,
+like any stat field.
+
+*** Configuration
+
+The mapping is **per repository**, living at =.metafolder/metadata-map.toml=,
+alongside =config.json= and the optional =schema.json= — ordinary trackable
+content (not under =internal/=), following the user-schema model rather than the
+git-backed =~/.config/= configs. Per-repo is deliberate: repositories in
+different languages or cataloguing conventions want different mappings, and the
+map belongs with the repository it describes.
+
+- =mf init= **seeds** the file from a default baked into the daemon
+  (=include_str!= of =crates/daemon/src/default-metadata-map.toml=), the same
+  way init writes =config.json= and the root metarecord's defaults. The shipped
+  default therefore only affects *new* repositories; editing it never rewrites
+  an existing repo's map.
+- At repo *load* the daemon reads the file. If it is **absent** (a repo created
+  before this feature, or a deleted file) the daemon self-heals: it writes the
+  baked-in default, then reads it (this is repository-owned data, not user
+  config, so writing a default does not conflict with spec-config's "No runtime
+  fallback"). If it is **malformed**, only *that* repository fails to load
+  (a targeted error/warning), never the whole daemon — exactly like an invalid
+  =schema.json=.
+
+Each field is one =[[field]]= table: =name= (the =mfr_meta_= suffix), =type=
+(=string=/=int=/=float=/=datetime=), and =from= (ordered source keys). Editing a
+repo's file changes what that repo extracts; a newly-mapped field is picked up
+by the next extraction of a file (re-extraction requires clearing
+=mfr_meta_extracted=, below). The baked-in default that seeds new repos:
+
+#+begin_src toml
+[[field]]
+name = "title"
+type = "string"
+from = ["TrackTitle", "Title"]
+
+[[field]]
+name = "artist"
+type = "string"
+from = ["TrackArtist", "Artist"]
+
+[[field]]
+name = "album_artist"        # distinct from artist: groups compilation albums
+type = "string"              # ("Various Artists"); merge by adding its sources
+from = ["AlbumArtist"]       # to the "artist" entry instead.
+
+[[field]]
+name = "album"
+type = "string"
+from = ["AlbumTitle"]
+
+[[field]]
+name = "genre"
+type = "string"
+from = ["Genre"]
+
+[[field]]
+name = "track"
+type = "int"
+from = ["TrackNumber"]
+
+[[field]]
+name = "disc"
+type = "int"
+from = ["DiscNumber"]
+
+[[field]]
+name = "date"
+type = "datetime"
+from = ["DateTimeOriginal", "RecordingDate", "Year"]
+
+[[field]]
+name = "comment"
+type = "string"
+from = ["Comment"]
+
+[[field]]
+name = "duration"
+type = "int"
+from = ["@duration_ms"]
+
+[[field]]
+name = "bitrate"
+type = "int"
+from = ["@bitrate"]
+
+[[field]]
+name = "sample_rate"
+type = "int"
+from = ["@sample_rate"]
+
+[[field]]
+name = "channels"
+type = "int"
+from = ["@channels"]
+
+[[field]]
+name = "width"
+type = "int"
+from = ["@width", "ImageWidth"]
+
+[[field]]
+name = "height"
+type = "int"
+from = ["@height", "ImageHeight"]
+
+[[field]]
+name = "camera_make"
+type = "string"
+from = ["Make"]
+
+[[field]]
+name = "camera_model"
+type = "string"
+from = ["Model"]
+
+[[field]]
+name = "orientation"
+type = "int"
+from = ["Orientation"]
+
+[[field]]
+name = "gps_lat"
+type = "float"
+from = ["GPSLatitude"]
+
+[[field]]
+name = "gps_lon"
+type = "float"
+from = ["GPSLongitude"]
+#+end_src
+
+*** Trigger and idempotency
+
+Extraction is a =reconcile= phase (full and single-metarecord), enabled by
+default and opted out per call with =metadata: false= in the request body
+(CLI: =--no-metadata=), the same shape as =mfr_mime=.
+
+Because a file may legitimately carry *no* embedded metadata (a plain =.txt=,
+a data blob), "is any =mfr_meta_*= field absent?" cannot gate re-extraction —
+it would re-parse such files on every reconcile. Instead a boolean marker
+=mfr_meta_extracted = true= records that a file has been analysed. The phase
+skips any file that already has the marker and sets it (alongside whatever
+keys were found) after analysing one. Extraction is thus idempotent: re-running
+reconcile never re-parses nor grows the log. A content change is not reflected
+until =mfr_meta_extracted= (and, to re-read, the stale =mfr_meta_*= values) are
+cleared — the same "clear to recompute" contract as =mfr_mime=.
+
 ** File watcher backends
 
 The =notify= crate abstracts the per-OS event APIs: inotify (Linux), FSEvents

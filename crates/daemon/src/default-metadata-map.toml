@@ -1,0 +1,121 @@
+# Embedded-metadata extraction map (spec-platform "Embedded metadata
+# extraction"). Per-repository file: this default seeds `.metafolder/
+# metadata-map.toml` at `mf init`; editing an existing repo's copy changes what
+# that repo extracts.
+#
+# Each [[field]] maps a set of native source keys onto one reserved
+# `mfr_meta_<name>` field of a given type. Extraction takes the FIRST present
+# source in `from`; a source whose text does not parse into `type` is skipped.
+#
+# Source-key vocabulary:
+#   - audio tags: lofty normalised item keys (TrackTitle, TrackArtist,
+#     AlbumTitle, AlbumArtist, Genre, RecordingDate, Year, TrackNumber,
+#     DiscNumber, Comment) — they already unify ID3 / Vorbis / MP4 spellings;
+#   - image tags: EXIF tag names (DateTimeOriginal, Make, Model, Orientation,
+#     ImageWidth, ImageHeight; GPSLatitude / GPSLongitude yield signed decimal
+#     degrees);
+#   - stream properties: reserved @-prefixed synthetic keys (@duration_ms,
+#     @bitrate, @sample_rate, @channels, @width, @height).
+
+[[field]]
+name = "title"
+type = "string"
+from = ["TrackTitle", "Title"]
+
+[[field]]
+name = "artist"
+type = "string"
+from = ["TrackArtist", "Artist"]
+
+# Distinct from artist: groups a compilation album ("Various Artists") whose
+# tracks each have a different artist. To merge the two, add "AlbumArtist" to
+# the "artist" entry's `from` and delete this entry.
+[[field]]
+name = "album_artist"
+type = "string"
+from = ["AlbumArtist"]
+
+[[field]]
+name = "album"
+type = "string"
+from = ["AlbumTitle"]
+
+[[field]]
+name = "genre"
+type = "string"
+from = ["Genre"]
+
+[[field]]
+name = "track"
+type = "int"
+from = ["TrackNumber"]
+
+[[field]]
+name = "disc"
+type = "int"
+from = ["DiscNumber"]
+
+[[field]]
+name = "date"
+type = "datetime"
+from = ["DateTimeOriginal", "RecordingDate", "Year"]
+
+[[field]]
+name = "comment"
+type = "string"
+from = ["Comment"]
+
+[[field]]
+name = "duration"
+type = "int"
+from = ["@duration_ms"]
+
+[[field]]
+name = "bitrate"
+type = "int"
+from = ["@bitrate"]
+
+[[field]]
+name = "sample_rate"
+type = "int"
+from = ["@sample_rate"]
+
+[[field]]
+name = "channels"
+type = "int"
+from = ["@channels"]
+
+[[field]]
+name = "width"
+type = "int"
+from = ["@width", "ImageWidth"]
+
+[[field]]
+name = "height"
+type = "int"
+from = ["@height", "ImageHeight"]
+
+[[field]]
+name = "camera_make"
+type = "string"
+from = ["Make"]
+
+[[field]]
+name = "camera_model"
+type = "string"
+from = ["Model"]
+
+[[field]]
+name = "orientation"
+type = "int"
+from = ["Orientation"]
+
+[[field]]
+name = "gps_lat"
+type = "float"
+from = ["GPSLatitude"]
+
+[[field]]
+name = "gps_lon"
+type = "float"
+from = ["GPSLongitude"]

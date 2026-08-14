@@ -71,7 +71,7 @@ fn reconcile_reports_phase_progress() {
     write_file(&root, "dir/b.txt", b"beta");
 
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, true, true, &reconcile::Reporter::new(&|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, true, false, true, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
     }, &|| false))
     .unwrap();
@@ -105,7 +105,7 @@ fn stat_phase_total_matches_walked_paths() {
     // The pure walk yields the full path list, so the stat phase (the heavy
     // pass) has an exact total — a.txt, dir, dir/b.txt = 3 eligible paths.
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
     }, &|| false))
     .unwrap();
@@ -125,7 +125,7 @@ fn walk_phase_reports_cumulative_file_count() {
     // the displayed number actually advances instead of being stuck at 0 (the
     // per-depth `done/total` is too coarse for trees smaller than the step).
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|phase, done, total| {
+    reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|phase, done, total| {
         phases.lock().unwrap().push((phase.to_string(), done, total));
     }, &|| false))
     .unwrap();
@@ -178,7 +178,7 @@ fn test_reconcile_tracks_a_symlink_without_following_it() {
     let target = "/nonexistent/outside/secret";
     std::os::unix::fs::symlink(target, root.join("link")).unwrap();
 
-    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false, false).unwrap();
 
     let uuid = resolve(&repo, "/link").expect("the symlink must be tracked");
     assert_eq!(field_value(&repo, uuid, "mfr_type"), Some(Value::String("symlink".into())));
@@ -256,13 +256,13 @@ fn test_reconcile_never_clears_paths() {
 fn test_full_reconcile_refreshes_in_place_modifications_when_enabled() {
     let (repo, root) = setup("refresh_on");
     write_file(&root, "note.txt", b"hi");
-    reconcile::reconcile_full(&repo, None, false, true).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false, true).unwrap();
     let uuid = resolve(&repo, "/note.txt").unwrap();
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
 
     // The file is edited in place (same path) while no watcher runs.
     write_file(&root, "note.txt", b"hello!");
-    let result = reconcile::reconcile_full(&repo, None, false, true).unwrap();
+    let result = reconcile::reconcile_full(&repo, None, false, false, true).unwrap();
     assert_eq!(result.created, 0);
     assert_eq!(result.moved, 0);
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(6)));
@@ -274,12 +274,12 @@ fn test_full_reconcile_refreshes_in_place_modifications_when_enabled() {
 fn test_full_reconcile_leaves_in_place_modifications_when_disabled() {
     let (repo, root) = setup("refresh_off");
     write_file(&root, "note.txt", b"hi");
-    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false, false).unwrap();
     let uuid = resolve(&repo, "/note.txt").unwrap();
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
 
     write_file(&root, "note.txt", b"hello!");
-    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false, false).unwrap();
     // Without the refresh option, the stale size is left untouched.
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(2)));
 
@@ -373,7 +373,7 @@ fn test_reconcile_computes_mime_when_enabled() {
     let (repo, root) = setup("mime");
     write_file(&root, "pic.png", PNG_MAGIC);
     write_file(&root, "notes.txt", b"hello"); // not magic-detectable → no mime
-    reconcile::reconcile_full(&repo, None, true, false).unwrap();
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
 
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
@@ -387,7 +387,7 @@ fn test_reconcile_computes_mime_when_enabled() {
 fn test_reconcile_skips_mime_when_disabled() {
     let (repo, root) = setup("nomime");
     write_file(&root, "pic.png", PNG_MAGIC);
-    reconcile::reconcile_full(&repo, None, false, false).unwrap();
+    reconcile::reconcile_full(&repo, None, false, false, false).unwrap();
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), None);
     std::fs::remove_dir_all(root).unwrap();
@@ -397,11 +397,11 @@ fn test_reconcile_skips_mime_when_disabled() {
 fn test_reconcile_mime_is_idempotent() {
     let (repo, root) = setup("mime_idem");
     write_file(&root, "pic.png", PNG_MAGIC);
-    reconcile::reconcile_full(&repo, None, true, false).unwrap();
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
     let after_first = op_count(&repo);
 
     // A second mime reconcile must not rewrite the existing mfr_mime.
-    let result = reconcile::reconcile_full(&repo, None, true, false).unwrap();
+    let result = reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
     assert_eq!(result.created, 0);
     assert_eq!(op_count(&repo), after_first, "mime must not be recomputed");
 
@@ -414,7 +414,7 @@ fn test_reconcile_mime_is_idempotent() {
 fn test_reconcile_folds_mime_into_creation() {
     let (repo, root) = setup("mime_create");
     write_file(&root, "pic.png", PNG_MAGIC);
-    reconcile::reconcile_full(&repo, None, true, false).unwrap();
+    reconcile::reconcile_full(&repo, None, true, false, false).unwrap();
 
     let pic = resolve(&repo, "/pic.png").unwrap();
     assert_eq!(field_value(&repo, pic, "mfr_mime"), Some(Value::String("image/png".into())));
@@ -461,7 +461,7 @@ fn test_similarity_candidate_carries_a_score() {
     std::fs::remove_file(root.join("music/old_song.mp3")).unwrap();
     write_file(&root, "music/old_song_v2.mp3", &vec![b'b'; 1100]);
 
-    let result = reconcile::reconcile_full(&repo, Some(0.6), false, false).unwrap();
+    let result = reconcile::reconcile_full(&repo, Some(0.6), false, false, false).unwrap();
     assert_eq!(result.moved, 0);
     assert_eq!(result.candidates.len(), 1, "{:?}", result.candidates);
     let candidate = &result.candidates[0];
@@ -508,7 +508,7 @@ fn cancelled_reconcile_bails_and_rolls_back() {
     write_file(&root, "a.txt", b"hello");
     write_file(&root, "sub/b.txt", b"world");
 
-    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, &reconcile::Reporter::new(&|_, _, _| {}, &|| true));
+    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|_, _, _| {}, &|| true));
     assert!(outcome.is_err(), "a pre-cancelled reconcile must bail");
 
     // Rolled back: no file metarecords exist.
@@ -520,6 +520,89 @@ fn cancelled_reconcile_bails_and_rolls_back() {
     let result = run(&repo);
     assert_eq!(result.created, 3); // a.txt, sub/, sub/b.txt
     assert!(resolve(&repo, "/a.txt").is_some());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+/// The tagged audio fixture (FLAC with Vorbis comments), copied into the repo.
+fn copy_fixture(root: &Path, rel: &str) {
+    let src = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tagged.flac");
+    let dest = root.join(rel);
+    std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+    std::fs::copy(src, &dest).unwrap();
+}
+
+#[test]
+fn metadata_phase_extracts_embedded_fields() {
+    let (repo, root) = setup("metadata");
+    copy_fixture(&root, "song.flac");
+
+    // metadata on (compute_metadata = true).
+    reconcile::reconcile_full(&repo, None, false, true, false).unwrap();
+    let uuid = resolve(&repo, "/song.flac").expect("record created");
+
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_meta_artist"),
+        Some(Value::String("Ada Lovelace".into()))
+    );
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_meta_album"),
+        Some(Value::String("Analytical Engine".into()))
+    );
+    // album_artist is kept distinct from artist by the default map.
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_meta_album_artist"),
+        Some(Value::String("Various Engineers".into()))
+    );
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_meta_title"),
+        Some(Value::String("Note G".into()))
+    );
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_track"), Some(Value::Int(7)));
+    // Bare year 1998 → 1998-01-01T00:00:00Z.
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_date"), Some(Value::DateTime(883_612_800_000)));
+    // The stream-property synthetic key is mapped too.
+    assert!(matches!(field_value(&repo, uuid, "mfr_meta_duration"), Some(Value::Int(_))));
+    // The analysed marker is set.
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_extracted"), Some(Value::Bool(true)));
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn metadata_extraction_is_idempotent() {
+    let (repo, root) = setup("metadata_idem");
+    copy_fixture(&root, "song.flac");
+
+    reconcile::reconcile_full(&repo, None, false, true, false).unwrap();
+    let uuid = resolve(&repo, "/song.flac").unwrap();
+    let version_after_first = {
+        let conn = repo.conn.lock().unwrap();
+        db::get_version(&conn, uuid).unwrap()
+    };
+
+    // A second metadata reconcile must not re-parse (marker present) — the
+    // record's version is unchanged, so the log did not grow.
+    reconcile::reconcile_full(&repo, None, false, true, false).unwrap();
+    let version_after_second = {
+        let conn = repo.conn.lock().unwrap();
+        db::get_version(&conn, uuid).unwrap()
+    };
+    assert_eq!(version_after_first, version_after_second);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn metadata_off_extracts_nothing() {
+    let (repo, root) = setup("metadata_off");
+    copy_fixture(&root, "song.flac");
+
+    // compute_metadata = false: no mfr_meta_* fields, no marker.
+    reconcile::reconcile_full(&repo, None, false, false, false).unwrap();
+    let uuid = resolve(&repo, "/song.flac").unwrap();
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_artist"), None);
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_extracted"), None);
 
     std::fs::remove_dir_all(root).unwrap();
 }

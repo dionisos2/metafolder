@@ -32,6 +32,11 @@ pub struct RepoState {
     pub handles: Mutex<Option<RepoHandles>>,
     /// Loaded user schema; replaced atomically on reload (spec-schema).
     pub schema: Mutex<Option<crate::schema::CompiledSchema>>,
+    /// The per-repo embedded-metadata extraction map (spec-platform). Loaded
+    /// (seeding/self-healing the on-disk file) in `activate`; initialised here to
+    /// the baked-in default so a `RepoState` built without `activate` (unit
+    /// tests) still extracts with sensible defaults.
+    pub metadata_map: Mutex<crate::metadata_map::MetadataMap>,
     /// Coordinated-rollback lock (spec-event-log): `Some` while a rollback
     /// navigation is in progress, carrying its resolved target. Never
     /// persisted — a crash restarts unlocked.
@@ -84,6 +89,10 @@ impl RepoState {
             case_insensitive: opened.case_insensitive,
             handles: Mutex::new(None),
             schema: Mutex::new(None),
+            metadata_map: Mutex::new(
+                crate::metadata_map::MetadataMap::parse(crate::metadata_map::DEFAULT)
+                    .expect("baked default metadata map is valid"),
+            ),
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
@@ -274,6 +283,13 @@ impl AppState {
             crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
                 .map_err(ApiError::bad_request)?;
         *repo_state.schema.lock_recover() = schema;
+        // Load the per-repo metadata map, seeding the file when absent
+        // (spec-platform "Configuration"). A malformed file fails this repo's
+        // load only, like an invalid schema.
+        let metadata_map =
+            crate::metadata_map::MetadataMap::load_or_seed(&repo_state.metafolder_dir)
+                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+        *repo_state.metadata_map.lock_recover() = metadata_map;
         crate::executor::flush_pending(&repo_state)?;
         let quiet = self.settings.watch_quiet_period();
         let executor = crate::executor::spawn(&repo_state, quiet);

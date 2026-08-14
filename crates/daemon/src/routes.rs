@@ -1427,6 +1427,10 @@ struct ReconcileBody {
     /// Compute `mfr_mime` for files that lack it (default true).
     #[serde(default = "default_true")]
     mime: bool,
+    /// Extract embedded `mfr_meta_*` fields for files not yet analysed
+    /// (default true; spec-platform "Embedded metadata extraction").
+    #[serde(default = "default_true")]
+    metadata: bool,
     /// Refresh the stat-derived `mfr_*` fields of files/directories still at
     /// their recorded path, catching in-place edits (default true).
     #[serde(default = "default_true")]
@@ -1435,7 +1439,7 @@ struct ReconcileBody {
 
 impl Default for ReconcileBody {
     fn default() -> Self {
-        Self { metarecord: None, threshold: None, mime: true, refresh: true }
+        Self { metarecord: None, threshold: None, mime: true, metadata: true, refresh: true }
     }
 }
 
@@ -1482,6 +1486,7 @@ async fn full_reconcile(
                 &repo_state,
                 uuid,
                 body.mime,
+                body.metadata,
                 body.refresh,
                 &crate::reconcile::Reporter::new(&progress, &cancel),
             ),
@@ -1489,6 +1494,7 @@ async fn full_reconcile(
                 &repo_state,
                 body.threshold,
                 body.mime,
+                body.metadata,
                 body.refresh,
                 &crate::reconcile::Reporter::new(&progress, &cancel),
             ),

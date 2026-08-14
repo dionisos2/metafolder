@@ -110,6 +110,9 @@ enum Command {
         /// Do not compute mfr_mime for files that lack it
         #[arg(long = "no-mime")]
         no_mime: bool,
+        /// Do not extract embedded mfr_meta_* fields for files not yet analysed
+        #[arg(long = "no-metadata")]
+        no_metadata: bool,
         /// Do not refresh mfr_* stat fields of in-place (unmoved) files
         #[arg(long = "no-refresh")]
         no_refresh: bool,
@@ -687,6 +690,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             metarecord,
             threshold,
             no_mime,
+            no_metadata,
             no_refresh,
             json,
             no_wait,
@@ -696,6 +700,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             metarecord.as_deref(),
             threshold,
             !no_mime,
+            !no_metadata,
             !no_refresh,
             json,
             no_wait,

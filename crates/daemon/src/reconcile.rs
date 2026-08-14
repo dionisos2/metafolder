@@ -51,9 +51,10 @@ pub struct ReconcileResult {
     pub candidates: Vec<Candidate>,
 }
 
-/// Full reconcile without the similarity, MIME or refresh phases (v1 behaviour).
+/// Full reconcile without the similarity, MIME, metadata or refresh phases
+/// (v1 behaviour).
 pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
-    reconcile_full(repo, None, false, false)
+    reconcile_full(repo, None, false, false, false)
 }
 
 /// Progress is reported every this many items inside the heavy reconcile loops,
@@ -112,17 +113,28 @@ fn cancelled() -> ApiError {
 /// score-based candidates for still-unmatched orphans and new files
 /// (spec-file-tracking "File Similarity"). When `compute_mime` is set, files
 /// without an `mfr_mime` get one from content analysis (spec-platform "MIME
-/// detection"). When `refresh` is set, files and directories still at their
-/// recorded path get their stat-derived `mfr_*` fields refreshed (catching
-/// in-place edits made while the watcher was not running), the same way
-/// single-metarecord reconcile does.
+/// detection"). When `compute_metadata` is set, files without an
+/// `mfr_meta_extracted` marker get their embedded metadata extracted into
+/// `mfr_meta_*` fields (spec-platform "Embedded metadata extraction"). When
+/// `refresh` is set, files and directories still at their recorded path get
+/// their stat-derived `mfr_*` fields refreshed (catching in-place edits made
+/// while the watcher was not running), the same way single-metarecord reconcile
+/// does.
 pub fn reconcile_full(
     repo: &RepoState,
     threshold: Option<f64>,
     compute_mime: bool,
+    compute_metadata: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_full_reported(repo, threshold, compute_mime, refresh, &Reporter::new(&|_, _, _| {}, &never()))
+    reconcile_full_reported(
+        repo,
+        threshold,
+        compute_mime,
+        compute_metadata,
+        refresh,
+        &Reporter::new(&|_, _, _| {}, &never()),
+    )
 }
 
 /// Like [`reconcile_full`], reporting phase progress through `progress`
@@ -133,6 +145,7 @@ pub fn reconcile_full_reported(
     repo: &RepoState,
     threshold: Option<f64>,
     compute_mime: bool,
+    compute_metadata: bool,
     refresh: bool,
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
@@ -401,6 +414,25 @@ pub fn reconcile_full_reported(
         }
     }
 
+    // Step 7 — metadata phase (spec-platform): extract embedded `mfr_meta_*`
+    // fields for files not yet marked `mfr_meta_extracted`.
+    if compute_metadata {
+        let map = repo.metadata_map.lock_recover().clone();
+        let meta_total = disk_files.len() as u64;
+        reporter.progress("metadata", Some(0), Some(meta_total));
+        for (i, rel) in disk_files.iter().enumerate() {
+            if i % PROGRESS_STEP == 0 {
+                reporter.progress("metadata", Some(i as u64), Some(meta_total));
+                if reporter.is_cancelled() {
+                    return Err(cancelled());
+                }
+            }
+            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+                maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
+            }
+        }
+    }
+
     writer.commit()?;
     Ok(result)
 }
@@ -413,18 +445,27 @@ pub fn reconcile_metarecord(
     repo: &RepoState,
     uuid: Uuid,
     compute_mime: bool,
+    compute_metadata: bool,
     refresh: bool,
 ) -> Result<ReconcileResult, ApiError> {
-    reconcile_metarecord_reported(repo, uuid, compute_mime, refresh, &Reporter::new(&|_, _, _| {}, &never()))
+    reconcile_metarecord_reported(
+        repo,
+        uuid,
+        compute_mime,
+        compute_metadata,
+        refresh,
+        &Reporter::new(&|_, _, _| {}, &never()),
+    )
 }
 
 /// Like [`reconcile_metarecord`], reporting phase progress for a task
 /// (spec-tasks). Phases: `walk` (subtree), `create` (create/refresh over the
-/// subtree), `mime`.
+/// subtree), `mime`, `metadata`.
 pub fn reconcile_metarecord_reported(
     repo: &RepoState,
     uuid: Uuid,
     compute_mime: bool,
+    compute_metadata: bool,
     refresh: bool,
     reporter: &Reporter,
 ) -> Result<ReconcileResult, ApiError> {
@@ -498,6 +539,26 @@ pub fn reconcile_metarecord_reported(
             }
             if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
+            }
+        }
+    }
+
+    if compute_metadata {
+        let map = repo.metadata_map.lock_recover().clone();
+        let meta_total = fs_paths.len() as u64;
+        reporter.progress("metadata", Some(0), Some(meta_total));
+        for (i, (rel, meta)) in fs_paths.iter().enumerate() {
+            if i % PROGRESS_STEP == 0 {
+                reporter.progress("metadata", Some(i as u64), Some(meta_total));
+                if reporter.is_cancelled() {
+                    return Err(cancelled());
+                }
+            }
+            if !meta.is_file() {
+                continue;
+            }
+            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+                maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
     }
@@ -728,6 +789,33 @@ fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -
     if let Some(mime) = detect_mime(&abs) {
         writer.set_field_as(OpType::FileModified, uuid, "mfr_mime", Value::String(mime))?;
     }
+    Ok(())
+}
+
+// ── Embedded metadata (spec-platform "Embedded metadata extraction") ─────────────
+
+/// Extracts embedded `mfr_meta_*` fields for a file that has not been analysed
+/// yet, using the per-repo `map`. Idempotent via the `mfr_meta_extracted`
+/// marker: a file already carrying it is skipped, so a file that legitimately
+/// has *no* metadata is not re-parsed on every reconcile (the marker is set even
+/// when nothing was found). Content changes are out of scope — clear the marker
+/// (and stale `mfr_meta_*` values) to re-read, the same "clear to recompute"
+/// contract as `mfr_mime`.
+fn maybe_extract_metadata(
+    writer: &mut Writer,
+    root: &Path,
+    uuid: Uuid,
+    rel: &str,
+    map: &crate::metadata_map::MetadataMap,
+) -> Result<()> {
+    if !db::get_field_rows_named(writer.connection(), uuid, "mfr_meta_extracted")?.is_empty() {
+        return Ok(());
+    }
+    let abs = root.join(rel.trim_start_matches('/'));
+    for field in crate::metadata::extract(&abs, map) {
+        writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
+    }
+    writer.set_field_as(OpType::FileModified, uuid, "mfr_meta_extracted", Value::Bool(true))?;
     Ok(())
 }
 

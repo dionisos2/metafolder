@@ -852,6 +852,7 @@ pub fn reconcile(
     entry: Option<&str>,
     threshold: Option<f64>,
     mime: bool,
+    metadata: bool,
     refresh: bool,
     raw_json: bool,
     no_wait: bool,
@@ -861,7 +862,7 @@ pub fn reconcile(
     // One reconcile endpoint (spec-tasks): an optional `metarecord` scopes it to
     // a subtree; absent reconciles the whole repository. Always asynchronous —
     // start it (202 + task id), then poll the task, rendering progress to stderr.
-    let mut body = json!({"mime": mime, "refresh": refresh});
+    let mut body = json!({"mime": mime, "metadata": metadata, "refresh": refresh});
     match entry {
         Some(uuid) => {
             let uuid = Uuid::parse_str(uuid)

@@ -28,6 +28,8 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # Pure-Rust, magic-byte MIME detection for mfr_mime (no system libmagic).
 infer = "0.19"
 roaring = "0.10"
+lofty = "0.25.0"
+nom-exif = "3.6.2"
 
 [dev-dependencies]
 http-body-util = "0.1"
