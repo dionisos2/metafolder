@@ -763,7 +763,7 @@ fn test_query_bad_sort_is_usage_error() {
 // ── File tracking ─────────────────────────────────────────────────────────────
 
 #[test]
-fn test_track_creates_entry_and_rejects_duplicates() {
+fn test_track_creates_entry_and_is_idempotent() {
     let (repo, root) = init_repo("track");
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("sub/file.txt"), b"hello").unwrap();
@@ -771,11 +771,14 @@ fn test_track_creates_entry_and_rejects_duplicates() {
 
     let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
     assert_ok(&out);
-    assert!(is_hex_uuid(out.stdout.trim()));
+    let uuid = out.stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
 
-    // Already tracked → operation error.
+    // Already tracked → idempotent: returns the existing uuid (POST /track is
+    // idempotent, spec-file-tracking).
     let out = mf(&["-u", &repo, "track", path.to_str().unwrap()]);
-    assert_eq!(out.code, 1, "stderr: {}", out.stderr);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), uuid, "re-track returns the existing uuid");
 
     // Outside the repository root → operation error.
     let outside = temp_dir("track_outside");
