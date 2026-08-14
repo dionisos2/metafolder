@@ -28,18 +28,9 @@ REPO=$(mf gui repo) || die "no GUI running or no repository in the focused works
 export METAFOLDER_REPO="$REPO"
 [ -d "$SORT_DIR" ] || die "not a directory: $SORT_DIR"
 
-# Get (or create) the metarecord uuid of a path. `mf track` prints the uuid when
-# it creates one, and errors "already tracked by metarecord <uuid>" otherwise —
-# we pull the uuid out of either case.
-ensure_metarecord() {
-    local abs=$1 out uuid
-    if out=$(mf track "$abs" 2>&1); then
-        printf '%s' "$out"
-    else
-        uuid=$(printf '%s' "$out" | grep -oiE '[0-9a-f]{32}' | head -n1)
-        [ -n "$uuid" ] && printf '%s' "$uuid" || { printf '%s' "$out" >&2; return 1; }
-    fi
-}
+# The metarecord uuid of a path. `mf track` is idempotent: it creates the
+# metarecord if needed and always prints the uuid (existing or new).
+ensure_metarecord() { mf track "$1"; }
 
 # ask "<question>" -> prints y | n | escape  (escape also on timeout/GUI closed).
 ask() {

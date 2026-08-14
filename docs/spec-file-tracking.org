@@ -409,7 +409,9 @@ Request body:
 The path must be inside the repository root; otherwise =400= is returned.
 
 If the path is already tracked (a metarecord with a matching =mfr_path= TreeRef
-exists), =409= is returned with the conflicting metarecord UUID.
+exists), the call is *idempotent*: the existing metarecord UUID is returned
+(=200=), and nothing is changed. Callers can therefore =track= a path to obtain
+its UUID without first checking whether it exists.
 
 Otherwise the daemon:
 1. Creates any missing parent directory metarecords along the path (with
@@ -422,7 +424,7 @@ The new metarecord is *not* subject to eligibility checks (=mf_watch= / =mf_igno
 evaluation); the caller is responsible for configuring the watch scope
 afterwards (see [[*Watch and Ignore]]).
 
-Response body: ={"uuid": "<new_entry_uuid>"}=
+Response body: ={"uuid": "<entry_uuid>"}= (newly created, or the existing one).
 
 ** Scoped (single-metarecord) reconcile
 
@@ -596,9 +598,9 @@ write, since =mfr_path= is an =mfr_*= field).
 ** =mf track <path>=
 
 Calls =POST /track= for the given path (OS-native absolute path, or relative
-to the current directory — the CLI absolutises it). Prints the new metarecord
-UUID. Fails with exit code 1 when the path is outside the repository root or
-already tracked.
+to the current directory — the CLI absolutises it). Prints the metarecord UUID.
+Idempotent: an already-tracked path prints its existing UUID rather than
+failing. Fails with exit code 1 when the path is outside the repository root.
 
 ** =mf path <uuid>=
 

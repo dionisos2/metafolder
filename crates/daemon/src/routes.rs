@@ -1551,11 +1551,11 @@ async fn track(
 
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
+        // Idempotent: a path already tracked returns its existing metarecord
+        // uuid rather than an error, so callers can `track` without first
+        // checking (spec-file-tracking "Single-metarecord track").
         if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel)? {
-            return Err(ApiError::conflict(format!(
-                "path already tracked by metarecord {}",
-                hex(existing)
-            )));
+            return Ok(Json(json!({"uuid": hex(existing)})));
         }
         let untracked = [Field::new("mf_watch", Value::Bool(false))];
         let mut writer = Writer::begin(&mut conn, None)?;

@@ -77,15 +77,16 @@ async fn test_track_creates_record_and_parents_untracked() {
     assert_eq!(field(&entry, "mfr_size").unwrap()["value"], 4);
     assert_eq!(field(&entry, "mf_watch").unwrap()["value"], false);
 
-    // Tracking again → 409.
-    let (status, _) = request(
+    // Tracking again is idempotent → 200 with the same uuid.
+    let (status, body) = request(
         &app,
         "POST",
         &format!("/repos/{repo}/track"),
         Some(json!({"path": abs.to_str().unwrap()})),
     )
     .await;
-    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(status, StatusCode::OK, "re-track failed: {body}");
+    assert_eq!(body["uuid"].as_str().unwrap(), uuid, "re-track returns the same uuid");
 
     // Outside the root → 400.
     let (status, _) = request(
