@@ -647,7 +647,16 @@ Reads metarecords; subsumes the former =list=, =query= and =get=:
 - with =-q= or no selector (match-all), prints the matching UUIDs, one per line
   (internal pagination over =next_cursor=).
 
+The selector may also be given as =--eq name[:type]=value= (repeatable, AND-ed):
+a *safe* exact-match query built without interpolating anything into the query
+DSL — the value is escaped, so a name with quotes cannot inject. Bare
+=name=value= defaults to a string; mutually exclusive with =-q=/=-i=. This is the
+selector the tagging scripts use instead of hand-quoting =name = "$TAG"=.
+
 =--select=, =--sort=, =--limit=, =--values= override the default output shape.
+=--select a,b,c --tsv= prints *one tab-separated row per metarecord* — the first
+value of each selected field, in order, empty for an absent field — the compact
+dump the scripts consume (e.g. the tag vocabulary).
 
 *** =mf metarecord add <spec> [<spec> ...]=
 
@@ -686,7 +695,11 @@ confirmation count comes from a =count=+=limit= query.
 Field operations scoped to the selected metarecord(s) (the selector is required).
 =get=/=unset= take a bare field =name=; =set=/=add=/=delete= take field specs:
 
-- =get <name>= — prints the field's value(s);
+- =get <name> [--resolve <field>]= — prints the field's value(s). With
+  =--resolve=, treats each value as a =Ref= and prints the referenced
+  metarecords' =<field>= instead — the ref→field join resolved in *one*
+  round-trip (a =uuid_in= query), e.g. a record's tag names from its =tags=
+  refs. =--resolve= requires =-i=;
 - =set <spec> [<spec> ...]= — replaces *all* rows of the field with the given
   value set (one or several — multi-map; the specs must share one name), in *one*
   log operation per metarecord;
@@ -700,6 +713,32 @@ Field operations scoped to the selected metarecord(s) (the selector is required)
 A UUID selector targets that one metarecord; a predicate applies the write across
 every match in one server-side transaction (one revision, one operation per
 affected metarecord). =-f=/=--force= is required for reserved =mfr_*= fields.
+
+** =mf tag [-i|-q|--eq] <verb> <path>= (hierarchical tags)
+
+Applies a *hierarchical tag convention* to the selected metarecord(s), owning
+the model the =gui-tag-*= scripts used to re-implement by hand. A *tag entry* is
+a metarecord =type = <entry_type>= (=tag=) whose =<name_field>= (=name=) is a
+=/=-separated path; records reference entries through the multi-map =Ref= fields
+=<positive>=/=<negative>=/=<mixed>= (=tags=/=negative_tags=/=mixed_tags=). All
+field names are configurable via the CLI config =[tag]= table (defaults reproduce
+this convention).
+
+Verbs (the selector precedes the verb, as for =mf metarecord=):
+- =add <path>= — the record(s) *have* the tag: idempotently add the positive
+  ref, then drop the more general *ancestor* tags, and — when =<path>= is
+  =exclusive= (own flag, or its parent is a =partition=) — drop its *siblings*;
+- =deny <path>= — the record(s) do *not*: add the negative ref, drop the more
+  specific *descendant* negatives it subsumes;
+- =mixed <path>= — mark the folder(s) mixed w.r.t. the tag (no subsumption);
+- =remove <path>= — drop the positive ref (undo of =add=);
+- =list= — the vocabulary as TSV =name<TAB>partition<TAB>exclusive= (0/1),
+  name-sorted — the universe format the tagging flow consumes; takes no selector.
+
+=add=/=deny=/=mixed= auto-create the tag entry when the vocabulary lacks it. The
+write is applied across the whole selector set through the batch field endpoints
+(=POST …/query/fields/{append,remove}=), one call per set — no per-record loop.
+So a whole subtree is tagged with =mf tag -q 'mfr_path ->* "/dir"' add <path>=.
 
 ** =mf field <verb> <id>= (direct row access)
 
