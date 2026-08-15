@@ -1,0 +1,45 @@
+<h1>Value picker</h1>
+<p>
+  Typing a raw UUID to fill a <strong>reference</strong> field
+  (<code>ref</code>) or a <strong>tree reference</strong> (<code>tree_ref</code>)
+  by hand is impractical. Instead, a field-editing form opens a
+  <strong>picker</strong>: a throwaway workspace you drive with the ordinary
+  panels — a <a data-help-page="metarecord-list">list</a>, a
+  <a data-help-page="treeref">tree explorer</a>, and so on — then confirm the
+  highlighted metarecord, which is handed back to the form.
+</p>
+
+<h2>How it works</h2>
+<ul>
+  <li>
+    Starting a pick opens the picker in the <strong>other</strong> slot, so the
+    form you were editing stays visible. The picker's status bar shows a prompt
+    telling you what to choose.
+  </li>
+  <li>
+    Navigate normally: highlighting a row selects it (nothing is committed yet).
+  </li>
+  <li>
+    <code>Ctrl+Enter</code> (<code>pick:confirm</code>) confirms and returns the
+    selection; <code>Ctrl+Escape</code> (<code>pick:cancel</code>) — or just
+    closing the picker — cancels. The slot's previous contents are restored
+    either way.
+  </li>
+</ul>
+<p>
+  Dedicated combos are used so plain <kbd>Enter</kbd>/<kbd>Escape</kbd> keep
+  their normal meaning inside the picker's panels. In the metarecord list the
+  finder auto-focuses in picker mode, so you can type to filter and
+  <code>Ctrl+Enter</code> straight away.
+</p>
+
+<h2>What comes back</h2>
+<p>
+  For a <code>ref</code> field the chosen UUID becomes the value. For a
+  <code>tree_ref</code> the pick fills the <strong>parent</strong>; you then type
+  the leaf <strong>name</strong> — e.g. picking the node <code>/document/test</code>
+  and typing <code>report</code> yields <code>/document/test/report</code>.
+</p>
+
+<p>See also: <a data-help-page="metarecord-detail">metarecord detail</a>,
+  <a data-help-page="treeref">tree reference</a>.</p>

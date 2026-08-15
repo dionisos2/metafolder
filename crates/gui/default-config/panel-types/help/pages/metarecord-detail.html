@@ -1,8 +1,41 @@
 <h1>Metarecord detail panel</h1>
 <p>
-  Shows one metarecord with all its fields and lets you edit them. Fields form a
-  multi-map (several fields may share a name), and each value has a type
-  (string, int, float, bool, datetime, references, tree references…). Pair it
-  with the <a data-help-page="metarecord-list">metarecord list</a> to inspect the
-  record under the cursor.
+  Shows one metarecord — the record under the cursor in the
+  <a data-help-page="metarecord-list">metarecord list</a> — with all its fields,
+  and lets you edit them. Fields form a <strong>multi-map</strong>: several
+  fields may share a name.
+</p>
+
+<h2>Values and types</h2>
+<p>
+  Each value has a type: string, int, float, bool, datetime, a
+  <strong>reference</strong> (<code>ref</code>) to another metarecord, a
+  <strong>tree reference</strong> (<code>tree_ref</code>, e.g.
+  <code>mfr_path</code>), and a few others. A value can also be
+  <strong>Nothing</strong> — an explicit "does not apply", distinct from the
+  field simply not existing. Reference and tree fields are filled with a
+  <a data-help-page="value-picker">value picker</a> rather than by typing a UUID.
+</p>
+
+<h2>Editing</h2>
+<p>Move between fields with the arrows / <code>j</code>/<code>k</code>. Then:</p>
+<table>
+  <tbody>
+    <tr><td><kbd>Enter</kbd></td><td>edit the field value under the cursor</td></tr>
+    <tr><td><code>a</code> / <code>d</code></td><td>add a field / delete the field under the cursor</td></tr>
+    <tr><td><code>Ctrl+n</code> / <code>Ctrl+s</code></td><td>create a new record / save changes</td></tr>
+  </tbody>
+</table>
+<p>
+  The command-input <code>m</code> family does the same from either the detail or
+  the list panel, with completion: <code>m s</code> set, <code>m a</code> add
+  value, <code>m v</code> edit value, <code>m d</code> delete value,
+  <code>m n</code> rename, <code>m t</code> retype. See the
+  <a data-help-page="keybindings">keyboard shortcuts</a> for the full family
+  (including the <code>m b *</code> bulk edits that act on the list selection).
+</p>
+
+<p>
+  Note: <code>mfr_*</code> fields are daemon-managed; overwriting one needs an
+  explicit force.
 </p>

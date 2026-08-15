@@ -1,0 +1,30 @@
+<h1>Sync panel</h1>
+<p>
+  Synchronises metarecords between two repositories. You pick a source and a
+  target, review what would change, resolve any conflicts, then run — all in one
+  panel, driving the shared sync engine (no shell scripting needed).
+</p>
+
+<h2>The flow</h2>
+<ol>
+  <li>
+    <strong>Pick two repositories</strong> and review the <strong>status</strong>
+    — how the two sides currently differ.
+  </li>
+  <li>
+    <strong>Review the plan</strong> — the operations that would be applied,
+    grouped by kind, with a live red/green overlay so you can see additions and
+    removals before committing to anything.
+  </li>
+  <li>
+    <strong>Resolve conflicts</strong> — where both sides changed the same thing,
+    edit the resolution inline.
+  </li>
+  <li>
+    <strong>Run</strong> — apply the plan.
+  </li>
+</ol>
+<p>
+  Open it with <code>s y</code> (or <code>panel:set-type sync</code>). Cross-repo
+  sync is also scriptable from the CLI (<code>mf sync plan / run / status</code>).
+</p>

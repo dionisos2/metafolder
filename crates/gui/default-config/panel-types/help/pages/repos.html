@@ -1,7 +1,20 @@
 <h1>Repositories panel</h1>
 <p>
   Lists the repositories the daemon knows about and lets you load, unload and
-  open them. Loading a repository warms its caches in the background (a progress
-  bar shows the load task); a workspace then targets one repository as its active
-  repo. Use <code>repos:open</code> to bring this panel up.
+  open them. Each workspace targets one repository as its <strong>active
+  repo</strong>; every panel in that workspace works against it.
+</p>
+
+<h2>Loading</h2>
+<p>
+  Loading a repository takes an exclusive lock on its database (one daemon per
+  repo) and warms its caches in the background — a
+  <a data-help-page="tracking">load task</a> shows a progress bar, and the repo
+  answers queries from the slower fallback engine meanwhile. Unloading releases
+  the lock.
+</p>
+<p>
+  Open this panel with <code>s r</code> (or <code>panel:set-type repos</code>).
+  Repositories are also managed from the CLI: <code>mf repo list / init / load /
+  unload</code>.
 </p>

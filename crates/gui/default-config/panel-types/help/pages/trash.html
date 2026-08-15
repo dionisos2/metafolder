@@ -1,0 +1,35 @@
+<h1>Trash panel</h1>
+<p>
+  A per-repository trash bin: deleting a tracked file moves it here instead of
+  destroying it, so nothing is lost by accident. It is a filesystem feature
+  (blobs and manifests under <code>.metafolder/internal/trash/</code>), shared
+  with the CLI's <code>mf trash</code>; the daemon has no part in it.
+</p>
+
+<h2>Sending files to the trash</h2>
+<p>
+  Press <code>Delete</code> on the selection in a
+  <a data-help-page="metarecord-list">list</a>,
+  <a data-help-page="metarecord-detail">detail</a>,
+  <a data-help-page="treeref">tree</a> or ref-list panel to trash the file behind
+  the metarecord (confirmed). In the <a data-help-page="file-manager">file
+  manager</a>, <code>Delete</code> trashes the highlighted file or folder itself —
+  to the repo trash when a repository is active, otherwise permanently — so
+  untracked entries can go too. A <a data-help-page="log">rollback</a> that would
+  overwrite an existing file routes the loser through the trash as well.
+</p>
+
+<h2>The panel</h2>
+<p>
+  Lists the trashed entries. Navigate with the arrows / <code>j</code>/<code>k</code>,
+  and:
+</p>
+<ul>
+  <li><strong>restore</strong> (<kbd>Enter</kbd>) — put the entry back at its original path.</li>
+  <li><strong>delete</strong> (<code>Delete</code>) — permanently remove the highlighted entry (confirmed).</li>
+  <li><strong>empty</strong> — permanently remove everything.</li>
+  <li><code>r</code> — refresh the list.</li>
+</ul>
+<p>
+  Pruning by age or size is available from the CLI (<code>mf trash prune</code>).
+</p>

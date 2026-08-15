@@ -1,8 +1,24 @@
 <h1>Tree reference panel</h1>
 <p>
-  Navigates a TreeRef forest — the hierarchical references (such as
-  <code>mfr_path</code>) that organise metarecords into trees per field name.
-  Browse from the roots down through the nodes; selecting a node can drive a
-  companion <a data-help-page="ref-list">reference list</a>. Paths are resolved
-  by the daemon, not walked client-side.
+  Navigates a <strong>TreeRef forest</strong> — the hierarchical references (such
+  as <code>mfr_path</code>, the file tree) that organise metarecords into trees,
+  one forest per field name. Paths are resolved by the daemon, never walked
+  client-side.
+</p>
+
+<h2>Navigating</h2>
+<table>
+  <tbody>
+    <tr><td><code>↑</code>/<code>↓</code> or <code>k</code>/<code>j</code></td><td>move the cursor</td></tr>
+    <tr><td><kbd>Enter</kbd> or <code>→</code></td><td>descend into the node</td></tr>
+    <tr><td><code>←</code> or <code>Backspace</code></td><td>go up to the parent</td></tr>
+    <tr><td><code>Home</code> / <code>End</code></td><td>first / last node</td></tr>
+    <tr><td><code>r</code></td><td>refresh</td></tr>
+  </tbody>
+</table>
+<p>
+  Which forest it shows is chosen by its field (default <code>mfr_path</code>).
+  Selecting a node publishes it, so it can drive a companion
+  <a data-help-page="ref-list">reference list</a> — the metarecords pointing at
+  the selected node.
 </p>

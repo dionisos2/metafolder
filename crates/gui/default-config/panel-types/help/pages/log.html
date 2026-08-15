@@ -1,7 +1,32 @@
 <h1>Log panel</h1>
 <p>
-  Shows the repository's event log: revisions and the operations within them.
-  Every write goes through the log, so you can review history and step through it.
-  <code>log:undo</code> and <code>log:redo</code> move HEAD backwards and
-  forwards, restoring field values and versions exactly.
+  The repository's event log. Every write goes through it — one
+  <strong>revision</strong> per change, each holding the individual
+  <strong>operations</strong> and their before/after snapshots — so the whole
+  history is reviewable and reversible.
+</p>
+
+<h2>Browsing</h2>
+<p>
+  Move through revisions with the arrows / <code>j</code>/<code>k</code>;
+  <kbd>Enter</kbd> expands a revision to show its operations. Watcher, reconcile
+  and manual edits all appear here.
+</p>
+
+<h2>Undo / redo</h2>
+<p>
+  <code>Ctrl+z</code> (<code>log:undo</code>) and <code>Ctrl+Shift+z</code>
+  (<code>log:redo</code>) move HEAD one revision back / forward on the active
+  repository, restoring field values <em>and</em> versions exactly. Navigation is
+  atomic: it computes the shortest path between where HEAD is and where you asked
+  to go, so you can jump to any point, not just step linearly.
+</p>
+
+<h2>Beyond the panel</h2>
+<p>
+  The CLI exposes the rest: <code>mf log list</code> to read history,
+  <code>mf log rollback</code> to move HEAD (with a coordinated
+  file-move policy), and <code>mf log prune</code> to compact old history. A
+  rollback that would overwrite a file on disk routes the loser to the
+  <a data-help-page="trash">trash</a> first.
 </p>

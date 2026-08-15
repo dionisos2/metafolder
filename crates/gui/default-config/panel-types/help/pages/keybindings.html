@@ -1,0 +1,119 @@
+<h1>Keyboard shortcuts</h1>
+<p>
+  Every action is a <a data-help-page="command-input">command</a>; a keybinding
+  is just a shortcut that dispatches one. Bindings live in a single file,
+  <code>~/.config/metafolder/gui/keybindings.toml</code> — the
+  <strong>complete</strong> set, editable through <code>config:open</code>
+  (which also shows the config paths). The tables below are the shipped defaults.
+</p>
+
+<h2>How keys are matched</h2>
+<ul>
+  <li>
+    A binding is a <strong>combo</strong> (<code>ctrl+z</code>) or a
+    <strong>sequence</strong> of combos typed in turn (<code>s l</code>,
+    <code>m b s</code>). While a sequence is pending the status bar lists the
+    possible continuations; <strong>Escape</strong> cancels it.
+  </li>
+  <li>
+    Most keys are <strong>scoped to the focused panel type</strong> (the same
+    combo does different things per panel), so navigation feels the same
+    everywhere. A few are global.
+  </li>
+  <li>
+    Keys do <em>not</em> fire while a text field has focus, unless the binding
+    opts in (the <code>editing:*</code> and <code>status:clear</code> keys do).
+  </li>
+</ul>
+
+<h2>Workspaces and panels</h2>
+<table>
+  <tbody>
+    <tr><td><code>t</code> / <code>w</code></td><td>new tab / close tab</td></tr>
+    <tr><td><code>n</code> / <code>p</code></td><td>next / previous workspace (moves both slots)</td></tr>
+    <tr><td><code>1</code>…<code>9</code></td><td>go to tab N</td></tr>
+    <tr><td><code>v</code> / <code>c</code></td><td>split toggle / unsplit</td></tr>
+    <tr><td><code>o</code> / <code>x</code></td><td>focus the other slot / swap the two slots</td></tr>
+    <tr><td><code>s</code> then a letter</td><td>set the focused slot's panel type (see below)</td></tr>
+  </tbody>
+</table>
+<p><strong>Panel-type keys</strong> (after <code>s</code>):</p>
+<table>
+  <tbody>
+    <tr><td><code>l</code> list · <code>d</code> detail · <code>f</code> file · <code>m</code> file-manager · <code>o</code> log · <code>r</code> repos</td><td></td></tr>
+    <tr><td><code>g</code> message · <code>w</code> workspace-info · <code>t</code> treeref · <code>e</code> ref-list · <code>v</code> recent</td><td></td></tr>
+    <tr><td><code>b</code> trash · <code>y</code> sync · <code>p</code> help</td><td></td></tr>
+  </tbody>
+</table>
+
+<h2>Navigation (list-like panels)</h2>
+<table>
+  <tbody>
+    <tr><td><code>↑</code>/<code>↓</code> or <code>k</code>/<code>j</code></td><td>move the cursor up / down</td></tr>
+    <tr><td><code>Home</code> / <code>End</code></td><td>first / last row</td></tr>
+    <tr><td><code>Enter</code></td><td>the panel's primary action (open / descend / edit / expand)</td></tr>
+    <tr><td><code>→</code> / <code>←</code></td><td>descend / go up (in the tree and list panels)</td></tr>
+    <tr><td><code>Backspace</code></td><td>parent directory / parent node</td></tr>
+    <tr><td><code>r</code></td><td>refresh the view</td></tr>
+    <tr><td><code>Delete</code></td><td>send the selection to the <a data-help-page="trash">trash</a> (confirmed)</td></tr>
+  </tbody>
+</table>
+
+<h2>The metarecord list &amp; detail</h2>
+<table>
+  <tbody>
+    <tr><td><code>/</code></td><td>focus the finder (quick filter)</td></tr>
+    <tr><td><code>Ctrl+/</code></td><td>edit the query</td></tr>
+    <tr><td><code>Space</code> / <code>Ctrl+Space</code></td><td>toggle selection / clear selection</td></tr>
+    <tr><td><code>a</code> / <code>d</code></td><td>add / delete a field (detail)</td></tr>
+    <tr><td><code>Ctrl+n</code> / <code>Ctrl+s</code></td><td>create / save a record (detail)</td></tr>
+  </tbody>
+</table>
+<p>
+  The <code>m</code> sequences edit fields from the command input, with
+  completion (they work from both the list and the detail panel):
+  <code>m s</code> set · <code>m a</code> add value · <code>m v</code> edit
+  value · <code>m d</code> delete value · <code>m n</code> rename ·
+  <code>m t</code> retype. The <strong>bulk</strong> variants act on the whole
+  selection: <code>m b s</code> set · <code>m b a</code> add · <code>m b r</code>
+  remove.
+</p>
+
+<h2>File manager &amp; file preview</h2>
+<table>
+  <tbody>
+    <tr><td><code>Ctrl+c</code> / <code>Ctrl+x</code> / <code>Ctrl+v</code></td><td>copy / cut / paste (file-manager)</td></tr>
+    <tr><td><code>F2</code> / <code>Ctrl+d</code></td><td>rename / duplicate</td></tr>
+    <tr><td><code>Ctrl+Shift+n</code></td><td>new folder</td></tr>
+    <tr><td><code>+</code> / <code>-</code> / <code>=</code> / <code>0</code></td><td>zoom in / out / fit / reset (<a data-help-page="file">file</a> preview)</td></tr>
+  </tbody>
+</table>
+
+<h2>Global &amp; editing</h2>
+<table>
+  <tbody>
+    <tr><td><code>:</code> / <code>!</code></td><td>focus the command input / the shell (<code>!</code>) input</td></tr>
+    <tr><td><code>Ctrl+z</code> / <code>Ctrl+Shift+z</code></td><td>undo / redo one revision (<a data-help-page="log">log</a>)</td></tr>
+    <tr><td><code>g r</code></td><td>jump to a <a data-help-page="recent">recently-viewed</a> metarecord</td></tr>
+    <tr><td><code>h h</code> / <code>h c</code> / <code>F1</code></td><td>open help / arm the help-cursor / help-cursor</td></tr>
+    <tr><td><code>Escape</code></td><td>unfocus a text input (keep the draft); cancel a pending sequence</td></tr>
+    <tr><td><code>Ctrl+q</code></td><td>discard the input draft</td></tr>
+    <tr><td><code>Ctrl+a</code> / <code>Ctrl+e</code></td><td>go to line start / end</td></tr>
+    <tr><td><code>Ctrl+l</code></td><td>dismiss the transient status-bar message</td></tr>
+    <tr><td><code>Ctrl+Enter</code> / <code>Ctrl+Escape</code></td><td>confirm / cancel a <a data-help-page="value-picker">value picker</a></td></tr>
+  </tbody>
+</table>
+<p>
+  <code>Ctrl+p</code> / <code>Ctrl+n</code> / <code>Ctrl+r</code> in a text field
+  walk and search its <a data-help-page="input-history">input history</a> — these
+  are attached to the input directly, not through this file.
+</p>
+
+<h2>Changing a binding</h2>
+<p>
+  Open <code>config:open</code> and use the keybinding editor, or edit
+  <code>keybindings.toml</code> and re-run <code>metafolder-sync-config</code>.
+  A key maps to a single binding, or to an array of per-panel bindings
+  (<code>when = "&lt;panel-type&gt;"</code>); <code>text-input = true</code> lets
+  it fire while typing. <code>set</code> upserts and <code>remove</code> unbinds.
+</p>

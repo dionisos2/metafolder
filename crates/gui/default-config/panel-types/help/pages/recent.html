@@ -1,0 +1,24 @@
+<h1>Recent panel</h1>
+<p>
+  Lists the metarecords you have viewed most recently in this repository, newest
+  first, with how long ago each was viewed. Recency is tracked GUI-side (the
+  daemon plays no part); opening a row publishes the selection just like the
+  <a data-help-page="metarecord-list">metarecord list</a>, so a companion
+  <a data-help-page="metarecord-detail">detail</a> or <a data-help-page="file">file</a>
+  panel follows it.
+</p>
+
+<h2>Two ways to use it</h2>
+<ul>
+  <li>
+    <strong>As a picker</strong> — press <code>g r</code> ("go recent") from any
+    panel to open the recent list in the command input, filtered by ordered
+    substring as you type; <kbd>Enter</kbd> jumps to the highlighted record.
+  </li>
+  <li>
+    <strong>As a panel</strong> — <code>s v</code> (or
+    <code>panel:set-type recent</code>) shows it in a slot. Navigate with the
+    arrows / <code>j</code>/<code>k</code>, <kbd>Enter</kbd> or <code>→</code>
+    opens the record, <code>r</code> refreshes.
+  </li>
+</ul>

@@ -1,9 +1,33 @@
 <h1>File panel</h1>
 <p>
-  Previews a single file together with its metarecord fields. Images, video and
-  audio play inline when the required codecs are available (the panel probes
-  support first to avoid crashing the WebView); otherwise a type glyph is shown.
-  The media toolbar offers zoom and fit controls. Open files from the
-  <a data-help-page="file-manager">file manager</a> or the
-  <a data-help-page="metarecord-list">metarecord list</a>.
+  Previews a single file together with its metarecord fields. It follows the
+  selection — open a file from the <a data-help-page="file-manager">file
+  manager</a> or the <a data-help-page="metarecord-list">metarecord list</a>, and
+  the arrows keep driving that list's cursor while the preview updates.
 </p>
+
+<h2>Media preview</h2>
+<p>
+  Images, video and audio play inline when the required codecs are present. The
+  panel <strong>probes support first</strong> (sinks and per-file decoders) and
+  falls back to a type glyph rather than risk crashing the WebView on a missing
+  codec; when a decoder is missing it says so instead of playing. Video and GIF
+  tiles show a still poster when <code>ffmpeg</code> is available.
+</p>
+
+<h2>Controls</h2>
+<table>
+  <tbody>
+    <tr><td><code>+</code> / <code>-</code></td><td>zoom in / out</td></tr>
+    <tr><td><code>=</code></td><td>fit to the panel</td></tr>
+    <tr><td><code>0</code></td><td>original size</td></tr>
+  </tbody>
+</table>
+<p>
+  A GIF preview has an <strong>animate</strong> toggle
+  (<code>file:toggle-gif-animation</code>). The media toolbar exposes the same
+  zoom/fit controls as buttons.
+</p>
+
+<p>See also: <a data-help-page="metarecord-detail">the metarecord detail panel</a>
+  for editing the fields shown here.</p>

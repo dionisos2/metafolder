@@ -5,10 +5,44 @@
     "file": "getting-started.html",
     "aliases": [
       "help", "start", "interface", "tab-bar", "tab", "panel", "panel-type",
-      "layout", "connection", "daemon", "keybindings",
-      "status-bar", "task-bar", "config", "reconcile",
-      "devtools", "quit"
+      "layout", "connection", "daemon",
+      "status-bar",
+      "devtools", "quit", "help-cursor", "config-open"
     ]
+  },
+  {
+    "id": "keybindings",
+    "title": "Keyboard shortcuts",
+    "file": "keybindings.html",
+    "aliases": [
+      "keybindings", "keybinding", "keys", "shortcuts", "shortcut", "keyboard",
+      "bindings", "sequence", "combo", "config", "keybindings.toml"
+    ]
+  },
+  {
+    "id": "tracking",
+    "title": "Tracking files",
+    "file": "tracking.html",
+    "aliases": [
+      "tracking", "track", "watch", "mf_watch", "ignore", "mf_ignore",
+      "reconcile", "reconcile:run", "task", "tasks", "task-bar", "mfr_path",
+      "untracked"
+    ]
+  },
+  {
+    "id": "value-picker",
+    "title": "Value picker",
+    "file": "value-picker.html",
+    "aliases": [
+      "value-picker", "picker", "pick", "pick:confirm", "pick:cancel",
+      "ref", "reference", "tree_ref"
+    ]
+  },
+  {
+    "id": "input-history",
+    "title": "Input history",
+    "file": "input-history.html",
+    "aliases": ["input-history", "input history", "history", "recall"]
   },
   {
     "id": "command-input",
@@ -41,13 +75,13 @@
     "id": "file",
     "title": "File panel",
     "file": "file.html",
-    "aliases": ["viewer", "media"]
+    "aliases": ["viewer", "media", "preview", "zoom", "codec", "gif"]
   },
   {
     "id": "metarecord-detail",
     "title": "Metarecord detail panel",
     "file": "metarecord-detail.html",
-    "aliases": ["detail"]
+    "aliases": ["detail", "field", "fields", "edit-field", "value", "types", "nothing"]
   },
   {
     "id": "repos",
@@ -59,7 +93,25 @@
     "id": "log",
     "title": "Log panel",
     "file": "log.html",
-    "aliases": ["history"]
+    "aliases": ["event-log", "revision", "undo", "redo", "rollback", "prune"]
+  },
+  {
+    "id": "recent",
+    "title": "Recent panel",
+    "file": "recent.html",
+    "aliases": ["recent", "recently-viewed", "recently viewed"]
+  },
+  {
+    "id": "trash",
+    "title": "Trash panel",
+    "file": "trash.html",
+    "aliases": ["trash", "trash-bin", "delete", "restore", "empty"]
+  },
+  {
+    "id": "sync",
+    "title": "Sync panel",
+    "file": "sync.html",
+    "aliases": ["sync", "synchronise", "synchronize", "cross-repo"]
   },
   {
     "id": "message",

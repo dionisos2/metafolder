@@ -1,0 +1,37 @@
+<h1>Input history</h1>
+<p>
+  Every text zone — the <a data-help-page="command-input">command input</a>, the
+  shell (<code>!</code>) input, and panel text fields — keeps a persistent
+  history, <strong>per repository and per zone</strong>. It is a GUI feature
+  (stored under <code>.metafolder/gui/history/</code>); the daemon plays no part.
+  Confirmed entries are appended, one per line.
+</p>
+
+<h2>Recall keys</h2>
+<p>These three keys are attached to the input directly (they work while you type):</p>
+<table>
+  <tbody>
+    <tr>
+      <td><code>Ctrl+p</code> / <code>Ctrl+n</code></td>
+      <td>
+        walk back / forward through the zone's entries, readline-style. Your
+        in-progress draft is kept at the newest position and restored when you
+        walk past it; making a real edit resets the walk.
+      </td>
+    </tr>
+    <tr>
+      <td><code>Ctrl+r</code></td>
+      <td>
+        an fzf-style search overlay: entries newest-first, deduplicated, filtered
+        by ordered-substring matching. <code>Ctrl+p</code>/<code>Ctrl+n</code> or
+        the arrows move the selection, <kbd>Enter</kbd> inserts it,
+        <kbd>Escape</kbd> (or losing focus) cancels.
+      </td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  These keys are not in <code>keybindings.toml</code>. Binding <code>ctrl+p</code>,
+  <code>ctrl+n</code> or <code>ctrl+r</code> there with <code>text-input = true</code>
+  would shadow them.
+</p>

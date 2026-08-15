@@ -1,0 +1,71 @@
+<h1>Tracking files</h1>
+<p>
+  A metarecord can describe anything, but most describe a <strong>file</strong>:
+  it carries an <code>mfr_path</code> (a <a data-help-page="treeref">TreeRef</a>
+  into the repository tree) plus stat-derived <code>mfr_*</code> fields. The
+  daemon keeps a tracked file's metarecord in sync as the file moves, changes or
+  is deleted.
+</p>
+
+<h2>Opt-in watching</h2>
+<p>
+  Nothing is tracked until you ask. Two fields on a directory's metarecord
+  control it, inherited down the <code>mfr_path</code> tree:
+</p>
+<ul>
+  <li>
+    <code>mf_watch</code> — <code>true</code> enables watching for that directory
+    and everything below it (until a descendant overrides it). It is
+    <code>false</code> at the repository root by default.
+  </li>
+  <li>
+    <code>mf_ignore</code> — a set of regex patterns; a matching path is skipped.
+    The <em>nearest ancestor</em> that sets <code>mf_ignore</code> wins (patterns
+    are not merged down the tree).
+  </li>
+</ul>
+
+<h2>Bringing files in</h2>
+<ul>
+  <li>
+    In the <a data-help-page="file-manager">file manager</a>, select untracked
+    files and use <strong>Add to DB</strong> — this creates their metarecords
+    (with <code>mf_watch = false</code>, so they are recorded but not yet
+    watched).
+  </li>
+  <li>
+    Set <code>mf_watch = true</code> on a directory metarecord to have the daemon
+    follow it live from then on.
+  </li>
+  <li>
+    Run <code>reconcile:run</code> for a full pass: it walks the tree (pruned by
+    eligibility), creates metarecords for new files, and detects moves by content
+    fingerprint. Reconcile never blanks a stale path — only the live watcher and
+    explicit <code>force</code> writes set <code>mfr_path = Nothing</code>.
+  </li>
+</ul>
+<p>
+  When a watched file is deleted its metarecord is <strong>kept</strong>; only
+  its <code>mfr_path</code> becomes empty (<code>Nothing</code>), so history and
+  your own fields survive.
+</p>
+
+<h2>Watching switched off</h2>
+<p>
+  While a subtree is not watched, its metadata is deliberately
+  <strong>frozen</strong> — the daemon will not silently rewrite <code>mfr_*</code>
+  fields for files it is not tracking. Re-enable <code>mf_watch</code> or run a
+  reconcile to refresh them.
+</p>
+
+<h2>Background tasks</h2>
+<p>
+  Reconcile, query warm-up and the watcher flush run as daemon
+  <strong>tasks</strong>; their live progress appears in the <strong>task
+  bar</strong> above the status bar (separate from the transient status
+  messages). Loading a repository warms its caches as one such task.
+</p>
+
+<p>See also: <a data-help-page="file-manager">file manager</a>,
+  <a data-help-page="trash">trash</a>,
+  <a data-help-page="log">the event log</a>.</p>
