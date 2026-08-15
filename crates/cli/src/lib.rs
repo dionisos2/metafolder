@@ -8,6 +8,7 @@ pub mod config;
 pub mod fieldspec;
 pub mod gui;
 pub mod log;
+pub mod order;
 pub mod sync;
 pub mod trash;
 

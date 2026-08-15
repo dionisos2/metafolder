@@ -2662,3 +2662,51 @@ fn test_sync_show_renders_plan_status() {
     assert!(files.stdout.contains("copy") && !files.stdout.contains("create-link"),
         "files view: {}", files.stdout);
 }
+
+// ── mf order (folder child numbering) ─────────────────────────────────────────
+
+#[test]
+fn test_order_numbers_folder_children() {
+    let (repo, root) = init_repo("order");
+    let album = root.join("album");
+    std::fs::create_dir_all(album.join("extra")).unwrap();
+    for f in ["song0.avi", "song1.avi", "song3.avi", "README.md"] {
+        std::fs::write(album.join(f), b"x").unwrap();
+    }
+    // Track each child (creates the metarecord + ancestor chain, with mfr_type).
+    let track = |p: std::path::PathBuf| {
+        let out = mf(&["-u", &repo, "track", p.to_str().unwrap()]);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    let song0 = track(album.join("song0.avi"));
+    let song1 = track(album.join("song1.avi"));
+    let song3 = track(album.join("song3.avi"));
+    let readme = track(album.join("README.md"));
+    let extra = track(album.join("extra"));
+
+    // song0 carries an ordering metadata (a custom field, so no reserved-force).
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &song0, "field", "set", "track_no:int=3"]));
+
+    let out = mf(&["-u", &repo, "order", album.to_str().unwrap(), "--meta", "track_no"]);
+    assert_ok(&out);
+
+    let pos = |uuid: &str, field: &str| -> String {
+        let out = mf(&["-u", &repo, "metarecord", "-i", uuid, "field", "get", field]);
+        assert_ok(&out);
+        out.stdout.trim().to_string()
+    };
+    // song0 pinned by its metadata (anchor), then the "song*.avi" name cluster,
+    // then README by date; the sub-directory is numbered separately.
+    assert_eq!(pos(&song0, "order_position_file"), "1");
+    assert_eq!(pos(&song1, "order_position_file"), "2");
+    assert_eq!(pos(&song3, "order_position_file"), "4");
+    assert_eq!(pos(&readme, "order_position_file"), "5");
+    assert_eq!(pos(&extra, "order_position_dir"), "1");
+
+    // A second run never overwrites an existing position: nothing is written.
+    let again = mf(&["-u", &repo, "order", album.to_str().unwrap(), "--meta", "track_no"]);
+    assert_ok(&again);
+    assert_eq!(again.stdout.trim(), "0", "second run must write nothing");
+    assert_eq!(pos(&song0, "order_position_file"), "1");
+}

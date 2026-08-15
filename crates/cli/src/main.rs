@@ -135,6 +135,24 @@ enum Command {
         #[arg(long)]
         relative: bool,
     },
+    /// Number a folder's direct children for sorting: assigns
+    /// `order_position_file` / `order_position_dir` (files and dirs are numbered
+    /// independently; an existing position is never overwritten). Orders by an
+    /// ordering metadata, then a shared name pattern, then creation date.
+    Order {
+        /// The folder whose direct children to number
+        path: PathBuf,
+        /// Metadata field giving an explicit order
+        #[arg(long, default_value = "mfr_meta_track")]
+        meta: String,
+        /// Largest gap between shared-pattern name numbers still treated as an
+        /// order (a larger gap ⇒ the number is an id/hash, ignored)
+        #[arg(long = "max-gap", default_value_t = metafolder_cli::order::DEFAULT_MAX_GAP)]
+        max_gap: i64,
+        /// Print the planned positions without writing them
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// User schema commands
     Schema {
         #[command(subcommand)]
@@ -708,6 +726,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         ),
         Command::Track { path } => commands::track(ctx, &path),
         Command::Path { uuid, relative } => commands::path(ctx, &uuid, relative),
+        Command::Order { path, meta, max_gap, dry_run } => {
+            commands::order(ctx, &path, &meta, max_gap, dry_run)
+        }
         Command::Schema { command } => match command {
             SchemaCommand::Check { predicate, json } => {
                 commands::schema_check(ctx, predicate.as_deref(), json)

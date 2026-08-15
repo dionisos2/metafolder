@@ -610,6 +610,36 @@ With =--relative=, prints the repo-root-relative path instead, starting
 with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
 metarecord has no =mfr_path= TreeRef (untracked or deleted file).
 
+** =mf order <folder> [--meta <field>] [--max-gap <n>] [--dry-run]=
+
+Numbers a folder's *direct children* so a "sort by position" orders them
+sensibly (an album's tracks, a series' seasons). Files and directories are
+numbered independently into two integer fields, =order_position_file= and
+=order_position_dir= (so each kind can be sorted on its own), and a child that
+already has a position is *never overwritten* — user corrections survive a
+re-run. Operates on already-tracked children (reconcile the folder first if
+some are missing).
+
+Each kind's children are ordered by three heuristics in turn, over a running
+maximum position (=next= = max+1); gaps are intentional (they mirror the number
+differences) and positions are not compacted:
+
+1. *Metadata* — children carrying an integer ordering field (=--meta=, default
+   =mfr_meta_track=), sorted by it: an anchor at =next=, then
+   =pos = anchor_pos + (value − anchor_value)= (ties share a position).
+2. *Name pattern* — children whose basename is =<prefix><number><suffix>=,
+   clustered by identical =(prefix, suffix)= (the *last* digit run is the
+   number). A cluster needs ≥2 members and a minimal consecutive gap ≤
+   =--max-gap= (default 1000; a larger gap means the number is an id/hash, not
+   an order). A member already positioned (e.g. by metadata) pins the cluster;
+   otherwise its lowest-numbered member is placed at =next=. Others:
+   =pos = anchor_pos + (number − anchor_number)=.
+3. *Creation date* — everything left, by =mfr_btime= ascending (missing btime
+   last, then by name), each at =next=.
+
+=--dry-run= prints the planned =uuid<TAB>field=pos<TAB>name= lines without
+writing; otherwise the number of fields written is printed.
+
 ** Configuring the watch scope
 
 The watch/ignore system is driven by the =mf_watch= and =mf_ignore= fields
