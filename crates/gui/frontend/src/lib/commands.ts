@@ -6,7 +6,8 @@ import { osmMatch } from '../../../panel-shim/finder.js';
 import { setHelpCursor } from './cursor';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
-import { focusedWs, store } from './store.svelte';
+import { recentLine } from './recent';
+import { focusedWs, store, workspaceById } from './store.svelte';
 import type { CommandDef, LayoutView } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
@@ -140,6 +141,93 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
 export function clearArgSpecs(): void {
   argSpecs.clear();
 }
+
+// ── Recently-viewed metarecords picker (the `recent` builtin) ───────────────
+// A shell builtin, so it works from any focused panel (a panel-registered
+// command only runs while its panel is focused). The metarecord argument
+// completes to the active repo's recently-viewed list (crate::recent), newest
+// first, one line "<mfr_path> — <label> — <name>"; the command input filters
+// the candidates by ordered substring — the same principle as the finder quick
+// filter — and picking one opens it in the other panel (file when the record
+// has paths, else metarecord-detail).
+
+/** Candidate display line → uuid, rebuilt on each completion pass. */
+const recentChoices = new Map<string, string>();
+
+/** A daemon round-trip through the proxy, throwing the daemon's error on >=400. */
+async function daemonJson(method: string, path: string, body: unknown = null): Promise<unknown> {
+  const res = await invoke<{ status: number; body: unknown }>('daemon_request', { method, path, body });
+  if (res.status >= 400) {
+    const err = (res.body as { error?: string })?.error;
+    throw new Error(err ?? `daemon ${method} ${path} failed (HTTP ${res.status})`);
+  }
+  return res.body;
+}
+
+/** The active repo of the focused workspace, or null. */
+function focusedRepo(): string | null {
+  return workspaceById(focusedWs())?.active_repo ?? null;
+}
+
+/** Absolute filesystem path of a repo-relative `mfr_path` position. */
+function absPath(root: string, rel: string): string {
+  return rel === '' ? root : `${root}/${rel}`;
+}
+
+/** The repository's filesystem root (via GET /repos), or '' when not found. */
+async function repoRoot(repo: string): Promise<string> {
+  const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; root: string }[];
+  const norm = repo.replace(/-/g, '');
+  return repos.find((r) => r.repo_uuid.replace(/-/g, '') === norm)?.root ?? '';
+}
+
+/** Completion candidates for the `recent` argument: the recently-viewed list,
+ *  newest first, one display line each. Also (re)builds `recentChoices`. */
+async function recentCandidates(): Promise<string[]> {
+  recentChoices.clear();
+  const repo = focusedRepo();
+  if (!repo) return [];
+  const entries = await invoke<{ uuid: string; viewed_at: string }[]>('recent_read', { repo, limit: null });
+  const uuids = entries.map((e) => e.uuid);
+  if (uuids.length === 0) return [];
+  const [records, paths] = (await Promise.all([
+    daemonJson('POST', `/repos/${repo}/metarecords/batch`, { uuids }),
+    daemonJson('POST', `/repos/${repo}/tree/resolve`, { field: 'mfr_path', uuids }),
+  ])) as [Record<string, Metafolder.Metarecord>, Record<string, string[]>];
+  const lines: string[] = [];
+  for (const { uuid } of entries) {
+    const line = recentLine(records[uuid], paths[uuid]?.[0] ?? '', uuid);
+    if (!recentChoices.has(line)) recentChoices.set(line, uuid); // newest wins on a collision
+    lines.push(line);
+  }
+  return lines;
+}
+
+/** Opens the picked line's metarecord: publishes the selection and reveals the
+ *  matching viewer in the other slot, exactly like a metarecord-list open. */
+async function openRecent(choice: string, ws: string): Promise<void> {
+  const repo = focusedRepo();
+  const uuid = recentChoices.get(choice);
+  if (!repo || !uuid) throw new Error(`no recently-viewed metarecord matches "${choice}"`);
+  const resolved = (await daemonJson('POST', `/repos/${repo}/tree/resolve`, {
+    field: 'mfr_path',
+    uuids: [uuid],
+  })) as Record<string, string[]>;
+  const rel = resolved[uuid] ?? [];
+  const root = rel.length > 0 ? await repoRoot(repo) : '';
+  const paths = rel.map((p) => absPath(root, p));
+  await invoke('ws_set_var', { wsId: ws, key: 'selected_metarecord', value: { uuid, repo } });
+  await invoke('ws_set_var', { wsId: ws, key: 'selected_paths', value: paths });
+  const other = store.layout.focused === 'left' ? 'right' : 'left';
+  await invoke('tab_assign', { wsId: ws, slot: other });
+  await invoke('panel_set_type', { slot: other, panelType: paths.length > 0 ? 'file' : 'metarecord-detail' });
+}
+
+// The builtin's argument spec is always present (unlike panel specs, registered
+// at mount): register it once at module load.
+registerArgs('recent', [
+  { name: 'metarecord', prompt: () => 'Recently viewed:', complete: () => recentCandidates() },
+]);
 
 /**
  * Assembles a command's full argument list from the inline-`provided` prefix,
@@ -537,6 +625,11 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'repos:open':
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
+      return true;
+    case 'recent':
+      // The `metarecord` argument was collected by dispatch (with completion);
+      // args[0] is the picked display line.
+      if (ws && args[0]) await openRecent(args[0], ws);
       return true;
     case 'help':
     case 'help:help': {

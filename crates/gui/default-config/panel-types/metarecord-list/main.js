@@ -1,7 +1,7 @@
 // metarecord-list panel: metarecords of the active repo filtered by an embedded
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
-import { byId, el, field, fields, formatValue, qs, thumbnail } from '/__ui.js';
+import { byId, el, fields, qs, thumbnail } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
@@ -547,54 +547,6 @@ export async function mount(root, metafolder) {
     await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
   }
 
-  // ── Recently-viewed metarecords picker (crate::recent) ──────────────────────
-  // The `recent` command's argument completion lists the repo's recently-viewed
-  // metarecords, newest first, one line "<mfr_path> — <label> — <name>". The
-  // command input filters them by ordered substring — the same principle as the
-  // finder quick filter — and picking one opens it like a list selection.
-
-  /** @type {Map<string, string>} display line → uuid, rebuilt on each complete() */
-  const recentChoices = new Map();
-
-  /** The first `name` field of `rec` rendered as text, or '' when absent. */
-  function fieldText(rec, name) {
-    const f = field(rec, name);
-    return f ? formatValue(f.value) : '';
-  }
-
-  async function recentCandidates() {
-    recentChoices.clear();
-    const r = repo;
-    if (!r) return [];
-    const entries = await metafolder.recent.list(r);
-    const uuids = entries.map((e) => e.uuid);
-    if (uuids.length === 0) return [];
-    await cache.fetchMetarecords(r, uuids);
-    const lines = [];
-    for (const { uuid } of entries) {
-      const rec = cache.readMetarecord(r, uuid);
-      const path = await daemon.resolvePath(r, uuid).catch(() => '');
-      const label = rec === REFRESH ? '' : fieldText(rec, 'label');
-      const name = rec === REFRESH ? '' : fieldText(rec, 'name');
-      const line = [path, label, name].filter(Boolean).join(' — ') || uuid;
-      // Newest wins on a collision (entries are newest first).
-      if (!recentChoices.has(line)) recentChoices.set(line, uuid);
-      lines.push(line);
-    }
-    return lines;
-  }
-
-  /** @param {string} choice a line returned by recentCandidates() */
-  async function openRecent(choice) {
-    const r = repo;
-    const uuid = recentChoices.get(choice);
-    if (!uuid || !r) throw new Error(`no recently-viewed metarecord matches "${choice}"`);
-    const paths = await daemon.metarecordPaths(r, { uuid }).catch(() => []);
-    await workspace.set('selected_metarecord', { uuid, repo: r });
-    await workspace.set('selected_paths', paths);
-    await commands.invoke(`panel:reveal-other ${paths.length > 0 ? 'file' : 'metarecord-detail'}`);
-  }
-
   // ── Query (two-zone editor) ─────────────────────────────────────────────
 
   /** Recomputes `queryIR` from the current editor state (no fetch). */
@@ -994,17 +946,6 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:open', {
     label: 'Metarecord list: open the selection in the other panel',
     handler: () => openSelected(),
-  });
-  void commands.register('recent', {
-    label: 'Open a recently-viewed metarecord',
-    args: [
-      {
-        name: 'metarecord',
-        prompt: () => 'Recently viewed:',
-        complete: () => recentCandidates(),
-      },
-    ],
-    handler: (choice) => void openRecent(choice),
   });
   void commands.register('metarecord-list:set-mode', {
     label: 'Metarecord list: switch display mode (table | grid)',

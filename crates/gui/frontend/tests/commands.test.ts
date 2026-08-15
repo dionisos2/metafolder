@@ -20,6 +20,15 @@ import {
 } from '../src/lib/commands';
 import type { LayoutView } from '../src/lib/types';
 
+// Runs before any clearArgSpecs() (called in the argSpecs-registry suite below):
+// the `recent` builtin registers its argument spec at module load, so the
+// command input collects the metarecord pick interactively.
+describe('recent builtin', () => {
+  test('registers its metarecord argument spec at module load', () => {
+    expect(argSpecFor('recent')?.map((s) => s.name)).toEqual(['metarecord']);
+  });
+});
+
 describe('parseInvocation', () => {
   test('plain command name', () => {
     expect(parseInvocation('tab:new')).toEqual({ name: 'tab:new', args: [] });

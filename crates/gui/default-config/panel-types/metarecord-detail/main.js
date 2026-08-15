@@ -46,8 +46,8 @@ export async function mount(root, metafolder) {
   let current = null;
   /** @type {Loaded|null} */
   let metarecord = null;
-  /** uuid last recorded in the recently-viewed list, to avoid re-touching the
-   *  same record on a `metarecords:dirty` reload. */
+  /** @type {string|null} uuid last recorded in the recently-viewed list, to
+   *  avoid re-touching the same record on a `metarecords:dirty` reload. */
   let lastViewedUuid = null;
   /** @type {number|null} field id being edited, or null */
   let editingField = null;

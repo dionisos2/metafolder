@@ -102,6 +102,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("quit", "Exit the GUI", true),
         ("daemon:set-url", "Change the daemon URL", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
+        ("recent", "Open a recently-viewed metarecord", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
         ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
         ("log:undo", "Undo the last revision of the active repository", true),
