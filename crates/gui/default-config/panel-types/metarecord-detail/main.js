@@ -13,6 +13,7 @@ import {
   MATCH_ALL,
 } from '/__value-widget.js';
 import { schemaTypes, templateFields } from '/__schema-template.js';
+import { fileMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 
 /**
@@ -1272,16 +1273,42 @@ export async function mount(root, metafolder) {
   metafolder.contextMenu.addDefaultItems(() => {
     const record = current;
     if (!record) return [];
-    return [
+    /** @type {Metafolder.MenuItem[]} */
+    const items = [
       { label: 'Copy UUID', action: () => void copyText(record.uuid) },
       {
         label: 'Enable tracking & reconcile',
         action: () => void commands.invoke('metarecord:watch-reconcile'),
       },
       { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
-      { label: 'Trash file', action: () => void commands.invoke('metarecord:trash') },
     ];
+    // File actions (cut/copy/paste/rename/duplicate/trash) when this metarecord
+    // is backed by a file — shared with the file manager (/__file-actions.js).
+    if (record.repo && currentPaths.length > 0) {
+      items.push(
+        '-',
+        ...fileMenuItems({
+          metafolder,
+          repo: record.repo,
+          path: currentPaths[0],
+          onChanged: () => void workspace.set('metarecords:dirty', Date.now()),
+        }),
+      );
+    }
+    return items;
   });
+
+  // The selected file's absolute path(s), mirrored from the workspace so the
+  // right-click file menu can target it (the source panel publishes them with
+  // the selection).
+  /** @type {string[]} */
+  let currentPaths = [];
+  /** @param {unknown} value */
+  function setCurrentPaths(value) {
+    currentPaths = Array.isArray(value) ? value.filter((p) => typeof p === 'string') : [];
+  }
+  workspace.onChange('selected_paths', setCurrentPaths);
+  setCurrentPaths(await workspace.get('selected_paths'));
 
   workspace.onChange('selected_metarecord', (value) => {
     if (!confirmDiscardIfEditing()) return;

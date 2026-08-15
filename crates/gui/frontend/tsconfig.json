@@ -21,7 +21,8 @@
       "/__history.js": ["../panel-shim/history.js"],
       "/__help.js": ["../panel-shim/help.js"],
       "/__coalesce.js": ["../panel-shim/coalesce.js"],
-      "/__select.js": ["../panel-shim/select.js"]
+      "/__select.js": ["../panel-shim/select.js"],
+      "/__file-actions.js": ["../panel-shim/file-actions.js"]
     }
   },
   "include": ["src", "tests", "types", "../panel-shim", "../default-config/panel-types"]

@@ -7,6 +7,7 @@
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
+import { fileActionsProvider } from '/__file-actions.js';
 import { childrenQuery, treeNameOf } from './queries.js';
 
 const PAGE_DEFAULT = 200;
@@ -38,6 +39,12 @@ export async function mount(root, metafolder) {
   let nextCursor = null;
   let cursorIndex = -1;
   let loading = false;
+  // The active repo's root path, cached for building absolute file paths for the
+  // right-click file menu (only meaningful for the mfr_path forest).
+  /** @type {string|null} */
+  let repoRootPath = null;
+  /** @type {string|null} the repo repoRootPath was fetched for */
+  let repoRootFor = null;
 
   // `fetchChildren` is a hoisted function declaration, so onChange can name it.
   const fieldSelect = createSelect(byId(root, 'field'), {
@@ -90,6 +97,11 @@ export async function mount(root, metafolder) {
     // narrow it inside the callbacks below.
     const r = repo;
     loading = true;
+    // Warm the repo root once per repo so render() can build absolute paths.
+    if (repoRootFor !== r) {
+      repoRootFor = r;
+      repoRootPath = await daemon.repoRoot(r).catch(() => null);
+    }
     try {
       if (reset) {
         await cache.sync(r);
@@ -183,6 +195,17 @@ export async function mount(root, metafolder) {
   /** @param {Node} node */
   const nodeLabel = (node) => (node.name === '' ? '/' : node.name || node.uuid.slice(0, 8));
 
+  // `data-mf-*` attributes for the shared right-click file menu — only for the
+  // mfr_path forest, whose nodes map to on-disk paths. isDir is left unset (a
+  // node may be a directory or a leaf file), so the menu probes when pasting.
+  /** @param {Node} child @returns {Record<string, string>} */
+  function fileRowAttrs(child) {
+    if (field !== 'mfr_path' || repoRootPath === null) return {};
+    const rel = [...stack.map((c) => c.name), child.name].filter((s) => s !== '').join('/');
+    const abs = rel === '' ? repoRootPath : `${repoRootPath}/${rel}`;
+    return { 'data-mf-path': abs, 'data-mf-name': child.name || rel };
+  }
+
   function render() {
     placeholderElement.hidden = children.length > 0 || loading;
     placeholderElement.textContent = loading
@@ -207,6 +230,7 @@ export async function mount(root, metafolder) {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
             ondblclick: () => descend(index),
+            ...fileRowAttrs(child),
           },
           el('span', { class: 'icon' }, '🏷️'),
           el('span', { class: 'name' }, nodeLabel(child)),
@@ -273,6 +297,10 @@ export async function mount(root, metafolder) {
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "treeref").
+
+  // Right-click a node in the mfr_path forest to cut/copy/paste/rename/duplicate
+  // /trash the file or directory it maps to (shared with the file manager).
+  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => repo));
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

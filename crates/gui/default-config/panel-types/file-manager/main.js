@@ -15,12 +15,11 @@ import {
   syntheticRows,
 } from './tracked.js';
 import { joinPath, dedupeName } from './fileops.js';
+import { getClipboard, setClipboard, hasClipboard } from '/__file-actions.js';
 
-// A single clipboard shared by every file-manager panel in the GUI's JS realm,
-// like a desktop file manager: copy/cut in one panel, paste in another (even a
-// different workspace). Cleared after a cut is pasted (the sources are gone).
-/** @type {{ paths: string[], mode: 'copy'|'cut' }|null} */
-let clipboard = null;
+// The clipboard is shared across the whole GUI JS realm (see /__file-actions.js)
+// — copy/cut here and paste in another file-manager, or in a metarecord panel's
+// right-click menu, and back. Cleared after a cut is pasted (sources are gone).
 
 // Render the directory in windows of this many rows (plus more on scroll), so
 // a directory with thousands of entries does not build a huge DOM — and, just
@@ -276,14 +275,14 @@ export async function mount(root, metafolder) {
         '-',
         { label: 'Cut', action: () => clip('cut') },
         { label: 'Copy', action: () => clip('copy') },
-        { label: 'Paste', disabled: !clipboard, action: () => void paste() },
+        { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
         '-',
         { label: 'Rename…', action: () => void renameSelected() },
         { label: 'Duplicate', action: () => void duplicateSelected() },
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
       );
     } else {
-      items.push('-', { label: 'Paste', disabled: !clipboard, action: () => void paste() });
+      items.push('-', { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() });
     }
     items.push(
       '-',
@@ -303,7 +302,7 @@ export async function mount(root, metafolder) {
       { label: 'New folder…', action: () => void newFolder() },
       { label: 'New file…', action: () => void newFile() },
       '-',
-      { label: 'Paste', disabled: !clipboard, action: () => void paste() },
+      { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
     ];
     metafolder.contextMenu(event, items);
   }
@@ -449,17 +448,18 @@ export async function mount(root, metafolder) {
   function clip(mode) {
     const item = selectedEntry();
     if (!item) return;
-    clipboard = { paths: [item.path], mode };
+    setClipboard({ paths: [item.path], mode });
     void statusBar.message(`${mode === 'cut' ? 'Cut' : 'Copied'} ${item.name}`, statusMessageMs);
   }
 
   async function paste() {
     if (currentDir === null) return;
-    if (!clipboard || clipboard.paths.length === 0) {
+    const cb = getClipboard();
+    if (!cb || cb.paths.length === 0) {
       void statusBar.message('clipboard is empty', 3000);
       return;
     }
-    const { paths, mode } = clipboard;
+    const { paths, mode } = cb;
     const taken = takenNames();
     let pasted = 0;
     for (const src of paths) {
@@ -479,7 +479,7 @@ export async function mount(root, metafolder) {
         await statusBar.error(error, statusMessageMs);
       }
     }
-    if (mode === 'cut') clipboard = null; // the sources have moved
+    if (mode === 'cut') setClipboard(null); // the sources have moved
     if (pasted > 0) {
       void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMessageMs);
       await afterMutation(paths.length === 1 ? baseName(paths[0]) : null);

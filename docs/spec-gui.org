@@ -941,6 +941,16 @@ the =devtools:open= command, which opens the WebKit inspector (no default
 keybinding; the =devtools= Tauri feature keeps it available in release
 builds).
 
+Panels backed by files prepend the shared *file actions* — Cut, Copy, Paste,
+Rename, Duplicate and Move to trash — for the right-clicked metarecord's file
+(the file-manager, metarecord-list, metarecord-detail, file, recent, ref-list
+and the =mfr_path= treeref). They come from =/__file-actions.js=, whose
+clipboard is one realm-wide singleton, so a Cut/Copy in any of them pastes in
+another (the file manager included). List panels tag each file row with
+=data-mf-path= (and =data-mf-isdir=/=data-mf-name=) so a ready-made provider
+resolves the clicked row; the file-manager and metarecord-detail supply the
+items from their own row/record menu directly.
+
 Right-clicking anywhere else shows the *default menu*: =Copy= (the text
 selection at open time; disabled when nothing is selected), the everyday
 layout commands (=panel:split-toggle=, =panel:swap=) and =devtools:open=.

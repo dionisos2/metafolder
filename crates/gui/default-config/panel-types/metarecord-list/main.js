@@ -8,6 +8,7 @@ import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
+import { fileMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
 import {
@@ -256,6 +257,14 @@ export async function mount(root, metafolder) {
     const rel = cache.readTreeRef(r, 'mfr_path', metarecord.uuid);
     if (rel === REFRESH) return [];
     return rel.map((p) => (p === '' ? rootPath : `${rootPath}/${p}`));
+  }
+
+  // Whether a metarecord's mfr_type is a directory (picks the paste target for
+  // the file-actions menu).
+  /** @param {Metafolder.Metarecord} metarecord */
+  function isDirMetarecord(metarecord) {
+    const typeValue = fields(metarecord, 'mfr_type')[0]?.value;
+    return typeValue?.type === 'string' && typeValue.value === 'dir';
   }
 
   /** Re-derives the ~ columns over the loaded metarecords (after a column change). */
@@ -1045,17 +1054,29 @@ export async function mount(root, metafolder) {
       label: 'Open in panel metarecord-detail',
       action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
     });
-    // Only offer the file panel when the metarecord actually has a linked file.
-    if (pathsOf(target).length > 0) {
+    const paths = pathsOf(target);
+    // Only offer the file panel + file actions when the metarecord has a file.
+    if (paths.length > 0) {
       items.push({
         label: 'Open in panel file',
         action: () => void commands.invoke('panel:reveal-other file'),
       });
     }
-    items.push(
-      { label: 'Copy UUID', action: () => void copyText(target.uuid) },
-      { label: 'Trash file', action: () => void commands.invoke('metarecord:trash') },
-    );
+    items.push({ label: 'Copy UUID', action: () => void copyText(target.uuid) });
+    if (repo && paths.length > 0) {
+      // Cut / Copy / Paste / Rename / Duplicate / Move-to-trash on the file
+      // (shared with the file manager — see /__file-actions.js).
+      items.push(
+        '-',
+        ...fileMenuItems({
+          metafolder,
+          repo,
+          path: paths[0],
+          isDir: isDirMetarecord(target),
+          onChanged: () => void workspace.set('metarecords:dirty', Date.now()),
+        }),
+      );
+    }
     return items;
   });
 

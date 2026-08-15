@@ -4,9 +4,10 @@
 // a Ref field name from the repo's Ref fields. Selecting a row publishes
 // `selected_metarecord` / `selected_paths`. Spec-gui "ref-list panel type".
 
-import { byId, el } from '/__ui.js';
+import { byId, el, field } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
+import { fileActionsProvider, baseName } from '/__file-actions.js';
 import { refListQuery } from './queries.js';
 
 const PAGE_DEFAULT = 100;
@@ -153,6 +154,9 @@ export async function mount(root, metafolder) {
       nextCursor = result.nextCursor;
       // Resolve mfr_path for display / selected_paths (best-effort).
       await cache.fetchTreeRefs(r, 'mfr_path', fetched.map((m) => m.uuid));
+      // Warm the repo root so the right-click file menu can build absolute paths
+      // synchronously in render().
+      await rootOf(r).catch(() => {});
       render();
     } finally {
       loading = false;
@@ -176,6 +180,21 @@ export async function mount(root, metafolder) {
     return rel === '' ? '/' : (rel.split('/').pop() || rel);
   }
 
+  // `data-mf-*` attributes for the shared right-click file menu
+  // (/__file-actions.js). Empty until the repo root is cached or when the record
+  // has no on-disk path.
+  /** @param {Metafolder.Metarecord} record */
+  function fileRowAttrs(record) {
+    const r = queryRepo();
+    const rootPath = r ? repoRoots.get(r) : undefined;
+    const rel = relPathsOf(record)[0];
+    if (!r || rootPath === undefined || rel === undefined) return {};
+    const abs = rel === '' ? rootPath : `${rootPath}/${rel}`;
+    const typeValue = field(record, 'mfr_type')?.value;
+    const isDir = typeValue?.type === 'string' && typeValue.value === 'dir';
+    return { 'data-mf-path': abs, 'data-mf-isdir': isDir ? '1' : '0', 'data-mf-name': baseName(abs) };
+  }
+
   // ── Rendering ─────────────────────────────────────────────────────────────
 
   function render() {
@@ -195,6 +214,7 @@ export async function mount(root, metafolder) {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
             ondblclick: () => openSelected(),
+            ...fileRowAttrs(record),
           },
           el('span', { class: 'name' }, displayName(record)),
         ),
@@ -280,6 +300,10 @@ export async function mount(root, metafolder) {
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "ref-list").
+
+  // Right-click a row backed by a file: cut/copy/paste/rename/duplicate/trash
+  // (shared with the file manager — see /__file-actions.js).
+  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => queryRepo()));
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

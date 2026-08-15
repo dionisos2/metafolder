@@ -8,6 +8,7 @@
 // under the cursor while you navigate.
 
 import { byId, el, field, formatValue } from '/__ui.js';
+import { fileActionsProvider, baseName } from '/__file-actions.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -30,7 +31,7 @@ export function formatViewedAge(iso, now = Date.now()) {
 
 /**
  * @typedef {{ uuid: string, viewedAt: string, label: string, name: string,
- *   relPath: string, absPaths: string[] }} Row
+ *   relPath: string, absPaths: string[], isDir: boolean }} Row
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
@@ -74,6 +75,13 @@ export function mount(root, metafolder) {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
             ondblclick: () => void open(),
+            ...(row.absPaths[0]
+              ? {
+                  'data-mf-path': row.absPaths[0],
+                  'data-mf-isdir': row.isDir ? '1' : '0',
+                  'data-mf-name': row.name || baseName(row.absPaths[0]),
+                }
+              : {}),
           },
           el('span', { class: 'name' }, rowName(row)),
           el('span', { class: 'path' }, row.relPath),
@@ -140,6 +148,7 @@ export function mount(root, metafolder) {
         name: rec === REFRESH ? '' : fieldText(rec, 'name'),
         relPath: relPaths[0] ?? '',
         absPaths,
+        isDir: rec !== REFRESH && fieldText(rec, 'mfr_type') === 'dir',
       };
     });
     if (cursorIndex >= rows.length) cursorIndex = rows.length - 1;
@@ -174,6 +183,10 @@ export function mount(root, metafolder) {
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "recent").
+
+  // Right-click a row backed by a file to cut/copy/paste/rename/duplicate/trash
+  // it (shared with the file manager — see /__file-actions.js).
+  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => repo));
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

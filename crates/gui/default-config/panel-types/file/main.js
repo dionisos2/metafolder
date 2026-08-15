@@ -6,6 +6,7 @@
 
 import { byId, el, thumbnail } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
+import { fileMenuItems } from '/__file-actions.js';
 import {
   SAVE_INTERVAL_MS,
   MIN_DELTA,
@@ -697,6 +698,20 @@ export async function mount(root, metafolder) {
   gifAnimateBox.addEventListener('change', () => setAnimateGifs(gifAnimateBox.checked));
 
   // Keybindings for this panel live in keybindings.toml (when = "file").
+
+  // Right-click the preview to cut/copy/paste/rename/duplicate/trash the shown
+  // file (shared with the file manager — see /__file-actions.js).
+  metafolder.contextMenu.addDefaultItems(() => {
+    const repo = selected?.repo;
+    const path = paths[activeIndex];
+    if (!repo || typeof path !== 'string' || path === '') return [];
+    return fileMenuItems({
+      metafolder,
+      repo,
+      path,
+      onChanged: () => void workspace.set('metarecords:dirty', Date.now()),
+    });
+  });
 
   byId(root, 'zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
   byId(root, 'zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
