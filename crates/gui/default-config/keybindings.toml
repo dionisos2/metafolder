@@ -208,11 +208,24 @@
 "delete" = [
   { command = "metarecord:trash", when = "metarecord-list" },
   { command = "metarecord:trash", when = "metarecord-detail" },
-  { command = "metarecord:trash", when = "file-manager" },
+  # In the file-manager, Delete removes the highlighted file/folder itself
+  # (to the repo trash when a repo is active, else permanently), so untracked
+  # entries can be deleted too — not just tracked metarecords.
+  { command = "file-manager:delete", when = "file-manager" },
   { command = "metarecord:trash", when = "treeref" },
   { command = "metarecord:trash", when = "ref-list" },
   { command = "trash:delete", when = "trash" },
 ]
+
+# file-manager: filesystem operations (clipboard, rename, duplicate, create).
+# All scoped to the panel; it has no text-input focus, so these plain
+# accelerators never clash with editing.
+"ctrl+c" = { command = "file-manager:copy", when = "file-manager" }
+"ctrl+x" = { command = "file-manager:cut", when = "file-manager" }
+"ctrl+v" = { command = "file-manager:paste", when = "file-manager" }
+"f2" = { command = "file-manager:rename", when = "file-manager" }
+"ctrl+d" = { command = "file-manager:duplicate", when = "file-manager" }
+"ctrl+shift+n" = { command = "file-manager:new-folder", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing.
 "space" = { command = "metarecord-list:select-toggle", when = "metarecord-list" }

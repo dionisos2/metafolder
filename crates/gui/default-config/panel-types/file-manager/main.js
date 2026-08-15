@@ -14,6 +14,13 @@ import {
   filterHidden,
   syntheticRows,
 } from './tracked.js';
+import { joinPath, dedupeName } from './fileops.js';
+
+// A single clipboard shared by every file-manager panel in the GUI's JS realm,
+// like a desktop file manager: copy/cut in one panel, paste in another (even a
+// different workspace). Cleared after a cut is pasted (the sources are gone).
+/** @type {{ paths: string[], mode: 'copy'|'cut' }|null} */
+let clipboard = null;
 
 // Render the directory in windows of this many rows (plus more on scroll), so
 // a directory with thousands of entries does not build a huge DOM — and, just
@@ -30,7 +37,7 @@ const PAGE_DEFAULT = 200;
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { fs, daemon, workspace, commands, statusBar, bench, cache } = metafolder;
+  const { fs, daemon, workspace, commands, statusBar, bench, cache, trash } = metafolder;
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
   const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
@@ -248,12 +255,14 @@ export async function mount(root, metafolder) {
     else await select(index);
   }
 
-  // Right-click on a row: move the cursor there, then offer the row's actions.
+  // Right-click on a row: move the cursor there, then offer the row's actions
+  // plus the directory-level create/paste actions.
   /** @param {MouseEvent} event @param {number} index */
   function rowMenu(event, index) {
     const item = listing[index];
     if (!item) return;
     void select(index);
+    const isEntry = item.name !== '.' && item.name !== '..';
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
     if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) }, '-');
@@ -262,6 +271,40 @@ export async function mount(root, metafolder) {
       disabled: !repo || trackedPaths.has(item.path) || !trackable(item.path),
       action: () => void addSelected(),
     });
+    if (isEntry) {
+      items.push(
+        '-',
+        { label: 'Cut', action: () => clip('cut') },
+        { label: 'Copy', action: () => clip('copy') },
+        { label: 'Paste', disabled: !clipboard, action: () => void paste() },
+        '-',
+        { label: 'Rename…', action: () => void renameSelected() },
+        { label: 'Duplicate', action: () => void duplicateSelected() },
+        { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
+      );
+    } else {
+      items.push('-', { label: 'Paste', disabled: !clipboard, action: () => void paste() });
+    }
+    items.push(
+      '-',
+      { label: 'New folder…', action: () => void newFolder() },
+      { label: 'New file…', action: () => void newFile() },
+    );
+    metafolder.contextMenu(event, items);
+  }
+
+  // Right-click on empty space in the listing (not on a row): the directory-level
+  // create/paste actions only.
+  /** @param {MouseEvent} event */
+  function backgroundMenu(event) {
+    if (/** @type {Element} */ (event.target).closest('li')) return; // a row handles its own
+    /** @type {Metafolder.MenuItem[]} */
+    const items = [
+      { label: 'New folder…', action: () => void newFolder() },
+      { label: 'New file…', action: () => void newFile() },
+      '-',
+      { label: 'Paste', disabled: !clipboard, action: () => void paste() },
+    ];
     metafolder.contextMenu(event, items);
   }
 
@@ -296,6 +339,180 @@ export async function mount(root, metafolder) {
       return;
     }
     await open(repoRoot);
+  }
+
+  // ── Filesystem operations (spec-gui "file-manager panel type") ─────────────
+  // The panel edits the disk directly, like it reads it — the daemon is never
+  // involved, so a tracked metarecord goes stale until the watcher (mf_watch)
+  // or a reconcile catches up (matching the panel's disk-only nature). The Rust
+  // layer refuses to overwrite an existing destination, so a name clash is a
+  // clear error, never a silent clobber.
+
+  /** The names of the current directory's real entries (for de-duplication). */
+  function takenNames() {
+    const names = new Set();
+    for (const item of listing) {
+      if (item.name !== '.' && item.name !== '..') names.add(item.name);
+    }
+    return names;
+  }
+
+  /** @param {string} path */
+  function baseName(path) {
+    return path.slice(path.lastIndexOf('/') + 1);
+  }
+
+  /** The cursor's row, unless it is a synthetic "." / ".." row or nothing. */
+  function selectedEntry() {
+    const item = listing[cursorIndex];
+    if (!item || item.name === '.' || item.name === '..') {
+      void statusBar.message('select a file or folder first', 3000);
+      return null;
+    }
+    return item;
+  }
+
+  // Reload the current directory after a mutation and move the cursor to
+  // `selectName` when given (the freshly created/renamed entry). Other panels
+  // showing this repo refresh via the metarecords:dirty nudge.
+  /** @param {string|null} selectName */
+  async function afterMutation(selectName) {
+    await workspace.set('metarecords:dirty', Date.now());
+    if (currentDir === null) return;
+    await open(currentDir);
+    if (selectName !== null) {
+      const index = listing.findIndex((item) => item.name === selectName);
+      if (index >= 0) await select(index);
+    }
+  }
+
+  async function newFolder() {
+    if (currentDir === null) return;
+    const name = (prompt('New folder name:') ?? '').trim();
+    if (!name) return;
+    try {
+      await fs.mkdir(joinPath(currentDir, name));
+    } catch (error) {
+      await statusBar.error(error, statusMessageMs);
+      return;
+    }
+    void statusBar.message(`Created folder ${name}`, statusMessageMs);
+    await afterMutation(name);
+  }
+
+  async function newFile() {
+    if (currentDir === null) return;
+    const name = (prompt('New file name:') ?? '').trim();
+    if (!name) return;
+    try {
+      await fs.createFile(joinPath(currentDir, name));
+    } catch (error) {
+      await statusBar.error(error, statusMessageMs);
+      return;
+    }
+    void statusBar.message(`Created file ${name}`, statusMessageMs);
+    await afterMutation(name);
+  }
+
+  async function renameSelected() {
+    if (currentDir === null) return;
+    const item = selectedEntry();
+    if (!item) return;
+    const next = (prompt('Rename to:', item.name) ?? '').trim();
+    if (!next || next === item.name) return;
+    try {
+      await fs.move(item.path, joinPath(currentDir, next));
+    } catch (error) {
+      await statusBar.error(error, statusMessageMs);
+      return;
+    }
+    void statusBar.message(`Renamed to ${next}`, statusMessageMs);
+    await afterMutation(next);
+  }
+
+  async function duplicateSelected() {
+    if (currentDir === null) return;
+    const item = selectedEntry();
+    if (!item) return;
+    const name = dedupeName(item.name, takenNames());
+    try {
+      await fs.copy(item.path, joinPath(currentDir, name));
+    } catch (error) {
+      await statusBar.error(error, statusMessageMs);
+      return;
+    }
+    void statusBar.message(`Duplicated to ${name}`, statusMessageMs);
+    await afterMutation(name);
+  }
+
+  /** @param {'copy'|'cut'} mode */
+  function clip(mode) {
+    const item = selectedEntry();
+    if (!item) return;
+    clipboard = { paths: [item.path], mode };
+    void statusBar.message(`${mode === 'cut' ? 'Cut' : 'Copied'} ${item.name}`, statusMessageMs);
+  }
+
+  async function paste() {
+    if (currentDir === null) return;
+    if (!clipboard || clipboard.paths.length === 0) {
+      void statusBar.message('clipboard is empty', 3000);
+      return;
+    }
+    const { paths, mode } = clipboard;
+    const taken = takenNames();
+    let pasted = 0;
+    for (const src of paths) {
+      // Never move/copy a directory into itself or one of its descendants.
+      if (isWithin(currentDir, src)) {
+        await statusBar.error(`cannot paste ${baseName(src)} into itself`, statusMessageMs);
+        continue;
+      }
+      const name = dedupeName(baseName(src), taken);
+      const target = joinPath(currentDir, name);
+      try {
+        if (mode === 'cut') await fs.move(src, target);
+        else await fs.copy(src, target);
+        taken.add(name);
+        pasted += 1;
+      } catch (error) {
+        await statusBar.error(error, statusMessageMs);
+      }
+    }
+    if (mode === 'cut') clipboard = null; // the sources have moved
+    if (pasted > 0) {
+      void statusBar.message(`Pasted ${pasted} item${pasted === 1 ? '' : 's'}`, statusMessageMs);
+      await afterMutation(paths.length === 1 ? baseName(paths[0]) : null);
+    }
+  }
+
+  async function deleteSelected() {
+    if (currentDir === null) return;
+    const item = selectedEntry();
+    if (!item) return;
+    // With an active repo, deletions are restorable through the repo trash;
+    // otherwise (browsing the raw disk) there is nowhere to restore from, so
+    // the removal is permanent and confirmed as such.
+    if (repo) {
+      if (!confirm(`Send "${item.name}" to the trash?`)) return;
+      try {
+        await trash.trashPath(repo, item.path);
+      } catch (error) {
+        await statusBar.error(error, statusMessageMs);
+        return;
+      }
+      void statusBar.message(`Trashed ${item.name} — restore it from the trash panel`, statusMessageMs);
+    } else {
+      if (!confirm(`Permanently delete "${item.name}"? This cannot be undone.`)) return;
+      try {
+        await fs.remove(item.path);
+      } catch (error) {
+        await statusBar.error(error, statusMessageMs);
+        return;
+      }
+      void statusBar.message(`Deleted ${item.name}`, statusMessageMs);
+    }
+    await afterMutation(null);
   }
 
   // Re-read the current directory and its tracked status from disk/daemon,
@@ -390,6 +607,40 @@ export async function mount(root, metafolder) {
     label: 'File manager: go up one level',
     handler: goUp,
   });
+  void commands.register('file-manager:new-folder', {
+    label: 'File manager: create a new folder',
+    handler: newFolder,
+  });
+  void commands.register('file-manager:new-file', {
+    label: 'File manager: create a new empty file',
+    handler: newFile,
+  });
+  void commands.register('file-manager:rename', {
+    label: 'File manager: rename the selected entry',
+    handler: renameSelected,
+  });
+  void commands.register('file-manager:duplicate', {
+    label: 'File manager: duplicate the selected entry',
+    handler: duplicateSelected,
+  });
+  void commands.register('file-manager:copy', {
+    label: 'File manager: copy the selected entry to the clipboard',
+    handler: () => clip('copy'),
+  });
+  void commands.register('file-manager:cut', {
+    label: 'File manager: cut the selected entry to the clipboard',
+    handler: () => clip('cut'),
+  });
+  void commands.register('file-manager:paste', {
+    label: 'File manager: paste the clipboard into the current directory',
+    handler: paste,
+  });
+  void commands.register('file-manager:delete', {
+    label: 'File manager: delete the selected entry (trash when a repo is active)',
+    handler: deleteSelected,
+  });
+
+  listingElement.addEventListener('contextmenu', backgroundMenu);
 
   // Keybindings for this panel live in keybindings.toml (when = "file-manager").
 

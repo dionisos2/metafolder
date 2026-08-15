@@ -1170,6 +1170,16 @@ const metarecords = await metafolder.fs.readDir('/path/to/dir')
 // Stat a single path
 const info = await metafolder.fs.stat('/path/to/file')
 // info: {path, is_dir, size, mtime}
+
+// Write operations (the file-manager panel's create/copy/move/delete). None
+// overwrite an existing destination — a clash rejects rather than clobbers —
+// and the daemon is never involved, so a tracked metarecord goes stale until
+// the watcher or a reconcile catches up.
+await metafolder.fs.mkdir('/path/to/new-dir')      // parent must exist; errors if present
+await metafolder.fs.createFile('/path/to/new-file') // empty file; errors if present (never truncates)
+await metafolder.fs.move('/from', '/to')            // rename/move (cross-filesystem safe)
+await metafolder.fs.copy('/from', '/to')            // file or whole tree; source kept
+await metafolder.fs.remove('/path')                 // permanent delete of a file/symlink/tree
 #+END_SRC
 
 **** =metafolder.history=
@@ -1600,7 +1610,10 @@ existing metadata metarecord in the active repo, =workspace.selected_metarecord=
 updated; otherwise it is set to =null=.
 
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
-selection for a file; =Backspace= goes up one level; =r= refreshes.
+selection for a file; =Backspace= goes up one level; =r= refreshes;
+=Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
+=Ctrl+V= copy / cut / paste; =Ctrl+D= duplicates; =Ctrl+Shift+N= creates a
+folder.
 
 *Listing*: the directory's entries are rendered in windows (page size from
 =[page-size].file-manager= in =config.toml=, default 200 — the largest of the
@@ -1613,10 +1626,32 @@ that window's names), not for every child up front, so the per-entry daemon
 lookups are bounded to what is on screen. =file-manager:refresh= re-reads the
 current directory and its tracked status, preserving the cursor.
 
+*File operations*: the panel edits the disk directly (via [[*=metafolder.fs=][=metafolder.fs=]], never
+the daemon — the same way it reads it), so it can stand in for a general
+file browser: create a folder or an empty file, copy/cut/paste, rename,
+duplicate and delete. This is deliberately *disk-only*: a tracked
+metarecord whose file is renamed/moved/deleted here goes stale until the
+watcher (=mf_watch = true= subtrees) or a reconcile catches up — matching the
+panel's read-side, which never involves the daemon in filesystem I/O. The
+backend refuses to overwrite an existing destination, so a name clash is a
+clear error, never a silent clobber. New/duplicated/pasted names that would
+collide are de-duplicated with a " copy" suffix ("=foo copy.txt=",
+"=foo copy 2.txt="…). The clipboard (copy/cut) is a single store shared by
+*every* file-manager panel in the GUI, like a desktop file manager: cut in one,
+paste in another (even a different workspace); a cut is cleared once pasted.
+Pasting a directory into itself or a descendant is refused. *Delete* is
+restorable when a repository is active — the entry (tracked or not) is sent to
+the repo trash ([[file:spec-trash.org][spec-trash.org]]) as a manual entry, restorable from the trash
+panel; browsing the raw disk with no active repo, it is a permanent removal.
+Both are confirmed.
+
 *Context menu*: right-clicking a row moves the cursor there and opens an
-HTML menu ([[*Context menus]]): =Open= (directories) and =Track= (disabled
-when there is no active repo, the path is already tracked, or it is
-outside the repo root).
+HTML menu ([[*Context menus]]): =Open= (directories), =Track= (disabled when
+there is no active repo, the path is already tracked, or it is outside the
+repo root), then the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
+=Duplicate=, the delete action (=Move to trash= with a repo, else =Delete…=),
+and the directory-level =New folder…= / =New file…=. Right-clicking empty
+space in the listing offers just =New folder…= / =New file…= / =Paste=.
 
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
@@ -1624,6 +1659,14 @@ outside the repo root).
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
+| =file-manager:new-folder= | Create a new folder in the current directory (name prompted) |
+| =file-manager:new-file=   | Create a new empty file in the current directory (name prompted) |
+| =file-manager:rename=     | Rename the selected entry (=F2=; name pre-filled)        |
+| =file-manager:duplicate=  | Copy the selected entry beside itself under a " copy" name (=Ctrl+D=) |
+| =file-manager:copy=       | Copy the selected entry to the shared clipboard (=Ctrl+C=) |
+| =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
+| =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
+| =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed |
 
 *** =treeref= panel type
 

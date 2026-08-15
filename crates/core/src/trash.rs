@@ -670,8 +670,9 @@ fn merge_move(src: &Path, dst: &Path) -> io::Result<()> {
 
 /// Moves `from` (a file, symlink, or directory) to `to`, falling back to
 /// copy-then-delete across filesystems (an external `.metafolder` may sit on a
-/// different mount than the file).
-fn move_path(from: &Path, to: &Path) -> io::Result<()> {
+/// different mount than the file). Also the file-manager panel's move/rename
+/// primitive (spec-gui "file-manager panel type").
+pub fn move_path(from: &Path, to: &Path) -> io::Result<()> {
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
         // EXDEV (18 on Linux): source and destination are on different mounts,
@@ -685,6 +686,26 @@ fn move_path(from: &Path, to: &Path) -> io::Result<()> {
             }
         }
         Err(e) => Err(e),
+    }
+}
+
+/// Copies `from` (a file or a whole directory tree) to `to`, leaving the source
+/// in place — the file-manager panel's copy/duplicate primitive (spec-gui
+/// "file-manager panel type"). Modification times are carried over best-effort,
+/// like the trash's cross-device fallback. `to` must not already exist (the
+/// caller de-duplicates the destination name).
+pub fn copy_path(from: &Path, to: &Path) -> io::Result<()> {
+    if std::fs::symlink_metadata(from)?.file_type().is_dir() {
+        copy_tree(from, to)
+    } else {
+        let mtime = std::fs::symlink_metadata(from).and_then(|m| m.modified());
+        std::fs::copy(from, to)?;
+        if let Ok(t) = mtime {
+            if let Ok(f) = std::fs::OpenOptions::new().write(true).open(to) {
+                let _ = f.set_modified(t);
+            }
+        }
+        Ok(())
     }
 }
 

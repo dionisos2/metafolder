@@ -1,8 +1,10 @@
 //! `metafolder.fs` backend: direct filesystem access for panel types
 //! (spec-gui "metafolder.fs"). Not routed through the daemon.
 
+use metafolder_core::trash::{copy_path, move_path};
 use serde::Serialize;
 use std::ffi::OsStr;
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -66,6 +68,74 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
     })
 }
 
+// ── Write operations (spec-gui "file-manager panel type") ────────────────────
+//
+// The file-manager panel edits the disk directly, the same way it reads it: the
+// daemon is never involved. A tracked metarecord therefore goes stale until the
+// watcher (`mf_watch = true` subtrees) or a reconcile catches up — deliberate,
+// matching the panel's disk-only nature. None of these clobber an existing
+// destination: the panel de-duplicates the target name before calling.
+
+/// Whether a path already exists (following no symlink, so a dangling symlink
+/// still counts as present — we must not silently overwrite it).
+fn exists(path: &str) -> bool {
+    std::fs::symlink_metadata(path).is_ok()
+}
+
+/// Creates a single new directory `path` (its parent must already exist).
+/// Errors if it already exists.
+#[tauri::command]
+pub fn fs_mkdir(path: String) -> Result<(), String> {
+    std::fs::create_dir(&path).map_err(|e| format!("cannot create directory {path}: {e}"))
+}
+
+/// Creates a new empty file `path`. Errors if it already exists (never
+/// truncates an existing file).
+#[tauri::command]
+pub fn fs_create_file(path: String) -> Result<(), String> {
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map(|_| ())
+        .map_err(|e| format!("cannot create file {path}: {e}"))
+}
+
+/// Moves/renames `from` to `to` (cross-filesystem safe). Refuses to overwrite an
+/// existing `to`.
+#[tauri::command]
+pub fn fs_move(from: String, to: String) -> Result<(), String> {
+    if exists(&to) {
+        return Err(format!("{to} already exists"));
+    }
+    move_path(Path::new(&from), Path::new(&to))
+        .map_err(|e| format!("cannot move {from} to {to}: {e}"))
+}
+
+/// Copies `from` (a file or a whole directory) to `to`, leaving the source in
+/// place. Refuses to overwrite an existing `to`.
+#[tauri::command]
+pub fn fs_copy(from: String, to: String) -> Result<(), String> {
+    if exists(&to) {
+        return Err(format!("{to} already exists"));
+    }
+    copy_path(Path::new(&from), Path::new(&to))
+        .map_err(|e| format!("cannot copy {from} to {to}: {e}"))
+}
+
+/// Permanently deletes `path` (a file, symlink, or whole directory). The
+/// file-manager only reaches this when no repository is active; with a repo the
+/// panel routes deletions through the trash instead.
+#[tauri::command]
+pub fn fs_delete(path: String) -> Result<(), String> {
+    let is_dir = std::fs::symlink_metadata(&path)
+        .map_err(|e| format!("cannot stat {path}: {e}"))?
+        .file_type()
+        .is_dir();
+    let result = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+    result.map_err(|e| format!("cannot delete {path}: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -119,5 +189,94 @@ mod tests {
     fn test_home_dir_falls_back_to_root() {
         assert_eq!(home_dir_from(None), "/");
         assert_eq!(home_dir_from(Some(OsStr::new(""))), "/");
+    }
+
+    fn p(base: &Path, name: &str) -> String {
+        base.join(name).display().to_string()
+    }
+
+    #[test]
+    fn test_mkdir_creates_and_refuses_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let sub = p(dir.path(), "new-dir");
+        fs_mkdir(sub.clone()).unwrap();
+        assert!(Path::new(&sub).is_dir());
+        // A second time is an error (never silently succeeds on an existing dir).
+        assert!(fs_mkdir(sub).is_err());
+    }
+
+    #[test]
+    fn test_mkdir_missing_parent_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(fs_mkdir(p(dir.path(), "no/such/parent")).is_err());
+    }
+
+    #[test]
+    fn test_create_file_creates_empty_and_refuses_existing() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = p(dir.path(), "note.txt");
+        fs_create_file(file.clone()).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap().len(), 0);
+        // Must never truncate an existing file.
+        std::fs::write(&file, b"keep").unwrap();
+        assert!(fs_create_file(file.clone()).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn test_move_renames_and_refuses_overwrite() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = p(dir.path(), "a.txt");
+        let to = p(dir.path(), "b.txt");
+        std::fs::write(&from, b"x").unwrap();
+        fs_move(from.clone(), to.clone()).unwrap();
+        assert!(!Path::new(&from).exists());
+        assert_eq!(std::fs::read(&to).unwrap(), b"x");
+
+        // A destination that already exists is refused, source left intact.
+        let other = p(dir.path(), "c.txt");
+        std::fs::write(&other, b"y").unwrap();
+        assert!(fs_move(other.clone(), to.clone()).is_err());
+        assert_eq!(std::fs::read(&other).unwrap(), b"y");
+        assert_eq!(std::fs::read(&to).unwrap(), b"x");
+    }
+
+    #[test]
+    fn test_copy_file_and_dir_leaves_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let from = p(dir.path(), "src.txt");
+        let to = p(dir.path(), "dst.txt");
+        std::fs::write(&from, b"data").unwrap();
+        fs_copy(from.clone(), to.clone()).unwrap();
+        assert_eq!(std::fs::read(&from).unwrap(), b"data");
+        assert_eq!(std::fs::read(&to).unwrap(), b"data");
+        // Refuses to overwrite.
+        assert!(fs_copy(from.clone(), to).is_err());
+
+        // A whole directory tree is copied recursively.
+        let tree = dir.path().join("tree");
+        std::fs::create_dir(&tree).unwrap();
+        std::fs::write(tree.join("inner.txt"), b"deep").unwrap();
+        let tree_copy = p(dir.path(), "tree-copy");
+        fs_copy(tree.display().to_string(), tree_copy.clone()).unwrap();
+        assert_eq!(std::fs::read(Path::new(&tree_copy).join("inner.txt")).unwrap(), b"deep");
+        assert!(tree.join("inner.txt").exists()); // source kept
+    }
+
+    #[test]
+    fn test_delete_file_and_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = p(dir.path(), "gone.txt");
+        std::fs::write(&file, b"x").unwrap();
+        fs_delete(file.clone()).unwrap();
+        assert!(!Path::new(&file).exists());
+
+        let tree = dir.path().join("d");
+        std::fs::create_dir(&tree).unwrap();
+        std::fs::write(tree.join("c.txt"), b"x").unwrap();
+        fs_delete(tree.display().to_string()).unwrap();
+        assert!(!tree.exists());
+
+        assert!(fs_delete(p(dir.path(), "nope")).is_err());
     }
 }

@@ -209,20 +209,28 @@ refresh, and nothing is written to the event log.
 
 The GUI exposes the same trash-bin (spec-gui.org), driving the shared
 =metafolder_core::trash= layer through Tauri commands (=trash_list=,
-=trash_selected_metarecord=, =trash_restore=, =trash_remove=, =trash_empty=);
-like the CLI it locates =internal_dir=/=root= through =GET /repos/:repo= and
-re-links a restored metarecord through the daemon — there is still *no daemon
-trash endpoint*.
+=trash_selected_metarecord=, =trash_path=, =trash_restore=, =trash_remove=,
+=trash_empty=); like the CLI it locates =internal_dir=/=root= through
+=GET /repos/:repo= and re-links a restored metarecord through the daemon —
+there is still *no daemon trash endpoint*.
 
 - *Send to the trash* — the =metarecord:trash= command (a shell builtin) sends
   the workspace's =selected_metarecord='s file to the trash (=reason=manual=,
   recording the metarecord and its current =version=, exactly like =mf trash
-  -f=). It is bound to =Delete= in every panel that carries a selection
-  (=metarecord-list=, =metarecord-detail=, =file-manager=, =treeref=,
-  =ref-list=) and offered as a *Trash file* context-menu item in the metarecord
-  panels. Because =Delete= is a bare key, the action is *confirmed* even though
-  it is reversible. The metadata update is still the watcher's job (as for =mf
-  trash -f=): the file's bytes are safe regardless.
+  -f=). It is bound to =Delete= in the panels that carry a metarecord selection
+  (=metarecord-list=, =metarecord-detail=, =treeref=, =ref-list=) and offered as
+  a *Trash file* context-menu item in the metarecord panels. Because =Delete= is
+  a bare key, the action is *confirmed* even though it is reversible. The
+  metadata update is still the watcher's job (as for =mf trash -f=): the file's
+  bytes are safe regardless.
+
+- *file-manager delete* — the =file-manager= panel deletes the *highlighted
+  filesystem entry* (=Delete=, or the context menu), tracked or not, through
+  =trash_path= (=reason=manual=, no metarecord correlation), since it operates on
+  the disk directly (spec-gui "file-manager panel type"). A raw-path entry
+  restores its bytes to the original location, where any still-stale metarecord
+  again points. With no active repository there is nowhere to restore from, so
+  the removal is permanent (=metafolder.fs.remove=). Both are confirmed.
 
 - *trash panel* (=panel:set-type trash=, default =s b=) — lists the entries
   (name, size, age, reason, path), newest first, and offers *Restore* (=Enter=;

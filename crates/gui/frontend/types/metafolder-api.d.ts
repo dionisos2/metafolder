@@ -194,6 +194,17 @@ declare namespace Metafolder {
     readDir(path: string): Promise<FsEntry[]>;
     stat(path: string): Promise<unknown>;
     homeDir(): Promise<string>;
+    /** Creates a single new directory (its parent must exist); errors if it
+     *  already exists. */
+    mkdir(path: string): Promise<void>;
+    /** Creates a new empty file; errors if it already exists (never truncates). */
+    createFile(path: string): Promise<void>;
+    /** Moves/renames a path (cross-filesystem safe); refuses to overwrite `to`. */
+    move(from: string, to: string): Promise<void>;
+    /** Copies a file or directory tree, leaving the source; refuses to overwrite. */
+    copy(from: string, to: string): Promise<void>;
+    /** Permanently deletes a file, symlink, or directory tree. */
+    remove(path: string): Promise<void>;
   }
 
   /** One entry in a repository's trash-bin (spec-trash.org). */
@@ -220,6 +231,9 @@ declare namespace Metafolder {
     remove(repo: string, id: string): Promise<void>;
     /** Empties the whole trash; returns the number of entries removed. */
     empty(repo: string): Promise<number>;
+    /** Sends a raw filesystem path to the trash (no metarecord correlation);
+     *  returns the trashed basename. The file-manager panel's delete. */
+    trashPath(repo: string, path: string): Promise<string>;
   }
 
   /** Per-repo input history (spec-gui "Input history"): GUI-side files under

@@ -241,6 +241,20 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('post_status', { wsId: 'ws-1', text: 'hi', kind: 'info', timeoutMs: 3000 });
   });
 
+  test('fs write operations route to their commands', async () => {
+    const { api, invoke } = setup();
+    await api.fs.mkdir('/tmp/d');
+    expect(invoke).toHaveBeenCalledWith('fs_mkdir', { path: '/tmp/d' });
+    await api.fs.createFile('/tmp/f');
+    expect(invoke).toHaveBeenCalledWith('fs_create_file', { path: '/tmp/f' });
+    await api.fs.move('/tmp/a', '/tmp/b');
+    expect(invoke).toHaveBeenCalledWith('fs_move', { from: '/tmp/a', to: '/tmp/b' });
+    await api.fs.copy('/tmp/a', '/tmp/c');
+    expect(invoke).toHaveBeenCalledWith('fs_copy', { from: '/tmp/a', to: '/tmp/c' });
+    await api.fs.remove('/tmp/a');
+    expect(invoke).toHaveBeenCalledWith('fs_delete', { path: '/tmp/a' });
+  });
+
   test('trash routes to the trash commands', async () => {
     const { api, invoke } = setup();
     await api.trash.list('r1');
@@ -251,6 +265,8 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('trash_remove', { repo: 'r1', id: 'id1' });
     await api.trash.empty('r1');
     expect(invoke).toHaveBeenCalledWith('trash_empty', { repo: 'r1' });
+    await api.trash.trashPath('r1', '/tmp/r1/song.mp3');
+    expect(invoke).toHaveBeenCalledWith('trash_path', { repo: 'r1', path: '/tmp/r1/song.mp3' });
   });
 
   test('recent routes to the recent commands', async () => {

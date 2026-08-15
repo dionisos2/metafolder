@@ -227,6 +227,29 @@ pub async fn trash_selected_metarecord(
     result.map(|_| ())
 }
 
+/// Sends a raw filesystem path (tracked or not) to the repo's trash. Used by the
+/// file-manager panel's delete, which operates on the disk directly (spec-gui
+/// "file-manager panel type"): the blob is captured as a manual entry with no
+/// metarecord correlation, so a later restore just puts the bytes back where any
+/// stale metarecord still points. Returns the trashed basename.
+#[tauri::command]
+pub async fn trash_path(
+    app: tauri::State<'_, Arc<App>>,
+    repo: String,
+    path: String,
+) -> Result<String, String> {
+    let info = repo_info(&app.daemon, &repo).await?;
+    let (_root, internal) = root_and_internal(&info)?;
+    tokio::task::spawn_blocking(move || {
+        let entry = trash_dir(&internal)
+            .trash_path(Path::new(&path), Reason::Manual, None, None, None)
+            .map_err(|e| e.0)?;
+        Ok(entry.original_name)
+    })
+    .await
+    .map_err(|e| format!("trash task panicked: {e}"))?
+}
+
 /// Restores a trash entry to its original path (re-linking the metarecords).
 /// Returns the restored path for display.
 #[tauri::command]

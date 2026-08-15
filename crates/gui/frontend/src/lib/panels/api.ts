@@ -377,6 +377,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       readDir: (path: string) => invoke('fs_read_dir', { path }) as Promise<Metafolder.FsEntry[]>,
       stat: (path: string) => invoke('fs_stat', { path }),
       homeDir: () => invoke('fs_home_dir') as Promise<string>,
+      mkdir: (path: string) => invoke('fs_mkdir', { path }) as Promise<void>,
+      createFile: (path: string) => invoke('fs_create_file', { path }) as Promise<void>,
+      move: (from: string, to: string) => invoke('fs_move', { from, to }) as Promise<void>,
+      copy: (from: string, to: string) => invoke('fs_copy', { from, to }) as Promise<void>,
+      remove: (path: string) => invoke('fs_delete', { path }) as Promise<void>,
     },
 
     /** Repository trash-bin (spec-trash.org): filesystem operations shared with
@@ -387,6 +392,8 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('trash_restore', { repo, id }) as Promise<string>,
       remove: (repo: string, id: string) => invoke('trash_remove', { repo, id }) as Promise<void>,
       empty: (repo: string) => invoke('trash_empty', { repo }) as Promise<number>,
+      trashPath: (repo: string, path: string) =>
+        invoke('trash_path', { repo, path }) as Promise<string>,
     },
 
     /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
