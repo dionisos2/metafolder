@@ -22,9 +22,28 @@ The project is a Cargo workspace:
 
 The full specification lives under `docs/` (`spec-*.org`).
 
+## Quick start (make)
+
+A `Makefile` wraps the build and install steps; `make help` lists every target.
+
+```bash
+make check-deps        # verify build/runtime deps and list what is missing
+make install           # build (release) + install binaries + install user config
+make install-headless  # daemon + CLI only (skips the GUI toolkit / npm)
+```
+
+Binaries install to `~/.local/bin` (`make install PREFIX=/usr/local` to change);
+`make uninstall` removes them. `install` also runs `metafolder-sync-config` to
+install the user config repo (see [Configuration](#configuration)). Other useful
+targets: `make run-daemon`, `make run-gui`, `make test`, `make check`.
+
+The individual commands each target runs are documented below.
+
 ## Dependencies
 
 Package names below are for Arch Linux; map them to your distribution.
+`make check-deps` (or `scripts/check-deps.sh`) reports which of these are
+present and prints the `pacman` line for whatever is missing.
 
 ### Build
 
