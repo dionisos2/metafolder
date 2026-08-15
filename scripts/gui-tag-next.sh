@@ -67,7 +67,7 @@ gui_tag_next() {
     # is_exclusive <path> : the tag excludes its siblings (own `exclusive`, or
     # its parent is a `partition`). Reads the universe flag columns.
     is_exclusive() {
-        local t=$1 par excl part p pa pe
+        local t=$1 par excl part
         excl=$(awk -F '\t' -v t="$t" '$1==t{print ($3==1)?1:0; exit}' "$universe")
         [ "${excl:-0}" = 1 ] && return 0
         par=$(tag_parent "$t")
