@@ -19,32 +19,24 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=lib/mf-gui.sh
+source "$HERE/lib/mf-gui.sh"
 SORT_DIR=${1:-$HOME/a_trier}
 DEST_ROOT=${DEST_ROOT:-$HOME/divertissement}
 
-die() { echo "error: $*" >&2; exit 1; }
-
-REPO=$(mf gui repo) || die "no GUI running or no repository in the focused workspace"
-export METAFOLDER_REPO="$REPO"
-[ -d "$SORT_DIR" ] || die "not a directory: $SORT_DIR"
+mf_gui_bind_repo
+[ -d "$SORT_DIR" ] || mf_die "not a directory: $SORT_DIR"
 
 # The metarecord uuid of a path. `mf track` is idempotent: it creates the
 # metarecord if needed and always prints the uuid (existing or new).
 ensure_metarecord() { mf track "$1"; }
 
 # ask "<question>" -> prints y | n | escape  (escape also on timeout/GUI closed).
-ask() {
-    mf gui message "$1" >/dev/null
-    mf gui input y n escape 2>/dev/null || echo escape
-}
+ask() { mf_gui_ask "$1" y n escape; }
 
-# The tag paths (names) a metarecord references through its `tags` field.
-record_tag_names() {
-    local ru
-    mf metarecord -i "$1" field get tags 2>/dev/null | while IFS= read -r ru; do
-        [ -n "$ru" ] && mf metarecord -i "$ru" field get name
-    done
-}
+# The tag paths (names) a metarecord references through its `tags` field —
+# resolved in one round-trip.
+record_tag_names() { mf metarecord -i "$1" field get tags --resolve name 2>/dev/null; }
 
 # --- Routing rules: the heart you customise. Return a destination dir, or ""
 # to leave the file in place. Reads $TAGS (see below) and any scalar field. ---
