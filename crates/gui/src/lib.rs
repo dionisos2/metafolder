@@ -17,6 +17,7 @@ pub mod keybindings;
 pub mod media_support;
 pub mod notifier;
 pub mod proc;
+pub mod recent;
 pub mod reconcile;
 pub mod sandbox;
 pub mod server;
@@ -432,6 +433,8 @@ pub fn run(options: Options) {
             fs_commands::fs_home_dir,
             commands::history_read,
             commands::history_append,
+            commands::recent_read,
+            commands::recent_touch,
             shell_exec::run_shell,
             bash_complete::bash_complete,
             commands::daemon_request,

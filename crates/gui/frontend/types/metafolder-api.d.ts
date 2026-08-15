@@ -229,6 +229,21 @@ declare namespace Metafolder {
     append(repo: string, zone: string, entry: string): Promise<void>;
   }
 
+  /** One entry of the recently-viewed list: a metarecord uuid and the ISO-8601
+   *  timestamp of its most recent view. */
+  interface RecentEntry {
+    uuid: string;
+    viewed_at: string;
+  }
+
+  /** Per-repo "recently viewed metarecords" (crate::recent): a GUI-side LRU
+   *  list under `.metafolder/gui/recent`, newest first. `touch` records a view;
+   *  `list` reads back the newest `limit` entries (all when omitted). */
+  interface Recent {
+    list(repo: string, limit?: number): Promise<RecentEntry[]>;
+    touch(repo: string, uuid: string): Promise<void>;
+  }
+
   /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
    *  orchestration, driven through the sync Tauri commands. Repos are named
    *  positionally (name or UUID), order-independent. `plan`/`run` run
@@ -335,6 +350,7 @@ declare namespace Metafolder {
     readonly trash: Trash;
     readonly sync: Sync;
     readonly history: History;
+    readonly recent: Recent;
     readonly statusBar: StatusBar;
     readonly messages: Messages;
     readonly contextMenu: ContextMenu;

@@ -572,3 +572,33 @@ pub async fn history_append(
         .await
         .map_err(|e| format!("blocking task failed: {e}"))?
 }
+
+/// Recently-viewed metarecords (crate::recent) — a GUI-side LRU list under
+/// `.metafolder/gui/recent`, like the input history: the daemon plays no part.
+#[tauri::command]
+pub async fn recent_read(
+    app: AppHandle<'_>,
+    repo: String,
+    limit: Option<usize>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
+    let entries =
+        tauri::async_runtime::spawn_blocking(move || crate::recent::read(&dir, limit))
+            .await
+            .map_err(|e| format!("blocking task failed: {e}"))??;
+    Ok(entries
+        .into_iter()
+        .map(|e| serde_json::json!({ "uuid": e.uuid, "viewed_at": e.viewed_at }))
+        .collect())
+}
+
+/// Records a view of `uuid` now (the timestamp is the GUI's clock, not the
+/// caller's — recency is a local concern).
+#[tauri::command]
+pub async fn recent_touch(app: AppHandle<'_>, repo: String, uuid: String) -> Result<(), String> {
+    let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
+    let now = metafolder_core::date::iso8601_from_ms(metafolder_core::date::now_ms());
+    tauri::async_runtime::spawn_blocking(move || crate::recent::touch(&dir, &uuid, &now))
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))?
+}

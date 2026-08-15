@@ -253,6 +253,16 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('trash_empty', { repo: 'r1' });
   });
 
+  test('recent routes to the recent commands', async () => {
+    const { api, invoke } = setup();
+    invoke.mockResolvedValueOnce([{ uuid: 'u1', viewed_at: '2026-08-15T10:00:00Z' }]);
+    const entries = await api.recent.list('r1', 20);
+    expect(invoke).toHaveBeenCalledWith('recent_read', { repo: 'r1', limit: 20 });
+    expect(entries).toEqual([{ uuid: 'u1', viewed_at: '2026-08-15T10:00:00Z' }]);
+    await api.recent.touch('r1', 'u1');
+    expect(invoke).toHaveBeenCalledWith('recent_touch', { repo: 'r1', uuid: 'u1' });
+  });
+
   test('messages.onAppend fires on pushMessageAppended', () => {
     const { api, instance } = setup();
     const listener = vi.fn();
