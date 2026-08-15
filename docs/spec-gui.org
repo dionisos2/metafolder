@@ -112,14 +112,14 @@ The =metarecord-list= panel type supports at minimum:
 - =table= — tabular list with configurable columns.
 - =grid= — thumbnail grid, useful for image collections.
 
-=metarecord-list= goes one step further than the deferred first display: it
-never runs its query automatically. Opening or switching a repo leaves the
-list empty (the footer says so) until an explicit user action runs it —
-applying the query or the finder (=Enter=), sorting on a column header, or
-=metarecord-list:refresh= — since a freshly opened repo often needs nothing
-from this panel. The one exception is opening as a value picker
-(=pick_request=), where rows are needed to pick from. The bench harnesses
-issue =metarecord-list:refresh= after showing the panel for this reason.
+=metarecord-list= runs its query *eagerly* on the first display, and again
+whenever a repo becomes active: the (possibly empty) query is executed and the
+repo's contents shown straight away, rather than waiting for an explicit apply
+or =metarecord-list:refresh=. Queries are fast enough that showing the list is
+the better default. The list stays empty only while there is no active repo.
+(Historically this panel deferred its query until an explicit user action; the
+value-picker case — =pick_request=, where rows are needed to pick from — was the
+one exception and is now subsumed by the eager run.)
 
 For large result sets, =metarecord-list= uses the daemon's cursor pagination
 (=limit= / =cursor= / =sort= on =POST /query=, see the Pagination section of

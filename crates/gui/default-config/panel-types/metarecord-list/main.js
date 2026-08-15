@@ -92,10 +92,11 @@ export async function mount(root, metafolder) {
   let normalShown = false; // zone B (normal DSL) revealed?
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
-  // Opening a repo does not run the query automatically (often nothing is
-  // wanted from this panel yet): the list stays empty until the user runs it
-  // — apply the query, type in the finder, sort, or refresh. Reset on repo
-  // change; a value-picker opening (pick_request) arms it, rows are needed.
+  // The list runs its query eagerly on first display (and whenever a repo
+  // becomes active): searches are fast enough that showing the repo's contents
+  // straight away beats making the user press Enter/refresh first. Set in
+  // `start()` once a repo is present; reset on repo change so the new repo is
+  // re-run from scratch.
   let queryRan = false;
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let livePreviewTimer;
@@ -480,9 +481,7 @@ export async function mount(root, metafolder) {
       }),
     );
     statusLine.textContent = !queryRan
-      ? repo === null
-        ? ''
-        : 'query not run — apply the query/finder (Enter) or refresh to load the list'
+      ? '' // no active repo: nothing to show yet
       : `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
           (total ?? metarecords.length) === 1 ? '' : 's'
         }` +
@@ -987,7 +986,7 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:refresh', {
     label: 'Metarecord list: reload from the daemon',
     handler: () => {
-      queryRan = true; // refresh is also how the deferred initial load is run
+      queryRan = true; // a manual refresh always loads, even with no repo yet armed
       return fetchPage(true);
     },
   });
@@ -1065,8 +1064,8 @@ export async function mount(root, metafolder) {
   async function start() {
     const activeRepo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
     if (activeRepo !== repo) {
-      // A new repo: empty the list and disarm the query — it only runs again
-      // on an explicit user action (see `queryRan`).
+      // A new repo: empty the list and disarm the query; it is re-armed below
+      // so the new repo's contents load on this same display (see `queryRan`).
       repo = activeRepo;
       repoRoot = null;
       queryRan = false;
@@ -1088,16 +1087,18 @@ export async function mount(root, metafolder) {
     if (repo !== null) {
       // Warm the field catalog so the finder can auto-detect osm/osmd per field.
       await cache.fetchFields(repo).catch(() => {});
+      // Run eagerly: show the repo's contents on first display rather than
+      // waiting for an explicit apply/refresh (searches are fast enough).
+      queryRan = true;
       const pickRequest = await workspace.get('pick_request');
       picking = !!pickRequest; // arms the "Pick this metarecord" context item
       if (!pickFocused && pickRequest) {
         pickFocused = true;
         finderInput.focus();
-        queryRan = true; // a value picker needs rows to pick from
       }
     }
     if (queryRan) await fetchPage(true);
-    else render(); // empty list + the "query not run" hint
+    else render(); // no repo: empty list
   }
 
   // The first query waits for the first actual display.
