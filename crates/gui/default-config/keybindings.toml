@@ -79,6 +79,7 @@
 "s b" = { command = "panel:set-type trash" }
 "s y" = { command = "panel:set-type sync" }
 "s p" = { command = "panel:set-type help" }
+"s v" = { command = "panel:set-type recent" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:help" }
@@ -107,6 +108,7 @@
   { command = "ref-list:next", when = "ref-list" },
   { command = "log:next", when = "log" },
   { command = "trash:next", when = "trash" },
+  { command = "recent:next", when = "recent" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "up" = [
@@ -118,6 +120,7 @@
   { command = "ref-list:prev", when = "ref-list" },
   { command = "log:prev", when = "log" },
   { command = "trash:prev", when = "trash" },
+  { command = "recent:prev", when = "recent" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -129,6 +132,7 @@
   { command = "ref-list:next", when = "ref-list" },
   { command = "log:next", when = "log" },
   { command = "trash:next", when = "trash" },
+  { command = "recent:next", when = "recent" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "k" = [
@@ -138,6 +142,7 @@
   { command = "ref-list:prev", when = "ref-list" },
   { command = "log:prev", when = "log" },
   { command = "trash:prev", when = "trash" },
+  { command = "recent:prev", when = "recent" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -148,6 +153,7 @@
   { command = "treeref:first", when = "treeref" },
   { command = "ref-list:first", when = "ref-list" },
   { command = "log:first", when = "log" },
+  { command = "recent:first", when = "recent" },
 ]
 "end" = [
   { command = "metarecord-list:last", when = "metarecord-list" },
@@ -155,6 +161,7 @@
   { command = "treeref:last", when = "treeref" },
   { command = "ref-list:last", when = "ref-list" },
   { command = "log:last", when = "log" },
+  { command = "recent:last", when = "recent" },
 ]
 
 # Enter: confirm while typing (global), otherwise the focused panel's primary
@@ -169,6 +176,7 @@
   { command = "ref-list:open", when = "ref-list" },
   { command = "log:toggle-ops", when = "log" },
   { command = "trash:restore", when = "trash" },
+  { command = "recent:open", when = "recent" },
   { command = "metarecord:field-edit", when = "metarecord-detail" },
 ]
 
@@ -177,6 +185,7 @@
   { command = "metarecord-list:open", when = "metarecord-list" },
   { command = "treeref:descend", when = "treeref" },
   { command = "ref-list:open", when = "ref-list" },
+  { command = "recent:open", when = "recent" },
 ]
 "left" = { command = "treeref:parent", when = "treeref" }
 "backspace" = [
@@ -190,6 +199,7 @@
   { command = "ref-list:refresh", when = "ref-list" },
   { command = "file-manager:refresh", when = "file-manager" },
   { command = "trash:refresh", when = "trash" },
+  { command = "recent:refresh", when = "recent" },
 ]
 
 # Delete: send the selected metarecord's file to the trash (spec-trash.org),
