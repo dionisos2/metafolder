@@ -10,6 +10,7 @@ pub mod gui;
 pub mod log;
 pub mod order;
 pub mod sync;
+pub mod tag;
 pub mod trash;
 
 // The query DSL parser lives in core (shared with the GUI); re-exported so

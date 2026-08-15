@@ -157,6 +157,26 @@ enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Hierarchical tags: add/deny/mixed/remove a tag on the selected
+    /// metarecord(s), or list the vocabulary. Encapsulates the subsumption and
+    /// exclusivity rules (drop ancestors on add, descendants on deny). The
+    /// field-name convention is configurable via the `[tag]` config table.
+    Tag {
+        /// DSL query selector (use -s for the simplified language)
+        #[arg(short = 'q', long = "query")]
+        query: Option<String>,
+        /// Single-metarecord selector by UUID
+        #[arg(short = 'i', long = "id", conflicts_with = "query")]
+        id: Option<String>,
+        /// Exact-match selector: name[:type]=value (repeatable, AND-ed)
+        #[arg(long = "eq", conflicts_with_all = ["query", "id"])]
+        eq: Vec<String>,
+        /// Treat -q as simplified-language text and expand it first
+        #[arg(short = 's', long = "simplified", requires = "query")]
+        simplified: bool,
+        #[command(subcommand)]
+        verb: TagVerb,
+    },
     /// User schema commands
     Schema {
         #[command(subcommand)]
@@ -292,6 +312,20 @@ enum LogCommand {
         #[command(subcommand)]
         command: PruneCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum TagVerb {
+    /// The record(s) have the tag (drops more general ancestor tags)
+    Add { path: String },
+    /// The record(s) do NOT have the tag (drops more specific descendants)
+    Deny { path: String },
+    /// Mark the folder(s) mixed w.r.t. the tag
+    Mixed { path: String },
+    /// Drop the tag from the record(s) (undo of add)
+    Remove { path: String },
+    /// List the tag vocabulary as TSV: name<TAB>partition<TAB>exclusive
+    List,
 }
 
 #[derive(Subcommand)]
@@ -677,10 +711,10 @@ fn main() {
     // kind fully overrides it (so the config never fills the *other* field and
     // trips the "-n and -u are mutually exclusive" check).
     let (repo_name, repo_uuid) = match (cli.repo_name, cli.repo_uuid) {
-        (None, None) => (config.repo.name, config.repo.uuid),
+        (None, None) => (config.repo.name.clone(), config.repo.uuid.clone()),
         explicit => explicit,
     };
-    let ctx = Ctx::new(port, repo_name, repo_uuid, &config.settings);
+    let ctx = Ctx::new(port, repo_name, repo_uuid, &config);
     let result = dispatch(&ctx, cli.command);
     match result {
         Ok(code) => std::process::exit(code),
@@ -743,6 +777,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         Command::Order { path, meta, max_gap, dry_run } => {
             commands::order(ctx, &path, &meta, max_gap, dry_run)
         }
+        Command::Tag { query, id, eq, simplified, verb } => {
+            dispatch_tag(ctx, query, id, eq, simplified, verb)
+        }
         Command::Schema { command } => match command {
             SchemaCommand::Check { predicate, json } => {
                 commands::schema_check(ctx, predicate.as_deref(), json)
@@ -778,6 +815,29 @@ fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
         SyncCommand::Unlink { repo_a, repo_b, link, with_endpoint } => {
             sync::unlink(ctx, &repo_a, &repo_b, &link, with_endpoint.as_deref())
         }
+    }
+}
+
+fn dispatch_tag(
+    ctx: &Ctx,
+    query: Option<String>,
+    id: Option<String>,
+    eq: Vec<String>,
+    simplified: bool,
+    verb: TagVerb,
+) -> CmdResult {
+    use metafolder_cli::client::CliError::Usage;
+    if let TagVerb::List = verb {
+        return commands::tag_list(ctx);
+    }
+    let selector = commands::resolve_selector(query.as_deref(), id.as_deref(), &eq, simplified)?
+        .ok_or_else(|| Usage("mf tag needs a selector: -i, -q or --eq".into()))?;
+    match verb {
+        TagVerb::Add { path } => commands::tag_add(ctx, &selector, &path),
+        TagVerb::Deny { path } => commands::tag_deny(ctx, &selector, &path),
+        TagVerb::Mixed { path } => commands::tag_mixed(ctx, &selector, &path),
+        TagVerb::Remove { path } => commands::tag_remove(ctx, &selector, &path),
+        TagVerb::List => unreachable!("handled above"),
     }
 }
 

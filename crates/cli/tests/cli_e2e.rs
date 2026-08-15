@@ -2748,3 +2748,54 @@ fn test_cli_primitives_eq_tsv_resolve() {
     names.sort();
     assert_eq!(names, vec!["musique/jazz", "musique/rock"]);
 }
+
+// ── mf tag (hierarchical tags: subsumption, exclusivity) ──────────────────────
+
+#[test]
+fn test_mf_tag_subsumption_exclusivity_deny_list() {
+    let (repo, _root) = init_repo("tag");
+    let rec = create_metarecord(&repo, &["note:string=target"]);
+    // Vocabulary; jazz is exclusive among musique's children.
+    create_metarecord(&repo, &["type:string=tag", "name:string=musique/jazz", "exclusive:bool=true"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=musique/rock"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=musique/jazz/bebop"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=administratif"]);
+    create_metarecord(&repo, &["type:string=tag", "name:string=administratif/impots"]);
+
+    let tag = |args: &[&str]| {
+        let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
+        v.extend_from_slice(args);
+        assert_ok(&mf(&v));
+    };
+    let names = |field: &str| -> Vec<String> {
+        let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", field, "--resolve", "name"]);
+        assert_ok(&out);
+        let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
+        v.sort();
+        v
+    };
+
+    tag(&["-i", &rec, "add", "musique/rock"]);
+    assert_eq!(names("tags"), vec!["musique/rock"]);
+
+    // jazz is exclusive → adding it drops the sibling rock.
+    tag(&["-i", &rec, "add", "musique/jazz"]);
+    assert_eq!(names("tags"), vec!["musique/jazz"]);
+
+    // bebop's ancestor jazz is present → dropped on add; add is idempotent.
+    tag(&["-i", &rec, "add", "musique/jazz/bebop"]);
+    tag(&["-i", &rec, "add", "musique/jazz/bebop"]);
+    assert_eq!(names("tags"), vec!["musique/jazz/bebop"]);
+
+    // deny: a generic negative subsumes (drops) its specific descendant.
+    tag(&["-i", &rec, "deny", "administratif/impots"]);
+    assert_eq!(names("negative_tags"), vec!["administratif/impots"]);
+    tag(&["-i", &rec, "deny", "administratif"]);
+    assert_eq!(names("negative_tags"), vec!["administratif"]);
+
+    // list = the vocabulary TSV with 0/1 flags.
+    let out = mf(&["-u", &repo, "tag", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.lines().any(|l| l == "musique/jazz\t0\t1"), "list:\n{}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "administratif\t0\t0"), "list:\n{}", out.stdout);
+}

@@ -65,6 +65,8 @@ pub struct CliConfig {
     pub settings: CliSettings,
     /// The default repository selector (`[repo]`).
     pub repo: RepoDefault,
+    /// The tag-model field names (`[tag]`), for `mf tag`.
+    pub tag: crate::tag::TagConfig,
 }
 
 #[derive(Deserialize)]
@@ -74,6 +76,8 @@ struct RawConfig {
     settings: CliSettings,
     #[serde(default)]
     repo: RepoDefault,
+    #[serde(default)]
+    tag: crate::tag::TagConfig,
 }
 
 /// Default configuration file path:
@@ -85,7 +89,7 @@ pub fn default_config_path() -> Option<PathBuf> {
 /// Parses configuration text into a [`CliConfig`].
 fn parse_config(contents: &str) -> Result<CliConfig, String> {
     let raw: RawConfig = toml::from_str(contents).map_err(|e| e.to_string())?;
-    Ok(CliConfig { settings: raw.settings, repo: raw.repo })
+    Ok(CliConfig { settings: raw.settings, repo: raw.repo, tag: raw.tag })
 }
 
 /// Reads and validates the configuration file. A missing file is equivalent to

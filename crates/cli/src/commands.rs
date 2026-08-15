@@ -23,6 +23,8 @@ pub struct Ctx {
     pub page_size: usize,
     /// Default poll interval (ms) for `mf reconcile` waits (config `[settings]`).
     pub reconcile_poll_interval_ms: u64,
+    /// Tag-model field names (`[tag]`), for `mf tag`.
+    pub tag: crate::tag::TagConfig,
     /// Cached `/repos/<uuid>` prefix (resolving `-n` costs one daemon round-trip).
     base: std::cell::OnceCell<String>,
 }
@@ -32,14 +34,15 @@ impl Ctx {
         port: u16,
         name: Option<String>,
         uuid: Option<String>,
-        settings: &crate::config::CliSettings,
+        config: &crate::config::CliConfig,
     ) -> Self {
         Self {
             client: Client::new(&format!("http://127.0.0.1:{port}")),
             name,
             uuid,
-            page_size: settings.page_size,
-            reconcile_poll_interval_ms: settings.reconcile_poll_interval_ms,
+            page_size: config.settings.page_size,
+            reconcile_poll_interval_ms: config.settings.reconcile_poll_interval_ms,
+            tag: config.tag.clone(),
             base: std::cell::OnceCell::new(),
         }
     }
@@ -971,6 +974,10 @@ fn field_int(fields: &Json, name: &str) -> Option<i64> {
 fn tree_ref_name(fields: &Json, name: &str) -> Option<String> {
     Some(field_value(fields, name)?["value"]["name"].as_str()?.to_string())
 }
+/// A bool field's value.
+fn field_bool(fields: &Json, name: &str) -> Option<bool> {
+    field_value(fields, name)?["value"].as_bool()
+}
 
 /// `mf order <folder>` — assigns `order_position_file` / `order_position_dir` to
 /// the folder's direct children so that "sort by position" orders them sensibly
@@ -1081,6 +1088,202 @@ pub fn order(
         }
     }
     println!("{written}");
+    Ok(0)
+}
+
+// ── mf tag (hierarchical-tag model, spec-data-model "* CLI") ──────────────────
+
+/// The tag vocabulary loaded once per `mf tag` run.
+struct Vocab {
+    /// Tag path → entry uuid (hex).
+    name2uuid: std::collections::HashMap<String, String>,
+    /// All tag paths (for descendant/sibling scans).
+    names: Vec<String>,
+    /// Paths flagged `partition = true`.
+    partitions: std::collections::HashSet<String>,
+    /// Paths flagged `exclusive = true`.
+    exclusives: std::collections::HashSet<String>,
+}
+
+/// Loads the tag vocabulary (`type = entry_type`) with its flags, paginating.
+fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
+    let cfg = &ctx.tag;
+    let query = json!({
+        "type": "eq", "field": cfg.type_field,
+        "value": {"type": "string", "value": cfg.entry_type},
+    });
+    let mut vocab = Vocab {
+        name2uuid: std::collections::HashMap::new(),
+        names: Vec::new(),
+        partitions: std::collections::HashSet::new(),
+        exclusives: std::collections::HashSet::new(),
+    };
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({
+            "query": query,
+            "select": [cfg.name_field, cfg.partition, cfg.exclusive],
+            "limit": ctx.page_size,
+        });
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
+        for entry in resp["results"].as_array().into_iter().flatten() {
+            let (Some(uuid), Some(name)) =
+                (entry["uuid"].as_str(), field_str(&entry["fields"], &cfg.name_field))
+            else {
+                continue;
+            };
+            vocab.name2uuid.insert(name.to_string(), uuid.to_string());
+            vocab.names.push(name.to_string());
+            if field_bool(&entry["fields"], &cfg.partition) == Some(true) {
+                vocab.partitions.insert(name.to_string());
+            }
+            if field_bool(&entry["fields"], &cfg.exclusive) == Some(true) {
+                vocab.exclusives.insert(name.to_string());
+            }
+        }
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    Ok(vocab)
+}
+
+/// The entry uuid for `path`, creating the tag entry if the vocabulary lacks it.
+fn ensure_tag_entry(ctx: &Ctx, base: &str, vocab: &mut Vocab, path: &str) -> Result<String, CliError> {
+    if let Some(uuid) = vocab.name2uuid.get(path) {
+        return Ok(uuid.clone());
+    }
+    let cfg = &ctx.tag;
+    let body = json!({"fields": [
+        {"name": cfg.type_field, "value": {"type": "string", "value": cfg.entry_type}},
+        {"name": cfg.name_field, "value": {"type": "string", "value": path}},
+    ]});
+    let resp = ctx.client.post(&format!("{base}/metarecords"), &body)?;
+    let uuid = resp["uuid"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("daemon did not return a uuid for the new tag entry".into()))?
+        .to_string();
+    vocab.name2uuid.insert(path.to_string(), uuid.clone());
+    vocab.names.push(path.to_string());
+    Ok(uuid)
+}
+
+/// The `Query` IR (as JSON) selecting the tag command's target set: a `uuid_in`
+/// for `-i`, else the given query.
+fn target_query(selector: &str) -> Result<Json, CliError> {
+    Ok(match parse_target(selector)? {
+        Target::Entry(uuid) => json!({"type": "uuid_in", "uuids": [uuid.as_simple().to_string()]}),
+        Target::Predicate(query) => serde_json::to_value(query).expect("Query serialization"),
+    })
+}
+
+/// Appends `field:ref=<tag_uuid>` over the target set; returns the update count.
+fn tag_batch_append(ctx: &Ctx, base: &str, query: &Json, field: &str, tag_uuid: &str) -> Result<u64, CliError> {
+    let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
+    let resp = ctx.client.post(&format!("{base}/query/fields/append"), &body)?;
+    Ok(resp["updated"].as_u64().unwrap_or(0))
+}
+
+/// Removes the rows equal to `field:ref=<tag_uuid>` over the target set.
+fn tag_batch_remove(ctx: &Ctx, base: &str, query: &Json, field: &str, tag_uuid: &str) -> Result<(), CliError> {
+    let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
+    ctx.client.post(&format!("{base}/query/fields/remove"), &body)?;
+    Ok(())
+}
+
+/// `mf tag [sel] add <path>` — the record(s) *have* the tag: (idempotently) add
+/// the positive ref, drop the more general ancestor tags, and, when the tag is
+/// exclusive, drop its siblings.
+pub fn tag_add(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let cfg = ctx.tag.clone();
+    let mut vocab = load_vocab(ctx, &base)?;
+    let query = target_query(selector)?;
+    let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
+    // Idempotent add (remove-then-append leaves exactly one row).
+    tag_batch_remove(ctx, &base, &query, &cfg.positive, &tag_uuid)?;
+    let n = tag_batch_append(ctx, &base, &query, &cfg.positive, &tag_uuid)?;
+    for ancestor in crate::tag::ancestors(path) {
+        if let Some(uuid) = vocab.name2uuid.get(&ancestor) {
+            tag_batch_remove(ctx, &base, &query, &cfg.positive, uuid)?;
+        }
+    }
+    if crate::tag::is_exclusive(path, &vocab.partitions, &vocab.exclusives) {
+        for sibling in crate::tag::siblings(path, &vocab.names) {
+            if let Some(uuid) = vocab.name2uuid.get(&sibling) {
+                tag_batch_remove(ctx, &base, &query, &cfg.positive, uuid)?;
+            }
+        }
+    }
+    println!("{n}");
+    Ok(0)
+}
+
+/// `mf tag [sel] deny <path>` — the record(s) do *not* have the tag: add the
+/// negative ref, drop the more specific descendant negatives it subsumes.
+pub fn tag_deny(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let cfg = ctx.tag.clone();
+    let mut vocab = load_vocab(ctx, &base)?;
+    let query = target_query(selector)?;
+    let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
+    tag_batch_remove(ctx, &base, &query, &cfg.negative, &tag_uuid)?;
+    let n = tag_batch_append(ctx, &base, &query, &cfg.negative, &tag_uuid)?;
+    for descendant in crate::tag::descendants(path, &vocab.names) {
+        if let Some(uuid) = vocab.name2uuid.get(&descendant) {
+            tag_batch_remove(ctx, &base, &query, &cfg.negative, uuid)?;
+        }
+    }
+    println!("{n}");
+    Ok(0)
+}
+
+/// `mf tag [sel] mixed <path>` — mark the folder(s) mixed w.r.t. the tag (no
+/// subsumption; the descend logic lives in the scripts).
+pub fn tag_mixed(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let cfg = ctx.tag.clone();
+    let mut vocab = load_vocab(ctx, &base)?;
+    let query = target_query(selector)?;
+    let tag_uuid = ensure_tag_entry(ctx, &base, &mut vocab, path)?;
+    tag_batch_remove(ctx, &base, &query, &cfg.mixed, &tag_uuid)?;
+    let n = tag_batch_append(ctx, &base, &query, &cfg.mixed, &tag_uuid)?;
+    println!("{n}");
+    Ok(0)
+}
+
+/// `mf tag [sel] remove <path>` — drop the positive ref (symmetric undo of add);
+/// a no-op when the tag entry does not exist.
+pub fn tag_remove(ctx: &Ctx, selector: &str, path: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let cfg = ctx.tag.clone();
+    let vocab = load_vocab(ctx, &base)?;
+    let Some(tag_uuid) = vocab.name2uuid.get(path) else {
+        println!("0");
+        return Ok(0);
+    };
+    let query = target_query(selector)?;
+    tag_batch_remove(ctx, &base, &query, &cfg.positive, tag_uuid)?;
+    println!("removed {path}");
+    Ok(0)
+}
+
+/// `mf tag list` — the vocabulary as TSV `name<TAB>partition<TAB>exclusive`
+/// (0/1), name-sorted. This is exactly the universe format the tagging scripts
+/// consume.
+pub fn tag_list(ctx: &Ctx) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut vocab = load_vocab(ctx, &base)?;
+    vocab.names.sort();
+    for name in &vocab.names {
+        let p = vocab.partitions.contains(name) as u8;
+        let e = vocab.exclusives.contains(name) as u8;
+        println!("{name}\t{p}\t{e}");
+    }
     Ok(0)
 }
 

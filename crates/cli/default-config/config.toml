@@ -30,3 +30,17 @@ reconcile-poll-interval-ms = 200
 [repo]
 # name = "music"
 # uuid = "3f7c1e2a4b5d6e7f8a9b0c1d2e3f4a5b"
+
+# Hierarchical-tag field names used by `mf tag` (add/deny/mixed/remove/list).
+# Every key is optional; the defaults below reproduce the convention the shipped
+# tagging scripts use, so an omitted [tag] table changes nothing. Override a key
+# only if your repository names these fields differently.
+[tag]
+# type-field  = "type"            # field marking a metarecord as a tag entry
+# entry-type  = "tag"             # its value
+# name-field  = "name"            # the tag's "/"-separated path
+# positive    = "tags"            # multi-map ref: the record HAS the tag
+# negative    = "negative_tags"   # multi-map ref: the record does NOT
+# mixed       = "mixed_tags"      # multi-map ref: a folder is mixed
+# partition   = "partition"       # bool flag: a parent's children are exclusive
+# exclusive   = "exclusive"       # bool flag: a child forbids its siblings
