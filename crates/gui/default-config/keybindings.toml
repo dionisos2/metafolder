@@ -85,6 +85,11 @@
 "h c" = { command = "help:help-cursor" }
 "f1" = { command = "help:help-cursor", text-input = true }
 
+# Go to a recently-viewed metarecord ("g" = go): opens the `recent` picker in
+# the command input, filtered by ordered substring like the finder. Global
+# (works from any panel); the "g" prefix is otherwise free.
+"g r" = { command = "recent" }
+
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # The list panels share the same navigation combos, each dispatched to its own
 # panel type via `when`. Commands are routed to their owning panel type whether
