@@ -63,6 +63,9 @@ export async function mount(root, metafolder) {
   // (a drill-in path has no metarecord in hand).
   /** @type {Selected|null} */
   let selected = null;
+  /** uuid last recorded in the recently-viewed list, so following the same
+   *  selection again (or a re-render) does not churn the list. */
+  let lastViewedUuid = null;
   /** @type {string|null} Local drill-in path: set when the user clicks into a
    *  directory's listing, overriding the selection until it changes.
    *  null = follow the selection. */
@@ -651,6 +654,13 @@ export async function mount(root, metafolder) {
     // click in metarecord-detail) must not re-target the played file's
     // position onto another metarecord.
     selected = /** @type {Selected|null} */ ((await workspace.get('selected_metarecord')) ?? null);
+    // Record the view in the repo's recently-viewed list (GUI-side, no daemon
+    // write) when the selection points at a tracked metarecord — only on an
+    // actual change, so re-selecting the same file does not churn the list.
+    if (selected?.uuid && selected.uuid !== lastViewedUuid) {
+      lastViewedUuid = selected.uuid;
+      void metafolder.recent.touch(selected.repo, selected.uuid);
+    }
     metafolder.whenVisible(rerender);
   }
 

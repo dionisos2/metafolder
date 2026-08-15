@@ -46,6 +46,9 @@ export async function mount(root, metafolder) {
   let current = null;
   /** @type {Loaded|null} */
   let metarecord = null;
+  /** uuid last recorded in the recently-viewed list, to avoid re-touching the
+   *  same record on a `metarecords:dirty` reload. */
+  let lastViewedUuid = null;
   /** @type {number|null} field id being edited, or null */
   let editingField = null;
   let newMetarecordMode = false;
@@ -494,6 +497,13 @@ export async function mount(root, metafolder) {
     } catch (error) {
       metarecord = null;
       showError(messageOf(error));
+    }
+    // Record the view in the repo's recently-viewed list (GUI-side, no daemon
+    // write) — only when the displayed record actually changed, so a
+    // `metarecords:dirty` reload of the same record does not churn the list.
+    if (metarecord && metarecord.uuid !== lastViewedUuid) {
+      lastViewedUuid = metarecord.uuid;
+      void metafolder.recent.touch(selection.repo, metarecord.uuid);
     }
     orphanNote.hidden = true;
     render();
