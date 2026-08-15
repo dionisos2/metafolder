@@ -1,43 +1,121 @@
 <h1>Queries</h1>
 <p>
-  Most panels that list metarecords are driven by a query. There are two
-  languages: the <strong>simplified query</strong> you usually type, and the
-  <strong>normal DSL</strong> it expands into.
+  Most panels that list metarecords are driven by a query — a filter that selects
+  which metarecords appear. There are two languages:
+</p>
+<ul>
+  <li>
+    the <strong><a data-help-page="simplified-query">simplified query</a></strong>
+    you usually type (short, forgiving, configurable), and
+  </li>
+  <li>
+    the <strong>normal DSL</strong> it expands into — precise but more verbose.
+    This page documents the DSL.
+  </li>
+</ul>
+<p>
+  In the <a data-help-page="metarecord-list">metarecord list</a> the query box
+  accepts simplified text; <em>Show normal DSL</em> reveals the expansion, which
+  you can <strong>freeze</strong> to edit as DSL by hand. Focus the box with
+  <code>Ctrl+/</code>. An <strong>empty query matches everything</strong>.
 </p>
 
-<h2>Simplified queries</h2>
+<h2>Boolean structure</h2>
 <p>
-  The query box (for example in the <a data-help-page="metarecord-list">metarecord
-  list</a> panel) accepts the simplified language. A few examples:
+  Combine predicates with <code>AND</code>, <code>OR</code> and <code>NOT</code>,
+  grouping with parentheses. <code>NOT</code> binds tighter than <code>AND</code>,
+  which binds tighter than <code>OR</code>. Keywords are
+  <strong>case-sensitive uppercase</strong> (the boolean literals
+  <code>true</code>/<code>false</code> are lowercase).
 </p>
-<pre>genre=jazz
-rating&gt;3
-fav genre=jazz
-size&gt;=100MB
-modified younger 3d</pre>
+<pre>rating &gt; 3 AND genre = "jazz"
+NOT (seen = true OR rating IS UNKNOWN)</pre>
+
+<h2>Comparisons</h2>
 <p>
-  Words separated by spaces mean <em>AND</em>; use <code>OR</code> (or
-  <code>+</code>) for alternatives, <code>!</code> for negation, and parentheses
-  to group. Comparison operators mirror the normal DSL
-  (<code>= != &lt; &lt;= &gt; &gt;=</code>); <code>~</code> is a regular-expression
-  match. An empty query matches everything.
+  <code>field <em>op</em> literal</code> with <code>=</code> <code>!=</code>
+  <code>&lt;</code> <code>&lt;=</code> <code>&gt;</code> <code>&gt;=</code>. A
+  literal is an integer, a float, a <code>"quoted string"</code>,
+  <code>true</code>/<code>false</code>, or a datetime.
+</p>
+<ul>
+  <li>
+    A <strong>datetime literal</strong> is <code>@</code> then a quoted ISO-8601
+    string (<code>@"2024-01-01"</code>, <code>@"2024-01-01 12:30:00"</code>, UTC)
+    or bare Unix milliseconds (<code>@1704067200000</code>). Use it to compare
+    against datetime fields: <code>mfr_mtime &gt; @"2024-01-01"</code> (a plain
+    string would not compare as a date).
+  </li>
+</ul>
+
+<h2>Three-valued presence</h2>
+<p>
+  A field can be <em>present</em>, explicitly empty, or never set — three
+  distinct states:
+</p>
+<table>
+  <tbody>
+    <tr><td><code>field IS PRESENT</code></td><td>has a value that is not <code>Nothing</code></td></tr>
+    <tr><td><code>field IS ABSENT</code></td><td>set to <code>Nothing</code> — an explicit "does not apply"</td></tr>
+    <tr><td><code>field IS UNKNOWN</code></td><td>the field was never set on this metarecord</td></tr>
+  </tbody>
+</table>
+<p>
+  For example a deleted file's metarecord has <code>mfr_path IS ABSENT</code>
+  (the path was blanked), not <code>UNKNOWN</code>.
 </p>
 
-<h2>The normal DSL</h2>
+<h2>Regex — <code>MATCHES</code></h2>
 <p>
-  Expansion is a pure, client-side transformation — the simplified text is
-  rewritten into the normal DSL before it is sent. Some panels can show and even
-  freeze the expanded DSL so you can edit it by hand. The normal DSL adds
-  three-valued predicates (present / absent / unknown) and traversal
-  (<code>follows</code> a reference, <code>-&gt;*</code> over a TreeRef path).
+  <code>field MATCHES "regex"</code> is a <strong>case-insensitive</strong>
+  regular-expression test on the field's text. On a TreeRef field it matches
+  against the resolved path.
+</p>
+<pre>title MATCHES "[Ll]ive"</pre>
+
+<h2>Traversal — following references</h2>
+<p>
+  Fields can point at other metarecords (a <code>Ref</code>) or form a tree (a
+  <code>TreeRef</code> like <code>mfr_path</code>). Follow them:
+</p>
+<table>
+  <tbody>
+    <tr>
+      <td><code>field -&gt; "path"</code></td>
+      <td>direct TreeRef step: the field's parent node is at <code>path</code></td>
+    </tr>
+    <tr>
+      <td><code>field -&gt; (query)</code></td>
+      <td>the referent (Ref target, or TreeRef parent) satisfies <code>query</code></td>
+    </tr>
+    <tr>
+      <td><code>field -&gt;* "path"</code></td>
+      <td>transitive (TreeRef only): a descendant of <code>path</code></td>
+    </tr>
+    <tr>
+      <td><code>field -&gt;* (query)</code></td>
+      <td>a descendant of any node matching <code>query</code></td>
+    </tr>
+  </tbody>
+</table>
+<pre>mfr_path -&gt;* "/music/jazz"
+author -&gt; (name = "Coltrane")</pre>
+
+<h2>Ordered-substring — <code>osm</code> / <code>osmd</code></h2>
+<p>
+  <code>osm(field, "terms")</code> matches when each whitespace-separated term
+  appears in order (the finder's semantics): <code>osm(mfr_path, "scien fic")</code>
+  matches <code>…/science-fiction/…</code>. <code>osm</code> follows a TreeRef
+  path; <code>osmd</code> matches a field's text directly.
 </p>
 
-<h2>The current simplified grammar</h2>
-<p>
-  The simplified language is configurable: this is the grammar in effect (loaded
-  at startup from <code>~/.config/metafolder/core/query-grammar</code>). Edit
-  that file and re-run <code>metafolder-sync-config</code> to change it.
-</p>
-<pre id="grammar-source">(loading…)</pre>
+<h2>Examples</h2>
+<pre>mfr_path IS ABSENT
+mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
+mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
+mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "sf"))</pre>
 
-<p>See also: <a data-help-page="metarecord-list">the metarecord list panel</a>.</p>
+<p>
+  See also: <a data-help-page="simplified-query">the simplified query language</a>,
+  <a data-help-page="metarecord-list">the metarecord list panel</a>.
+</p>

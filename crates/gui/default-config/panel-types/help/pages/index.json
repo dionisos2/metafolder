@@ -57,7 +57,19 @@
     "id": "queries",
     "title": "Queries",
     "file": "queries.html",
-    "aliases": ["query", "edit-query", "simplified-query", "grammar", "dsl"]
+    "aliases": [
+      "query", "edit-query", "dsl", "normal-dsl", "matches", "match",
+      "follows", "traversal", "present", "absent", "unknown", "osm", "osmd"
+    ]
+  },
+  {
+    "id": "simplified-query",
+    "title": "Simplified queries",
+    "file": "simplified-query.html",
+    "aliases": [
+      "simplified-query", "simplified", "simplified query", "grammar",
+      "query-grammar", "under", "fav"
+    ]
   },
   {
     "id": "metarecord-list",

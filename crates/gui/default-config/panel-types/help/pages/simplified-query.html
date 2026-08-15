@@ -1,0 +1,83 @@
+<h1>Simplified queries</h1>
+<p>
+  The <a data-help-page="queries">normal DSL</a> is precise but wordy for
+  everyday filtering (<code>genre = "jazz" AND rating IS PRESENT</code>). The
+  <strong>simplified query</strong> is a shorter, forgiving surface that
+  <strong>transpiles to normal DSL</strong> before it is run. It is the default
+  input of the query box in the <a data-help-page="metarecord-list">metarecord
+  list</a> panel; <em>Show normal DSL</em> reveals what it expands to.
+</p>
+
+<h2>Boolean skeleton</h2>
+<p>
+  Words separated by <strong>spaces</strong> mean <em>AND</em>. Use
+  <code>OR</code> (or <code>+</code>) for alternatives, <code>!</code> for
+  negation, and parentheses to group. An empty query matches everything.
+</p>
+<pre>genre=jazz rating&gt;3
+genre=jazz OR genre=blues
+!fav</pre>
+
+<h2>Predicates (default grammar)</h2>
+<p>These are the shipped conveniences — the part you type most:</p>
+<table>
+  <tbody>
+    <tr><td><code>field=value</code></td><td>equality; the value's type is inferred (number, <code>true</code>/<code>false</code>, else string)</td></tr>
+    <tr><td><code>field!=value</code></td><td>inequality</td></tr>
+    <tr><td><code>field&gt;n</code> <code>&gt;=n</code> <code>&lt;n</code> <code>&lt;=n</code></td><td>numeric comparisons</td></tr>
+    <tr><td><code>field~text</code></td><td>regex match (<code>MATCHES</code>)</td></tr>
+    <tr><td><code>field?</code></td><td>present</td></tr>
+    <tr><td><code>field!?</code></td><td>absent (value is <code>Nothing</code>)</td></tr>
+    <tr><td><code>field??</code></td><td>unknown (never set)</td></tr>
+    <tr><td><code>under <em>path</em></code></td><td>anywhere below a tree path (<code>mfr_path -&gt;* path</code>)</td></tr>
+  </tbody>
+</table>
+
+<h3>Size and field aliases</h3>
+<ul>
+  <li><code>path</code> → <code>mfr_path</code>, <code>size</code> → <code>mfr_size</code>; any other name passes through.</li>
+  <li>Numbers accept <code>MB</code> and <code>mins</code> suffixes: <code>size&gt;=100MB</code>, <code>length&lt;5mins</code>.</li>
+</ul>
+
+<h3>Date macros</h3>
+<p>
+  <code>modified</code> and <code>created</code> select the field
+  (<code>mfr_mtime</code> / <code>mfr_btime</code>); durations are numbers with a
+  unit (<code>s min h d w</code>):
+</p>
+<table>
+  <tbody>
+    <tr><td><code>modified younger 3d</code></td><td>changed in the last 3 days</td></tr>
+    <tr><td><code>created older 1w</code></td><td>created more than a week ago</td></tr>
+    <tr><td><code>modified since "2024-01-01"</code></td><td>on/after a date</td></tr>
+    <tr><td><code>created before "2024-01-01"</code></td><td>before a date</td></tr>
+    <tr><td><code>modified between "2024-01-01" and "2024-02-01"</code></td><td>within a range</td></tr>
+  </tbody>
+</table>
+
+<h3>Handy shortcuts</h3>
+<ul>
+  <li><code>tag</code> → <code>tag = "test"</code>, <code>fav</code> → <code>rating &gt;= 4</code> (example rules — adapt them to your own repository).</li>
+</ul>
+
+<h2>Simplified is not the DSL</h2>
+<p>
+  The simplified language is <strong>not</strong> a superset of the normal DSL:
+  the grammar defines its <em>entire</em> syntax, so expansion is not idempotent
+  on DSL text. The two are kept explicit — the GUI shows both and lets you freeze
+  the DSL to edit it directly; the CLI gates simplified input behind
+  <code>mf query -s</code>.
+</p>
+
+<h2>Editing the grammar</h2>
+<p>
+  Nothing above is hard-coded — every convenience is a rule in a grammar file you
+  can edit: <code>~/.config/metafolder/core/query-grammar</code>. It is global
+  (not per-repo), read client-side by the GUI and CLI (the daemon never sees it).
+  After editing, re-run <code>metafolder-sync-config</code>. This is the grammar
+  currently in effect:
+</p>
+<pre id="grammar-source">(loading…)</pre>
+
+<p>See also: <a data-help-page="queries">the normal DSL</a>,
+  <a data-help-page="metarecord-list">the metarecord list panel</a>.</p>
