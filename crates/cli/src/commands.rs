@@ -8,6 +8,7 @@ use std::path::Path;
 use serde_json::{json, Value as Json};
 use uuid::Uuid;
 
+use metafolder_core::metarecord::Value;
 use metafolder_core::query::Query;
 
 use crate::client::{Client, CliError};
@@ -144,15 +145,24 @@ pub(crate) fn expand_simplified(text: &str) -> Result<String, CliError> {
 pub fn resolve_selector(
     query: Option<&str>,
     id: Option<&str>,
+    eq: &[String],
     simplified: bool,
 ) -> Result<Option<String>, CliError> {
+    let sources = query.is_some() as u8 + id.is_some() as u8 + (!eq.is_empty()) as u8;
+    if sources > 1 {
+        return Err(CliError::Usage("-q, -i and --eq are mutually exclusive".into()));
+    }
+    if !eq.is_empty() {
+        // Safe exact-match query built from name[:type]=value (escaped) — no DSL
+        // string interpolation for the caller.
+        return Ok(Some(eq_to_dsl(eq)?));
+    }
     match (query, id) {
-        (Some(_), Some(_)) => Err(CliError::Usage("-q and -i are mutually exclusive".into())),
         (None, Some(uuid)) => Ok(Some(uuid.to_string())),
         (Some(q), None) => {
             Ok(Some(if simplified { expand_simplified(q)? } else { q.to_string() }))
         }
-        (None, None) => Ok(None),
+        (Some(_), Some(_)) | (None, None) => Ok(None),
     }
 }
 
@@ -474,6 +484,9 @@ pub struct QueryArgs {
     /// Print the selected field's raw values, one per line, instead of
     /// metarecord JSON (requires `--select` with exactly one field).
     pub values: bool,
+    /// Print one tab-separated row per metarecord (the first value of each
+    /// `--select` field, in order). Requires `--select` with a field list.
+    pub tsv: bool,
     /// Treat `predicate` as simplified-language text and expand it to the
     /// normal DSL first, locally via the shared grammar in core (no daemon
     /// round-trip).
@@ -492,6 +505,63 @@ fn raw_value_line(value: &Json) -> Option<String> {
         Some("int") | Some("float") | Some("bool") => Some(value["value"].to_string()),
         _ => Some(value["value"].to_string()),
     }
+}
+
+// ── --eq selector, --tsv output (spec-data-model "* CLI") ─────────────────────
+
+/// Renders a scalar [`Value`] as a query-DSL literal for `--eq`, escaping so a
+/// value can never break out of its string (the injection the scripts guard
+/// against by hand). Only the comparable scalar types are supported.
+fn value_to_dsl(value: &Value) -> Result<String, CliError> {
+    Ok(match value {
+        Value::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+        Value::Int(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::DateTime(ms) => format!("@\"{}\"", metafolder_core::date::iso8601_from_ms(*ms)),
+        _ => {
+            return Err(CliError::Usage(
+                "--eq supports string/int/float/bool/datetime values only".into(),
+            ))
+        }
+    })
+}
+
+/// Builds an AND-of-equalities DSL query from `--eq name[:type]=value` specs
+/// (bare `name=value` defaults to string). The value is escaped, so no quoting
+/// or injection concern is left to the caller.
+pub(crate) fn eq_to_dsl(specs: &[String]) -> Result<String, CliError> {
+    let mut clauses = Vec::with_capacity(specs.len());
+    for spec in specs {
+        let (key, val) = spec
+            .split_once('=')
+            .ok_or_else(|| CliError::Usage(format!("invalid --eq '{spec}': expected name[:type]=value")))?;
+        // A typed spec (`name:type=value`) is a full field spec; a bare
+        // `name=value` is string by default.
+        let field_spec =
+            if key.contains(':') { spec.clone() } else { format!("{key}:string={val}") };
+        let (name, value) = fieldspec::parse_field_spec(&field_spec).map_err(CliError::Usage)?;
+        clauses.push(format!("({name} = {})", value_to_dsl(&value)?));
+    }
+    Ok(clauses.join(" AND "))
+}
+
+/// One TSV line for `--tsv`: the first value of each `field` name (in order),
+/// tab-joined; an absent or `nothing` field yields an empty cell.
+fn tsv_row(entry: &Json, fields: &[String]) -> String {
+    fields
+        .iter()
+        .map(|name| {
+            entry["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|f| f["name"].as_str() == Some(name))
+                .and_then(|f| raw_value_line(&f["value"]))
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join("\t")
 }
 
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
@@ -523,6 +593,16 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
             json!(s.split(',').map(str::trim).collect::<Vec<_>>())
         }
     });
+    // `--tsv`: the ordered field names of one TSV row (a field list, not `*`).
+    let tsv_fields: Vec<String> = args
+        .select
+        .as_deref()
+        .filter(|s| *s != "*")
+        .map(|s| s.split(',').map(|f| f.trim().to_string()).collect())
+        .unwrap_or_default();
+    if args.tsv && tsv_fields.is_empty() {
+        return Err(CliError::Usage("--tsv requires --select with a field list".into()));
+    }
 
     let mut objects = Vec::new();
     let mut remaining = args.limit;
@@ -556,6 +636,11 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
                     }
                 }
             }
+        } else if args.tsv {
+            // One tab-separated row per metarecord, streamed.
+            for entry in &results {
+                println!("{}", tsv_row(entry, &tsv_fields));
+            }
         } else {
             objects.extend(results.iter().cloned());
         }
@@ -567,7 +652,7 @@ pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
             None => break,
         }
     }
-    if select.is_some() && !args.values {
+    if select.is_some() && !args.values && !args.tsv {
         print_pretty(&Json::Array(objects));
     }
     Ok(0)
@@ -607,6 +692,7 @@ pub fn metarecord_get(
     sort: &[String],
     limit: Option<usize>,
     values: bool,
+    tsv: bool,
 ) -> Result<i32, CliError> {
     match selector {
         None => list(ctx, limit),
@@ -616,7 +702,19 @@ pub fn metarecord_get(
             let fields: Option<Vec<String>> = select
                 .filter(|sel| *sel != "*")
                 .map(|sel| sel.split(',').map(|f| f.trim().to_string()).collect());
-            get(ctx, s, fields.as_deref(), &[], None)
+            if tsv {
+                // One TSV row for the single record (first value per field).
+                let names = fields.ok_or_else(|| {
+                    CliError::Usage("--tsv requires --select with a field list".into())
+                })?;
+                let base = ctx.repo_base()?;
+                let record =
+                    ctx.client.get(&format!("{base}/metarecords/{}", Uuid::parse_str(s).unwrap().as_simple()), &[])?;
+                println!("{}", tsv_row(&record, &names));
+                Ok(0)
+            } else {
+                get(ctx, s, fields.as_deref(), &[], None)
+            }
         }
         Some(s) => query(
             ctx,
@@ -626,6 +724,7 @@ pub fn metarecord_get(
                 sort: sort.to_vec(),
                 limit,
                 values,
+                tsv,
                 simplified: false,
             },
         ),
@@ -700,33 +799,86 @@ pub fn field_set(ctx: &Ctx, selector: &str, specs: &[String], force: bool) -> Re
     Ok(0)
 }
 
-/// `mf metarecord <sel> field get <name>` — print the field's value(s).
-pub fn field_get(ctx: &Ctx, selector: &str, name: &str) -> Result<i32, CliError> {
+/// `mf metarecord <sel> field get <name> [--resolve <target>]` — print the
+/// field's value(s). With `--resolve`, treat each value as a Ref and print the
+/// referenced metarecords' `<target>` field instead (one server round-trip via
+/// a `uuid_in` query) — the tag-name join the scripts used to loop by hand.
+pub fn field_get(
+    ctx: &Ctx,
+    selector: &str,
+    name: &str,
+    resolve: Option<&str>,
+) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    match parse_target(selector)? {
-        Target::Entry(uuid) => {
-            let got = ctx
-                .client
-                .get(&format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()), &[])?;
-            for value in got["values"].as_array().into_iter().flatten() {
-                if let Some(line) = raw_value_line(value) {
-                    println!("{line}");
-                }
-            }
-            Ok(0)
+    let uuid = match parse_target(selector)? {
+        Target::Entry(uuid) => uuid,
+        Target::Predicate(_) if resolve.is_some() => {
+            return Err(CliError::Usage("--resolve requires -i <uuid>".into()))
         }
-        Target::Predicate(_) => query(
-            ctx,
-            &QueryArgs {
-                predicate: selector.to_string(),
-                select: Some(name.to_string()),
-                sort: vec![],
-                limit: None,
-                values: true,
-                simplified: false,
-            },
-        ),
+        Target::Predicate(_) => {
+            return query(
+                ctx,
+                &QueryArgs {
+                    predicate: selector.to_string(),
+                    select: Some(name.to_string()),
+                    sort: vec![],
+                    limit: None,
+                    values: true,
+                    tsv: false,
+                    simplified: false,
+                },
+            )
+        }
+    };
+    let got =
+        ctx.client.get(&format!("{base}/metarecords/{}/fields/{name}", uuid.as_simple()), &[])?;
+    let Some(target) = resolve else {
+        for value in got["values"].as_array().into_iter().flatten() {
+            if let Some(line) = raw_value_line(value) {
+                println!("{line}");
+            }
+        }
+        return Ok(0);
+    };
+    // Collect the field's Ref uuids, then fetch the referents' `target` field in
+    // one query. Preserve order; skip non-ref / empty values.
+    let refs: Vec<String> = got["values"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|v| v["value"].as_str().map(str::to_string))
+        .collect();
+    if refs.is_empty() {
+        return Ok(0);
     }
+    let resp = ctx.client.post(
+        &format!("{base}/query"),
+        &json!({"query": {"type": "uuid_in", "uuids": refs}, "select": [target]}),
+    )?;
+    // `/query` with a select returns a bare array (no pagination requested here)
+    // or a `{results}` page — accept either.
+    let entries = resp.as_array().or_else(|| resp["results"].as_array());
+    // Map referent uuid → its target value, then print in the refs' order.
+    let mut by_uuid: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for entry in entries.into_iter().flatten() {
+        if let Some(u) = entry["uuid"].as_str() {
+            if let Some(line) = entry["fields"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|f| f["name"].as_str() == Some(target))
+                .and_then(|f| raw_value_line(&f["value"]))
+            {
+                by_uuid.insert(u.to_string(), line);
+            }
+        }
+    }
+    for r in &refs {
+        if let Some(line) = by_uuid.get(r) {
+            println!("{line}");
+        }
+    }
+    Ok(0)
 }
 
 /// `mf metarecord <sel> field unset <name>` — remove the field entirely.
@@ -1450,6 +1602,44 @@ pub fn trash_prune_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── --eq / --tsv helpers ─────────────────────────────────────────────────
+
+    #[test]
+    fn test_eq_to_dsl_types_and_and_join() {
+        assert_eq!(
+            eq_to_dsl(&["type=tag".into(), "name=musique/jazz".into()]).unwrap(),
+            r#"(type = "tag") AND (name = "musique/jazz")"#
+        );
+        assert_eq!(eq_to_dsl(&["rate:int=3".into()]).unwrap(), "(rate = 3)");
+        assert_eq!(eq_to_dsl(&["seen:bool=true".into()]).unwrap(), "(seen = true)");
+    }
+
+    #[test]
+    fn test_eq_to_dsl_escapes_injection() {
+        // A value carrying quotes/backslashes cannot break out of the string.
+        assert_eq!(eq_to_dsl(&[r#"name=a"b\c"#.into()]).unwrap(), r#"(name = "a\"b\\c")"#);
+    }
+
+    #[test]
+    fn test_eq_to_dsl_rejects_malformed() {
+        assert!(eq_to_dsl(&["noequals".into()]).is_err());
+        assert!(eq_to_dsl(&["ref:ref=8f3a2b1c4d5e6f708192a3b4c5d6e7f8".into()]).is_err());
+    }
+
+    #[test]
+    fn test_tsv_row_first_value_per_field() {
+        let entry = json!({"fields": [
+            {"name": "name", "value": {"type": "string", "value": "jazz"}},
+            {"name": "exclusive", "value": {"type": "bool", "value": true}},
+            {"name": "name", "value": {"type": "string", "value": "dup"}},
+        ]});
+        // partition is absent → empty cell; the first `name` row wins.
+        assert_eq!(
+            tsv_row(&entry, &["name".into(), "partition".into(), "exclusive".into()]),
+            "jazz\t\ttrue"
+        );
+    }
 
     // ── format_reconcile (spec-file-tracking sample output) ──────────────────
 

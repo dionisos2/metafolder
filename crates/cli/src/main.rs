@@ -81,6 +81,10 @@ enum Command {
         /// Single-metarecord selector by UUID
         #[arg(short = 'i', long = "id", conflicts_with = "query")]
         id: Option<String>,
+        /// Exact-match selector: name[:type]=value (repeatable, AND-ed; safe —
+        /// no DSL interpolation). Mutually exclusive with -q/-i.
+        #[arg(long = "eq", conflicts_with_all = ["query", "id"])]
+        eq: Vec<String>,
         /// Treat -q as simplified-language text and expand it first
         #[arg(short = 's', long = "simplified", requires = "query")]
         simplified: bool,
@@ -306,6 +310,10 @@ enum MetarecordVerb {
         /// Print the selected field's raw values, one per line
         #[arg(long, requires = "select")]
         values: bool,
+        /// Print one tab-separated row per metarecord (first value of each
+        /// --select field). Requires --select with a field list.
+        #[arg(long, requires = "select", conflicts_with = "values")]
+        tsv: bool,
     },
     /// Create a metarecord with the given fields and print its UUID (no selector)
     Add {
@@ -341,7 +349,13 @@ enum MetarecordVerb {
 #[derive(Subcommand)]
 enum FieldVerb {
     /// Print the field's value(s)
-    Get { name: String },
+    Get {
+        name: String,
+        /// Treat each value as a Ref and print the referenced records' <field>
+        /// instead (one round-trip). Requires -i.
+        #[arg(long)]
+        resolve: Option<String>,
+    },
     /// Replace all rows of the field with the given value(s)
     Set {
         /// Field spec name:type[=value]; repeatable (multi-map set)
@@ -699,8 +713,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Trash { file, command } => dispatch_trash(ctx, file, command),
-        Command::Metarecord { query, id, simplified, verb } => {
-            dispatch_metarecord(ctx, query, id, simplified, verb)
+        Command::Metarecord { query, id, eq, simplified, verb } => {
+            dispatch_metarecord(ctx, query, id, eq, simplified, verb)
         }
         Command::Field { command } => dispatch_field(ctx, command),
         Command::Retype { name, to } => commands::retype(ctx, &name, &to),
@@ -771,22 +785,24 @@ fn dispatch_metarecord(
     ctx: &Ctx,
     query: Option<String>,
     id: Option<String>,
+    eq: Vec<String>,
     simplified: bool,
     verb: Option<MetarecordVerb>,
 ) -> CmdResult {
     use metafolder_cli::client::CliError::Usage;
     let by_id = id.is_some();
     // -q is expanded here when -s is set, so the rest sees a normal-DSL selector.
-    let selector = commands::resolve_selector(query.as_deref(), id.as_deref(), simplified)?;
+    let selector = commands::resolve_selector(query.as_deref(), id.as_deref(), &eq, simplified)?;
     let verb = verb.unwrap_or(MetarecordVerb::Get {
         select: None,
         sort: Vec::new(),
         limit: None,
         values: false,
+        tsv: false,
     });
     match verb {
-        MetarecordVerb::Get { select, sort, limit, values } => {
-            commands::metarecord_get(ctx, selector.as_deref(), select.as_deref(), &sort, limit, values)
+        MetarecordVerb::Get { select, sort, limit, values, tsv } => {
+            commands::metarecord_get(ctx, selector.as_deref(), select.as_deref(), &sort, limit, values, tsv)
         }
         MetarecordVerb::Add { specs, force } => {
             if selector.is_some() {
@@ -806,7 +822,9 @@ fn dispatch_metarecord(
             let sel = selector
                 .ok_or_else(|| Usage("a field operation requires a selector (-q or -i)".into()))?;
             match verb {
-                FieldVerb::Get { name } => commands::field_get(ctx, &sel, &name),
+                FieldVerb::Get { name, resolve } => {
+                    commands::field_get(ctx, &sel, &name, resolve.as_deref())
+                }
                 FieldVerb::Set { specs, force } => commands::field_set(ctx, &sel, &specs, force),
                 FieldVerb::Add { spec, force } => commands::add(ctx, &sel, &spec, force),
                 FieldVerb::Delete { spec, force } => commands::remove(ctx, &sel, &spec, force),

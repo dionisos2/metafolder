@@ -2710,3 +2710,41 @@ fn test_order_numbers_folder_children() {
     assert_eq!(again.stdout.trim(), "0", "second run must write nothing");
     assert_eq!(pos(&song0, "order_position_file"), "1");
 }
+
+// ── CLI primitives: --eq, --tsv, --resolve ────────────────────────────────────
+
+#[test]
+fn test_cli_primitives_eq_tsv_resolve() {
+    let (repo, _root) = init_repo("prim");
+    let jazz = create_metarecord(
+        &repo,
+        &["type:string=tag", "name:string=musique/jazz", "exclusive:bool=true"],
+    );
+    let rock = create_metarecord(&repo, &["type:string=tag", "name:string=musique/rock"]);
+    let rec = create_metarecord(
+        &repo,
+        &[&format!("tags:ref={jazz}"), &format!("tags:ref={rock}")],
+    );
+
+    // --eq: safe exact match (no DSL interpolation) → the jazz uuid only.
+    let out = mf(&["-u", &repo, "metarecord", "--eq", "type=tag", "--eq", "name=musique/jazz", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), jazz);
+
+    // --tsv: name<TAB>partition<TAB>exclusive, one row per tag (absent = empty).
+    let out = mf(&[
+        "-u", &repo, "metarecord", "--eq", "type=tag", "get",
+        "--select", "name,partition,exclusive", "--tsv",
+    ]);
+    assert_ok(&out);
+    let mut lines: Vec<&str> = out.stdout.lines().collect();
+    lines.sort();
+    assert_eq!(lines, vec!["musique/jazz\t\ttrue", "musique/rock\t\t"]);
+
+    // --resolve: the `tags` refs → their `name`, in one round-trip.
+    let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "tags", "--resolve", "name"]);
+    assert_ok(&out);
+    let mut names: Vec<&str> = out.stdout.lines().collect();
+    names.sort();
+    assert_eq!(names, vec!["musique/jazz", "musique/rock"]);
+}
