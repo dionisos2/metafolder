@@ -36,10 +36,18 @@ export async function mount(root, metafolder) {
   /** @type {number|null} */
   let expandedRev = null;
   let graphMode = false; // false: active line (list); true: full branch graph
+  // The list view fetches a bounded window of the most recent operations so a
+  // repository with millions of them (a large initial reconcile) still loads;
+  // "Show more" grows the window. The graph view is unbounded (it needs every
+  // branch), so it is only offered explicitly.
+  const LOG_PAGE = 1000;
+  let limit = LOG_PAGE;
 
   const rows = byId(root, 'rows');
   const table = qs(root, 'table');
   const placeholderElement = byId(root, 'placeholder');
+  const moreBox = byId(root, 'more');
+  const showMoreButton = byId(root, 'show-more', HTMLButtonElement);
   const rollbackButton = byId(root, 'rollback', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
@@ -54,11 +62,13 @@ export async function mount(root, metafolder) {
       // `active` shows only the line through HEAD (ancestry + the most-recent
       // forward continuation, so a rolled-back future stays available for
       // redo). `tree` adds every divergent branch, drawn as a graph.
-      const mode = graphMode ? 'tree' : 'active';
+      // The graph needs every branch (unbounded); the list fetches only the
+      // most recent `limit` operations so a huge log loads quickly.
+      const query = graphMode ? '?mode=tree' : `?mode=active&limit=${limit}`;
       const log = /** @type {{operations?: Operation[], head?: number,
        *                      revisions?: {id: number, timestamp: number,
        *                                  label: string|null}[]}} */ (
-        await daemon.call('GET', `/repos/${repo}/log?mode=${mode}`)
+        await daemon.call('GET', `/repos/${repo}/log${query}`)
       );
       operations = log.operations ?? [];
       const head = log.head;
@@ -80,7 +90,11 @@ export async function mount(root, metafolder) {
         }))
         .sort((a, b) => b.id - a.id); // reverse chronological
       render();
+      // Offer "Show more" while the list fills the requested window: older
+      // operations may lie beyond it. The graph view is always complete.
+      moreBox.hidden = graphMode || operations.length < limit;
     } catch (error) {
+      moreBox.hidden = true;
       placeholderElement.textContent = error instanceof Error ? error.message : String(error);
     }
   }
@@ -274,6 +288,12 @@ export async function mount(root, metafolder) {
   }
   graphCheckbox.addEventListener('change', () => void toggleGraph(graphCheckbox.checked));
 
+  // Grow the fetched window by one page and reload (list view only).
+  showMoreButton.addEventListener('click', () => {
+    limit += LOG_PAGE;
+    void refresh();
+  });
+
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   // Shell builtins (they work on the active repo, no selection needed).
   byId(root, 'undo').addEventListener('click', () => void commands.invoke('log:undo'));
@@ -326,6 +346,7 @@ export async function mount(root, metafolder) {
   workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredRefresh));
   workspace.onChange('active_repo', (value) => {
     repo = /** @type {string|null} */ (value ?? null);
+    limit = LOG_PAGE; // reset the window for the new repository
     metafolder.whenVisible(deferredRefresh);
   });
 
