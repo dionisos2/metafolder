@@ -212,7 +212,12 @@ export async function mount(root, metafolder) {
     placeholder.classList.toggle('hidden', hasContent);
     content.classList.toggle('hidden', !hasContent);
     byId(root, 'save-new').hidden = !newMetarecordMode;
-    byId(root, 'watch-reconcile').hidden = newMetarecordMode || !needsWatch();
+    // One button, two roles: it enables tracking + does the initial reconcile
+    // while the record is unwatched, then becomes a plain subtree reconcile once
+    // watched (staying visible, so reconcile is always reachable from here).
+    const watchBtn = byId(root, 'watch-reconcile');
+    watchBtn.hidden = newMetarecordMode || metarecord === null;
+    watchBtn.textContent = needsWatch() ? 'Watch and reconcile' : 'Reconcile';
     byId(root, 'delete-metarecord', HTMLButtonElement).disabled =
       newMetarecordMode || metarecord === null;
     if (!hasContent) return;
@@ -678,31 +683,52 @@ export async function mount(root, metafolder) {
     }
   }
 
-  async function watchAndReconcile() {
+  /** Runs a reconcile scoped to `current`'s subtree and refreshes the view.
+   *  Shared by watchAndReconcile and reconcileScoped. Throws on failure. */
+  async function runScopedReconcile() {
     if (!current) return;
     const { repo, uuid } = current;
-    try {
-      void statusBar.message('Reconciling…', null);
-      await daemon.call('PUT', api('/fields/mf_watch'), { value: { type: 'bool', value: true } });
-      // One reconcile endpoint, scoped via `metarecord` (spec-tasks). It is
-      // asynchronous: poll the task to completion (the task bar shows live
-      // progress) before refreshing the view.
-      const started = /** @type {{task_id: string}} */ (
-        await daemon.call('POST', `/repos/${repo}/reconcile`, { metarecord: uuid })
+    void statusBar.message('Reconciling…', null);
+    // One reconcile endpoint, scoped via `metarecord` (spec-tasks). It is
+    // asynchronous: poll the task to completion (the task bar shows live
+    // progress) before refreshing the view.
+    const started = /** @type {{task_id: string}} */ (
+      await daemon.call('POST', `/repos/${repo}/reconcile`, { metarecord: uuid })
+    );
+    /** @type {{status: string, error?: string|null, result?: unknown}} */
+    let task;
+    for (;;) {
+      task = /** @type {{status: string, error?: string|null, result?: unknown}} */ (
+        await daemon.call('GET', `/repos/${repo}/tasks/${started.task_id}`)
       );
-      /** @type {{status: string, error?: string|null, result?: unknown}} */
-      let task;
-      for (;;) {
-        task = /** @type {{status: string, error?: string|null, result?: unknown}} */ (
-          await daemon.call('GET', `/repos/${repo}/tasks/${started.task_id}`)
-        );
-        if (task.status === 'done' || task.status === 'failed') break;
-        await new Promise((resolve) => setTimeout(resolve, 300));
-      }
-      if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
-      void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
-      await load();
-      await dirty();
+      if (task.status === 'done' || task.status === 'failed') break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
+    void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
+    await load();
+    await dirty();
+  }
+
+  /** Enables tracking (`mf_watch = true`) on the selected metarecord, then runs
+   *  the initial scoped reconcile. Used while the record is not yet watched. */
+  async function watchAndReconcile() {
+    if (!current) return;
+    try {
+      await daemon.call('PUT', api('/fields/mf_watch'), { value: { type: 'bool', value: true } });
+      await runScopedReconcile();
+    } catch (error) {
+      await statusBar.error(error, statusErrorMs);
+    }
+  }
+
+  /** Re-runs the scoped reconcile on an already-watched metarecord (no write to
+   *  `mf_watch`), so the detail panel keeps a reconcile affordance after the
+   *  record is tracked. */
+  async function reconcileScoped() {
+    if (!current) return;
+    try {
+      await runScopedReconcile();
     } catch (error) {
       await statusBar.error(error, statusErrorMs);
     }
@@ -1168,7 +1194,9 @@ export async function mount(root, metafolder) {
   byId(root, 'new-metarecord-placeholder').addEventListener('click', invoke('metarecord:create'));
   byId(root, 'save-new').addEventListener('click', () => void saveNewEntry());
   byId(root, 'delete-metarecord').addEventListener('click', invoke('metarecord:delete'));
-  byId(root, 'watch-reconcile').addEventListener('click', invoke('metarecord:watch-reconcile'));
+  byId(root, 'watch-reconcile').addEventListener('click', () => {
+    void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile');
+  });
   byId(root, 'show-add').addEventListener('click', invoke('metarecord:add-field'));
   byId(root, 'add-append').addEventListener('click', () => void addField(false));
   byId(root, 'add-set').addEventListener('click', () => void addField(true));
@@ -1187,6 +1215,10 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord:watch-reconcile', {
     label: 'Enable tracking and reconcile the selected metarecord',
     handler: watchAndReconcile,
+  });
+  void commands.register('metarecord:reconcile', {
+    label: "Reconcile the selected metarecord's subtree",
+    handler: reconcileScoped,
   });
   void commands.register('metarecord:add-field', {
     label: 'Add a field to the selected metarecord (detail form)',
@@ -1282,8 +1314,9 @@ export async function mount(root, metafolder) {
     const items = [
       { label: 'Copy UUID', action: () => void copyText(record.uuid) },
       {
-        label: 'Enable tracking & reconcile',
-        action: () => void commands.invoke('metarecord:watch-reconcile'),
+        label: needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',
+        action: () =>
+          void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile'),
       },
       { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
     ];
