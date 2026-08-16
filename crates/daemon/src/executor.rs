@@ -141,84 +141,107 @@ fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
 /// Compaction rules of spec-file-tracking: redundant sequences within the
 /// batching window are simplified before any database write.
 ///
-/// This is O(n²) in the batch size: each event does up to a few `find_last`
-/// (`rposition`) scans over the accumulated `out`. That is fine for the
-/// realistic case (a quiet-period flush of interactive edits is small). It only
-/// matters for a huge single batch (e.g. bulk-moving 10⁵ files inside the
-/// window). A path→index acceleration is *not* a drop-in here: the predicates
-/// key on different path roles per variant (Create's path, a Rename's to-path,
-/// RenameFrom/To's path, a Modify's path), and entries are nulled/rewritten in
-/// place, so a naive single-key map would mis-compact. Left linear-scan on
-/// purpose until a batch size is observed that warrants the careful rewrite.
+/// Each rule looks for the *last* live earlier event matching a path in a
+/// particular role (a `Create`'s path, a `Rename`'s to-path, a `RenameFrom`/
+/// `RenameTo`'s path, a `Modify`'s path). Instead of an O(n²) `rposition` scan
+/// per event, we keep one `path -> {live indices}` set per role: the set's max
+/// is exactly that "last matching", and every null-out / in-place rewrite / push
+/// updates the sets so lookups stay O(log n). Validated to match the former
+/// linear-scan implementation byte-for-byte by the `compact_matches_reference`
+/// fuzz test.
 fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
+    use std::collections::{BTreeSet, HashMap};
+
+    /// Highest live index registered for `key`, or `None` (the `find_last`).
+    fn last(map: &HashMap<String, BTreeSet<usize>>, key: &str) -> Option<usize> {
+        map.get(key).and_then(|s| s.last().copied())
+    }
+    fn insert(map: &mut HashMap<String, BTreeSet<usize>>, key: &str, i: usize) {
+        map.entry(key.to_string()).or_default().insert(i);
+    }
+    fn unregister(map: &mut HashMap<String, BTreeSet<usize>>, key: &str, i: usize) {
+        if let Some(s) = map.get_mut(key) {
+            s.remove(&i);
+        }
+    }
+    fn any(map: &HashMap<String, BTreeSet<usize>>, key: &str) -> bool {
+        map.get(key).is_some_and(|s| !s.is_empty())
+    }
+
     let mut out: Vec<Option<FsEvent>> = Vec::with_capacity(events.len());
+    // One live-index set per lookup role (keyed by the path that role uses).
+    let mut create: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut rename_from: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut rename_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut rename_by_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut modify_data: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut modify_meta: HashMap<String, BTreeSet<usize>> = HashMap::new();
+
     for ev in events {
-        let find_last = |out: &Vec<Option<FsEvent>>, pred: &dyn Fn(&FsEvent) -> bool| {
-            out.iter().rposition(|e| e.as_ref().is_some_and(pred))
-        };
         match ev {
             FsEvent::Remove(p) => {
-                // Create A, Remove A → nothing.
-                if let Some(i) =
-                    find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == p))
-                {
+                // Create A, Remove A → nothing. (Remove is never looked up, so
+                // when it survives it needs no index.)
+                if let Some(i) = last(&create, &p) {
                     out[i] = None;
+                    unregister(&mut create, &p, i);
                 } else {
                     out.push(Some(FsEvent::Remove(p)));
                 }
             }
             FsEvent::Rename(a, b) => {
-                // The notify backend emits Rename(From) + Rename(To) and
-                // then the correlated Rename(Both) for the same move: the
-                // one-sided pair is absorbed by the Both event.
-                if let Some(i) =
-                    find_last(&out, &|e| matches!(e, FsEvent::RenameFrom(q) if *q == a))
-                {
+                // The notify backend emits Rename(From) + Rename(To) and then the
+                // correlated Rename(Both) for the same move: the one-sided pair is
+                // absorbed by the Both event.
+                if let Some(i) = last(&rename_from, &a) {
                     out[i] = None;
+                    unregister(&mut rename_from, &a, i);
                 }
-                if let Some(i) =
-                    find_last(&out, &|e| matches!(e, FsEvent::RenameTo(q) if *q == b))
-                {
+                if let Some(i) = last(&rename_to, &b) {
                     out[i] = None;
+                    unregister(&mut rename_to, &b, i);
                 }
-                // Create A, Rename A→B → Create B.
-                if let Some(i) =
-                    find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == a))
-                {
-                    out[i] = Some(FsEvent::Create(b));
-                }
-                // Rename X→A, Rename A→B → Rename X→B.
-                else if let Some(i) =
-                    find_last(&out, &|e| matches!(e, FsEvent::Rename(_, q) if *q == a))
-                {
+                if let Some(i) = last(&create, &a) {
+                    // Create A, Rename A→B → Create B.
+                    out[i] = Some(FsEvent::Create(b.clone()));
+                    unregister(&mut create, &a, i);
+                    insert(&mut create, &b, i);
+                } else if let Some(i) = last(&rename_by_to, &a) {
+                    // Rename X→A, Rename A→B → Rename X→B.
                     let Some(FsEvent::Rename(x, _)) = out[i].clone() else { unreachable!() };
-                    out[i] = Some(FsEvent::Rename(x, b));
+                    out[i] = Some(FsEvent::Rename(x, b.clone()));
+                    unregister(&mut rename_by_to, &a, i);
+                    insert(&mut rename_by_to, &b, i);
                 } else {
+                    insert(&mut rename_by_to, &b, out.len());
                     out.push(Some(FsEvent::Rename(a, b)));
                 }
             }
             FsEvent::ModifyData(p) => {
                 // Create A, Modify A → Create A; Modify ×N → one Modify.
-                let redundant = find_last(&out, &|e| {
-                    matches!(e, FsEvent::Create(q) if *q == p)
-                        || matches!(e, FsEvent::ModifyData(q) if *q == p)
-                })
-                .is_some();
-                if !redundant {
+                if !(any(&create, &p) || any(&modify_data, &p)) {
+                    insert(&mut modify_data, &p, out.len());
                     out.push(Some(FsEvent::ModifyData(p)));
                 }
             }
             FsEvent::ModifyMeta(p) => {
-                let redundant = find_last(&out, &|e| {
-                    matches!(e, FsEvent::Create(q) if *q == p)
-                        || matches!(e, FsEvent::ModifyMeta(q) if *q == p)
-                })
-                .is_some();
-                if !redundant {
+                if !(any(&create, &p) || any(&modify_meta, &p)) {
+                    insert(&mut modify_meta, &p, out.len());
                     out.push(Some(FsEvent::ModifyMeta(p)));
                 }
             }
-            other => out.push(Some(other)),
+            FsEvent::Create(p) => {
+                insert(&mut create, &p, out.len());
+                out.push(Some(FsEvent::Create(p)));
+            }
+            FsEvent::RenameFrom(p) => {
+                insert(&mut rename_from, &p, out.len());
+                out.push(Some(FsEvent::RenameFrom(p)));
+            }
+            FsEvent::RenameTo(p) => {
+                insert(&mut rename_to, &p, out.len());
+                out.push(Some(FsEvent::RenameTo(p)));
+            }
         }
     }
     out.into_iter().flatten().collect()
@@ -876,5 +899,160 @@ mod tests {
         // A `To` whose cookie has no matching `From` is a real arrival.
         let out = correlate_renames(vec![(to("/b"), Some(5))]);
         assert_eq!(out, vec![to("/b")]);
+    }
+
+    // ── compact ────────────────────────────────────────────────────────────
+
+    fn create(p: &str) -> FsEvent {
+        FsEvent::Create(p.into())
+    }
+    fn remove(p: &str) -> FsEvent {
+        FsEvent::Remove(p.into())
+    }
+    fn mdata(p: &str) -> FsEvent {
+        FsEvent::ModifyData(p.into())
+    }
+    fn mmeta(p: &str) -> FsEvent {
+        FsEvent::ModifyMeta(p.into())
+    }
+
+    #[test]
+    fn compact_create_then_remove_cancels() {
+        assert_eq!(compact(vec![create("/a"), remove("/a")]), vec![]);
+    }
+
+    #[test]
+    fn compact_create_then_rename_creates_at_destination() {
+        assert_eq!(compact(vec![create("/a"), rename("/a", "/b")]), vec![create("/b")]);
+    }
+
+    #[test]
+    fn compact_rename_chain_collapses() {
+        assert_eq!(
+            compact(vec![rename("/a", "/b"), rename("/b", "/c")]),
+            vec![rename("/a", "/c")]
+        );
+    }
+
+    #[test]
+    fn compact_collapses_repeated_modify() {
+        assert_eq!(compact(vec![mdata("/a"), mdata("/a"), mmeta("/a"), mmeta("/a")]), vec![mdata("/a"), mmeta("/a")]);
+    }
+
+    #[test]
+    fn compact_modify_after_create_is_absorbed() {
+        assert_eq!(compact(vec![create("/a"), mdata("/a"), mmeta("/a")]), vec![create("/a")]);
+    }
+
+    #[test]
+    fn compact_absorbs_notify_rename_triplet() {
+        assert_eq!(
+            compact(vec![from("/a"), to("/b"), rename("/a", "/b")]),
+            vec![rename("/a", "/b")]
+        );
+    }
+
+    #[test]
+    fn compact_preserves_unrelated_and_a_lone_remove() {
+        assert_eq!(
+            compact(vec![remove("/a"), create("/b"), mdata("/c")]),
+            vec![remove("/a"), create("/b"), mdata("/c")]
+        );
+    }
+
+    /// The pre-refactor O(n²) linear-scan implementation, kept as the oracle the
+    /// index-based [`compact`] must match byte for byte (see `compact_matches_reference`).
+    fn compact_reference(events: Vec<FsEvent>) -> Vec<FsEvent> {
+        let mut out: Vec<Option<FsEvent>> = Vec::with_capacity(events.len());
+        for ev in events {
+            let find_last = |out: &Vec<Option<FsEvent>>, pred: &dyn Fn(&FsEvent) -> bool| {
+                out.iter().rposition(|e| e.as_ref().is_some_and(pred))
+            };
+            match ev {
+                FsEvent::Remove(p) => {
+                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == p)) {
+                        out[i] = None;
+                    } else {
+                        out.push(Some(FsEvent::Remove(p)));
+                    }
+                }
+                FsEvent::Rename(a, b) => {
+                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::RenameFrom(q) if *q == a)) {
+                        out[i] = None;
+                    }
+                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::RenameTo(q) if *q == b)) {
+                        out[i] = None;
+                    }
+                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == a)) {
+                        out[i] = Some(FsEvent::Create(b));
+                    } else if let Some(i) =
+                        find_last(&out, &|e| matches!(e, FsEvent::Rename(_, q) if *q == a))
+                    {
+                        let Some(FsEvent::Rename(x, _)) = out[i].clone() else { unreachable!() };
+                        out[i] = Some(FsEvent::Rename(x, b));
+                    } else {
+                        out.push(Some(FsEvent::Rename(a, b)));
+                    }
+                }
+                FsEvent::ModifyData(p) => {
+                    let redundant = find_last(&out, &|e| {
+                        matches!(e, FsEvent::Create(q) if *q == p)
+                            || matches!(e, FsEvent::ModifyData(q) if *q == p)
+                    })
+                    .is_some();
+                    if !redundant {
+                        out.push(Some(FsEvent::ModifyData(p)));
+                    }
+                }
+                FsEvent::ModifyMeta(p) => {
+                    let redundant = find_last(&out, &|e| {
+                        matches!(e, FsEvent::Create(q) if *q == p)
+                            || matches!(e, FsEvent::ModifyMeta(q) if *q == p)
+                    })
+                    .is_some();
+                    if !redundant {
+                        out.push(Some(FsEvent::ModifyMeta(p)));
+                    }
+                }
+                other => out.push(Some(other)),
+            }
+        }
+        out.into_iter().flatten().collect()
+    }
+
+    /// Deterministic fuzz: thousands of random event streams over a tiny path
+    /// alphabet, asserting the index-based `compact` equals the reference. A
+    /// small alphabet maximises collisions (the interesting compaction cases).
+    #[test]
+    fn compact_matches_reference() {
+        // A dependency-free LCG (numerical recipes constants).
+        let mut state: u64 = 0x2545_F491_4F6C_DD1D;
+        let mut next = |n: u64| {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            (state >> 33) % n
+        };
+        let paths = ["/a", "/b", "/c"];
+        for _ in 0..50_000 {
+            let len = next(13) as usize; // 0..=12 events
+            let mut events = Vec::with_capacity(len);
+            for _ in 0..len {
+                let p = paths[next(paths.len() as u64) as usize].to_string();
+                let q = paths[next(paths.len() as u64) as usize].to_string();
+                events.push(match next(7) {
+                    0 => FsEvent::Create(p),
+                    1 => FsEvent::Remove(p),
+                    2 => FsEvent::Rename(p, q),
+                    3 => FsEvent::RenameFrom(p),
+                    4 => FsEvent::RenameTo(p),
+                    5 => FsEvent::ModifyData(p),
+                    _ => FsEvent::ModifyMeta(p),
+                });
+            }
+            assert_eq!(
+                compact(events.clone()),
+                compact_reference(events.clone()),
+                "divergence on {events:?}"
+            );
+        }
     }
 }
