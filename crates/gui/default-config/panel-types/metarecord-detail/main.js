@@ -802,7 +802,12 @@ export async function mount(root, metafolder) {
         );
         return body.paths?.[0] ?? value.value.name;
       }
+      case 'externalref':
+        // Same one-line form as formatValue (ui.js); the value is an object, so
+        // the default String(...) would render "[object Object]".
+        return `${value.value.repo} :: ${value.value.metarecord}`;
       default:
+        // Only primitive-valued types (string/int/float/datetime) reach here.
         return String(value.value);
     }
   }
