@@ -2239,7 +2239,7 @@ dependencies = [
 
 [[package]]
 name = "metafolder-bench"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "metafolder-core",
@@ -2252,7 +2252,7 @@ dependencies = [
 
 [[package]]
 name = "metafolder-cli"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "clap",
@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "metafolder-core"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "git2",
  "rusqlite",
@@ -2280,7 +2280,7 @@ dependencies = [
 
 [[package]]
 name = "metafolder-daemon"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2307,7 +2307,7 @@ dependencies = [
 
 [[package]]
 name = "metafolder-gui"
-version = "0.1.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "clap",

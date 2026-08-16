@@ -2014,7 +2014,7 @@ struct QueryDeleteBody {
     query: MetaQuery,
 }
 
-/// `POST /repos/:repo/delete` — deletes every metarecord matching `query` in a
+/// `POST /repos/:repo/query/delete` — deletes every metarecord matching `query` in a
 /// single transaction (one revision). Atomic and free of the client-side
 /// TOCTOU of selecting then deleting one-by-one over HTTP.
 async fn delete_by_query(

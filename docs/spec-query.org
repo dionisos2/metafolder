@@ -243,7 +243,7 @@ Request body:
 #+BEGIN_SRC json
 {
   "query": <Query>,
-  "select": ["path", "rating"],
+  "select": ["mfr_path", "rating"],
   "sort": [{"field": "rating", "order": "desc"}],
   "limit": 500,
   "cursor": "..."
@@ -270,7 +270,7 @@ Example response with =select=:
     "uuid": "...",
     "version": 3,
     "fields": [
-      {"id": 42, "name": "path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
+      {"id": 42, "name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "<parent_uuid>", "name": "bar.mp3"}}},
       {"id": 43, "name": "rating", "value": {"type": "int", "value": 5}}
     ]
   }

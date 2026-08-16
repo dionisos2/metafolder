@@ -4,7 +4,7 @@ Metafolder is a file metadata management system. It attaches arbitrary metadata 
 
 File identity is hash-based, so metadata follows files when they are moved or renamed.
 
-> **Status: v0.1 — nothing is stable yet.** This is early development:
+> **Status: v0.3 — nothing is stable yet.** This is early development:
 > APIs, the CLI command tree, the on-disk database layout and the config
 > format all change without migrations or deprecation. Do not rely on it for
 > anything you cannot afford to lose. This project has been built
@@ -62,6 +62,21 @@ pacman -S --needed rust base-devel openssl webkit2gtk-4.1 gtk3 librsvg nodejs np
   `cargo build` works without a built frontend (`build.rs` writes a
   placeholder), but the GUI window stays empty until
   `npm --prefix crates/gui/frontend run build` has produced the real bundle.
+
+### Runtime (GUI only, required)
+
+```bash
+pacman -S --needed bubblewrap
+```
+
+- **`bubblewrap`** (`bwrap`) — **hard dependency: the GUI refuses to start
+  without a working one.** Every media decoder is untrusted-input-facing and is
+  confined with `bwrap` + rlimits, and the WebView's web process is sandboxed
+  (`WEBKIT_FORCE_SANDBOX=1`); startup probes a real sandbox and aborts if it
+  fails. WebKit's sandbox mounts `/proc`, which some containers forbid — inside
+  one, pass `--allow-unsandboxed-webview` (dev only, per-run, prints a warning;
+  the media helpers stay sandboxed regardless). The daemon and CLI do not need
+  it.
 
 ### Runtime (GUI only, optional)
 
@@ -123,7 +138,16 @@ cargo run -p metafolder-daemon            # listens on 127.0.0.1:7523
 cargo run -p metafolder-daemon -- --port 8080
 ```
 
-The daemon is local-only and unauthenticated; access control is left to the OS.
+The daemon binds `127.0.0.1` only (single-user model, no *user* access control),
+but every request is gated by a per-service **session token**: it must carry
+`Authorization: Bearer <token>`, where `<token>` is the 64-hex-char secret the
+daemon writes to a user-only file at startup
+(`$XDG_RUNTIME_DIR/metafolder/daemon.token`, or `/tmp/metafolder-<uid>/…` when
+`XDG_RUNTIME_DIR` is unset). This keeps browser content — which can also reach
+`127.0.0.1` — out, since it cannot read the file. `mf` reads the token
+automatically; a raw `curl` client must pass it (see below). The GUI server has
+its own `gui.token`. See `docs/spec-auth.org`.
+
 Repositories listed in `~/.config/metafolder/daemon/config.toml` are auto-loaded
 at startup.
 
@@ -195,12 +219,22 @@ The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
   direct field-row access by DB id.
 - `mf retype <name> <type>` — convert a field's value type repository-wide.
 - `mf reconcile`, `mf track <path>`, `mf path <uuid>` — filesystem sync.
+  `reconcile` takes `--metarecord`, `--threshold`, `--no-mime`, `--no-metadata`,
+  `--no-refresh`, `--json`, `--no-wait`, `--poll-interval`.
+- `mf tag [selector] <add|deny|mixed|remove|list> <tag>` — hierarchical tags
+  with subsumption and exclusivity (selector as for `metarecord`, plus `--eq`).
+- `mf order <folder>` — number a folder's direct children for sorting
+  (`order_position_file`/`order_position_dir`).
+- `mf trash {list,restore,prune}` (+ `mf trash -f <path>` to trash a tracked
+  file/directory) — the repository trash bin.
 - `mf log {list,show,rollback,prune}` — event log, atomic navigation, pruning.
+- `mf sync {plan,run,show,status,link,unlink}` — cross-repository sync (both
+  repos of a pair loaded in the daemon).
 - `mf task {list,show}` — background tasks.
 - `mf schema {check,reload,show}` — user schema.
 - `mf gui …` — drive a running GUI through its scripting API (`status`, `repo`,
-  `workspace new|rm`, `layout`, `view`, `message`, `input`, `prompt`); see
-  `scripts/gui-tag-pair.sh` for a complete interactive example.
+  `workspace new|rm`, `layout`, `view`, `message`, `bench`, `command`, `input`,
+  `prompt`); see `scripts/gui-tag-pair.sh` for a complete interactive example.
 
 Field specs are `name:type[=value]` (e.g. `genre:string=jazz`, `rating:int=5`).
 Run `mf --help` (and `mf <command> --help`) for the full set of options.
@@ -215,44 +249,50 @@ layer** (`POST …/query/*`) where every body carries a `query`.
 ```bash
 B=localhost:7523
 
+# Every request needs the daemon's session token (see "Running the daemon"):
+TOKEN=$(cat "${XDG_RUNTIME_DIR:-/tmp/metafolder-$(id -u)}/metafolder/daemon.token")
+AUTH="Authorization: Bearer $TOKEN"
+
 # Initialise a repository (creates .metafolder/ inside the directory)
 REPO=$(curl -s -X POST $B/repos/init -d '{"root": "/path/to/folder"}' \
-       -H 'content-type: application/json' | jq -r .repo_uuid)
+       -H "$AUTH" -H 'content-type: application/json' | jq -r .repo_uuid)
 
 # Nothing is tracked by default (opt-in). Enable tracking on the root metarecord:
-ROOT=$(curl -s -X POST $B/repos/$REPO/query \
+ROOT=$(curl -s -X POST $B/repos/$REPO/query -H "$AUTH" \
        -d '{"query": {"type": "is_present", "field": "mf_watch"}}' \
        -H 'content-type: application/json' | jq -r '.[0]')
-curl -s -X PUT $B/repos/$REPO/metarecords/$ROOT/fields/mf_watch \
+curl -s -X PUT $B/repos/$REPO/metarecords/$ROOT/fields/mf_watch -H "$AUTH" \
      -d '{"value": {"type": "bool", "value": true}}' \
      -H 'content-type: application/json'
 
 # Index the files already present (the watcher tracks new changes live):
-curl -s -X POST $B/repos/$REPO/reconcile
+curl -s -X POST $B/repos/$REPO/reconcile -H "$AUTH"
 
 # Query: every file under /music, with sizes
-curl -s -X POST $B/repos/$REPO/query -H 'content-type: application/json' -d '{
-  "query": {"type": "follows_transitive", "field": "mfr_path", "path": "/music"},
+curl -s -X POST $B/repos/$REPO/query -H "$AUTH" -H 'content-type: application/json' -d '{
+  "query": {"type": "follows_transitive", "field": "mfr_path", "target": "/music"},
   "select": ["mfr_size"]
 }'
 
 # Set a field on every match of a query (one transaction)
-curl -s -X POST $B/repos/$REPO/query/fields/set -H 'content-type: application/json' -d '{
+curl -s -X POST $B/repos/$REPO/query/fields/set -H "$AUTH" -H 'content-type: application/json' -d '{
   "query": {"type": "eq", "field": "genre", "value": {"type": "string", "value": "jazz"}},
   "name": "reviewed",
   "value": {"type": "bool", "value": true}
 }'
 
 # Undo the last revision (metadata only)
-curl -s -X POST $B/repos/$REPO/rollback \
+curl -s -X POST $B/repos/$REPO/rollback -H "$AUTH" \
      -d '{"target": {"prev_revision": true}}' -H 'content-type: application/json'
 ```
 
 ## HTTP API overview
 
 All bodies are JSON; errors are `{"error": "<message>"}` with a meaningful
-status code. UUIDs are 32-char lowercase hex strings. See the `docs/` specs
-for the full request/response formats.
+status code. UUIDs are 32-char lowercase hex strings. **Every route (including
+`GET /health`) requires `Authorization: Bearer <token>`** — see "Running the
+daemon".
+See the `docs/` specs for the full request/response formats.
 
 | Route | Description |
 |---|---|
@@ -287,7 +327,8 @@ Key concepts (see `docs/spec-data-model.org`):
 - Three-valued logic: a field can be *present*, explicitly *absent*
   (`nothing`), or *unknown* (no row).
 - `mfr_*` fields are daemon-owned (require `"force": true` to override);
-  `mf_*` fields (`mf_watch`, `mf_ignore`, `mf_schema`) control the daemon.
+  `mf_*` fields (`mf_watch`, `mf_ignore`, `mf_schema`, `mf_sync`) control the
+  daemon.
 - Tracking is opt-in per subtree via `mf_watch`/`mf_ignore` inheritance.
 - Every write is recorded in an event log; any past state can be restored
   with `POST /rollback`, and new writes after a rollback create branches.

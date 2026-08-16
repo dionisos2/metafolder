@@ -3,12 +3,17 @@
 
 * Status
 
-This is a *design* document, not an implemented specification. It records the
-analysis and the chosen direction for making filtered + sorted + paginated
-queries scale to large repositories (target: ~2 000 000 metarecords). Only the
-two baseline indexes of [[*Baseline indexes (implemented)][Baseline indexes]]
-are implemented today; everything from [[*The proposed architecture][The
-proposed architecture]] onward is forward-looking and tagged =:v2:= or later.
+This is a partly-implemented design document. It records the analysis and the
+chosen direction for making filtered + sorted + paginated queries scale to
+large repositories (target: ~2 000 000 metarecords). Implemented today: the
+two SQL [[*Baseline indexes (implemented)][baseline indexes]] *and* the
+in-memory roaring-bitmap / BSI query accelerator described under
+[[*The proposed architecture][The proposed architecture]]
+(=crates/daemon/src/index/=, built at repo load, refreshed to HEAD per query,
+validated by =tests/index_oracle.rs=). Still forward-looking (tagged =:v2:= or
+later): the *adaptive planner* / cost model, on-disk index persistence, and the
+larger-scale refinements. When in doubt, =crates/daemon/src/index/= is the
+authority on what exists.
 
 Numbers below come from =crates/bench= run against the two persistent data
 folders (=benchmarks/bench_data= ≈ 5 101 and =benchmarks/bench_data_big= ≈

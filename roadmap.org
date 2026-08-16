@@ -18,3 +18,20 @@
 * DONE first version of the daemon
 * DONE first version of the Rust commands
 * DONE first version of the GUI
+* DONE post-GUI feature work (towards v0.3)
+** DONE loopback session-token authentication (spec-auth)
+** DONE trash bin (mf trash, core::trash)
+** DONE hierarchical tags (mf tag) + folder ordering (mf order)
+** DONE cross-repo sync (mf sync, core::sync, daemon + GUI panel)
+** DONE in-memory bitmap/BSI query accelerator (daemon/src/index)
+** DONE embedded media metadata extraction (mfr_meta_*)
+** DONE recently-viewed metarecords (GUI)
+** DONE shared file operations in every panel (cut/copy/paste/rename/trash)
+** DONE build/install tooling (Makefile, check-deps.sh)
+** DONE GUI help panel
+* TODO v0.3 release
+** TODO whole-project review pass (docs/code coherence, bugs, refactors)
+** TODO cut the release (tag, changelog)
+* TODO v2 (deferred)
+** TODO multi-owner link metarecords
+** TODO adaptive query planner / on-disk index persistence (spec-indexing)
