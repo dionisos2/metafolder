@@ -704,7 +704,7 @@ export async function mount(root, metafolder) {
       await load();
       await dirty();
     } catch (error) {
-      await statusBar.error(error);
+      await statusBar.error(error, statusErrorMs);
     }
   }
 
