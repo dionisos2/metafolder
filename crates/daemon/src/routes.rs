@@ -1694,10 +1694,18 @@ fn run_query_filter(
     match index.evaluate_page_with_roots(&body.query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
     {
         Ok((uuids, next_cursor)) => {
-            let total = body.count.then(|| {
-                index.count_with_roots(&body.query, &roots).expect("a page-able query also counts")
-                    as usize
-            });
+            // The page came from the index; the count normally does too. If the
+            // index ever reports the count `Unsupported` (a future asymmetry
+            // between the two paths), fall back to the SQL count rather than
+            // panicking on a live request.
+            let total = if body.count {
+                match index.count_with_roots(&body.query, &roots) {
+                    Ok(n) => Some(n as usize),
+                    Err(_unsupported) => Some(query_exec::count(conn, cache, &body.query)?),
+                }
+            } else {
+                None
+            };
             Ok((uuids, next_cursor, total))
         }
         Err(_unsupported) => {

@@ -249,11 +249,13 @@ pub fn reconcile_full_reported(
         // Directories have no fingerprint (matched only by path); orphans with
         // no stored size have no fingerprint either. Both can still be matched
         // by the similarity phase below.
-        if is_dir || size.is_none() {
-            states.push(state);
-            continue;
-        }
-        let size = size.unwrap();
+        let size = match size {
+            Some(size) if !is_dir => size,
+            _ => {
+                states.push(state);
+                continue;
+            }
+        };
         let stored_partial = string_field(&writer, orphan, "mfr_partial_hash")?;
         let stored_full = string_field(&writer, orphan, "mfr_full_hash")?;
 

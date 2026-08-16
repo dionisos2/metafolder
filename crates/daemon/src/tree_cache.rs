@@ -137,7 +137,11 @@ impl TreeCache {
             let norm = self.normalize(&self.node(idx).name.clone());
             match parent {
                 None => {
-                    self.fields.entry(field).or_default().roots.insert(norm, idx);
+                    let prev = self.fields.entry(field).or_default().roots.insert(norm, idx);
+                    debug_assert!(
+                        prev.is_none() || prev == Some(idx),
+                        "two distinct roots share a normalized name in tree cache populate"
+                    );
                 }
                 Some(p) => {
                     let Some(&pidx) =
@@ -146,7 +150,11 @@ impl TreeCache {
                         continue;
                     };
                     self.node_mut(idx).parent = Some(pidx);
-                    self.node_mut(pidx).children.insert(norm, idx);
+                    let prev = self.node_mut(pidx).children.insert(norm, idx);
+                    debug_assert!(
+                        prev.is_none() || prev == Some(idx),
+                        "two distinct children share a normalized name under one parent in populate"
+                    );
                 }
             }
         }
