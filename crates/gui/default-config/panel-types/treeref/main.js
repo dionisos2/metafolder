@@ -39,6 +39,7 @@ export async function mount(root, metafolder) {
   let nextCursor = null;
   let cursorIndex = -1;
   let loading = false;
+  let picking = false; // true while this panel is open as a tree_ref value picker
   // The active repo's root path, cached for building absolute file paths for the
   // right-click file menu (only meaningful for the mfr_path forest).
   /** @type {string|null} */
@@ -298,9 +299,43 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "treeref").
 
+  /** The index in `entriesList` of the node `li` under a context-menu event, or
+   *  -1 when the click missed a row. The event is handled at the shell `window`,
+   *  so the real clicked node is found through `composedPath()`.
+   *  @param {MouseEvent} event */
+  function liIndexFromEvent(event) {
+    for (const node of event.composedPath()) {
+      if (node instanceof Element && node.matches('li')) {
+        const index = [...entriesList.children].indexOf(node);
+        if (index >= 0) return index;
+      }
+    }
+    return -1;
+  }
+
   // Right-click a node in the mfr_path forest to cut/copy/paste/rename/duplicate
-  // /trash the file or directory it maps to (shared with the file manager).
-  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => repo));
+  // /trash the file or directory it maps to (shared with the file manager). When
+  // this panel is open as a tree_ref value picker, the node also gets a "Pick
+  // this folder" item that confirms the pick (its uuid becomes the TreeRef
+  // parent) — the same affordance the metarecord-list picker offers.
+  const fileActions = fileActionsProvider(metafolder, () => repo);
+  metafolder.contextMenu.addDefaultItems((event) => {
+    /** @type {Metafolder.MenuItem[]} */
+    const items = [];
+    if (picking) {
+      const index = liIndexFromEvent(event);
+      // Make the clicked node the selection so `pick:confirm` reads its uuid.
+      if (index >= 0 && index !== cursorIndex) void select(index);
+      if (children[index >= 0 ? index : cursorIndex]) {
+        items.push({
+          label: 'Pick this folder',
+          action: () => void commands.invoke('pick:confirm'),
+        });
+      }
+    }
+    items.push(...fileActions(event));
+    return items;
+  });
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
@@ -311,7 +346,9 @@ export async function mount(root, metafolder) {
       return;
     }
     fieldSelect.element.toggleAttribute('disabled', false);
-    // A value picker (spec-gui "Value picker") can seed the field to explore.
+    // A value picker (spec-gui "Value picker") can seed the field to explore and
+    // arms the "Pick this folder" context-menu item.
+    picking = !!(await workspace.get('pick_request'));
     const seedField = await workspace.get('treeref:field');
     if (typeof seedField === 'string' && seedField) field = seedField;
     await loadFields();
