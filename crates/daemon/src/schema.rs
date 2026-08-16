@@ -59,9 +59,11 @@ struct RawConstraint {
     #[allow(dead_code)]
     description: Option<String>,
     /// Optional default value for client templates: a bare JSON value
-    /// interpreted via this constraint's `type` (so `type` is required and the
-    /// value's kind must match). Returned verbatim by `GET /schema`; not used
-    /// by validation, so it is not kept in the compiled form.
+    /// interpreted via this constraint's `type`. Never read from this parsed
+    /// struct (hence `dead_code`) and not kept in the compiled form — it exists
+    /// only so `deny_unknown_fields` accepts it in the file. Clients read it
+    /// from the *raw* schema JSON that `GET /schema` serves verbatim, not from
+    /// here.
     #[serde(default)]
     #[allow(dead_code)]
     default: Option<serde_json::Value>,

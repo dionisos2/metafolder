@@ -754,21 +754,11 @@ fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) 
 }
 
 fn string_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<String>> {
-    Ok(db::get_field_rows_named(writer.connection(), uuid, name)?
-        .into_iter()
-        .find_map(|r| match r.value {
-            Value::String(s) => Some(s),
-            _ => None,
-        }))
+    db::string_field(writer.connection(), uuid, name)
 }
 
 fn int_field(writer: &Writer, uuid: Uuid, name: &str) -> Result<Option<i64>> {
-    Ok(db::get_field_rows_named(writer.connection(), uuid, name)?
-        .into_iter()
-        .find_map(|r| match r.value {
-            Value::Int(n) => Some(n),
-            _ => None,
-        }))
+    db::int_field(writer.connection(), uuid, name)
 }
 
 // ── MIME detection (spec-platform "MIME detection") ─────────────────────────────

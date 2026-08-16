@@ -140,6 +140,16 @@ fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
 
 /// Compaction rules of spec-file-tracking: redundant sequences within the
 /// batching window are simplified before any database write.
+///
+/// This is O(n²) in the batch size: each event does up to a few `find_last`
+/// (`rposition`) scans over the accumulated `out`. That is fine for the
+/// realistic case (a quiet-period flush of interactive edits is small). It only
+/// matters for a huge single batch (e.g. bulk-moving 10⁵ files inside the
+/// window). A path→index acceleration is *not* a drop-in here: the predicates
+/// key on different path roles per variant (Create's path, a Rename's to-path,
+/// RenameFrom/To's path, a Modify's path), and entries are nulled/rewritten in
+/// place, so a naive single-key map would mis-compact. Left linear-scan on
+/// purpose until a batch size is observed that warrants the careful rewrite.
 fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
     let mut out: Vec<Option<FsEvent>> = Vec::with_capacity(events.len());
     for ev in events {
@@ -613,8 +623,8 @@ impl Apply<'_, '_> {
         let mut full: Option<String> = None;
         for candidate in candidates {
             let conn = self.writer.connection();
-            let stored_partial = string_field(conn, candidate, "mfr_partial_hash")?;
-            let stored_full = string_field(conn, candidate, "mfr_full_hash")?;
+            let stored_partial = db::string_field(conn, candidate, "mfr_partial_hash")?;
+            let stored_full = db::string_field(conn, candidate, "mfr_full_hash")?;
             let (Some(stored_partial), Some(stored_full)) = (stored_partial, stored_full) else {
                 continue; // Without a stored full hash, identity cannot be confirmed.
             };
@@ -745,14 +755,6 @@ pub(crate) fn ensure_parent_metarecords(
     Ok(parent)
 }
 
-fn string_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<String>> {
-    Ok(db::get_field_rows_named(conn, uuid, name)?
-        .into_iter()
-        .find_map(|r| match r.value {
-            Value::String(s) => Some(s),
-            _ => None,
-        }))
-}
 
 // ── Background executor ───────────────────────────────────────────────────────
 

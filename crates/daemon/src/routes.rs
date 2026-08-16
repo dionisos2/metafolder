@@ -302,11 +302,7 @@ async fn list_fields(
             .map(|s| s.declared_types())
             .unwrap_or_default();
         let mut index_guard = repo_state.index.lock_recover();
-        match index_guard.as_mut() {
-            Some(index) => index.refresh(&conn)?,
-            None => *index_guard = Some(crate::index::RepoIndex::build(&conn)?),
-        }
-        let data = index_guard.as_ref().expect("index built above").field_catalog(None);
+        let data = ensure_index(&conn, &mut index_guard)?.field_catalog(None);
         drop(index_guard);
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).
@@ -1645,6 +1641,23 @@ type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 /// Resolves a query's page (and optional total) through the in-memory bitmap
 /// index when it is applicable, falling back to the SQL engine otherwise.
 ///
+/// Bring the repo's in-memory index up to the current HEAD (building it on the
+/// first use), then hand back a shared reference to it. The single acquisition
+/// point for the two live-query call sites (`field_catalog` and
+/// `run_query_filter`) so they cannot drift.
+fn ensure_index<'g>(
+    conn: &rusqlite::Connection,
+    guard: &'g mut Option<crate::index::RepoIndex>,
+) -> Result<&'g crate::index::RepoIndex, ApiError> {
+    match guard.as_mut() {
+        // Already built: bring it up to the current HEAD (incrementally when the
+        // delta is a forward extension, else an internal full rebuild).
+        Some(index) => index.refresh(conn)?,
+        None => *guard = Some(crate::index::RepoIndex::build(conn)?),
+    }
+    Ok(guard.as_ref().expect("index built above"))
+}
+
 /// The index is consulted only while it reflects the current log HEAD; after any
 /// write the HEAD advances and the index is rebuilt before use, so it can never
 /// serve stale results. A query shape the index does not accelerate (`Matches`,
@@ -1683,13 +1696,7 @@ fn run_query_filter(
     }
 
     let mut index_guard = repo_state.index.lock_recover();
-    match index_guard.as_mut() {
-        // Already built: bring it up to the current HEAD (incrementally when the
-        // delta is a forward extension, else an internal full rebuild).
-        Some(index) => index.refresh(conn)?,
-        None => *index_guard = Some(crate::index::RepoIndex::build(conn)?),
-    }
-    let index = index_guard.as_ref().expect("index built above");
+    let index = ensure_index(conn, &mut index_guard)?;
 
     match index.evaluate_page_with_roots(&body.query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
     {

@@ -4,6 +4,7 @@ pub mod config;
 pub mod config_sync;
 pub mod date;
 pub mod dsl;
+pub mod hex;
 pub mod metarecord;
 pub mod progress;
 pub mod query;

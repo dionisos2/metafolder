@@ -101,7 +101,7 @@ fn read_token_in(dir: &Path, service: &str) -> Result<String, String> {
 pub fn generate_token() -> Result<String, String> {
     let mut bytes = [0u8; 32];
     read_random(&mut bytes)?;
-    Ok(hex_encode(&bytes))
+    Ok(crate::hex::encode(&bytes))
 }
 
 /// Extract the token from an `Authorization: Bearer <token>` header value.
@@ -122,16 +122,6 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
         diff |= x ^ y;
     }
     diff == 0
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0f) as usize] as char);
-    }
-    out
 }
 
 // ── Unix filesystem primitives ──────────────────────────────────────────────

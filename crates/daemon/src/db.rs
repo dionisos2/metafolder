@@ -485,6 +485,44 @@ pub fn get_field_rows_named(conn: &Connection, uuid: Uuid, name: &str) -> Result
     collect_field_rows(rows)
 }
 
+/// The first `String` value of the `(uuid, name)` field, or `None`. The single
+/// typed reader shared by reconcile / executor / eligibility (they used to
+/// re-derive it over `get_field_rows_named` each).
+pub fn string_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<String>> {
+    Ok(get_field_rows_named(conn, uuid, name)?.into_iter().find_map(|r| match r.value {
+        Value::String(s) => Some(s),
+        _ => None,
+    }))
+}
+
+/// The first `Int` value of the `(uuid, name)` field, or `None`.
+pub fn int_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<i64>> {
+    Ok(get_field_rows_named(conn, uuid, name)?.into_iter().find_map(|r| match r.value {
+        Value::Int(n) => Some(n),
+        _ => None,
+    }))
+}
+
+/// Every `String` value of the `(uuid, name)` multi-map field, in row order.
+pub fn string_fields(conn: &Connection, uuid: Uuid, name: &str) -> Result<Vec<String>> {
+    Ok(get_field_rows_named(conn, uuid, name)?
+        .into_iter()
+        .filter_map(|r| match r.value {
+            Value::String(s) => Some(s),
+            _ => None,
+        })
+        .collect())
+}
+
+/// The first `Bool` value of the `(uuid, name)` field, or `None` (`Nothing`
+/// rows do not count).
+pub fn bool_field(conn: &Connection, uuid: Uuid, name: &str) -> Result<Option<bool>> {
+    Ok(get_field_rows_named(conn, uuid, name)?.into_iter().find_map(|r| match r.value {
+        Value::Bool(b) => Some(b),
+        _ => None,
+    }))
+}
+
 /// The established non-`Nothing` value type of a field name, file-wide, or
 /// `None` when the name has no non-`Nothing` rows (type not yet established).
 /// The "one value type per field name" invariant guarantees at most one such

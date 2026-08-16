@@ -408,9 +408,7 @@ fn keyset_predicate(
     build(components, values, params, 0)
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
+use metafolder_core::hex::encode as hex_encode;
 
 /// The case-insensitive ordered-substring regex for OSM `Direct` mode:
 /// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
