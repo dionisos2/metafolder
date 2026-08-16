@@ -164,13 +164,19 @@ The tree cache is used to collect descendants efficiently.
 *** Interaction with reconcile and watcher
 
 Both reconcile and the watcher evaluate eligibility before creating, updating,
-or clearing any metarecord. Ineligible paths are silently ignored.
+or clearing any metarecord. Ineligible paths are silently ignored. The watcher
+additionally uses eligibility to decide *where to place its inotify watches* —
+only eligible directories are watched (see [[*File Watcher]]).
 
 *** Behaviour when =mf_watch= or =mf_ignore= changes
 
 Changing =mf_watch= or =mf_ignore= on a metarecord does *not* automatically
 modify any existing database metarecords. The changes take effect only on the next
-event (watcher or reconcile) for each affected path:
+event (watcher or reconcile) for each affected path. The watcher does, however,
+*immediately re-place its inotify watches* to match the new eligible-directory
+set (see [[*File Watcher]]), so filesystem events arriving in a newly-eligible
+subtree start being captured at once — but the metarecords for files *already*
+present there still require a reconcile:
 
 - *=mf_watch= set to =true=* on a previously-unwatched directory: existing
   files under that directory have no metarecords yet. A subsequent reconcile is
@@ -307,6 +313,18 @@ event's inotify cookie in =pending_operation.tracker=, and compaction re-fuses
 a =Rename(From)= / =Rename(To)= pair sharing the same non-null cookie back into
 a single =Rename(Both)=. Events without a cookie, and genuine one-sided renames
 (no matching cookie), are left as-is.
+
+The watcher places one *non-recursive* watch per *eligible directory* only
+(see [[*Watch and Ignore]]), rather than a single recursive watch on the whole
+root. The eligible set is computed by the same walk reconcile uses: descend only
+through eligible directories, prune ineligible subtrees, never follow symlinked
+directories (so a watch can never escape the repository root — e.g. a Wine
+=dosdevices/z: -> /= symlink is not traversed), and skip a directory that cannot
+be read rather than aborting the whole watch. A repository with =mf_watch =
+false= everywhere (the opt-in default of a fresh repo) is therefore watched
+nowhere at all. The set is maintained incrementally as directories appear or
+disappear, and recomputed after a manual write changes =mf_watch=/=mf_ignore=
+(see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]).
 
 Before processing any event, the daemon evaluates eligibility for the affected
 path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events

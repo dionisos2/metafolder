@@ -407,11 +407,17 @@ where
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         // Manual TreeRef writes bypass the watcher's incremental cache upkeep;
         // rebuild the complete cache so reads stay correct (no-op if absent).
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        // A change to mf_watch/mf_ignore may have grown or shrunk the watched
+        // scope; re-place the inotify watches accordingly.
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         metarecord_response(&conn, uuid)
     })
@@ -1846,9 +1852,13 @@ async fn batch_set(
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
         }
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"updated": uuids.len()})))
     })
@@ -1881,9 +1891,13 @@ async fn batch_append(
             validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
         }
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"updated": uuids.len()})))
     })
@@ -1920,9 +1934,13 @@ async fn batch_remove(
             }
         }
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"updated": changed})))
     })
@@ -1966,9 +1984,13 @@ async fn batch_unset(
             }
         }
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"updated": changed})))
     })
@@ -2011,9 +2033,13 @@ async fn retype_field(
         let mut writer = Writer::begin(&mut conn, None)?;
         let summary = writer.retype_field(&name, to)?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({
             "converted": summary.converted,
@@ -2052,11 +2078,17 @@ async fn delete_by_query(
             writer.delete_metarecord(*uuid)?;
         }
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         // Deleting a metarecord with a TreeRef removes tree nodes: rebuild the
         // complete cache so reads stay correct (no-op if absent).
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        // Deleting a record that carried mf_watch/mf_ignore can shrink the
+        // watched scope; re-place the inotify watches accordingly.
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(json!({"deleted": uuids.len()})))
     })
@@ -2101,9 +2133,13 @@ async fn create_record_endpoint(
         };
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(Json(created))
     })
@@ -2140,9 +2176,13 @@ async fn delete_record_endpoint(
         ensure_version(writer.connection(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(StatusCode::NO_CONTENT)
     })
@@ -2351,9 +2391,13 @@ async fn patch_field_by_id(
             &[old.name.clone(), new_name.clone()],
         )?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         metarecord_response(&conn, uuid).map(Json)
     })
@@ -2379,9 +2423,13 @@ async fn delete_field_by_id(
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
         let tree_touched = writer.touched_tree();
+        let watch_touched = writer.touched_watch();
         writer.commit()?;
         if tree_touched {
             repo_state.lock_cache().populate(&conn)?;
+        }
+        if watch_touched {
+            repo_state.refresh_watches(&conn);
         }
         Ok(StatusCode::NO_CONTENT)
     })

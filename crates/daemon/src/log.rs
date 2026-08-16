@@ -987,6 +987,19 @@ impl<'c> Writer<'c> {
         })
     }
 
+    /// True if this revision wrote an `mf_watch` or `mf_ignore` field — the
+    /// fields that determine watch/ignore eligibility. A caller that keeps a
+    /// live inotify watch set (the watcher) must refresh it after such a write,
+    /// since the set of eligible directories may have changed.
+    pub fn touched_watch(&self) -> bool {
+        self.pending.iter().any(|op| {
+            op.before
+                .iter()
+                .chain(op.after.iter())
+                .any(|f| f.name == "mf_watch" || f.name == "mf_ignore")
+        })
+    }
+
     /// Removes every row of `(uuid, name)`, leaving the field unknown.
     /// Set-field shaped (before = all rows, after = none) so the standard
     /// `set_field` inverse applies. Used to invalidate `mfr_*` hashes.

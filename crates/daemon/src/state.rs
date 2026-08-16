@@ -151,6 +151,21 @@ impl RepoState {
         self.rollback_lock.lock_recover().is_some()
     }
 
+    /// Recomputes the watcher's eligible-directory set after a manual write that
+    /// changed `mf_watch`/`mf_ignore` (spec-file-tracking "Watch and Ignore"),
+    /// so a subtree just made eligible starts being watched immediately (and one
+    /// just excluded stops). No-op when the watcher is not running (unit tests,
+    /// or a repository being torn down). `conn` is the already-locked
+    /// connection; the tree cache is locked here.
+    pub fn refresh_watches(&self, conn: &Connection) {
+        let handles = self.handles.lock_recover();
+        let Some(handles) = handles.as_ref() else {
+            return;
+        };
+        let mut cache = self.lock_cache();
+        handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir());
+    }
+
     /// Warms the in-memory accelerators of a freshly loaded repository:
     /// eagerly populates the tree cache (so tree navigation is served from
     /// memory — spec-file-tracking "Tree Cache") and builds the query index (so

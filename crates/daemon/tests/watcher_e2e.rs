@@ -111,3 +111,69 @@ async fn test_watcher_tracks_create_rename_delete() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+/// Regression: a repository whose root contains a symlink to a directory the
+/// daemon cannot read (the classic Wine `~/.wine/dosdevices/z: -> /` case) must
+/// still load. The watcher must not follow the symlink, and one unwatchable
+/// path must never abort the whole load.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let root: PathBuf =
+        std::env::temp_dir().join(format!("metafolder_symlink_{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+
+    // A readable directory outside the repo that itself contains an *unreadable*
+    // subdirectory, and a symlink to it inside the repo root. This mirrors the
+    // real case `z: -> /` where `/` is readable but `/opt/containerd` is not:
+    // following the symlink and trying to add an inotify watch on the deep
+    // unreadable directory EACCESes.
+    let secret: PathBuf =
+        std::env::temp_dir().join(format!("metafolder_secret_{}", Uuid::new_v4()));
+    let locked = secret.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::os::unix::fs::symlink(&secret, root.join("z")).unwrap();
+    let mut perm = std::fs::metadata(&locked).unwrap().permissions();
+    perm.set_mode(0o000);
+    std::fs::set_permissions(&locked, perm).unwrap();
+
+    // Init: must succeed (a fresh repo is mf_watch=false — nothing watched).
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init must not fail on the symlink: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+
+    // Enabling watch on the root triggers a watch refresh that walks the tree:
+    // it must skip the symlink (not a real directory) and not EACCES.
+    let (_, roots) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
+    )
+    .await;
+    let root_uuid = roots[0].as_str().unwrap().to_string();
+    let (status, body) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "enabling watch must not fail on the symlink: {body}");
+
+    // A real file created in the root is still detected: the refresh placed a
+    // watch on the (eligible) root directory.
+    std::fs::write(root.join("real.txt"), b"hello").unwrap();
+    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^real\\.txt$"});
+    wait_for_match(&app, &repo, by_name, 1).await;
+
+    // Cleanup: restore permissions so the trees can be removed.
+    let mut perm = std::fs::metadata(&locked).unwrap().permissions();
+    perm.set_mode(0o755);
+    std::fs::set_permissions(&locked, perm).unwrap();
+    std::fs::remove_dir_all(&secret).ok();
+    std::fs::remove_dir_all(&root).ok();
+}
