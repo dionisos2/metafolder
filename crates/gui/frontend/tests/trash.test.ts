@@ -5,7 +5,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-// eslint-disable-next-line import/no-unresolved -- served as /__ui.js, aliased in vite.config
 import { formatAge, formatSize, mount } from '../../default-config/panel-types/trash/main.js';
 
 describe('trash format helpers', () => {
@@ -108,7 +107,7 @@ describe('trash panel actions', () => {
   test('mount lists entries and renders one row per entry', async () => {
     const { api, trash } = stub();
     const shadow = shadowForTrash();
-    await mount(shadow, api as never);
+    mount(shadow, api as never);
     // `whenVisible` fired start(), but its load() is async: let it settle.
     await new Promise((r) => setTimeout(r, 0));
     expect(trash.list).toHaveBeenCalledWith('repo-1');
@@ -121,7 +120,10 @@ describe('trash panel actions', () => {
 
   test('restore, delete and empty drive the trash API', async () => {
     const { api, handlers, trash, workspace, statusBar } = stub();
-    await mount(shadowForTrash(), api as never);
+    mount(shadowForTrash(), api as never);
+    // mount is synchronous, but its whenVisible→load() is async: let it settle
+    // so the entries are present before the cursor/restore commands run.
+    await new Promise((r) => setTimeout(r, 0));
 
     // Move the cursor onto the first entry, then restore it.
     await handlers.get('trash:next')!();
@@ -142,7 +144,7 @@ describe('trash panel actions', () => {
   test('destructive actions are cancelled when unconfirmed', async () => {
     vi.stubGlobal('confirm', vi.fn(() => false));
     const { api, handlers, trash } = stub();
-    await mount(shadowForTrash(), api as never);
+    mount(shadowForTrash(), api as never);
     await handlers.get('trash:next')!();
     await handlers.get('trash:delete')!();
     await handlers.get('trash:empty')!();

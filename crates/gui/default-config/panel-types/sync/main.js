@@ -14,6 +14,15 @@ function planRepoName(a, b) {
   return `plan-${x}-${y}`;
 }
 
+/** Stringifies an unknown leaf for display: a non-null object as compact JSON,
+ *  everything else via `String` — so a nested value never renders as the
+ *  useless "[object Object]". @param {unknown} x @returns {string} */
+function leafString(x) {
+  if (x !== null && typeof x === 'object') return JSON.stringify(x);
+  // Runtime-checked to be a non-object here; the cast lets `String` narrow it.
+  return String(/** @type {string | number | boolean | null | undefined} */ (x));
+}
+
 /** A short one-line preview of a field value multiset (for conflict display).
  *  @param {unknown} value @returns {string} */
 function previewValue(value) {
@@ -21,9 +30,9 @@ function previewValue(value) {
   if (Array.isArray(value)) return value.map(previewValue).join(', ');
   if (typeof value === 'object') {
     const v = /** @type {{ value?: unknown }} */ (value).value;
-    return v === undefined ? JSON.stringify(value) : String(v);
+    return v === undefined ? JSON.stringify(value) : leafString(v);
   }
-  return String(value);
+  return leafString(value);
 }
 
 /**
@@ -266,7 +275,9 @@ export function mount(root, metafolder) {
     if (state === 'empty') return [placeholder('The plan is empty (nothing to sync).')];
 
     /** @type {HTMLElement[]} */
-    const nodes = [el('div', { class: 'section-title' }, `Plan overlay — ${report.total ?? 0} operation(s)`)];
+    const nodes = [
+      el('div', { class: 'section-title' }, `Plan overlay — ${Number(report.total ?? 0)} operation(s)`),
+    ];
     const counts = /** @type {{ kind: string, count: number }[]} */ (report.counts ?? []);
     for (const c of counts) {
       nodes.push(
