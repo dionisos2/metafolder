@@ -495,6 +495,16 @@ keeps a rolled-back "future" visible for redo while hiding operations on
 divergent branches. In =tree= mode, operations are returned in insertion order
 (by =id=). The client reconstructs tree structure from =parent_id= in all cases.
 
+For =linear= and =active= modes, =limit= is not merely a post-filter: it bounds
+the walk itself, so listing the most recent =N= operations stays O(N) on a
+repository with millions of operations (a large initial reconcile) instead of
+loading the whole history. =linear= walks HEAD's ancestry capped at =limit=;
+=active= does the same whenever HEAD has no forward continuation (the common
+case, checked with an indexed lookup) and otherwise falls back to the full
+computation so a rolled-back redo future is still surfaced. The observable
+result is unchanged — the most recent =limit= operations of the selected line.
+GUI clients use this to page the log list ("Show more" grows the window).
+
 Response body:
 #+BEGIN_SRC json
 {

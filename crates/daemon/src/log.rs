@@ -212,6 +212,50 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
     Ok(ops)
 }
 
+/// The most-recent `max` operations of the ancestor chain from `from`
+/// (inclusive), HEAD-first: `from` and its `max - 1` nearest ancestors. Unlike
+/// [`ancestry_ops`] the walk is bounded by a small `LIMIT`, so it stays O(max)
+/// on a huge log (each step is a primary-key lookup up the parent chain); it
+/// therefore does not validate the chain against cycles. Backs the bounded log
+/// listing that keeps `GET /log?…&limit=N` fast on repositories with millions
+/// of operations.
+pub fn ancestry_ops_limited(
+    conn: &rusqlite::Connection,
+    from: i64,
+    max: usize,
+) -> Result<Vec<OpRow>> {
+    let mut stmt = conn.prepare_cached(&format!(
+        "{ANCESTRY_CTE}
+         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
+                o.entity_version_before, o.entity_version_after, o.field_name
+         FROM chain c JOIN operation o ON o.id = c.id
+         ORDER BY c.depth"
+    ))?;
+    let ops = stmt
+        .query_map(params![from, max as i64], row_to_op)?
+        .map(|r| {
+            let (mut op, entity) = r?;
+            op.entity_uuid = db::bytes_to_uuid(entity)?;
+            Ok(op)
+        })
+        .collect::<Result<Vec<OpRow>>>()?;
+    Ok(ops)
+}
+
+/// Whether any operation has `op_id` as its `parent_id` — i.e. whether a forward
+/// continuation (a rolled-back redo future, or a divergent branch) exists below
+/// `op_id`. Indexed lookup (`idx_operation_parent`), so O(log N) even on a huge
+/// log; used to take the cheap bounded-ancestry path in the log listing when
+/// HEAD is a plain tip.
+pub fn has_children(conn: &rusqlite::Connection, op_id: i64) -> Result<bool> {
+    let exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM operation WHERE parent_id = ?1)",
+        [op_id],
+        |r| r.get(0),
+    )?;
+    Ok(exists)
+}
+
 /// The "active line" through HEAD: the ancestry path root→HEAD followed by the
 /// forward continuation that, at each fork below HEAD, follows the child whose
 /// subtree contains the most recently created operation (largest id). This

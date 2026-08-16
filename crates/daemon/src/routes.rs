@@ -786,13 +786,20 @@ async fn get_log(
         let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let mode = params.mode.as_deref().unwrap_or("linear");
+        let limit = params.limit;
 
         let mut ops: Vec<crate::log::OpRow> = match mode {
             "tree" => crate::log::all_ops(&conn)?,
             "linear" => match head {
                 None => vec![],
                 Some(head) => {
-                    let mut chain = crate::log::ancestry_ops(&conn, head)?;
+                    // With a limit, bound the ancestry walk so a huge log is not
+                    // read in full (spec-event-log "limit"): most recent first,
+                    // then reversed to oldest-first.
+                    let mut chain = match limit {
+                        Some(l) => crate::log::ancestry_ops_limited(&conn, head, l)?,
+                        None => crate::log::ancestry_ops(&conn, head)?,
+                    };
                     chain.reverse(); // root → HEAD, oldest first
                     chain
                 }
@@ -802,7 +809,19 @@ async fn get_log(
             // visible, hides divergent branches).
             "active" => match head {
                 None => vec![],
-                Some(head) => crate::log::active_line_ops(&conn, head)?,
+                Some(head) => match limit {
+                    // Fast path: a limited request whose HEAD has no forward
+                    // continuation (the common case — no rollback) has an active
+                    // line equal to its ancestry, so bound that instead of
+                    // scanning every operation to rebuild forward branches
+                    // (`active_line_ops` loads the whole log).
+                    Some(l) if !crate::log::has_children(&conn, head)? => {
+                        let mut chain = crate::log::ancestry_ops_limited(&conn, head, l)?;
+                        chain.reverse();
+                        chain
+                    }
+                    _ => crate::log::active_line_ops(&conn, head)?,
+                },
             },
             other => {
                 return Err(ApiError::bad_request(format!(

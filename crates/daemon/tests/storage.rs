@@ -1075,3 +1075,46 @@ fn test_recreate_metarecord_recomputes_next_version() {
     set_field(&mut conn, m.uuid, "a", Value::Int(9)); // must get 3, not reuse 1
     assert_eq!(db::get_version(&conn, m.uuid).unwrap(), Some(3));
 }
+
+// ── Bounded log reading (efficient log listing for huge repos) ──────────────────
+
+#[test]
+fn test_ancestry_ops_limited_returns_the_most_recent() {
+    use metafolder_daemon::log;
+    // A linear chain of writes: create + four set_fields on one metarecord.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
+    for i in 1..=4 {
+        set_field(&mut conn, m.uuid, "s", Value::Int(i));
+    }
+    let head = log::get_head(&conn).unwrap().unwrap();
+    // `ancestry_ops` is HEAD-first (depth 0 = HEAD) up to the root.
+    let full = log::ancestry_ops(&conn, head).unwrap();
+    assert_eq!(full.len(), 5, "create + four sets");
+
+    // Bounded to 2: exactly the two most recent (HEAD and its parent), HEAD-first
+    // — the prefix of the full ancestry, walked without scanning the whole log.
+    let limited = log::ancestry_ops_limited(&conn, head, 2).unwrap();
+    assert_eq!(
+        limited.iter().map(|o| o.id).collect::<Vec<_>>(),
+        full.iter().take(2).map(|o| o.id).collect::<Vec<_>>(),
+    );
+    // A cap larger than the chain returns the whole ancestry.
+    let big = log::ancestry_ops_limited(&conn, head, 999).unwrap();
+    assert_eq!(big.iter().map(|o| o.id).collect::<Vec<_>>(),
+               full.iter().map(|o| o.id).collect::<Vec<_>>());
+}
+
+#[test]
+fn test_has_children_reflects_forward_ops() {
+    use metafolder_daemon::log;
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
+    set_field(&mut conn, m.uuid, "s", Value::Int(1));
+    let head = log::get_head(&conn).unwrap().unwrap();
+    // HEAD is the tip of the chain: nothing points at it as a parent.
+    assert!(!log::has_children(&conn, head).unwrap());
+    // Its parent does have a forward child (HEAD).
+    let parent = log::get_op(&conn, head).unwrap().unwrap().parent_id.unwrap();
+    assert!(log::has_children(&conn, parent).unwrap());
+}

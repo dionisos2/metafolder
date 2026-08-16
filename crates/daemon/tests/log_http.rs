@@ -181,6 +181,55 @@ async fn test_log_active_line_through_head() {
 }
 
 #[tokio::test]
+async fn test_log_active_limit_is_bounded_and_keeps_redo() {
+    let (app, repo, root) = setup("active_limit").await;
+    let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 0}}]))
+        .await;
+    let uuid = entry["uuid"].as_str().unwrap().to_string();
+    for i in 1..=5 {
+        patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": i})).await;
+    }
+    let ids = |log: &Value| -> Vec<i64> {
+        log["operations"].as_array().unwrap().iter().map(|o| o["id"].as_i64().unwrap()).collect()
+    };
+
+    // No redo future below HEAD: `active&limit` takes the bounded path and
+    // returns exactly the most-recent tail of the unlimited active line,
+    // oldest-first.
+    let full = get_log(&app, &repo, "?mode=active").await;
+    let full_ids = ids(&full);
+    let head = full["head"].as_i64().unwrap();
+    let limited = get_log(&app, &repo, "?mode=active&limit=2").await;
+    let limited_ids = ids(&limited);
+    assert_eq!(limited_ids.len(), 2);
+    assert_eq!(*limited_ids.last().unwrap(), head, "most recent op is HEAD");
+    assert_eq!(limited_ids, full_ids[full_ids.len() - 2..].to_vec());
+
+    // After a rollback, HEAD has a forward child: `active&limit` must fall back
+    // to the full active line and still surface the redo future.
+    let parent_of_head = full["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"].as_i64() == Some(head))
+        .unwrap()["parent_id"]
+        .as_i64()
+        .unwrap();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback"),
+        Some(json!({"target": {"id": parent_of_head}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+    let redo = get_log(&app, &repo, "?mode=active&limit=50").await;
+    assert!(ids(&redo).contains(&head), "active+limit keeps the redo future: {redo}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_revision_detail_and_label() {
     let (app, repo, root) = setup("rev").await;
     let entry = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}]))
