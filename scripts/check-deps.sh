@@ -74,7 +74,11 @@ present() {
     case "$probe" in
         cmd)   command -v "$arg" >/dev/null 2>&1 ;;
         pc)    command -v pkg-config >/dev/null 2>&1 && pkg-config --exists "$arg" 2>/dev/null ;;
-        emoji) command -v fc-list >/dev/null 2>&1 && fc-list 2>/dev/null | grep -qi emoji ;;
+        # grep without -q so it reads all of fc-list's output: with -q it would
+        # close the pipe on the first match and, under `set -o pipefail`, the
+        # SIGPIPE'd fc-list (exit 141) would fail the whole probe on machines
+        # with many fonts installed.
+        emoji) command -v fc-list >/dev/null 2>&1 && fc-list 2>/dev/null | grep -i emoji >/dev/null ;;
         gst)   command -v gst-inspect-1.0 >/dev/null 2>&1 && gst-inspect-1.0 "$arg" >/dev/null 2>&1 ;;
         *)     return 1 ;;
     esac
