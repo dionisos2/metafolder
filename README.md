@@ -4,11 +4,14 @@ Metafolder is a file metadata management system. It attaches arbitrary metadata 
 
 File identity is hash-based, so metadata follows files when they are moved or renamed.
 
-> **Status: v0.3 — nothing is stable yet.** This is early development:
-> APIs, the CLI command tree, the on-disk database layout and the config
-> format all change without migrations or deprecation. Do not rely on it for
-> anything you cannot afford to lose. This project has been built
-> predominantly with [Claude Code](https://claude.com/claude-code).
+> **Status: v0.3 — early; the API surface is not stable.** The HTTP API, the
+> CLI command tree and the configuration keys still change between versions
+> without deprecation. **On-disk formats are preserved, though:** from v0.3 on,
+> any change to a persisted format (the SQLite schema, the `.metafolder/`
+> layout, the config file format) ships with a conversion path that migrates
+> existing repositories and configuration rather than breaking them. This
+> project has been built predominantly with
+> [Claude Code](https://claude.com/claude-code).
 
 ## Architecture
 
