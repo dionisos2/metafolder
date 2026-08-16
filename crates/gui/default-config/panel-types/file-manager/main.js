@@ -14,8 +14,14 @@ import {
   filterHidden,
   syntheticRows,
 } from './tracked.js';
-import { joinPath, dedupeName } from './fileops.js';
-import { getClipboard, setClipboard, hasClipboard } from '/__file-actions.js';
+import {
+  joinPath,
+  dedupeName,
+  baseName,
+  getClipboard,
+  setClipboard,
+  hasClipboard,
+} from '/__file-actions.js';
 
 // The clipboard is shared across the whole GUI JS realm (see /__file-actions.js)
 // — copy/cut here and paste in another file-manager, or in a metarecord panel's
@@ -40,6 +46,7 @@ export async function mount(root, metafolder) {
   // Standard status-message duration (config.toml `[panels]`), with the former
   // hard-coded fallback.
   const statusMessageMs = metafolder.settings.statusMessageMs ?? 5000;
+  const statusErrorMs = metafolder.settings.statusErrorMs ?? 8000;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
   /** @type {string|null} */
@@ -143,7 +150,7 @@ export async function mount(root, metafolder) {
     try {
       items = await fs.readDir(dir);
     } catch (error) {
-      await statusBar.error(error, statusMessageMs);
+      await statusBar.error(error, statusErrorMs);
       return;
     }
     const synthetic = syntheticRows(dir, repoRoot, constrainToRoot);
@@ -356,11 +363,6 @@ export async function mount(root, metafolder) {
     return names;
   }
 
-  /** @param {string} path */
-  function baseName(path) {
-    return path.slice(path.lastIndexOf('/') + 1);
-  }
-
   /** The cursor's row, unless it is a synthetic "." / ".." row or nothing. */
   function selectedEntry() {
     const item = listing[cursorIndex];
@@ -392,7 +394,7 @@ export async function mount(root, metafolder) {
     try {
       await fs.mkdir(joinPath(currentDir, name));
     } catch (error) {
-      await statusBar.error(error, statusMessageMs);
+      await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Created folder ${name}`, statusMessageMs);
@@ -406,7 +408,7 @@ export async function mount(root, metafolder) {
     try {
       await fs.createFile(joinPath(currentDir, name));
     } catch (error) {
-      await statusBar.error(error, statusMessageMs);
+      await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Created file ${name}`, statusMessageMs);
@@ -422,7 +424,7 @@ export async function mount(root, metafolder) {
     try {
       await fs.move(item.path, joinPath(currentDir, next));
     } catch (error) {
-      await statusBar.error(error, statusMessageMs);
+      await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Renamed to ${next}`, statusMessageMs);
@@ -437,7 +439,7 @@ export async function mount(root, metafolder) {
     try {
       await fs.copy(item.path, joinPath(currentDir, name));
     } catch (error) {
-      await statusBar.error(error, statusMessageMs);
+      await statusBar.error(error, statusErrorMs);
       return;
     }
     void statusBar.message(`Duplicated to ${name}`, statusMessageMs);
@@ -465,7 +467,7 @@ export async function mount(root, metafolder) {
     for (const src of paths) {
       // Never move/copy a directory into itself or one of its descendants.
       if (isWithin(currentDir, src)) {
-        await statusBar.error(`cannot paste ${baseName(src)} into itself`, statusMessageMs);
+        await statusBar.error(`cannot paste ${baseName(src)} into itself`, statusErrorMs);
         continue;
       }
       const name = dedupeName(baseName(src), taken);
@@ -476,7 +478,7 @@ export async function mount(root, metafolder) {
         taken.add(name);
         pasted += 1;
       } catch (error) {
-        await statusBar.error(error, statusMessageMs);
+        await statusBar.error(error, statusErrorMs);
       }
     }
     if (mode === 'cut') setClipboard(null); // the sources have moved
@@ -498,7 +500,7 @@ export async function mount(root, metafolder) {
       try {
         await trash.trashPath(repo, item.path);
       } catch (error) {
-        await statusBar.error(error, statusMessageMs);
+        await statusBar.error(error, statusErrorMs);
         return;
       }
       void statusBar.message(`Trashed ${item.name} — restore it from the trash panel`, statusMessageMs);
@@ -507,7 +509,7 @@ export async function mount(root, metafolder) {
       try {
         await fs.remove(item.path);
       } catch (error) {
-        await statusBar.error(error, statusMessageMs);
+        await statusBar.error(error, statusErrorMs);
         return;
       }
       void statusBar.message(`Deleted ${item.name}`, statusMessageMs);

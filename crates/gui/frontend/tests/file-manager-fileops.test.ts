@@ -1,13 +1,10 @@
-// file-manager filesystem-operation helpers (spec-gui "file-manager panel
-// type"): path joining and collision-free destination naming for the
-// new-folder/new-file, copy/cut/paste, duplicate and rename actions.
+// Shared filesystem-operation helpers (spec-gui "file-manager panel type" /
+// "Context menus"): path joining and collision-free destination naming for the
+// new-folder/new-file, copy/cut/paste, duplicate and rename actions. These now
+// live in the shared /__file-actions.js shim (was file-manager/fileops.js).
 
 import { describe, expect, test } from 'vitest';
-import {
-  joinPath,
-  splitExt,
-  dedupeName,
-} from '../../default-config/panel-types/file-manager/fileops.js';
+import { joinPath, splitExt, dedupeName } from '/__file-actions.js';
 
 describe('joinPath', () => {
   test('joins a name onto a directory', () => {

@@ -451,7 +451,7 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         invoke('post_status', {
           wsId: ctx.wsId,
           text: String((error as { message?: unknown })?.message ?? error),
-          kind: 'info',
+          kind: 'error',
           timeoutMs,
         }) as Promise<void>,
     },

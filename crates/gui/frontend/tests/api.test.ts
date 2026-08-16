@@ -241,6 +241,17 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('post_status', { wsId: 'ws-1', text: 'hi', kind: 'info', timeoutMs: 3000 });
   });
 
+  test('statusBar.error posts kind "error" (so the status bar styles it)', async () => {
+    const { api, invoke } = setup();
+    await api.statusBar.error(new Error('boom'), 8000);
+    expect(invoke).toHaveBeenCalledWith('post_status', {
+      wsId: 'ws-1',
+      text: 'boom',
+      kind: 'error',
+      timeoutMs: 8000,
+    });
+  });
+
   test('fs write operations route to their commands', async () => {
     const { api, invoke } = setup();
     await api.fs.mkdir('/tmp/d');

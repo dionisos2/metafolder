@@ -57,7 +57,7 @@ export function joinPath(dir, name) {
 
 /** Splits a filename into [stem, extension-including-dot]; a leading dot is a
  *  hidden marker, not an extension. @param {string} name @returns {[string, string]} */
-function splitExt(name) {
+export function splitExt(name) {
   const dot = name.lastIndexOf('.');
   if (dot <= 0 || dot === name.length - 1) return [name, ''];
   return [name.slice(0, dot), name.slice(dot)];
@@ -85,6 +85,13 @@ export function isWithin(path, dir) {
 }
 
 // ── Operations ────────────────────────────────────────────────────────────────
+
+/** Error-status duration (config `status-error-ms`), the longer timeout the
+ *  status bar pairs with its error styling. Messages keep the shorter
+ *  `statusMs` passed in by the caller. @param {MetafolderApi} metafolder */
+function errorMs(metafolder) {
+  return metafolder.settings?.statusErrorMs ?? 8000;
+}
 
 /** The directory a paste lands in: the target itself when it is a directory,
  *  otherwise its parent. When `isDir` is unknown, probe by listing.
@@ -118,14 +125,14 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
   try {
     existing = (await fs.readDir(dir)).map((entry) => entry.name);
   } catch (error) {
-    await statusBar.error(error, statusMs);
+    await statusBar.error(error, errorMs(metafolder));
     return;
   }
   const taken = new Set(existing);
   let pasted = 0;
   for (const src of cb.paths) {
     if (isWithin(dir, src)) {
-      await statusBar.error(`cannot paste ${baseName(src)} into itself`, statusMs);
+      await statusBar.error(`cannot paste ${baseName(src)} into itself`, errorMs(metafolder));
       continue;
     }
     const name = dedupeName(baseName(src), taken);
@@ -136,7 +143,7 @@ async function pasteInto(metafolder, targetPath, isDir, onChanged, statusMs) {
       taken.add(name);
       pasted += 1;
     } catch (error) {
-      await statusBar.error(error, statusMs);
+      await statusBar.error(error, errorMs(metafolder));
     }
   }
   if (cb.mode === 'cut' && pasted > 0) setClipboard(null);
@@ -158,7 +165,7 @@ async function renamePath(metafolder, path, onChanged, statusMs) {
   try {
     await fs.move(path, joinPath(parentDir(path), next));
   } catch (error) {
-    await statusBar.error(error, statusMs);
+    await statusBar.error(error, errorMs(metafolder));
     return;
   }
   void statusBar.message(`Renamed to ${next}`, statusMs);
@@ -177,14 +184,14 @@ async function duplicatePath(metafolder, path, onChanged, statusMs) {
   try {
     taken = new Set((await fs.readDir(dir)).map((entry) => entry.name));
   } catch (error) {
-    await statusBar.error(error, statusMs);
+    await statusBar.error(error, errorMs(metafolder));
     return;
   }
   const name = dedupeName(baseName(path), taken);
   try {
     await fs.copy(path, joinPath(dir, name));
   } catch (error) {
-    await statusBar.error(error, statusMs);
+    await statusBar.error(error, errorMs(metafolder));
     return;
   }
   void statusBar.message(`Duplicated to ${name}`, statusMs);
@@ -201,7 +208,7 @@ async function trashPath(metafolder, repo, path, label, onChanged, statusMs) {
   try {
     await trash.trashPath(repo, path);
   } catch (error) {
-    await statusBar.error(error, statusMs);
+    await statusBar.error(error, errorMs(metafolder));
     return;
   }
   void statusBar.message(`Trashed ${label} — restore it from the trash panel`, statusMs);
