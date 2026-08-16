@@ -272,7 +272,7 @@ export async function mount(root, metafolder) {
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {
-      void statusBar.message(`cannot open the repository: ${messageOf(error)}`, statusErrorMs);
+      void statusBar.error(`cannot open the repository: ${messageOf(error)}`, statusErrorMs);
     }
   }
 

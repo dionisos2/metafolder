@@ -700,7 +700,7 @@ export async function mount(root, metafolder) {
         await new Promise((resolve) => setTimeout(resolve, 300));
       }
       if (task.status === 'failed') throw new Error(task.error || 'reconcile failed');
-      void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusErrorMs);
+      void statusBar.message(`Reconcile done: ${JSON.stringify(task.result)}`, statusMessageMs);
       await load();
       await dirty();
     } catch (error) {
