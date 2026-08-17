@@ -316,8 +316,9 @@ export async function mount(root, metafolder) {
   // Right-click a node in the mfr_path forest to cut/copy/paste/rename/duplicate
   // /trash the file or directory it maps to (shared with the file manager). When
   // this panel is open as a tree_ref value picker, the node also gets a "Pick
-  // this folder" item that confirms the pick (its uuid becomes the TreeRef
-  // parent) — the same affordance the metarecord-list picker offers.
+  // this folder" (mfr_path) / "Pick this node" (any other TreeRef) item that
+  // confirms the pick (its uuid becomes the TreeRef parent) — the same
+  // affordance the metarecord-list picker offers.
   const fileActions = fileActionsProvider(metafolder, () => repo);
   metafolder.contextMenu.addDefaultItems((event) => {
     /** @type {Metafolder.MenuItem[]} */
@@ -327,9 +328,12 @@ export async function mount(root, metafolder) {
       // Make the clicked node the selection so `pick:confirm` reads its uuid.
       if (index >= 0 && index !== cursorIndex) void select(index);
       if (children[index >= 0 ? index : cursorIndex]) {
+        // Only the mfr_path forest maps to on-disk folders; every other TreeRef
+        // (tag trees, …) is a generic node, so word the item accordingly.
+        const pickLabel = field === 'mfr_path' ? 'Pick this folder' : 'Pick this node';
         items.push(
           { header: 'Metarecord' },
-          { label: 'Pick this folder', action: () => void commands.invoke('pick:confirm') },
+          { label: pickLabel, action: () => void commands.invoke('pick:confirm') },
         );
       }
     }
@@ -347,7 +351,7 @@ export async function mount(root, metafolder) {
     }
     fieldSelect.element.toggleAttribute('disabled', false);
     // A value picker (spec-gui "Value picker") can seed the field to explore and
-    // arms the "Pick this folder" context-menu item.
+    // arms the "Pick this folder/node" context-menu item.
     picking = !!(await workspace.get('pick_request'));
     const seedField = await workspace.get('treeref:field');
     if (typeof seedField === 'string' && seedField) field = seedField;
