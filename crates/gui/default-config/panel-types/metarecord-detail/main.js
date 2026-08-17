@@ -2,7 +2,7 @@
 // (spec-gui "metarecord-detail panel type").
 
 import { byId, el, formatValue, valueEl } from '/__ui.js';
-import { copyText, showMenu } from '/__menu.js';
+import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import {
   createTypePicker,
@@ -612,33 +612,6 @@ export async function mount(root, metafolder) {
     return schema;
   }
 
-  /**
-   * Entry point for "New metarecord": when the schema declares types, offer a
-   * picker (each type + an empty option); picking a type pre-stages its fields.
-   * With no schema/types, falls straight through to a blank record.
-   */
-  async function createMetarecord() {
-    const repo = await repoForAdd();
-    if (!repo) {
-      startNewMetarecord(null);
-      return;
-    }
-    const schema = await loadSchema(repo);
-    const types = schemaTypes(schema);
-    if (types.length === 0) {
-      startNewMetarecord(null);
-      return;
-    }
-    const rect = byId(root, 'new-metarecord').getBoundingClientRect();
-    void showMenu(
-      [
-        { label: '(empty metarecord)', action: () => startNewMetarecord(null) },
-        ...types.map((type) => ({ label: type, action: () => startNewMetarecord(type, schema) })),
-      ],
-      { x: rect.left, y: rect.bottom },
-    );
-  }
-
   /** @param {string|null} [type] @param {Schema} [schema] */
   function startNewMetarecord(type = null, schema = schemaCache.schema) {
     newMetarecordMode = true;
@@ -1206,7 +1179,27 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord:create', {
     label: 'Create a new metarecord (metarecord-detail form)',
     reveal: true,
-    handler: createMetarecord,
+    // The schema type is collected through the command input's completion
+    // (spec-gui "Interactive command arguments"): the completion lists the
+    // schema's declared metarecord types, a blank answer creates an empty
+    // record, and picking a type pre-stages its template fields. Replaces the
+    // old mouse-only pop-up menu so creation is fully keyboard-drivable.
+    args: [
+      {
+        name: 'schema',
+        prompt: () => 'Metarecord schema? (blank for an empty metarecord)',
+        complete: async () => {
+          const repo = await repoForAdd();
+          return repo ? schemaTypes(await loadSchema(repo)) : [];
+        },
+      },
+    ],
+    handler: async (schema) => {
+      const repo = await repoForAdd();
+      const loaded = repo ? await loadSchema(repo) : null;
+      const type = schema && schemaTypes(loaded).includes(schema) ? schema : null;
+      startNewMetarecord(type, loaded);
+    },
   });
   void commands.register('metarecord:delete', {
     label: 'Delete the selected metarecord',
