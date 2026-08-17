@@ -148,6 +148,7 @@
 
 # Jump to first / last row.
 "home" = [
+  { command = "metarecord-list:first", when = "file" },
   { command = "metarecord-list:first", when = "metarecord-list" },
   { command = "file-manager:first", when = "file-manager" },
   { command = "treeref:first", when = "treeref" },
@@ -156,6 +157,7 @@
   { command = "recent:first", when = "recent" },
 ]
 "end" = [
+  { command = "metarecord-list:last", when = "file" },
   { command = "metarecord-list:last", when = "metarecord-list" },
   { command = "file-manager:last", when = "file-manager" },
   { command = "treeref:last", when = "treeref" },
