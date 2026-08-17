@@ -1106,6 +1106,39 @@ fn test_ancestry_ops_limited_returns_the_most_recent() {
 }
 
 #[test]
+fn test_index_build_is_cancellable() {
+    use metafolder_daemon::index::RepoIndex;
+    // The heavy per-metarecord scan that builds the query index must honour a
+    // cancellation probe (spec-tasks "Cancellation"), so a Stop on a query that
+    // triggered a rebuild actually stops it.
+    let mut conn = test_conn();
+    create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    assert!(
+        RepoIndex::build_reported(&conn, &|_, _| {}, &|| true).is_err(),
+        "a pre-cancelled index build must bail"
+    );
+    assert!(
+        RepoIndex::build_reported(&conn, &|_, _| {}, &|| false).is_ok(),
+        "a non-cancelled build succeeds"
+    );
+}
+
+#[test]
+fn test_assemble_selected_is_cancellable() {
+    use metafolder_daemon::query_exec;
+    // The select-projection loop (the dominant cost of `select=*` over many
+    // matches) must honour the cancellation probe.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("a", Value::Int(1))]);
+    assert!(
+        query_exec::assemble_selected(&conn, &[m.uuid], None, &|| true).is_err(),
+        "a pre-cancelled assembly must bail"
+    );
+    let objects = query_exec::assemble_selected(&conn, &[m.uuid], None, &|| false).unwrap();
+    assert_eq!(objects.len(), 1);
+}
+
+#[test]
 fn test_has_children_reflects_forward_ops() {
     use metafolder_daemon::log;
     let mut conn = test_conn();

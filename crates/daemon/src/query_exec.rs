@@ -144,6 +144,32 @@ fn validate_comparison(value: &Value, ordered: bool) -> Result<(), ApiError> {
     }
 }
 
+/// Assembles the `select`-projected JSON objects for a page of result UUIDs,
+/// polling `cancel` every few hundred rows so a long assembly (the dominant cost
+/// of a `select=*` query over many matches) can be stopped (spec-tasks
+/// "Cancellation"). `fields_filter = None` keeps every field; `Some(list)` keeps
+/// only the named ones. Pass `&|| false` for uncancellable callers.
+pub fn assemble_selected(
+    conn: &Connection,
+    uuids: &[Uuid],
+    fields_filter: Option<&[String]>,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    let mut objects = Vec::with_capacity(uuids.len());
+    for (i, &uuid) in uuids.iter().enumerate() {
+        if i % 256 == 0 && cancel() {
+            return Err(ApiError::conflict("query cancelled"));
+        }
+        let mut metarecord = db::get_metarecord(conn, uuid)?
+            .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))?;
+        if let Some(filter) = fields_filter {
+            metarecord.fields.retain(|f| filter.contains(&f.name));
+        }
+        objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));
+    }
+    Ok(objects)
+}
+
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
 pub fn count(

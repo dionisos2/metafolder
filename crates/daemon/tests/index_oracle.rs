@@ -326,7 +326,7 @@ fn field_catalog_drops_field_when_last_value_removed() {
     let mut w = Writer::begin(&mut o.conn, None).unwrap();
     w.set_field(m, "rating", Value::Nothing).unwrap();
     w.commit().unwrap();
-    index.refresh(&o.conn).unwrap();
+    index.refresh(&o.conn, &|| false).unwrap();
 
     let sql = db::distinct_field_names(&o.conn, None).unwrap();
     assert!(sql.is_empty(), "SQL reference no longer lists the field");

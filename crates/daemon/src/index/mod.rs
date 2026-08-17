@@ -112,15 +112,19 @@ impl RepoIndex {
     /// Builds the index from a single pass over the repository's field rows
     /// (every metarecord — one repository per database file).
     pub fn build(conn: &Connection) -> anyhow::Result<RepoIndex> {
-        Self::build_reported(conn, &|_, _| {})
+        Self::build_reported(conn, &|_, _| {}, &|| false)
     }
 
     /// [`Self::build`] reporting progress as `(done, total)` metarecords scanned,
     /// for the load progress bar. `progress` is called every few thousand rows
-    /// and once at completion.
+    /// and once at completion. `cancel` is polled at the same cadence: when it
+    /// returns true the build bails (spec-tasks "Cancellation"), so a query that
+    /// triggered a rebuild can be stopped. Pass `&|| false` for uncancellable
+    /// callers (the load warmup).
     pub fn build_reported(
         conn: &Connection,
         progress: &dyn Fn(u64, u64),
+        cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
         let built_at_head = db::current_head(conn)?;
         let mut registry = IdRegistry::new();
@@ -138,6 +142,9 @@ impl RepoIndex {
         for id in 0..registry.len() as u32 {
             if id % 2048 == 0 {
                 progress(id as u64, total);
+                if cancel() {
+                    anyhow::bail!("index build cancelled");
+                }
             }
             let uuid = registry.uuid(id).expect("dense id in range");
             for row in db::get_field_rows(conn, uuid)? {
@@ -192,7 +199,10 @@ impl RepoIndex {
     /// DB state. Anything else (a rollback / prune that rewrote history, an
     /// unrecognised op, or `built_at_head` no longer on the chain) triggers a
     /// full rebuild, which is always correct.
-    pub fn refresh(&mut self, conn: &Connection) -> anyhow::Result<()> {
+    /// `cancel` is polled during a full rebuild (the heavy case), so a query
+    /// that triggered one can be stopped (spec-tasks "Cancellation"). The
+    /// incremental path is bounded (`REBUILD_OVER` ops) and runs to completion.
+    pub fn refresh(&mut self, conn: &Connection, cancel: &dyn Fn() -> bool) -> anyhow::Result<()> {
         let head = db::current_head(conn)?;
         if head == self.built_at_head {
             return Ok(());
@@ -209,7 +219,7 @@ impl RepoIndex {
                 self.apply_ops(conn, &delta)?;
                 self.built_at_head = head;
             }
-            _ => *self = Self::build(conn)?,
+            _ => *self = Self::build_reported(conn, &|_, _| {}, cancel)?,
         }
         Ok(())
     }

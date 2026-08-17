@@ -186,9 +186,11 @@ impl RepoState {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
             return;
         }
-        match crate::index::RepoIndex::build_reported(&conn, &|done, total| {
-            progress("index", Some(done), Some(total));
-        }) {
+        match crate::index::RepoIndex::build_reported(
+            &conn,
+            &|done, total| progress("index", Some(done), Some(total)),
+            &|| false, // the load warmup is not cancellable (spec-tasks)
+        ) {
             Ok(index) => *self.index.lock_recover() = Some(index),
             Err(e) => {
                 eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid)

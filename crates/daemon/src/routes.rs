@@ -302,7 +302,7 @@ async fn list_fields(
             .map(|s| s.declared_types())
             .unwrap_or_default();
         let mut index_guard = repo_state.index.lock_recover();
-        let data = ensure_index(&conn, &mut index_guard)?.field_catalog(None);
+        let data = ensure_index(&conn, &mut index_guard, &|| false)?.field_catalog(None);
         drop(index_guard);
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).
@@ -1673,12 +1673,14 @@ type QueryPage = (Vec<Uuid>, Option<String>, Option<usize>);
 fn ensure_index<'g>(
     conn: &rusqlite::Connection,
     guard: &'g mut Option<crate::index::RepoIndex>,
+    cancel: &dyn Fn() -> bool,
 ) -> Result<&'g crate::index::RepoIndex, ApiError> {
     match guard.as_mut() {
         // Already built: bring it up to the current HEAD (incrementally when the
-        // delta is a forward extension, else an internal full rebuild).
-        Some(index) => index.refresh(conn)?,
-        None => *guard = Some(crate::index::RepoIndex::build(conn)?),
+        // delta is a forward extension, else an internal full rebuild). A full
+        // rebuild polls `cancel` so a Stop on a query that triggered it works.
+        Some(index) => index.refresh(conn, cancel)?,
+        None => *guard = Some(crate::index::RepoIndex::build_reported(conn, &|_, _| {}, cancel)?),
     }
     Ok(guard.as_ref().expect("index built above"))
 }
@@ -1694,6 +1696,7 @@ fn run_query_filter(
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
     body: &QueryBody,
+    cancel: &dyn Fn() -> bool,
 ) -> Result<QueryPage, ApiError> {
     // Reject ill-defined comparisons upfront, before choosing an engine, so the
     // rejection never depends on the index→SQL fallback path (spec-query).
@@ -1721,7 +1724,12 @@ fn run_query_filter(
     }
 
     let mut index_guard = repo_state.index.lock_recover();
-    let index = ensure_index(conn, &mut index_guard)?;
+    let index = ensure_index(conn, &mut index_guard, cancel)?;
+    // The index build/refresh above is the heavy phase on a large repo; if a
+    // Stop landed during it, don't start the (also non-trivial) evaluation.
+    if cancel() {
+        return Err(ApiError::conflict("query cancelled"));
+    }
 
     match index.evaluate_page_with_roots(&body.query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
     {
@@ -1774,9 +1782,13 @@ fn run_query_inner(
         // is harmless once the query finishes (no running statement to stop).
         let handle = conn.get_interrupt_handle();
         repo_state.tasks.set_canceller(task, Box::new(move || handle.interrupt()));
+        // Cooperative cancellation (spec-tasks): the SQLite interrupt only aborts
+        // a running statement, so it cannot stop the index build/evaluation or the
+        // result assembly (all Rust). Those phases poll this flag instead.
+        let cancel = || repo_state.tasks.is_cancel_requested(task);
         let mut cache = repo_state.lock_cache();
         let (uuids, next_cursor, total) =
-            run_query_filter(repo_state, &conn, &mut cache, body)?;
+            run_query_filter(repo_state, &conn, &mut cache, body, &cancel)?;
         drop(cache);
 
         let results: Vec<serde_json::Value> = match &body.select {
@@ -1791,15 +1803,7 @@ fn run_query_inner(
                     }
                     SelectSpec::Fields(list) => Some(list.clone()),
                 };
-                let mut objects = Vec::with_capacity(uuids.len());
-                for uuid in uuids {
-                    let mut metarecord = metarecord_response(&conn, uuid)?;
-                    if let Some(filter) = &fields_filter {
-                        metarecord.fields.retain(|f| filter.contains(&f.name));
-                    }
-                    objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));
-                }
-                objects
+                query_exec::assemble_selected(&conn, &uuids, fields_filter.as_deref(), &cancel)?
             }
         };
 

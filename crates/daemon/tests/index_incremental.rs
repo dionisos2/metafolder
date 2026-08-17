@@ -37,7 +37,7 @@ impl Repo {
         let mut w = Writer::begin(&mut self.conn, None).unwrap();
         let out = f(&mut w);
         w.commit().unwrap();
-        self.index.refresh(&self.conn).unwrap();
+        self.index.refresh(&self.conn, &|| false).unwrap();
         self.assert_consistent();
         out
     }
@@ -263,6 +263,6 @@ fn incremental_rollback_falls_back_to_rebuild() {
     // Move HEAD back to the checkpoint: built_at_head is now a descendant of
     // HEAD, not an ancestor → forward_delta returns None → rebuild.
     metafolder_daemon::log::navigate(&mut r.conn, checkpoint).unwrap();
-    r.index.refresh(&r.conn).unwrap();
+    r.index.refresh(&r.conn, &|| false).unwrap();
     r.assert_consistent();
 }

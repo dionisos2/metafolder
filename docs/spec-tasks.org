@@ -314,10 +314,15 @@ Requests cancellation of the task. The mechanism depends on the kind:
   started (the single-transaction guarantee makes the rollback automatic — there
   is no partial reconcile). Cancellation therefore takes effect within one
   progress step of the request, not instantly mid-syscall.
-- *query* — *interrupted*. The running SQL is aborted via SQLite's interrupt
-  handle, registered on the task while the query holds the connection. The
-  waiting =POST …/query= client receives a =409= (=query cancelled=) instead of
-  results.
+- *query* — *interrupted + cooperative*. The running SQL is aborted via SQLite's
+  interrupt handle, registered on the task while the query holds the connection.
+  But a query's heavy phases on a large repository run in Rust, not SQL — the
+  in-memory index build/refresh and evaluation, and the =select= result
+  assembly — and the interrupt (which only aborts a statement already running)
+  cannot stop those. So the query also polls the cancellation flag at the same
+  cadence those phases already checkpoint at (the index scan's progress step, the
+  assembly loop), and bails when it is set. The waiting =POST …/query= client
+  receives a =409= (=query cancelled=) instead of results either way.
 - *flush* — *not cancellable* (it is short and internal). → =400=.
 
 On success the task transitions to =cancelled= (terminal) once its worker
@@ -334,7 +339,8 @@ window before the worker observes the request).
 
 The flag is set and the SQLite interrupt fired *synchronously* in the cancel
 request; the =cancelled= status appears once the worker reaches its next
-checkpoint (reconcile) or the interrupted statement returns (query).
+checkpoint (reconcile, and the query's Rust phases) or the interrupted statement
+returns (the query's SQL).
 
 ** Error handling
 
