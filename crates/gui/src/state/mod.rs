@@ -68,13 +68,18 @@ impl Inner {
             .ok_or_else(|| format!("unknown workspace: {id}"))
     }
 
-    fn new_workspace(&mut self, active_repo: Option<String>) -> String {
+    fn new_workspace(&mut self, active_repo: Option<String>, repo_name: Option<String>) -> String {
         let n = self.next_workspace_number();
         let id = format!("ws-{n}");
+        let base = repo_name.as_deref().unwrap_or("Workspace");
+        let index = self.next_index_for_base(base);
+        let name = format!("{base} {index}");
         self.workspaces.push(Workspace {
             id: id.clone(),
-            name: format!("Workspace {n}"),
+            name,
             active_repo,
+            repo_name,
+            auto_index: Some(index),
             vars: Default::default(),
             messages: Vec::new(),
             last_panel: Default::default(),
@@ -91,6 +96,21 @@ impl Inner {
         let used: std::collections::HashSet<&str> =
             self.workspaces.iter().map(|w| w.id.as_str()).collect();
         (1..).find(|n| !used.contains(format!("ws-{n}").as_str())).unwrap()
+    }
+
+    /// Smallest positive integer not yet used as the auto-index of an
+    /// auto-named workspace sharing the given base (the repository name, or
+    /// "Workspace"). Custom-named workspaces (`auto_index == None`) do not
+    /// participate, so the counter fills gaps like the id numbering. The
+    /// display name is "<base> <index>" (spec-gui "Workspace name").
+    fn next_index_for_base(&self, base: &str) -> u64 {
+        let used: std::collections::HashSet<u64> = self
+            .workspaces
+            .iter()
+            .filter(|w| w.base() == base)
+            .filter_map(|w| w.auto_index)
+            .collect();
+        (1..).find(|n| !used.contains(n)).unwrap()
     }
 
     /// Assigns a workspace to a slot, showing the slot and restoring the
@@ -262,7 +282,7 @@ impl GuiState {
             right: Slot::default(),
             focused: SlotId::Left,
         };
-        let id = inner.new_workspace(None);
+        let id = inner.new_workspace(None, None);
         inner
             .assign(&id, SlotId::Left)
             .expect("assigning the initial workspace cannot fail");
@@ -383,7 +403,18 @@ impl GuiState {
 
     /// Creates a workspace without assigning it to a slot (GUI HTTP API).
     pub fn create_workspace(&self, active_repo: Option<String>) -> String {
-        self.update(|inner| (inner.new_workspace(active_repo), Emit::WORKSPACES))
+        self.create_workspace_named(active_repo, None)
+    }
+
+    /// [`create_workspace`](Self::create_workspace) carrying the repository's
+    /// human name (resolved by the caller from the daemon) so the workspace is
+    /// auto-named after it (spec-gui "Workspace name").
+    pub fn create_workspace_named(
+        &self,
+        active_repo: Option<String>,
+        repo_name: Option<String>,
+    ) -> String {
+        self.update(|inner| (inner.new_workspace(active_repo, repo_name), Emit::WORKSPACES))
     }
 
     /// `tab:new` — creates a workspace and assigns it to the focused slot.
@@ -391,16 +422,26 @@ impl GuiState {
     /// staying on the same repo is the expected default, and switching
     /// costs the same single action either way.
     pub fn tab_new(&self, active_repo: Option<String>) -> String {
+        self.tab_new_named(active_repo, None)
+    }
+
+    /// [`tab_new`](Self::tab_new) carrying the repository's human name (resolved
+    /// by the caller from the daemon) so the workspace is auto-named after it.
+    /// When no repo is given the focused workspace's repo *and* its name are
+    /// both inherited, so an inherited tab is numbered under the same base.
+    pub fn tab_new_named(&self, active_repo: Option<String>, repo_name: Option<String>) -> String {
         self.update(|inner| {
-            let active_repo = active_repo.or_else(|| {
-                inner
+            let (active_repo, repo_name) = match active_repo {
+                Some(repo) => (Some(repo), repo_name),
+                None => inner
                     .slot(inner.focused)
                     .workspace
                     .as_deref()
                     .and_then(|id| inner.workspace(id).ok())
-                    .and_then(|w| w.active_repo.clone())
-            });
-            let id = inner.new_workspace(active_repo);
+                    .map(|w| (w.active_repo.clone(), w.repo_name.clone()))
+                    .unwrap_or((None, None)),
+            };
+            let id = inner.new_workspace(active_repo, repo_name);
             // Both panels follow the new workspace (a hidden slot just
             // remembers it), so creating a tab never leaves the two panels
             // on different workspaces.
@@ -456,7 +497,10 @@ impl GuiState {
 
     pub fn rename_workspace(&self, ws_id: &str, name: &str) -> Result<(), String> {
         self.mutate(|inner| {
-            inner.workspace_mut(ws_id)?.name = name.to_string();
+            let ws = inner.workspace_mut(ws_id)?;
+            ws.name = name.to_string();
+            // A user-chosen name is frozen and leaves its base's auto-numbering.
+            ws.auto_index = None;
             Ok(((), Emit::WORKSPACES))
         })
     }
@@ -564,7 +608,7 @@ impl GuiState {
                     // Empty layout (no focused workspace at all): a fresh
                     // workspace is the only meaningful split.
                     None => {
-                        let id = inner.new_workspace(None);
+                        let id = inner.new_workspace(None, None);
                         inner.assign(&id, target)?;
                         created = true;
                     }
@@ -721,12 +765,41 @@ impl GuiState {
     /// (spec-gui "Repo indicator": in-place selection at startup). Once
     /// set, the repo never changes — open another workspace instead.
     pub fn adopt_repo(&self, ws_id: &str, repo: &str) -> Result<(), String> {
+        self.adopt_repo_named(ws_id, repo, None)
+    }
+
+    /// [`adopt_repo`](Self::adopt_repo) carrying the repository's human name
+    /// (resolved by the caller from the daemon). An auto-named workspace is
+    /// re-based to the repo's counter ("<repo> N"); a user-named one keeps its
+    /// custom name.
+    pub fn adopt_repo_named(
+        &self,
+        ws_id: &str,
+        repo: &str,
+        repo_name: Option<String>,
+    ) -> Result<(), String> {
         let mut inner = self.lock();
-        let ws = inner.workspace_mut(ws_id)?;
-        if ws.active_repo.is_some() {
+        if inner.workspace(ws_id)?.active_repo.is_some() {
             return Err("this workspace already has a repository; open a new tab".into());
         }
+        // Re-number under the new base before mutating, while the workspace
+        // still carries its old base (so it is not counted against itself).
+        let base = repo_name.as_deref().unwrap_or("Workspace");
+        let rename = inner
+            .workspace(ws_id)?
+            .auto_index
+            .is_some()
+            .then(|| {
+                let index = inner.next_index_for_base(base);
+                (index, format!("{base} {index}"))
+            });
+        let ws = inner.workspace_mut(ws_id)?;
         ws.active_repo = Some(repo.to_string());
+        ws.repo_name = repo_name;
+        if let Some((index, name)) = rename {
+            ws.auto_index = Some(index);
+            ws.name = name;
+        }
         self.emit_workspaces(&inner);
         self.notifier.emit(
             events::WORKSPACE_VAR_CHANGED,
@@ -776,11 +849,14 @@ impl GuiState {
                 "visible": prior.visible,
             });
 
-            let ws_id = inner.new_workspace(spec.repo.clone());
+            let ws_id = inner.new_workspace(spec.repo.clone(), None);
             {
                 let ws = inner.workspace_mut(&ws_id)?;
                 if let Some(name) = &spec.name {
+                    // A picker's explicit name is custom: freeze it and drop it
+                    // out of its base's auto-numbering.
                     ws.name = name.clone();
+                    ws.auto_index = None;
                 }
                 ws.vars.insert(
                     "pick_request".into(),
@@ -1037,6 +1113,78 @@ mod tests {
         // Staying on the same repo is the expected default; picking
         // another one costs the same single action either way.
         assert_eq!(info.active_repo.as_deref(), Some("repo-9"));
+    }
+
+    #[test]
+    fn test_workspace_named_after_its_repo() {
+        let (_, state) = state();
+        let id = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
+        assert_eq!(info.name, "my_repo 1");
+        assert_eq!(info.active_repo.as_deref(), Some("uuid-a"));
+    }
+
+    #[test]
+    fn test_repo_workspaces_are_numbered_per_repo() {
+        let (_, state) = state();
+        let a1 = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let a2 = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let b1 = state.tab_new_named(Some("uuid-b".into()), Some("other_repo".into()));
+        let name = |id: &str| {
+            state.workspaces().into_iter().find(|w| w.id == id).unwrap().name
+        };
+        assert_eq!(name(&a1), "my_repo 1");
+        assert_eq!(name(&a2), "my_repo 2");
+        assert_eq!(name(&b1), "other_repo 1");
+    }
+
+    #[test]
+    fn test_naming_matches_the_example_sequence() {
+        // User example: Workspace 1, my_repo 1, my_repo 2, Workspace 2,
+        // other_repo 1 — each base ("Workspace" or a repo name) numbered
+        // independently. `create_workspace*` does not inherit a repo, so the
+        // no-repo workspace is genuinely repo-less here.
+        let (_, state) = state(); // ws-1 = "Workspace 1"
+        let my1 = state.create_workspace_named(Some("a".into()), Some("my_repo".into()));
+        let my2 = state.create_workspace_named(Some("a".into()), Some("my_repo".into()));
+        let w2 = state.create_workspace(None);
+        let o1 = state.create_workspace_named(Some("b".into()), Some("other_repo".into()));
+        let name = |id: &str| {
+            state.workspaces().into_iter().find(|w| w.id == id).unwrap().name
+        };
+        assert_eq!(name("ws-1"), "Workspace 1");
+        assert_eq!(name(&my1), "my_repo 1");
+        assert_eq!(name(&my2), "my_repo 2");
+        assert_eq!(name(&w2), "Workspace 2");
+        assert_eq!(name(&o1), "other_repo 1");
+    }
+
+    #[test]
+    fn test_adopt_repo_renames_auto_named_workspace() {
+        let (_, state) = state(); // ws-1 "Workspace 1", no repo
+        state
+            .adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into()))
+            .unwrap();
+        assert_eq!(state.workspaces()[0].name, "my_repo 1");
+        assert_eq!(state.workspaces()[0].active_repo.as_deref(), Some("uuid-a"));
+    }
+
+    #[test]
+    fn test_manual_rename_freezes_name_and_frees_its_number() {
+        let (_, state) = state();
+        state.rename_workspace("ws-1", "Music").unwrap();
+        // The renamed workspace no longer participates in "Workspace"
+        // numbering, so a fresh no-repo workspace reclaims index 1.
+        let id = state.create_workspace(None);
+        assert_eq!(
+            state.workspaces().into_iter().find(|w| w.id == id).unwrap().name,
+            "Workspace 1"
+        );
+        // Adopting a repo into a user-named workspace keeps the custom name.
+        state
+            .adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into()))
+            .unwrap();
+        assert_eq!(state.workspaces()[0].name, "Music");
     }
 
     #[test]

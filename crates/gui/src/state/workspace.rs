@@ -10,6 +10,16 @@ pub struct Workspace {
     pub name: String,
     /// Set at creation, never changed afterwards (spec-gui "Workspace").
     pub active_repo: Option<String>,
+    /// Human repository name captured when the workspace adopts a repo (the
+    /// daemon owns the canonical name; `active_repo` is only its uuid). `None`
+    /// with no repo or when the name could not be resolved. Frozen at load:
+    /// a later daemon-side repo rename does not propagate here.
+    pub repo_name: Option<String>,
+    /// The per-base counter that produced the auto-generated `name`
+    /// ("<base> <auto_index>", base = `repo_name` or "Workspace"). `None`
+    /// once the user (or a picker) sets a custom name, which also excludes
+    /// the workspace from the auto-numbering of its base.
+    pub auto_index: Option<u64>,
     /// Reactive per-workspace key-value store shared by panel types.
     pub vars: HashMap<String, Value>,
     /// Append-only log shown by the `message` panel type.
@@ -24,6 +34,14 @@ pub struct Workspace {
     /// Panel types whose iframe finished initializing in this workspace
     /// (GET /gui/panels/:slot/view "loading"/"ready").
     pub ready_panels: HashSet<String>,
+}
+
+impl Workspace {
+    /// The auto-naming base: the repository name, or "Workspace" with none.
+    /// Workspaces sharing a base share one auto-numbering sequence.
+    pub fn base(&self) -> &str {
+        self.repo_name.as_deref().unwrap_or("Workspace")
+    }
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq)]

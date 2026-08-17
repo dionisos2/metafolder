@@ -132,6 +132,25 @@ impl DaemonProxy {
         *self.connected.lock_recover()
     }
 
+    /// The repository's human name (`GET /repos/:uuid` → `name`), best-effort:
+    /// `None` if the daemon is unreachable or the repo is unknown. Used to
+    /// auto-name a workspace after the repo it loads (spec-gui "Workspace
+    /// name"); the caller falls back to the plain "Workspace N" numbering.
+    pub async fn repo_name(&self, uuid: &str) -> Option<String> {
+        let response = self
+            .request("GET", &format!("/repos/{uuid}"), None)
+            .await
+            .ok()?;
+        if response.status != 200 {
+            return None;
+        }
+        response
+            .body
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+    }
+
     /// One health probe; emits `daemon-health-changed` when the state
     /// differs from the last known one. Returns the current state.
     pub async fn check_health(&self, gui: &GuiState) -> bool {

@@ -561,8 +561,17 @@ need a seed: the natural starting point is the field's own forest.
 ** Tab bar
 
 A row of tabs at the top of the window. Each tab represents one workspace.
-Tabs have a short user-editable name (default: ="Workspace 1"=,
-="Workspace 2"=, etc.). Tab state is not persisted across sessions.
+Tabs have a short user-editable name. The default name is auto-generated from
+the workspace's repository: a workspace with no repository is ="Workspace N"=,
+a workspace showing repository =my_repo= is ="my_repo N"=, where =N= is a
+per-base counter (the repository name, or ="Workspace"=, each numbered
+independently and gap-filled when a workspace closes). So a session might read
+="Workspace 1"=, ="my_repo 1"=, ="my_repo 2"=, ="Workspace 2"=,
+="other_repo 1"=. The repository name is captured (from the daemon) when the
+workspace adopts the repository and is *frozen*: a later daemon-side repository
+rename does not propagate to the tab name. Renaming a tab by hand freezes its
+name and removes it from its base's numbering. Tab state is not persisted
+across sessions.
 
 Color indicators show the current slot assignments:
 - *Green*: workspace displayed in the focused slot.

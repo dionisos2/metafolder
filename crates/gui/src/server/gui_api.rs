@@ -58,13 +58,19 @@ pub async fn create_workspace(
     body: Option<Json<CreateWorkspaceBody>>,
 ) -> Response {
     let mut active_repo = body.and_then(|Json(b)| b.active_repo);
+    // Resolve the repo's human name so the workspace is auto-named after it
+    // (spec-gui "Workspace name"); best-effort, falls back to "Workspace N".
+    let mut repo_name = None;
     if active_repo.is_none() {
         // Default to the daemon's first loaded repository.
         if let Ok(response) = state.daemon.request("GET", "/repos", None).await {
             active_repo = response.body[0]["repo_uuid"].as_str().map(str::to_string);
+            repo_name = response.body[0]["name"].as_str().map(str::to_string);
         }
+    } else if let Some(uuid) = &active_repo {
+        repo_name = state.daemon.repo_name(uuid).await;
     }
-    let id = state.gui.create_workspace(active_repo);
+    let id = state.gui.create_workspace_named(active_repo, repo_name);
     Json(json!({ "id": id })).into_response()
 }
 

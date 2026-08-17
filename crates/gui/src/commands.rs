@@ -119,8 +119,14 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
 // ── Tabs ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn tab_new(app: AppHandle, active_repo: Option<String>) -> String {
-    app.gui.tab_new(active_repo)
+pub async fn tab_new(app: AppHandle<'_>, active_repo: Option<String>) -> Result<String, String> {
+    // Resolve the repo's human name so the new tab is auto-named after it;
+    // no repo means the focused workspace's repo (and name) are inherited.
+    let repo_name = match &active_repo {
+        Some(uuid) => app.daemon.repo_name(uuid).await,
+        None => None,
+    };
+    Ok(app.gui.tab_new_named(active_repo, repo_name))
 }
 
 #[tauri::command]
@@ -233,8 +239,9 @@ pub fn ws_vars(app: AppHandle, ws_id: String) -> Result<Vec<(String, Value)>, St
 }
 
 #[tauri::command]
-pub fn adopt_repo(app: AppHandle, ws_id: String, repo: String) -> Result<(), String> {
-    app.gui.adopt_repo(&ws_id, &repo)
+pub async fn adopt_repo(app: AppHandle<'_>, ws_id: String, repo: String) -> Result<(), String> {
+    let repo_name = app.daemon.repo_name(&repo).await;
+    app.gui.adopt_repo_named(&ws_id, &repo, repo_name)
 }
 
 // ── Commands and keybindings ─────────────────────────────────────────────
