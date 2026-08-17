@@ -12,7 +12,7 @@ import {
   showMenu,
 } from '../../panel-shim/menu.js';
 
-type Item = { label: string; action?: () => void; disabled?: boolean } | '-';
+type Item = { label: string; action?: () => void; disabled?: boolean } | { header: string } | '-';
 
 function open(items: Item[], position = { x: 10, y: 20 }) {
   return showMenu(items, position);
@@ -49,6 +49,26 @@ describe('showMenu', () => {
     expect(itemElements()[1].classList.contains('disabled')).toBe(true);
     press('Escape');
     await promise;
+  });
+
+  test('renders a category header as a non-interactive label', async () => {
+    const action = vi.fn();
+    const promise = open([{ header: 'Text' }, { label: 'Copy', action }]);
+    const header = document.querySelector('.mf-menu-header');
+    expect(header?.textContent).toBe('Text');
+    // The header is not a selectable item.
+    expect(itemElements()).toHaveLength(1);
+    // Arrow navigation lands on the real item, skipping the header.
+    press('ArrowDown');
+    expect(itemElements()[0].classList.contains('active')).toBe(true);
+    press('Enter');
+    await promise;
+    expect(action).toHaveBeenCalledOnce();
+  });
+
+  test('a menu of only headers and separators shows nothing', () => {
+    void open([{ header: 'Text' }, '-']);
+    expect(menuElement()).toBeNull();
   });
 
   test('clicking an item runs its action and resolves with it', async () => {
@@ -306,6 +326,26 @@ describe('installDefaultContextMenu', () => {
     expect(menuElement()).toBeNull();
   });
 
+  test('keeps the native menu on a text field inside a panel Shadow DOM', () => {
+    // At the window listener a composed event from a shadow tree is retargeted:
+    // event.target is the host, but composedPath()[0] is the real input. The
+    // check must use the composed target, or panel text inputs lose cut/paste.
+    install();
+    const host = document.createElement('div');
+    document.body.append(host);
+    const input = document.createElement('input');
+    host.attachShadow({ mode: 'open' }).append(input);
+    const event = new MouseEvent('contextmenu', {
+      bubbles: true,
+      composed: true,
+      cancelable: true,
+      clientX: 5,
+      clientY: 6,
+    });
+    input.dispatchEvent(event);
+    expect(menuElement()).toBeNull();
+  });
+
   test('stands down when a more specific menu is already open', async () => {
     install();
     const promise = open([{ label: 'Panel item' }]);
@@ -428,5 +468,19 @@ describe('installContextMenuSuppression', () => {
     const onInput = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     input.dispatchEvent(onInput);
     expect(onInput.defaultPrevented).toBe(false);
+  });
+
+  test('keeps the native menu on a text field inside a Shadow DOM (retargeted)', () => {
+    installContextMenuSuppression(window);
+    const host = document.createElement('div');
+    document.body.append(host);
+    const input = document.createElement('input');
+    host.attachShadow({ mode: 'open' }).append(input);
+
+    const event = new MouseEvent('contextmenu', { bubbles: true, composed: true, cancelable: true });
+    input.dispatchEvent(event);
+    // event.target is retargeted to the host at window; the composed target is
+    // the input, so suppression must stand down.
+    expect(event.defaultPrevented).toBe(false);
   });
 });

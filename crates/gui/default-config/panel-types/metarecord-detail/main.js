@@ -1312,6 +1312,7 @@ export async function mount(root, metafolder) {
     if (!record) return [];
     /** @type {Metafolder.MenuItem[]} */
     const items = [
+      { header: 'Metarecord' },
       { label: 'Copy UUID', action: () => void copyText(record.uuid) },
       {
         label: needsWatch() ? 'Enable tracking & reconcile' : 'Reconcile',

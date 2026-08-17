@@ -1043,7 +1043,7 @@ export async function mount(root, metafolder) {
     const target = metarecords[index >= 0 ? index : cursorIndex];
     if (!target) return [];
     /** @type {Metafolder.MenuItem[]} */
-    const items = [];
+    const items = [{ header: 'Metarecord' }];
     if (picking) {
       items.push({
         label: 'Pick this metarecord',

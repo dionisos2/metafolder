@@ -38,6 +38,16 @@ const MENU_CSS = `
   margin: 4px 0;
   border-top: 1px solid var(--mf-border, #3a3a44);
 }
+.mf-menu-header {
+  padding: 3px 14px 2px;
+  font-size: 0.78em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--mf-fg-dim, #8a8a96);
+  cursor: default;
+  user-select: none;
+}
 `;
 
 // At most one menu per document — but this module is evaluated twice in the
@@ -80,6 +90,19 @@ export function clampPosition(x, y, menuWidth, menuHeight, viewportWidth, viewpo
   return { x: Math.max(0, left), y: Math.max(0, top) };
 }
 
+/** A selectable entry (has a label), as opposed to a `'-'` separator or a
+ *  `{header}` category label.
+ *  @param {Metafolder.MenuItem} item @returns {item is Metafolder.MenuEntry} */
+function isEntry(item) {
+  return item !== '-' && typeof item === 'object' && 'label' in item;
+}
+
+/** A non-interactive category header.
+ *  @param {Metafolder.MenuItem} item @returns {item is Metafolder.MenuHeader} */
+function isHeader(item) {
+  return item !== '-' && typeof item === 'object' && 'header' in item;
+}
+
 /**
  * Shows an HTML context menu at {x, y} (viewport coordinates).
  *
@@ -97,9 +120,11 @@ export function clampPosition(x, y, menuWidth, menuHeight, viewportWidth, viewpo
  */
 export function showMenu(items, { x, y }) {
   shared.active?.close(null);
-  if (!items.some((item) => item !== '-')) return Promise.resolve(null);
+  // A menu needs at least one selectable entry — headers and separators alone
+  // are just decoration.
+  if (!items.some(isEntry)) return Promise.resolve(null);
   const enabled = /** @type {Metafolder.MenuEntry[]} */ (
-    items.filter((item) => item !== '-' && !item.disabled)
+    items.filter((item) => isEntry(item) && !item.disabled)
   );
   installStyle();
 
@@ -117,6 +142,13 @@ export function showMenu(items, { x, y }) {
         const separator = document.createElement('div');
         separator.className = 'mf-menu-separator';
         menu.append(separator);
+        continue;
+      }
+      if (isHeader(item)) {
+        const header = document.createElement('div');
+        header.className = 'mf-menu-header';
+        header.textContent = item.header;
+        menu.append(header);
         continue;
       }
       const element = document.createElement('div');
@@ -229,6 +261,15 @@ export function showMenu(items, { x, y }) {
   });
 }
 
+/** The real element under a right-click. For an event that crossed a Shadow
+ *  DOM boundary (a panel input), `event.target` is retargeted to the panel's
+ *  host element, so the composed path's first node is the actual clicked node.
+ *  Without this, text inputs inside panels lose their native cut/copy/paste.
+ *  @param {Event} event */
+function effectiveTarget(event) {
+  return event.composedPath?.()[0] ?? event.target;
+}
+
 /** Editable text fields keep the WebView's native menu: cut/copy/paste
  *  has no cheap HTML replacement.
  *  @param {EventTarget|null} element the event's target */
@@ -250,7 +291,7 @@ function keepsNativeMenu(element) {
  */
 export function installContextMenuSuppression(target = window) {
   target.addEventListener('contextmenu', (event) => {
-    if (!keepsNativeMenu(event.target)) event.preventDefault();
+    if (!keepsNativeMenu(effectiveTarget(event))) event.preventDefault();
   });
 }
 
@@ -305,7 +346,7 @@ export function installDefaultContextMenu(target, dispatch) {
 
   /** @param {MouseEvent} event */
   function onContextMenu(event) {
-    if (keepsNativeMenu(event.target)) return;
+    if (keepsNativeMenu(effectiveTarget(event))) return;
     if (hasOpenMenu()) return; // a more specific handler already answered
     const selection = String(target.getSelection?.() ?? '');
     /** @type {Metafolder.MenuItem[]} */
@@ -315,11 +356,11 @@ export function installDefaultContextMenu(target, dispatch) {
       if (extra.length > 0) items.push(...extra, '-');
     }
     items.push(
+      { header: 'Text' },
       { label: 'Copy', disabled: selection === '', action: () => void copyText(selection) },
-      '-',
+      { header: 'View' },
       { label: 'Split / unsplit', action: () => void dispatch('panel:split-toggle') },
       { label: 'Swap panel types', action: () => void dispatch('panel:swap') },
-      '-',
       { label: 'Open web inspector', action: () => void dispatch('devtools:open') },
     );
     void showMenu(items, { x: event.clientX, y: event.clientY });

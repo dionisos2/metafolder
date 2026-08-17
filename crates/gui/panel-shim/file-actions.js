@@ -231,6 +231,7 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
   const nudge =
     onChanged ?? (() => void metafolder.workspace.set('metarecords:dirty', Date.now()));
   return [
+    { header: 'File' },
     {
       label: 'Cut',
       action: () => {

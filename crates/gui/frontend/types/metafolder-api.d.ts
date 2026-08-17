@@ -315,9 +315,12 @@ declare namespace Metafolder {
     onAppend(listener: (entry: unknown) => void): void;
   }
 
-  /** One context-menu entry, or the string `'-'` for a separator. */
+  /** One context-menu entry, a `{header}` category label, or the string `'-'`
+   *  for a separator. A header is non-interactive: it groups the entries below
+   *  it (metarecord / file / text operations). */
   type MenuEntry = { label: string; action?: () => void; disabled?: boolean };
-  type MenuItem = MenuEntry | '-';
+  type MenuHeader = { header: string };
+  type MenuItem = MenuEntry | MenuHeader | '-';
 
   /** Callable *and* carrying `addDefaultItems` — hence the `Object.assign` in
    *  api.ts: a plain object literal cannot satisfy a call signature. */

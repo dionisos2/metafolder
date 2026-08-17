@@ -327,10 +327,10 @@ export async function mount(root, metafolder) {
       // Make the clicked node the selection so `pick:confirm` reads its uuid.
       if (index >= 0 && index !== cursorIndex) void select(index);
       if (children[index >= 0 ? index : cursorIndex]) {
-        items.push({
-          label: 'Pick this folder',
-          action: () => void commands.invoke('pick:confirm'),
-        });
+        items.push(
+          { header: 'Metarecord' },
+          { label: 'Pick this folder', action: () => void commands.invoke('pick:confirm') },
+        );
       }
     }
     items.push(...fileActions(event));

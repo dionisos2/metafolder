@@ -936,10 +936,14 @@ resolution and the grep filter are the pure functions in =/__help.js=
 The WebView's native context menu (back/forward/reload/inspect…) is
 suppressed everywhere — in the shell and inside every panel iframe — with
 one exception: editable text fields keep the native menu (cut/copy/paste
-has no cheap HTML replacement). Its Inspect Element metarecord is replaced by
-the =devtools:open= command, which opens the WebKit inspector (no default
-keybinding; the =devtools= Tauri feature keeps it available in release
-builds).
+has no cheap HTML replacement). The "is this a text field?" test uses the
+event's *composed* target (=composedPath()[0]=), not =event.target=: a
+right-click inside a panel's Shadow DOM is retargeted to the panel host at the
+shell listener, so testing =event.target= would wrongly suppress the native
+menu — and its cut/copy/paste — over panel text inputs. Its Inspect Element
+metarecord is replaced by the =devtools:open= command, which opens the WebKit
+inspector (no default keybinding; the =devtools= Tauri feature keeps it
+available in release builds).
 
 Panels backed by files prepend the shared *file actions* — Cut, Copy, Paste,
 Rename, Duplicate and Move to trash — for the right-clicked metarecord's file
@@ -974,9 +978,18 @@ cycles through its matches). While a menu is open the keybinding matchers
 stand down — regardless of which copy of the menu module opened it, the
 shell's bundled one or the =/__menu.js= one panels import — so its
 navigation and typeahead keys never trigger panel commands.
+Items are grouped under non-interactive *category headers* (=mf-menu-header=) so
+a right-click reads at a glance which operations act on the *metarecord*, its
+*file*, the selected *text*, or the *view*: the shared file actions carry a
+=File= header, each panel prepends a =Metarecord= header to its record
+operations, and the default menu labels its selection =Copy= as =Text= and the
+layout commands as =View=. A header is not selectable and is skipped by keyboard
+navigation and typeahead. A menu item is either =\{label, action?, disabled?\}=,
+a =\{header\}= category label, or the string =-= for a separator.
+
 Appearance: classes =mf-menu=, =mf-menu-item= (=active=,
-=disabled=) and =mf-menu-separator=, with built-in defaults that the user
-stylesheet overrides.
+=disabled=), =mf-menu-header= and =mf-menu-separator=, with built-in defaults
+that the user stylesheet overrides.
 
 ** Style and theming
 
