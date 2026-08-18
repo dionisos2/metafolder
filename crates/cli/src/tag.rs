@@ -4,12 +4,15 @@
 //! pure and unit-tested; the HTTP orchestration lives in `commands::tag_*`.
 //!
 //! Convention (all names configurable via the `[tag]` config table): a *tag
-//! entry* is a metarecord `type = <entry_type>` (`"tag"`) whose `<name_field>`
-//! (`"name"`) is a `"/"`-separated path; records reference entries through the
-//! multi-map Ref fields `<positive>` / `<negative>` / `<mixed>`
-//! (`tags`/`negative_tags`/`mixed_tags`). Bool flags `<partition>` on a parent
-//! and `<exclusive>` on a child make a parent's direct children mutually
-//! exclusive.
+//! entry* is a metarecord `type = <entry_type>` (`"tag"`) whose position in the
+//! tag hierarchy is a `TreeRef` field `<path_field>` (`"path"`) — its resolved
+//! path (`"musique/jazz"`) is the tag's identity, and an optional `label` may
+//! name it. Records reference entries through the multi-map Ref fields
+//! `<positive>` / `<negative>` / `<mixed>` (`tag`/`negative_tag`/`mixed_tag`).
+//! Bool flags `<partition>` on a parent and `<exclusive>` on a child make a
+//! parent's direct children mutually exclusive. The pure helpers below operate
+//! on the resolved path strings, so the hierarchy logic is unchanged whether the
+//! path comes from a TreeRef (now) or a string field (before).
 
 use std::collections::HashSet;
 
@@ -24,8 +27,9 @@ pub struct TagConfig {
     pub type_field: String,
     /// `type` value marking a metarecord as a tag entry.
     pub entry_type: String,
-    /// The tag entry's path field.
-    pub name_field: String,
+    /// The tag entry's hierarchy field — a `TreeRef` whose resolved path is the
+    /// tag's identity.
+    pub path_field: String,
     /// Multi-map Ref field: the record *has* the tag.
     pub positive: String,
     /// Multi-map Ref field: the record does *not* have the tag.
@@ -43,10 +47,10 @@ impl Default for TagConfig {
         TagConfig {
             type_field: "type".into(),
             entry_type: "tag".into(),
-            name_field: "name".into(),
-            positive: "tags".into(),
-            negative: "negative_tags".into(),
-            mixed: "mixed_tags".into(),
+            path_field: "path".into(),
+            positive: "tag".into(),
+            negative: "negative_tag".into(),
+            mixed: "mixed_tag".into(),
             partition: "partition".into(),
             exclusive: "exclusive".into(),
         }

@@ -38,9 +38,9 @@ reconcile-poll-interval-ms = 200
 [tag]
 # type-field  = "type"            # field marking a metarecord as a tag entry
 # entry-type  = "tag"             # its value
-# name-field  = "name"            # the tag's "/"-separated path
-# positive    = "tags"            # multi-map ref: the record HAS the tag
-# negative    = "negative_tags"   # multi-map ref: the record does NOT
-# mixed       = "mixed_tags"      # multi-map ref: a folder is mixed
+# path-field  = "path"            # TreeRef: the tag's position in the hierarchy
+# positive    = "tag"             # multi-map ref: the record HAS the tag
+# negative    = "negative_tag"    # multi-map ref: the record does NOT
+# mixed       = "mixed_tag"       # multi-map ref: a folder is mixed
 # partition   = "partition"       # bool flag: a parent's children are exclusive
 # exclusive   = "exclusive"       # bool flag: a child forbids its siblings

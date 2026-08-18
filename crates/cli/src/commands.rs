@@ -854,25 +854,47 @@ pub fn field_get(
     if refs.is_empty() {
         return Ok(0);
     }
+    let ref_query = json!({"type": "uuid_in", "uuids": refs});
     let resp = ctx.client.post(
         &format!("{base}/query"),
-        &json!({"query": {"type": "uuid_in", "uuids": refs}, "select": [target]}),
+        &json!({"query": ref_query, "select": [target]}),
     )?;
     // `/query` with a select returns a bare array (no pagination requested here)
     // or a `{results}` page — accept either.
     let entries = resp.as_array().or_else(|| resp["results"].as_array());
-    // Map referent uuid → its target value, then print in the refs' order.
+    // Map referent uuid → its target value, then print in the refs' order. When
+    // the target field is a TreeRef, print its resolved path (a second
+    // round-trip) rather than the raw `(parent, name)` — the natural join for a
+    // hierarchy (e.g. a record's tags → their tag paths).
     let mut by_uuid: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    for entry in entries.into_iter().flatten() {
-        if let Some(u) = entry["uuid"].as_str() {
-            if let Some(line) = entry["fields"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .find(|f| f["name"].as_str() == Some(target))
-                .and_then(|f| raw_value_line(&f["value"]))
+    let target_is_tree = entries.into_iter().flatten().any(|e| {
+        e["fields"].as_array().into_iter().flatten().any(|f| {
+            f["name"].as_str() == Some(target) && f["value"]["type"].as_str() == Some("tree_ref")
+        })
+    });
+    if target_is_tree {
+        let resolved = ctx.client.post(
+            &format!("{base}/query/fields/resolve-tree"),
+            &json!({"query": ref_query, "field": target}),
+        )?;
+        for r in &refs {
+            if let Some(path) = resolved[r].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
             {
-                by_uuid.insert(u.to_string(), line);
+                by_uuid.insert(r.clone(), path.to_string());
+            }
+        }
+    } else {
+        for entry in entries.into_iter().flatten() {
+            if let Some(u) = entry["uuid"].as_str() {
+                if let Some(line) = entry["fields"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|f| f["name"].as_str() == Some(target))
+                    .and_then(|f| raw_value_line(&f["value"]))
+                {
+                    by_uuid.insert(u.to_string(), line);
+                }
             }
         }
     }
@@ -1106,6 +1128,8 @@ struct Vocab {
 }
 
 /// Loads the tag vocabulary (`type = entry_type`) with its flags, paginating.
+/// A tag's identity is the resolved path of its `path_field` TreeRef, fetched in
+/// one `resolve-tree` round-trip and joined onto the per-entry flags.
 fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
     let cfg = &ctx.tag;
     let query = json!({
@@ -1118,11 +1142,17 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
         partitions: std::collections::HashSet::new(),
         exclusives: std::collections::HashSet::new(),
     };
+    // Resolve every tag entry's hierarchy path in one call (uuid → [paths]).
+    let resolved = ctx.client.post(
+        &format!("{base}/query/fields/resolve-tree"),
+        &json!({"query": query, "field": cfg.path_field}),
+    )?;
+    // Per-entry flags (paginated); joined onto the resolved paths above.
     let mut cursor: Option<String> = None;
     loop {
         let mut body = json!({
             "query": query,
-            "select": [cfg.name_field, cfg.partition, cfg.exclusive],
+            "select": [cfg.partition, cfg.exclusive],
             "limit": ctx.page_size,
         });
         if let Some(c) = &cursor {
@@ -1130,18 +1160,18 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
         }
         let resp = ctx.client.post(&format!("{base}/query"), &body)?;
         for entry in resp["results"].as_array().into_iter().flatten() {
-            let (Some(uuid), Some(name)) =
-                (entry["uuid"].as_str(), field_str(&entry["fields"], &cfg.name_field))
+            let Some(uuid) = entry["uuid"].as_str() else { continue };
+            let Some(path) = resolved[uuid].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
             else {
-                continue;
+                continue; // no resolvable path → not part of the vocabulary
             };
-            vocab.name2uuid.insert(name.to_string(), uuid.to_string());
-            vocab.names.push(name.to_string());
+            vocab.name2uuid.insert(path.to_string(), uuid.to_string());
+            vocab.names.push(path.to_string());
             if field_bool(&entry["fields"], &cfg.partition) == Some(true) {
-                vocab.partitions.insert(name.to_string());
+                vocab.partitions.insert(path.to_string());
             }
             if field_bool(&entry["fields"], &cfg.exclusive) == Some(true) {
-                vocab.exclusives.insert(name.to_string());
+                vocab.exclusives.insert(path.to_string());
             }
         }
         match resp["next_cursor"].as_str() {
@@ -1152,15 +1182,31 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
     Ok(vocab)
 }
 
-/// The entry uuid for `path`, creating the tag entry if the vocabulary lacks it.
+/// The entry uuid for `path`, creating the tag entry (and any missing ancestors)
+/// if the vocabulary lacks it. The tag's position is a `path_field` TreeRef, so a
+/// nested path `a/b/c` is created as a chain of nodes: the parent `a/b` is
+/// ensured first, then `c` is created under it (`TreeRef { parent, name }`).
 fn ensure_tag_entry(ctx: &Ctx, base: &str, vocab: &mut Vocab, path: &str) -> Result<String, CliError> {
     if let Some(uuid) = vocab.name2uuid.get(path) {
         return Ok(uuid.clone());
     }
-    let cfg = &ctx.tag;
+    let cfg = ctx.tag.clone();
+    // Split into (parent path, leaf name); ensure the parent chain first.
+    let (parent_uuid, leaf) = match crate::tag::parent(path) {
+        Some(parent_path) => {
+            let leaf = &path[parent_path.len() + 1..];
+            (Some(ensure_tag_entry(ctx, base, vocab, parent_path)?), leaf)
+        }
+        None => (None, path),
+    };
+    let parent_json = match &parent_uuid {
+        Some(u) => json!(u),
+        None => Json::Null,
+    };
     let body = json!({"fields": [
         {"name": cfg.type_field, "value": {"type": "string", "value": cfg.entry_type}},
-        {"name": cfg.name_field, "value": {"type": "string", "value": path}},
+        {"name": cfg.path_field, "value": {"type": "tree_ref",
+            "value": {"parent": parent_json, "name": leaf}}},
     ]});
     let resp = ctx.client.post(&format!("{base}/metarecords"), &body)?;
     let uuid = resp["uuid"]

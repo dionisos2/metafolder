@@ -2755,20 +2755,29 @@ fn test_cli_primitives_eq_tsv_resolve() {
 fn test_mf_tag_subsumption_exclusivity_deny_list() {
     let (repo, _root) = init_repo("tag");
     let rec = create_metarecord(&repo, &["note:string=target"]);
-    // Vocabulary; jazz is exclusive among musique's children.
-    create_metarecord(&repo, &["type:string=tag", "name:string=musique/jazz", "exclusive:bool=true"]);
-    create_metarecord(&repo, &["type:string=tag", "name:string=musique/rock"]);
-    create_metarecord(&repo, &["type:string=tag", "name:string=musique/jazz/bebop"]);
-    create_metarecord(&repo, &["type:string=tag", "name:string=administratif"]);
-    create_metarecord(&repo, &["type:string=tag", "name:string=administratif/impots"]);
+    // Vocabulary as a TreeRef forest on `path`: each tag is a node whose parent
+    // is another tag entry. jazz is exclusive among musique's children.
+    let mk_tag = |specs: &[&str]| create_metarecord(&repo, specs);
+    let musique = mk_tag(&["type:string=tag", "path:tree_ref=/musique"]);
+    let jazz = mk_tag(&[
+        "type:string=tag",
+        format!("path:tree_ref={musique}/jazz").as_str(),
+        "exclusive:bool=true",
+    ]);
+    let _rock = mk_tag(&["type:string=tag", format!("path:tree_ref={musique}/rock").as_str()]);
+    let _bebop = mk_tag(&["type:string=tag", format!("path:tree_ref={jazz}/bebop").as_str()]);
+    let admin = mk_tag(&["type:string=tag", "path:tree_ref=/administratif"]);
+    let _impots = mk_tag(&["type:string=tag", format!("path:tree_ref={admin}/impots").as_str()]);
 
     let tag = |args: &[&str]| {
         let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
         v.extend_from_slice(args);
         assert_ok(&mf(&v));
     };
+    // Read the record's tag refs as their resolved hierarchy paths (ref → tag →
+    // `path` TreeRef, resolved by the tree-aware `--resolve`).
     let names = |field: &str| -> Vec<String> {
-        let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", field, "--resolve", "name"]);
+        let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", field, "--resolve", "path"]);
         assert_ok(&out);
         let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
         v.sort();
@@ -2776,26 +2785,33 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     };
 
     tag(&["-i", &rec, "add", "musique/rock"]);
-    assert_eq!(names("tags"), vec!["musique/rock"]);
+    assert_eq!(names("tag"), vec!["musique/rock"]);
 
     // jazz is exclusive → adding it drops the sibling rock.
     tag(&["-i", &rec, "add", "musique/jazz"]);
-    assert_eq!(names("tags"), vec!["musique/jazz"]);
+    assert_eq!(names("tag"), vec!["musique/jazz"]);
 
     // bebop's ancestor jazz is present → dropped on add; add is idempotent.
     tag(&["-i", &rec, "add", "musique/jazz/bebop"]);
     tag(&["-i", &rec, "add", "musique/jazz/bebop"]);
-    assert_eq!(names("tags"), vec!["musique/jazz/bebop"]);
+    assert_eq!(names("tag"), vec!["musique/jazz/bebop"]);
+
+    // A path absent from the vocabulary is auto-created as a node chain
+    // (cinema → cinema/thriller) by `ensure_tag_entry`. It is unrelated to bebop,
+    // so both tags coexist (add only drops ancestors and exclusive siblings).
+    tag(&["-i", &rec, "add", "cinema/thriller"]);
+    assert_eq!(names("tag"), vec!["cinema/thriller", "musique/jazz/bebop"]);
 
     // deny: a generic negative subsumes (drops) its specific descendant.
     tag(&["-i", &rec, "deny", "administratif/impots"]);
-    assert_eq!(names("negative_tags"), vec!["administratif/impots"]);
+    assert_eq!(names("negative_tag"), vec!["administratif/impots"]);
     tag(&["-i", &rec, "deny", "administratif"]);
-    assert_eq!(names("negative_tags"), vec!["administratif"]);
+    assert_eq!(names("negative_tag"), vec!["administratif"]);
 
-    // list = the vocabulary TSV with 0/1 flags.
+    // list = the vocabulary TSV with 0/1 flags (auto-created cinema tags present).
     let out = mf(&["-u", &repo, "tag", "list"]);
     assert_ok(&out);
     assert!(out.stdout.lines().any(|l| l == "musique/jazz\t0\t1"), "list:\n{}", out.stdout);
     assert!(out.stdout.lines().any(|l| l == "administratif\t0\t0"), "list:\n{}", out.stdout);
+    assert!(out.stdout.lines().any(|l| l == "cinema/thriller\t0\t0"), "list:\n{}", out.stdout);
 }
