@@ -79,6 +79,7 @@ function stubApi(panelType: string) {
       readFields: () => [],
       fieldType: () => null,
       sync: async () => {},
+      subscribe: () => () => {},
       REFRESH: Symbol('refresh'),
     },
     query: { parse: async () => null, expand: async () => '', grammarSource: async () => '' },

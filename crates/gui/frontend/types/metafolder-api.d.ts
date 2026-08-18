@@ -117,7 +117,18 @@ declare namespace Metafolder {
     /** Poll the change feed now — a deliberate freshness point (a query, a
      *  refresh, a panel becoming visible), on top of the background timer. */
     sync(repo: string): Promise<void>;
+    /** Subscribe to feed-driven changes so a panel can re-render its displayed
+     *  rows when the daemon reflects a watcher/rollback change (`uuids` are the
+     *  touched metarecords, `null` = a coarse whole-repo refresh). Returns an
+     *  unsubscribe fn — call it in the panel's cleanup. */
+    subscribe(cb: (event: CacheChange) => void): () => void;
     readonly REFRESH: Refresh;
+  }
+
+  /** The payload of a {@link Cache.subscribe} notification. */
+  interface CacheChange {
+    repo: string;
+    uuids: string[] | null;
   }
 
   /** Pure query transformations, run locally in the GUI backend (core). */

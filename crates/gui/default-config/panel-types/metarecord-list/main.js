@@ -247,6 +247,19 @@ export async function mount(root, metafolder) {
     fillColumns(columns, subset, { pathsByField, targets, followedPathsByField });
   }
 
+  // Re-resolve + re-render the displayed rows after the change feed reports
+  // they changed daemon-side (e.g. the watcher reflected a GUI-initiated rename
+  // ~500 ms later, so mfr_path — and thus the orphan state and any path-derived
+  // column — is only now up to date). Non-disruptive: it keeps the loaded
+  // pages, cursor and selection, only re-resolving the (now invalidated) tree
+  // refs from the cache and repainting. Without this, a false "orphaned" marker
+  // painted from the pre-rename path would linger until a manual refresh.
+  async function refreshDisplayed() {
+    if (metarecords.length === 0) return;
+    await prepareNow(metarecords);
+    render();
+  }
+
   // Absolute filesystem paths of a metarecord's mfr_path positions (read-only,
   // from the cache + the repo root) — replaces the old per-metarecord `.paths`.
   /** @param {Metafolder.Metarecord} metarecord @returns {string[]} */
@@ -1124,8 +1137,44 @@ export async function mount(root, metafolder) {
 
   // The first query waits for the first actual display.
   const deferredStart = () => void start();
-  workspace.onChange('metarecords:dirty', () => metafolder.whenVisible(deferredStart));
+  // A `metarecords:dirty` nudge fires right after a local mutation (e.g. a
+  // rename's fs.move), but a watcher-driven daemon write only lands after its
+  // ~500 ms quiet period — after our immediate refresh has already read the
+  // stale path. Poll the change feed a couple of times over the next seconds so
+  // the settled change is picked up promptly (the subscription above then
+  // repaints), rather than waiting for the slow background poll. The 7 s timer
+  // remains the backstop.
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  let catchupTimers = [];
+  function scheduleCatchupSync() {
+    for (const t of catchupTimers) clearTimeout(t); // supersede the previous nudge
+    catchupTimers = [700, 1800].map((delay) =>
+      setTimeout(() => void (repo && cache.sync(repo)), delay),
+    );
+  }
+  workspace.onChange('metarecords:dirty', () => {
+    metafolder.whenVisible(deferredStart);
+    scheduleCatchupSync();
+  });
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
+
+  // Keep the list live when the daemon reflects a change out-of-band from our
+  // own query round-trip — chiefly a watcher-driven update (a GUI rename lands
+  // in the daemon ~500 ms after the fs.move, well after our immediate
+  // `metarecords:dirty` refresh already read the stale path). The background
+  // change-feed poll invalidates the cache; here we react to it so the affected
+  // rows are re-resolved and repainted (clearing any stale orphan marker).
+  const unsubscribeCache = cache.subscribe(({ repo: changedRepo, uuids }) => {
+    if (changedRepo !== repo || metarecords.length === 0) return;
+    if (uuids === null) {
+      orphanCache = new Map(); // coarse refresh: the whole repo may have changed
+    } else {
+      const displayed = new Set(metarecords.map((m) => m.uuid));
+      if (!uuids.some((u) => displayed.has(u))) return; // nothing on screen changed
+      for (const u of uuids) orphanCache.delete(u);
+    }
+    metafolder.whenVisible(() => void refreshDisplayed());
+  });
   /** @param {unknown} value */
   async function onColumnsChanged(value) {
     setColumns(value);
@@ -1175,8 +1224,10 @@ export async function mount(root, metafolder) {
 
   return () => {
     clearTimeout(finderTimer);
+    for (const t of catchupTimers) clearTimeout(t);
     finderHistory.detach();
     queryHistory.detach();
+    unsubscribeCache();
     document.removeEventListener('mousemove', /** @type {EventListener} */ (onMouseMove));
     document.removeEventListener('mouseup', onMouseUp);
     detachScroll();

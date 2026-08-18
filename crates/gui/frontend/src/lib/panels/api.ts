@@ -287,6 +287,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       // Poll the change feed now (a deliberate freshness point: a query, a
       // refresh, a panel becoming visible) — on top of the background timer.
       sync: (repo: string) => sharedCache.sync(repo, rawFetch),
+      // Subscribe to feed-driven changes (a watcher-reflected write, a
+      // rollback…): the callback runs with the touched uuids (`null` = a coarse
+      // whole-repo refresh) so a panel can re-render its displayed rows. Returns
+      // an unsubscribe fn — call it in the panel's cleanup.
+      subscribe: (cb: (event: import('./cache').ChangeEvent) => void) => sharedCache.subscribe(cb),
       REFRESH: sharedCache.REFRESH,
     },
 

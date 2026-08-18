@@ -150,6 +150,84 @@ describe('cache — sync / invalidation', () => {
   });
 });
 
+describe('cache — change subscription', () => {
+  async function seed(cache: ReturnType<typeof createCache>) {
+    await cache.request('POST', '/repos/r/query', { select: '*' }, async () =>
+      ok({ results: [rec('aaa'), rec('bbb')] }),
+    );
+  }
+
+  test('a delta notifies subscribers of the distinct touched uuids', async () => {
+    const cache = createCache();
+    await seed(cache);
+    let head = 10;
+    let ops: { id: number; entity_uuid: string }[] = [];
+    const raw = vi.fn(async () => ok({ head, operations: ops }));
+    /** @type {unknown[]} */
+    const events: unknown[] = [];
+    const off = cache.subscribe((e) => events.push(e));
+
+    await cache.sync('r', raw); // baseline: no event
+    expect(events).toEqual([]);
+
+    head = 12;
+    ops = [
+      { id: 12, entity_uuid: 'aaa' },
+      { id: 13, entity_uuid: 'aaa' }, // same entity twice → deduped
+    ];
+    await cache.sync('r', raw);
+    expect(events).toEqual([{ repo: 'r', uuids: ['aaa'] }]);
+
+    off(); // unsubscribed: no further events
+    head = 14;
+    ops = [{ id: 14, entity_uuid: 'bbb' }];
+    await cache.sync('r', raw);
+    expect(events).toHaveLength(1);
+  });
+
+  test('a coarse refresh (rollback) notifies with uuids=null', async () => {
+    const cache = createCache();
+    await seed(cache);
+    let head = 10;
+    const raw = vi.fn(async () => ok({ head, operations: [] }));
+    const events: unknown[] = [];
+    cache.subscribe((e) => events.push(e));
+    await cache.sync('r', raw); // baseline
+    head = 7; // rollback: head backward, empty delta
+    await cache.sync('r', raw);
+    expect(events).toEqual([{ repo: 'r', uuids: null }]);
+  });
+
+  test('an unchanged head fires no event', async () => {
+    const cache = createCache();
+    await seed(cache);
+    const raw = vi.fn(async () => ok({ head: 9, operations: [] }));
+    const events: unknown[] = [];
+    cache.subscribe((e) => events.push(e));
+    await cache.sync('r', raw); // baseline 9
+    await cache.sync('r', raw); // head unchanged
+    expect(events).toEqual([]);
+  });
+
+  test('a throwing subscriber does not break the others', async () => {
+    const cache = createCache();
+    await seed(cache);
+    let head = 10;
+    let ops: { id: number; entity_uuid: string }[] = [];
+    const raw = vi.fn(async () => ok({ head, operations: ops }));
+    const seen: unknown[] = [];
+    cache.subscribe(() => {
+      throw new Error('boom');
+    });
+    cache.subscribe((e) => seen.push(e));
+    await cache.sync('r', raw); // baseline: no event
+    head = 12;
+    ops = [{ id: 12, entity_uuid: 'aaa' }];
+    await cache.sync('r', raw);
+    expect(seen).toEqual([{ repo: 'r', uuids: ['aaa'] }]);
+  });
+});
+
 describe('cache — explicit fetch/read API', () => {
   test('query returns uuids + pagination meta and populates entities', async () => {
     const cache = createCache();

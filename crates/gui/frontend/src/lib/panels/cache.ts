@@ -50,6 +50,14 @@ function queryKey(value: unknown): string {
     .join(',')}}`;
 }
 
+/** Emitted by `sync` when the change feed reports data has changed.
+ *  `uuids` lists the touched metarecords, or is `null` for a coarse
+ *  whole-repo refresh (a rollback, or the empty→filled transition). */
+export interface ChangeEvent {
+  repo: string;
+  uuids: string[] | null;
+}
+
 export interface CacheOptions {
   maxEntities?: number;
   maxTreeRefs?: number;
@@ -84,6 +92,29 @@ export function createCache(opts: CacheOptions = {}) {
 
   const eKey = (repo: string, uuid: string) => `${repo}|${uuid}`;
   const tKey = (repo: string, field: string, uuid: string) => `${repo}|${field}|${uuid}`;
+
+  // ── Change subscription ───────────────────────────────────────────────────
+  // A panel that renders daemon data must re-render when the change feed
+  // (`sync`) reports that data has changed — otherwise a watcher-driven update
+  // (e.g. a rename the daemon reflects ~500 ms later) invalidates the cache but
+  // leaves the panel showing stale rows. Subscribers are notified with the
+  // touched uuids (`null` = a coarse whole-repo refresh). Only feed-driven
+  // changes fire here (not a panel's own writes), so a panel does not re-render
+  // in reaction to its own edit.
+  const changeListeners = new Set<(event: ChangeEvent) => void>();
+  function subscribe(cb: (event: ChangeEvent) => void): () => void {
+    changeListeners.add(cb);
+    return () => changeListeners.delete(cb);
+  }
+  function emitChange(event: ChangeEvent) {
+    for (const cb of changeListeners) {
+      try {
+        cb(event);
+      } catch {
+        // A throwing subscriber must not stop the others (or the sync).
+      }
+    }
+  }
 
   // ── LRU helpers (Map keeps insertion order; move-to-end = most recent) ────
   function touch<V>(map: Map<string, V>, key: string): V | undefined {
@@ -272,18 +303,32 @@ export function createCache(opts: CacheOptions = {}) {
     // it (so a name added/removed/retyped daemon-side is reflected without the
     // panel re-fetching). Uninterested repos are left cold — never fetched here.
     const hadFields = fields.has(repo);
+    /** The change to broadcast once invalidation is done, or null for none. */
+    let change: ChangeEvent | null = null;
     if (operations.length > 0) {
       for (const op of operations) invalidateMetarecord(repo, op.entity_uuid);
       clearQueries(repo);
+      // Distinct touched uuids, in first-seen order.
+      const seen = new Set<string>();
+      const uuids: string[] = [];
+      for (const op of operations) {
+        if (!seen.has(op.entity_uuid)) {
+          seen.add(op.entity_uuid);
+          uuids.push(op.entity_uuid);
+        }
+      }
+      change = { repo, uuids };
     } else if (since !== undefined && head !== since) {
       // head moved with no forward delta: a pure rollback/redo, or a repo that
       // was empty at the baseline (since === null, so no ?op= and thus no
       // operations) gaining a head. Either way, coarse refresh. `undefined`
       // (first sync) is excluded — it only establishes the baseline.
       clearRepo(repo);
+      change = { repo, uuids: null };
     }
     lastHead.set(repo, head);
     if (hadFields && !fields.has(repo)) await fetchFields(repo, raw);
+    if (change) emitChange(change);
   }
 
   // ── Explicit fetch/read API (panels use this; reads are synchronous) ─────
@@ -385,6 +430,7 @@ export function createCache(opts: CacheOptions = {}) {
   return {
     request,
     sync,
+    subscribe,
     configure,
     clearRepo,
     trackedRepos,
