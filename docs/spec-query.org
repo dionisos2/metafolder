@@ -26,7 +26,7 @@ CLI provides a DSL that compiles to this representation.
 | Or                  | =or=                  | At least one operand must match                |
 | Not                 | =not=                 | Operand must not match                         |
 | Follows             | =follows=             | =Ref= or =TreeRef= field: direct referent matches condition    |
-| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition) |
+| FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition); =inclusive: true= also matches the target itself (the whole subtree) |
 | Matches             | =matches=             | String field matches a regex pattern                           |
 | Osm                 | =osm=                 | Ordered-substring match over a field's text (=direct=) or its =TreeRef= path (=path=) |
 | UuidIn              | =uuid_in=             | Metarecord UUID is in an explicit list (=uuids=, 32-hex)        |
@@ -78,14 +78,37 @@ from the DB step by step, deduplicating across overlapping roots), and the
 resulting UUID set is used to filter the query results. The roots themselves
 are not part of the result.
 
+=FollowsTransitive= carries a boolean =inclusive= (default =false=). When
+=true=, the resolved root(s) are added to the descendant set, so the query
+matches the *whole subtree* rooted at the target (self ∪ descendants) rather
+than the strict descendants. The DSL spells the two forms =field ->* …=
+(=inclusive: false=) and =field =>* …= (=inclusive: true=); both take a path
+string or a sub-query, both are =TreeRef=-only. The subtree form is the natural
+way to select a metarecord together with everything under it — e.g. a tag and
+all of its narrower tags (=tag -> (path =>* "music/jazz")=).
+
 String operations on a =TreeRef= row apply to =value_name= (the single name
 component) — the same convention everywhere: comparisons (=Eq=/=Neq= and the
 ordered operators) with a string operand, =Matches=, and sorting. So
 =mfr_path = "2021"= matches every metarecord whose =mfr_path= name is exactly
-=2021=, wherever it sits in the tree. Strict =(parent, name)= equality remains
-available through =Eq= with a =tree_ref= JSON value (no DSL literal exists for
-it; the same pair can be expressed in the DSL as
-=field -> "/parent/path" AND field = "name"=).
+=2021=, wherever it sits in the tree.
+
+*Exact-node equality.* There is one refinement of that convention: when the
+=Eq=/=Neq= string operand contains the path separator =/=, it is not a
+=value_name= compare but an *exact-node* match — the operand is resolved through
+the tree cache to the single node at that path, and =Eq= matches exactly that
+metarecord (=Neq=, every other). This is sound because a =value_name= never
+contains =/=, so a separator-bearing operand matched nothing under the old
+convention; it is the DSL surface for the strict =(parent, name)= equality that
+otherwise required an =Eq= with a =tree_ref= JSON value. Path resolution and
+anchoring follow the =->= / =->*= path-string convention (=mfr_path= is
+=/=-rooted, so =mfr_path = "/music/jazz"=; a named-root forest like a tag tree
+has no leading =/=, so =path = "music/jazz"=). A path that resolves to nothing
+matches no rows. A single forest-root node (whose path has no separator) cannot
+be pinned this way — use =field -> "parent" AND field = "name"=, or accept the
+=value_name= match. The IR is unchanged (=Eq= with a =String= operand): the
+daemon disambiguates by the field's value type, since only it — not the DSL
+parser — knows the field is a =TreeRef=.
 
 =Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
 setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
@@ -371,6 +394,7 @@ predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field "MATCHES" string
            | field "->"  ( string | "(" query ")" )
            | field "->*" ( string | "(" query ")" )
+           | field "=>*" ( string | "(" query ")" )
 
 osm_call  := ( "osm" | "osmd" ) "(" field "," string ")"
 
@@ -391,8 +415,20 @@ string    := '"' ... '"'
   sub-query right-hand side (the referent of a =Ref= row, or the direct
   parent of a =TreeRef= row, must satisfy the predicate).
 - =field ->* "path"= / =field ->* (predicate)= compiles to
-  =FollowsTransitive= (TreeRef only), with the same two right-hand-side
-  forms as =->=.
+  =FollowsTransitive= (TreeRef only, =inclusive: false=), with the same two
+  right-hand-side forms as =->=.
+- =field =>* "path"= / =field =>* (predicate)= compiles to the same
+  =FollowsTransitive= with =inclusive: true= — the target node(s) themselves
+  plus every descendant (the whole subtree). Like =->= and =->*=, ~=>*~ is a
+  single token, lexed by maximal munch — never the ~=~ comparison operator
+  followed by =>= and =*=.
+- On a =TreeRef= field, =field = "a/b"= / =field != "a/b"= whose string operand
+  contains the path separator =/= is an *exact-node* match (the metarecord at
+  exactly that TreeRef path), not a =value_name= compare — see the "Exact-node
+  equality" paragraph under [[*Compilation]]. A separator-free operand keeps the
+  leaf-name meaning. The compiled IR is an ordinary =Eq=/=Neq= with a =String=
+  operand; the exact-node reading is applied by the daemon, which alone knows
+  the field is a =TreeRef=.
 - =osm(field, "terms")= / =osmd(field, "terms")= compile to =Osm= with
   =mode = path= / =direct= (see [[*Ordered substring matching (OSM, implemented)]]);
   the term string is split on whitespace. =osm=/=osmd= are function-call
@@ -415,7 +451,10 @@ NOT (seen = true OR rating IS UNKNOWN)
 mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
 author -> (name = "Coltrane")
 mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
-mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "sf"))
+mfr_path = "/music/jazz"                     # the one metarecord at this exact path
+tag -> (path = "music/jazz")                 # records carrying exactly this tag
+tag -> (path =>* "music/jazz")               # ... this tag or any tag beneath it
+type = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
 #+END_SRC
 
 ** =mf query <predicate>=
