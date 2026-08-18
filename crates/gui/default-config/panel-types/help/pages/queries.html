@@ -101,6 +101,26 @@ NOT (seen = true OR rating IS UNKNOWN)</pre>
 <pre>mfr_path -&gt;* "/music/jazz"
 author -&gt; (name = "Coltrane")</pre>
 
+<h2>Tags</h2>
+<p>
+  A tag is a metarecord marked <code>type = "tag"</code>; its place in the tag
+  hierarchy is a <strong>TreeRef field, <code>path</code></strong> (its display
+  label may be left unset — never rely on a name). A record carries a tag through
+  a Ref field — <code>tag</code> in the default schema — pointing at that entry.
+  So you select by tag by <em>following the ref into the tag tree</em>, using the
+  very same TreeRef traversal as <code>mfr_path</code> — no name matching. Tag
+  paths carry no leading <code>/</code> (unlike <code>mfr_path</code>, whose root
+  is the empty-named filesystem root).
+</p>
+<p>Records carrying one specific tag — the node <code>jazz</code> under <code>music</code>:</p>
+<pre>tag -&gt; (path -&gt; "music" AND path = "jazz")</pre>
+<p>
+  Records carrying that tag <strong>or any tag below it</strong> in the hierarchy:
+  the transitive step gathers the descendants, and the direct step adds the tag
+  itself (needed because tagging a child drops the now-redundant ancestor tag):
+</p>
+<pre>tag -&gt; (path -&gt;* "music/jazz" OR (path -&gt; "music" AND path = "jazz"))</pre>
+
 <h2>Ordered-substring — <code>osm</code> / <code>osmd</code></h2>
 <p>
   <code>osm(field, "terms")</code> matches when each whitespace-separated term

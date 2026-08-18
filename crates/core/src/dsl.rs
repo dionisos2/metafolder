@@ -847,4 +847,54 @@ mod tests {
     fn test_unbalanced_parenthesis() {
         err("(a = 1");
     }
+
+    // The two tag-query examples shipped in the GUI help (queries.html "Tags"):
+    // selecting records by a TreeRef `path` tag, with no name matching. These
+    // keep the docs honest — if the traversal grammar changes, they fail here.
+    #[test]
+    fn test_help_tag_examples_parse() {
+        // Records carrying one specific tag (node "jazz" under "music").
+        assert_eq!(
+            ok(r#"tag -> (path -> "music" AND path = "jazz")"#),
+            Query::Follows {
+                field: "tag".into(),
+                target: FollowTarget::Condition(Box::new(Query::And {
+                    operands: vec![
+                        Query::Follows {
+                            field: "path".into(),
+                            target: FollowTarget::Path("music".into()),
+                        },
+                        Query::Eq { field: "path".into(), value: Value::String("jazz".into()) },
+                    ],
+                })),
+            }
+        );
+        // That tag or any tag below it in the hierarchy (subtree, root included).
+        assert_eq!(
+            ok(r#"tag -> (path ->* "music/jazz" OR (path -> "music" AND path = "jazz"))"#),
+            Query::Follows {
+                field: "tag".into(),
+                target: FollowTarget::Condition(Box::new(Query::Or {
+                    operands: vec![
+                        Query::FollowsTransitive {
+                            field: "path".into(),
+                            target: FollowTarget::Path("music/jazz".into()),
+                        },
+                        Query::And {
+                            operands: vec![
+                                Query::Follows {
+                                    field: "path".into(),
+                                    target: FollowTarget::Path("music".into()),
+                                },
+                                Query::Eq {
+                                    field: "path".into(),
+                                    value: Value::String("jazz".into()),
+                                },
+                            ],
+                        },
+                    ],
+                })),
+            }
+        );
+    }
 }
