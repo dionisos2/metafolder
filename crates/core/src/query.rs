@@ -39,8 +39,16 @@ pub enum Query {
     Follows { field: String, target: FollowTarget },
     /// `TreeRef` fields only: the metarecord is a descendant of the metarecord at
     /// the given path (`target` is a path string), or of any metarecord satisfying
-    /// the sub-query (`target` is a condition).
-    FollowsTransitive { field: String, target: FollowTarget },
+    /// the sub-query (`target` is a condition). When `inclusive` is true the
+    /// resolved root(s) are matched as well (self ∪ descendants — the whole
+    /// subtree; DSL `=>*` vs the strict-descendants `->*`). JSON: `inclusive` is
+    /// omitted when false, so existing bodies parse unchanged.
+    FollowsTransitive {
+        field: String,
+        target: FollowTarget,
+        #[serde(default, skip_serializing_if = "is_false")]
+        inclusive: bool,
+    },
 
     // --- Pattern matching ---
     /// The field has a string value matching the regex. On a `TreeRef`
@@ -89,6 +97,12 @@ pub enum OsmMode {
 /// The single, shared term-splitting rule (used by the DSL and any client).
 pub fn split_terms(input: &str) -> Vec<String> {
     input.split_whitespace().map(str::to_string).collect()
+}
+
+/// serde `skip_serializing_if` for the `FollowsTransitive::inclusive` flag,
+/// so the common (strict) form serializes without an `inclusive` key.
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// Right-hand side of `Follows` and `FollowsTransitive`: either a path string
@@ -143,6 +157,7 @@ mod tests {
         let q = Query::FollowsTransitive {
             field: "mfr_path".into(),
             target: FollowTarget::Path("/music/jazz".into()),
+            inclusive: false,
         };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
@@ -158,12 +173,41 @@ mod tests {
                 field: "mfr_path".into(),
                 value: Value::String("2021".into()),
             })),
+            inclusive: false,
         };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"follows_transitive","field":"mfr_path","target":{"type":"eq","field":"mfr_path","value":{"type":"string","value":"2021"}}}"#
         );
         assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_follows_transitive_inclusive_json_format_and_roundtrip() {
+        // The strict form omits `inclusive` (above); the inclusive form emits it.
+        let q = Query::FollowsTransitive {
+            field: "mfr_path".into(),
+            target: FollowTarget::Path("/music/jazz".into()),
+            inclusive: true,
+        };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"follows_transitive","field":"mfr_path","target":"/music/jazz","inclusive":true}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+        // A legacy body without `inclusive` parses as the strict form.
+        let legacy: Query = serde_json::from_str(
+            r#"{"type":"follows_transitive","field":"mfr_path","target":"/music/jazz"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            legacy,
+            Query::FollowsTransitive {
+                field: "mfr_path".into(),
+                target: FollowTarget::Path("/music/jazz".into()),
+                inclusive: false,
+            }
+        );
     }
 
     #[test]
@@ -272,6 +316,7 @@ mod tests {
                 Query::FollowsTransitive {
                     field: "mfr_path".into(),
                     target: FollowTarget::Path("/music".into()),
+                    inclusive: false,
                 },
                 Query::Matches { field: "title".into(), pattern: "^Live".into() },
             ],

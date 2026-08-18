@@ -239,7 +239,18 @@ fn follows(field: &str, cond: Query) -> Query {
     Query::Follows { field: field.into(), target: FollowTarget::Condition(Box::new(cond)) }
 }
 fn follows_t(field: &str, cond: Query) -> Query {
-    Query::FollowsTransitive { field: field.into(), target: FollowTarget::Condition(Box::new(cond)) }
+    Query::FollowsTransitive {
+        field: field.into(),
+        target: FollowTarget::Condition(Box::new(cond)),
+        inclusive: false,
+    }
+}
+fn follows_ti(field: &str, cond: Query) -> Query {
+    Query::FollowsTransitive {
+        field: field.into(),
+        target: FollowTarget::Condition(Box::new(cond)),
+        inclusive: true,
+    }
 }
 
 fn and(operands: Vec<Query>) -> Query {
@@ -593,6 +604,27 @@ fn reverse_tree_follows_transitive() {
     o.check(&follows_t("loc", eq("tag", s("root")))); // b, c, d
     // FollowsTransitive on a ref field has no descendants → empty.
     o.check(&follows_t("author", eq("tag", s("root"))));
+    // Inclusive (`=>*`): the matching roots plus their descendants — parity with
+    // the SQL engine, which adds the roots to the result.
+    o.check(&follows_ti("loc", eq("tag", s("root")))); // root, b, c, d
+    o.check(&follows_ti("loc", eq("kind", s("file")))); // matching leaves + their (no) descendants
+    o.check(&follows_ti("author", eq("tag", s("root")))); // ref field → empty
+}
+
+#[test]
+fn exact_node_path_equality_defers_to_sql() {
+    // On a tree_ref field, an Eq/Neq string operand containing '/' is an
+    // exact-node match resolved through the tree cache — outside the index, which
+    // must report Unsupported so the route falls back to SQL (rather than answer
+    // with the wrong value_name-based bitmap).
+    let (o, _) = forest();
+    let index = RepoIndex::build(&o.conn).unwrap();
+    assert!(index.evaluate(&eq("loc", s("root/b"))).is_err());
+    assert!(index.evaluate(&Query::Neq { field: "loc".into(), value: s("root/b") }).is_err());
+    // A separator-free operand stays a value_name compare (index handles it).
+    assert!(index.evaluate(&eq("loc", s("b"))).is_ok());
+    // On a plain string field, '/' is literal equality — still the index's job.
+    assert!(index.evaluate(&eq("tag", s("a/b"))).is_ok());
 }
 
 #[test]
@@ -602,13 +634,15 @@ fn reverse_tree_follows_path_target_matches_sql() {
     // cache. Each path must agree with the SQL engine, and an unresolved path
     // (no roots supplied) must stay `Unsupported` so the route falls back.
     let (mut o, [_root, _b, _c, _d]) = forest();
+    // shape: 0 = Follows, 1 = FollowsTransitive strict, 2 = FollowsTransitive
+    // inclusive (`=>*`, the subtree including its root).
     for path in ["root", "root/b", "root/d", "root/nope"] {
-        for transitive in [true, false] {
+        for shape in [0, 1, 2] {
             let target = FollowTarget::Path(path.to_string());
-            let q = if transitive {
-                Query::FollowsTransitive { field: "loc".into(), target }
-            } else {
-                Query::Follows { field: "loc".into(), target }
+            let q = match shape {
+                0 => Query::Follows { field: "loc".into(), target },
+                1 => Query::FollowsTransitive { field: "loc".into(), target, inclusive: false },
+                _ => Query::FollowsTransitive { field: "loc".into(), target, inclusive: true },
             };
             // Resolve the path root exactly as `run_query_filter` does.
             let mut roots = metafolder_daemon::index::PathRoots::new();
@@ -656,6 +690,7 @@ fn keyset_pagination_over_path_target_with_sort() {
     let q = Query::FollowsTransitive {
         field: "loc".into(),
         target: FollowTarget::Path("root".into()),
+        inclusive: false,
     };
     for &asc in &[true, false] {
         for &limit in &[1usize, 2, 3] {

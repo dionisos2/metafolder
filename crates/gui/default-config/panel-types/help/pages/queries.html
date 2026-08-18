@@ -113,13 +113,23 @@ author -&gt; (name = "Coltrane")</pre>
   is the empty-named filesystem root).
 </p>
 <p>Records carrying one specific tag — the node <code>jazz</code> under <code>music</code>:</p>
-<pre>tag -&gt; (path -&gt; "music" AND path = "jazz")</pre>
+<pre>tag -&gt; (path = "music/jazz")</pre>
 <p>
-  Records carrying that tag <strong>or any tag below it</strong> in the hierarchy:
-  the transitive step gathers the descendants, and the direct step adds the tag
-  itself (needed because tagging a child drops the now-redundant ancestor tag):
+  On a TreeRef field, an <code>=</code> operand that contains a <code>/</code> is
+  an <strong>exact-path</strong> match (the one node at that path), not a
+  leaf-name compare — so this pins that single tag.
 </p>
-<pre>tag -&gt; (path -&gt;* "music/jazz" OR (path -&gt; "music" AND path = "jazz"))</pre>
+<p>
+  Records carrying that tag <strong>or any tag below it</strong> in the hierarchy
+  use <code>=&gt;*</code>, the inclusive subtree step (the node itself plus every
+  descendant). Useful because tagging a child drops the now-redundant ancestor
+  tag, so records may carry only the narrower tag:
+</p>
+<pre>tag -&gt; (path =&gt;* "music/jazz")</pre>
+<p>
+  (<code>-&gt;*</code> is the strict form — descendants only, excluding the node
+  itself.)
+</p>
 
 <h2>Ordered-substring — <code>osm</code> / <code>osmd</code></h2>
 <p>

@@ -617,7 +617,7 @@ impl<'a> Compiler<'a> {
                 // At least one non-Nothing occurrence differing from `value`
                 // (a different value type counts as differing).
                 self.push_text(field);
-                let pred = self.scalar_predicate(value, CmpOp::Eq)?;
+                let pred = self.scalar_predicate(field, value, CmpOp::Eq)?;
                 Ok(self.add(format!(
                     "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND value_type != 'nothing' AND NOT ({pred})"
@@ -697,13 +697,14 @@ impl<'a> Compiler<'a> {
                 }
             },
 
-            Query::FollowsTransitive { field, target } => {
+            Query::FollowsTransitive { field, target, inclusive } => {
                 // Hybrid execution: the root set (one path-resolved metarecord,
                 // or every match of the condition sub-query) and its
                 // descendants are collected through the tree cache, then
                 // injected as inline literals (no bound parameter limit).
                 // Only TreeRef trees have descendants; on a Ref field this
-                // matches nothing by construction.
+                // matches nothing by construction. When `inclusive` (DSL `=>*`),
+                // the roots themselves are part of the result (whole subtree).
                 let conn = self.conn;
                 let roots = match target {
                     FollowTarget::Path(path) => {
@@ -714,9 +715,17 @@ impl<'a> Compiler<'a> {
                     }
                     FollowTarget::Condition(cond) => self.execute_condition(cond)?,
                 };
+                // The inclusive form keeps the roots only on an actual tree_ref
+                // forest — on a ref field FollowsTransitive matches nothing
+                // (TreeRef-only), matching the bitmap index's `supports_transitive`
+                // gate. `descendants` is already empty for a non-forest field.
+                let include_roots = *inclusive && self.field_is_tree_ref(field)?;
                 let mut descendants = Vec::new();
                 let mut seen = std::collections::HashSet::new();
                 for root in roots {
+                    if include_roots && seen.insert(root) {
+                        descendants.push(root);
+                    }
                     for d in self.cache.descendants(conn, field, root)? {
                         if seen.insert(d) {
                             descendants.push(d);
@@ -915,9 +924,24 @@ impl<'a> Compiler<'a> {
             .map_err(anyhow::Error::from)?)
     }
 
+    /// Whether `field` holds any `tree_ref` value — i.e. is a tree forest. Backs
+    /// the inclusive `FollowsTransitive` (`=>*`) root gate and mirrors the
+    /// index's `supports_transitive`.
+    fn field_is_tree_ref(&self, field: &str) -> Result<bool, ApiError> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM field \
+                 WHERE field_name = ?1 AND value_type = 'tree_ref')",
+                [field],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(anyhow::Error::from)?)
+    }
+
     fn comparison(&mut self, field: &str, value: &Value, op: CmpOp) -> Result<String, ApiError> {
         self.push_text(field);
-        let pred = self.scalar_predicate(value, op)?;
+        let pred = self.scalar_predicate(field, value, op)?;
         Ok(self.add(format!(
             "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
              WHERE field_name = ? AND ({pred})"
@@ -944,7 +968,13 @@ impl<'a> Compiler<'a> {
     }
 
     /// Row-level predicate for one comparison operand; pushes its parameters.
-    fn scalar_predicate(&mut self, value: &Value, op: CmpOp) -> Result<String, ApiError> {
+    /// `field` is needed for the exact-node path case (below).
+    fn scalar_predicate(
+        &mut self,
+        field: &str,
+        value: &Value,
+        op: CmpOp,
+    ) -> Result<String, ApiError> {
         let sym = op.symbol();
         let ordered_only_eq = |type_name: &str| {
             ApiError::bad_request(format!(
@@ -971,6 +1001,29 @@ impl<'a> Compiler<'a> {
                 ))
             }
             Value::String(s) => {
+                // Exact-node path (spec-query "Exact-node equality"): on a
+                // tree_ref field, an Eq/Neq string operand containing the path
+                // separator '/' is resolved through the tree cache to the single
+                // node at that path, and identity (metarecord_uuid) is compared —
+                // not value_name. A value_name never contains '/', so this only
+                // repurposes an operand that matched nothing before; on a string
+                // field the path never resolves, leaving plain literal equality.
+                // Neq compiles as a negated Eq, so `op` is Eq here; ordered ops
+                // keep the lexicographic value_name comparison.
+                if matches!(op, CmpOp::Eq) && s.contains('/') {
+                    let conn = self.conn;
+                    let node = self.cache.resolve_path(conn, field, s)?;
+                    self.push_text(s); // the string-field literal branch
+                    return Ok(match node {
+                        Some(u) => {
+                            self.params.push(SqlValue::Blob(db::uuid_to_bytes(u)));
+                            "(value_type = 'string' AND value_text = ?) OR \
+                             (value_type = 'tree_ref' AND metarecord_uuid = ?)"
+                                .to_string()
+                        }
+                        None => "value_type = 'string' AND value_text = ?".to_string(),
+                    });
+                }
                 // Same convention as Matches and sorting: on a tree_ref row,
                 // a string operand compares against the name component.
                 self.push_text(s);
@@ -1078,6 +1131,7 @@ mod tests {
                 Query::FollowsTransitive {
                     field: "mfr_path".into(),
                     target: FollowTarget::Condition(Box::new(leaf())),
+                    inclusive: false,
                 },
             ],
         };

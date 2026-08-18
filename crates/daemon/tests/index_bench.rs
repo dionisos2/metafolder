@@ -67,7 +67,11 @@ fn build_repo(dirs: usize, files: usize) -> Connection {
 }
 
 fn follows_t(field: &str, cond: Query) -> Query {
-    Query::FollowsTransitive { field: field.into(), target: FollowTarget::Condition(Box::new(cond)) }
+    Query::FollowsTransitive {
+        field: field.into(),
+        target: FollowTarget::Condition(Box::new(cond)),
+        inclusive: false,
+    }
 }
 
 fn battery() -> Vec<(&'static str, Query)> {

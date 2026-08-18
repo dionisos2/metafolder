@@ -326,6 +326,7 @@ fn test_validate_query_rejects_meaningless_comparisons() {
     let in_follows = Query::FollowsTransitive {
         field: "loc".into(),
         target: FollowTarget::Condition(Box::new(Query::Lt { field: f, value: Value::Nothing })),
+        inclusive: false,
     };
     assert!(query_exec::validate_query(&in_follows).is_err());
 }
@@ -620,14 +621,121 @@ fn test_follows_transitive_collects_all_descendants() {
     let q = Query::FollowsTransitive {
         field: "mfr_path".into(),
         target: FollowTarget::Path("/music".into()),
+        inclusive: false,
     };
     assert_same_set(f.run(&q), vec![jazz, song]);
 
     let q = Query::FollowsTransitive {
         field: "mfr_path".into(),
         target: FollowTarget::Path("/nope".into()),
+        inclusive: false,
     };
     assert!(f.run(&q).is_empty());
+}
+
+#[test]
+fn test_follows_transitive_inclusive_adds_the_roots() {
+    // `=>*` (inclusive) yields the whole subtree — the resolved root plus its
+    // descendants — where `->*` (strict) yields only the descendants.
+    let mut f = Fixture::new();
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let music = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "music".into() },
+    )]);
+    let jazz = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(music), name: "jazz".into() },
+    )]);
+    let song = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(jazz), name: "a.mp3".into() },
+    )]);
+
+    let strict = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/music".into()),
+        inclusive: false,
+    };
+    assert_same_set(f.run(&strict), vec![jazz, song]);
+
+    let subtree = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Path("/music".into()),
+        inclusive: true,
+    };
+    assert_same_set(f.run(&subtree), vec![music, jazz, song]);
+}
+
+#[test]
+fn test_follows_transitive_inclusive_condition_roots() {
+    // The inclusive form of a condition target keeps the matching roots too.
+    let mut f = Fixture::new();
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let y2021 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "2021".into() },
+    )]);
+    let inner = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(y2021), name: "a.txt".into() },
+    )]);
+
+    let q = Query::FollowsTransitive {
+        field: "mfr_path".into(),
+        target: FollowTarget::Condition(Box::new(Query::Eq {
+            field: "mfr_path".into(),
+            value: s("2021"),
+        })),
+        inclusive: true,
+    };
+    assert_same_set(f.run(&q), vec![y2021, inner]);
+}
+
+#[test]
+fn test_exact_node_path_equality() {
+    // A string operand containing '/' is an exact-node match, not a value_name
+    // compare — even when two nodes share the same leaf name in different
+    // subtrees (spec-query "Exact-node equality").
+    let mut f = Fixture::new();
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let music = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "music".into() },
+    )]);
+    let dance = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(root), name: "dance".into() },
+    )]);
+    let jazz = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(music), name: "jazz".into() },
+    )]);
+    let jazz2 = f.create(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: Some(dance), name: "jazz".into() },
+    )]);
+
+    // Leaf-name equality (no '/') still matches both "jazz" nodes.
+    assert_same_set(
+        f.run(&Query::Eq { field: "mfr_path".into(), value: s("jazz") }),
+        vec![jazz, jazz2],
+    );
+    // Exact path pins the one under /music.
+    assert_same_set(
+        f.run(&Query::Eq { field: "mfr_path".into(), value: s("/music/jazz") }),
+        vec![jazz],
+    );
+    // Neq exact path: every metarecord whose mfr_path is not that node.
+    assert_same_set(
+        f.run(&Query::Neq { field: "mfr_path".into(), value: s("/music/jazz") }),
+        vec![root, music, dance, jazz2],
+    );
+    // A path that resolves to nothing matches nothing (Eq).
+    assert!(f.run(&Query::Eq { field: "mfr_path".into(), value: s("/music/rock") }).is_empty());
 }
 
 #[test]
@@ -672,6 +780,7 @@ fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
             field: "mfr_path".into(),
             value: s("2021"),
         })),
+        inclusive: false,
     };
     // y2021_inner is both a matching root and a descendant of y2021_outer.
     assert_same_set(f.run(&q), vec![sub, deep, y2021_inner, inner_file]);
@@ -683,6 +792,7 @@ fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
             field: "mfr_path".into(),
             value: s("nope"),
         })),
+        inclusive: false,
     };
     assert!(f.run(&q).is_empty());
 }
@@ -747,6 +857,7 @@ fn test_sort_over_follows_transitive_subset() {
     let q = Query::FollowsTransitive {
         field: "mfr_path".into(),
         target: FollowTarget::Path("/documents".into()),
+        inclusive: false,
     };
     let desc = f.run_sorted(&q, &[sort_desc("mtime")]);
     assert_eq!(desc, vec![b, a, c], "in-subtree, mtime desc, missing-field last");
@@ -784,6 +895,7 @@ fn test_multi_key_sort_with_missing_secondary_over_subset() {
     let q = Query::FollowsTransitive {
         field: "mfr_path".into(),
         target: FollowTarget::Path("/documents".into()),
+        inclusive: false,
     };
     assert_eq!(
         f.run_sorted(&q, &[sort_asc("grp"), sort_asc("n")]),

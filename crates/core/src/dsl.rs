@@ -23,8 +23,9 @@ enum Tok {
     LParen,
     RParen,
     Comma,
-    Arrow,     // ->
-    ArrowStar, // ->*
+    Arrow,        // ->
+    ArrowStar,    // ->*
+    FatArrowStar, // =>*  (inclusive transitive: self ∪ descendants)
     Eq,
     Neq,
     Lt,
@@ -56,6 +57,7 @@ fn describe(tok: &Tok) -> String {
         Tok::Comma => "','".into(),
         Tok::Arrow => "'->'".into(),
         Tok::ArrowStar => "'->*'".into(),
+        Tok::FatArrowStar => "'=>*'".into(),
         Tok::Eq => "'='".into(),
         Tok::Neq => "'!='".into(),
         Tok::Lt => "'<'".into(),
@@ -100,8 +102,20 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
                 i += 1;
             }
             '=' => {
-                tokens.push(Tok::Eq);
-                i += 1;
+                // `=>*` is the inclusive transitive arrow (maximal munch); a
+                // bare `=` stays the equality operator. `=>` without `*` is not
+                // a token — reject it rather than mis-lex it as `=` then `>`.
+                if chars.get(i + 1) == Some(&'>') {
+                    if chars.get(i + 2) == Some(&'*') {
+                        tokens.push(Tok::FatArrowStar);
+                        i += 3;
+                    } else {
+                        return Err("expected '*' after '=>' (the inclusive arrow is '=>*')".into());
+                    }
+                } else {
+                    tokens.push(Tok::Eq);
+                    i += 1;
+                }
             }
             '!' => {
                 if chars.get(i + 1) == Some(&'=') {
@@ -413,29 +427,47 @@ impl Parser {
                 )),
                 None => Err("expected a path string or a parenthesized query after '->'".into()),
             },
-            Some(Tok::ArrowStar) => match self.next() {
-                Some(Tok::Str(path)) => {
-                    Ok(Query::FollowsTransitive { field, target: FollowTarget::Path(path) })
-                }
-                Some(Tok::LParen) => {
-                    let sub = self.or_expr()?;
-                    self.expect(Tok::RParen)?;
-                    Ok(Query::FollowsTransitive {
-                        field,
-                        target: FollowTarget::Condition(Box::new(sub)),
-                    })
-                }
-                Some(tok) => Err(format!(
-                    "expected a path string or a parenthesized query after '->*', got {}",
-                    describe(&tok)
-                )),
-                None => Err("expected a path string or a parenthesized query after '->*'".into()),
-            },
+            // `->*` (strict descendants) and `=>*` (self ∪ descendants) share a
+            // right-hand side; they differ only in the `inclusive` flag.
+            Some(Tok::ArrowStar) => self.transitive(field, false, "->*"),
+            Some(Tok::FatArrowStar) => self.transitive(field, true, "=>*"),
             Some(tok) => Err(format!(
                 "expected an operator after field '{field}', got {}",
                 describe(&tok)
             )),
             None => Err(format!("expected an operator after field '{field}'")),
+        }
+    }
+
+    /// Parses the right-hand side of a transitive arrow (`->*` / `=>*`): a path
+    /// string or a parenthesized sub-query, into a `FollowsTransitive` with the
+    /// given `inclusive` flag. `arrow` names the operator in error messages.
+    fn transitive(
+        &mut self,
+        field: String,
+        inclusive: bool,
+        arrow: &str,
+    ) -> Result<Query, String> {
+        match self.next() {
+            Some(Tok::Str(path)) => Ok(Query::FollowsTransitive {
+                field,
+                target: FollowTarget::Path(path),
+                inclusive,
+            }),
+            Some(Tok::LParen) => {
+                let sub = self.or_expr()?;
+                self.expect(Tok::RParen)?;
+                Ok(Query::FollowsTransitive {
+                    field,
+                    target: FollowTarget::Condition(Box::new(sub)),
+                    inclusive,
+                })
+            }
+            Some(tok) => Err(format!(
+                "expected a path string or a parenthesized query after '{arrow}', got {}",
+                describe(&tok)
+            )),
+            None => Err(format!("expected a path string or a parenthesized query after '{arrow}'")),
         }
     }
 
@@ -619,6 +651,7 @@ mod tests {
             Query::FollowsTransitive {
                 field: "mfr_path".into(),
                 target: FollowTarget::Path("/music/jazz".into()),
+                inclusive: false,
             }
         );
     }
@@ -633,7 +666,51 @@ mod tests {
                     field: "mfr_path".into(),
                     value: Value::String("2021".into()),
                 })),
+                inclusive: false,
             }
+        );
+    }
+
+    #[test]
+    fn test_inclusive_transitive_path() {
+        // `=>*` is the same FollowsTransitive with the inclusive flag set.
+        assert_eq!(
+            ok(r#"path =>* "music/jazz""#),
+            Query::FollowsTransitive {
+                field: "path".into(),
+                target: FollowTarget::Path("music/jazz".into()),
+                inclusive: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_inclusive_transitive_with_condition() {
+        assert_eq!(
+            ok(r#"path =>* (name = "jazz")"#),
+            Query::FollowsTransitive {
+                field: "path".into(),
+                target: FollowTarget::Condition(Box::new(Query::Eq {
+                    field: "name".into(),
+                    value: Value::String("jazz".into()),
+                })),
+                inclusive: true,
+            }
+        );
+    }
+
+    #[test]
+    fn test_fat_arrow_star_requires_string_or_query() {
+        err("path =>* 5");
+    }
+
+    #[test]
+    fn test_bare_fat_arrow_is_rejected() {
+        // `=>` without `*` is not a token (and `=` must still lex on its own).
+        err("path => 5");
+        assert_eq!(
+            ok(r#"a = "b""#),
+            Query::Eq { field: "a".into(), value: Value::String("b".into()) }
         );
     }
 
@@ -777,6 +854,7 @@ mod tests {
                     Query::FollowsTransitive {
                         field: "mfr_path".into(),
                         target: FollowTarget::Path("/music/jazz".into()),
+                        inclusive: false,
                     },
                     Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() },
                 ],
@@ -849,50 +927,32 @@ mod tests {
     }
 
     // The two tag-query examples shipped in the GUI help (queries.html "Tags"):
-    // selecting records by a TreeRef `path` tag, with no name matching. These
-    // keep the docs honest — if the traversal grammar changes, they fail here.
+    // selecting records by a TreeRef `path` tag with the exact-node `=` and the
+    // subtree `=>*` forms. These keep the docs honest — if the grammar changes,
+    // they fail here.
     #[test]
     fn test_help_tag_examples_parse() {
-        // Records carrying one specific tag (node "jazz" under "music").
+        // Records carrying one specific tag: the exact-node path form (the
+        // daemon reads the '/'-bearing operand as a path on the tree_ref field).
         assert_eq!(
-            ok(r#"tag -> (path -> "music" AND path = "jazz")"#),
+            ok(r#"tag -> (path = "music/jazz")"#),
             Query::Follows {
                 field: "tag".into(),
-                target: FollowTarget::Condition(Box::new(Query::And {
-                    operands: vec![
-                        Query::Follows {
-                            field: "path".into(),
-                            target: FollowTarget::Path("music".into()),
-                        },
-                        Query::Eq { field: "path".into(), value: Value::String("jazz".into()) },
-                    ],
+                target: FollowTarget::Condition(Box::new(Query::Eq {
+                    field: "path".into(),
+                    value: Value::String("music/jazz".into()),
                 })),
             }
         );
-        // That tag or any tag below it in the hierarchy (subtree, root included).
+        // That tag or any tag below it in the hierarchy: the inclusive subtree.
         assert_eq!(
-            ok(r#"tag -> (path ->* "music/jazz" OR (path -> "music" AND path = "jazz"))"#),
+            ok(r#"tag -> (path =>* "music/jazz")"#),
             Query::Follows {
                 field: "tag".into(),
-                target: FollowTarget::Condition(Box::new(Query::Or {
-                    operands: vec![
-                        Query::FollowsTransitive {
-                            field: "path".into(),
-                            target: FollowTarget::Path("music/jazz".into()),
-                        },
-                        Query::And {
-                            operands: vec![
-                                Query::Follows {
-                                    field: "path".into(),
-                                    target: FollowTarget::Path("music".into()),
-                                },
-                                Query::Eq {
-                                    field: "path".into(),
-                                    value: Value::String("jazz".into()),
-                                },
-                            ],
-                        },
-                    ],
+                target: FollowTarget::Condition(Box::new(Query::FollowsTransitive {
+                    field: "path".into(),
+                    target: FollowTarget::Path("music/jazz".into()),
+                    inclusive: true,
                 })),
             }
         );

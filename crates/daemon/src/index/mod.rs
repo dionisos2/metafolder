@@ -44,7 +44,7 @@ pub type PathRoots = HashMap<(String, String), Uuid>;
 /// before evaluation.
 pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
     match q {
-        Query::Follows { field, target } | Query::FollowsTransitive { field, target } => {
+        Query::Follows { field, target } | Query::FollowsTransitive { field, target, .. } => {
             if let FollowTarget::Path(p) = target {
                 out.push((field.clone(), p.clone()));
             }
@@ -529,8 +529,8 @@ impl RepoIndex {
             }
 
             Query::Follows { field, target } => self.follows(field, target, roots),
-            Query::FollowsTransitive { field, target } => {
-                self.follows_transitive(field, target, roots)
+            Query::FollowsTransitive { field, target, inclusive } => {
+                self.follows_transitive(field, target, *inclusive, roots)
             }
 
             Query::UuidIn { uuids } => {
@@ -605,6 +605,7 @@ impl RepoIndex {
         &self,
         field: &str,
         target: &FollowTarget,
+        inclusive: bool,
         roots: Option<&PathRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
         // Seed the expansion with the matching roots' dense ids. For a path
@@ -626,7 +627,12 @@ impl RepoIndex {
         if !fi.supports_transitive() {
             return Ok(RoaringBitmap::new());
         }
+        // The inclusive form (`=>*`) keeps the root(s) in the result (whole
+        // subtree); the strict form (`->*`) grows only downward from them.
         let mut result = RoaringBitmap::new();
+        if inclusive {
+            result = &frontier & &self.universe;
+        }
         while !frontier.is_empty() {
             let mut next = RoaringBitmap::new();
             for nid in &frontier {
@@ -669,6 +675,19 @@ impl RepoIndex {
     fn compare(&self, field: &str, op: CmpOp, value: &Value) -> Result<RoaringBitmap, Unsupported> {
         if matches!(value, Value::Nothing) {
             return Err(unsupported("comparison with 'nothing'"));
+        }
+        // Exact-node path (spec-query "Exact-node equality"): on a tree_ref field
+        // an Eq/Neq string operand containing '/' is a path-resolved node match,
+        // not a value_name compare. That resolution lives in the tree cache, not
+        // the index, so defer to the SQL engine rather than answer with the
+        // (wrong, value_name-based) bitmap. A string field keeps literal equality
+        // (the index handles it).
+        if matches!(op, CmpOp::Eq | CmpOp::Neq) {
+            if let Value::String(s) = value {
+                if s.contains('/') && self.types.get(field) == Some(&"tree_ref") {
+                    return Err(unsupported("exact-node tree_ref path equality"));
+                }
+            }
         }
         match self.fields.get(field) {
             Some(fi) => fi.compare(op, value),
