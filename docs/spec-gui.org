@@ -381,6 +381,13 @@ shown; when the two slots display different workspaces, two status bars are
 shown (one per slot). Messages auto-clear after a configurable timeout
 (default 5 s).
 
+A running script's *question* does **not** share this line. When a
+=POST /gui/input= wait carries a =prompt=, that question — and the keys the
+wait accepts — is shown in a *dedicated bar* just above the status line (the
+same place as the pending key-sequence reminder), so a status or error message
+can never overwrite the question the user is being asked. The bar clears when
+the wait resolves.
+
 ** Command input
 
 A single-line text input permanently visible just above the status bar,
@@ -2052,11 +2059,16 @@ request resolves or times out. If =keys= is absent or empty, no temporary
 bindings are installed; the user can still resolve the wait by typing
 =answer:send <value>= manually in the command input.
 
+The optional =prompt= is the *question* to show while the wait is active. It
+is displayed in a dedicated bar (see [[*Status bar]]), kept apart from the
+status/error line so a message cannot hide it, together with the =keys= the
+wait accepts. Absent =prompt= ⇒ a generic "Waiting for input" label.
+
 Only one =POST /gui/input= at a time; concurrent calls return =409=.
 
 Request body:
 #+BEGIN_SRC json
-{"keys": ["left", "right", "escape"], "timeout_ms": null}
+{"keys": ["left", "right", "escape"], "prompt": "Which action?", "timeout_ms": null}
 #+END_SRC
 
 Responses: ={"event": "answer", "value": "left"}= / ={"event": "timeout"}= /
@@ -2116,7 +2128,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui message <text> [--workspace] [--timeout-ms]= | Posts a status bar message                                         |
 | =mf gui command <invocation>... [--timeout-ms]=      | Runs a command invocation through the GUI (exit 1 on error/timeout) |
 | =mf gui bench [--clear]=                             | Prints the recorded bench measures (JSON), or clears the buffer    |
-| =mf gui input <key>... [--timeout-ms]=               | Waits for one of the keys, prints it (exit 1 on timeout/close)     |
+| =mf gui input <key>... [--prompt <text>] [--timeout-ms]= | Waits for one of the keys, prints it (=--prompt= shows a question in the dedicated bar; exit 1 on timeout/close) |
 | =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
 *** Example: image comparison script

@@ -362,12 +362,18 @@ pub async fn post_message(
 pub struct InputBody {
     #[serde(default)]
     keys: Vec<String>,
+    /// Question shown while the wait is active, in a dedicated bar separate
+    /// from the status/error line (spec-gui "Scripting"). Optional.
+    #[serde(default)]
+    prompt: Option<String>,
     #[serde(default)]
     timeout_ms: Option<u64>,
 }
 
-/// Pushes the compiled table plus the temporary `answer:send` bindings.
-fn push_keytable(state: &ServerState, temp_keys: &[String]) {
+/// Pushes the compiled table plus the temporary `answer:send` bindings, and
+/// broadcasts the input-wait state (including its `prompt` question) so the
+/// frontend can show a dedicated question bar.
+fn push_keytable(state: &ServerState, temp_keys: &[String], prompt: Option<&str>) {
     let mut bindings: Vec<CompiledBinding> = state.keybindings.lock_recover().compiled();
     for key in temp_keys {
         if let Ok(keys) = crate::keybindings::parse_combo(key) {
@@ -386,7 +392,8 @@ fn push_keytable(state: &ServerState, temp_keys: &[String]) {
     state.gui.notify(
         events::INPUT_WAIT_CHANGED,
         json!({ "active": !temp_keys.is_empty() || state.input.is_active(),
-                "temp_keys": temp_keys }),
+                "temp_keys": temp_keys,
+                "prompt": prompt }),
     );
 }
 
@@ -398,7 +405,7 @@ pub async fn post_input(
     let Some(receiver) = state.input.begin_input() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
-    push_keytable(&state, &body.keys);
+    push_keytable(&state, &body.keys, body.prompt.as_deref());
 
     let outcome = match body.timeout_ms {
         Some(ms) => tokio::time::timeout(Duration::from_millis(ms), receiver)
@@ -408,7 +415,7 @@ pub async fn post_input(
         None => receiver.await.ok(),
     };
     state.input.end(); // release the lock on timeout paths
-    push_keytable(&state, &[]); // remove temporary bindings
+    push_keytable(&state, &[], None); // remove temporary bindings + question
 
     let payload = match outcome {
         Some(InputOutcome::Answer(value)) => json!({"event": "answer", "value": value}),

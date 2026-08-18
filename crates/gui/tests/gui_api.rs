@@ -331,6 +331,42 @@ async fn test_input_wait_resolves_on_answer() {
 }
 
 #[tokio::test]
+async fn test_input_wait_broadcasts_its_prompt() {
+    let ctx = setup().await;
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/input",
+            Some(json!({"keys": ["a", "r"], "prompt": "Which action?"})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // The active input wait carries its question so the frontend can show it
+    // in a dedicated bar, separate from the transient status/error line.
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    let active = waits
+        .iter()
+        .find(|p| p["active"] == json!(true))
+        .expect("an active input-wait event");
+    assert_eq!(active["prompt"], json!("Which action?"));
+
+    assert!(ctx.input.resolve_answer("a"));
+    let _ = waiting.await.unwrap();
+
+    // The question is cleared when the wait ends.
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    let last = waits.last().unwrap();
+    assert_eq!(last["active"], json!(false));
+    assert_eq!(last["prompt"], json!(null));
+}
+
+#[tokio::test]
 async fn test_concurrent_input_waits_conflict() {
     let ctx = setup().await;
     let router = ctx.router.clone();

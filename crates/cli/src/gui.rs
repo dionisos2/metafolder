@@ -205,9 +205,15 @@ pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Resul
 }
 
 /// Blocks until one of `keys` is pressed and prints it; exit 1 on
-/// timeout or when the GUI closes the wait.
-pub fn input(ctx: &GuiCtx, keys: &[String], timeout_ms: Option<u64>) -> Result<i32, CliError> {
-    let body = json!({"keys": keys, "timeout_ms": timeout_ms});
+/// timeout or when the GUI closes the wait. `prompt` is the question shown in
+/// the GUI's dedicated input bar while waiting (separate from status messages).
+pub fn input(
+    ctx: &GuiCtx,
+    keys: &[String],
+    prompt: Option<&str>,
+    timeout_ms: Option<u64>,
+) -> Result<i32, CliError> {
+    let body = json!({"keys": keys, "prompt": prompt, "timeout_ms": timeout_ms});
     let resp = ctx.client.post("/gui/input", &body)?;
     match resp["event"].as_str() {
         Some("answer") => {

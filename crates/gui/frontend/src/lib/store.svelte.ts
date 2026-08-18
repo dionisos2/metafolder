@@ -73,8 +73,25 @@ export const store = $state({
       prefix: string[];
       candidates: { keys: string[]; invocation: string }[];
     } | null,
+    /// A running script's `POST /gui/input` question and the keys it accepts,
+    /// shown in a dedicated bar so a status/error message cannot hide it
+    /// (spec-gui "Scripting"). Null when no input wait is active. `prompt` is
+    /// always a display string (a generic label when the script gave none).
+    inputWait: null as { prompt: string; keys: string[] } | null,
   },
 });
+
+/** Maps a `input-wait-changed` event payload to the `ui.inputWait` state: the
+ *  script's question (a generic label when it gave none) and the keys it
+ *  accepts, or null when no wait is active. Pure, so it is unit-tested. */
+export function inputWaitState(payload: {
+  active: boolean;
+  temp_keys?: string[];
+  prompt?: string | null;
+}): { prompt: string; keys: string[] } | null {
+  if (!payload.active) return null;
+  return { prompt: payload.prompt || 'Waiting for input', keys: payload.temp_keys ?? [] };
+}
 
 export function slotPayload(id: SlotId) {
   return id === 'left' ? store.layout.left : store.layout.right;
@@ -172,6 +189,14 @@ export async function initStore() {
     store.ui.promptCompletions = event.payload.completions ?? [];
     store.ui.commandInputFocusTick += 1;
   });
+  // A script's `POST /gui/input` wait: keep its question in a dedicated bar,
+  // never on the status line where an error would overwrite it.
+  await listen<{ active: boolean; temp_keys?: string[]; prompt?: string | null }>(
+    'input-wait-changed',
+    (event) => {
+      store.ui.inputWait = inputWaitState(event.payload);
+    },
+  );
   // An external POST /gui/command: run it through the very same dispatch()
   // the command input and keybindings use, then report the outcome back so
   // the waiting HTTP handler resolves.

@@ -603,6 +603,10 @@ enum GuiCommand {
         /// Keys to bind for the duration of the wait (e.g. y n escape)
         #[arg(required = true)]
         keys: Vec<String>,
+        /// Question shown in the GUI's dedicated input bar while waiting
+        /// (kept separate from status/error messages)
+        #[arg(long)]
+        prompt: Option<String>,
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
@@ -1015,7 +1019,9 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         GuiCommand::Command { invocation, timeout_ms } => {
             gui::command(&gui_ctx, &invocation.join(" "), timeout_ms)
         }
-        GuiCommand::Input { keys, timeout_ms } => gui::input(&gui_ctx, &keys, timeout_ms),
+        GuiCommand::Input { keys, prompt, timeout_ms } => {
+            gui::input(&gui_ctx, &keys, prompt.as_deref(), timeout_ms)
+        }
         GuiCommand::Prompt { text, completions, completions_stdin, timeout_ms } => {
             gui::prompt(&gui_ctx, &text, &completions, completions_stdin, timeout_ms)
         }

@@ -36,6 +36,17 @@
   </div>
 {/if}
 
+<!-- A running script's question (POST /gui/input) lives here, not on the
+     status line, so an error message can never hide it. -->
+{#if store.ui.inputWait}
+  <div class="input-wait" data-help-topic="scripting">
+    <span class="question">{store.ui.inputWait.prompt}</span>
+    {#each store.ui.inputWait.keys as key (key)}
+      <span class="keycap">{key}</span>
+    {/each}
+  </div>
+{/if}
+
 <footer class="status-bars" data-help-topic="status-bar">
   {#each barWorkspaces as wsId (wsId)}
     {@const status = store.status[wsId]}
@@ -88,6 +99,30 @@
   .key-hints .hint.dim {
     margin-left: auto;
     color: var(--mf-fg-dim, #8a8a96);
+  }
+  /* A script's input question: a dedicated, persistent bar, visually distinct
+     from the status/error line so the two never compete for the same slot. */
+  .input-wait {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 6px 10px;
+    background: var(--mf-bg-raised, #26262e);
+    border-top: 2px solid var(--mf-accent, #4c56c4);
+    font-size: 1em;
+  }
+  .input-wait .question {
+    font-weight: 600;
+  }
+  .input-wait .keycap {
+    font-family: var(--mf-font-mono, monospace);
+    font-weight: 600;
+    padding: 1px 7px;
+    border-radius: 4px;
+    border: 1px solid var(--mf-accent, #4c56c4);
+    color: var(--mf-accent, #4c56c4);
+    background: var(--mf-bg, #1e1e24);
   }
   .status-bars {
     display: flex;
