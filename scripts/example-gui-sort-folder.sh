@@ -34,9 +34,9 @@ ensure_metarecord() { mf track "$1"; }
 # ask "<question>" -> prints y | n | escape  (escape also on timeout/GUI closed).
 ask() { mf_gui_ask "$1" y n escape; }
 
-# The tag paths (names) a metarecord references through its `tags` field —
-# resolved in one round-trip.
-record_tag_names() { mf metarecord -i "$1" field get tags --resolve name 2>/dev/null; }
+# The tag paths a metarecord references through its `tag` field — resolved in
+# one round-trip (each ref → the tag entry's `path` TreeRef → its path string).
+record_tag_names() { mf metarecord -i "$1" field get tag --resolve path 2>/dev/null; }
 
 # --- Routing rules: the heart you customise. Return a destination dir, or ""
 # to leave the file in place. Reads $TAGS (see below) and any scalar field. ---

@@ -143,7 +143,8 @@ author -&gt; (name = "Coltrane")</pre>
 <pre>mfr_path IS ABSENT
 mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
 mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
-mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "sf"))</pre>
+tag -&gt; (path = "music/jazz")
+type = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))</pre>
 
 <p>
   See also: <a data-help-page="simplified-query">the simplified query language</a>,

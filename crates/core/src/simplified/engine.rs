@@ -467,4 +467,23 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
         let g = parse_grammar("query = \"(\" q:query => $q\n      | WORD => x").unwrap();
         assert!(validate(&g).is_ok());
     }
+
+    #[test]
+    fn shipped_grammar_parses_and_tag_macro_expands() {
+        // Guards the shipped default grammar: it must stay valid, and its `tag`
+        // macro must expand to the current tag model (a `tag` ref into the
+        // TreeRef `path` hierarchy).
+        let src = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/default-config/query-grammar"
+        ))
+        .unwrap();
+        let g = parse_grammar(&src).unwrap();
+        validate(&g).unwrap();
+        assert_eq!(expand(&g, "tag jazz").unwrap(), r#"tag -> (type = "tag" AND path = "jazz")"#);
+        assert_eq!(
+            expand(&g, r#"tag "music/jazz""#).unwrap(),
+            r#"tag -> (type = "tag" AND path = "music/jazz")"#
+        );
+    }
 }

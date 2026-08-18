@@ -2716,37 +2716,38 @@ fn test_order_numbers_folder_children() {
 #[test]
 fn test_cli_primitives_eq_tsv_resolve() {
     let (repo, _root) = init_repo("prim");
-    let jazz = create_metarecord(
+    let coltrane = create_metarecord(
         &repo,
-        &["type:string=tag", "name:string=musique/jazz", "exclusive:bool=true"],
+        &["type:string=person", "name:string=Coltrane", "lead:bool=true"],
     );
-    let rock = create_metarecord(&repo, &["type:string=tag", "name:string=musique/rock"]);
+    let davis = create_metarecord(&repo, &["type:string=person", "name:string=Davis"]);
     let rec = create_metarecord(
         &repo,
-        &[&format!("tags:ref={jazz}"), &format!("tags:ref={rock}")],
+        &[&format!("author:ref={coltrane}"), &format!("author:ref={davis}")],
     );
 
-    // --eq: safe exact match (no DSL interpolation) → the jazz uuid only.
-    let out = mf(&["-u", &repo, "metarecord", "--eq", "type=tag", "--eq", "name=musique/jazz", "get"]);
+    // --eq: safe exact match (no DSL interpolation) → the Coltrane uuid only.
+    let out = mf(&["-u", &repo, "metarecord", "--eq", "type=person", "--eq", "name=Coltrane", "get"]);
     assert_ok(&out);
-    assert_eq!(out.stdout.trim(), jazz);
+    assert_eq!(out.stdout.trim(), coltrane);
 
-    // --tsv: name<TAB>partition<TAB>exclusive, one row per tag (absent = empty).
+    // --tsv: name<TAB>lead, one row per person (absent field = empty).
     let out = mf(&[
-        "-u", &repo, "metarecord", "--eq", "type=tag", "get",
-        "--select", "name,partition,exclusive", "--tsv",
+        "-u", &repo, "metarecord", "--eq", "type=person", "get",
+        "--select", "name,lead", "--tsv",
     ]);
     assert_ok(&out);
     let mut lines: Vec<&str> = out.stdout.lines().collect();
     lines.sort();
-    assert_eq!(lines, vec!["musique/jazz\t\ttrue", "musique/rock\t\t"]);
+    assert_eq!(lines, vec!["Coltrane\ttrue", "Davis\t"]);
 
-    // --resolve: the `tags` refs → their `name`, in one round-trip.
-    let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "tags", "--resolve", "name"]);
+    // --resolve on a string target field: the `author` refs → their `name`, in
+    // one round-trip (the tree-aware path form is covered by the tag test).
+    let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "author", "--resolve", "name"]);
     assert_ok(&out);
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort();
-    assert_eq!(names, vec!["musique/jazz", "musique/rock"]);
+    assert_eq!(names, vec!["Coltrane", "Davis"]);
 }
 
 // ── mf tag (hierarchical tags: subsumption, exclusivity) ──────────────────────

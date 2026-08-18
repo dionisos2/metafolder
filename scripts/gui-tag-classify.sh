@@ -16,8 +16,8 @@
 # longer re-implements any of it.
 #
 # The vocabulary and exclusivity flags come from `mf tag list`
-# (name<TAB>partition<TAB>exclusive), the metarecord's current tags from
-# `mf … field get <field> --resolve name` — one round-trip each, no per-entry
+# (path<TAB>partition<TAB>exclusive), the metarecord's current tags from
+# `mf … field get <field> --resolve path` — one round-trip each, no per-entry
 # loops. Resumable: answered questions are skipped, so re-run until nothing is
 # left to ask.
 #
@@ -54,8 +54,8 @@ mf tag list >"$UNIVERSE"
 
 yes=0 no=0
 while :; do
-    mf metarecord -i "$UUID" field get tags --resolve name >"$POS"
-    mf metarecord -i "$UUID" field get negative_tags --resolve name >"$NEG"
+    mf metarecord -i "$UUID" field get tag --resolve path >"$POS"
+    mf metarecord -i "$UUID" field get negative_tag --resolve path >"$NEG"
 
     T=$(gui_tag_next "$UNIVERSE" "$POS" "$NEG") || break # no question left
 

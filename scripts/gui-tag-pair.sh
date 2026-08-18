@@ -8,10 +8,10 @@
 #   s      -> skip this file
 #   Escape -> stop
 #
-# The tag model (entries + tags/negative_tags refs, hierarchy, exclusivity) is
-# owned by `mf tag`; this script is just the display + y/n loop. Files already
-# referencing the tag either way are excluded, so it is resumable. Skipped files
-# come back on the next run.
+# The tag model (entries + tag/negative_tag refs, TreeRef `path` hierarchy,
+# exclusivity) is owned by `mf tag`; this script is just the display + y/n loop.
+# Files already referencing the tag either way are excluded, so it is resumable.
+# Skipped files come back on the next run.
 #
 # Usage: gui-tag-pair.sh
 
@@ -31,20 +31,16 @@ case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 
 mf_gui_session_open metarecord-detail
 
-# The tag entry (created if the vocabulary lacks it), used only to phrase the
-# "no opinion yet" query. `--eq` builds it safely; `mf tag` would create the
-# entry too, but only when applied to a record.
-TAG_UUID=$(mf metarecord --eq type=tag --eq "name=$TAG" get | head -n1)
-if [ -z "$TAG_UUID" ]; then
-    TAG_UUID=$(mf metarecord add type:string=tag "name:string=$TAG")
-    mf gui message "created tag entry '$TAG'" --workspace "$WS" --timeout-ms 3000
-fi
+# The tag is identified by its hierarchy path: `path = "<TAG>"` is an exact-node
+# match on the `path` TreeRef (a '/'-bearing path resolves to the one node). The
+# entry need not pre-exist — a non-matching condition just leaves every file with
+# "no opinion"; `mf tag add` creates the entry (and its ancestor chain) on apply.
+TAG_COND="(type = \"tag\" AND path = \"$TAG\")"
 
 # Files with no opinion on this tag yet (NOT() is a complement, so files where
-# tags/negative_tags are unknown are included).
-TAG_COND="(type = \"tag\" AND name = \"$TAG\")"
+# tag/negative_tag are unknown are included).
 PREDICATE="mfr_path IS PRESENT AND mfr_type = \"file\" \
-AND NOT (tags -> $TAG_COND OR negative_tags -> $TAG_COND)"
+AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)"
 
 yes=0 no=0 skipped=0
 while read -r uuid; do
