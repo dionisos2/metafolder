@@ -802,6 +802,16 @@ Behaviours:
 | =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
 | =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
 
+A field whose only value is =Nothing= (an *explicit absence*, distinct from
+the field not existing) is still a first-class target of the =edit-field-*=
+commands: its name is offered by the completion of =edit-field-name=,
+=edit-field-type= and =edit-field-value=. Renaming moves the Nothing row with
+the rest of the field. Because a =Nothing= value carries no type, giving such
+a field a value first *establishes a type*: =edit-field-value= uses the field's
+single established type when one is known (from the schema or from other
+records) and otherwise asks which type to use; =edit-field-type= on an
+otherwise-empty field likewise asks for a value to attach to the chosen type.
+
 ** Input history
 
 Text zones keep a persistent input history, *per repository × per zone*.

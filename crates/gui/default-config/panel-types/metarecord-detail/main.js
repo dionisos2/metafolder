@@ -746,6 +746,18 @@ export async function mount(root, metafolder) {
     return names;
   }
 
+  /** Distinct field names *including* fields whose only value is Nothing, so
+   *  edit-field-name/type/value can act on a field that is currently absent
+   *  (an explicit Nothing row still carries a db id to edit). */
+  function editableFieldNames() {
+    /** @type {string[]} */
+    const names = [];
+    for (const f of metarecord?.fields ?? []) {
+      if (!names.includes(f.name)) names.push(f.name);
+    }
+    return names;
+  }
+
   /** Field names offered by set/add: the record's own plus the repo catalog,
    *  so a not-yet-present field can still be completed (free text allowed). */
   async function completableFieldNames() {
@@ -763,18 +775,18 @@ export async function mount(root, metafolder) {
     return [...names].sort();
   }
 
-  /** Stable "name = value" labels for each non-Nothing row (value selection for
-   *  edit/delete); `rowForLabel` maps one back to its row. */
+  /** Stable "name = value" labels for each row (value selection for
+   *  edit/delete); `rowForLabel` maps one back to its row. Nothing rows are
+   *  included (rendered "name = ∅") so edit-field-value can give an absent
+   *  field a value. */
   function valueChoices() {
-    return (metarecord?.fields ?? [])
-      .filter((f) => f.value.type !== 'nothing')
-      .map((f) => `${f.name} = ${formatValue(f.value)}`);
+    return (metarecord?.fields ?? []).map((f) => `${f.name} = ${formatValue(f.value)}`);
   }
   /** @param {string} label @returns {Field|null} */
   function rowForLabel(label) {
     return (
       (metarecord?.fields ?? []).find(
-        (f) => f.value.type !== 'nothing' && `${f.name} = ${formatValue(f.value)}` === label,
+        (f) => `${f.name} = ${formatValue(f.value)}` === label,
       ) ?? null
     );
   }
@@ -826,6 +838,25 @@ export async function mount(root, metafolder) {
     return 'string';
   }
 
+  /** The value type to use when giving a currently-Nothing field a value: its
+   *  single established type when known (from the schema or other records),
+   *  otherwise the user's pick among the concrete types — the "edit-field-type
+   *  first" step. Returns null if the user cancels. @param {string} repo
+   *  @param {string} field @returns {Promise<Metafolder.Value['type']|null>} */
+  async function establishType(repo, field) {
+    await cache.fetchFields(repo);
+    const known = cache.fieldType(repo, field);
+    if (typeof known === 'string' && known !== 'nothing')
+      return /** @type {Metafolder.Value['type']} */ (known);
+    const concrete = TYPES.filter((t) => t !== 'nothing');
+    const answer = window.prompt(`Type for "${field}" (${concrete.join(', ')}):`, 'string');
+    if (answer === null) return null;
+    const type = answer.trim();
+    if (!(/** @type {readonly string[]} */ (concrete)).includes(type))
+      throw new Error(`unknown value type "${type}"`);
+    return /** @type {Metafolder.Value['type']} */ (type);
+  }
+
   /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
    *  `raw` is a PATH, whose parent is resolved to a uuid via /tree/resolve-path.
    *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
@@ -865,7 +896,7 @@ export async function mount(root, metafolder) {
   }
 
   /** @param {string} prompt */
-  const nameArg = (prompt) => ({ name: 'field', prompt: () => prompt, complete: () => recordFieldNames() });
+  const nameArg = (prompt) => ({ name: 'field', prompt: () => prompt, complete: () => editableFieldNames() });
 
   void commands.register('metarecord:set-field', {
     label: 'Set a field on this metarecord (overwrite all its values)',
@@ -943,7 +974,15 @@ export async function mount(root, metafolder) {
       const cur = requireCurrent();
       const row = rowForLabel(label);
       if (!row) throw new Error(`no field value matching "${label}"`);
-      const value = await parseValueForField(cur.repo, row.name, row.value.type, raw);
+      // A Nothing row carries no type: establish one (its single known type, or
+      // ask) before parsing the value the user just typed.
+      let type = row.value.type;
+      if (type === 'nothing') {
+        const established = await establishType(cur.repo, row.name);
+        if (established === null) return; // user cancelled the type pick
+        type = established;
+      }
+      const value = await parseValueForField(cur.repo, row.name, type, raw);
       const force = isReserved(row.name) ? { force: true } : {};
       await daemon.call('PATCH', `/repos/${cur.repo}/fields/${row.id}`, { value, ...force });
       await load();
@@ -978,9 +1017,9 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, newName) => {
       const cur = requireCurrent();
-      const rows = (metarecord?.fields ?? []).filter(
-        (f) => f.name === field && f.value.type !== 'nothing',
-      );
+      // Rename every row of this field, Nothing rows included — an explicit
+      // absence should move with the field, not be orphaned under the old name.
+      const rows = (metarecord?.fields ?? []).filter((f) => f.name === field);
       if (rows.length === 0) throw new Error(`no field "${field}"`);
       const force = isReserved(field) || isReserved(newName) ? { force: true } : {};
       for (const r of rows) {
@@ -999,28 +1038,35 @@ export async function mount(root, metafolder) {
       {
         name: 'type',
         prompt: (p) => `New type for "${p[0]}"?`,
-        initial: (p) => {
-          const r = (metarecord?.fields ?? []).find(
-            (f) => f.name === p[0] && f.value.type !== 'nothing',
-          );
-          return r?.value.type ?? 'string';
-        },
-        complete: () => [...TYPES],
+        // A concrete row's type, else the established/schema type for the name.
+        initial: (p) => fieldTypeOf(p[0]),
+        complete: () => TYPES.filter((t) => t !== 'nothing'),
       },
     ],
     handler: async (field, type) => {
       const cur = requireCurrent();
       if (!(/** @type {readonly string[]} */ (TYPES)).includes(type))
         throw new Error(`unknown value type "${type}"`);
-      const rows = (metarecord?.fields ?? []).filter(
-        (f) => f.name === field && f.value.type !== 'nothing',
-      );
-      if (rows.length === 0) throw new Error(`no field "${field}"`);
+      const all = (metarecord?.fields ?? []).filter((f) => f.name === field);
+      if (all.length === 0) throw new Error(`no field "${field}"`);
+      const concrete = all.filter((f) => f.value.type !== 'nothing');
       const force = isReserved(field) ? { force: true } : {};
-      for (const r of rows) {
-        const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+      if (concrete.length === 0) {
+        // A field whose only value is Nothing has nothing to re-encode: a type
+        // is only meaningful with a value, so ask for one and set it (this is
+        // the type step already chosen above, now given a value).
+        const raw = window.prompt(`Value for "${field}" (${type})?`);
+        if (raw === null) return;
         const value = await parseValueForField(cur.repo, field, type, raw);
-        await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+        for (const r of all) {
+          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+        }
+      } else {
+        for (const r of concrete) {
+          const raw = await rawOfValue(cur.repo, cur.uuid, field, r.value);
+          const value = await parseValueForField(cur.repo, field, type, raw);
+          await daemon.call('PATCH', `/repos/${cur.repo}/fields/${r.id}`, { value, ...force });
+        }
       }
       await load();
       await dirty();
