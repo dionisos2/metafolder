@@ -122,49 +122,50 @@ export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
   return page.results[0]?.uuid ?? null;
 }
 
-// Map of absolute child path -> metarecord uuid for the tracked entries
-// among `names` (the direct children currently rendered in the window).
-// The query is narrowed to those names — Follows(parent) AND
-// Matches(^(name1|name2|…)$) — so a directory with thousands of tracked
-// files only costs one bounded query per rendered window, not a full walk
-// of every tracked child up front. Outside the repo root, or with an empty
-// window, nothing is tracked and no round-trip happens.
+// How many tracked children to fetch per page while walking a directory's
+// direct children.
+const CHILDREN_PAGE = 500;
+
+// Map of absolute child path -> metarecord uuid for every direct tracked child
+// of `dir`. The query is a single `Follows` on the path target (the direct
+// referrers of the directory node) — no per-name `Matches`, which the bitmap
+// index cannot serve and which forces a full-repository REGEXP scan. `Follows`
+// is served straight from the index and is naturally bounded to the directory's
+// own children, so this is fetched once per directory (not once per rendered
+// window). `dirUuid` is the directory node's metarecord uuid (from
+// `loadDirMetarecord`); a `null` uuid means the directory is untracked, so no
+// child can reference it as a parent and nothing is fetched. Positions are kept
+// only when their parent is exactly `dirUuid`, so a multi-position metarecord
+// does not leak positions living in other directories.
 /**
  * @param {Daemon} daemon @param {string|null} repo
- * @param {string|null} repoRoot @param {string} dir @param {string[]} names
+ * @param {string|null} repoRoot @param {string} dir @param {string|null} dirUuid
  * @returns {Promise<Map<string, string>>}
  */
-export async function loadTrackedFor(daemon, repo, repoRoot, dir, names) {
+export async function loadTrackedChildren(daemon, repo, repoRoot, dir, dirUuid) {
   /** @type {Map<string, string>} absolute child path → metarecord uuid */
   const tracked = new Map();
   const rel = relPath(dir, repoRoot);
-  if (!repo || rel === null || names.length === 0) return tracked;
+  if (!repo || rel === null || dirUuid === null) return tracked;
   const prefix = dir.endsWith('/') ? dir : `${dir}/`;
-  const wanted = new Set(names);
-  const query = {
-    type: 'and',
-    operands: [
-      { type: 'follows', field: 'mfr_path', target: rel },
-      { type: 'matches', field: 'mfr_path', pattern: `^(${names.map(escapeRegex).join('|')})$` },
-    ],
-  };
+  const query = { type: 'follows', field: 'mfr_path', target: rel };
   /** @type {string|null|undefined} */
   let cursor = null;
   do {
     const page = /** @type {Page} */ (
       await daemon.call('POST', `/repos/${repo}/query`, {
         query,
-        select: '*',
-        limit: names.length,
+        select: ['mfr_path'],
+        limit: CHILDREN_PAGE,
         ...(cursor && { cursor }),
       })
     );
     for (const metarecord of page.results) {
       for (const field of metarecord.fields ?? []) {
         if (field.name !== 'mfr_path' || field.value.type !== 'tree_ref') continue;
-        // A matched metarecord may hold other positions outside the window
-        // (multi-map): keep only the names we actually asked for.
-        if (!wanted.has(field.value.value.name)) continue;
+        // A matched metarecord may hold positions in other directories
+        // (multi-map): keep only the ones parented at this directory node.
+        if (field.value.value.parent !== dirUuid) continue;
         tracked.set(prefix + field.value.value.name, metarecord.uuid);
       }
     }

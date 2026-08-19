@@ -150,7 +150,7 @@ impl RepoIndex {
         let mut scanned_rows: u64 = 0;
         db::for_each_field_row(conn, |uuid, row| {
             scanned_rows += 1;
-            if scanned_rows % 4096 == 0 {
+            if scanned_rows.is_multiple_of(4096) {
                 progress(scanned_rows.min(total), total);
                 if cancel() {
                     anyhow::bail!("index build cancelled");

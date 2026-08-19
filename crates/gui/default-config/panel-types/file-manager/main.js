@@ -6,7 +6,7 @@ import { byId, el, fileTypeGlyph } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
 import {
-  loadTrackedFor,
+  loadTrackedChildren,
   loadDirMetarecord,
   parentDir,
   isWithin,
@@ -90,10 +90,13 @@ export async function mount(root, metafolder) {
   }
 
   // Tracked status of "." (the directory itself) and ".." (its parent) — the
-  // two synthetic rows always present in the first window.
+  // two synthetic rows always present in the first window. Returns the
+  // directory's own metarecord uuid (its tree node), or null when untracked, so
+  // the caller can fetch its children without resolving it again.
+  /** @returns {Promise<string|null>} */
   async function enrichSelfParent() {
     const dir = currentDir;
-    if (dir === null) return;
+    if (dir === null) return null;
     try {
       const parent = parentDir(dir);
       const [selfUuid, parentUuid] = await Promise.all([
@@ -102,37 +105,35 @@ export async function mount(root, metafolder) {
       ]);
       if (selfUuid) trackedPaths.set(dir, selfUuid);
       if (parentUuid) trackedPaths.set(parent, parentUuid);
+      return selfUuid;
     } catch (error) {
       await statusBar.error(error);
+      return null;
     }
   }
 
-  // Tracked status of the real entries in listing[start, end) — queried for
-  // just that window's names, so a huge directory never resolves every child.
-  /** @param {number} start @param {number} end */
-  async function enrichRange(start, end) {
+  // Tracked status of every direct child of the current directory, fetched in
+  // one `Follows` query the bitmap index serves (bounded to this directory's
+  // children — not a per-window round-trip and not a full-repo scan). `dirUuid`
+  // is the directory node resolved by `enrichSelfParent`.
+  /** @param {string|null} dirUuid */
+  async function enrichChildren(dirUuid) {
     const dir = currentDir;
     if (dir === null) return;
-    /** @type {string[]} */
-    const names = [];
-    for (let i = start; i < end; i++) {
-      const item = listing[i];
-      if (item && item.name !== '.' && item.name !== '..') names.push(item.name);
-    }
     try {
-      const found = await loadTrackedFor(daemon, repo, repoRoot, dir, names);
+      const found = await loadTrackedChildren(daemon, repo, repoRoot, dir, dirUuid);
       for (const [path, uuid] of found) trackedPaths.set(path, uuid);
     } catch (error) {
       await statusBar.error(error);
     }
   }
 
-  // Re-query the tracked status of everything currently rendered (after a
-  // write, or an external change): drop the stale map and refill the window.
+  // Re-query the tracked status of the current directory (after a write, or an
+  // external change): drop the stale map and refill it from the daemon.
   async function reenrichVisible() {
     trackedPaths = new Map();
-    await enrichSelfParent();
-    await enrichRange(0, rendered);
+    const dirUuid = await enrichSelfParent();
+    await enrichChildren(dirUuid);
   }
 
   /** @param {string} dir @returns {Promise<void>} */
@@ -161,8 +162,8 @@ export async function mount(root, metafolder) {
     cursorIndex = -1;
     rendered = Math.min(PAGE, listing.length);
     render(); // rows appear at once; tracked badges fill in just below
-    await enrichSelfParent();
-    await enrichRange(0, rendered);
+    const dirUuid = await enrichSelfParent();
+    await enrichChildren(dirUuid);
     render();
   }
 
@@ -237,13 +238,10 @@ export async function mount(root, metafolder) {
   async function select(index) {
     cursorIndex = Math.max(0, Math.min(index, listing.length - 1));
     // Keep the cursor inside the rendered window (jumping to the last entry
-    // expands it so the row exists in the DOM to scroll to), enriching the
-    // newly revealed rows.
+    // expands it so the row exists in the DOM to scroll to). Tracked status is
+    // already loaded for the whole directory, so revealing rows needs no fetch.
     if (cursorIndex >= rendered) {
-      const prev = rendered;
       rendered = cursorIndex + 1;
-      render();
-      await enrichRange(prev, rendered);
       render();
     } else {
       moveCursorHighlight();
@@ -527,17 +525,15 @@ export async function mount(root, metafolder) {
     if (keep >= 0) await select(keep);
   }
 
-  // Reveal (and enrich) the next window of rows as the listing is scrolled to
-  // its end — the shared progressive-loading controller owns the threshold and
-  // the one-load-at-a-time guard.
+  // Reveal the next window of rows as the listing is scrolled to its end — the
+  // shared progressive-loading controller owns the threshold and the
+  // one-load-at-a-time guard. Tracked status needs no round-trip here: the
+  // whole directory's tracked children were fetched once on open.
   const pager = createPagedList({
     loaded: () => rendered,
     total: () => listing.length,
     loadMore: async () => {
-      const prev = rendered;
       rendered = Math.min(listing.length, rendered + PAGE);
-      render();
-      await enrichRange(prev, rendered);
       render();
     },
   });

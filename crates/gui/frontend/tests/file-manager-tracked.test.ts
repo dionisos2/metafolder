@@ -4,7 +4,7 @@
 // thousands of tracked files only queries the slice the user can see.
 
 import { describe, expect, test, vi } from 'vitest';
-import { relPath, parentDir, isWithin, loadTrackedFor, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows } from '../../default-config/panel-types/file-manager/tracked.js';
+import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows } from '../../default-config/panel-types/file-manager/tracked.js';
 
 type Entry = { uuid: string; fields: { name: string; value: unknown }[] };
 
@@ -184,48 +184,43 @@ describe('loadDirMetarecord', () => {
   });
 });
 
-describe('loadTrackedFor', () => {
+describe('loadTrackedChildren', () => {
   test('no repo: empty map, no daemon round-trip', async () => {
     const daemon = fakeDaemon([]);
-    const map = await loadTrackedFor(daemon, null, '/data/repo', '/data/repo', ['a']);
+    const map = await loadTrackedChildren(daemon, null, '/data/repo', '/data/repo', 'dddd');
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
   test('outside the root: empty map, no daemon round-trip', async () => {
     const daemon = fakeDaemon([]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/tmp', ['a']);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/tmp', 'dddd');
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
-  test('no names (empty window): empty map, no daemon round-trip', async () => {
+  test('untracked directory (no node uuid): empty map, no daemon round-trip', async () => {
+    // With no metarecord for the directory itself, no child can reference it as
+    // a parent — so there is nothing to fetch.
     const daemon = fakeDaemon([]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', []);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo/new', null);
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
-  test('queries only the window names: follows(parent) AND matches(^(names)$)', async () => {
+  test('fetches every direct tracked child via follows(parent) alone, index-served', async () => {
+    // The direct children of /music are its metarecords; the query is a single
+    // Follows on the path target (no per-name Matches), which the bitmap index
+    // serves. Positions are kept only when their parent is the directory node.
     const daemon = fakeDaemon([
       { results: [entry('aaaa', 'a.mp3'), entry('bbbb', 'jazz')], next_cursor: null },
     ]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo/music', [
-      'a.mp3',
-      'jazz',
-      'untracked',
-    ]);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo/music', 'dddd');
     expect(daemon.call).toHaveBeenCalledTimes(1);
     expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/query', {
-      query: {
-        type: 'and',
-        operands: [
-          { type: 'follows', field: 'mfr_path', target: '/music' },
-          { type: 'matches', field: 'mfr_path', pattern: '^(a\\.mp3|jazz|untracked)$' },
-        ],
-      },
-      select: '*',
-      limit: 3,
+      query: { type: 'follows', field: 'mfr_path', target: '/music' },
+      select: ['mfr_path'],
+      limit: 500,
     });
     expect(map.get('/data/repo/music/a.mp3')).toBe('aaaa');
     expect(map.get('/data/repo/music/jazz')).toBe('bbbb');
@@ -234,8 +229,8 @@ describe('loadTrackedFor', () => {
 
   test('the repo root queries the empty path target', async () => {
     const daemon = fakeDaemon([{ results: [entry('aaaa', 'music')], next_cursor: null }]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['music']);
-    expect(daemon.call.mock.calls[0][2].query.operands[0]).toEqual({
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
+    expect(daemon.call.mock.calls[0][2].query).toEqual({
       type: 'follows',
       field: 'mfr_path',
       target: '',
@@ -248,13 +243,13 @@ describe('loadTrackedFor', () => {
       { results: [entry('aaaa', 'a')], next_cursor: 'c1' },
       { results: [entry('bbbb', 'b')], next_cursor: null },
     ]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['a', 'b']);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
     expect(daemon.call).toHaveBeenCalledTimes(2);
     expect(daemon.call.mock.calls[1][2].cursor).toBe('c1');
     expect(map.size).toBe(2);
   });
 
-  test('ignores fields other than tree_ref mfr_path, and names outside the window', async () => {
+  test('keeps only positions whose parent is the directory node', async () => {
     const noisy: Entry = {
       uuid: 'cccc',
       fields: [
@@ -262,17 +257,18 @@ describe('loadTrackedFor', () => {
         { name: 'mfr_path', value: { type: 'nothing', value: null } },
       ],
     };
-    // A multi-position metarecord whose other position is not in this window
-    // must not leak that name into the map.
+    // A multi-position metarecord: one position is a child of this directory
+    // node ('dddd'), the other lives under a different parent — only the former
+    // is mapped here.
     const multi: Entry = {
       uuid: 'dddd',
       fields: [
         { name: 'mfr_path', value: treeRef('dddd', 'wanted') },
-        { name: 'mfr_path', value: treeRef('dddd', 'elsewhere') },
+        { name: 'mfr_path', value: treeRef('eeee', 'elsewhere') },
       ],
     };
     const daemon = fakeDaemon([{ results: [noisy, multi], next_cursor: null }]);
-    const map = await loadTrackedFor(daemon, 'r1', '/data/repo', '/data/repo', ['wanted']);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
     expect(map.get('/data/repo/wanted')).toBe('dddd');
     expect(map.size).toBe(1);
   });
