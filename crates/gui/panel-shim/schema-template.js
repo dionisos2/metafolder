@@ -41,12 +41,12 @@ function groupApplies(group, type) {
 }
 
 /**
- * Staged fields for a new metarecord of `type`: first `mf_schema = type`, then
- * every constrained field applicable to the type (global "*" groups + the
+ * Template fields for a new metarecord of `type`: first `mf_schema = type`,
+ * then every constrained field applicable to the type (global "*" groups + the
  * type's groups). A constraint's `default` is a bare value interpreted via its
  * `type`, built here into a `{type, value}`; a field with no `default` is
  * templated as `Nothing`. A field appearing in several applicable groups is
- * staged once, preferring the occurrence that carries a default.
+ * included once, preferring the occurrence that carries a default.
  */
 /**
  * @param {Constraint} c

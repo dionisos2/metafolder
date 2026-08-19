@@ -24,8 +24,8 @@ import { createAnnotator } from './annotations.js';
  * @typedef {{uuid: string, version: number, fields: Field[]}} Loaded
  * @typedef {Metafolder.Field & {id: number}} Field
  *
- * A field staged for a not-yet-created metarecord (no DB row, so no id).
- * @typedef {{name: string, value: Metafolder.Value}} Staged
+ * A name/value pair read from the add-field form (no DB row, so no id).
+ * @typedef {{name: string, value: Metafolder.Value}} FieldInput
  *
  * The value editor `widgetFor` builds.
  * @typedef {{element: HTMLElement, read: () => Metafolder.Value}} Widget
@@ -52,11 +52,6 @@ export async function mount(root, metafolder) {
   let lastViewedUuid = null;
   /** @type {number|null} field id being edited, or null */
   let editingField = null;
-  let newMetarecordMode = false;
-  /** @type {Staged[]} new-metarecord mode */
-  let stagedFields = [];
-  /** @type {number|null} staged-field index being edited, or null */
-  let editingStaged = null;
   let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
   /** @type {{repo: string|null, schema: Schema}} memoized GET /schema */
   let schemaCache = { repo: null, schema: null };
@@ -207,26 +202,19 @@ export async function mount(root, metafolder) {
   }
 
   function renderNow() {
-    const hasContent = metarecord !== null || newMetarecordMode;
-    if (metarecord === null || newMetarecordMode) orphanNote.hidden = true;
+    const hasContent = metarecord !== null;
+    if (metarecord === null) orphanNote.hidden = true;
     placeholder.classList.toggle('hidden', hasContent);
     content.classList.toggle('hidden', !hasContent);
-    byId(root, 'save-new').hidden = !newMetarecordMode;
     // One button, two roles: it enables tracking + does the initial reconcile
     // while the record is unwatched, then becomes a plain subtree reconcile once
     // watched (staying visible, so reconcile is always reachable from here).
     const watchBtn = byId(root, 'watch-reconcile');
-    watchBtn.hidden = newMetarecordMode || metarecord === null;
+    watchBtn.hidden = metarecord === null;
     watchBtn.textContent = needsWatch() ? 'Watch and reconcile' : 'Reconcile';
-    byId(root, 'delete-metarecord', HTMLButtonElement).disabled =
-      newMetarecordMode || metarecord === null;
+    byId(root, 'delete-metarecord', HTMLButtonElement).disabled = metarecord === null;
     if (!hasContent) return;
 
-    if (newMetarecordMode) {
-      metarecordHead.textContent = 'new metarecord (not saved yet)';
-      fieldRows.replaceChildren(...stagedFields.map(stagedRow));
-      return;
-    }
     // `hasContent` above already established this, but only through a variable.
     const loaded = metarecord;
     if (!loaded) return;
@@ -341,100 +329,13 @@ export async function mount(root, metafolder) {
     });
   }
 
-  /** @param {Staged} staged @param {number} index */
-  function stagedRow(staged, index) {
-    const value = el('td', { class: 'value' });
-    const ops = el('td', { class: 'ops' });
-
-    if (editingStaged === index) {
-      // Inline editor: a type picker drives the value widget (the staged value
-      // lives only in memory until "Save new metarecord").
-      const stagedPick = pickOpts(() => staged.name);
-      let widget = widgetFor(staged.value.type, valuePayload(staged.value), stagedPick);
-      const slot = el('span', {}, widget.element);
-      const typeButton = el('button', {});
-      const picker = createTypePicker(typeButton, staged.value.type, (type) => {
-        widget = widgetFor(type, undefined, stagedPick);
-        slot.replaceChildren(widget.element);
-      });
-      // Restrict to the field's established type (+ nothing), like field edits.
-      void applyEditTypeLock(picker, staged.name, staged.value.type);
-      const commitStaged = () => {
-        stagedFields[index] = { name: staged.name, value: widget.read() };
-        editingStaged = null;
-        render();
-      };
-      editKeys(value, commitStaged, () => {
-        editingStaged = null;
-        render();
-      });
-      value.append(typeButton, ' ', slot);
-      ops.append(
-        el(
-          'button',
-          {
-            onclick: () => {
-              stagedFields[index] = { name: staged.name, value: widget.read() };
-              editingStaged = null;
-              render();
-            },
-          },
-          'OK',
-        ),
-        el(
-          'button',
-          {
-            onclick: () => {
-              editingStaged = null;
-              render();
-            },
-          },
-          'Cancel',
-        ),
-      );
-      queueMicrotask(() => focusWidget(widget));
-    } else {
-      value.append(formatValue(staged.value));
-      ops.append(
-        el(
-          'button',
-          {
-            onclick: () => {
-              editingStaged = index;
-              render();
-            },
-          },
-          'Edit',
-        ),
-        el(
-          'button',
-          {
-            onclick: () => {
-              stagedFields.splice(index, 1);
-              if (editingStaged === index) editingStaged = null;
-              render();
-            },
-          },
-          'Remove',
-        ),
-      );
-    }
-    return el(
-      'tr',
-      { class: [index === cursorIndex && 'cursor'] },
-      nameCell(staged.name, staged.value.type),
-      value,
-      ops,
-    );
-  }
 
   // ── Keyboard cursor over the field rows ───────────────────────────────
 
-  // The list the cursor walks: staged fields while creating, else the loaded
-  // metarecord's fields.
-  /** @returns {(Field|Staged)[]} */
+  // The list the cursor walks: the loaded metarecord's fields.
+  /** @returns {Field[]} */
   function rowItems() {
-    return newMetarecordMode ? stagedFields : (metarecord?.fields ?? []);
+    return metarecord?.fields ?? [];
   }
   /** @param {number} delta */
   function moveCursor(delta) {
@@ -448,28 +349,20 @@ export async function mount(root, metafolder) {
     render();
     root.querySelector('tr.cursor')?.scrollIntoView({ block: 'nearest' });
   }
-  /** @param {Field|Staged} item */
+  /** @param {Field} item */
   function isRowReadonly(item) {
-    return !newMetarecordMode && isReserved(item.name) && !forceBox.checked;
+    return isReserved(item.name) && !forceBox.checked;
   }
   function editCursorRow() {
     const item = rowItems()[cursorIndex];
     if (!item || isRowReadonly(item)) return;
-    if (newMetarecordMode) editingStaged = cursorIndex;
-    else if ('id' in item) editingField = item.id;
+    editingField = item.id;
     render();
   }
   function deleteCursorRow() {
     const item = rowItems()[cursorIndex];
     if (!item || isRowReadonly(item)) return;
-    if (newMetarecordMode) {
-      stagedFields.splice(cursorIndex, 1);
-      if (editingStaged === cursorIndex) editingStaged = null;
-      cursorIndex = Math.min(cursorIndex, stagedFields.length - 1);
-      render();
-    } else if ('id' in item) {
-      void deleteField(item);
-    }
+    void deleteField(item);
   }
 
   // ── Operations ────────────────────────────────────────────────────────
@@ -568,7 +461,7 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /** @returns {Staged} */
+  /** @returns {FieldInput} */
   function readAddForm() {
     const name = addNameInput().value.trim();
     if (!name) throw new Error('field name is required');
@@ -581,11 +474,6 @@ export async function mount(root, metafolder) {
     showError('');
     try {
       const { name, value } = readAddForm();
-      if (newMetarecordMode) {
-        stagedFields.push({ name, value });
-        render();
-        return;
-      }
       if (!current) throw new Error('no metarecord selected');
       const force = isReserved(name) ? { force: true } : {};
       if (replace) {
@@ -612,30 +500,20 @@ export async function mount(root, metafolder) {
     return schema;
   }
 
-  /** @param {string|null} [type] @param {Schema} [schema] */
-  function startNewMetarecord(type = null, schema = schemaCache.schema) {
-    newMetarecordMode = true;
-    stagedFields = type ? templateFields(schema, type) : [];
-    metarecord = null;
-    editingField = null;
-    editingStaged = null;
-    cursorIndex = -1;
-    render();
-  }
-
-  async function saveNewEntry() {
+  /** Creates a metarecord immediately (spec-gui "metarecord-detail panel type")
+   *  and selects it, so every field-editing command applies to a live record
+   *  from the start — there is no staged draft. A `type` seeds the schema's
+   *  template fields; otherwise the record is created empty.
+   *  @param {string|null} [type] @param {Schema} [schema] */
+  async function createMetarecord(type = null, schema = schemaCache.schema) {
     try {
       const repo = await repoForAdd();
       if (!repo) throw new Error('no active repository');
-      const force = stagedFields.some((f) => isReserved(f.name)) ? { force: true } : {};
+      const fields = type ? templateFields(schema, type) : [];
+      const force = fields.some((f) => isReserved(f.name)) ? { force: true } : {};
       const created = /** @type {{uuid: string}} */ (
-        await daemon.call('POST', `/repos/${repo}/metarecords`, {
-          fields: stagedFields,
-          ...force,
-        })
+        await daemon.call('POST', `/repos/${repo}/metarecords`, { fields, ...force })
       );
-      newMetarecordMode = false;
-      editingStaged = null;
       void statusBar.message(`Metarecord created: ${created.uuid.slice(0, 8)}…`, statusMessageMs);
       await workspace.set('selected_metarecord', { uuid: created.uuid, repo });
       await dirty();
@@ -714,11 +592,7 @@ export async function mount(root, metafolder) {
     return addForm.classList.contains('open') && addNameInput().value.trim() !== '';
   }
   function isEditing() {
-    return (
-      editingField !== null ||
-      addFieldInProgress() ||
-      (newMetarecordMode && stagedFields.length > 0)
-    );
+    return editingField !== null || addFieldInProgress();
   }
   function confirmDiscardIfEditing() {
     if (!isEditing()) return true;
@@ -1211,7 +1085,6 @@ export async function mount(root, metafolder) {
   const invoke = (name) => () => void commands.invoke(name);
   byId(root, 'new-metarecord').addEventListener('click', invoke('metarecord:create'));
   byId(root, 'new-metarecord-placeholder').addEventListener('click', invoke('metarecord:create'));
-  byId(root, 'save-new').addEventListener('click', () => void saveNewEntry());
   byId(root, 'delete-metarecord').addEventListener('click', invoke('metarecord:delete'));
   byId(root, 'watch-reconcile').addEventListener('click', () => {
     void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile');
@@ -1223,13 +1096,14 @@ export async function mount(root, metafolder) {
   forceBox.addEventListener('change', render);
 
   void commands.register('metarecord:create', {
-    label: 'Create a new metarecord (metarecord-detail form)',
+    label: 'Create a new metarecord',
     reveal: true,
     // The schema type is collected through the command input's completion
     // (spec-gui "Interactive command arguments"): the completion lists the
     // schema's declared metarecord types, a blank answer creates an empty
-    // record, and picking a type pre-stages its template fields. Replaces the
-    // old mouse-only pop-up menu so creation is fully keyboard-drivable.
+    // record, and picking a type seeds its template fields. The record is
+    // created immediately and selected, so every field-editing command applies
+    // to it at once — there is no staged, not-yet-saved draft to get stuck in.
     args: [
       {
         name: 'schema',
@@ -1244,7 +1118,7 @@ export async function mount(root, metafolder) {
       const repo = await repoForAdd();
       const loaded = repo ? await loadSchema(repo) : null;
       const type = schema && schemaTypes(loaded).includes(schema) ? schema : null;
-      startNewMetarecord(type, loaded);
+      await createMetarecord(type, loaded);
     },
   });
   void commands.register('metarecord:delete', {
@@ -1326,16 +1200,11 @@ export async function mount(root, metafolder) {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });
-  void commands.register('metarecord:save', {
-    label: 'Save the new metarecord',
-    handler: () => saveNewEntry(),
-  });
   void commands.register('metarecord:edit-cancel', {
     label: 'Cancel the current field edit or add form',
     log: false,
     handler: () => {
       editingField = null;
-      editingStaged = null;
       addForm.classList.remove('open');
       render();
     },
@@ -1393,9 +1262,7 @@ export async function mount(root, metafolder) {
     // The discard was confirmed (or nothing was in progress): drop any add in
     // progress along with the rest of the edit state.
     addForm.classList.remove('open');
-    newMetarecordMode = false;
     editingField = null;
-    editingStaged = null;
     current = /** @type {Selection|null} */ (value ?? null);
     void load();
   });
@@ -1405,7 +1272,7 @@ export async function mount(root, metafolder) {
   // reads fresh data even when the change came from a non-metarecord write
   // (e.g. a rollback, which the per-write invalidation can't pinpoint).
   async function onMetarecordsDirty() {
-    if (editingField !== null || newMetarecordMode || addFieldInProgress()) return;
+    if (editingField !== null || addFieldInProgress()) return;
     if (current?.repo) await cache.sync(current.repo);
     void load();
   }

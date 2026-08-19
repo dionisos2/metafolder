@@ -240,11 +240,10 @@
 "/" = { command = "metarecord-list:find", when = "metarecord-list" }
 "ctrl+/" = { command = "metarecord-list:edit-query", when = "metarecord-list" }
 
-# metarecord-detail: field actions and record create/save.
+# metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
 "a" = { command = "metarecord:add-field", when = "metarecord-detail" }
 "ctrl+n" = { command = "metarecord:create", when = "metarecord-detail" }
-"ctrl+s" = { command = "metarecord:save", when = "metarecord-detail" }
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar
 # lists the continuations while the sequence is pending). Bound under BOTH main

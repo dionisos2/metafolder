@@ -752,9 +752,8 @@ Behaviours:
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
 | =panel:fullscreen=   | Show only the focused panel fullscreen (escape exits) |
-| =metarecord:create=       | Clear =metarecord-detail= to create a new metarecord     |
+| =metarecord:create=       | Create a new metarecord immediately and select it (=metarecord-detail=) |
 | =metarecord:delete=       | Delete the selected metarecord                      |
-| =metarecord:save=         | Save the staged new metarecord (=metarecord-detail=)    |
 | =metarecord:field-next= / =metarecord:field-prev= | Move the field-row cursor (=metarecord-detail=) |
 | =metarecord:field-edit=   | Edit the field row under the cursor                 |
 | =metarecord:field-delete= | Delete the field row under the cursor               |
@@ -899,9 +898,8 @@ fully keyboard-drivable):
   inline editor =Enter= confirms and =Escape= cancels.
 - =d= deletes the field row under the cursor (=metarecord:field-delete=, with
   confirmation).
-- =a= opens the add-field form (=metarecord:add-field=); =Ctrl-n= starts a new
-  metarecord (=metarecord:create=); =Ctrl-s= saves a staged new metarecord
-  (=metarecord:save=).
+- =a= opens the add-field form (=metarecord:add-field=); =Ctrl-n= creates a new
+  metarecord (=metarecord:create=) and selects it.
 All defaults are =when = metarecord-detail= suggestions (the weakest layer), so
 a user binding overrides them.
 
@@ -1511,10 +1509,14 @@ Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).
 
 At the bottom of the panel:
-- /New metarecord/ button (or =metarecord:create= command) → clears the form and
-  presents an empty field list for creating a new metarecord. Submitting calls
-  =POST .../metarecords=; on success the new metarecord is set as =selected_metarecord=
-  and the list in the linked =metarecord-list= panel (if any) refreshes.
+- /New metarecord/ button (or =metarecord:create= command) → creates a metarecord
+  *immediately* with =POST .../metarecords= and sets it as =selected_metarecord=,
+  so the ordinary field-editing commands (=metarecord:add-field=,
+  =metarecord:set-field=, the =m …= sequence) apply to a live record from the
+  start — there is no staged, not-yet-saved draft. The command first prompts for
+  a schema type (blank = an empty record; a type seeds its template fields, one
+  atomic create); the linked =metarecord-list= panel (if any) refreshes. To
+  abandon a record created this way, delete it (=metarecord:delete=).
 - /Add field/ → =POST .../metarecords/:uuid/fields=
 - /Set field/ → =PATCH .../metarecords/:uuid=
 - /Delete metarecord/ → confirmation → =DELETE .../metarecords/:uuid=
