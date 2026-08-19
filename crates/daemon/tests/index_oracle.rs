@@ -757,6 +757,34 @@ fn osm_path_single_term_matches_sql() {
 }
 
 #[test]
+fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
+    // A multi-term OSM path is order-sensitive, so the index can't do it alone;
+    // `resolve_index_leaves` pre-resolves it to a UuidIn (without the SQL VALUES
+    // inlining) and the index composes. The set and count must match SQL, and the
+    // ordered semantics must hold (a reversed term order matches nothing here).
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let video = o.create(vec![tref("loc", Some(root), "video")]);
+    let series = o.create(vec![tref("loc", Some(video), "series")]);
+    let _scifi = o.create(vec![tref("loc", Some(series), "science-fiction")]);
+    let _music = o.create(vec![tref("loc", Some(root), "music")]);
+
+    for terms in [vec!["video", "scien"], vec!["scien", "video"], vec!["ser", "vid"]] {
+        let q = osm_path_q("loc", &terms);
+        let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let index = RepoIndex::build(&o.conn).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
+        // with no roots needed.
+        let (mut got, _) =
+            index.evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new()).unwrap();
+        sql.sort();
+        got.sort();
+        assert_eq!(got, sql, "multi-term osm path divergence on {terms:?}");
+    }
+}
+
+#[test]
 fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
     // The GUI finder runs `or(osm_path(mfr_path), osmd(label), osmd(name))`. The
     // index can't do the `osmd` (Direct) leaves, but after `resolve_index_leaves`
