@@ -17,9 +17,6 @@ export function entriesFooter(shown, total) {
  * One directory entry, as `metafolder.fs.readDir` returns it.
  * @typedef {Metafolder.FsEntry} Entry
  *
- * A `select: '*'` query page, as the daemon returns it.
- * @typedef {{results: Metafolder.Metarecord[], next_cursor?: string|null}} Page
- *
  * The one API method these helpers need.
  * @typedef {Pick<Metafolder.Daemon, 'call'>} Daemon
  */
@@ -81,14 +78,10 @@ export function isWithin(path, dir) {
   return dir !== null && (path === dir || path.startsWith(`${dir}/`));
 }
 
-/** @param {string} s */
-function escapeRegex(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 // Uuid of the metarecord of `dir` itself (the "." row), or null when untracked
-// or outside the repo. The root metarecord is the only one with an empty
-// TreeRef name; a subdirectory is pinned down by parent + exact name.
+// or outside the repo. A repo-root-relative path resolves to its node uuid
+// straight from the daemon's in-memory tree cache (`tree/resolve-path`) — one
+// in-memory round-trip, no query. The root maps to the empty path.
 /**
  * @param {Daemon} daemon @param {string|null} repo
  * @param {string|null} repoRoot @param {string} dir
@@ -97,29 +90,10 @@ function escapeRegex(s) {
 export async function loadDirMetarecord(daemon, repo, repoRoot, dir) {
   const rel = relPath(dir, repoRoot);
   if (!repo || rel === null) return null;
-  const matchSelf = {
-    type: 'matches',
-    field: 'mfr_path',
-    pattern: `^${escapeRegex(rel.slice(rel.lastIndexOf('/') + 1))}$`,
-  };
-  const query =
-    rel === ''
-      ? matchSelf
-      : {
-          type: 'and',
-          operands: [
-            {
-              type: 'follows',
-              field: 'mfr_path',
-              target: rel.slice(0, rel.lastIndexOf('/')),
-            },
-            matchSelf,
-          ],
-        };
-  const page = /** @type {Page} */ (
-    await daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1 })
+  const res = /** @type {{uuid: string|null}} */ (
+    await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field: 'mfr_path', path: rel })
   );
-  return page.results[0]?.uuid ?? null;
+  return res?.uuid ?? null;
 }
 
 // Map of absolute child path -> metarecord uuid for every direct tracked child
