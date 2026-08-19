@@ -458,6 +458,29 @@ pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
     collect_field_rows(rows)
 }
 
+/// Streams every field row of the whole repository — all metarecords — in a
+/// single sequential table scan, invoking `f(owner_uuid, row)` per row. This
+/// replaces the per-metarecord `get_field_rows` walk in the bulk index build
+/// (`RepoIndex::build`): one scan instead of one query per metarecord, which on
+/// a large repository turns ~N seeks into a single pass. Row order is
+/// unspecified (the caller routes each row by its owner uuid), and the owner
+/// uuid is selected *after* the shared `FIELD_COLUMNS` so `row_to_field_row`
+/// keeps its column indices.
+pub fn for_each_field_row(
+    conn: &Connection,
+    mut f: impl FnMut(Uuid, FieldRow) -> Result<()>,
+) -> Result<()> {
+    let mut stmt =
+        conn.prepare(&format!("SELECT {FIELD_COLUMNS}, metarecord_uuid FROM field"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let (id, name, value) = row_to_field_row(row)?;
+        let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(9)?)?;
+        f(uuid, FieldRow { id, name, value: value? })?;
+    }
+    Ok(())
+}
+
 /// A single field row by its (repository-unique) id, or `None` if absent.
 pub fn get_field_row_by_id(conn: &Connection, id: i64) -> Result<Option<FieldRow>> {
     let mut stmt =

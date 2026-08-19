@@ -139,35 +139,44 @@ impl RepoIndex {
         let mut sort: HashMap<String, SortReps> = HashMap::new();
         let mut types: HashMap<String, &'static str> = HashMap::new();
         let total = registry.len() as u64;
-        for id in 0..registry.len() as u32 {
-            if id % 2048 == 0 {
-                progress(id as u64, total);
+        // One sequential scan of the whole `field` table — routing each row to
+        // its owner's dense id — instead of a query per metarecord. Progress is
+        // reported per batch of rows against the metarecord total (an upper
+        // bound on progress, since a metarecord holds ≥1 row), and cancellation
+        // is polled at the same cadence.
+        if cancel() {
+            anyhow::bail!("index build cancelled");
+        }
+        let mut scanned_rows: u64 = 0;
+        db::for_each_field_row(conn, |uuid, row| {
+            scanned_rows += 1;
+            if scanned_rows % 4096 == 0 {
+                progress(scanned_rows.min(total), total);
                 if cancel() {
                     anyhow::bail!("index build cancelled");
                 }
             }
-            let uuid = registry.uuid(id).expect("dense id in range");
-            for row in db::get_field_rows(conn, uuid)? {
-                match row.value {
-                    Value::Nothing => {
-                        absent.entry(row.name).or_default().insert(id);
+            let Some(id) = registry.id(uuid) else { return Ok(()) };
+            match row.value {
+                Value::Nothing => {
+                    absent.entry(row.name).or_default().insert(id);
+                }
+                value => {
+                    present.entry(row.name.clone()).or_default().insert(id);
+                    types.entry(row.name.clone()).or_insert_with(|| value.type_str());
+                    // BSI fields derive their sort representative from the
+                    // bit-slices, so they skip the separate sort store.
+                    if !is_bsi_value(&value) {
+                        sort.entry(row.name.clone()).or_default().insert(&value, id);
                     }
-                    value => {
-                        present.entry(row.name.clone()).or_default().insert(id);
-                        types.entry(row.name.clone()).or_insert_with(|| value.type_str());
-                        // BSI fields derive their sort representative from the
-                        // bit-slices, so they skip the separate sort store.
-                        if !is_bsi_value(&value) {
-                            sort.entry(row.name.clone()).or_default().insert(&value, id);
-                        }
-                        fields
-                            .entry(row.name)
-                            .or_insert_with(|| FieldIndex::for_value(&value))
-                            .insert(&value, id);
-                    }
+                    fields
+                        .entry(row.name)
+                        .or_insert_with(|| FieldIndex::for_value(&value))
+                        .insert(&value, id);
                 }
             }
-        }
+            Ok(())
+        })?;
         for fi in fields.values_mut() {
             fi.finalize();
         }

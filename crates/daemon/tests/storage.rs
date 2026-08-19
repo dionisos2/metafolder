@@ -88,6 +88,50 @@ fn test_field_allows_nothing_against_any_type() {
 }
 
 #[test]
+fn test_for_each_field_row_matches_per_record_scan() {
+    // A single streaming scan of the whole `field` table must yield exactly the
+    // same (uuid, id, name, value) rows as the per-metarecord `get_field_rows`
+    // walk it replaces in the index build — every row, once, with its owner.
+    let mut conn = test_conn();
+    let a = create(
+        &mut conn,
+        vec![
+            Field::new("tag", Value::String("x".into())),
+            Field::new("tag", Value::String("y".into())), // multi-map
+            Field::new("rating", Value::Int(5)),
+        ],
+    );
+    let b = create(
+        &mut conn,
+        vec![Field::new("note", Value::Nothing)], // explicit absence
+    );
+    let _empty = create(&mut conn, vec![]); // no fields at all
+
+    // Reference: the per-record accessor, gathered into (uuid, id) -> value.
+    let mut expected: std::collections::HashMap<(Uuid, i64), (String, Value)> =
+        std::collections::HashMap::new();
+    for uuid in db::list_entries(&conn).unwrap() {
+        for row in db::get_field_rows(&conn, uuid).unwrap() {
+            expected.insert((uuid, row.id), (row.name, row.value));
+        }
+    }
+
+    // The streaming scan must reproduce it exactly.
+    let mut got: std::collections::HashMap<(Uuid, i64), (String, Value)> =
+        std::collections::HashMap::new();
+    db::for_each_field_row(&conn, |uuid, row| {
+        let prev = got.insert((uuid, row.id), (row.name, row.value));
+        assert!(prev.is_none(), "row id {} streamed twice", row.id);
+        Ok(())
+    })
+    .unwrap();
+
+    assert_eq!(got, expected);
+    assert_eq!(a.fields.len(), 3);
+    assert_eq!(b.fields.len(), 1);
+}
+
+#[test]
 fn test_field_type_unlocks_when_empty() {
     // With no non-Nothing rows left, the name's type is unestablished again and a
     // new (different) type may be written.
