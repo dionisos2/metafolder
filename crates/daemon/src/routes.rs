@@ -1791,6 +1791,7 @@ fn run_query_filter(
     // the index serves it by expanding those nodes' subtrees.
     let mut osm_targets = Vec::new();
     crate::index::collect_osm_path_targets(&body.query, &mut osm_targets);
+    let has_indexable_osm = !osm_targets.is_empty();
     for (field, term) in osm_targets {
         let nodes = query_exec::osm_name_nodes(conn, &field, &term)?;
         roots.osm.insert((field, term), nodes);
@@ -1799,7 +1800,15 @@ fn run_query_filter(
     // multi-term Osm Path) to UuidIn sets, so a query that merely *contains* one
     // (the finder's `or(osm_path, osmd(label), osmd(name))`) is still served
     // whole by the index — with an O(1) count — instead of a full SQL scan.
-    let indexed_query = query_exec::resolve_index_leaves(conn, cache, &body.query)?;
+    // Only worthwhile when a full scan would happen anyway (`count`) or an
+    // index-served osm_path carries the expensive part: otherwise pre-resolving a
+    // text leaf would fetch its whole match set where the SQL engine could stop
+    // at `limit`, so leave the query for the SQL fallback.
+    let indexed_query = if body.count || has_indexable_osm {
+        query_exec::resolve_index_leaves(conn, cache, &body.query)?
+    } else {
+        body.query.clone()
+    };
 
     let mut index_guard = repo_state.index.lock_recover();
     let index = ensure_index(conn, &mut index_guard, cancel)?;
