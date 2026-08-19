@@ -2131,6 +2131,17 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui input <key>... [--prompt <text>] [--timeout-ms]= | Waits for one of the keys, prints it (=--prompt= shows a question in the dedicated bar; exit 1 on timeout/close) |
 | =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
+=mf gui prompt --completions-stdin= is how a script obtains a *missing argument*
+through the GUI's completion UI rather than only from its command line: it reads
+the candidate list on stdin and returns the confirmed value. The bundled scripts
+share thin wrappers over it in =scripts/lib/mf-gui.sh= — =mf_gui_prompt= (generic,
+completions on stdin), =mf_gui_prompt_tag= (over the tag vocabulary), and
+=mf_gui_prompt_folder= / =mf_gui_prompt_file= (over the repository's tracked
+directories/files, resolved in one =mf metarecord … get --resolve-tree mfr_path=
+round-trip and paired with =mf_gui_path_uuid= to map the chosen path back to a
+metarecord). So e.g. =gui-tag-folder.sh= takes its tag and folder either as
+positional arguments *or*, when omitted, from the GUI completion.
+
 *** Example: image comparison script
 
 #+BEGIN_SRC bash

@@ -688,6 +688,37 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
 /// `mf metarecord get [<selector>]` — merges the former list/query/get:
 /// a UUID selector prints the full JSON object; a predicate (or no selector)
 /// prints UUIDs (with `--select`/`--values` for fields/raw values).
+/// `mf metarecord <sel> get --resolve-tree <field>` — the bulk form of
+/// `mf path`: resolve the tree_ref `<field>` of every selected metarecord to
+/// its root-relative path(s) in one `query/fields/resolve-tree` round-trip,
+/// one path per line (sorted, deduplicated). Paths are the endpoint form (no
+/// leading slash; the repo root resolves to an empty line). This is what lets a
+/// GUI script offer folder/file completions without a per-record loop.
+fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let query = match parse_target(selector)? {
+        Target::Entry(uuid) => json!({"type": "uuid_in", "uuids": [uuid.as_simple().to_string()]}),
+        Target::Predicate(query) => serde_json::to_value(query).expect("query serializes"),
+    };
+    let resp = ctx
+        .client
+        .post(&format!("{base}/query/fields/resolve-tree"), &json!({"query": query, "field": field}))?;
+    let mut paths: Vec<String> = resp
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(_, paths)| paths.as_array().cloned().unwrap_or_default())
+        .filter_map(|p| p.as_str().map(str::to_string))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    for path in paths {
+        println!("{path}");
+    }
+    Ok(0)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn metarecord_get(
     ctx: &Ctx,
     selector: Option<&str>,
@@ -696,7 +727,14 @@ pub fn metarecord_get(
     limit: Option<usize>,
     values: bool,
     tsv: bool,
+    resolve_tree: Option<&str>,
 ) -> Result<i32, CliError> {
+    if let Some(field) = resolve_tree {
+        let selector = selector.ok_or_else(|| {
+            CliError::Usage("mf metarecord get --resolve-tree requires -q or -i".into())
+        })?;
+        return resolve_tree_paths(ctx, selector, field);
+    }
     match selector {
         None => list(ctx, limit),
         // A UUID selector (-i) prints the full metadata object (`--select`

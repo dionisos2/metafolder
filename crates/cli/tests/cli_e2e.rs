@@ -2750,6 +2750,41 @@ fn test_cli_primitives_eq_tsv_resolve() {
     assert_eq!(names, vec!["Coltrane", "Davis"]);
 }
 
+#[test]
+fn test_metarecord_get_resolve_tree_lists_paths() {
+    let (repo, root) = init_repo("resolve_tree");
+    std::fs::create_dir_all(root.join("a/b")).unwrap();
+    std::fs::write(root.join("a/f.txt"), b"x").unwrap();
+    // Track the two directories and one file (track builds the parent chain).
+    assert_ok(&mf(&["-u", &repo, "track", root.join("a").to_str().unwrap()]));
+    assert_ok(&mf(&["-u", &repo, "track", root.join("a/b").to_str().unwrap()]));
+    let f = mf(&["-u", &repo, "track", root.join("a/f.txt").to_str().unwrap()]);
+    assert_ok(&f);
+    let f_uuid = f.stdout.trim().to_string();
+
+    // Bulk (query selector): every directory's mfr_path resolved to its
+    // root-relative path, one per line (endpoint form: no leading slash) — the
+    // one round-trip that lets a GUI script offer folder completions.
+    let out = mf(&[
+        "-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get", "--resolve-tree", "mfr_path",
+    ]);
+    assert_ok(&out);
+    let lines: Vec<&str> = out.stdout.lines().collect();
+    assert!(lines.contains(&"a"), "got: {}", out.stdout);
+    assert!(lines.contains(&"a/b"), "got: {}", out.stdout);
+
+    // Direct selector (-i): the single record's resolved path.
+    let out = mf(&[
+        "-u", &repo, "metarecord", "-i", &f_uuid, "get", "--resolve-tree", "mfr_path",
+    ]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "a/f.txt");
+
+    // No selector is a usage error (exit 2, no HTTP round-trip).
+    let out = mf(&["-u", &repo, "metarecord", "get", "--resolve-tree", "mfr_path"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
 // ── mf tag (hierarchical tags: subsumption, exclusivity) ──────────────────────
 
 #[test]

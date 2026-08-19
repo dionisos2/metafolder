@@ -19,7 +19,11 @@
 # Operates on TRACKED metarecords only — reconcile the folder first if you want
 # everything under it covered.
 #
-# Usage: gui-tag-folder.sh <tag> <folder>
+# Both arguments are optional: a missing one is asked in the GUI with
+# completion (the tag over the vocabulary, the folder over the repository's
+# tracked directories).
+#
+# Usage: gui-tag-folder.sh [<tag> [<folder>]]
 
 set -euo pipefail
 
@@ -27,16 +31,29 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/mf-gui.sh
 source "$HERE/lib/mf-gui.sh"
 
-[ $# -eq 2 ] || mf_die "usage: $0 <tag> <folder>"
-TAG=$1
-FOLDER=$2
-case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
+[ $# -le 2 ] || mf_die "usage: $0 [<tag> [<folder>]]"
+TAG=${1:-}
+FOLDER=${2:-}
 
 mf_gui_bind_repo
 
-FOLDER_ABS=$(readlink -f -- "$FOLDER") || mf_die "no such folder: $FOLDER"
-[ -d "$FOLDER_ABS" ] || mf_die "not a directory: $FOLDER_ABS"
-FOLDER_UUID=$(mf track "$FOLDER_ABS") || mf_die "cannot track $FOLDER_ABS (inside the repo root?)"
+# Tag: from the command line, or prompted with completion over the vocabulary.
+[ -n "$TAG" ] || TAG=$(mf_gui_prompt_tag "Tag: ") || mf_die "cancelled"
+[ -n "$TAG" ] || mf_die "empty tag name"
+case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
+
+# Folder: a command-line argument is a filesystem path (tracked on the fly); a
+# prompted value is an in-repo tree-path chosen from the folder completion.
+if [ -n "$FOLDER" ]; then
+    FOLDER_ABS=$(readlink -f -- "$FOLDER") || mf_die "no such folder: $FOLDER"
+    [ -d "$FOLDER_ABS" ] || mf_die "not a directory: $FOLDER_ABS"
+    FOLDER_UUID=$(mf track "$FOLDER_ABS") || mf_die "cannot track $FOLDER_ABS (inside the repo root?)"
+else
+    FOLDER_TP=$(mf_gui_prompt_folder "Folder: ") || mf_die "cancelled"
+    [ -n "$FOLDER_TP" ] || mf_die "empty folder"
+    FOLDER_UUID=$(mf_gui_path_uuid "$FOLDER_TP")
+    [ -n "$FOLDER_UUID" ] || mf_die "no tracked folder at $FOLDER_TP"
+fi
 FOLDER_TP=$(mf path --relative "$FOLDER_UUID")
 
 mf_gui_session_open metarecord-detail

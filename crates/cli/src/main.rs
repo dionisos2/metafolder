@@ -348,6 +348,11 @@ enum MetarecordVerb {
         /// --select field). Requires --select with a field list.
         #[arg(long, requires = "select", conflicts_with = "values")]
         tsv: bool,
+        /// Resolve this tree_ref field of each selected metarecord to its
+        /// root-relative path(s), one per line (the bulk form of `mf path`).
+        /// Needs a selector (-q or -i).
+        #[arg(long = "resolve-tree", conflicts_with_all = ["select", "values", "tsv", "sort"])]
+        resolve_tree: Option<String>,
     },
     /// Create a metarecord with the given fields and print its UUID (no selector)
     Add {
@@ -863,10 +868,14 @@ fn dispatch_metarecord(
         limit: None,
         values: false,
         tsv: false,
+        resolve_tree: None,
     });
     match verb {
-        MetarecordVerb::Get { select, sort, limit, values, tsv } => {
-            commands::metarecord_get(ctx, selector.as_deref(), select.as_deref(), &sort, limit, values, tsv)
+        MetarecordVerb::Get { select, sort, limit, values, tsv, resolve_tree } => {
+            commands::metarecord_get(
+                ctx, selector.as_deref(), select.as_deref(), &sort, limit, values, tsv,
+                resolve_tree.as_deref(),
+            )
         }
         MetarecordVerb::Add { specs, force } => {
             if selector.is_some() {

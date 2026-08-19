@@ -23,9 +23,8 @@ source "$HERE/lib/mf-gui.sh"
 
 mf_gui_bind_repo
 
-# Ask for the tag, completing over the existing vocabulary (mf tag list).
-TAG=$(mf tag list | cut -f1 | mf gui prompt "Tag name: " --completions-stdin) \
-    || mf_die "cancelled"
+# Ask for the tag, completing over the existing vocabulary.
+TAG=$(mf_gui_prompt_tag "Tag name: ") || mf_die "cancelled"
 [ -n "$TAG" ] || mf_die "empty tag name"
 case $TAG in *\"*) mf_die "tag names must not contain double quotes" ;; esac
 

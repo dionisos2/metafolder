@@ -658,6 +658,14 @@ selector the tagging scripts use instead of hand-quoting =title = "$X"=.
 value of each selected field, in order, empty for an absent field — the compact
 dump the scripts consume (e.g. the tag vocabulary).
 
+=--resolve-tree <field>= is the *bulk* form of =mf path=: it resolves the given
+=TreeRef= field of every selected metarecord to its root-relative path(s), one
+per line (sorted, deduplicated), in a single =POST /query/fields/resolve-tree=
+round-trip (paths in the endpoint form — no leading slash; the repo root
+resolves to an empty line). It needs a selector (=-q= or =-i=) and is exclusive
+with =--select=/=--values=/=--tsv=/=--sort=. This is what lets a GUI script offer
+folder/file completions (=mfr_path=) without a per-record loop.
+
 *** =mf metarecord add <spec> [<spec> ...]=
 
 Creates a metarecord with the given fields and prints its UUID (the former =mf

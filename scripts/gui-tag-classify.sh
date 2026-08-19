@@ -21,7 +21,10 @@
 # loops. Resumable: answered questions are skipped, so re-run until nothing is
 # left to ask.
 #
-# Usage: gui-tag-classify.sh <metarecord-uuid>
+# The metarecord is optional: without it, a file is asked in the GUI with
+# completion over the repository's tracked files.
+#
+# Usage: gui-tag-classify.sh [<metarecord-uuid>]
 
 set -euo pipefail
 
@@ -33,10 +36,16 @@ source "$HERE/lib/mf-gui.sh"
 # shellcheck source=gui-tag-next.sh
 source "$HERE/gui-tag-next.sh"
 
-[ $# -eq 1 ] || mf_die "usage: $0 <metarecord-uuid>"
-UUID=$1
+[ $# -le 1 ] || mf_die "usage: $0 [<metarecord-uuid>]"
+UUID=${1:-}
 
 mf_gui_bind_repo
+if [ -z "$UUID" ]; then
+    FILE_TP=$(mf_gui_prompt_file "File to classify: ") || mf_die "cancelled"
+    [ -n "$FILE_TP" ] || mf_die "empty path"
+    UUID=$(mf_gui_path_uuid "$FILE_TP")
+    [ -n "$UUID" ] || mf_die "no tracked file at $FILE_TP"
+fi
 ABS=$(mf path "$UUID") || mf_die "metarecord $UUID has no file path (mfr_path present?)"
 
 mf_gui_session_open metarecord-detail
