@@ -774,6 +774,7 @@ Behaviours:
 | =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
+| =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |

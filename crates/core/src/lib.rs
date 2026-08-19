@@ -8,6 +8,7 @@ pub mod hex;
 pub mod metarecord;
 pub mod progress;
 pub mod query;
+pub mod scripts;
 pub mod simplified;
 pub mod sync;
 pub mod trash;

@@ -609,3 +609,13 @@ pub async fn recent_touch(app: AppHandle<'_>, repo: String, uuid: String) -> Res
         .await
         .map_err(|e| format!("blocking task failed: {e}"))?
 }
+
+/// The installed shipped helper scripts (spec-config "Shipped scripts") that
+/// carry a `# Summary:` header, sorted by name — the candidates for the
+/// `script:run` launcher. Empty when none are installed.
+#[tauri::command]
+pub async fn list_scripts() -> Result<Vec<metafolder_core::scripts::ScriptInfo>, String> {
+    tauri::async_runtime::spawn_blocking(metafolder_core::scripts::list_scripts)
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))
+}

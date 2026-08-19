@@ -91,6 +91,11 @@
 # (works from any panel); the "g" prefix is otherwise free.
 "g r" = { command = "recent" }
 
+# Run an installed helper script ("g s" = go → script): opens the `script:run`
+# picker in the command input, completing over ~/.config/metafolder/scripts/
+# with each script's `# Summary:` as the description. Global, like `g r`.
+"g s" = { command = "script:run" }
+
 # ── Panel navigation and actions ─────────────────────────────────────────────
 # The list panels share the same navigation combos, each dispatched to its own
 # panel type via `when`. Commands are routed to their owning panel type whether

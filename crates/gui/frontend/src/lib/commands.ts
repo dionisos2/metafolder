@@ -229,6 +229,72 @@ registerArgs('recent', [
   { name: 'metarecord', prompt: () => 'Recently viewed:', complete: () => recentCandidates() },
 ]);
 
+// ── Installed helper scripts (the `script:run` builtin) ─────────────────────
+// The shipped scripts live in ~/.config/metafolder/scripts/; a launchable one
+// carries a `# Summary:` header (spec-config "Shipped scripts"), enumerated by
+// the `list_scripts` command. The argument completes to "<name> — <summary>"
+// lines; picking one runs the script as a subprocess whose output streams to
+// the message panel (like a `!` command), and the script drives the GUI back
+// through `mf gui`.
+
+interface ScriptInfo {
+  name: string;
+  summary: string;
+  path: string;
+}
+
+/** Candidate display line → absolute script path, rebuilt on each completion
+ *  pass (and consulted again at launch). */
+const scriptChoices = new Map<string, string>();
+
+/** The installed launchable scripts, newest listing each call. */
+function installedScripts(): Promise<ScriptInfo[]> {
+  return invoke<ScriptInfo[]>('list_scripts');
+}
+
+/** One display line per installed script; also (re)builds `scriptChoices`. */
+async function scriptCandidates(): Promise<string[]> {
+  scriptChoices.clear();
+  const scripts = await installedScripts();
+  return scripts.map((s) => {
+    const line = `${s.name} — ${s.summary}`;
+    scriptChoices.set(line, s.path);
+    return line;
+  });
+}
+
+registerArgs('script:run', [
+  { name: 'script', prompt: () => 'Run script:', complete: () => scriptCandidates() },
+]);
+
+/** Resolves a picked argument to an installed script's path. Accepts the full
+ *  "<name> — <summary>" completion line, or a bare name (e.g. from a
+ *  keybinding), with or without the `.sh` extension. Null when nothing matches. */
+async function resolveScriptPath(choice: string): Promise<string | null> {
+  const mapped = scriptChoices.get(choice);
+  if (mapped) return mapped;
+  const want = choice.trim();
+  const scripts = await installedScripts();
+  const hit = scripts.find(
+    (s) => `${s.name} — ${s.summary}` === want || s.name === want || s.name === `${want}.sh`,
+  );
+  return hit?.path ?? null;
+}
+
+/** Single-quote a path for `sh -c`, escaping embedded single quotes. */
+function shellQuote(path: string): string {
+  return `'${path.replace(/'/g, `'\\''`)}'`;
+}
+
+/** Runs an installed script, surfacing its output in the message panel exactly
+ *  as a `!` command does. */
+async function runScript(path: string, ws: string | null): Promise<void> {
+  if (needsMessagePanel(store.layout, ws)) {
+    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+  }
+  await runShell(`bash ${shellQuote(path)}`);
+}
+
 /**
  * Assembles a command's full argument list from the inline-`provided` prefix,
  * gathering any missing trailing arguments through `promptFn`. The last
@@ -631,6 +697,19 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // args[0] is the picked display line.
       if (ws && args[0]) await openRecent(args[0], ws);
       return true;
+    case 'script:run': {
+      // The `script` argument was collected by dispatch (with completion);
+      // args[0] is the picked "<name> — <summary>" line (or a bare name).
+      const choice = args.join(' ').trim();
+      if (!choice) return true;
+      const path = await resolveScriptPath(choice);
+      if (!path) {
+        await status(`no installed script matches "${choice}"`);
+        return true;
+      }
+      await runScript(path, ws);
+      return true;
+    }
     case 'help':
     case 'help:help': {
       // Open the help panel for an optional topic. The topic (raw arg text) is

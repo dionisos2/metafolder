@@ -41,6 +41,12 @@ fn crate_dir(root: &Path, crate_name: &str) -> PathBuf {
     root.join(crate_name)
 }
 
+/// The installed shipped-scripts directory: `<config_root>/scripts` (a
+/// crate-agnostic top-level category, spec-config "Shipped scripts").
+pub fn scripts_dir() -> Option<PathBuf> {
+    config_root().map(|root| root.join("scripts"))
+}
+
 /// Reads a required configuration file. A missing file is an explicit error
 /// pointing at the install command; there is no fall back to a shipped
 /// default (spec-config "No runtime fallback").
