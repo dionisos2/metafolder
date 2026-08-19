@@ -349,6 +349,60 @@ pub fn validate_entry_fields(
     Ok(violations)
 }
 
+/// A superset of the metarecords that could violate any constraint, gathered
+/// with a handful of index-served set queries (a small group per constraint)
+/// instead of a per-record walk of the whole repository. Running
+/// [`validate_entry_fields`] on exactly these reproduces the full-repo check: a
+/// metarecord not in this set holds every constrained field within its type and
+/// cardinality bounds, so it cannot violate. On a healthy repository the set is
+/// nearly empty, so the whole-repo check no longer scans every metarecord.
+///
+/// `cap` bounds how many rows each query contributes (`Some` for the capped
+/// heads-up, `None` for a full audit). Order is unspecified (the caller applies
+/// the precise per-record validator anyway). The set is a *superset*: the
+/// validator re-applies each constraint's target-type filter, so a candidate
+/// that is not actually of a targeted type simply yields no violation.
+pub fn violation_candidates(
+    schema: &CompiledSchema,
+    conn: &Connection,
+    cap: Option<usize>,
+) -> Result<Vec<Uuid>> {
+    let limit = cap.map(|c| c as i64).unwrap_or(i64::MAX);
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    let mut add = |uuids: Vec<Uuid>| {
+        for u in uuids {
+            if seen.insert(u) {
+                out.push(u);
+            }
+        }
+    };
+    for (field, constraints) in &schema.by_field {
+        for c in constraints {
+            // A row of the wrong type trips the `type` constraint.
+            if let Some(expected) = &c.value_type {
+                add(db::uuids_field_wrong_type(conn, field, expected, limit)?);
+            }
+            // Too many rows trips `max`.
+            if let Some(max) = c.max {
+                add(db::uuids_field_count_over(conn, field, max as i64, limit)?);
+            }
+            // Too few rows trips `min`: present-but-under, plus records that lack
+            // the field entirely (restricted to the target population when the
+            // constraint is targeted, so unrelated records never become
+            // candidates; unrestricted for a global constraint).
+            if c.min > 0 {
+                add(db::uuids_field_count_under(conn, field, c.min as i64, limit)?);
+                match &c.targets {
+                    Some(types) => add(db::uuids_typed_missing_field(conn, types, field, limit)?),
+                    None => add(db::uuids_missing_field(conn, field, limit)?),
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Builds the 400 response carrying the violations array.
 pub fn violation_error(violations: Vec<Violation>) -> ApiError {
     let serialized =
@@ -362,6 +416,66 @@ mod tests {
 
     fn pairs(items: &[(&str, &str)]) -> Vec<(String, String)> {
         items.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect()
+    }
+
+    #[test]
+    fn violation_candidates_gathers_only_records_that_can_violate() {
+        use crate::log::Writer;
+        use metafolder_core::metarecord::{Field, Value};
+
+        // Global: rating is int, at most one; tag is int. Films must have a name.
+        let schema = parse(
+            r#"{"version":1,"groups":[
+                {"targets":"*","constraints":[
+                    {"field":"rating","type":"int","max":1},
+                    {"field":"tag","type":"int"}
+                ]},
+                {"targets":["film"],"constraints":[{"field":"name","type":"string","min":1}]}
+            ]}"#,
+        )
+        .unwrap();
+
+        let mut conn = crate::db::open_in_memory().unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let mk = |conn: &mut rusqlite::Connection, fields: Vec<Field>| -> Uuid {
+            let mut w = Writer::begin(conn, None).unwrap();
+            let m = w.create_metarecord(fields).unwrap();
+            w.commit().unwrap();
+            m.uuid
+        };
+
+        // Clean: satisfies every constraint — not a candidate.
+        let clean = mk(&mut conn, vec![Field::new("rating", Value::Int(5))]);
+        // Two ratings → max_cardinality candidate.
+        let over_max = mk(
+            &mut conn,
+            vec![Field::new("rating", Value::Int(1)), Field::new("rating", Value::Int(2))],
+        );
+        // A film with no name → min_cardinality (missing) candidate.
+        let film_no_name = mk(
+            &mut conn,
+            vec![
+                Field::new("mf_schema", Value::String("film".into())),
+                Field::new("rating", Value::Int(3)),
+            ],
+        );
+        // A film with a name → not a candidate.
+        let clean_film = mk(
+            &mut conn,
+            vec![
+                Field::new("mf_schema", Value::String("film".into())),
+                Field::new("rating", Value::Int(4)),
+                Field::new("name", Value::String("x".into())),
+            ],
+        );
+        // tag declared int, stored string → type candidate.
+        let tag_wrong = mk(&mut conn, vec![Field::new("tag", Value::String("hello".into()))]);
+
+        let got: std::collections::HashSet<Uuid> =
+            violation_candidates(&schema, &conn, None).unwrap().into_iter().collect();
+        let want: std::collections::HashSet<Uuid> =
+            [over_max, film_no_name, tag_wrong].into_iter().collect();
+        assert_eq!(got, want, "clean={clean} clean_film={clean_film}");
     }
 
     #[test]

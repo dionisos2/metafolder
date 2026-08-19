@@ -586,6 +586,116 @@ pub fn metarecords_with_field(conn: &Connection, name: &str) -> Result<Vec<Uuid>
     Ok(uuids)
 }
 
+/// Collects a query yielding one UUID-blob column into `Uuid`s.
+fn collect_uuid_col<'a>(
+    rows: impl Iterator<Item = rusqlite::Result<Vec<u8>>> + 'a,
+) -> Result<Vec<Uuid>> {
+    rows.map(|r| r.map_err(Into::into).and_then(bytes_to_uuid)).collect()
+}
+
+// ── Schema-check candidate queries ──────────────────────────────────────────
+//
+// A whole-repository schema check only needs the metarecords that *could*
+// violate a constraint (schema.rs `violation_candidates`); these index-served
+// set queries find them without a per-record scan. Each takes a `limit` (rows
+// to return — `i64::MAX` for "all") so the capped heads-up stays bounded.
+
+/// Metarecords with ≥1 non-`Nothing` row of `field` whose value type is neither
+/// `allowed` — the exact holders a `type` constraint on `field` can reject.
+pub fn uuids_field_wrong_type(
+    conn: &Connection,
+    field: &str,
+    allowed: &str,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT metarecord_uuid FROM field \
+         WHERE field_name = ?1 AND value_type != 'nothing' AND value_type != ?2 LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![field, allowed, limit], |r| r.get::<_, Vec<u8>>(0))?;
+    collect_uuid_col(rows)
+}
+
+/// Metarecords whose row-count for `field` exceeds `max` (max-cardinality
+/// candidates). Counts every row, `Nothing` included, matching validation.
+pub fn uuids_field_count_over(
+    conn: &Connection,
+    field: &str,
+    max: i64,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT metarecord_uuid FROM field WHERE field_name = ?1 \
+         GROUP BY metarecord_uuid HAVING COUNT(*) > ?2 LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![field, max, limit], |r| r.get::<_, Vec<u8>>(0))?;
+    collect_uuid_col(rows)
+}
+
+/// Metarecords that hold `field` but with fewer than `min` rows (the
+/// present-but-under-minimum candidates; the absent ones are found separately).
+pub fn uuids_field_count_under(
+    conn: &Connection,
+    field: &str,
+    min: i64,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT metarecord_uuid FROM field WHERE field_name = ?1 \
+         GROUP BY metarecord_uuid HAVING COUNT(*) < ?2 LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(params![field, min, limit], |r| r.get::<_, Vec<u8>>(0))?;
+    collect_uuid_col(rows)
+}
+
+/// Metarecords with no `field` row at all (min-cardinality candidates for a
+/// global constraint, where absence violates a `min ≥ 1`).
+pub fn uuids_missing_field(conn: &Connection, field: &str, limit: i64) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT uuid FROM metarecord \
+         WHERE uuid NOT IN (SELECT metarecord_uuid FROM field WHERE field_name = ?1) LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![field, limit], |r| r.get::<_, Vec<u8>>(0))?;
+    collect_uuid_col(rows)
+}
+
+/// Metarecords declared one of `types` (via `mf_schema`) that hold no `field`
+/// row — min-cardinality candidates for a *targeted* constraint, restricted to
+/// the target population so unrelated records are never candidates.
+pub fn uuids_typed_missing_field(
+    conn: &Connection,
+    types: &[String],
+    field: &str,
+    limit: i64,
+) -> Result<Vec<Uuid>> {
+    if types.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders =
+        (1..=types.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
+    let field_idx = types.len() + 1;
+    let limit_idx = types.len() + 2;
+    let sql = format!(
+        "SELECT DISTINCT metarecord_uuid FROM field \
+         WHERE field_name = 'mf_schema' AND value_type = 'string' AND value_text IN ({placeholders}) \
+           AND metarecord_uuid NOT IN (SELECT metarecord_uuid FROM field WHERE field_name = ?{field_idx}) \
+         LIMIT ?{limit_idx}"
+    );
+    let mut params: Vec<rusqlite::types::Value> =
+        types.iter().map(|t| rusqlite::types::Value::Text(t.clone())).collect();
+    params.push(rusqlite::types::Value::Text(field.to_string()));
+    params.push(rusqlite::types::Value::Integer(limit));
+    let mut stmt = conn.prepare(&sql)?;
+    let rows =
+        stmt.query_map(rusqlite::params_from_iter(params.iter()), |r| r.get::<_, Vec<u8>>(0))?;
+    collect_uuid_col(rows)
+}
+
+/// Total number of metarecords in the repository (one cheap `COUNT`).
+pub fn count_metarecords(conn: &Connection) -> Result<usize> {
+    Ok(conn.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get::<_, i64>(0))? as usize)
+}
+
 fn collect_field_rows<'a>(
     rows: impl Iterator<Item = rusqlite::Result<(i64, String, Result<Value>)>> + 'a,
 ) -> Result<Vec<FieldRow>> {

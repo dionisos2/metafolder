@@ -1389,20 +1389,30 @@ async fn check_schema(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
-        let uuids = match &body.query {
-            None => db::list_entries(&conn)?,
-            Some(query) => {
-                let mut cache = repo_state.lock_cache();
-                query_exec::execute(&conn, &mut cache, query, &[], None, None)?.0
-            }
-        };
         let guard = repo_state.schema.lock_recover();
         let mut violations: Vec<serde_json::Value> = Vec::new();
         let mut checked = 0usize;
         if let Some(schema) = guard.as_ref() {
+            // Which metarecords to validate. A scoped check (`query`) walks that
+            // (usually small) result set. A whole-repo check does NOT scan every
+            // metarecord: it validates only the ones the index-served candidate
+            // queries flag as *able* to violate — nearly none on a healthy repo,
+            // so the once-per-open heads-up stays cheap even at 400k records.
+            let uuids = match &body.query {
+                Some(query) => {
+                    let mut cache = repo_state.lock_cache();
+                    query_exec::execute(&conn, &mut cache, query, &[], None, None)?.0
+                }
+                None => crate::schema::violation_candidates(
+                    schema,
+                    &conn,
+                    // A cap on candidates suffices once we only need `limit + 1`
+                    // violations to report truncation; unbounded for a full audit.
+                    body.limit.map(|l| l + 1),
+                )?,
+            };
             let fields = schema.constrained_fields();
-            // Collect up to `limit + 1` so truncation is exact, then stop the
-            // scan — a repo with hundreds of thousands of violations stays cheap.
+            // Collect up to `limit + 1` so truncation is exact, then stop.
             'scan: for uuid in &uuids {
                 checked += 1;
                 for violation in
@@ -1414,6 +1424,14 @@ async fn check_schema(
                         break 'scan;
                     }
                 }
+            }
+            // For a whole-repo check that ran to completion, report the true
+            // repository size as `checked`: the candidate set is an exhaustive
+            // superset of the violators, so every metarecord was effectively
+            // examined (the non-candidates are provably clean).
+            let truncated = body.limit.is_some_and(|l| violations.len() > l);
+            if body.query.is_none() && !truncated {
+                checked = db::count_metarecords(&conn)?;
             }
         }
         let truncated = body.limit.is_some_and(|l| violations.len() > l);
