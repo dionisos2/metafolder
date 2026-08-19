@@ -80,9 +80,10 @@ task-poll-ms = 1500
 # ref points to, so this cannot be inferred). Each value is written in the
 # metarecord-list query box's syntax. The seed is keyed by field name, so the
 # tag model's three ref fields (tag / negative_tag / mixed_tag) each need their
-# own entry — all filtering to the tag entries. Example:
-# [picker-seeds]
-# tag          = 'type = "tag"'
-# negative_tag = 'type = "tag"'
-# mixed_tag    = 'type = "tag"'
+# own entry — all filtering to the tag entries; they are seeded by default
+# below. Add your own the same way (e.g. the commented `author` example).
+[picker-seeds]
+tag          = 'type = "tag"'
+negative_tag = 'type = "tag"'
+mixed_tag    = 'type = "tag"'
 # author       = 'type = "person"'
