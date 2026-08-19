@@ -93,6 +93,33 @@ crates/cli/default-config/config.toml
 There are no =include_str!=/=include_dir!= copies of these in any binary: a
 binary never holds its own defaults (see "No runtime fallback").
 
+*** Shipped scripts
+
+Beside the per-crate subdirectories there is one *crate-agnostic* top-level
+category: the user-facing helper scripts (the =gui-*= tag/classification
+drivers and their shared =lib/=). They are not tied to any single crate — a
+script may drive the GUI, the CLI, or both — so they do not belong under any
+=<crate>/= subdir.
+
+Their source lives at =scripts/shipped/= in the checkout (the dev/build
+scripts stay in =scripts/= and are *not* shipped), and maps to the config
+repo's top-level =scripts/= → =~/.config/metafolder/scripts/=:
+
+#+BEGIN_SRC
+scripts/shipped/gui-tag-classify.sh   -> ~/.config/metafolder/scripts/gui-tag-classify.sh
+scripts/shipped/lib/mf-gui.sh         -> ~/.config/metafolder/scripts/lib/mf-gui.sh
+#+END_SRC
+
+Because they live under =main= like every other config file, a user can edit
+a shipped script or drop in their own, and refreshed shipped versions merge in
+(the same three-way merge as the rest of the config).
+
+A launchable script carries a one-line =# Summary:= header comment (right
+after the shebang); the GUI's =script:run= launcher lists exactly those, using
+the summary as the completion description. Sourced-only libraries
+(=lib/mf-gui.sh=, =gui-tag-next.sh=) carry no =# Summary:= and so are installed
+but not offered as runnable entries.
+
 * Branch model
 
 - =default= — the shipped defaults. Updated only by =metafolder-sync-config=,
@@ -115,9 +142,10 @@ working tree. The command is run as an install/update step (e.g. after pulling
 a new source checkout), not from any long-running process.
 
 Inputs:
-- =--source <dir>= — the source checkout whose =crates/*/default-config/= are
-  gathered. Defaults to the current working directory (the git-checkout install
-  case). [v2: a binary-only install would embed the defaults instead.]
+- =--source <dir>= — the source checkout whose =crates/*/default-config/= and
+  =scripts/shipped/= are gathered. Defaults to the current working directory
+  (the git-checkout install case). [v2: a binary-only install would embed the
+  defaults instead.]
 - =--config-dir <dir>= — target. Defaults to =~/.config/metafolder/=.
 
 ** First run (repository absent)

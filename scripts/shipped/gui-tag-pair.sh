@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Summary: Interactive yes/no tagging of one tag across all files.
 # Interactive y/n tagging for ONE tag over a repository's files, in the running
 # metafolder GUI. Asks for a tag (autocompleting over the existing vocabulary),
 # then walks every file with no opinion on it yet, shows it, and waits for a key:

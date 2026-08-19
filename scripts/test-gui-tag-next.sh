@@ -6,7 +6,7 @@
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
-NEXT="$HERE/gui-tag-next.sh"
+NEXT="$HERE/shipped/gui-tag-next.sh"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

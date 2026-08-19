@@ -2134,7 +2134,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 =mf gui prompt --completions-stdin= is how a script obtains a *missing argument*
 through the GUI's completion UI rather than only from its command line: it reads
 the candidate list on stdin and returns the confirmed value. The bundled scripts
-share thin wrappers over it in =scripts/lib/mf-gui.sh= — =mf_gui_prompt= (generic,
+share thin wrappers over it in =scripts/shipped/lib/mf-gui.sh= — =mf_gui_prompt= (generic,
 completions on stdin), =mf_gui_prompt_tag= (over the tag vocabulary), and
 =mf_gui_prompt_folder= / =mf_gui_prompt_file= (over the repository's tracked
 directories/files, resolved in one =mf metarecord … get --resolve-tree mfr_path=

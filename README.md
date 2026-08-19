@@ -237,7 +237,8 @@ The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
 - `mf schema {check,reload,show}` — user schema.
 - `mf gui …` — drive a running GUI through its scripting API (`status`, `repo`,
   `workspace new|rm`, `layout`, `view`, `message`, `bench`, `command`, `input`,
-  `prompt`); see `scripts/gui-tag-pair.sh` for a complete interactive example.
+  `prompt`); see `scripts/shipped/gui-tag-pair.sh` for a complete interactive
+  example.
 
 Field specs are `name:type[=value]` (e.g. `genre:string=jazz`, `rating:int=5`).
 Run `mf --help` (and `mf <command> --help`) for the full set of options.

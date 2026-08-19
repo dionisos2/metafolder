@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Summary: Bulk-apply one tag over a folder subtree (yes/no/mixed walk).
 # Bulk-apply one tag over a folder subtree, in the running metafolder GUI.
 # Given a TAG (a "/"-separated tag path) and a FOLDER, asks whether the folder
 # carries the tag; three answers:

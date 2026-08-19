@@ -22,9 +22,10 @@ pub struct SyncOutcome {
     pub conflict: Option<Vec<PathBuf>>,
 }
 
-/// Gathers `<source_root>/crates/*/default-config/` into the user
-/// configuration repository at `config_dir`, creating it on first run and
-/// otherwise merging the refreshed defaults into the user's `main` branch.
+/// Gathers `<source_root>/crates/*/default-config/` (plus the crate-agnostic
+/// `<source_root>/scripts/shipped/` → `scripts/`) into the user configuration
+/// repository at `config_dir`, creating it on first run and otherwise merging
+/// the refreshed defaults into the user's `main` branch.
 pub fn sync(source_root: &Path, config_dir: &Path) -> Result<SyncOutcome, String> {
     let files = gather_defaults(source_root)?;
     if config_dir.join(".git").exists() {
@@ -274,7 +275,8 @@ fn build_tree(repo: &git2::Repository, files: &BTreeMap<PathBuf, Vec<u8>>) -> Re
 }
 
 /// Gathers the shipped defaults into a map of repo-relative path -> bytes.
-/// Each `crates/<name>/default-config/<sub>` maps to `<name>/<sub>`; the
+/// Each `crates/<name>/default-config/<sub>` maps to `<name>/<sub>`, and
+/// `scripts/shipped/<sub>` maps to the crate-agnostic `scripts/<sub>`; the
 /// root `.gitignore` is included.
 fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
     let mut out = BTreeMap::new();
@@ -294,6 +296,15 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
         }
         let prefix = PathBuf::from(entry.file_name());
         collect_files(&default_config, &prefix, &mut out)?;
+    }
+
+    // Crate-agnostic category: the shipped user scripts under
+    // `<source_root>/scripts/shipped/` install to the config repo's top-level
+    // `scripts/` (spec-config "Shipped scripts"). Optional — a checkout may
+    // lack it.
+    let shipped = source_root.join("scripts").join("shipped");
+    if shipped.is_dir() {
+        collect_files(&shipped, &PathBuf::from("scripts"), &mut out)?;
     }
     Ok(out)
 }
@@ -375,6 +386,30 @@ mod tests {
         assert_eq!(read(&config, "core/query-grammar").as_deref(), Some("g1"));
         assert!(config.join(".gitignore").exists());
         assert!(config.join(".git").is_dir());
+    }
+
+    #[test]
+    fn gathers_top_level_scripts_dir() {
+        let area = scratch();
+        let (source, config) = (area.join("src"), area.join("cfg"));
+        make_source(&source, &[("gui/style.css", "body{}")]);
+        // Shipped user scripts live at <root>/scripts/shipped/ and install to
+        // the config repo's top-level scripts/ — a crate-agnostic category,
+        // unlike the per-crate default-config/ trees.
+        let shipped = source.join("scripts").join("shipped");
+        fs::create_dir_all(shipped.join("lib")).unwrap();
+        fs::write(shipped.join("gui-tag-classify.sh"), "#!/bin/sh\n").unwrap();
+        fs::write(shipped.join("lib/mf-gui.sh"), "helpers\n").unwrap();
+
+        sync(&source, &config).unwrap();
+        assert_eq!(
+            read(&config, "scripts/gui-tag-classify.sh").as_deref(),
+            Some("#!/bin/sh\n")
+        );
+        assert_eq!(
+            read(&config, "scripts/lib/mf-gui.sh").as_deref(),
+            Some("helpers\n")
+        );
     }
 
     #[test]

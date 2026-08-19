@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Summary: Interactively classify one file's hierarchical tags in the GUI.
 # Interactive hierarchical-tag classification of ONE metarecord, in the running
 # metafolder GUI. Shows the file (left `file` panel) and its metadata (right
 # `metarecord-detail` panel), then asks a descending series of questions

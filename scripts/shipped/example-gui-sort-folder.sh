@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Summary: Example/template — classify then sort a folder's files by metadata.
 # EXAMPLE — a *template* to copy and adapt, not a finished tool. It walks a
 # folder, and for each entry: (1) fully classifies its tags with
 # gui-tag-classify.sh, (2) asks a few extra field questions, then (3) moves the
