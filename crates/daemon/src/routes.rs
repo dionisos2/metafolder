@@ -301,9 +301,22 @@ async fn list_fields(
             .as_ref()
             .map(|s| s.declared_types())
             .unwrap_or_default();
-        let mut index_guard = repo_state.index.lock_recover();
-        let data = ensure_index(&conn, &mut index_guard, &|| false)?.field_catalog(None);
-        drop(index_guard);
+        // The data-derived catalog is served from the in-memory index only when
+        // it is present AND already at the current HEAD — an O(1) memory read,
+        // the fast path a warm repository hits. Otherwise (index cold, or stale
+        // after writes) fall back to a single cheap `SELECT DISTINCT field_name,
+        // value_type` rather than building/refreshing the whole index
+        // synchronously here, which on a large repository would block this
+        // request for seconds just to enumerate field names.
+        let data = {
+            let index_guard = repo_state.index.lock_recover();
+            match index_guard.as_ref() {
+                Some(index) if index.built_at_head() == db::current_head(&conn)? => {
+                    index.field_catalog(None)
+                }
+                _ => db::distinct_field_names(&conn, None)?,
+            }
+        };
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).
         let names =
