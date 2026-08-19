@@ -62,6 +62,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/retype", post(retype_field))
         .route("/repos/:repo/fields", get(list_fields))
         .route("/repos/:repo/tree/roots", get(tree_roots))
+        .route("/repos/:repo/tree/children", get(tree_children))
         .route("/repos/:repo/tree/resolve-path", post(resolve_tree_path))
         // ── Set layer (by predicate) ─────────────────────────────────────────
         .route("/repos/:repo/query", post(run_query))
@@ -334,6 +335,14 @@ struct TreeRootsParams {
     field: String,
 }
 
+#[derive(Deserialize)]
+struct TreeChildrenParams {
+    #[serde(default = "default_tree_field")]
+    field: String,
+    /// The parent node's metarecord uuid (hex), whose direct children are listed.
+    uuid: String,
+}
+
 /// `GET /repos/:repo/tree/roots?field=<field>`: the forest roots of a TreeRef
 /// field — the nodes whose direct parent is the root sentinel (no parent).
 /// Response `[{"uuid": "<hex>", "name": "<name>"}, ...]`, ordered by name. This
@@ -354,6 +363,31 @@ async fn tree_roots(
         roots.sort_by(|a, b| a.1.cmp(&b.1));
         let out: Vec<serde_json::Value> =
             roots.into_iter().map(|(uuid, name)| json!({"uuid": hex(uuid), "name": name})).collect();
+        Ok(Json(serde_json::Value::Array(out)))
+    })
+    .await
+}
+
+/// `GET /repos/:repo/tree/children?field=<field>&uuid=<hex>`: the direct
+/// children of one TreeRef node as `[{"uuid": "<hex>", "name": "<name>"}, ...]`,
+/// ordered by name. Served from the (eager) tree cache in memory, falling back
+/// to one DB query. Lets a client list a directory's tracked entries — names +
+/// their metarecords — in one call, without a query and a per-record fetch of
+/// every child.
+async fn tree_children(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<TreeChildrenParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let parent = parse_uuid(&params.uuid)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let mut children = cache.children_of(&conn, &params.field, parent)?;
+        children.sort_by(|a, b| a.0.cmp(&b.0));
+        let out: Vec<serde_json::Value> =
+            children.into_iter().map(|(name, uuid)| json!({"uuid": hex(uuid), "name": name})).collect();
         Ok(Json(serde_json::Value::Array(out)))
     })
     .await

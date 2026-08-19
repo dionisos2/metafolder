@@ -318,6 +318,45 @@ impl TreeCache {
         Ok(result)
     }
 
+    /// The direct children of `uuid` in `field`'s forest as `(name, child_uuid)`
+    /// pairs — the one-level counterpart of [`Self::descendants`]. Served from
+    /// memory while the cache is complete, else one DB query. Lets a caller list
+    /// a directory's tracked entries (names + metarecords) without a query and a
+    /// per-record fetch of each child.
+    pub fn children_of(
+        &mut self,
+        conn: &Connection,
+        field: &str,
+        uuid: Uuid,
+    ) -> Result<Vec<(String, Uuid)>> {
+        if self.complete {
+            return Ok(self.children_of_in_cache(field, uuid));
+        }
+        self.misses += 1;
+        // `tree_children` yields `(child_uuid, name)`; expose `(name, child_uuid)`.
+        Ok(db::tree_children(conn, field, uuid)?.into_iter().map(|(u, n)| (n, u)).collect())
+    }
+
+    fn children_of_in_cache(&self, field: &str, uuid: Uuid) -> Vec<(String, Uuid)> {
+        let mut out = Vec::new();
+        let mut seen = HashSet::new();
+        let Some(ft) = self.fields.get(field) else {
+            return out;
+        };
+        let Some(starts) = ft.by_uuid.get(&uuid) else {
+            return out;
+        };
+        for &start in starts {
+            for &child in self.node(start).children.values() {
+                let node = self.node(child);
+                if seen.insert(node.uuid) {
+                    out.push((node.name.clone(), node.uuid));
+                }
+            }
+        }
+        out
+    }
+
     /// Notifies the cache that a metarecord was inserted under `parent`.
     pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &str, uuid: Uuid) {
         self.clock += 1;

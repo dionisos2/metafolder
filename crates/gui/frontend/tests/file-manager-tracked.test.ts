@@ -1,7 +1,7 @@
 // file-manager tracked-children lookup (spec-gui "file-manager panel
-// type"): only the entries of the currently rendered window are fetched
-// (Follows + Matches over the window's names), so a directory with
-// thousands of tracked files only queries the slice the user can see.
+// type"): a directory's tracked entries come from a single GET /tree/children
+// on its node (served from the daemon's in-memory tree cache), so a directory
+// with thousands of tracked files costs neither a query nor a per-record fetch.
 
 import { describe, expect, test, vi } from 'vitest';
 import { relPath, parentDir, isWithin, loadTrackedChildren, loadDirMetarecord, entriesFooter, filterHidden, syntheticRows } from '../../default-config/panel-types/file-manager/tracked.js';
@@ -185,91 +185,63 @@ describe('loadDirMetarecord', () => {
 });
 
 describe('loadTrackedChildren', () => {
+  // The daemon returns a directory node's direct children as {uuid, name} —
+  // served from the tree cache, no query and no per-record fetch.
+  const childrenDaemon = (children: { uuid: string; name: string }[]) => ({
+    call: vi.fn(async (..._args: any[]) => children),
+  });
+
   test('no repo: empty map, no daemon round-trip', async () => {
-    const daemon = fakeDaemon([]);
+    const daemon = childrenDaemon([]);
     const map = await loadTrackedChildren(daemon, null, '/data/repo', '/data/repo', 'dddd');
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
   test('outside the root: empty map, no daemon round-trip', async () => {
-    const daemon = fakeDaemon([]);
+    const daemon = childrenDaemon([]);
     const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/tmp', 'dddd');
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
   test('untracked directory (no node uuid): empty map, no daemon round-trip', async () => {
-    // With no metarecord for the directory itself, no child can reference it as
-    // a parent — so there is nothing to fetch.
-    const daemon = fakeDaemon([]);
+    // With no metarecord for the directory itself, it has no tracked children.
+    const daemon = childrenDaemon([]);
     const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo/new', null);
     expect(map.size).toBe(0);
     expect(daemon.call).not.toHaveBeenCalled();
   });
 
-  test('fetches every direct tracked child via follows(parent) alone, index-served', async () => {
-    // The direct children of /music are its metarecords; the query is a single
-    // Follows on the path target (no per-name Matches), which the bitmap index
-    // serves. Positions are kept only when their parent is the directory node.
-    const daemon = fakeDaemon([
-      { results: [entry('aaaa', 'a.mp3'), entry('bbbb', 'jazz')], next_cursor: null },
+  test('fetches the directory node\'s direct children in one tree/children call', async () => {
+    const daemon = childrenDaemon([
+      { uuid: 'aaaa', name: 'a.mp3' },
+      { uuid: 'bbbb', name: 'jazz' },
     ]);
     const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo/music', 'dddd');
     expect(daemon.call).toHaveBeenCalledTimes(1);
-    expect(daemon.call).toHaveBeenCalledWith('POST', '/repos/r1/query', {
-      query: { type: 'follows', field: 'mfr_path', target: '/music' },
-      select: ['mfr_path'],
-      limit: 500,
-    });
+    expect(daemon.call).toHaveBeenCalledWith(
+      'GET',
+      '/repos/r1/tree/children?field=mfr_path&uuid=dddd',
+    );
     expect(map.get('/data/repo/music/a.mp3')).toBe('aaaa');
     expect(map.get('/data/repo/music/jazz')).toBe('bbbb');
     expect(map.size).toBe(2);
   });
 
-  test('the repo root queries the empty path target', async () => {
-    const daemon = fakeDaemon([{ results: [entry('aaaa', 'music')], next_cursor: null }]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
-    expect(daemon.call.mock.calls[0][2].query).toEqual({
-      type: 'follows',
-      field: 'mfr_path',
-      target: '',
-    });
+  test('the repo root uses its own node uuid', async () => {
+    const daemon = childrenDaemon([{ uuid: 'aaaa', name: 'music' }]);
+    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'rootuuid');
+    expect(daemon.call).toHaveBeenCalledWith(
+      'GET',
+      '/repos/r1/tree/children?field=mfr_path&uuid=rootuuid',
+    );
     expect(map.get('/data/repo/music')).toBe('aaaa');
   });
 
-  test('follows next_cursor across pages', async () => {
-    const daemon = fakeDaemon([
-      { results: [entry('aaaa', 'a')], next_cursor: 'c1' },
-      { results: [entry('bbbb', 'b')], next_cursor: null },
-    ]);
+  test('a missing/null response yields an empty map', async () => {
+    const daemon = { call: vi.fn(async () => null) };
     const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
-    expect(daemon.call).toHaveBeenCalledTimes(2);
-    expect(daemon.call.mock.calls[1][2].cursor).toBe('c1');
-    expect(map.size).toBe(2);
-  });
-
-  test('keeps only positions whose parent is the directory node', async () => {
-    const noisy: Entry = {
-      uuid: 'cccc',
-      fields: [
-        { name: 'title', value: { type: 'string', value: 'x' } },
-        { name: 'mfr_path', value: { type: 'nothing', value: null } },
-      ],
-    };
-    // A multi-position metarecord: one position is a child of this directory
-    // node ('dddd'), the other lives under a different parent — only the former
-    // is mapped here.
-    const multi: Entry = {
-      uuid: 'dddd',
-      fields: [
-        { name: 'mfr_path', value: treeRef('dddd', 'wanted') },
-        { name: 'mfr_path', value: treeRef('eeee', 'elsewhere') },
-      ],
-    };
-    const daemon = fakeDaemon([{ results: [noisy, multi], next_cursor: null }]);
-    const map = await loadTrackedChildren(daemon, 'r1', '/data/repo', '/data/repo', 'dddd');
-    expect(map.get('/data/repo/wanted')).toBe('dddd');
-    expect(map.size).toBe(1);
+    expect(map.size).toBe(0);
   });
 });

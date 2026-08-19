@@ -936,6 +936,50 @@ async fn test_tree_roots_lists_forest_roots() {
 }
 
 #[tokio::test]
+async fn test_tree_children_lists_direct_children() {
+    let (app, repo, root) = app_with_repo("treechildren").await;
+    let treeref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "cat",
+            "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let id = |m: Value| m["uuid"].as_str().unwrap().to_string();
+
+    let music = id(create_metarecord(&app, &repo, treeref(None, "music")).await);
+    let jazz = id(create_metarecord(&app, &repo, treeref(Some(&music), "jazz").clone()).await);
+    let rock = id(create_metarecord(&app, &repo, treeref(Some(&music), "rock")).await);
+
+    // The direct children of `music`, ordered by name, each with its uuid.
+    let (status, body) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/tree/children?field=cat&uuid={music}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "got: {body}");
+    let entries = body.as_array().unwrap();
+    let names: Vec<&str> = entries.iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["jazz", "rock"], "direct children only, sorted by name");
+    let by_name = |n: &str| {
+        entries.iter().find(|e| e["name"] == n).unwrap()["uuid"].as_str().unwrap().to_string()
+    };
+    assert_eq!(by_name("jazz"), jazz);
+    assert_eq!(by_name("rock"), rock);
+
+    // A leaf has no children.
+    let (_, leaf) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/tree/children?field=cat&uuid={jazz}"),
+        None,
+    )
+    .await;
+    assert_eq!(leaf.as_array().unwrap().len(), 0, "a leaf has no children: {leaf}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_list_fields_distinct_names_and_types() {
     let (app, repo, root) = app_with_repo("listfields").await;
 

@@ -127,6 +127,38 @@ fn test_paths_of_without_the_field_is_empty() {
     assert!(cache.paths_of(&conn, "mfr_path", m).unwrap().is_empty());
 }
 
+// ── Direct children (children_of) ───────────────────────────────────────────
+
+#[test]
+fn test_children_of_lists_direct_children_cache_and_fallback() {
+    let mut conn = test_conn();
+    let (root, music, jazz, file) = build_tree(&mut conn);
+    let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
+
+    let mut want = vec![("jazz".to_string(), jazz), ("rock".to_string(), rock)];
+    want.sort();
+
+    // DB-fallback path (cache not populated → not complete).
+    let mut cache = TreeCache::new(false);
+    let mut got = cache.children_of(&conn, "mfr_path", music).unwrap();
+    got.sort();
+    assert_eq!(got, want, "direct children of music");
+    assert_eq!(
+        cache.children_of(&conn, "mfr_path", root).unwrap(),
+        vec![("music".to_string(), music)],
+        "root's only child is music"
+    );
+    assert!(cache.children_of(&conn, "mfr_path", file).unwrap().is_empty(), "a leaf has none");
+
+    // In-memory path (fully populated) yields the same.
+    let mut warm = TreeCache::new(false);
+    warm.populate(&conn).unwrap();
+    assert!(warm.is_complete());
+    let mut got_warm = warm.children_of(&conn, "mfr_path", music).unwrap();
+    got_warm.sort();
+    assert_eq!(got_warm, want, "cache and fallback agree");
+}
+
 #[test]
 fn test_resolution_is_cached() {
     let mut conn = test_conn();
