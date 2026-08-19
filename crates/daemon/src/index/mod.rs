@@ -5,9 +5,15 @@
 //! against the SQL engine ([`crate::query_exec`]) by an equivalence oracle
 //! (`tests/index_oracle.rs`). It is built at repo load and refreshed to HEAD
 //! per query (`run_query_filter`), which falls back to the SQL engine on any
-//! `Unsupported` shape. `Path`-target follows are resolved to a root
-//! metarecord through the tree cache by the caller and supplied as
-//! [`PathRoots`]. Not persisted — rebuilt each session.
+//! `Unsupported` shape. Shapes the index cannot resolve on its own are handled
+//! with caller-supplied seeds ([`QueryRoots`]): `Path`-target follows resolve to
+//! a root metarecord through the tree cache, and a single-term `Osm` `Path`
+//! resolves to its "term nodes" (name-substring matches) through FTS, which the
+//! index then expands into a subtree union — the exact match set, no per-path
+//! check. Remaining text leaves (`Matches`, `Osm` `Direct`, multi-term `Osm`
+//! `Path`) are pre-resolved to `UuidIn` sets by the caller
+//! (`query_exec::resolve_index_leaves`), so a query that merely *contains* one is
+//! still served whole by the index. Not persisted — rebuilt each session.
 
 pub mod field_index;
 pub mod id_registry;
@@ -39,6 +45,29 @@ pub struct SortBy {
 /// map resolved to nothing and yields an empty result, matching the SQL engine.
 pub type PathRoots = HashMap<(String, String), Uuid>;
 
+/// Pre-resolved `(field, term)` → the "term nodes" (TreeRef nodes whose *name*
+/// contains the term) of a single-term `Osm` `Path` query. The index has no
+/// substring-of-name index, so — as with [`PathRoots`] — the caller resolves
+/// these nodes (via `query_exec::osm_name_nodes`, an FTS lookup) and hands them
+/// in; the index then expands each node's subtree by bitmap and unions them.
+pub type OsmRoots = HashMap<(String, String), Vec<Uuid>>;
+
+/// The caller-resolved seeds a query needs the index to evaluate the shapes it
+/// cannot resolve on its own: `Path` targets (through the tree cache) and
+/// single-term `Osm` `Path` term nodes (through FTS). Bundled so the evaluation
+/// threads one context.
+#[derive(Default)]
+pub struct QueryRoots {
+    pub path: PathRoots,
+    pub osm: OsmRoots,
+}
+
+impl QueryRoots {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
 /// Collects the `(field, path)` of every `Path`-target `Follows`/
 /// `FollowsTransitive` in `q`, so the caller can resolve them in one pass
 /// before evaluation.
@@ -56,6 +85,41 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
             operands.iter().for_each(|o| collect_path_targets(o, out));
         }
         Query::Not { operand } => collect_path_targets(operand, out),
+        _ => {}
+    }
+}
+
+/// Whether a `terms` list is the single ≥3-char term the index accelerates for
+/// `Osm` `Path` (a shorter term has no trigram pre-filter, a multi-term query is
+/// order-sensitive; both defer to the SQL engine). The single-term case is
+/// exact: every metarecord under a node whose name contains the term has the
+/// term in its path, so the subtree union *is* the match set.
+fn osm_path_indexable(terms: &[String]) -> Option<&str> {
+    match terms {
+        [only] if only.chars().count() >= 3 => Some(only.as_str()),
+        _ => None,
+    }
+}
+
+/// Collects the `(field, term)` of every index-accelerable single-term `Osm`
+/// `Path` in `q`, so the caller can resolve their term nodes before evaluation
+/// (mirrors [`collect_path_targets`]).
+pub fn collect_osm_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
+    match q {
+        Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Path } => {
+            if let Some(term) = osm_path_indexable(terms) {
+                out.push((field.clone(), term.to_string()));
+            }
+        }
+        Query::And { operands } | Query::Or { operands } => {
+            operands.iter().for_each(|o| collect_osm_path_targets(o, out));
+        }
+        Query::Not { operand } => collect_osm_path_targets(operand, out),
+        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
+            if let FollowTarget::Condition(c) = target {
+                collect_osm_path_targets(c, out);
+            }
+        }
         _ => {}
     }
 }
@@ -393,7 +457,7 @@ impl RepoIndex {
     }
 
     /// [`Self::count`] with pre-resolved path-target roots (see [`PathRoots`]).
-    pub fn count_with_roots(&self, q: &Query, roots: &PathRoots) -> Result<u64, Unsupported> {
+    pub fn count_with_roots(&self, q: &Query, roots: &QueryRoots) -> Result<u64, Unsupported> {
         Ok(self.eval(q, Some(roots))?.len())
     }
 
@@ -432,7 +496,7 @@ impl RepoIndex {
         sort: &[SortBy],
         limit: Option<usize>,
         cursor: Option<&str>,
-        roots: &PathRoots,
+        roots: &QueryRoots,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         self.page(q, sort, limit, cursor, Some(roots))
     }
@@ -443,7 +507,7 @@ impl RepoIndex {
         sort: &[SortBy],
         limit: Option<usize>,
         cursor: Option<&str>,
-        roots: Option<&PathRoots>,
+        roots: Option<&QueryRoots>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
         let guard = page_guard(q, sort);
@@ -509,7 +573,7 @@ impl RepoIndex {
     /// `Some(map)` once the caller has resolved the query's `Path` targets (see
     /// [`PathRoots`]); `None` means they have not, so a `Path` target is
     /// reported `Unsupported` and the caller falls back to the SQL engine.
-    fn eval(&self, q: &Query, roots: Option<&PathRoots>) -> Result<RoaringBitmap, Unsupported> {
+    fn eval(&self, q: &Query, roots: Option<&QueryRoots>) -> Result<RoaringBitmap, Unsupported> {
         match q {
             Query::IsPresent { field } => Ok(self.present_of(field)),
             Query::IsAbsent { field } => Ok(self.absent_of(field)),
@@ -542,6 +606,10 @@ impl RepoIndex {
                 self.follows_transitive(field, target, *inclusive, roots)
             }
 
+            Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Path } => {
+                self.osm_path(field, terms, roots)
+            }
+
             Query::UuidIn { uuids } => {
                 // Interned ids of the given uuids, restricted to the universe
                 // (unknown / non-owned uuids drop out).
@@ -571,11 +639,11 @@ impl RepoIndex {
         &self,
         field: &str,
         path: &str,
-        roots: Option<&PathRoots>,
+        roots: Option<&QueryRoots>,
     ) -> Result<Option<Uuid>, Unsupported> {
         match roots {
             None => Err(unsupported("path-target follows")),
-            Some(map) => Ok(map.get(&(field.to_string(), path.to_string())).copied()),
+            Some(roots) => Ok(roots.path.get(&(field.to_string(), path.to_string())).copied()),
         }
     }
 
@@ -583,7 +651,7 @@ impl RepoIndex {
         &self,
         field: &str,
         target: &FollowTarget,
-        roots: Option<&PathRoots>,
+        roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
         let target_uuids: Vec<Uuid> = match target {
             FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
@@ -615,14 +683,14 @@ impl RepoIndex {
         field: &str,
         target: &FollowTarget,
         inclusive: bool,
-        roots: Option<&PathRoots>,
+        roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
         // Seed the expansion with the matching roots' dense ids. For a path
         // target that is the single metarecord resolved through the tree cache;
         // for a condition it is the sub-query's match set. (Resolve the seed
         // before the index-support check so an unsupported sub-query still
         // surfaces, matching the SQL fallback contract.)
-        let mut frontier = match target {
+        let frontier = match target {
             FollowTarget::Path(p) => match self.resolved_root(field, p, roots)? {
                 Some(root) => match self.registry.id(root) {
                     Some(id) => RoaringBitmap::from_iter([id]),
@@ -638,10 +706,21 @@ impl RepoIndex {
         }
         // The inclusive form (`=>*`) keeps the root(s) in the result (whole
         // subtree); the strict form (`->*`) grows only downward from them.
-        let mut result = RoaringBitmap::new();
-        if inclusive {
-            result = &frontier & &self.universe;
-        }
+        Ok(self.expand_subtrees(fi, frontier, inclusive))
+    }
+
+    /// Grows `frontier` downward over the reverse (direct-children) index of
+    /// `fi` until fixpoint, returning every reachable node. `inclusive` keeps the
+    /// seed nodes themselves (whole subtree); otherwise only their descendants.
+    /// The shared core of `FollowsTransitive` and single-term `Osm` `Path`.
+    fn expand_subtrees(
+        &self,
+        fi: &FieldIndex,
+        mut frontier: RoaringBitmap,
+        inclusive: bool,
+    ) -> RoaringBitmap {
+        let mut result =
+            if inclusive { &frontier & &self.universe } else { RoaringBitmap::new() };
         while !frontier.is_empty() {
             let mut next = RoaringBitmap::new();
             for nid in &frontier {
@@ -655,14 +734,47 @@ impl RepoIndex {
             result |= &next;
             frontier = next;
         }
-        Ok(result)
+        result
+    }
+
+    /// Single-term `Osm` `Path`: the union of the subtrees rooted at the term
+    /// nodes (nodes whose name contains the term), which the caller resolved into
+    /// `roots.osm`. Every such node's descendants have the term in their path, so
+    /// the inclusive subtree union *is* the match set — no per-path verification.
+    /// Multi-term (order-sensitive) or a `roots`-less call is `Unsupported`, so
+    /// the caller falls back to the SQL engine.
+    fn osm_path(
+        &self,
+        field: &str,
+        terms: &[String],
+        roots: Option<&QueryRoots>,
+    ) -> Result<RoaringBitmap, Unsupported> {
+        let Some(term) = osm_path_indexable(terms) else {
+            return Err(unsupported("multi-term or short-term osm path"));
+        };
+        let nodes = match roots {
+            None => return Err(unsupported("osm path (no resolved term nodes)")),
+            Some(roots) => roots.osm.get(&(field.to_string(), term.to_string())),
+        };
+        let Some(nodes) = nodes else { return Ok(RoaringBitmap::new()) }; // no term node
+        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
+        if !fi.supports_transitive() {
+            return Ok(RoaringBitmap::new());
+        }
+        let mut seeds = RoaringBitmap::new();
+        for uuid in nodes {
+            if let Some(id) = self.registry.id(*uuid) {
+                seeds.insert(id);
+            }
+        }
+        Ok(self.expand_subtrees(fi, seeds, true))
     }
 
     fn combine(
         &self,
         operands: &[Query],
         is_and: bool,
-        roots: Option<&PathRoots>,
+        roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
         let mut it = operands.iter();
         let first = it.next().ok_or_else(|| unsupported("'and'/'or' need an operand"))?;

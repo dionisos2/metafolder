@@ -1781,12 +1781,25 @@ fn run_query_filter(
     // `mfr_path ->* "/dir"` by in-memory expansion instead of deferring to SQL.
     let mut path_targets = Vec::new();
     crate::index::collect_path_targets(&body.query, &mut path_targets);
-    let mut roots = crate::index::PathRoots::new();
+    let mut roots = crate::index::QueryRoots::new();
     for (field, path) in path_targets {
         if let Some(uuid) = cache.resolve_path(conn, &field, &path)? {
-            roots.insert((field, path), uuid);
+            roots.path.insert((field, path), uuid);
         }
     }
+    // Resolve the term nodes of every single-term Osm-Path (an FTS lookup), so
+    // the index serves it by expanding those nodes' subtrees.
+    let mut osm_targets = Vec::new();
+    crate::index::collect_osm_path_targets(&body.query, &mut osm_targets);
+    for (field, term) in osm_targets {
+        let nodes = query_exec::osm_name_nodes(conn, &field, &term)?;
+        roots.osm.insert((field, term), nodes);
+    }
+    // Pre-resolve the index-unsupported text leaves (Matches, Osm Direct,
+    // multi-term Osm Path) to UuidIn sets, so a query that merely *contains* one
+    // (the finder's `or(osm_path, osmd(label), osmd(name))`) is still served
+    // whole by the index — with an O(1) count — instead of a full SQL scan.
+    let indexed_query = query_exec::resolve_index_leaves(conn, cache, &body.query)?;
 
     let mut index_guard = repo_state.index.lock_recover();
     let index = ensure_index(conn, &mut index_guard, cancel)?;
@@ -1796,7 +1809,7 @@ fn run_query_filter(
         return Err(ApiError::conflict("query cancelled"));
     }
 
-    match index.evaluate_page_with_roots(&body.query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
+    match index.evaluate_page_with_roots(&indexed_query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
     {
         Ok((uuids, next_cursor)) => {
             // The page came from the index; the count normally does too. If the
@@ -1804,7 +1817,7 @@ fn run_query_filter(
             // between the two paths), fall back to the SQL count rather than
             // panicking on a live request.
             let total = if body.count {
-                match index.count_with_roots(&body.query, &roots) {
+                match index.count_with_roots(&indexed_query, &roots) {
                     Ok(n) => Some(n as usize),
                     Err(_unsupported) => Some(query_exec::count(conn, cache, &body.query)?),
                 }

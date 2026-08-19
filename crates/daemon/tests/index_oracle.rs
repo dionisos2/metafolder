@@ -8,9 +8,9 @@
 //! roots.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::{collect_path_targets, PathRoots, RepoIndex, SortBy};
+use metafolder_daemon::index::{collect_path_targets, QueryRoots, RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
@@ -153,10 +153,10 @@ impl Oracle {
         let index = RepoIndex::build(&self.conn).unwrap();
         let mut targets = Vec::new();
         collect_path_targets(q, &mut targets);
-        let mut roots = PathRoots::new();
+        let mut roots = QueryRoots::new();
         for (field, path) in targets {
             if let Some(uuid) = self.cache.resolve_path(&self.conn, &field, &path).unwrap() {
-                roots.insert((field, path), uuid);
+                roots.path.insert((field, path), uuid);
             }
         }
         let sql_keys: Vec<SortKey> = by
@@ -645,9 +645,9 @@ fn reverse_tree_follows_path_target_matches_sql() {
                 _ => Query::FollowsTransitive { field: "loc".into(), target, inclusive: true },
             };
             // Resolve the path root exactly as `run_query_filter` does.
-            let mut roots = metafolder_daemon::index::PathRoots::new();
+            let mut roots = QueryRoots::new();
             if let Some(uuid) = o.cache.resolve_path(&o.conn, "loc", path).unwrap() {
-                roots.insert(("loc".to_string(), path.to_string()), uuid);
+                roots.path.insert(("loc".to_string(), path.to_string()), uuid);
             }
             let index = RepoIndex::build(&o.conn).unwrap();
 
@@ -699,6 +699,102 @@ fn keyset_pagination_over_path_target_with_sort() {
     }
     // Multi-key: rate then loc-name, still over the filtered subtree.
     o.check_paginated_with_roots(&q, &[("rate", false), ("loc", true)], 2);
+}
+
+fn osm_path_q(field: &str, terms: &[&str]) -> Query {
+    Query::Osm {
+        field: field.into(),
+        terms: terms.iter().map(|t| t.to_string()).collect(),
+        mode: OsmMode::Path,
+    }
+}
+
+#[test]
+fn osm_path_single_term_matches_sql() {
+    // A single-term OSM path ("every metarecord whose path contains the term")
+    // is a union of subtrees — the index serves it by expanding, from the
+    // caller-resolved term nodes, exactly as `run_query_filter` will. Each term
+    // must agree with the SQL engine on both the set and the count.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let sci = o.create(vec![tref("loc", Some(root), "science")]);
+    let sub = o.create(vec![tref("loc", Some(sci), "fiction")]);
+    let _file = o.create(vec![tref("loc", Some(sub), "ep.mkv")]);
+    let _music = o.create(vec![tref("loc", Some(root), "music")]);
+
+    for term in ["sci", "science", "root", "fic", "nope", "mus"] {
+        let q = osm_path_q("loc", &[term]);
+        // Resolve the OSM term nodes exactly as `run_query_filter` does.
+        let mut roots = QueryRoots::new();
+        let nodes = query_exec::osm_name_nodes(&o.conn, "loc", term).unwrap();
+        roots.osm.insert(("loc".to_string(), term.to_string()), nodes);
+        let index = RepoIndex::build(&o.conn).unwrap();
+
+        let (mut sql, _) =
+            query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+        sql.sort();
+        got.sort();
+        assert_eq!(got, sql, "osm path divergence on term {term:?}");
+
+        let sql_count = query_exec::count(&o.conn, &mut o.cache, &q).unwrap();
+        assert_eq!(
+            index.count_with_roots(&q, &roots).unwrap() as usize,
+            sql_count,
+            "osm path count divergence on term {term:?}"
+        );
+    }
+
+    let index = RepoIndex::build(&o.conn).unwrap();
+    // Without resolved OSM roots the bitmap path defers to SQL.
+    assert!(index.evaluate(&osm_path_q("loc", &["sci"])).is_err(), "needs resolved osm nodes");
+    // Multi-term OSM path (order-sensitive) is not accelerated — index defers.
+    let multi = osm_path_q("loc", &["science", "fiction"]);
+    assert!(
+        index.evaluate_page_with_roots(&multi, &[], None, None, &QueryRoots::new()).is_err(),
+        "multi-term osm path defers to SQL"
+    );
+}
+
+#[test]
+fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
+    // The GUI finder runs `or(osm_path(mfr_path), osmd(label), osmd(name))`. The
+    // index can't do the `osmd` (Direct) leaves, but after `resolve_index_leaves`
+    // rewrites them to UuidIn sets, the index serves the whole query — the
+    // single-term osm_path natively — and must agree with the SQL engine.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let sci = o.create(vec![tref("loc", Some(root), "science")]);
+    let _f = o.create(vec![tref("loc", Some(sci), "ep.mkv"), Field::new("label", s("plain"))]);
+    // A record OUTSIDE the science subtree, matched only by the osmd(label) leaf.
+    let _tagged = o.create(vec![tref("loc", Some(root), "misc"), Field::new("label", s("scifi"))]);
+
+    let q = Query::Or {
+        operands: vec![
+            osm_path_q("loc", &["science"]),
+            Query::Osm { field: "label".into(), terms: vec!["sci".into()], mode: OsmMode::Direct },
+        ],
+    };
+
+    // Rewrite the index-unsupported osmd leaf, and resolve the osm-path nodes —
+    // exactly as `run_query_filter` does.
+    let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+    let mut roots = QueryRoots::new();
+    let nodes = query_exec::osm_name_nodes(&o.conn, "loc", "science").unwrap();
+    roots.osm.insert(("loc".to_string(), "science".to_string()), nodes);
+
+    let index = RepoIndex::build(&o.conn).unwrap();
+    let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    let (mut got, _) =
+        index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
+    sql.sort();
+    got.sort();
+    assert_eq!(got, sql, "finder-shaped query divergence");
+    assert_eq!(
+        index.count_with_roots(&rewritten, &roots).unwrap() as usize,
+        query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+        "finder-shaped count divergence"
+    );
 }
 
 #[test]

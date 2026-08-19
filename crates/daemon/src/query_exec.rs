@@ -194,6 +194,60 @@ pub fn count(
     Ok(total as usize)
 }
 
+/// Whether a query node is a text-search leaf the bitmap index cannot evaluate
+/// on its own — `Matches`, `Osm` `Direct`, and multi-/short-term `Osm` `Path`
+/// (single-term `Osm` `Path` the index serves via resolved term nodes). These
+/// are pre-resolved to a `UuidIn` set so an otherwise index-supported query
+/// (e.g. the finder's `or(osm_path, osmd(label), osmd(name))`) is served whole
+/// by the index instead of falling back to SQL.
+fn is_index_text_leaf(q: &Query) -> bool {
+    match q {
+        Query::Matches { .. } => true,
+        Query::Osm { mode: OsmMode::Direct, .. } => true,
+        Query::Osm { mode: OsmMode::Path, terms, .. } => {
+            !matches!(terms.as_slice(), [only] if only.chars().count() >= 3)
+        }
+        _ => false,
+    }
+}
+
+/// Rewrites `q` so every index-unsupported text leaf ([`is_index_text_leaf`]) is
+/// replaced by the `UuidIn` set it matches — evaluated once through the SQL
+/// engine (FTS-pre-filtered, so a selective term is cheap). The result is an
+/// equivalent query the bitmap index can serve end-to-end, with its `count` then
+/// `O(1)` instead of a second SQL scan. Boolean structure and the shapes the
+/// index already handles (comparisons, presence, `Follows`/path, single-term
+/// `Osm` `Path`, `UuidIn`) pass through unchanged; on any evaluation error the
+/// caller keeps the original query and the SQL fallback.
+pub fn resolve_index_leaves(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    q: &Query,
+) -> Result<Query, ApiError> {
+    if is_index_text_leaf(q) {
+        let (uuids, _) = execute(conn, cache, q, &[], None, None)?;
+        return Ok(Query::UuidIn { uuids });
+    }
+    Ok(match q {
+        Query::And { operands } => Query::And {
+            operands: operands
+                .iter()
+                .map(|o| resolve_index_leaves(conn, cache, o))
+                .collect::<Result<_, _>>()?,
+        },
+        Query::Or { operands } => Query::Or {
+            operands: operands
+                .iter()
+                .map(|o| resolve_index_leaves(conn, cache, o))
+                .collect::<Result<_, _>>()?,
+        },
+        Query::Not { operand } => {
+            Query::Not { operand: Box::new(resolve_index_leaves(conn, cache, operand)?) }
+        }
+        other => other.clone(),
+    })
+}
+
 /// Executes a query: returns one page of matching UUIDs in query order plus
 /// the next cursor (always None when `limit` is absent).
 pub fn execute(
@@ -435,6 +489,43 @@ fn keyset_predicate(
 }
 
 use metafolder_core::hex::encode as hex_encode;
+
+/// The metarecord uuids whose `field` `tree_ref` name contains `term`
+/// (case-insensitive), trigram-pre-filtered when `term` is ≥ 3 chars. Shared by
+/// the SQL OSM `Path` engine and, so the bitmap index can accelerate a
+/// single-term OSM path, by `run_query_filter` — which resolves these "term
+/// nodes" and hands them to the index as the seeds of a subtree expansion (the
+/// index has no substring-of-name index of its own), mirroring how it resolves
+/// `Path` targets to root metarecords.
+pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<Uuid>, ApiError> {
+    let pattern = format!("(?i){}", regex::escape(term));
+    let collect = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Vec<Uuid>, ApiError> {
+        let mut stmt = conn.prepare(sql).map_err(anyhow::Error::from)?;
+        let rows =
+            stmt.query_map(params, |row| row.get::<_, Vec<u8>>(0)).map_err(anyhow::Error::from)?;
+        let mut out = Vec::new();
+        for bytes in rows {
+            out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
+        }
+        Ok(out)
+    };
+    if term.chars().count() >= 3 {
+        let phrase = crate::fts::match_phrase(term);
+        collect(
+            "SELECT DISTINCT metarecord_uuid FROM field \
+             WHERE field_name = ?1 AND value_type = 'tree_ref' \
+               AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?2) \
+               AND value_name REGEXP ?3",
+            &[&field, &phrase, &pattern],
+        )
+    } else {
+        collect(
+            "SELECT DISTINCT metarecord_uuid FROM field \
+             WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
+            &[&field, &pattern],
+        )
+    }
+}
 
 /// The case-insensitive ordered-substring regex for OSM `Direct` mode:
 /// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
@@ -858,34 +949,7 @@ impl<'a> Compiler<'a> {
     /// The metarecord uuids whose `field` `tree_ref` name contains `term`
     /// (case-insensitive), trigram-pre-filtered when `term` is ≥ 3 chars.
     fn osm_name_nodes(&self, field: &str, term: &str) -> Result<Vec<Uuid>, ApiError> {
-        let pattern = format!("(?i){}", regex::escape(term));
-        let collect = |sql: &str, params: &[&dyn rusqlite::ToSql]| -> Result<Vec<Uuid>, ApiError> {
-            let mut stmt = self.conn.prepare(sql).map_err(anyhow::Error::from)?;
-            let rows = stmt
-                .query_map(params, |row| row.get::<_, Vec<u8>>(0))
-                .map_err(anyhow::Error::from)?;
-            let mut out = Vec::new();
-            for bytes in rows {
-                out.push(db::bytes_to_uuid(bytes.map_err(anyhow::Error::from)?)?);
-            }
-            Ok(out)
-        };
-        if term.chars().count() >= 3 {
-            let phrase = crate::fts::match_phrase(term);
-            collect(
-                "SELECT DISTINCT metarecord_uuid FROM field \
-                 WHERE field_name = ?1 AND value_type = 'tree_ref' \
-                   AND id IN (SELECT rowid FROM field_text WHERE text MATCH ?2) \
-                   AND value_name REGEXP ?3",
-                &[&field, &phrase, &pattern],
-            )
-        } else {
-            collect(
-                "SELECT DISTINCT metarecord_uuid FROM field \
-                 WHERE field_name = ?1 AND value_type = 'tree_ref' AND value_name REGEXP ?2",
-                &[&field, &pattern],
-            )
-        }
+        osm_name_nodes(self.conn, field, term)
     }
 
     /// Every metarecord with a `tree_ref` value in `field` (the unpruned

@@ -1,0 +1,199 @@
+Pour une recherche simple (par exemple filtre rapide sur "dionisos"), le temps reste long même si ça semble s’être amélioré :
+
+$ mf gui bench
+{
+  "records": [
+    {
+      "duration_ms": 4.000000000029104,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 6.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 6.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 21.999999999970896,
+      "name": "mf:daemon GET /repos/:id/log/since"
+    },
+    {
+      "duration_ms": 13.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 2901.0,
+      "name": "mf:daemon POST /repos/:id/query"
+    },
+    {
+      "duration_ms": 0.0,
+      "name": "mf:list:enrich"
+    },
+    {
+      "duration_ms": 1.999999999970896,
+      "name": "mf:list:render"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:daemon GET /repos/:id/log/since"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 4.999999999970896,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 1.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 6817.0,
+      "name": "mf:daemon POST /repos/:id/query"
+    },
+    {
+      "duration_ms": 100.0,
+      "name": "mf:daemon POST /repos/:id/query/fields/resolve-tree"
+    },
+    {
+      "duration_ms": 102.0,
+      "name": "mf:list:enrich"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:list:render"
+    },
+    {
+      "duration_ms": 1.0,
+      "name": "mf:detail:render"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:detail:load"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:daemon GET /tasks"
+    }
+  ]
+}
+
+file-manager est encore plutôt lent :
+
+$mf gui bench
+{
+  "records": [
+    {
+      "duration_ms": 1.0000000000582077,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 4.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 1.0000000000582077,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 4.000000000058208,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 16139.0,
+      "name": "mf:daemon POST /repos/:id/query"
+    },
+    {
+      "duration_ms": 0.0,
+      "name": "mf:list:enrich"
+    },
+    {
+      "duration_ms": 1.0000000000582077,
+      "name": "mf:list:render"
+    },
+    {
+      "duration_ms": 3988.0,
+      "name": "mf:daemon GET /repos/:id/log/since"
+    },
+    {
+      "duration_ms": 0.9999999999417925,
+      "name": "mf:daemon GET /repos"
+    },
+    {
+      "duration_ms": 1.0,
+      "name": "mf:fm:render"
+    },
+    {
+      "duration_ms": 1.0000000000582077,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 1966.0,
+      "name": "mf:daemon GET /repos/:id/log/since"
+    },
+    {
+      "duration_ms": 2036.0,
+      "name": "mf:daemon POST /repos/:id/query"
+    },
+    {
+      "duration_ms": 3.0000000000582077,
+      "name": "mf:daemon GET /repos/:id/tree/children"
+    },
+    {
+      "duration_ms": 2.0,
+      "name": "mf:fm:render"
+    },
+    {
+      "duration_ms": 2054.0,
+      "name": "mf:fm:load"
+    },
+    {
+      "duration_ms": 84.0,
+      "name": "mf:daemon POST /repos/:id/query"
+    },
+    {
+      "duration_ms": 2.9999999999417923,
+      "name": "mf:list:enrich"
+    },
+    {
+      "duration_ms": 5.0,
+      "name": "mf:list:render"
+    },
+    {
+      "duration_ms": 3.0,
+      "name": "mf:daemon GET /tasks"
+    },
+    {
+      "duration_ms": 4.0,
+      "name": "mf:daemon GET /tasks"
+    }
+  ]
+}

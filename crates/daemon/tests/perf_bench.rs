@@ -22,7 +22,7 @@ use std::time::Instant;
 
 use metafolder_core::metarecord::Value;
 use metafolder_core::query::{FollowTarget, Query};
-use metafolder_daemon::index::{PathRoots, RepoIndex};
+use metafolder_daemon::index::{QueryRoots, RepoIndex};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
 use metafolder_daemon::{db, query_exec, reconcile, repo};
@@ -177,9 +177,9 @@ fn bench_index_build_and_folder_query() {
 
     // NEW: a plain Follows the bitmap index serves, path target resolved
     // through the tree cache (as run_query_filter does).
-    let mut roots = PathRoots::new();
+    let mut roots = QueryRoots::new();
     if let Some(u) = cache.resolve_path(&conn, "mfr_path", &rel).unwrap() {
-        roots.insert(("mfr_path".into(), rel.clone()), u);
+        roots.path.insert(("mfr_path".into(), rel.clone()), u);
     }
     let t = Instant::now();
     let (new_hits, _) =
