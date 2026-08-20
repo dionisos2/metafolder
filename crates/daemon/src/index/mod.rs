@@ -529,13 +529,22 @@ impl RepoIndex {
         if let Some(after) = &after {
             entries.retain(|e| cmp_entry(e, after, sort) == Ordering::Greater);
         }
-        entries.sort_by(|a, b| cmp_entry(a, b, sort));
 
         let total = entries.len();
         let end = match limit {
             Some(l) => l.min(total),
             None => total,
         };
+        // Only the page's `end` smallest entries need to be in order. Partition
+        // the rest out in O(n) (`select_nth`) and sort just the page, so a broad
+        // query with a small limit no longer pays a full O(n log n) sort of the
+        // whole match set. When the page is the whole set the partition is a
+        // no-op and this is the plain sort.
+        if end > 0 && end < total {
+            entries.select_nth_unstable_by(end - 1, |a, b| cmp_entry(a, b, sort));
+        }
+        entries[..end].sort_by(|a, b| cmp_entry(a, b, sort));
+
         let page = entries[..end].iter().map(|e| e.1).collect();
         let next = match limit {
             Some(_) if end > 0 && end < total => Some(encode_cursor(guard, &entries[end - 1])),
