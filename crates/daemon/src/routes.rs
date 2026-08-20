@@ -1837,10 +1837,14 @@ fn run_query_filter(
         .collect();
 
     // Resolve the query's index seeds (Path targets, Osm-Path term nodes) and
-    // pre-resolve its text leaves — the shared preparation. `count` forces the
-    // leaf rewrite (a full scan happens anyway, so an O(1) index count wins);
-    // without it a bare text leaf is left for the SQL fallback's early `limit`.
-    let (roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, body.count)?;
+    // pre-resolve its text leaves — the shared preparation. The engine choice
+    // must be a function of the query *shape* alone (`full_set = false` here, so
+    // the rewrite is driven only by an index-served Osm-Path): the list asks for
+    // `count` on the first page only, and if that toggled the rewrite, page 1
+    // (index) and page 2 (SQL) would run on different engines and reject each
+    // other's cursor. A bare text leaf without an Osm-Path therefore stays on the
+    // SQL engine for the whole paginated session, count included.
+    let (roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
 
     let mut index_guard = repo_state.index.lock_recover();
     let index = ensure_index(conn, &mut index_guard, cancel)?;

@@ -88,6 +88,71 @@ async fn test_query_returns_uuids_by_default() {
 }
 
 #[tokio::test]
+async fn test_matches_query_paginates_across_count_boundary() {
+    // The metarecord-list asks for `count` on the first page only. The engine
+    // choice must not depend on `count`, or page 1 (with count) and page 2
+    // (without) would run on different engines and the cursor from one would be
+    // rejected by the other. A paginated Matches query must page cleanly.
+    let (app, repo, root) = setup("matchespage").await;
+    let mut all = Vec::new();
+    for i in 0..5 {
+        all.push(
+            create(
+                &app,
+                &repo,
+                json!([{"name": "title", "value": {"type": "string", "value": format!("song{i}")}}]),
+            )
+            .await,
+        );
+    }
+
+    let page = |cursor: Option<String>, count: bool| {
+        let app = app.clone();
+        let repo = repo.clone();
+        async move {
+            let mut b = json!({
+                "query": {"type": "matches", "field": "title", "pattern": "song"},
+                "select": "*",
+                "sort": [{"field": "title", "order": "asc"}],
+                "limit": 2,
+            });
+            if count {
+                b["count"] = json!(true);
+            }
+            if let Some(c) = cursor {
+                b["cursor"] = json!(c);
+            }
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(b)).await
+        }
+    };
+
+    // Page 1 (with count), then walk the cursor to the end (no count).
+    let mut seen = Vec::new();
+    let (status, body) = page(None, true).await;
+    assert_eq!(status, StatusCode::OK, "page 1 failed: {body}");
+    assert_eq!(body["total"], json!(5));
+    let mut cursor = body["next_cursor"].as_str().map(str::to_string);
+    for r in body["results"].as_array().unwrap() {
+        seen.push(r["uuid"].as_str().unwrap().to_string());
+    }
+    while let Some(c) = cursor {
+        let (status, body) = page(Some(c), false).await;
+        assert_eq!(status, StatusCode::OK, "a later page failed: {body}");
+        for r in body["results"].as_array().unwrap() {
+            seen.push(r["uuid"].as_str().unwrap().to_string());
+        }
+        cursor = body["next_cursor"].as_str().map(str::to_string);
+    }
+
+    seen.sort();
+    let mut want = all.clone();
+    want.sort();
+    assert_eq!(seen, want, "every match returned exactly once across pages");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_query_select_fields_and_star() {
     let (app, repo, root) = setup("select").await;
     let _ = create(
