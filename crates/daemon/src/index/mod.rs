@@ -202,12 +202,12 @@ impl RepoIndex {
         let mut fields: HashMap<String, FieldIndex> = HashMap::new();
         let mut sort: HashMap<String, SortReps> = HashMap::new();
         let mut types: HashMap<String, &'static str> = HashMap::new();
-        let total = registry.len() as u64;
         // One sequential scan of the whole `field` table — routing each row to
-        // its owner's dense id — instead of a query per metarecord. Progress is
-        // reported per batch of rows against the metarecord total (an upper
-        // bound on progress, since a metarecord holds ≥1 row), and cancellation
+        // its owner's dense id — instead of a query per metarecord. The scan is
+        // in rowid (`id`) order, so progress against `MAX(id)` is a near-linear
+        // bar (`MAX(id)` is an O(1) read, unlike counting the rows); cancellation
         // is polled at the same cadence.
+        let total = db::max_field_id(conn)?.max(0) as u64;
         if cancel() {
             anyhow::bail!("index build cancelled");
         }
@@ -215,7 +215,7 @@ impl RepoIndex {
         db::for_each_field_row(conn, |uuid, row| {
             scanned_rows += 1;
             if scanned_rows.is_multiple_of(4096) {
-                progress(scanned_rows.min(total), total);
+                progress((row.id.max(0) as u64).min(total), total);
                 if cancel() {
                     anyhow::bail!("index build cancelled");
                 }

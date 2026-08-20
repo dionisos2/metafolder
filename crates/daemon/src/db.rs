@@ -749,6 +749,13 @@ pub fn count_metarecords(conn: &Connection) -> Result<usize> {
     Ok(conn.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get::<_, i64>(0))? as usize)
 }
 
+/// The largest `field.id` (0 when empty). `id` is the AUTOINCREMENT rowid, so
+/// this is an O(1) rightmost-btree read — a cheap upper bound for a determinate
+/// progress bar over a sequential (rowid-ordered) scan of the `field` table.
+pub fn max_field_id(conn: &Connection) -> Result<i64> {
+    Ok(conn.query_row("SELECT COALESCE(MAX(id), 0) FROM field", [], |r| r.get(0))?)
+}
+
 fn collect_field_rows<'a>(
     rows: impl Iterator<Item = rusqlite::Result<(i64, String, Result<Value>)>> + 'a,
 ) -> Result<Vec<FieldRow>> {

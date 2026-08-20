@@ -1181,6 +1181,36 @@ fn test_ancestry_ops_limited_returns_the_most_recent() {
 }
 
 #[test]
+fn test_index_build_progress_tracks_field_ids() {
+    use metafolder_daemon::index::RepoIndex;
+    use std::cell::RefCell;
+    // Progress is reported against MAX(field.id) (a determinate bar), not the
+    // metarecord count — so it does not saturate at ~10% on a repo whose rows
+    // outnumber its metarecords, and it ends exactly at 100%.
+    let mut conn = test_conn();
+    for i in 0..50 {
+        create(
+            &mut conn,
+            vec![
+                Field::new("a", Value::Int(i)),
+                Field::new("b", Value::String(format!("x{i}"))),
+                Field::new("c", Value::Bool(i % 2 == 0)),
+            ],
+        );
+    }
+    let max_id = db::max_field_id(&conn).unwrap() as u64;
+    assert!(max_id >= 150, "50 records * 3 fields → at least 150 rows: {max_id}");
+
+    let seen: RefCell<Vec<(u64, u64)>> = RefCell::new(Vec::new());
+    RepoIndex::build_reported(&conn, &|done, total| seen.borrow_mut().push((done, total)), &|| false)
+        .unwrap();
+    let seen = seen.into_inner();
+    // Every sample uses MAX(id) as the total, and the final one is exactly full.
+    assert!(seen.iter().all(|&(_, total)| total == max_id), "total is MAX(field.id): {seen:?}");
+    assert_eq!(seen.last(), Some(&(max_id, max_id)), "ends at 100%");
+}
+
+#[test]
 fn test_index_build_is_cancellable() {
     use metafolder_daemon::index::RepoIndex;
     // The heavy per-metarecord scan that builds the query index must honour a

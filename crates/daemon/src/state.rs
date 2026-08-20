@@ -181,11 +181,13 @@ impl RepoState {
     /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
     pub fn warmup(&self, progress: ProgressFn) {
         let conn = self.conn.lock_recover();
-        progress("tree cache", None, None);
-        if let Err(e) = self.lock_cache().populate(&conn) {
-            eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
-            return;
-        }
+        // Build the index first: its single scan of the whole `field` table is
+        // the load's cold-I/O floor (on first open the table is read from disk),
+        // and it reports a determinate progress bar. Populating the tree cache
+        // afterwards re-reads the same, now warm, pages — so it is fast, where
+        // run first it would silently absorb that cold cost under an
+        // indeterminate spinner. Both phases are independent and best-effort: a
+        // failure just leaves that accelerator in DB-fallback mode.
         match crate::index::RepoIndex::build_reported(
             &conn,
             &|done, total| progress("index", Some(done), Some(total)),
@@ -195,6 +197,10 @@ impl RepoState {
             Err(e) => {
                 eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid)
             }
+        }
+        progress("tree cache", None, None);
+        if let Err(e) = self.lock_cache().populate(&conn) {
+            eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
         }
     }
 
