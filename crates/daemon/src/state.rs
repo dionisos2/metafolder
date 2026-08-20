@@ -181,6 +181,11 @@ impl RepoState {
     /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
     pub fn warmup(&self, progress: ProgressFn) {
         let conn = self.conn.lock_recover();
+        // Per-phase timings are logged (`[warmup <name>] …`): a persistent load
+        // report, so a slow phase on a large repository is visible without a
+        // profiler. See also the `[tree cache]` and `[watcher]` split lines.
+        let who = self.name();
+
         // Build the index first: its single scan of the whole `field` table is
         // the load's cold-I/O floor (on first open the table is read from disk),
         // and it reports a determinate progress bar. Populating the tree cache
@@ -188,6 +193,7 @@ impl RepoState {
         // run first it would silently absorb that cold cost under an
         // indeterminate spinner. Both phases are independent and best-effort: a
         // failure just leaves that accelerator in DB-fallback mode.
+        let t = std::time::Instant::now();
         match crate::index::RepoIndex::build_reported(
             &conn,
             &|done, total| progress("index", Some(done), Some(total)),
@@ -198,15 +204,22 @@ impl RepoState {
                 eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid)
             }
         }
+        eprintln!("[warmup {who}] index build: {:?}", t.elapsed());
+
         progress("tree cache", None, None);
+        let t = std::time::Instant::now();
         if let Err(e) = self.lock_cache().populate(&conn) {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
         }
+        eprintln!("[warmup {who}] tree cache: {:?}", t.elapsed());
+
         // Place the watcher's directory watches now that the tree cache is
         // populated: `watcher::start` defers this initial walk to here so each
         // directory's eligibility is served from memory, not a per-directory DB
         // walk (which dominated the pre-warmup walk — thousands of cold queries).
+        let t = std::time::Instant::now();
         self.refresh_watches(&conn);
+        eprintln!("[warmup {who}] watch placement: {:?}", t.elapsed());
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation

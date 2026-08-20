@@ -103,7 +103,17 @@ impl WatcherHandle {
         root: &Path,
         internal_dir: &Path,
     ) {
-        let target = compute_watched_dirs(conn, cache, root, internal_dir);
+        let (target, total, elig) = compute_watched_dirs_timed(conn, cache, root, internal_dir);
+        // A persistent diagnostic for the initial (load-time) walk and any large
+        // watch reconfiguration: the filesystem read_dir cost vs the per-directory
+        // eligibility cost (served from the tree cache once warm).
+        if total.as_millis() >= 100 {
+            eprintln!(
+                "[watcher] walk: {} dirs in {total:?} (fs {:?} + eligibility {elig:?})",
+                target.len(),
+                total.saturating_sub(elig)
+            );
+        }
         self.inner.apply(&target);
     }
 }
@@ -152,20 +162,12 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
 /// [`crate::reconcile`]'s walk). Symlinked directories are not followed
 /// (`file_type().is_dir()` is false for a symlink), unreadable directories are
 /// skipped, and `.metafolder/internal/` is always excluded. Read-only.
-fn compute_watched_dirs(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    root: &Path,
-    internal_dir: &Path,
-) -> HashSet<PathBuf> {
-    compute_watched_dirs_timed(conn, cache, root, internal_dir).0
-}
-
-/// [`compute_watched_dirs`] returning the wall time spent in eligibility checks
-/// (the DB / tree-cache part) alongside the total, so the filesystem-walk part
-/// (`total − eligibility`) can be told apart — used to decide whether starting
-/// the watcher before the tree cache is populated (eligibility falls to the DB)
-/// costs meaningfully more than after (served from memory).
+/// Computes the set of directories that should be watched, returning the wall
+/// time spent in eligibility checks (the DB / tree-cache part) alongside the
+/// total, so the filesystem-walk part (`total − eligibility`) can be told apart
+/// — a persistent diagnostic (see [`WatcherHandle::refresh`]) and the basis for
+/// deferring the initial walk until the tree cache is warm (eligibility served
+/// from memory rather than a per-directory DB walk).
 pub fn compute_watched_dirs_timed(
     conn: &Connection,
     cache: &mut TreeCache,

@@ -91,10 +91,17 @@ impl TreeCache {
     /// in use. Replaces any current contents.
     pub fn populate(&mut self, conn: &Connection) -> Result<()> {
         self.clear();
+        // Timed in two parts (logged when non-trivial): the `load_tree_forest`
+        // SQL scan+sort, and the in-memory node linking — a persistent load
+        // report, so it is clear which dominates on a large forest.
+        let t_scan = std::time::Instant::now();
         let rows = db::load_tree_forest(conn)?;
+        let scan = t_scan.elapsed();
         if rows.len() > self.max_nodes {
             return Ok(()); // Over budget: stay lazy, DB fallbacks apply.
         }
+        let n = rows.len();
+        let t_link = std::time::Instant::now();
         self.clock += 1;
         // Pass 1: create one detached node per position, registered by uuid so
         // pass 2 can resolve each child's parent to an arena index. Rows are
@@ -159,6 +166,10 @@ impl TreeCache {
             }
         }
         self.complete = true;
+        let link = t_link.elapsed();
+        if (scan + link).as_millis() >= 200 {
+            eprintln!("[tree cache] {n} nodes: scan {scan:?}, link {link:?}");
+        }
         Ok(())
     }
 
