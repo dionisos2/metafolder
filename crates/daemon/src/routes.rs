@@ -178,8 +178,7 @@ async fn query_resolve_tree(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
             let paths = cache.paths_of(&conn, &field, uuid)?;
@@ -1448,7 +1447,7 @@ async fn check_schema(
             let uuids = match &body.query {
                 Some(query) => {
                     let mut cache = repo_state.lock_cache();
-                    query_exec::execute(&conn, &mut cache, query, &[], None, None)?.0
+                    resolve_query_uuids(repo_state, &conn, &mut cache, query, &|| false)?
                 }
                 None => crate::schema::violation_candidates(
                     schema,
@@ -1750,6 +1749,67 @@ fn ensure_index<'g>(
     Ok(guard.as_ref().expect("index built above"))
 }
 
+/// Resolves a query's index seeds and rewrites its index-unsupported text leaves
+/// — the shared preparation feeding the bitmap index, used by both the paginated
+/// query path ([`run_query_filter`]) and the whole-set resolution
+/// ([`resolve_query_uuids`]). Path targets resolve to root metarecords through
+/// the tree cache; single-term Osm-Path term nodes resolve through FTS; the
+/// remaining text leaves (Matches, Osm Direct, multi-term Osm Path) are
+/// pre-resolved to `UuidIn` sets. `full_set` forces that rewrite (a whole-set
+/// resolution wants every match, so the SQL early-`limit` optimisation that
+/// keeps a bare-leaf *page* cheaper does not apply); an index-served Osm-Path
+/// present in the query always forces it too.
+fn prepare_indexed_query(
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    query: &MetaQuery,
+    full_set: bool,
+) -> Result<(crate::index::QueryRoots, MetaQuery), ApiError> {
+    let mut roots = crate::index::QueryRoots::new();
+    let mut path_targets = Vec::new();
+    crate::index::collect_path_targets(query, &mut path_targets);
+    for (field, path) in path_targets {
+        if let Some(uuid) = cache.resolve_path(conn, &field, &path)? {
+            roots.path.insert((field, path), uuid);
+        }
+    }
+    let mut osm_targets = Vec::new();
+    crate::index::collect_osm_path_targets(query, &mut osm_targets);
+    let has_indexable_osm = !osm_targets.is_empty();
+    for (field, term) in osm_targets {
+        let nodes = query_exec::osm_name_nodes(conn, &field, &term)?;
+        roots.osm.insert((field, term), nodes);
+    }
+    let indexed = if full_set || has_indexable_osm {
+        query_exec::resolve_index_leaves(conn, cache, query)?
+    } else {
+        query.clone()
+    };
+    Ok((roots, indexed))
+}
+
+/// Resolves a query to *all* its matching uuids, index-accelerated — the
+/// set-layer counterpart of [`run_query_filter`] (batch field writes, query
+/// delete, tree resolution) which operate on the whole match set rather than a
+/// page. Shares [`prepare_indexed_query`] so these writes get the same bitmap
+/// acceleration as reads; an unsupported shape falls back to the SQL engine.
+fn resolve_query_uuids(
+    repo_state: &RepoState,
+    conn: &rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    query: &MetaQuery,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Vec<Uuid>, ApiError> {
+    query_exec::validate_query(query)?;
+    let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
+    let mut index_guard = repo_state.index.lock_recover();
+    let index = ensure_index(conn, &mut index_guard, cancel)?;
+    match index.evaluate_page_with_roots(&indexed, &[], None, None, &roots) {
+        Ok((uuids, _)) => Ok(uuids),
+        Err(_unsupported) => Ok(query_exec::execute(conn, cache, query, &[], None, None)?.0),
+    }
+}
+
 /// The index is consulted only while it reflects the current log HEAD; after any
 /// write the HEAD advances and the index is rebuilt before use, so it can never
 /// serve stale results. A query shape the index does not accelerate (`Matches`,
@@ -1776,39 +1836,11 @@ fn run_query_filter(
         })
         .collect();
 
-    // Resolve every Path-target follows in the query to its root metarecord
-    // through the (eagerly populated) tree cache, so the bitmap index can serve
-    // `mfr_path ->* "/dir"` by in-memory expansion instead of deferring to SQL.
-    let mut path_targets = Vec::new();
-    crate::index::collect_path_targets(&body.query, &mut path_targets);
-    let mut roots = crate::index::QueryRoots::new();
-    for (field, path) in path_targets {
-        if let Some(uuid) = cache.resolve_path(conn, &field, &path)? {
-            roots.path.insert((field, path), uuid);
-        }
-    }
-    // Resolve the term nodes of every single-term Osm-Path (an FTS lookup), so
-    // the index serves it by expanding those nodes' subtrees.
-    let mut osm_targets = Vec::new();
-    crate::index::collect_osm_path_targets(&body.query, &mut osm_targets);
-    let has_indexable_osm = !osm_targets.is_empty();
-    for (field, term) in osm_targets {
-        let nodes = query_exec::osm_name_nodes(conn, &field, &term)?;
-        roots.osm.insert((field, term), nodes);
-    }
-    // Pre-resolve the index-unsupported text leaves (Matches, Osm Direct,
-    // multi-term Osm Path) to UuidIn sets, so a query that merely *contains* one
-    // (the finder's `or(osm_path, osmd(label), osmd(name))`) is still served
-    // whole by the index — with an O(1) count — instead of a full SQL scan.
-    // Only worthwhile when a full scan would happen anyway (`count`) or an
-    // index-served osm_path carries the expensive part: otherwise pre-resolving a
-    // text leaf would fetch its whole match set where the SQL engine could stop
-    // at `limit`, so leave the query for the SQL fallback.
-    let indexed_query = if body.count || has_indexable_osm {
-        query_exec::resolve_index_leaves(conn, cache, &body.query)?
-    } else {
-        body.query.clone()
-    };
+    // Resolve the query's index seeds (Path targets, Osm-Path term nodes) and
+    // pre-resolve its text leaves — the shared preparation. `count` forces the
+    // leaf rewrite (a full scan happens anyway, so an O(1) index count wins);
+    // without it a bare text leaf is left for the SQL fallback's early `limit`.
+    let (roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, body.count)?;
 
     let mut index_guard = repo_state.index.lock_recover();
     let index = ensure_index(conn, &mut index_guard, cancel)?;
@@ -1952,8 +1984,7 @@ async fn batch_set(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = Writer::begin(&mut conn, None)?;
@@ -1991,8 +2022,7 @@ async fn batch_append(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = Writer::begin(&mut conn, None)?;
@@ -2031,8 +2061,7 @@ async fn batch_remove(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = Writer::begin(&mut conn, None)?;
@@ -2081,8 +2110,7 @@ async fn batch_unset(
         check_writable(&body.name, body.force)?;
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = Writer::begin(&mut conn, None)?;
@@ -2179,8 +2207,7 @@ async fn delete_by_query(
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let (uuids, _) =
-            query_exec::execute(&conn, &mut cache, &body.query, &[], None, None)?;
+        let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = Writer::begin(&mut conn, None)?;
