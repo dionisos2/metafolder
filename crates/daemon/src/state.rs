@@ -202,6 +202,11 @@ impl RepoState {
         if let Err(e) = self.lock_cache().populate(&conn) {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
         }
+        // Place the watcher's directory watches now that the tree cache is
+        // populated: `watcher::start` defers this initial walk to here so each
+        // directory's eligibility is served from memory, not a per-directory DB
+        // walk (which dominated the pre-warmup walk — thousands of cold queries).
+        self.refresh_watches(&conn);
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation

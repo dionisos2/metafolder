@@ -139,25 +139,11 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     .context("Failed to create the filesystem watcher")?;
     *inner.watcher.lock_recover() = Some(watcher);
 
-    // Initial placement: watch every eligible directory (none, for a fresh repo).
-    {
-        let conn = repo.conn.lock_recover();
-        let mut cache = repo.lock_cache();
-        let (target, total, elig) =
-            compute_watched_dirs_timed(&conn, &mut cache, &root, &internal_dir);
-        // Diagnostic: this initial walk runs before the tree cache is populated,
-        // so eligibility falls to the DB. Log the split (filesystem read_dir vs
-        // eligibility) so the startup "dead" phase can be understood.
-        if total.as_millis() >= 100 {
-            eprintln!(
-                "[watcher] initial walk: {} dirs in {total:?} (fs {:?} + eligibility {elig:?})",
-                target.len(),
-                total.saturating_sub(elig)
-            );
-        }
-        inner.apply(&target);
-    }
-
+    // No initial placement here: the eligible-directory walk needs the tree
+    // cache, so it is deferred to the end of the load warmup (which populates the
+    // cache) via `RepoState::refresh_watches` — there each directory's
+    // eligibility is served from memory instead of a per-directory DB walk. Until
+    // then the watcher holds no watches (a fresh repo watches nothing anyway).
     Ok(WatcherHandle { inner })
 }
 
