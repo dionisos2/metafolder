@@ -143,7 +143,18 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     {
         let conn = repo.conn.lock_recover();
         let mut cache = repo.lock_cache();
-        let target = compute_watched_dirs(&conn, &mut cache, &root, &internal_dir);
+        let (target, total, elig) =
+            compute_watched_dirs_timed(&conn, &mut cache, &root, &internal_dir);
+        // Diagnostic: this initial walk runs before the tree cache is populated,
+        // so eligibility falls to the DB. Log the split (filesystem read_dir vs
+        // eligibility) so the startup "dead" phase can be understood.
+        if total.as_millis() >= 100 {
+            eprintln!(
+                "[watcher] initial walk: {} dirs in {total:?} (fs {:?} + eligibility {elig:?})",
+                target.len(),
+                total.saturating_sub(elig)
+            );
+        }
         inner.apply(&target);
     }
 
@@ -161,27 +172,48 @@ fn compute_watched_dirs(
     root: &Path,
     internal_dir: &Path,
 ) -> HashSet<PathBuf> {
+    compute_watched_dirs_timed(conn, cache, root, internal_dir).0
+}
+
+/// [`compute_watched_dirs`] returning the wall time spent in eligibility checks
+/// (the DB / tree-cache part) alongside the total, so the filesystem-walk part
+/// (`total − eligibility`) can be told apart — used to decide whether starting
+/// the watcher before the tree cache is populated (eligibility falls to the DB)
+/// costs meaningfully more than after (served from memory).
+pub fn compute_watched_dirs_timed(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    root: &Path,
+    internal_dir: &Path,
+) -> (HashSet<PathBuf>, std::time::Duration, std::time::Duration) {
+    let start = std::time::Instant::now();
+    let mut elig = std::time::Duration::ZERO;
     let mut ec = EligibilityCache::default();
     let mut out = HashSet::new();
     // The root directory is watched iff the root metarecord is eligible
     // (`mf_watch = true` set directly on it — the opt-in default is false).
-    match eligibility::is_eligible_cached(conn, cache, "", &mut ec) {
+    let t = std::time::Instant::now();
+    let root_eligible = eligibility::is_eligible_cached(conn, cache, "", &mut ec);
+    elig += t.elapsed();
+    match root_eligible {
         Ok(true) => {
             out.insert(root.to_path_buf());
         }
-        Ok(false) => return out,
+        Ok(false) => return (out, start.elapsed(), elig),
         Err(err) => {
             eprintln!("[watcher] root eligibility check failed: {err:#}");
-            return out;
+            return (out, start.elapsed(), elig);
         }
     }
-    collect_eligible_dirs(conn, cache, root, internal_dir, "", &mut ec, &mut out);
-    out
+    collect_eligible_dirs(conn, cache, root, internal_dir, "", &mut ec, &mut out, &mut elig);
+    let total = start.elapsed();
+    (out, total, elig)
 }
 
 /// Depth-first descent from the eligible directory `base` (repo-root-relative,
 /// `""` for the root), inserting the absolute path of every eligible descendant
 /// directory into `out`.
+#[allow(clippy::too_many_arguments)]
 fn collect_eligible_dirs(
     conn: &Connection,
     cache: &mut TreeCache,
@@ -190,6 +222,7 @@ fn collect_eligible_dirs(
     base: &str,
     ec: &mut EligibilityCache,
     out: &mut HashSet<PathBuf>,
+    elig: &mut std::time::Duration,
 ) {
     let mut stack = vec![base.to_string()];
     while let Some(dir) = stack.pop() {
@@ -217,7 +250,10 @@ fn collect_eligible_dirs(
                 continue; // Non-UTF-8 name: skip (a reconcile can handle it).
             };
             let rel = format!("{dir}/{name}");
-            match eligibility::is_eligible_cached(conn, cache, &rel, ec) {
+            let t = std::time::Instant::now();
+            let eligible = eligibility::is_eligible_cached(conn, cache, &rel, ec);
+            *elig += t.elapsed();
+            match eligible {
                 Ok(true) => {
                     out.insert(path);
                     stack.push(rel);
@@ -380,7 +416,8 @@ fn maintain_watches(
         }
         let mut subtree = HashSet::new();
         subtree.insert(abs);
-        collect_eligible_dirs(&conn, &mut cache, root, internal_dir, rel, &mut ec, &mut subtree);
+        let mut elig = std::time::Duration::ZERO;
+        collect_eligible_dirs(&conn, &mut cache, root, internal_dir, rel, &mut ec, &mut subtree, &mut elig);
         for dir in &subtree {
             inner.watch_dir(dir);
         }

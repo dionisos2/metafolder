@@ -191,6 +191,34 @@ fn bench_index_build_and_folder_query() {
     eprintln!("   speedup                                   : {:.0}x\n", old_q.as_secs_f64() / new_q.as_secs_f64());
 
     drop(cache);
+
+    // ── #3: the watcher's initial directory walk (the startup "dead" phase) ──
+    // Split into the filesystem read_dir cost and the per-directory eligibility
+    // cost, the latter served from the DB (empty cache) vs from memory (the
+    // populated cache) — to decide whether starting the watcher after the tree
+    // cache is populated would meaningfully shrink the walk.
+    use metafolder_daemon::tree_cache::TreeCache;
+    let root_dir = repo.config.root.clone();
+    let internal = repo.internal_dir();
+
+    let mut empty = TreeCache::new(false);
+    let (dirs, total_cold, elig_cold) =
+        metafolder_daemon::watcher::compute_watched_dirs_timed(&conn, &mut empty, &root_dir, &internal);
+    eprintln!("\n#3 watcher walk over {} eligible dirs:", dirs.len());
+    eprintln!(
+        "   empty cache (eligibility → DB) : total {total_cold:?}  (fs {:?} + eligibility {elig_cold:?})",
+        total_cold.saturating_sub(elig_cold)
+    );
+
+    let mut warm = TreeCache::new(false);
+    warm.populate(&conn).unwrap();
+    let (_dirs, total_warm, elig_warm) =
+        metafolder_daemon::watcher::compute_watched_dirs_timed(&conn, &mut warm, &root_dir, &internal);
+    eprintln!(
+        "   full cache  (eligibility → mem): total {total_warm:?}  (fs {:?} + eligibility {elig_warm:?})",
+        total_warm.saturating_sub(elig_warm)
+    );
+
     drop(conn);
     let _ = std::fs::remove_dir_all(&meta);
 }
