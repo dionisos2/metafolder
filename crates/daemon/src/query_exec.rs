@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Value, ZERO_UUID};
+use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
 use metafolder_core::query::{FollowTarget, OsmMode, Query};
 
 use crate::db;
@@ -155,16 +155,26 @@ pub fn assemble_selected(
     fields_filter: Option<&[String]>,
     cancel: &dyn Fn() -> bool,
 ) -> Result<Vec<serde_json::Value>, ApiError> {
+    // Batched reads: the whole page's versions and field rows in a couple of
+    // `IN (…)` scans, not a query per metarecord.
+    let versions = db::versions_for(conn, uuids)?;
+    let mut rows = db::field_rows_for(conn, uuids)?;
     let mut objects = Vec::with_capacity(uuids.len());
     for (i, &uuid) in uuids.iter().enumerate() {
         if i % 256 == 0 && cancel() {
             return Err(ApiError::conflict("query cancelled"));
         }
-        let mut metarecord = db::get_metarecord(conn, uuid)?
+        let version = *versions
+            .get(&uuid)
             .ok_or_else(|| ApiError::not_found(format!("Metarecord not found: {uuid}")))?;
-        if let Some(filter) = fields_filter {
-            metarecord.fields.retain(|f| filter.contains(&f.name));
-        }
+        let fields: Vec<Field> = rows
+            .remove(&uuid)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| fields_filter.is_none_or(|f| f.contains(&r.name)))
+            .map(|r| Field { id: Some(r.id), name: r.name, value: r.value })
+            .collect();
+        let metarecord = MetaRecord { uuid, version, fields };
         objects.push(serde_json::to_value(metarecord).expect("metarecord serialization"));
     }
     Ok(objects)

@@ -458,6 +458,59 @@ pub fn get_field_rows(conn: &Connection, uuid: Uuid) -> Result<Vec<FieldRow>> {
     collect_field_rows(rows)
 }
 
+/// Max metarecords per `IN (…)` batch — well under SQLite's variable limit, so
+/// the readers below never build an oversized statement.
+const IN_CHUNK: usize = 500;
+
+/// Field rows of several metarecords in a handful of `WHERE metarecord_uuid IN
+/// (…)` scans (chunked), grouped by owner with each metarecord's rows in id
+/// order — the batched form of [`get_field_rows`], so assembling a query page no
+/// longer costs one query per metarecord. A uuid with no rows (or unknown) is
+/// simply absent from the map.
+pub fn field_rows_for(
+    conn: &Connection,
+    uuids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, Vec<FieldRow>>> {
+    let mut out: std::collections::HashMap<Uuid, Vec<FieldRow>> = std::collections::HashMap::new();
+    for chunk in uuids.chunks(IN_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {FIELD_COLUMNS}, metarecord_uuid FROM field \
+             WHERE metarecord_uuid IN ({placeholders}) ORDER BY id"
+        ))?;
+        let params: Vec<Vec<u8>> = chunk.iter().map(|u| uuid_to_bytes(*u)).collect();
+        let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+        while let Some(row) = rows.next()? {
+            let (id, name, value) = row_to_field_row(row)?;
+            let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(9)?)?;
+            out.entry(uuid).or_default().push(FieldRow { id, name, value: value? });
+        }
+    }
+    Ok(out)
+}
+
+/// Versions of several metarecords in chunked `IN (…)` queries — the batched
+/// form of [`get_version`]. An unknown uuid is absent from the map.
+pub fn versions_for(
+    conn: &Connection,
+    uuids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, u64>> {
+    let mut out = std::collections::HashMap::new();
+    for chunk in uuids.chunks(IN_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT uuid, version FROM metarecord WHERE uuid IN ({placeholders})"
+        ))?;
+        let params: Vec<Vec<u8>> = chunk.iter().map(|u| uuid_to_bytes(*u)).collect();
+        let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+        while let Some(row) = rows.next()? {
+            let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(0)?)?;
+            out.insert(uuid, row.get::<_, i64>(1)? as u64);
+        }
+    }
+    Ok(out)
+}
+
 /// Streams every field row of the whole repository — all metarecords — in a
 /// single sequential table scan, invoking `f(owner_uuid, row)` per row. This
 /// replaces the per-metarecord `get_field_rows` walk in the bulk index build

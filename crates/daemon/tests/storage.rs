@@ -88,6 +88,37 @@ fn test_field_allows_nothing_against_any_type() {
 }
 
 #[test]
+fn test_field_rows_for_matches_per_record_reads() {
+    // The batched readers must reproduce, for a set of metarecords, exactly what
+    // the per-record `get_field_rows` / `get_version` return — grouped by owner,
+    // per-record rows in id order, missing uuids absent.
+    let mut conn = test_conn();
+    let a = create(
+        &mut conn,
+        vec![
+            Field::new("tag", Value::String("x".into())),
+            Field::new("tag", Value::String("y".into())),
+            Field::new("rating", Value::Int(5)),
+        ],
+    );
+    let b = create(&mut conn, vec![Field::new("note", Value::Nothing)]);
+    let empty = create(&mut conn, vec![]);
+    let absent = Uuid::new_v4();
+
+    let want = [a.uuid, b.uuid, empty.uuid, absent];
+    let rows = db::field_rows_for(&conn, &want).unwrap();
+    let versions = db::versions_for(&conn, &want).unwrap();
+
+    for uuid in [a.uuid, b.uuid, empty.uuid] {
+        assert_eq!(rows.get(&uuid).cloned().unwrap_or_default(), db::get_field_rows(&conn, uuid).unwrap());
+        assert_eq!(versions.get(&uuid).copied(), db::get_version(&conn, uuid).unwrap());
+    }
+    // An unknown uuid contributes no rows and no version.
+    assert!(rows.get(&absent).map_or(true, |v| v.is_empty()));
+    assert_eq!(versions.get(&absent), None);
+}
+
+#[test]
 fn test_for_each_field_row_matches_per_record_scan() {
     // A single streaming scan of the whole `field` table must yield exactly the
     // same (uuid, id, name, value) rows as the per-metarecord `get_field_rows`
