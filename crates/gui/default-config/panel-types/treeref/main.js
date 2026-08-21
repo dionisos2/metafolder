@@ -7,7 +7,7 @@
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
-import { fileActionsProvider } from '/__file-actions.js';
+import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { childrenQuery, treeNameOf } from './queries.js';
 
 const PAGE_DEFAULT = 200;
@@ -321,21 +321,30 @@ export async function mount(root, metafolder) {
   // affordance the metarecord-list picker offers.
   const fileActions = fileActionsProvider(metafolder, () => repo);
   metafolder.contextMenu.addDefaultItems((event) => {
+    const index = liIndexFromEvent(event);
+    // Make the clicked node the selection so `pick:confirm` and "Open in panel
+    // metarecord-detail" read its uuid, not whatever the cursor last sat on.
+    if (index >= 0 && index !== cursorIndex) void select(index);
+    const node = children[index >= 0 ? index : cursorIndex];
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
-    if (picking) {
-      const index = liIndexFromEvent(event);
-      // Make the clicked node the selection so `pick:confirm` reads its uuid.
-      if (index >= 0 && index !== cursorIndex) void select(index);
-      if (children[index >= 0 ? index : cursorIndex]) {
-        // Only the mfr_path forest maps to on-disk folders; every other TreeRef
-        // (tag trees, …) is a generic node, so word the item accordingly.
-        const pickLabel = field === 'mfr_path' ? 'Pick this folder' : 'Pick this node';
-        items.push(
-          { header: 'Metarecord' },
-          { label: pickLabel, action: () => void commands.invoke('pick:confirm') },
-        );
-      }
+    if (node) {
+      // A picker also offers "Pick this folder" (mfr_path) / "Pick this node"
+      // (any other TreeRef) — worded per forest, as only mfr_path maps to disk.
+      const pickLabel = field === 'mfr_path' ? 'Pick this folder' : 'Pick this node';
+      // No "Open in panel file"/"reveal folder" here: this panel does not
+      // publish `selected_paths`, which those commands need. The file actions
+      // (cut/copy/…) still come from `fileActions` via the row's data-mf-path.
+      items.push(
+        ...metarecordMenuItems({
+          metafolder,
+          uuid: node.uuid,
+          hasFile: false,
+          leading: picking
+            ? [{ label: pickLabel, action: () => void commands.invoke('pick:confirm') }]
+            : [],
+        }),
+      );
     }
     items.push(...fileActions(event));
     return items;

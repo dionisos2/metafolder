@@ -7,7 +7,7 @@
 import { byId, el, field } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
-import { fileActionsProvider, baseName } from '/__file-actions.js';
+import { rowActionsProvider, baseName } from '/__file-actions.js';
 import { refListQuery } from './queries.js';
 
 const PAGE_DEFAULT = 100;
@@ -214,6 +214,7 @@ export async function mount(root, metafolder) {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
             ondblclick: () => openSelected(),
+            'data-mf-uuid': record.uuid,
             ...fileRowAttrs(record),
           },
           el('span', { class: 'name' }, displayName(record)),
@@ -301,9 +302,10 @@ export async function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "ref-list").
 
-  // Right-click a row backed by a file: cut/copy/paste/rename/duplicate/trash
-  // (shared with the file manager — see /__file-actions.js).
-  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => queryRepo()));
+  // Right-click a row: the shared "Metarecord" section (open in detail/file,
+  // reveal folder, Copy UUID) plus, when the record is file-backed, the file
+  // actions (cut/copy/paste/rename/duplicate/trash) — see /__file-actions.js.
+  metafolder.contextMenu.addDefaultItems(rowActionsProvider(metafolder, () => queryRepo()));
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

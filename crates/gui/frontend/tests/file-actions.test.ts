@@ -9,7 +9,9 @@ import {
   fileActionsProvider,
   fileMenuItems,
   getClipboard,
+  metarecordMenuItems,
   revealFolder,
+  rowActionsProvider,
   setClipboard,
 } from '/__file-actions.js';
 
@@ -37,8 +39,23 @@ function mockMf(
   };
   const trash = { trashPath: vi.fn(async () => {}) };
   const workspace = { set: vi.fn(async () => {}) };
-  const metafolder = { statusBar, fs, trash, workspace, settings } as unknown as MetafolderApi;
-  return { metafolder, statusBar, fs, trash, workspace };
+  const commands = { invoke: vi.fn(async (_invocation?: string) => {}) };
+  const metafolder = {
+    statusBar,
+    fs,
+    trash,
+    workspace,
+    commands,
+    settings,
+  } as unknown as MetafolderApi;
+  return { metafolder, statusBar, fs, trash, workspace, commands };
+}
+
+/** The labels of the entries in a menu (skipping '-' separators and headers). */
+function labels(items: unknown[]): string[] {
+  return items
+    .filter((i): i is MenuItem => i !== '-' && typeof i === 'object' && 'label' in (i as object))
+    .map((i) => i.label);
 }
 
 /** The menu item with `label` (menu entries are items or '-' separators). */
@@ -241,5 +258,113 @@ describe('revealFolder', () => {
 
   test('a trailing slash on a directory path is tolerated', () => {
     expect(revealFolder('/a/b/', true)).toEqual({ dir: '/a/b/', select: null });
+  });
+});
+
+describe('metarecordMenuItems', () => {
+  test('a file-backed metarecord offers detail, file, reveal-folder and Copy UUID', () => {
+    const { metafolder, commands } = mockMf();
+    const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: true });
+    expect(labels(items)).toEqual([
+      'Open in panel metarecord-detail',
+      'Open in panel file',
+      'Open folder in file manager',
+      'Copy UUID',
+    ]);
+    item(items, 'Open in panel metarecord-detail').action!();
+    expect(commands.invoke).toHaveBeenCalledWith('panel:reveal-other metarecord-detail');
+    item(items, 'Open in panel file').action!();
+    expect(commands.invoke).toHaveBeenCalledWith('panel:reveal-other file');
+    item(items, 'Open folder in file manager').action!();
+    expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal-folder');
+  });
+
+  test('a metarecord with no file offers only detail and Copy UUID', () => {
+    const { metafolder } = mockMf();
+    const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: false });
+    expect(labels(items)).toEqual(['Open in panel metarecord-detail', 'Copy UUID']);
+  });
+
+  test('revealFolder:false drops the file-manager item (the panel IS the file manager)', () => {
+    const { metafolder } = mockMf();
+    const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: true, revealFolder: false });
+    expect(labels(items)).toEqual([
+      'Open in panel metarecord-detail',
+      'Open in panel file',
+      'Copy UUID',
+    ]);
+  });
+
+  test('leading items are inserted right after the Metarecord header', () => {
+    const { metafolder, commands } = mockMf();
+    const items = metarecordMenuItems({
+      metafolder,
+      uuid: 'abc',
+      hasFile: false,
+      leading: [{ label: 'Pick this metarecord', action: () => void commands.invoke('pick:confirm') }],
+    });
+    expect(labels(items)).toEqual([
+      'Pick this metarecord',
+      'Open in panel metarecord-detail',
+      'Copy UUID',
+    ]);
+  });
+
+  test('Copy UUID copies the uuid to the clipboard', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { metafolder } = mockMf();
+    const items = metarecordMenuItems({ metafolder, uuid: 'the-uuid', hasFile: false });
+    item(items, 'Copy UUID').action!();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('the-uuid'));
+  });
+});
+
+describe('rowActionsProvider', () => {
+  /** A composed-path event whose first tagged node carries `dataset`. */
+  function event(dataset: Record<string, string> | null) {
+    const node = dataset ? { dataset } : {};
+    return { composedPath: () => [node, {}] } as unknown as MouseEvent;
+  }
+
+  test('returns no items when there is no active repo', () => {
+    const { metafolder } = mockMf();
+    const provider = rowActionsProvider(metafolder, () => null);
+    expect(provider(event({ mfUuid: 'abc', mfPath: '/dir/a.txt' }))).toEqual([]);
+  });
+
+  test('a file-backed row publishes the selection and offers metarecord + file items', () => {
+    const { metafolder, workspace } = mockMf();
+    const provider = rowActionsProvider(metafolder, () => 'r');
+    const items = provider(event({ mfUuid: 'abc', mfPath: '/dir/a.txt', mfIsdir: '0', mfName: 'a.txt' }));
+    expect(workspace.set).toHaveBeenCalledWith('selected_metarecord', { uuid: 'abc', repo: 'r' });
+    expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']);
+    const l = labels(items);
+    expect(l).toContain('Open in panel metarecord-detail');
+    expect(l).toContain('Open folder in file manager');
+    expect(l).toContain('Cut'); // the file section is appended
+  });
+
+  test('a row with a uuid but no file offers only metarecord items and empty paths', () => {
+    const { metafolder, workspace } = mockMf();
+    const provider = rowActionsProvider(metafolder, () => 'r');
+    const items = provider(event({ mfUuid: 'abc' }));
+    expect(workspace.set).toHaveBeenCalledWith('selected_paths', []);
+    expect(labels(items)).toEqual(['Open in panel metarecord-detail', 'Copy UUID']);
+  });
+
+  test('a file row with no uuid falls back to the file section only', () => {
+    const { metafolder, workspace } = mockMf();
+    const provider = rowActionsProvider(metafolder, () => 'r');
+    const items = provider(event({ mfPath: '/dir/a.txt', mfIsdir: '0' }));
+    expect(workspace.set).not.toHaveBeenCalledWith('selected_metarecord', expect.anything());
+    expect(labels(items)).toContain('Cut');
+    expect(labels(items)).not.toContain('Open in panel metarecord-detail');
+  });
+
+  test('returns no items when the click was not on a tagged row', () => {
+    const { metafolder } = mockMf();
+    const provider = rowActionsProvider(metafolder, () => 'r');
+    expect(provider(event(null))).toEqual([]);
   });
 });

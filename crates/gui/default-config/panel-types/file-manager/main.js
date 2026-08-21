@@ -22,6 +22,7 @@ import {
   setClipboard,
   hasClipboard,
   revealFolder,
+  metarecordMenuItems,
 } from '/__file-actions.js';
 
 // The clipboard is shared across the whole GUI JS realm (see /__file-actions.js)
@@ -293,6 +294,15 @@ export async function mount(root, metafolder) {
       );
     } else {
       items.push('-', { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() });
+    }
+    // A tracked row is a metarecord too: offer the same "Metarecord" section the
+    // metarecord list does (open in detail/file, Copy UUID). "Open folder in
+    // file manager" is dropped — this panel already IS the file manager. The
+    // `select(index)` above published the row as `selected_metarecord`, which the
+    // reveal commands read.
+    const uuid = trackedPaths.get(item.path);
+    if (isEntry && repo && uuid) {
+      items.push('-', ...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
     }
     items.push(
       '-',

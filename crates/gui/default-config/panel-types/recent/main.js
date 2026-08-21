@@ -8,7 +8,7 @@
 // under the cursor while you navigate.
 
 import { byId, el, field, formatValue } from '/__ui.js';
-import { fileActionsProvider, baseName } from '/__file-actions.js';
+import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -75,6 +75,7 @@ export function mount(root, metafolder) {
             class: [index === cursorIndex && 'cursor'],
             onclick: () => select(index),
             ondblclick: () => void open(),
+            'data-mf-uuid': row.uuid,
             ...(row.absPaths[0]
               ? {
                   'data-mf-path': row.absPaths[0],
@@ -184,9 +185,10 @@ export function mount(root, metafolder) {
 
   // Keybindings for this panel live in keybindings.toml (when = "recent").
 
-  // Right-click a row backed by a file to cut/copy/paste/rename/duplicate/trash
-  // it (shared with the file manager — see /__file-actions.js).
-  metafolder.contextMenu.addDefaultItems(fileActionsProvider(metafolder, () => repo));
+  // Right-click a row: the shared "Metarecord" section (open in detail/file,
+  // reveal folder, Copy UUID) plus, when the record is file-backed, the file
+  // actions (cut/copy/paste/rename/duplicate/trash) — see /__file-actions.js.
+  metafolder.contextMenu.addDefaultItems(rowActionsProvider(metafolder, () => repo));
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

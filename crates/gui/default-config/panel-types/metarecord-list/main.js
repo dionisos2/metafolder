@@ -2,13 +2,12 @@
 // DSL query; primary selection source (spec-gui "metarecord-list panel type").
 
 import { byId, el, fields, qs, thumbnail } from '/__ui.js';
-import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
-import { fileMenuItems } from '/__file-actions.js';
+import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
 import {
@@ -1055,33 +1054,19 @@ export async function mount(root, metafolder) {
     if (index >= 0 && index !== cursorIndex) void setCursor(index);
     const target = metarecords[index >= 0 ? index : cursorIndex];
     if (!target) return [];
-    /** @type {Metafolder.MenuItem[]} */
-    const items = [{ header: 'Metarecord' }];
-    if (picking) {
-      items.push({
-        label: 'Pick this metarecord',
-        action: () => void commands.invoke('pick:confirm'),
-      });
-    }
-    items.push({
-      label: 'Open in panel metarecord-detail',
-      action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
-    });
     const paths = pathsOf(target);
-    // Only offer the file panel + file actions when the metarecord has a file.
-    if (paths.length > 0) {
-      items.push({
-        label: 'Open in panel file',
-        action: () => void commands.invoke('panel:reveal-other file'),
-      });
-      // Open the metarecord's folder (itself for a directory, the containing
-      // folder for a file) in the file manager, here in this panel.
-      items.push({
-        label: 'Open folder in file manager',
-        action: () => void commands.invoke('file-manager:reveal-folder'),
-      });
-    }
-    items.push({ label: 'Copy UUID', action: () => void copyText(target.uuid) });
+    // The shared "Metarecord" section (open in detail/file, reveal folder, Copy
+    // UUID) — every metarecord-bearing panel shows the same one. A value picker
+    // prepends "Pick this metarecord" right after the header.
+    /** @type {Metafolder.MenuItem[]} */
+    const items = metarecordMenuItems({
+      metafolder,
+      uuid: target.uuid,
+      hasFile: paths.length > 0,
+      leading: picking
+        ? [{ label: 'Pick this metarecord', action: () => void commands.invoke('pick:confirm') }]
+        : [],
+    });
     if (repo && paths.length > 0) {
       // Cut / Copy / Paste / Rename / Duplicate / Move-to-trash on the file
       // (shared with the file manager — see /__file-actions.js).

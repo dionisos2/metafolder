@@ -10,6 +10,14 @@
 // panel's `onChanged` nudge so its view refreshes (the daemon watcher also
 // reconciles the metarecords). Native `prompt`/`confirm` match the
 // file-manager's own dialogs.
+//
+// It also owns the "Metarecord" section every panel showing metarecords offers
+// on the record under the cursor (open it in the detail / file panels, reveal
+// its folder, copy its UUID — the actions the metarecord list has always had),
+// so file-manager, recent, ref-list and the tree panels all present the same
+// menu the list does.
+
+import { copyText } from '/__menu.js';
 
 /**
  * The shared clipboard, a module singleton (ES modules are cached per URL in
@@ -277,6 +285,56 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
 }
 
 /**
+ * The "Metarecord" section any panel showing metarecords can offer on the record
+ * under the cursor: open it in the detail panel, in the file panel and reveal
+ * its folder (both only when it is backed by a file), and copy its UUID — the
+ * same items the metarecord list has always shown. The reveal commands read the
+ * `selected_metarecord` / `selected_paths` workspace vars, so the caller must
+ * have made the clicked record the selection before a menu action fires (every
+ * panel already does this when it moves the cursor to the right-clicked row).
+ *
+ * @param {{ metafolder: MetafolderApi, uuid: string, hasFile?: boolean,
+ *   revealFolder?: boolean, leading?: Metafolder.MenuItem[] }} args `hasFile`
+ *   gates the file-backed items; `revealFolder` (default `hasFile`) also offers
+ *   "Open folder in file manager" — a panel that IS the file manager passes
+ *   `false`; `leading` items are inserted right after the header (e.g. a value
+ *   picker's "Pick this metarecord").
+ * @returns {Metafolder.MenuItem[]}
+ */
+export function metarecordMenuItems({
+  metafolder,
+  uuid,
+  hasFile = false,
+  revealFolder = hasFile,
+  leading = [],
+}) {
+  const { commands } = metafolder;
+  /** @type {Metafolder.MenuItem[]} */
+  const items = [
+    { header: 'Metarecord' },
+    ...leading,
+    {
+      label: 'Open in panel metarecord-detail',
+      action: () => void commands.invoke('panel:reveal-other metarecord-detail'),
+    },
+  ];
+  if (hasFile) {
+    items.push({
+      label: 'Open in panel file',
+      action: () => void commands.invoke('panel:reveal-other file'),
+    });
+    if (revealFolder) {
+      items.push({
+        label: 'Open folder in file manager',
+        action: () => void commands.invoke('file-manager:reveal-folder'),
+      });
+    }
+  }
+  items.push({ label: 'Copy UUID', action: () => void copyText(uuid) });
+  return items;
+}
+
+/**
  * A ready-made `contextMenu.addDefaultItems` provider: on right-click it walks
  * the event's composed path for the nearest element tagged with a
  * `data-mf-path` (its absolute OS path), and offers the file actions for it.
@@ -303,6 +361,53 @@ export function fileActionsProvider(metafolder, getRepo) {
           isDir,
         });
       }
+    }
+    return [];
+  };
+}
+
+/**
+ * A `contextMenu.addDefaultItems` provider for a panel whose rows ARE
+ * metarecords: it walks the event's composed path for the nearest element
+ * tagged with a `data-mf-uuid` (and, when file-backed, `data-mf-path` +
+ * `data-mf-isdir`/`data-mf-name`), publishes that row as the selection
+ * (`selected_metarecord` / `selected_paths`) so the reveal commands act on the
+ * right-clicked row rather than the keyboard cursor, and returns the metarecord
+ * section followed by the file section (when file-backed). A row that carries a
+ * `data-mf-path` but no uuid falls back to the file section only (same as
+ * {@link fileActionsProvider}). Returns no items when there is no active repo or
+ * the click missed a tagged row.
+ *
+ * @param {MetafolderApi} metafolder
+ * @param {() => string|null} getRepo the panel's current active repo
+ * @returns {(event: MouseEvent) => Metafolder.MenuItem[]}
+ */
+export function rowActionsProvider(metafolder, getRepo) {
+  return (event) => {
+    const repo = getRepo();
+    if (!repo) return [];
+    for (const node of event.composedPath()) {
+      const dataset = /** @type {HTMLElement} */ (node)?.dataset;
+      if (!dataset) continue;
+      const uuid = dataset.mfUuid;
+      const path = dataset.mfPath;
+      const hasFile = typeof path === 'string' && path !== '';
+      if (!uuid && !hasFile) continue; // neither a metarecord nor a file row
+      /** @type {Metafolder.MenuItem[]} */
+      const items = [];
+      if (uuid) {
+        // Make the right-clicked row the selection so the reveal commands read
+        // its uuid/path, not whatever the cursor last sat on.
+        void metafolder.workspace.set('selected_metarecord', { uuid, repo });
+        void metafolder.workspace.set('selected_paths', hasFile ? [path] : []);
+        items.push(...metarecordMenuItems({ metafolder, uuid, hasFile }));
+      }
+      if (hasFile) {
+        const isDir = dataset.mfIsdir === '1' ? true : dataset.mfIsdir === '0' ? false : undefined;
+        if (items.length > 0) items.push('-');
+        items.push(...fileMenuItems({ metafolder, repo, path, name: dataset.mfName, isDir }));
+      }
+      return items;
     }
     return [];
   };
