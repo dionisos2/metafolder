@@ -414,7 +414,7 @@ fn maintain_watches(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_watched_dirs, relative};
+    use super::{compute_watched_dirs_timed, relative};
     use crate::db;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
@@ -457,7 +457,7 @@ mod tests {
         fn watched(&mut self) -> HashSet<PathBuf> {
             let internal = self.internal_dir();
             let root = self.root.clone();
-            compute_watched_dirs(&self.conn, &mut self.cache, &root, &internal)
+            compute_watched_dirs_timed(&self.conn, &mut self.cache, &root, &internal).0
         }
     }
 
