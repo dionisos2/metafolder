@@ -32,12 +32,17 @@ async fn request(app: &Router, method: &str, uri: &str) -> (StatusCode, Value) {
 }
 
 async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
-    let request = Request::builder()
-        .method("POST")
-        .uri(uri)
-        .header("content-type", "application/json")
-        .body(Body::from(body.to_string()))
-        .unwrap();
+    send(app, "POST", uri, Some(body)).await
+}
+
+async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    let builder = Request::builder().method(method).uri(uri);
+    let request = match body {
+        Some(v) => {
+            builder.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap()
+        }
+        None => builder.body(Body::empty()).unwrap(),
+    };
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
@@ -140,6 +145,104 @@ async fn query_registers_an_observable_task() {
     assert!(query_task["result"].is_null());
     assert!(query_task["done"].is_null());
     assert!(query_task["total"].is_null());
+}
+
+/// Seeds a repo with a two-write log (root entry + one metarecord) and returns
+/// the metarecord uuid; enough history to prune or roll back against.
+async fn seed_history(app: &Router, repo: &str) -> String {
+    let (status, body) = post(
+        app,
+        &format!("/repos/{repo}/metarecords"),
+        serde_json::json!({"fields": [{"name": "s", "value": {"type": "int", "value": 1}}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "seed create failed: {body}");
+    let uuid = body["uuid"].as_str().unwrap().to_string();
+    let (status, body) = send(
+        app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/s"),
+        Some(serde_json::json!({"value": {"type": "int", "value": 2}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "seed patch failed: {body}");
+    uuid
+}
+
+#[tokio::test]
+async fn prune_registers_an_observable_task() {
+    let (app, _state, repo) = app_with_repo("pruneobs");
+    seed_history(&app, &repo).await;
+
+    // Prune everything before the current HEAD (a synchronous, lock-holding
+    // operation): its observation task must be recorded like a query's.
+    let log = send(&app, "GET", &format!("/repos/{repo}/log"), None).await.1;
+    let head = log["head"].as_i64().expect("head is set");
+    let (status, body) = post(
+        &app,
+        &format!("/repos/{repo}/log/prune"),
+        serde_json::json!({"mode": "before", "target": {"id": head}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "prune failed: {body}");
+
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+    assert_eq!(status, StatusCode::OK);
+    let task = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "prune")
+        .expect("a prune task is recorded");
+    assert_eq!(task["status"], "done");
+    // Observation-only: the result travels with the prune response.
+    assert!(task["result"].is_null());
+    assert!(task["done"].is_null());
+    assert!(task["total"].is_null());
+}
+
+#[tokio::test]
+async fn rollback_registers_an_observable_task() {
+    let (app, _state, repo) = app_with_repo("rollbackobs");
+    seed_history(&app, &repo).await;
+
+    let (status, body) = post(
+        &app,
+        &format!("/repos/{repo}/rollback"),
+        serde_json::json!({"target": {"prev_revision": true}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "rollback failed: {body}");
+
+    let (status, body) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+    assert_eq!(status, StatusCode::OK);
+    let task = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["kind"] == "rollback")
+        .expect("a rollback task is recorded");
+    assert_eq!(task["status"], "done");
+    assert!(task["result"].is_null());
+    assert!(task["done"].is_null());
+    assert!(task["total"].is_null());
+}
+
+/// Prune and rollback are single atomic transactions with no cooperative
+/// cancellation point, so their observation tasks are non-cancellable (400),
+/// like `flush`/`load` and unlike `query`.
+#[tokio::test]
+async fn cancel_prune_or_rollback_task_is_400() {
+    let (app, state, repo) = app_with_repo("cancelnav");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    for kind in [TaskKind::Prune, TaskKind::Rollback] {
+        let id = state.repo(repo_uuid).unwrap().tasks.start(kind);
+        state.repo(repo_uuid).unwrap().tasks.mark_running(id);
+        let hex = id.as_simple().to_string();
+        let (status, _) =
+            request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{kind:?} must be non-cancellable");
+    }
 }
 
 #[tokio::test]

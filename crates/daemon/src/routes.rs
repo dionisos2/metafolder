@@ -1079,16 +1079,43 @@ async fn rollback(
     let repo_uuid = parse_uuid(&repo)?;
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
-        let resolved = crate::log::resolve_target(&conn, &target)?;
-        let result = crate::log::navigate(&mut conn, resolved)?;
-        // Navigation rewrites tree positions arbitrarily: rebuild the cache
-        // from the new state (keeps it complete; `populate` clears first).
-        repo_state.lock_cache().populate(&conn)?;
-        Ok(Json(result))
+        // Observation-only task (spec-tasks), like prune: rollback rewrites
+        // arbitrary state under the connection lock and rebuilds the tree cache.
+        observed(repo_state, TaskKind::Rollback, "rolling back", |repo_state| {
+            repo_state.ensure_writable()?;
+            let mut conn = repo_state.conn.lock_recover();
+            let resolved = crate::log::resolve_target(&conn, &target)?;
+            let result = crate::log::navigate(&mut conn, resolved)?;
+            // Navigation rewrites tree positions arbitrarily: rebuild the cache
+            // from the new state (keeps it complete; `populate` clears first).
+            repo_state.lock_cache().populate(&conn)?;
+            Ok(Json(result))
+        })
     })
     .await
+}
+
+/// Runs `f` as an observation-only task (spec-tasks): registers a task of
+/// `kind`, marks it running with `phase`, and records its terminal state. Like
+/// `query`, the operation's result travels with the HTTP response, so the task
+/// carries no result payload and its counts stay unknown. Used for the
+/// synchronous, connection-lock-holding log operations (prune, rollback) so
+/// other clients can see why their work is queued.
+fn observed<T>(
+    repo_state: &RepoState,
+    kind: TaskKind,
+    phase: &'static str,
+    f: impl FnOnce(&RepoState) -> Result<T, ApiError>,
+) -> Result<T, ApiError> {
+    let task = repo_state.tasks.start(kind);
+    repo_state.tasks.mark_running(task);
+    repo_state.tasks.set_progress(task, phase, None, None);
+    let outcome = f(repo_state);
+    match &outcome {
+        Ok(_) => repo_state.tasks.finish(task, None),
+        Err(e) => repo_state.tasks.fail(task, &e.message),
+    }
+    outcome
 }
 
 #[derive(Deserialize)]
@@ -1115,13 +1142,19 @@ async fn prune_log(
     };
     let target = body.target.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
-        let resolved = crate::log::resolve_target(&conn, &target)?
-            .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
-        let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
-            .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-        Ok(Json(json!({"pruned_operations": ops, "pruned_revisions": revisions})))
+        // Observation-only task (spec-tasks): the result travels with this
+        // response, so the task carries no result payload and its counts stay
+        // unknown. Registered because prune holds the connection lock and can be
+        // long on a large log, so other clients see why their work is queued.
+        observed(repo_state, TaskKind::Prune, "pruning", |repo_state| {
+            repo_state.ensure_writable()?;
+            let mut conn = repo_state.conn.lock_recover();
+            let resolved = crate::log::resolve_target(&conn, &target)?
+                .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
+            let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
+                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+            Ok(Json(json!({"pruned_operations": ops, "pruned_revisions": revisions})))
+        })
     })
     .await
 }

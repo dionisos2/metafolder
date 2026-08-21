@@ -30,13 +30,24 @@ pub enum TaskKind {
     /// load progress bar; not cancellable (a partial warmup just falls back to
     /// the DB, so there is nothing to roll back or refuse an unload for).
     Load,
+    /// Log pruning (`POST /log/prune`). Observation-only, like `query`: the
+    /// result travels with the request response. Registered because it holds the
+    /// connection lock synchronously (potentially long on a large log), so other
+    /// clients can see why their work is queued.
+    Prune,
+    /// A one-shot atomic rollback (`POST /rollback`). Observation-only for the
+    /// same reason as `prune`: it rewrites arbitrary state under the connection
+    /// lock and rebuilds the tree cache.
+    Rollback,
 }
 
 impl TaskKind {
     /// Whether a task of this kind can be cancelled (spec-tasks "Cancellation").
-    /// `flush` is internal and transient; `load` is a harmless warmup.
+    /// `flush` is internal and transient; `load` is a harmless warmup; `prune`
+    /// and `rollback` are single atomic transactions with no cooperative
+    /// cancellation point (interrupting one would only roll it back).
     pub fn is_cancellable(self) -> bool {
-        !matches!(self, TaskKind::Flush | TaskKind::Load)
+        !matches!(self, TaskKind::Flush | TaskKind::Load | TaskKind::Prune | TaskKind::Rollback)
     }
 }
 
