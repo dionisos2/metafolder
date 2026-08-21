@@ -1074,6 +1074,12 @@ export async function mount(root, metafolder) {
         label: 'Open in panel file',
         action: () => void commands.invoke('panel:reveal-other file'),
       });
+      // Open the metarecord's folder (itself for a directory, the containing
+      // folder for a file) in the file manager, here in this panel.
+      items.push({
+        label: 'Open folder in file manager',
+        action: () => void commands.invoke('file-manager:reveal-folder'),
+      });
     }
     items.push({ label: 'Copy UUID', action: () => void copyText(target.uuid) });
     if (repo && paths.length > 0) {

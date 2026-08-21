@@ -5,7 +5,13 @@
 // with the error-status timeout (statusErrorMs, or the 8000 fallback).
 
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { fileActionsProvider, fileMenuItems, getClipboard, setClipboard } from '/__file-actions.js';
+import {
+  fileActionsProvider,
+  fileMenuItems,
+  getClipboard,
+  revealFolder,
+  setClipboard,
+} from '/__file-actions.js';
 
 afterEach(() => {
   setClipboard(null);
@@ -213,5 +219,27 @@ describe('fileActionsProvider', () => {
       const items = provider(event(dataset));
       expect(items.map((i) => (i === '-' ? '-' : (i as { label: string }).label))).toContain('Cut');
     }
+  });
+});
+
+describe('revealFolder', () => {
+  test('a file opens its containing folder with the file highlighted', () => {
+    expect(revealFolder('/a/b/c.txt', false)).toEqual({ dir: '/a/b', select: 'c.txt' });
+  });
+
+  test('a directory is opened directly, nothing highlighted', () => {
+    expect(revealFolder('/a/b', true)).toEqual({ dir: '/a/b', select: null });
+  });
+
+  test('a file directly under the root opens the root', () => {
+    expect(revealFolder('/top.txt', false)).toEqual({ dir: '/', select: 'top.txt' });
+  });
+
+  test('the root directory opens itself', () => {
+    expect(revealFolder('/', true)).toEqual({ dir: '/', select: null });
+  });
+
+  test('a trailing slash on a directory path is tolerated', () => {
+    expect(revealFolder('/a/b/', true)).toEqual({ dir: '/a/b/', select: null });
   });
 });

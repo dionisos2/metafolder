@@ -692,6 +692,26 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'repos:open':
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
       return true;
+    case 'file-manager:reveal-folder': {
+      // Open the folder of the current selection in the file manager, replacing
+      // the focused panel: the folder itself when a directory is selected, or
+      // the folder containing the selected file. The file manager (which reads
+      // the disk) stats the path to tell the two apart and highlights the file.
+      if (!ws) return true;
+      const paths = await invoke('ws_get_var', { wsId: ws, key: 'selected_paths' });
+      const path = Array.isArray(paths) ? paths.find((p) => typeof p === 'string') : undefined;
+      if (!path) {
+        await status('no file or folder is selected');
+        return true;
+      }
+      await invoke('ws_set_var', {
+        wsId: ws,
+        key: 'file-manager:reveal-path',
+        value: { path, nonce: Date.now() },
+      });
+      await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'file-manager' });
+      return true;
+    }
     case 'recent':
       // The `metarecord` argument was collected by dispatch (with completion);
       // args[0] is the picked display line.

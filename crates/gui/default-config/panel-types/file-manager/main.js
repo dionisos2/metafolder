@@ -21,6 +21,7 @@ import {
   getClipboard,
   setClipboard,
   hasClipboard,
+  revealFolder,
 } from '/__file-actions.js';
 
 // The clipboard is shared across the whole GUI JS realm (see /__file-actions.js)
@@ -69,6 +70,10 @@ export async function mount(root, metafolder) {
   let showHidden = false;
   /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
   let trackedPaths = new Map();
+  /** The nonce of the last handled `file-manager:reveal-path` request, so the
+   *  same request is never acted on twice (start + onChange).
+   *  @type {unknown} */
+  let revealNonce = null;
 
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
@@ -343,6 +348,66 @@ export async function mount(root, metafolder) {
       return;
     }
     await open(repoRoot);
+  }
+
+  // ── Reveal a path (spec-gui "Cross-panel selection") ───────────────────────
+  // Another panel asks the file manager to show a metarecord's folder: the
+  // folder itself for a directory, or the containing folder (with the file
+  // highlighted) for a file. The request travels through the workspace variable
+  // `file-manager:reveal-path` = { path, nonce }, honoured both when the panel
+  // mounts (start) and while it is already mounted (onChange). The `nonce` guard
+  // makes an identical repeated request re-trigger, yet the same request act
+  // only once across the two paths.
+
+  /** Highlights the entry named `name` in the current listing, if present.
+   *  @param {string} name */
+  function selectByName(name) {
+    const index = listing.findIndex((item) => item.name === name);
+    if (index >= 0) void select(index);
+  }
+
+  /** Resolves a reveal request to the folder to open and the entry to
+   *  highlight, statting the path to tell a directory from a file (a path that
+   *  no longer exists is treated as a file, so its parent opens).
+   *  @param {string} path @returns {Promise<{dir: string, select: string|null}>} */
+  async function targetFor(path) {
+    let isDir = false;
+    try {
+      isDir = !!(/** @type {{is_dir?: boolean}} */ (await fs.stat(path))).is_dir;
+    } catch {
+      /* gone: fall through as a file, so revealFolder opens the parent */
+    }
+    return revealFolder(path, isDir);
+  }
+
+  /** Reads a fresh `file-manager:reveal-path` request (marking its nonce
+   *  handled) and resolves it, or null when there is none / already handled.
+   *  @returns {Promise<{dir: string, select: string|null}|null>} */
+  async function consumeReveal() {
+    const req = await workspace.get('file-manager:reveal-path');
+    if (!req || typeof req !== 'object') return null;
+    const { path, nonce } = /** @type {{path?: unknown, nonce?: unknown}} */ (req);
+    if (typeof path !== 'string' || !path || nonce === revealNonce) return null;
+    revealNonce = nonce;
+    return targetFor(path);
+  }
+
+  /** @param {{dir: string, select: string|null}} revealed */
+  async function applyReveal(revealed) {
+    if (constrainToRoot && repoRoot !== null && !insideRoot(revealed.dir)) {
+      // The target lies outside the constrained root (a metarecord whose file is
+      // outside the repo): honour the explicit request by dropping the
+      // constraint rather than refusing to navigate.
+      constrainToRoot = false;
+      constrainBox.checked = false;
+    }
+    await open(revealed.dir);
+    if (revealed.select) selectByName(revealed.select);
+  }
+
+  async function handleReveal() {
+    const revealed = await consumeReveal();
+    if (revealed) await applyReveal(revealed);
   }
 
   // ── Filesystem operations (spec-gui "file-manager panel type") ─────────────
@@ -648,24 +713,32 @@ export async function mount(root, metafolder) {
     // A value picker (spec-gui "Value picker") can seed the directory to open
     // at — e.g. the repos panel's folder picker starts from the typed path.
     const seedDir = await workspace.get('file-manager:start-dir');
-    const start = typeof seedDir === 'string' && seedDir ? seedDir : null;
+    const seedStart = typeof seedDir === 'string' && seedDir ? seedDir : null;
     if (repo !== null) {
       await cache.sync(repo); // fresh tracked status on display
       repoRoot = await daemon.repoRoot(repo);
       internalDir = await daemon.repoInternalDir(repo);
-      await open(start ?? repoRoot);
     } else {
-      // No repo: browse from the seed (or the root), everything untracked.
+      // No repo: everything is untracked; browse from the reveal/seed or root.
       repoRoot = null;
       internalDir = null;
       placeholderElement.textContent = 'No active repository — browsing the disk.';
-      await open(start ?? '/');
     }
+    // A pending reveal request (from another panel's "open folder" action) wins
+    // over the plain seed; otherwise fall back to the seed, the repo root, or /.
+    const revealed = await consumeReveal();
+    if (revealed) await applyReveal(revealed);
+    else await open(seedStart ?? repoRoot ?? '/');
   }
 
   // The first directory listing waits for the first actual display.
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
+  // A reveal request while the panel is already mounted: navigate to the folder
+  // when it next becomes visible (start() handles a request present at mount).
+  workspace.onChange('file-manager:reveal-path', () =>
+    metafolder.whenVisible(() => void handleReveal()),
+  );
   async function onMetarecordsDirty() {
     if (currentDir === null) return; // not started yet (still hidden)
     if (repo) await cache.sync(repo); // pick up the change before re-querying

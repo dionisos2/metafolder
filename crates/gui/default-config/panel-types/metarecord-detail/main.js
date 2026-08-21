@@ -1229,6 +1229,14 @@ export async function mount(root, metafolder) {
       },
       { label: 'Delete metarecord', action: () => void commands.invoke('metarecord:delete') },
     ];
+    // Open the metarecord's folder (itself for a directory, the containing
+    // folder for a file) in the file manager, here in this panel.
+    if (currentPaths.length > 0) {
+      items.push({
+        label: 'Open folder in file manager',
+        action: () => void commands.invoke('file-manager:reveal-folder'),
+      });
+    }
     // File actions (cut/copy/paste/rename/duplicate/trash) when this metarecord
     // is backed by a file — shared with the file manager (/__file-actions.js).
     if (record.repo && currentPaths.length > 0) {

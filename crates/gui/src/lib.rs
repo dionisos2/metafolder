@@ -102,6 +102,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("quit", "Exit the GUI", true),
         ("daemon:set-url", "Change the daemon URL", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
+        (
+            "file-manager:reveal-folder",
+            "Open the selected metarecord's folder in the file manager (focused panel)",
+            true,
+        ),
         ("recent", "Open a recently-viewed metarecord", true),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),

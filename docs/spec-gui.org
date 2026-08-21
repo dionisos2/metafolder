@@ -772,6 +772,7 @@ Behaviours:
 | =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
 | =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
+| =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
@@ -1661,6 +1662,12 @@ single-element list containing the highlighted path. If the path has an
 existing metadata metarecord in the active repo, =workspace.selected_metarecord= is also
 updated; otherwise it is set to =null=.
 
+*Reveal*: the panel also honours a =file-manager:reveal-path= workspace variable
+(={ path, nonce }=), set by =file-manager:reveal-folder= from another panel — it
+stats the path, navigates to the folder (its parent for a file, highlighting the
+file), and drops the root constraint if the target lies outside the repo. See
+[[*Cross-panel selection]].
+
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
 selection for a file; =Backspace= goes up one level; =r= refreshes;
 =Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
@@ -1815,6 +1822,18 @@ workspace).
 checks whether any field is being edited. If so, an alert is shown:
 ="Unsaved changes — discard and switch metarecord? [Confirm / Cancel]"=. The switch
 proceeds only if the user confirms.
+
+*Reveal folder*: the builtin command =file-manager:reveal-folder= (and the
+right-click menu item "Open folder in file manager" in =metarecord-list= and
+=metarecord-detail=) opens the selected metarecord's folder in the file manager,
+*replacing the focused panel* — the folder itself when the metarecord is a
+directory, or the folder containing the file (with the file highlighted) when it
+is a file. It reads the selection's first =selected_paths= entry, publishes it as
+the workspace variable =file-manager:reveal-path= (={ path, nonce }=), then
+switches the focused slot to =file-manager=; the =file-manager= panel stats the
+path to tell a directory from a file and navigates there (honouring the request
+both when it mounts and while already mounted, the =nonce= guaranteeing an
+identical repeated request re-triggers while the same request acts only once).
 
 *** Batch set
 

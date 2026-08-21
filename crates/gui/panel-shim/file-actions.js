@@ -84,6 +84,20 @@ export function isWithin(path, dir) {
   return path === dir || path.startsWith(dir.endsWith('/') ? dir : `${dir}/`);
 }
 
+/**
+ * Where the file manager should navigate to *reveal* a path: the folder to open
+ * and the entry name to highlight inside it. A directory is opened directly
+ * (nothing to highlight); a file opens its containing folder, with the file
+ * highlighted. `isDir` is the caller's already-known type (the file manager
+ * stats the path first).
+ * @param {string} path an absolute OS path
+ * @param {boolean} isDir whether `path` is itself a directory
+ * @returns {{ dir: string, select: string|null }}
+ */
+export function revealFolder(path, isDir) {
+  return isDir ? { dir: path, select: null } : { dir: parentDir(path), select: baseName(path) };
+}
+
 // ── Operations ────────────────────────────────────────────────────────────────
 
 /** Error-status duration (config `status-error-ms`), the longer timeout the
