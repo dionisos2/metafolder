@@ -193,25 +193,36 @@ impl RepoState {
         // run first it would silently absorb that cold cost under an
         // indeterminate spinner. Both phases are independent and best-effort: a
         // failure just leaves that accelerator in DB-fallback mode.
+        // The single scan over `field` collects the TreeRef forest too, so the
+        // tree cache is then built from those rows in memory — no second scan.
         let t = std::time::Instant::now();
-        match crate::index::RepoIndex::build_reported(
+        let mut forest = Vec::new();
+        let built = match crate::index::RepoIndex::build_reported_collecting(
             &conn,
+            &mut forest,
             &|done, total| progress("index", Some(done), Some(total)),
             &|| false, // the load warmup is not cancellable (spec-tasks)
         ) {
-            Ok(index) => *self.index.lock_recover() = Some(index),
-            Err(e) => {
-                eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid)
+            Ok(index) => {
+                *self.index.lock_recover() = Some(index);
+                true
             }
-        }
+            Err(e) => {
+                eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid);
+                false // a bailed scan leaves `forest` partial — do not trust it
+            }
+        };
         eprintln!("[warmup {who}] index build: {:?}", t.elapsed());
 
         progress("tree cache", None, None);
         let t = std::time::Instant::now();
-        if let Err(e) = self.lock_cache().populate(&conn) {
+        if built {
+            let n = forest.len();
+            self.lock_cache().populate_from_forest(forest);
+            eprintln!("[warmup {who}] tree cache: {:?} ({n} nodes, from the index scan)", t.elapsed());
+        } else if let Err(e) = self.lock_cache().populate(&conn) {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
         }
-        eprintln!("[warmup {who}] tree cache: {:?}", t.elapsed());
 
         // Place the watcher's directory watches now that the tree cache is
         // populated: `watcher::start` defers this initial walk to here so each

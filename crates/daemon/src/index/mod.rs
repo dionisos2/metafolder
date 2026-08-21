@@ -190,6 +190,28 @@ impl RepoIndex {
         progress: &dyn Fn(u64, u64),
         cancel: &dyn Fn() -> bool,
     ) -> anyhow::Result<RepoIndex> {
+        Self::build_inner(conn, None, progress, cancel)
+    }
+
+    /// [`Self::build_reported`] that also collects every TreeRef position it
+    /// scans into `forest` (in `field.id` order), so the caller can populate the
+    /// tree cache from the *same* single pass over the `field` table instead of a
+    /// second full scan (`db::load_tree_forest`). See `RepoState::warmup`.
+    pub fn build_reported_collecting(
+        conn: &Connection,
+        forest: &mut Vec<db::TreeRow>,
+        progress: &dyn Fn(u64, u64),
+        cancel: &dyn Fn() -> bool,
+    ) -> anyhow::Result<RepoIndex> {
+        Self::build_inner(conn, Some(forest), progress, cancel)
+    }
+
+    fn build_inner(
+        conn: &Connection,
+        mut forest: Option<&mut Vec<db::TreeRow>>,
+        progress: &dyn Fn(u64, u64),
+        cancel: &dyn Fn() -> bool,
+    ) -> anyhow::Result<RepoIndex> {
         let built_at_head = db::current_head(conn)?;
         let mut registry = IdRegistry::new();
         let mut universe = RoaringBitmap::new();
@@ -221,6 +243,18 @@ impl RepoIndex {
                 }
             }
             let Some(id) = registry.id(uuid) else { return Ok(()) };
+            // Collect TreeRef positions so the caller can populate the tree cache
+            // from this pass — the rows arrive in `field.id` order (rowid scan),
+            // which is exactly what the cache's position grouping needs.
+            if let (Some(sink), Value::TreeRef { parent, name }) = (forest.as_deref_mut(), &row.value)
+            {
+                sink.push(db::TreeRow {
+                    field_name: row.name.clone(),
+                    uuid,
+                    parent: *parent,
+                    name: name.clone(),
+                });
+            }
             match row.value {
                 Value::Nothing => {
                     absent.entry(row.name).or_default().insert(id);

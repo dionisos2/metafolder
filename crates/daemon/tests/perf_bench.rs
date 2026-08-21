@@ -108,8 +108,15 @@ fn bench_index_build_and_folder_query() {
     eprintln!("   speedup                       : {:.1}x", old.as_secs_f64() / new.as_secs_f64());
 
     let t = Instant::now();
-    let index = RepoIndex::build(&conn).unwrap();
-    eprintln!("   NEW  full RepoIndex::build     : {:?}\n", t.elapsed());
+    let mut forest = Vec::new();
+    let index =
+        RepoIndex::build_reported_collecting(&conn, &mut forest, &|_, _| {}, &|| false).unwrap();
+    eprintln!("   NEW  build + collect forest    : {:?}", t.elapsed());
+    // Piggyback: the tree cache built from the forest the build just collected,
+    // vs the standalone DB scan (`populate`) it replaces at load.
+    let t = Instant::now();
+    metafolder_daemon::tree_cache::TreeCache::new(false).populate_from_forest(forest);
+    eprintln!("   NEW  tree cache from that scan : {:?}  (vs a full second field scan)\n", t.elapsed());
 
     // ── #2: folder-open query, on the busiest directory ─────────────────────
     // The directory (tree node) with the most direct children — parent uuid

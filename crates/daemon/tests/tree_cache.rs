@@ -130,6 +130,51 @@ fn test_paths_of_without_the_field_is_empty() {
 // ── Direct children (children_of) ───────────────────────────────────────────
 
 #[test]
+fn test_populate_from_forest_matches_db_populate() {
+    use metafolder_daemon::index::RepoIndex;
+    // Populating from the rows the index build collects (in `field.id` order)
+    // must yield the same forest as the DB scan (`load_tree_forest`, ordered by
+    // field_name, metarecord_uuid, id) — including a multi-position metarecord,
+    // where per-uuid position order matters.
+    let mut conn = test_conn();
+    let (root, music, jazz, file) = build_tree(&mut conn);
+    let rock = tree_entry(&mut conn, "mfr_path", Some(music), "rock");
+    // A second forest with a two-position metarecord.
+    let top = tree_entry(&mut conn, "path", None, "top");
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let m = w
+        .create_metarecord(vec![
+            Field::new("path", Value::TreeRef { parent: Some(top), name: "a".into() }),
+            Field::new("path", Value::TreeRef { parent: Some(top), name: "b".into() }),
+        ])
+        .unwrap();
+    w.commit().unwrap();
+
+    let mut from_db = TreeCache::new(false);
+    from_db.populate(&conn).unwrap();
+
+    let mut forest = Vec::new();
+    RepoIndex::build_reported_collecting(&conn, &mut forest, &|_, _| {}, &|| false).unwrap();
+    let mut from_scan = TreeCache::new(false);
+    assert!(from_scan.populate_from_forest(forest), "forest within budget");
+
+    for uuid in [root, music, jazz, file, rock, top, m.uuid] {
+        for field in ["mfr_path", "path"] {
+            let mut pa = from_db.paths_of(&conn, field, uuid).unwrap();
+            let mut pb = from_scan.paths_of(&conn, field, uuid).unwrap();
+            pa.sort();
+            pb.sort();
+            assert_eq!(pa, pb, "paths_of {field} {uuid}");
+            let mut da = from_db.descendants(&conn, field, uuid).unwrap();
+            let mut db_ = from_scan.descendants(&conn, field, uuid).unwrap();
+            da.sort();
+            db_.sort();
+            assert_eq!(da, db_, "descendants {field} {uuid}");
+        }
+    }
+}
+
+#[test]
 fn test_children_of_lists_direct_children_cache_and_fallback() {
     let mut conn = test_conn();
     let (root, music, jazz, file) = build_tree(&mut conn);
