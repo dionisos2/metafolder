@@ -269,7 +269,9 @@ export async function mount(root, metafolder) {
     if (!r || rootPath === null) return [];
     const rel = cache.readTreeRef(r, 'mfr_path', metarecord.uuid);
     if (rel === REFRESH) return [];
-    return rel.map((p) => (p === '' ? rootPath : `${rootPath}/${p}`));
+    // Resolved paths are leading-"/"-rooted ('' is the repo root itself), so the
+    // absolute path is a plain concatenation with the repo root.
+    return rel.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
   }
 
   // Whether a metarecord's mfr_type is a directory (picks the paste target for

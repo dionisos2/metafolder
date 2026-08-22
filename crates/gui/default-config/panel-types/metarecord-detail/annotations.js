@@ -20,7 +20,10 @@ export function createAnnotator({ resolvePaths, getMetarecords }) {
     const byUuid = await resolvePaths(field, [parent]);
     const parentPath = (byUuid[parent] ?? [])[0];
     if (parentPath == null) return null; // broken/stale chain: better nothing than a wrong path
-    return parentPath === '' ? name : `${parentPath}/${name}`;
+    // Empty parent path = the filesystem repo root, so a top-level node is
+    // leading-"/"-rooted (matching the daemon's `paths_of` and the DSL); a
+    // named-root forest (parentPath non-empty) has no leading "/".
+    return parentPath === '' ? `/${name}` : `${parentPath}/${name}`;
   }
 
   /** @param {string} uuid @returns {Promise<string|null>} */

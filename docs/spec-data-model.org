@@ -529,8 +529,10 @@ with =Follows{field, target: \{uuid_in: [node]\}\}=.
 *** =POST /repos/:repo_uuid/tree/resolve-path=
 
 The inverse of =resolve-tree=: resolves a repo-root-relative path (components
-split on =/=, no leading slash) in a TreeRef forest to the uuid of the node at
-that path. Body ={"field"?: <field> (default =mfr_path=), "path": "musique/jazz"}=;
+split on =/=, in the [[file:spec-file-tracking.org][Path string format]] — the filesystem forest is
+leading-=/=-rooted, so its first component is the empty root name; a named-root
+forest has no leading =/=) in a TreeRef forest to the uuid of the node at that
+path. Body ={"field"?: <field> (default =mfr_path=), "path": "/music/jazz"}=;
 response ={"uuid": "<hex>" | null}= (null = no such node). Paths are unique
 within a forest (sibling names are unique), so at most one node matches. Used to
 *set* a TreeRef value from a path: resolve the parent path to a uuid, then post
@@ -661,7 +663,8 @@ dump the scripts consume (e.g. the tag vocabulary).
 =--resolve-tree <field>= is the *bulk* form of =mf path=: it resolves the given
 =TreeRef= field of every selected metarecord to its root-relative path(s), one
 per line (sorted, deduplicated), in a single =POST /query/fields/resolve-tree=
-round-trip (paths in the endpoint form — no leading slash; the repo root
+round-trip (paths in the endpoint form — leading-=/=-rooted for the filesystem
+forest, so a line pastes straight into an =mfr_path -> "…"= query; the repo root
 resolves to an empty line). It needs a selector (=-q= or =-i=) and is exclusive
 with =--select=/=--values=/=--tsv=/=--sort=. This is what lets a GUI script offer
 folder/file completions (=mfr_path=) without a per-record loop.

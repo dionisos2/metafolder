@@ -16,7 +16,9 @@ function annotatorFor(entries: Entry[]) {
   const byUuid = new Map(entries.map((e) => [e.uuid, e]));
 
   // Simulate the daemon tree-resolve endpoint: walk `field`'s parent chain to a
-  // root-relative path (no leading slash; the root's empty name drops out).
+  // repo-root-relative path. The empty repo root (name "") is kept as a leading
+  // component, so a filesystem path is leading-"/"-rooted (`/music`), matching
+  // the daemon's paths_of and the DSL; a named-root forest has no leading "/".
   function pathOf(field: string, uuid: string): string | null {
     const components: string[] = [];
     let cur: string | null = uuid;
@@ -30,7 +32,7 @@ function annotatorFor(entries: Entry[]) {
       components.push(name);
       cur = parent;
     }
-    return components.reverse().filter(Boolean).join('/');
+    return components.reverse().join('/');
   }
 
   const resolvePaths = vi.fn(async (field: string, uuids: string[]) => {
@@ -58,7 +60,7 @@ describe('tree_ref annotations', () => {
 
   test('resolves the path through the daemon endpoint', async () => {
     const { annotator } = annotatorFor([root, dir]);
-    expect(await annotator.annotate('mfr_path', treeRef('d000', 'song.flac'))).toBe('music/song.flac');
+    expect(await annotator.annotate('mfr_path', treeRef('d000', 'song.flac'))).toBe('/music/song.flac');
   });
 
   test('resolves through the endpoint (no client-side chain walk)', async () => {
@@ -69,9 +71,9 @@ describe('tree_ref annotations', () => {
     expect(resolvePaths).toHaveBeenCalledWith('mfr_path', ['d000']);
   });
 
-  test('the root contributes an empty path segment', async () => {
+  test('a top-level filesystem node is leading-"/"-rooted', async () => {
     const { annotator } = annotatorFor([root]);
-    expect(await annotator.annotate('mfr_path', treeRef('r000', 'top.txt'))).toBe('top.txt');
+    expect(await annotator.annotate('mfr_path', treeRef('r000', 'top.txt'))).toBe('/top.txt');
   });
 
   test('a rootless tree_ref needs no annotation (the name is the path)', async () => {

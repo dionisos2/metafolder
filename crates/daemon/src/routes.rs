@@ -221,12 +221,9 @@ async fn get_record_mf_sync(
         let mut cache = repo_state.lock_cache();
         let paths = cache.paths_of(&conn, "mfr_path", uuid)?;
         let mode = match paths.first() {
-            // `paths_of` omits the leading slash; `resolve_mf_sync` (eligibility)
-            // wants it (`""` = root, `/a/b` = nested).
-            Some(p) => {
-                let rel = if p.is_empty() { String::new() } else { format!("/{p}") };
-                crate::eligibility::resolve_mf_sync(&conn, &mut cache, &rel)?
-            }
+            // `paths_of` and `resolve_mf_sync` (eligibility) share the same
+            // leading-"/"-rooted form (`""` = root, `/a/b` = nested).
+            Some(p) => crate::eligibility::resolve_mf_sync(&conn, &mut cache, p)?,
             None => "internal".to_string(),
         };
         Ok(Json(json!({ "mf_sync": mode })))
@@ -238,8 +235,10 @@ async fn get_record_mf_sync(
 struct ResolvePathBody {
     #[serde(default = "default_tree_field")]
     field: String,
-    /// Repo-root-relative path (components split on `/`, no leading slash),
-    /// e.g. `musique/jazz`.
+    /// Repo-root-relative path (components split on `/`, in the Path string
+    /// format): leading-`/`-rooted for the filesystem forest (e.g. `/music/jazz`,
+    /// whose first component is the empty root name), no leading `/` for a
+    /// named-root forest such as tags (e.g. `tag1/tag2`).
     path: String,
 }
 

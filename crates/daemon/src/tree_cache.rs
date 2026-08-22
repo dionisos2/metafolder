@@ -303,14 +303,13 @@ impl TreeCache {
                 None => paths.push(name),
                 Some(parent) => {
                     if let Some(parent_path) = self.path_of(conn, field, parent)? {
-                        let joined = if parent_path.is_empty() {
-                            name
-                        } else {
-                            format!("{parent_path}/{name}")
-                        };
-                        // `path_of` keeps the empty repo-root as a leading "/";
-                        // paths are root-relative for clients, so drop it.
-                        paths.push(joined.strip_prefix('/').map(str::to_string).unwrap_or(joined));
+                        // Mirror `path_of` exactly: the empty repo-root gives
+                        // `parent_path == ""`, so a top-level filesystem node
+                        // joins to a leading-"/" path (`/file.txt`) — the same
+                        // form the DSL and `resolve_path` use, so the two
+                        // round-trip. A named-root forest (e.g. tags) has a
+                        // non-empty root name and so no leading "/".
+                        paths.push(format!("{parent_path}/{name}"));
                     }
                 }
             }
@@ -566,15 +565,11 @@ impl TreeCache {
             match node.parent {
                 None => paths.push(node.name.clone()),
                 Some(p) => {
+                    // Mirror `path_of_at`: the empty repo-root contributes a
+                    // leading "/", so a filesystem path round-trips with the DSL
+                    // / `resolve_path` (a named-root forest has no leading "/").
                     let parent_path = self.path_of_at(p);
-                    let joined = if parent_path.is_empty() {
-                        node.name.clone()
-                    } else {
-                        format!("{parent_path}/{}", node.name)
-                    };
-                    // Drop the leading "/" the repo root contributes: paths are
-                    // root-relative for clients.
-                    paths.push(joined.strip_prefix('/').map(str::to_string).unwrap_or(joined));
+                    paths.push(format!("{parent_path}/{}", node.name));
                 }
             }
         }

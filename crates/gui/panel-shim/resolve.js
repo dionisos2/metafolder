@@ -41,7 +41,10 @@ export function createPathResolver(resolvePaths) {
   async function resolveTreeRef({ parent, name }) {
     if (!parent) return name; // tree root (empty name for the repo root)
     const parentPath = await resolveUuid(parent);
-    return parentPath === '' ? name : `${parentPath}/${name}`;
+    // An empty parent path is the filesystem repo root (name ""), so a top-level
+    // node is leading-"/"-rooted (`/name`) — matching the daemon's `paths_of` and
+    // the DSL. A named-root forest (parentPath non-empty, e.g. tags) has no "/".
+    return parentPath === '' ? `/${name}` : `${parentPath}/${name}`;
   }
 
   return {

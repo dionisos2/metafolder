@@ -2850,22 +2850,23 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
     let f_uuid = f.stdout.trim().to_string();
 
     // Bulk (query selector): every directory's mfr_path resolved to its
-    // root-relative path, one per line (endpoint form: no leading slash) — the
-    // one round-trip that lets a GUI script offer folder completions.
+    // repo-root-relative path, one per line (leading-"/"-rooted, the DSL form —
+    // paste-able straight into an `mfr_path -> "…"` query) — the one round-trip
+    // that lets a GUI script offer folder completions.
     let out = mf(&[
         "-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get", "--resolve-tree", "mfr_path",
     ]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
-    assert!(lines.contains(&"a"), "got: {}", out.stdout);
-    assert!(lines.contains(&"a/b"), "got: {}", out.stdout);
+    assert!(lines.contains(&"/a"), "got: {}", out.stdout);
+    assert!(lines.contains(&"/a/b"), "got: {}", out.stdout);
 
     // Direct selector (-i): the single record's resolved path.
     let out = mf(&[
         "-u", &repo, "metarecord", "-i", &f_uuid, "get", "--resolve-tree", "mfr_path",
     ]);
     assert_ok(&out);
-    assert_eq!(out.stdout.trim(), "a/f.txt");
+    assert_eq!(out.stdout.trim(), "/a/f.txt");
 
     // No selector is a usage error (exit 2, no HTTP round-trip).
     let out = mf(&["-u", &repo, "metarecord", "get", "--resolve-tree", "mfr_path"]);

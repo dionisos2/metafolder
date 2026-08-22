@@ -360,9 +360,12 @@ Resolves a =TreeRef= field to its root-relative path(s) for every match — the
 set form of the direct =GET …/fields/:name/resolve-tree= ([[file:spec-data-model.org][spec-data-model.org]]).
 A read/projection (not a write), but set-scoped, so it lives here. Body
 ={"query": <Query>, "field": "mfr_path"}= (=field= defaults to =mfr_path=) →
-={"<uuid>": ["<path>", ...], ...}= (paths are root-relative, no leading slash; a
-metarecord absent from the result carries no resolvable path). The tree-cache
-serves it from memory; the GUI memoises it per =(field, uuid)=.
+={"<uuid>": ["<path>", ...], ...}= (paths follow the [[file:spec-file-tracking.org][Path string format]]:
+leading-=/=-rooted for the filesystem forest, no leading =/= for a named-root
+forest such as tags — so a path round-trips straight into =resolve-path= and the
+DSL =->= / =->*= / =-= path operators; a metarecord absent from the result
+carries no resolvable path). The tree-cache serves it from memory; the GUI
+memoises it per =(field, uuid)=.
 
 * CLI
 
