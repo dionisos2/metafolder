@@ -93,13 +93,28 @@ export function resolvePromptValue(
   return suggestions[Math.min(selectedIndex, suggestions.length - 1)].name;
 }
 
+/** How many completions the input renders at once. A prompt can be handed
+ *  thousands of candidates (e.g. every tracked folder of a large repo); the
+ *  list renders one DOM node per entry, so without a cap each keystroke
+ *  rebuilds thousands of nodes and the whole WebView stalls. The list scrolls
+ *  and the user narrows it by typing, so only the best-ranked slice is
+ *  ever useful on screen. */
+export const MAX_COMPLETIONS = 200;
+
 /** Autocomplete filter for script prompt completions (POST /gui/prompt):
- *  same prefix-then-substring ranking as the command list. */
-export function filterCompletions(completions: string[], draft: string): string[] {
+ *  same prefix-then-substring ranking as the command list, capped at `limit`
+ *  best-ranked entries so a huge candidate set stays cheap to render. */
+export function filterCompletions(
+  completions: string[],
+  draft: string,
+  limit: number = MAX_COMPLETIONS,
+): string[] {
   return filterCommands(
     completions.map((name) => ({ name })),
     draft,
-  ).map((c) => c.name);
+  )
+    .slice(0, limit)
+    .map((c) => c.name);
 }
 
 // ── Interactive command arguments (spec-gui "Command") ─────────────────

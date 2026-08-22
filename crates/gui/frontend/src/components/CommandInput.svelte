@@ -141,8 +141,9 @@
           ? bashCandidates.map((name) => ({ name, label: '' }))
           : filterCommands(store.commands, draft),
   );
-  // Every match is listed; the CSS max-height makes the list scroll, so
-  // arrow navigation travels through all possible completions.
+  // The best-ranked matches are listed (filterCompletions caps prompt
+  // candidates so a huge set stays cheap to render); the CSS max-height makes
+  // the list scroll, and typing narrows it toward the wanted value.
   const suggestions = $derived(matches);
 
   // Typing returns the selection to the best (first) match.

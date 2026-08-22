@@ -226,6 +226,16 @@ describe('filterCompletions', () => {
     expect(filterCompletions(tags, 'ja be')).toEqual(['jazz/bebop']);
     expect(filterCompletions(tags, 'be ja')).toEqual([]);
   });
+
+  test('caps the result so a huge completion set stays cheap to render', () => {
+    const many = Array.from({ length: 5000 }, (_, i) => `dir/${String(i).padStart(4, '0')}`);
+    expect(filterCompletions(many, '').length).toBe(200);
+    // The cap keeps the best (sorted-first) matches, not an arbitrary slice.
+    expect(filterCompletions(many, '')[0]).toBe('dir/0000');
+    // An explicit smaller limit is honoured; a small set is unaffected.
+    expect(filterCompletions(many, '', 10).length).toBe(10);
+    expect(filterCompletions(tags, '', 200)).toEqual(['classical', 'jazz', 'jazz/bebop', 'rock']);
+  });
 });
 
 describe('argSpecs registry', () => {
