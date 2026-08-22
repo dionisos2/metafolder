@@ -75,7 +75,7 @@ function stub(repo: string | null, vars: Record<string, unknown>, repoRoot = '/r
       repoRoot: async () => repoRoot,
       repoInternalDir: async () => `${repoRoot}/.metafolder/internal`,
     },
-    cache: { sync: vi.fn(async () => {}) },
+    cache: { sync: vi.fn(async () => {}), subscribe: vi.fn(() => () => {}) },
     workspace: {
       get: async (key: string) => (key === 'active_repo' ? repo : (vars[key] ?? null)),
       set: setVar,
