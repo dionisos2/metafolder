@@ -277,18 +277,15 @@
   { command = "metarecord:edit-field-type", when = "metarecord-detail" },
   { command = "metarecord:edit-field-type", when = "metarecord-list" },
 ]
-"m b s" = [
-  { command = "metarecord:bulk-set-field", when = "metarecord-detail" },
-  { command = "metarecord:bulk-set-field", when = "metarecord-list" },
-]
-"m b a" = [
-  { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" },
-  { command = "metarecord:bulk-add-field-value", when = "metarecord-list" },
-]
-"m b r" = [
-  { command = "metarecord:bulk-remove-field", when = "metarecord-detail" },
-  { command = "metarecord:bulk-remove-field", when = "metarecord-list" },
-]
+# Bulk edits act on the list selection / current query. From the list, "m b"
+# opens the bulk-edit operation picker (set / append / remove / unset / delete);
+# it then delegates to the per-operation command, which collects its field/value
+# in the command input with completion. From the detail panel the per-operation
+# commands are bound directly (there is no umbrella there).
+"m b" = { command = "metarecord-list:bulk-edit", when = "metarecord-list" }
+"m b s" = { command = "metarecord:bulk-set-field", when = "metarecord-detail" }
+"m b a" = { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" }
+"m b r" = { command = "metarecord:bulk-remove-field", when = "metarecord-detail" }
 
 # file: image zoom controls.
 "plus" = { command = "file:zoom-in", when = "file" }

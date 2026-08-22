@@ -766,7 +766,10 @@ Behaviours:
 | =metarecord:edit-field-type [field] [type]= | Change a field's type on the current metarecord |
 | =metarecord:bulk-set-field [field] [value]= | Overwrite a field on the selection (or current query) |
 | =metarecord:bulk-add-field-value [field] [value]= | Add a value to a field on the selection (or current query) |
-| =metarecord:bulk-remove-field [field]= | Remove a field from the selection (or current query) |
+| =metarecord:bulk-remove-value [field] [value]= | Remove one value from a field on the selection (or current query) |
+| =metarecord:bulk-remove-field [field]= | Remove a field entirely from the selection (or current query) |
+| =metarecord:bulk-delete= | Delete the metarecords in the selection (or current query); the files stay on disk |
+| =metarecord-list:bulk-edit [operation]= | Pick a bulk operation (set/append/remove/unset/delete), then delegate to its command |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
 | =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
@@ -913,13 +916,22 @@ completion and the current value pre-filled. =TreeRef= values are edited as
 paths (completed against the field's forest, resolved through
 =POST …/tree/resolve-path= on commit). The set is =set-field=,
 =add-field-value=, =edit-field-value=, =delete-field-value=, =edit-field-name=,
-=edit-field-type= on the current metarecord, and =bulk-set-field=,
-=bulk-add-field-value=, =bulk-remove-field= over the checkbox selection
+=edit-field-type= on the current metarecord, and the bulk family —
+=bulk-set-field=, =bulk-add-field-value=, =bulk-remove-value=,
+=bulk-remove-field=, =bulk-delete= — over the checkbox selection
 (=selected_metarecords=) or, when it is empty, the current query. The default
 suggestions bind them under an =m= sequence prefix (=m s= set, =m a= add, =m v=
-edit a value, =m d= delete a value, =m n= rename, =m t= retype; =m b s/a/r= for
-the bulk variants), active in both the =metarecord-list= and =metarecord-detail=
-panels so the family is reachable whether the list or the detail is focused.
+edit a value, =m d= delete a value, =m n= rename, =m t= retype), active in both
+the =metarecord-list= and =metarecord-detail= panels so the family is reachable
+whether the list or the detail is focused.
+
+For bulk edits the =metarecord-list= panel offers an umbrella command,
+=metarecord-list:bulk-edit= (bound to =m b=): it first collects the *operation*
+in the command input (completion over =set / append / remove / unset / delete=),
+then delegates to the matching bulk command, which collects its own field/value
+arguments with completion. This replaces the earlier in-panel "edit / delete on
+query" form. The =metarecord-detail= panel binds the per-operation bulk commands
+directly instead (=m b s= set, =m b a= add, =m b r= remove the field).
 
 Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).

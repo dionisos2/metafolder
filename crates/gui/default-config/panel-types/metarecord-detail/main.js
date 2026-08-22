@@ -1077,6 +1077,49 @@ export async function mount(root, metafolder) {
     },
   });
 
+  void commands.register('metarecord:bulk-remove-value', {
+    label: 'Remove a specific field value on the selected metarecords (or current query)',
+    args: [
+      {
+        name: 'field',
+        prompt: () => 'Field to remove a value from?',
+        complete: async () => catalogFieldNames(await repoForAdd()),
+      },
+      { name: 'value', prompt: (p) => `Value to remove from "${p[0]}"?`, complete: (_partial, p) => bulkValueCompletion(p[0]) },
+    ],
+    handler: async (field, raw) => {
+      const t = await bulkTarget();
+      if (!confirmBulk(t, `Remove a value from "${field}"`)) return;
+      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const force = isReserved(field) ? { force: true } : {};
+      await daemon.call('POST', `/repos/${t.repo}/query/fields/remove`, {
+        query: t.query,
+        name: field,
+        value,
+        ...force,
+      });
+      void statusBar.message(`Value removed from "${field}" on ${t.desc}.`, statusMessageMs);
+      await dirty();
+    },
+  });
+
+  void commands.register('metarecord:bulk-delete', {
+    label: 'Delete the selected metarecords (or current query) — the files stay on disk',
+    handler: async () => {
+      const t = await bulkTarget();
+      // Always confirm: deletion is not undoable from the UI. Prefer the exact
+      // selection count, else the query description.
+      const what = t.count !== null ? `${t.count} metarecord${t.count === 1 ? '' : 's'}` : t.desc;
+      if (!confirm(`Delete ${what}? This removes the metarecords (any files stay on disk).`)) return;
+      const resp = /** @type {{deleted?: number}} */ (
+        await daemon.call('POST', `/repos/${t.repo}/query/delete`, { query: t.query })
+      );
+      const deleted = resp.deleted ?? 0;
+      void statusBar.message(`Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`, statusMessageMs);
+      await dirty();
+    },
+  });
+
   // ── Wiring ──────────────────────────────────────────────────────────────
 
   // Buttons dispatch through their registered commands (so every control is

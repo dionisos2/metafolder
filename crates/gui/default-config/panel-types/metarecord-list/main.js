@@ -4,12 +4,12 @@
 import { byId, el, fields, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
 import { createPagedList } from '/__paged-list.js';
-import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
-import { createSelect } from '/__select.js';
+import { MATCH_ALL } from '/__value-widget.js';
 import { splitTerms, finderTargets, finderClause, composeQuery } from '/__finder.js';
 import { fileMenuItems, metarecordMenuItems } from '/__file-actions.js';
 import { attachHistory } from '/__history.js';
 import { latestOnly } from '/__coalesce.js';
+import { BULK_OPERATIONS, bulkCommandFor } from './bulk-ops.js';
 import {
   parseColumns,
   isSortable,
@@ -47,9 +47,6 @@ const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
  * A sort key, as the daemon's query body takes it.
  * @typedef {{field: string, order: 'asc'|'desc'}} SortKey
  *
- * The value editor `widgetFor` builds.
- * @typedef {{element: HTMLElement, read: () => Metafolder.Value}} Widget
- *
  * Whether a metarecord's tracked file is gone, as /__orphan.js reports it.
  * @typedef {'deleted'|'missing'|null} OrphanState
  *
@@ -66,7 +63,6 @@ export async function mount(root, metafolder) {
   const { settings } = metafolder;
   const finderDebounceMs = settings.finderDebounceMs ?? FINDER_DEBOUNCE_MS;
   const livePreviewMs = settings.livePreviewDebounceMs ?? 130;
-  const statusMessageMs = settings.statusMessageMs ?? 5000;
 
   /** @type {string|null} */
   let repo = null;
@@ -125,23 +121,6 @@ export async function mount(root, metafolder) {
   const normalInput = byId(root, 'normal-input', HTMLInputElement);
   const normalError = byId(root, 'normal-error');
   const normalFreeze = byId(root, 'normal-freeze', HTMLInputElement);
-  const bulkForm = byId(root, 'bulk-form');
-  // `syncBulkOpUi` is a hoisted function declaration, so onChange can name it here.
-  const bulkOp = createSelect(byId(root, 'bulk-op'), {
-    value: 'set',
-    options: [
-      { value: 'set', label: 'Set (replace all rows)' },
-      { value: 'append', label: 'Append (add a row)' },
-      { value: 'remove', label: 'Remove (delete matching rows)' },
-      { value: 'unset', label: 'Unset (remove the field)' },
-      { value: 'delete', label: 'Delete metarecords' },
-    ],
-    onChange: () => syncBulkOpUi(),
-  });
-  const bulkName = byId(root, 'bulk-name', HTMLInputElement);
-  const bulkValueSlot = byId(root, 'bulk-value');
-  const bulkForce = byId(root, 'bulk-force', HTMLInputElement);
-  const bulkError = byId(root, 'bulk-error');
 
   // Per-repo input history (spec-gui "Input history"): ctrl-p/ctrl-n walk,
   // ctrl-r OSM search. Recorded on explicit submits only, never the debounce.
@@ -713,148 +692,6 @@ export async function mount(root, metafolder) {
     void fetchPage(true);
   }
 
-  // ── Bulk edit (set/append/remove a field over the whole query result) ────
-
-  /** @type {Widget|null} the value editor following the picked type */
-  let bulkWidget = null;
-
-  // Each operation maps to its batch endpoint and a confirmation verb.
-  // `valueless` ops (unset) act on the field name alone — no value widget.
-  // `noField` ops (delete) act on the matched metarecords themselves — no field
-  // name, no value; the response counts `deleted` rather than `updated`.
-  /** @type {Record<string, {path: string, verb: string, prep: string, valueless?: boolean, noField?: boolean}>} */
-  const BULK_OPS = {
-    set: { path: 'query/fields/set', verb: 'Set', prep: 'on' },
-    append: { path: 'query/fields/append', verb: 'Append', prep: 'to' },
-    remove: { path: 'query/fields/remove', verb: 'Remove', prep: 'from' },
-    unset: { path: 'query/fields/unset', verb: 'Unset', prep: 'from', valueless: true },
-    delete: { path: 'query/delete', verb: 'Delete', prep: '', valueless: true, noField: true },
-  };
-
-  // Value picker (spec-gui "Value picker") for the bulk-set value widget.
-  const pickRunner = createPickRunner(metafolder);
-  const bulkPickOpts = {
-    /** @param {string} valueType */
-    pick: (valueType) => pickRunner.run({ field: bulkName.value.trim(), valueType }),
-  };
-
-  /** The form's value widget follows the picked type.
-   *  @param {string} type */
-  function setBulkWidget(type) {
-    bulkWidget = widgetFor(type, undefined, bulkPickOpts);
-    bulkValueSlot.replaceChildren(bulkWidget.element);
-  }
-  const bulkTypePicker = createTypePicker(byId(root, 'bulk-type'), 'string', setBulkWidget);
-  setBulkWidget(bulkTypePicker.get());
-
-  // Hide the type picker + value row for value-less ops (unset, delete), and
-  // the field-name input + force checkbox for ops that take no field (delete).
-  const bulkValueRow = byId(root, 'bulk-value-row');
-  const bulkTypeBtn = byId(root, 'bulk-type');
-  const bulkForceLabel = byId(root, 'bulk-force-label');
-  function syncBulkOpUi() {
-    const op = BULK_OPS[bulkOp.get() ?? 'set'] ?? BULK_OPS.set;
-    const noField = op.noField === true;
-    bulkValueRow.hidden = op.valueless === true;
-    bulkTypeBtn.hidden = op.valueless === true || noField;
-    bulkName.hidden = noField;
-    bulkForceLabel.hidden = noField;
-  }
-  syncBulkOpUi();
-
-  function openBulkForm() {
-    bulkError.textContent = '';
-    bulkForm.classList.add('open');
-    syncBulkOpUi();
-    if (!bulkName.hidden) bulkName.focus();
-  }
-
-  // Clicking "Edit / delete on query" again (or re-invoking the command) closes
-  // the form when it is already open, rather than re-opening it.
-  function toggleBulkForm() {
-    if (bulkForm.classList.contains('open')) bulkForm.classList.remove('open');
-    else openBulkForm();
-  }
-
-  /** Counts the metarecords the current query matches (for the confirmation). */
-  async function countMatches() {
-    const result = /** @type {{total?: number|null}} */ (
-      await daemon.call('POST', `/repos/${repo}/query`, {
-        query: effectiveQuery() ?? MATCH_ALL,
-        select: '*',
-        limit: 1,
-        count: true,
-      })
-    );
-    return result.total ?? 0;
-  }
-
-  async function applyBulkEdit() {
-    bulkError.textContent = '';
-    try {
-      if (!repo) throw new Error('no active repository');
-      const op = BULK_OPS[bulkOp.get() ?? 'set'] ?? BULK_OPS.set;
-      // Bulk actions target the effective (finder-filtered) set — you act on
-      // what you see.
-      const effQ = effectiveQuery();
-      const n = await countMatches();
-
-      if (op.noField) {
-        // Delete the matched metarecords themselves. This removes the
-        // metarecords; any associated files stay on disk (untracked). Confirm
-        // with the count since it is not undoable from the UI.
-        if (n === 0) {
-          void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
-          return;
-        }
-        if (
-          !confirm(
-            `Delete ${n} metarecord${n === 1 ? '' : 's'}? This removes the metarecords ` +
-              `(any files stay on disk).`,
-          )
-        )
-          return;
-        const resp = /** @type {{deleted?: number}} */ (
-          await daemon.call('POST', `/repos/${repo}/${op.path}`, { query: effQ ?? MATCH_ALL })
-        );
-        const deleted = resp.deleted ?? 0;
-        bulkForm.classList.remove('open');
-        void statusBar.message(
-          `Deleted ${deleted} metarecord${deleted === 1 ? '' : 's'}.`,
-          statusMessageMs,
-        );
-        await workspace.set('metarecords:dirty', Date.now());
-        return;
-      }
-
-      const name = bulkName.value.trim();
-      if (!name) throw new Error('field name is required');
-      const force = name.startsWith('mfr_') || bulkForce.checked;
-      if (!confirm(`${op.verb} "${name}" ${op.prep} ${n} metarecord${n === 1 ? '' : 's'}?`)) return;
-      // Value-less ops (unset) act on the name alone.
-      const widget = bulkWidget;
-      if (!op.valueless && !widget) throw new Error('no value widget');
-      const body =
-        op.valueless || !widget
-          ? { query: effQ ?? MATCH_ALL, name, ...(force ? { force: true } : {}) }
-          : bulkSetBody(effQ, name, widget.read(), force);
-      const resp = /** @type {{updated?: number}} */ (
-        await daemon.call('POST', `/repos/${repo}/${op.path}`, body)
-      );
-      const updated = resp.updated ?? 0;
-      bulkForm.classList.remove('open');
-      void statusBar.message(
-        `${op.verb} "${name}": ${updated} metarecord${updated === 1 ? '' : 's'} changed.`,
-        statusMessageMs,
-      );
-      // Refresh this list and any metarecord-detail mirror (the cache picks the
-      // write up via the change feed on the next reset fetch).
-      await workspace.set('metarecords:dirty', Date.now());
-    } catch (error) {
-      bulkError.textContent = messageOf(error);
-    }
-  }
-
   // Progressive loading: the shared controller owns the scroll threshold and
   // the one-fetch-at-a-time guard; the footer below stays custom (it carries
   // the selection count too). hasMore tracks the daemon cursor.
@@ -923,14 +760,6 @@ export async function mount(root, metafolder) {
   });
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyColumns();
-  });
-  byId(root, 'bulk-open').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:bulk-edit');
-  });
-  byId(root, 'bulk-apply').addEventListener('click', () => void applyBulkEdit());
-  byId(root, 'bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
-  bulkName.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyBulkEdit();
   });
 
   // ── Wiring ──────────────────────────────────────────────────────────────
@@ -1012,9 +841,19 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('metarecord-list:bulk-edit', {
-    label: 'Metarecord list: set/append/remove a field on every metarecord matching the query',
-    reveal: true,
-    handler: () => toggleBulkForm(),
+    label: 'Metarecord list: bulk edit / delete on the current query (pick an operation)',
+    // Collects the operation through the command input (completion), then
+    // delegates to the completion-driven command that performs it. Each of
+    // those collects its own field/value args and targets the list's effective
+    // query / selection (spec-gui "Interactive command arguments").
+    args: [
+      {
+        name: 'operation',
+        prompt: () => 'Operation? (set / append / remove / unset / delete)',
+        complete: () => BULK_OPERATIONS,
+      },
+    ],
+    handler: (operation) => commands.invoke(bulkCommandFor(operation)),
   });
   void commands.register('metarecord-list:set-page-size', {
     label: 'Metarecord list: set the page size (results per fetch)',
