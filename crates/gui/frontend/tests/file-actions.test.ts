@@ -181,6 +181,21 @@ describe('file-actions shared operations', () => {
     expect(statusBar).toBeDefined();
   });
 
+  test('Copy full path copies the absolute path to the clipboard', async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal('navigator', { clipboard: { writeText } });
+    const { metafolder } = mockMf();
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
+    item(menu, 'Copy full path').action!();
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('/dir/a.txt'));
+  });
+
+  test('Copy full path is offered for a directory too', () => {
+    const { metafolder } = mockMf();
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/sub', isDir: true });
+    expect(labels(menu)).toContain('Copy full path');
+  });
+
   test('Move to trash confirms then trashes; declining does nothing', async () => {
     const { metafolder, trash } = mockMf();
     vi.stubGlobal('confirm', vi.fn(() => true));

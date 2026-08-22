@@ -995,7 +995,8 @@ inspector (no default keybinding; the =devtools= Tauri feature keeps it
 available in release builds).
 
 Panels backed by files prepend the shared *file actions* — Cut, Copy, Paste,
-Rename, Duplicate and Move to trash — for the right-clicked metarecord's file
+Rename, Duplicate, Copy full path (the entry's absolute OS path, to the text
+clipboard) and Move to trash — for the right-clicked metarecord's file
 (the file-manager, metarecord-list, metarecord-detail, file, recent, ref-list
 and the =mfr_path= treeref). They come from =/__file-actions.js=, whose
 clipboard is one realm-wide singleton, so a Cut/Copy in any of them pastes in
@@ -1731,7 +1732,8 @@ Both are confirmed.
 HTML menu ([[*Context menus]]): =Open= (directories), =Track= (disabled when
 there is no active repo, the path is already tracked, or it is outside the
 repo root), then the clipboard actions (=Cut=, =Copy=, =Paste=), =Rename…=,
-=Duplicate=, the delete action (=Move to trash= with a repo, else =Delete…=),
+=Duplicate=, =Copy full path=, the delete action (=Move to trash= with a repo,
+else =Delete…=),
 and the directory-level =New folder…= / =New file…=. Right-clicking empty
 space in the listing offers just =New folder…= / =New file…= / =Paste=.
 

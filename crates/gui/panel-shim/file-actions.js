@@ -276,6 +276,13 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
     '-',
     { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },
     { label: 'Duplicate', action: () => void duplicatePath(metafolder, path, nudge, statusMs) },
+    {
+      label: 'Copy full path',
+      action: () => {
+        void copyText(path);
+        void statusBar.message(`Copied ${path}`, statusMs);
+      },
+    },
     '-',
     {
       label: 'Move to trash',

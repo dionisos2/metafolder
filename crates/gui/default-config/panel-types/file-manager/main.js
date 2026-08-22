@@ -3,6 +3,7 @@
 // (spec-gui "file-manager panel type").
 
 import { byId, el, fileTypeGlyph } from '/__ui.js';
+import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
 import {
@@ -290,6 +291,13 @@ export async function mount(root, metafolder) {
         '-',
         { label: 'Rename…', action: () => void renameSelected() },
         { label: 'Duplicate', action: () => void duplicateSelected() },
+        {
+          label: 'Copy full path',
+          action: () => {
+            void copyText(item.path);
+            void statusBar.message(`Copied ${item.path}`, statusMessageMs);
+          },
+        },
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
       );
     } else {
