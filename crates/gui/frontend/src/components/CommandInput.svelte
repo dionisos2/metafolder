@@ -6,6 +6,7 @@
     dispatch,
     filterCommands,
     filterCompletions,
+    resolvePromptValue,
     resolveSubmission,
     setEditingTarget,
     shortcutsFor,
@@ -158,7 +159,12 @@
 
   function moveSelection(delta: number) {
     if (suggestions.length === 0) return;
-    selectedIndex = (selectedIndex + delta + suggestions.length) % suggestions.length;
+    // In a prompt, index -1 is the minibuffer itself (no completion
+    // highlighted): Up past the top deselects so Enter submits the typed
+    // free value. Command/bash mode keep a highlight always (spec-gui).
+    const min = store.ui.promptText !== null ? -1 : 0;
+    const span = suggestions.length - min;
+    selectedIndex = ((((selectedIndex - min + delta) % span) + span) % span) + min;
     scrollSelectionIntoView();
   }
 
@@ -270,22 +276,26 @@
 
   // Enter runs the highlighted suggestion when the list is non-empty,
   // otherwise the typed text (resolveSubmission). Snapshot before clearing
-  // the draft, since `suggestions` recomputes from it. The script-prompt
-  // path always confirms with the raw text.
-  async function submit() {
+  // the draft, since `suggestions` recomputes from it. In a prompt, plain
+  // Enter accepts the highlighted completion while `raw` (Ctrl-Enter, or a
+  // deselected list) confirms the typed free value.
+  async function submit(raw = false) {
     const input = draft;
     const picked =
       store.ui.promptText === null ? resolveSubmission(input, suggestions, selectedIndex) : input;
+    const promptValue = resolvePromptValue(input, suggestions, selectedIndex, raw);
     draft = '';
     bashCandidates = [];
     const ws = currentWs;
     if (ws !== null) draftsOf(mode)[ws] = '';
     if (store.ui.promptText !== null) {
       // Prompt (script POST /gui/prompt or interactive argument collection):
-      // confirm with the typed text. The resolver routes it to Rust or to the
-      // frontend collector, which then prompts for the next argument (if any).
+      // confirm with the resolved value (highlighted completion or, on
+      // Ctrl-Enter / a deselected list, the typed text). The resolver routes
+      // it to Rust or to the frontend collector, which then prompts for the
+      // next argument (if any).
       element?.blur();
-      resolvePrompt(true, input);
+      resolvePrompt(true, promptValue);
       return;
     }
     element?.blur();
@@ -306,7 +316,9 @@
   function onKeydown(event: KeyboardEvent) {
     if (event.key === 'Enter') {
       event.preventDefault();
-      void submit();
+      // Ctrl/Cmd-Enter confirms the typed free value even when a completion is
+      // highlighted (spec-gui "Interactive command arguments").
+      void submit(event.ctrlKey || event.metaKey);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       unfocus();
@@ -392,6 +404,9 @@
       spellcheck="false"
       autocomplete="off"
     />
+    {#if store.ui.promptText !== null && suggestions.length > 0}
+      <span class="hint" title="Enter picks the highlighted value; Ctrl-Enter keeps what you typed">⏎ pick · ⌃⏎ new</span>
+    {/if}
   </div>
 </div>
 
@@ -425,6 +440,14 @@
   input::placeholder {
     color: var(--mf-fg-dim, #8a8a96);
     opacity: 0.6;
+  }
+  .hint {
+    flex: none;
+    color: var(--mf-fg-dim, #8a8a96);
+    font-family: var(--mf-font-mono, monospace);
+    font-size: 0.8em;
+    opacity: 0.7;
+    white-space: nowrap;
   }
   .suggestions {
     list-style: none;

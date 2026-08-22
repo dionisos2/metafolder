@@ -14,6 +14,7 @@ import {
   needsMessagePanel,
   parseInvocation,
   registerArgs,
+  resolvePromptValue,
   resolveSubmission,
   shortcutsFor,
   shouldLogCommand,
@@ -355,5 +356,33 @@ describe('resolveSubmission', () => {
   test('falls back to the typed text when there is no suggestion', () => {
     expect(resolveSubmission('panel:set-type file', [], 0)).toBe('panel:set-type file');
     expect(resolveSubmission('!ls', [], 0)).toBe('!ls');
+  });
+});
+
+describe('resolvePromptValue', () => {
+  const sugg = [{ name: 'jazz' }, { name: 'jazz/bebop' }];
+
+  test('accepts the highlighted completion (plain Enter)', () => {
+    expect(resolvePromptValue('ja', sugg, 0, false)).toBe('jazz');
+    expect(resolvePromptValue('ja', sugg, 1, false)).toBe('jazz/bebop');
+  });
+
+  test('clamps an out-of-range selection', () => {
+    expect(resolvePromptValue('ja', sugg, 9, false)).toBe('jazz/bebop');
+  });
+
+  test('raw submits the typed text verbatim even with a highlight (Ctrl-Enter)', () => {
+    expect(resolvePromptValue('jazz', sugg, 0, true)).toBe('jazz');
+    // A brand-new value that ordered-substring-matches an existing completion:
+    // Ctrl-Enter creates it instead of picking the suggestion.
+    expect(resolvePromptValue('ja', sugg, 0, true)).toBe('ja');
+  });
+
+  test('a deselected list (index < 0) submits the typed text', () => {
+    expect(resolvePromptValue('ja', sugg, -1, false)).toBe('ja');
+  });
+
+  test('an empty completion list submits the typed text', () => {
+    expect(resolvePromptValue('newvalue', [], 0, false)).toBe('newvalue');
   });
 });

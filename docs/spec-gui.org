@@ -429,8 +429,14 @@ missing arguments in order, reusing the same prompt/autocomplete machinery as
 a script's =POST /gui/prompt= — the prompt character shows the argument's
 =prompt= text, the field is pre-filled with its =initial= value, and the
 suggestion list offers =complete='s candidates filtered like command names.
-=Enter= accepts the current argument and advances to the next; =Escape=
-abandons the whole invocation. Only one prompt owns the input at a time: an
+Unlike command mode (where =Enter= always runs the typed text), a prompt
+=Enter= accepts the *highlighted completion* and advances to the next
+argument — no =Tab= needed. To submit a *new value* that is not in the list
+(even one that ordered-substring-matches an existing candidate), either
+=Ctrl-Enter=, or =Up= past the top of the list to deselect it (the minibuffer
+itself) and then =Enter=; with no candidates highlighted, or none offered,
+=Enter= submits exactly what was typed. =Escape= abandons the whole
+invocation. Only one prompt owns the input at a time: an
 interactive argument collection and a script prompt are mutually exclusive
 (whichever holds the input makes the other refuse to start).
 

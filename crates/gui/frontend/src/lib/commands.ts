@@ -78,6 +78,21 @@ export function resolveSubmission(
   return suggestions[index].name;
 }
 
+/** What a prompt submits on Enter (interactive command arguments and script
+ *  `POST /gui/prompt`, unlike the command path). Plain Enter accepts the
+ *  highlighted completion; `raw` (Ctrl-Enter) — or a deselected list, or no
+ *  completions at all — submits exactly what was typed, so a brand-new value
+ *  that ordered-substring-matches an existing completion can still be entered. */
+export function resolvePromptValue(
+  draft: string,
+  suggestions: { name: string }[],
+  selectedIndex: number,
+  raw: boolean,
+): string {
+  if (raw || selectedIndex < 0 || suggestions.length === 0) return draft;
+  return suggestions[Math.min(selectedIndex, suggestions.length - 1)].name;
+}
+
 /** Autocomplete filter for script prompt completions (POST /gui/prompt):
  *  same prefix-then-substring ranking as the command list. */
 export function filterCompletions(completions: string[], draft: string): string[] {
