@@ -207,8 +207,16 @@ fn lex_string(chars: &[char], i: &mut usize) -> Result<Tok, String> {
                     .get(*i + 1)
                     .ok_or_else(|| "unterminated string literal".to_string())?;
                 match escaped {
+                    // The two escapes the DSL itself needs decode to the bare
+                    // character.
                     '"' | '\\' => out.push(*escaped),
-                    other => return Err(format!("unsupported escape '\\{other}'")),
+                    // Any other escape passes through verbatim (backslash kept),
+                    // so a MATCHES pattern can carry regex escapes like `\.`,
+                    // `\d`, `\w` that must reach the regex engine intact.
+                    other => {
+                        out.push('\\');
+                        out.push(*other);
+                    }
                 }
                 *i += 2;
             }
@@ -879,6 +887,27 @@ mod tests {
         assert_eq!(
             ok(r#"name = "a\"b\\c""#),
             Query::Eq { field: "name".into(), value: Value::String(r#"a"b\c"#.into()) }
+        );
+    }
+
+    #[test]
+    fn test_regex_escape_passthrough() {
+        // A regex escape like `\.` must survive the DSL string decode so MATCHES
+        // can match a literal dot — otherwise it was rejected as an unsupported
+        // escape. Unknown escapes keep their backslash verbatim.
+        assert_eq!(
+            ok(r#"name MATCHES "\.config""#),
+            Query::Matches { field: "name".into(), pattern: r#"\.config"#.into() }
+        );
+        // Other regex escapes (`\d`, `\w`, `\s`, …) pass through the same way.
+        assert_eq!(
+            ok(r#"name MATCHES "\d+""#),
+            Query::Matches { field: "name".into(), pattern: r#"\d+"#.into() }
+        );
+        // The two DSL-recognized escapes still decode.
+        assert_eq!(
+            ok(r#"name MATCHES "a\"b\\c""#),
+            Query::Matches { field: "name".into(), pattern: r#"a"b\c"#.into() }
         );
     }
 

@@ -72,6 +72,13 @@ NOT (seen = true OR rating IS UNKNOWN)</pre>
   against the resolved path.
 </p>
 <pre>title MATCHES "[Ll]ive"</pre>
+<p>
+  Backslash escapes survive inside the string, so regex escapes work: write
+  <code>\.</code> for a literal dot, <code>\d</code>/<code>\w</code>/<code>\s</code>
+  for the usual classes. Only <code>\"</code> and <code>\\</code> are special to
+  the string itself. To match a literal backslash, write <code>\\\\</code>.
+</p>
+<pre>name MATCHES "\.config"</pre>
 
 <h2>Traversal — following references</h2>
 <p>

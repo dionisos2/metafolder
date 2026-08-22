@@ -410,6 +410,13 @@ string    := '"' ... '"'
   literals.
 - Precedence: =NOT= binds tighter than =AND=, which binds tighter than =OR=;
   parentheses override.
+- String escapes: inside a =STRING= literal, =\"= and =\\= decode to the bare
+  character; any other backslash escape is passed through *verbatim* (the
+  backslash is kept). This lets a =MATCHES= pattern carry regex escapes —
+  =title MATCHES "\.config"= matches a literal =.config= (=\d=, =\w=, =\s=, …
+  reach the =regex= engine unchanged). To match a literal backslash in a regex,
+  write =\\\\= (the DSL decodes it to =\\=, which the regex reads as one
+  backslash).
 - =field -> "path"= compiles to =Follows= with a path right-hand side
   (=TreeRef= semantics); =field -> (predicate)= compiles to =Follows= with a
   sub-query right-hand side (the referent of a =Ref= row, or the direct
