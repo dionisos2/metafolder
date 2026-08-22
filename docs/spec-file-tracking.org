@@ -112,11 +112,14 @@ that defines them; the root metarecord always defines both.
   files for per-file override. Default on root: =false= (opt-in by default —
   nothing is tracked until explicitly whitelisted).
 - =mf_ignore= (String, multi-map): each row is a regex pattern tested against
-  the path of a candidate, *relative to the repository root* (e.g.
-  =/music/.git/config=). All paths in metadata are repo-root-relative so that
-  the repository can be moved without invalidating stored patterns. The nearest
-  ancestor that has at least one =mf_ignore= row provides the effective pattern
-  set; patterns from different ancestors are *not* merged.
+  the path of a candidate, *relative to the tracking-scope root* — the nearest
+  ancestor on which =mf_watch= is set directly (the repository root in the
+  common case, giving a repo-root-relative path such as =/music/.git/config=;
+  see the eligibility algorithm below for the re-anchoring rule). All stored
+  paths are repo-root-relative so that the repository can be moved without
+  invalidating stored patterns. The nearest ancestor that has at least one
+  =mf_ignore= row provides the effective pattern set; patterns from different
+  ancestors are *not* merged.
 
 At =repo init=, the root metarecord is created with =mf_watch = false= and the
 following default =mf_ignore= rows:
@@ -125,7 +128,14 @@ following default =mf_ignore= rows:
 \.git(/.*)?$
 node_modules(/.*)?$
 __pycache__(/.*)?$
+\.metafolder(/.*)?$
+(^|/)\.[^/]+
 #+END_SRC
+
+The last row ignores every *hidden* entry (a path component starting with a
+dot); it already covers =.git= and =.metafolder=. The more specific =\.git= and
+=\.metafolder= rows are kept as separate entries so a user can drop "ignore all
+hidden files" without also un-ignoring those two.
 
 *** Eligibility algorithm
 
@@ -138,16 +148,31 @@ For a given repo-root-relative path =p= with direct metarecord =e=:
    inherited) → *track unconditionally*; skip steps 4–5.
 4. Walk the ancestor chain (*excluding* =e= itself) to find =ignore_ancestor= —
    the nearest ancestor that has at least one =mf_ignore= row.
-5. If any pattern in =ignore_ancestor='s =mf_ignore= rows matches =p= → *skip*.
+5. Let =p_scoped= be =p= re-anchored at =watch_ancestor= — i.e. with the
+   directory prefix of =watch_ancestor= removed, so it is a leading-slash path
+   *relative to the tracking-scope root*. (When =watch_ancestor= is the
+   repository root this is =p= unchanged.) If any pattern in
+   =ignore_ancestor='s =mf_ignore= rows matches =p_scoped= → *skip*.
 6. Otherwise → *track*.
 
-Step 3 is the per-metarecord override: setting =mf_watch = true= directly on an
-metarecord forces it to be tracked regardless of any ancestor's ignore patterns.
-This applies only to the metarecord itself — its descendants are still subject to
-normal eligibility evaluation (they inherit =mf_watch = true= but it is not
-"direct" on them, so they go through the ignore check). To also track the
-contents of a directly-watched directory, set =mf_ignore= on that directory
-to replace the ancestor's patterns (including removing unwanted ones).
+Step 3 is the per-metarecord override: setting =mf_watch = true= directly on a
+metarecord forces *that metarecord* to be tracked regardless of any ancestor's
+ignore patterns. Its descendants still go through the ignore check (they inherit
+=mf_watch = true= but it is not "direct" on them) — but, by step 5, that check is
+performed *relative to the directly-watched directory*, which becomes a new
+tracking-scope root. So directly watching a directory tracks its contents, with
+the ignore patterns applying from that directory downwards:
+
+- The watched directory's own name is stripped before matching, so watching a
+  directory whose name would otherwise be ignored (e.g. a hidden =.config=, or
+  =.git= itself) no longer prunes its subtree.
+- Patterns still apply *inside* the scope: with the default rows, =.git=,
+  =node_modules= and hidden entries found *below* the watched directory remain
+  ignored.
+
+To instead give a directly-watched directory a different pattern set, set
+=mf_ignore= on it to replace the ancestor's patterns (they are not merged;
+including removing unwanted ones).
 
 *Replacing ignore patterns*: because patterns are not merged, a directory that
 needs a different pattern set must re-declare all desired patterns in its own

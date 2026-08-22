@@ -46,15 +46,17 @@ pub fn is_eligible_cached(
     let own_entry: Option<Uuid> =
         chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
 
-    // Steps 1–2: nearest metarecord (including the path itself) defining mf_watch.
-    let mut watch: Option<(Uuid, bool)> = None;
-    for (_, uuid) in chain.iter().rev() {
+    // Steps 1–2: nearest metarecord (including the path itself) defining
+    // mf_watch. Its component index (`watch_idx`) marks the tracking-scope root:
+    // ignore patterns for a descendant are matched *relative to it* (below).
+    let mut watch: Option<(usize, Uuid, bool)> = None;
+    for (idx, uuid) in chain.iter().rev() {
         if let Some(value) = cached_watch(conn, ec, *uuid)? {
-            watch = Some((*uuid, value));
+            watch = Some((*idx, *uuid, value));
             break;
         }
     }
-    let Some((watch_entry, watch_value)) = watch else {
+    let Some((watch_idx, watch_entry, watch_value)) = watch else {
         return Ok(false); // No mf_watch anywhere: opt-in default.
     };
     if !watch_value {
@@ -64,6 +66,16 @@ pub fn is_eligible_cached(
     if own_entry == Some(watch_entry) {
         return Ok(true);
     }
+
+    // The path against which ignore patterns are tested: `rel_path` re-anchored
+    // at the tracking-scope root (the directly-watched ancestor), i.e. with the
+    // watched directory's prefix stripped (spec-file-tracking "Eligibility
+    // algorithm"). When the scope root is the repository root (`watch_idx == 0`)
+    // this is `rel_path` unchanged. So a directly-watched hidden directory (e.g.
+    // `.config`) no longer prunes its own subtree, while patterns like `\.git`
+    // still apply *inside* the scope.
+    let comps: Vec<&str> = rel_path.split('/').collect();
+    let scoped = format!("/{}", comps[watch_idx + 1..].join("/"));
 
     // Steps 4–5: nearest strict ancestor with mf_ignore rows provides the
     // effective pattern set (sets are replaced, never merged).
@@ -76,7 +88,7 @@ pub fn is_eligible_cached(
             continue;
         }
         for pattern in &patterns {
-            if cached_regex(ec, pattern)?.is_match(rel_path) {
+            if cached_regex(ec, pattern)?.is_match(&scoped) {
                 return Ok(false);
             }
         }

@@ -126,8 +126,58 @@ fn test_direct_watch_overrides_ancestor_ignore() {
 
     // mf_watch set directly on the entry → tracked unconditionally (step 3).
     assert!(f.eligible("/.git"));
-    // ...but its descendants still go through the ignore check.
-    assert!(!f.eligible("/.git/config"));
+    // Its descendants are tracked too: ignore patterns are matched *relative to
+    // the directly-watched directory*, so the root's `\.git` pattern no longer
+    // matches `/config` (the watched `.git` prefix is stripped before testing).
+    assert!(f.eligible("/.git/config"));
+}
+
+#[test]
+fn test_direct_watch_reanchors_ignore_to_its_scope() {
+    // Root covers e.g. the home directory with the shipped defaults, including
+    // the hidden-entry pattern `(^|/)\.[^/]+`. A hidden directory (`.config`) is
+    // made a direct watch root: its contents become tracked because ignore
+    // patterns are matched relative to the watched directory (so `.config` being
+    // hidden no longer prunes the whole subtree), while the patterns still apply
+    // *inside* the scope.
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let mut fields = vec![
+        Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
+        Field::new("mf_watch", Value::Bool(true)),
+    ];
+    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+        fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
+    }
+    let root = w.create_metarecord(fields).unwrap().uuid;
+    w.commit().unwrap();
+
+    // `.config` is hidden, but directly watched.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.create_metarecord(vec![
+        Field::new("mfr_path", Value::TreeRef { parent: Some(root), name: ".config".into() }),
+        Field::new("mf_watch", Value::Bool(true)),
+    ])
+    .unwrap();
+    w.commit().unwrap();
+
+    let mut cache = TreeCache::new(false);
+    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+
+    assert!(elig("/.config"), "directly watched → tracked unconditionally");
+    assert!(elig("/.config/nvim"), "child tracked: the `.config` prefix no longer matches the hidden pattern");
+    assert!(elig("/.config/nvim/init.lua"), "grandchild tracked");
+    assert!(
+        !elig("/.config/nvim/.git/config"),
+        "`.git` still ignored: matched relative to the watched dir"
+    );
+    assert!(!elig("/.config/.hidden"), "a hidden entry INSIDE the scope is still ignored");
+    assert!(
+        !elig("/.cache/foo"),
+        "a hidden sibling without its own direct watch stays ignored (matched root-relative)"
+    );
 }
 
 #[test]
