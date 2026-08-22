@@ -935,9 +935,12 @@ For bulk edits the =metarecord-list= panel offers an umbrella command,
 =metarecord-list:bulk-edit= (bound to =m b=): it first collects the *operation*
 in the command input (completion over =set / append / remove / unset / delete=),
 then delegates to the matching bulk command, which collects its own field/value
-arguments with completion. This replaces the earlier in-panel "edit / delete on
-query" form. The =metarecord-detail= panel binds the per-operation bulk commands
-directly instead (=m b s= set, =m b a= add, =m b r= remove the field).
+arguments with completion. The panel's footer "edit / delete on query…" button
+invokes the same command (so the flow is reachable by mouse); it replaces the
+earlier in-panel form. Each query-scoped bulk command counts its matches
+(daemon-side =count=) and names that number in its confirmation. The
+=metarecord-detail= panel binds the per-operation bulk commands directly instead
+(=m b s= set, =m b a= add, =m b r= remove the field).
 
 Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).

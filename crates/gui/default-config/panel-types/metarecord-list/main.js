@@ -761,6 +761,9 @@ export async function mount(root, metafolder) {
   columnsInput.addEventListener('keydown', (event) => {
     if (event.key === 'Enter') void applyColumns();
   });
+  byId(root, 'bulk-open').addEventListener('click', () => {
+    void commands.invoke('metarecord-list:bulk-edit');
+  });
 
   // ── Wiring ──────────────────────────────────────────────────────────────
 

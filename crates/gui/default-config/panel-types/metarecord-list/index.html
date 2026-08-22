@@ -83,6 +83,11 @@
         white-space: nowrap;
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #bulk-open {
+        font-size: 11px;
+        white-space: nowrap;
+        margin-right: 8px;
+      }
       #scroll {
         flex: 1;
         overflow-y: auto;
@@ -261,6 +266,7 @@
     </div>
     <div id="footer">
       <div id="status-line"></div>
+      <button id="bulk-open" type="button" title="Bulk edit or delete on the current query: pick an operation (set / append / remove / unset / delete), then fill in the field and value in the command input.">Edit / delete on query…</button>
     </div>
   </body>
 </html>
