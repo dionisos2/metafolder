@@ -1577,6 +1577,93 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     assert!(mf(&["-u", &repo, "path", &m2]).stdout.contains("A.txt"), "m2 keeps the slot");
 }
 
+/// Polls `f` every 200 ms up to `tries` times; returns whether it ever held.
+fn poll(tries: u32, f: impl Fn() -> bool) -> bool {
+    for _ in 0..tries {
+        if f() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    false
+}
+
+/// The uuids tracking repo-relative top-level `name`, one per line of
+/// `metarecord -q 'mfr_path = "name"' get`.
+fn uuids_at(repo: &str, name: &str) -> Vec<String> {
+    let out = mf(&["-u", repo, "metarecord", "-q", &format!("mfr_path = {name:?}"), "get"]);
+    out.stdout.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+// Regression (spec-trash "Restore"): trashing a file through the metarecord path
+// (as the GUI's `metarecord:trash` and `mf trash -f` do) while the **live
+// watcher** is running, then restoring it, must re-link the *original*
+// metarecord — not orphan it and create a duplicate. The existing subtree tests
+// orphan the metarecords by hand (`field unset`); this one lets the real watcher
+// cascade the delete and process the restored file's arrival.
+#[test]
+fn test_trash_restore_relinks_after_live_watcher_delete() {
+    let (repo, root) = init_repo("trashwatch");
+    let root_uuid =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+
+    // The watcher tracks a file created under the watched root (a watcher-born
+    // metarecord: no stored fingerprint hashes, exactly like the user's file).
+    let file = root.join("f.txt");
+    std::fs::write(&file, b"hello").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "f.txt").len() == 1), "watcher should track f.txt");
+    let m = uuids_at(&repo, "f.txt")[0].clone();
+
+    // Trash it through the metarecord-capturing path, then let the watcher
+    // observe the deletion and orphan the metarecord (as the GUI flow does).
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    assert!(!file.exists());
+    assert!(poll(40, || mf(&["-u", &repo, "path", &m]).code != 0), "watcher should orphan the record");
+
+    // Restore, then let the watcher process the file's re-arrival.
+    let id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &id]));
+    assert!(file.exists(), "the file is back on disk");
+
+    // The ORIGINAL metarecord must track f.txt again, and it must be the *only*
+    // one — no orphaned original left behind, no fresh duplicate created.
+    assert!(
+        poll(40, || mf(&["-u", &repo, "path", &m]).stdout.contains("f.txt")),
+        "the original metarecord must be re-linked to f.txt",
+    );
+    std::thread::sleep(std::time::Duration::from_millis(1200)); // let any duplicate settle
+    let hits = uuids_at(&repo, "f.txt");
+    assert_eq!(hits, vec![m], "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}");
+}
+
+// Same as above, but the restore happens *immediately* after trashing — before
+// the watcher's 500 ms quiet window has flushed the deletion. The delete and the
+// re-arrival then land in one batch, racing the re-link.
+#[test]
+fn test_trash_restore_relinks_when_restore_races_the_watcher() {
+    let (repo, root) = init_repo("trashwatchrace");
+    let root_uuid =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+
+    let file = root.join("f.txt");
+    std::fs::write(&file, b"hello").unwrap();
+    assert!(poll(40, || uuids_at(&repo, "f.txt").len() == 1), "watcher should track f.txt");
+    let m = uuids_at(&repo, "f.txt")[0].clone();
+
+    // Trash and restore back-to-back — no wait, so the deletion has not flushed.
+    assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
+    let id = repo_trash(&root).entries().unwrap()[0].id.clone();
+    assert_ok(&mf(&["-u", &repo, "trash", "restore", &id]));
+    assert!(file.exists(), "the file is back on disk");
+
+    // The original metarecord must still be the only one tracking f.txt.
+    std::thread::sleep(std::time::Duration::from_millis(1500)); // let the watcher settle
+    let hits = uuids_at(&repo, "f.txt");
+    assert_eq!(hits, vec![m], "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}");
+}
+
 // Restoring a nested file whose *ancestor* metarecord is no longer available
 // (deleted, e.g. by sweeping orphans) must still bring the bytes back: the
 // descendant's re-link fails with "invalid TreeRef parent", which is benign —

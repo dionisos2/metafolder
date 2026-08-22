@@ -586,6 +586,17 @@ impl Apply<'_, '_> {
         let Some(uuid) = self.resolve(rel)? else {
             return Ok(());
         };
+        // The path exists again on disk: the deletion was undone within the
+        // batching window — the file was recreated, or a `mf trash -f` +
+        // `mf trash restore` round-trip put it back before the buffered
+        // `file_deleted` flushed. Orphaning here would strand the live
+        // metarecord and let the paired arrival create a duplicate (a
+        // freshly-tracked file has no stored full hash for the fingerprint
+        // search to re-home it). Skip the stale removal; the arrival/create in
+        // the same batch refreshes the still-linked metarecord instead.
+        if std::fs::symlink_metadata(self.abs(rel)).is_ok() {
+            return Ok(());
+        }
         if !self.eligible(rel)? {
             return Ok(()); // Out of watch scope: metadata left unchanged.
         }

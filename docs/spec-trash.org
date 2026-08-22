@@ -103,6 +103,20 @@ respected), and it is skipped with a note when the restored path lies outside
 the repo or its parent directory is untracked. The restore itself is never
 blocked by a re-link failure.
 
+That =mfr_path=-still-present state has a second, transient cause in a *watched*
+repo: right after a trash, the metarecord is still linked because the watcher's
+=file_deleted= has not flushed yet (it is buffered for the quiet period). A
+restore that races that window would then find =mfr_path= present, skip the
+re-link, and let the buffered =file_deleted= (about to fire) orphan the record
+while the paired arrival creates a duplicate. The watcher closes this race: a
+buffered =Remove=/=RenameFrom= whose path *exists again on disk at flush time*
+is recognised as an *undone deletion* (the file was recreated, or a
+trash→restore round-trip put it back) and is skipped — the record stays linked
+and the arrival in the same batch is reconciled as a plain refresh. This is a
+general watcher property (any fast delete→recreate at one path collapses to a
+refresh, consistent with the batching-window compaction), so restore is reliable
+whether or not it beats the watcher. See [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event batching".
+
 Restore never overwrites a file: an occupied target is refused outright (no
 =--force=) — *except* a directory blob onto an existing directory, which is
 *merged* (contents the target lacks are moved in, shared subdirectories merge

@@ -411,7 +411,7 @@ individually.
 | Filesystem event   | Action                                                                                                     |
 |--------------------+------------------------------------------------------------------------------------------------------------|
 | =Create=           | Resolve the path first: if a metarecord already holds this =mfr_path=, refresh it as for =Modify(Data)= (idempotent — crash replay, or a file that appeared where the database already expected one, e.g. a cross-repo sync placement). Otherwise look up the parent UUID via the tree cache and create a metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
-| =Remove=           | Set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade =Nothing= to all descendants in the same transaction |
+| =Remove=           | Set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade =Nothing= to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID) |
 | =Rename(From)=     | File definitively left the repository: set =mfr_path= to =Nothing=; if a directory, cascade =Nothing= to all descendants in the same transaction |
 | =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned metarecords (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new metarecord |
@@ -421,6 +421,17 @@ individually.
 On platforms where the =Data= / =Metadata= distinction is unavailable (e.g.
 some macOS or Windows backends), the daemon falls back to =Modify(Data)=
 semantics (full refresh + hash invalidation).
+
+*Undone deletions.* A =Remove= / =Rename(From)= is applied only if its path is
+*still gone at flush time*: the check is deferred to application, not enqueue, so
+a delete followed by a recreate of the same path within one window collapses to a
+plain refresh rather than orphan-then-arrival. This matters most for the trash:
+=mf trash restore= (and the GUI equivalent) re-link the metarecord *before*
+moving the file back, but if the restore beats the buffered =file_deleted= from
+the trashing, that =file_deleted= would otherwise fire against the restored file
+and — since a freshly-tracked file has no stored =mfr_full_hash= for the arrival
+to re-home it — strand the original metarecord and create a duplicate. Skipping
+the stale removal closes that race (see [[file:spec-trash.org][spec-trash.org]] "Restore").
 
 The refresh is *idempotent*: when the stored =mfr_size= / =mfr_mtime= (and,
 for =Modify(Metadata)=, the attribute fields) already equal what =stat=
