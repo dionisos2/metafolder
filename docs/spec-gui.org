@@ -775,7 +775,8 @@ Behaviours:
 | =metarecord:bulk-remove-value [field] [value]= | Remove one value from a field on the selection (or current query) |
 | =metarecord:bulk-remove-field [field]= | Remove a field entirely from the selection (or current query) |
 | =metarecord:bulk-delete= | Delete the metarecords in the selection (or current query); the files stay on disk |
-| =metarecord-list:bulk-edit [operation]= | Pick a bulk operation (set/append/remove/unset/delete), then delegate to its command |
+| =metarecord-list:bulk-edit [operation]= | Keyboard flow: pick a bulk operation (set/append/remove/unset/delete), then delegate to its command |
+| =metarecord-list:bulk-edit-form= | Mouse flow: open the in-panel bulk edit / delete form |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
 | =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
@@ -931,14 +932,15 @@ edit a value, =m d= delete a value, =m n= rename, =m t= retype), active in both
 the =metarecord-list= and =metarecord-detail= panels so the family is reachable
 whether the list or the detail is focused.
 
-For bulk edits the =metarecord-list= panel offers an umbrella command,
-=metarecord-list:bulk-edit= (bound to =m b=): it first collects the *operation*
-in the command input (completion over =set / append / remove / unset / delete=),
-then delegates to the matching bulk command, which collects its own field/value
-arguments with completion. The panel's footer "edit / delete on query…" button
-invokes the same command (so the flow is reachable by mouse); it replaces the
-earlier in-panel form. Each query-scoped bulk command counts its matches
-(daemon-side =count=) and names that number in its confirmation. The
+For bulk edits the =metarecord-list= panel offers two entry points. The
+*mouse-oriented* one is an in-panel form (operation picker + typed value widget +
+=force=), opened by the footer "edit / delete on query…" button
+(=metarecord-list:bulk-edit-form=). The *keyboard-oriented* one is
+=metarecord-list:bulk-edit= (bound to =m b=): it collects the *operation* in the
+command input (completion over =set / append / remove / unset / delete=), then
+delegates to the matching per-operation bulk command, which collects its own
+field/value arguments with completion. Each query-scoped bulk command counts its
+matches (daemon-side =count=) and names that number in its confirmation. The
 =metarecord-detail= panel binds the per-operation bulk commands directly instead
 (=m b s= set, =m b a= add, =m b r= remove the field).
 
