@@ -344,6 +344,47 @@ fn field_catalog_drops_field_when_last_value_removed() {
     assert_eq!(index.field_catalog(None), sql, "catalog must drop the emptied field");
 }
 
+#[test]
+fn refresh_over_set_record_stays_incremental() {
+    // `apply_ops` handles the `set_metarecord` op (whole-record set), so it must
+    // also be in `forward_delta`'s KNOWN list — otherwise a whole-record set
+    // (CLI `mf metarecord set`, or the whole-record PUT) forces a full index
+    // rebuild on the next refresh, the multi-second stall this guards against on
+    // a large repository. Observed through the dense-id count: the incremental
+    // path keeps a deleted metarecord's tombstone id, whereas a full rebuild
+    // re-interns only the live set and reclaims it.
+    let mut o = Oracle::new();
+    let a = o.create(vec![Field::new("tag", s("a"))]);
+    let b = o.create(vec![Field::new("tag", s("b"))]);
+    let mut index = RepoIndex::build(&o.conn).unwrap();
+    assert_eq!(index.dense_id_count(), 2, "both metarecords interned");
+
+    // Delete A (incremental, leaves a tombstone id) then set B whole-record.
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
+    w.delete_metarecord(a).unwrap();
+    w.commit().unwrap();
+    let mut w = Writer::begin(&mut o.conn, None).unwrap();
+    w.set_record(b, vec![Field::new("tag", s("b2")), Field::new("rating", Value::Int(7))]).unwrap();
+    w.commit().unwrap();
+
+    index.refresh(&o.conn, &|| false).unwrap();
+
+    // A full rebuild would reclaim A's id (dense_id_count == 1); the incremental
+    // path keeps the tombstone (== 2).
+    assert_eq!(
+        index.dense_id_count(),
+        2,
+        "set_metarecord must refresh incrementally, not trigger a full rebuild",
+    );
+    // Correctness of the incremental set_metarecord handling.
+    let fresh = RepoIndex::build(&o.conn).unwrap();
+    assert_eq!(
+        index.to_uuids(&index.evaluate(&eq("rating", Value::Int(7))).unwrap()),
+        fresh.to_uuids(&fresh.evaluate(&eq("rating", Value::Int(7))).unwrap()),
+    );
+    assert_eq!(index.field_catalog(None), db::distinct_field_names(&o.conn, None).unwrap());
+}
+
 // ── Categorical: string ─────────────────────────────────────────────────────
 
 #[test]

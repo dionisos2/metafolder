@@ -343,6 +343,7 @@ impl RepoIndex {
         const KNOWN: &[&str] = &[
             "create_metarecord",
             "delete_metarecord",
+            "set_metarecord",
             "set_field",
             "append_field",
             "delete_field",

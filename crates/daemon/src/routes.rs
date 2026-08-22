@@ -301,20 +301,24 @@ async fn list_fields(
             .as_ref()
             .map(|s| s.declared_types())
             .unwrap_or_default();
-        // The data-derived catalog is served from the in-memory index only when
-        // it is present AND already at the current HEAD — an O(1) memory read,
-        // the fast path a warm repository hits. Otherwise (index cold, or stale
-        // after writes) fall back to a single cheap `SELECT DISTINCT field_name,
-        // value_type` rather than building/refreshing the whole index
-        // synchronously here, which on a large repository would block this
-        // request for seconds just to enumerate field names.
+        // The data-derived catalog is served from the in-memory index. When it
+        // is already warm (present) we bring it up to HEAD first — a forward
+        // delta after a write is incremental and cheap, the same refresh
+        // `run_query_filter` performs. This matters because the GUI re-warms the
+        // catalog on every change it sees, right after a write when the index is
+        // one op stale: serving that from the O(rows) `SELECT DISTINCT` table
+        // scan is a multi-second stall on a large repository. Only when the
+        // index is *cold* (absent — e.g. before warmup finishes) do we fall back
+        // to the DB scan, rather than building the whole index synchronously here
+        // just to enumerate field names.
         let data = {
-            let index_guard = repo_state.index.lock_recover();
-            match index_guard.as_ref() {
-                Some(index) if index.built_at_head() == db::current_head(&conn)? => {
+            let mut index_guard = repo_state.index.lock_recover();
+            match index_guard.as_mut() {
+                Some(index) => {
+                    index.refresh(&conn, &|| false)?;
                     index.field_catalog(None)
                 }
-                _ => db::distinct_field_names(&conn, None)?,
+                None => db::distinct_field_names(&conn, None)?,
             }
         };
         // Merge in the schema (schema-priority, schema-only fields added), then

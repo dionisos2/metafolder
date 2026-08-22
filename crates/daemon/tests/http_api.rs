@@ -294,6 +294,70 @@ async fn test_create_get_delete_metarecord() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+// The GUI re-warms the field catalog (GET /repos/:repo/fields) on every change
+// it sees through the log change feed — right after a write, when the in-memory
+// index is one op stale. Serving that from the O(rows) `SELECT DISTINCT
+// field_name, value_type` table scan is the 3-4 s stall on a large repo. A warm
+// index must instead be refreshed incrementally (cheap for a one-op delta) and
+// the catalog served from memory, leaving the index at the current HEAD.
+#[tokio::test]
+async fn list_fields_refreshes_warm_index_after_write() {
+    use metafolder_daemon::db;
+
+    let state = std::sync::Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("fields_refresh");
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+
+    // Create a metarecord and warm the index with a query (the GUI's first list
+    // display builds it).
+    let created =
+        create_metarecord(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]))
+            .await;
+    let uuid = created["uuid"].as_str().unwrap().to_string();
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "tag"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A write advances HEAD; the warm index is now one op stale.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/rating"),
+        Some(json!({"value": {"type": "int", "value": 5}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, catalog) = request(&app, "GET", &format!("/repos/{repo}/fields"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let names: Vec<&str> =
+        catalog.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert!(names.contains(&"rating"), "catalog must reflect the new field: {catalog}");
+
+    let repo_state = state.repo(repo_uuid).unwrap();
+    let head = {
+        let conn = repo_state.conn.lock().unwrap();
+        db::current_head(&conn).unwrap()
+    };
+    let built = repo_state.index.lock().unwrap().as_ref().and_then(|i| i.built_at_head());
+    assert_eq!(
+        built, head,
+        "GET /fields must refresh the warm index to HEAD, not fall back to the table scan",
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn test_get_unknown_record_is_not_found() {
     let (app, repo, root) = app_with_repo("get404").await;
