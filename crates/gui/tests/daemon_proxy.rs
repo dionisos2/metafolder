@@ -22,7 +22,12 @@ struct Recorded {
 async fn spawn_stub() -> (String, Recorded) {
     let recorded = Recorded::default();
     let router = axum::Router::new()
-        .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
+        .route(
+            "/health",
+            get(|| async {
+                Json(json!({"status": "ok", "api_version": metafolder_core::API_VERSION}))
+            }),
+        )
         .route(
             "/fail",
             any(|| async {
@@ -127,11 +132,77 @@ async fn test_health_transitions_emit_events() {
     assert_eq!(
         payloads,
         vec![
-            json!({"connected": true}),
-            json!({"connected": false}),
-            json!({"connected": true}),
+            json!({
+                "connected": true, "compatible": true,
+                "daemon_api_version": metafolder_core::API_VERSION,
+                "gui_api_version": metafolder_core::API_VERSION,
+            }),
+            json!({
+                "connected": false, "compatible": false,
+                "daemon_api_version": Value::Null,
+                "gui_api_version": metafolder_core::API_VERSION,
+            }),
+            json!({
+                "connected": true, "compatible": true,
+                "daemon_api_version": metafolder_core::API_VERSION,
+                "gui_api_version": metafolder_core::API_VERSION,
+            }),
         ]
     );
+}
+
+/// A health-only stub reporting the given `/health` body (used to exercise the
+/// version-compatibility verdict).
+async fn spawn_health_stub(body: Value) -> String {
+    let router = axum::Router::new()
+        .route("/health", get(move || {
+            let body = body.clone();
+            async move { Json(body) }
+        }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn test_incompatible_daemon_flagged() {
+    // A reachable daemon that reports a wire-protocol version we do not speak is
+    // connected but not compatible, so the shell can warn (spec-gui) instead of
+    // silently serving requests the two sides may disagree about.
+    let url = spawn_health_stub(json!({
+        "status": "ok",
+        "api_version": metafolder_core::API_VERSION + 1,
+    }))
+    .await;
+    let (notifier, gui) = gui_with_notifier();
+    let proxy = DaemonProxy::new(url);
+
+    // Still reachable (the probe succeeded), just incompatible.
+    assert!(proxy.check_health(&gui).await);
+    let payloads = notifier.payloads(events::DAEMON_HEALTH_CHANGED);
+    assert_eq!(payloads.len(), 1);
+    assert_eq!(payloads[0]["connected"], json!(true));
+    assert_eq!(payloads[0]["compatible"], json!(false));
+    assert_eq!(payloads[0]["daemon_api_version"], json!(metafolder_core::API_VERSION + 1));
+    assert_eq!(payloads[0]["gui_api_version"], json!(metafolder_core::API_VERSION));
+}
+
+#[tokio::test]
+async fn test_pre_versioning_daemon_is_incompatible() {
+    // A daemon predating the api_version field: reachable but treated as
+    // incompatible (we cannot vouch for its contract).
+    let url = spawn_health_stub(json!({"status": "ok"})).await;
+    let (notifier, gui) = gui_with_notifier();
+    let proxy = DaemonProxy::new(url);
+
+    assert!(proxy.check_health(&gui).await);
+    let payloads = notifier.payloads(events::DAEMON_HEALTH_CHANGED);
+    assert_eq!(payloads[0]["connected"], json!(true));
+    assert_eq!(payloads[0]["compatible"], json!(false));
+    assert_eq!(payloads[0]["daemon_api_version"], Value::Null);
 }
 
 /// Stub for the asynchronous reconcile contract (spec-tasks): POST reconcile

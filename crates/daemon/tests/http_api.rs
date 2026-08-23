@@ -76,6 +76,8 @@ async fn test_health() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["status"], "ok");
     assert!(body["version"].is_string());
+    // The wire-protocol version a client checks for compatibility (spec-gui).
+    assert_eq!(body["api_version"], json!(metafolder_core::API_VERSION));
     assert_eq!(body["repos"], json!(0));
 }
 

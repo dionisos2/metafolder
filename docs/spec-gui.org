@@ -548,6 +548,23 @@ is shown and all daemon-dependent commands are disabled. The GUI itself
 (panels, status bar, command input, keybindings, panel type system, and the
 GUI API) remains functional.
 
+=GET /health= also reports =api_version=, the wire-protocol version shared by
+every service (=core::API_VERSION=; distinct from the crate semver, and bumped
+by hand whenever a change to the HTTP contract would make an older client
+misbehave). The GUI compares the daemon's =api_version= against its own
+compiled-in value: a reachable daemon reporting a different version (or none —
+a daemon predating the field) is *incompatible*, and a distinct banner warns
+that data may be missing or wrong and the two sides should be rebuilt from the
+same source. This catches the common development mishap of restarting a rebuilt
+daemon against a still-running older GUI (or vice versa), which otherwise
+manifests as silently empty or broken panels.
+
+Independently, panels never present a failed daemon fetch as an empty result:
+=metarecord-list= and =file-manager= render a *persistent* error state in the
+panel body (not only a transient status-bar flash) when a query or directory
+listing fails, and =file-manager= degrades to disk-only browsing rather than
+hanging on "Loading…" when the daemon calls in its start-up path fail.
+
 No authentication: the daemon is local-only and requires none.
 
 ** Picker seeds

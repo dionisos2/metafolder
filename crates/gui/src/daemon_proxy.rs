@@ -18,11 +18,29 @@ pub struct ProxyResponse {
     pub body: Value,
 }
 
+/// The outcome of one `/health` probe (spec-gui "Connection to the daemon").
+///
+/// `reachable` alone drives the "daemon unreachable" banner; `compatible`
+/// additionally distinguishes a *reachable but wrong-version* daemon (the GUI
+/// and daemon were built from sources whose wire contract differs — see
+/// [`metafolder_core::API_VERSION`]) so the shell can warn instead of silently
+/// serving broken data.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct HealthOutcome {
+    reachable: bool,
+    /// Whether the daemon's reported `api_version` matches ours. Meaningful
+    /// only when `reachable`; `false` when unreachable.
+    compatible: bool,
+    /// The daemon's reported `api_version`, if any (absent on a pre-versioning
+    /// daemon or when unreachable).
+    daemon_api: Option<u32>,
+}
+
 pub struct DaemonProxy {
     client: reqwest::Client,
     base_url: Mutex<String>,
-    /// Last known reachability; `None` until the first check.
-    connected: Mutex<Option<bool>>,
+    /// Last known health; `None` until the first check.
+    health: Mutex<Option<HealthOutcome>>,
     /// Cached daemon session token (spec-auth), read lazily from the token
     /// file. Stable across daemon restarts, so caching is safe; cleared and
     /// re-read once on a 401 (covers the daemon having regenerated it).
@@ -41,7 +59,7 @@ impl DaemonProxy {
                 .build()
                 .expect("reqwest client"),
             base_url: Mutex::new(base_url),
-            connected: Mutex::new(None),
+            health: Mutex::new(None),
             token: Mutex::new(None),
         }
     }
@@ -127,9 +145,9 @@ impl DaemonProxy {
         Ok(ProxyResponse { status, body })
     }
 
-    /// Last health-check outcome; `None` before the first check.
+    /// Last health-check reachability; `None` before the first check.
     pub fn last_connected(&self) -> Option<bool> {
-        *self.connected.lock_recover()
+        self.health.lock_recover().map(|h| h.reachable)
     }
 
     /// The repository's human name (`GET /repos/:uuid` → `name`), best-effort:
@@ -151,19 +169,41 @@ impl DaemonProxy {
             .map(str::to_string)
     }
 
-    /// One health probe; emits `daemon-health-changed` when the state
-    /// differs from the last known one. Returns the current state.
+    /// One health probe; emits `daemon-health-changed` when the state differs
+    /// from the last known one. Returns whether the daemon is reachable.
+    ///
+    /// A reachable daemon whose `/health` reports an `api_version` other than
+    /// our [`metafolder_core::API_VERSION`] (or none at all — a daemon predating
+    /// the field) is flagged `compatible: false`: the shell shows a distinct
+    /// "incompatible daemon" banner rather than silently serving requests the
+    /// two sides may disagree about.
     pub async fn check_health(&self, gui: &GuiState) -> bool {
-        let healthy = matches!(
-            self.request("GET", "/health", None).await,
-            Ok(ProxyResponse { status: 200, .. })
-        );
-        let mut connected = self.connected.lock_recover();
-        if *connected != Some(healthy) {
-            *connected = Some(healthy);
-            gui.notify(events::DAEMON_HEALTH_CHANGED, json!({ "connected": healthy }));
+        let outcome = match self.request("GET", "/health", None).await {
+            Ok(ProxyResponse { status: 200, body }) => {
+                let daemon_api =
+                    body.get("api_version").and_then(Value::as_u64).map(|v| v as u32);
+                HealthOutcome {
+                    reachable: true,
+                    compatible: daemon_api == Some(metafolder_core::API_VERSION),
+                    daemon_api,
+                }
+            }
+            _ => HealthOutcome { reachable: false, compatible: false, daemon_api: None },
+        };
+        let mut health = self.health.lock_recover();
+        if *health != Some(outcome) {
+            *health = Some(outcome);
+            gui.notify(
+                events::DAEMON_HEALTH_CHANGED,
+                json!({
+                    "connected": outcome.reachable,
+                    "compatible": outcome.compatible,
+                    "daemon_api_version": outcome.daemon_api,
+                    "gui_api_version": metafolder_core::API_VERSION,
+                }),
+            );
         }
-        healthy
+        outcome.reachable
     }
 }
 

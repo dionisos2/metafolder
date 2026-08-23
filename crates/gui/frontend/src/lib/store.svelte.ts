@@ -32,6 +32,15 @@ export const store = $state({
   panelSettings: {} as Record<string, number>,
   daemonUrl: '',
   daemonConnected: true,
+  /** False when the daemon is reachable but reports an `api_version` this GUI
+   *  does not understand (wire-contract skew — typically the daemon and GUI
+   *  were rebuilt from different sources). Meaningful only when
+   *  `daemonConnected`; drives the "incompatible daemon" banner. */
+  daemonCompatible: true,
+  /** The daemon's reported wire-protocol version (null on a pre-versioning
+   *  daemon), and ours, for the incompatibility banner's message. */
+  daemonApiVersion: null as number | null,
+  guiApiVersion: null as number | null,
   splitRatio: 0.5,
   status: {} as Record<string, StatusMessage | null>,
   lastCommand: {} as Record<string, string>,
@@ -181,8 +190,18 @@ export async function initStore() {
   await listen<{ css: string }>('style-changed', (event) => {
     applyStyle(event.payload.css);
   });
-  await listen<{ connected: boolean }>('daemon-health-changed', (event) => {
+  await listen<{
+    connected: boolean;
+    compatible?: boolean;
+    daemon_api_version?: number | null;
+    gui_api_version?: number | null;
+  }>('daemon-health-changed', (event) => {
     store.daemonConnected = event.payload.connected;
+    // `compatible` only carries meaning while connected; treat a reachable
+    // daemon with no verdict as compatible (nothing to warn about).
+    store.daemonCompatible = !event.payload.connected || event.payload.compatible !== false;
+    store.daemonApiVersion = event.payload.daemon_api_version ?? null;
+    store.guiApiVersion = event.payload.gui_api_version ?? null;
   });
   await listen<{ prompt: string; completions?: string[] }>('prompt-requested', (event) => {
     store.ui.promptText = event.payload.prompt;
