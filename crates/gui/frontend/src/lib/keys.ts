@@ -107,11 +107,18 @@ export function installKeys() {
       }
       const combo = comboFromEvent(event);
       if (!combo) return;
+      // composedPath()[0] is the real focused element even inside a panel's
+      // Shadow DOM (document.activeElement would be the shadow host).
+      const path = event.composedPath();
+      const target = (path[0] as Element | undefined) ?? document.activeElement;
+      const textInput = inTextInputContext(target);
       // A script's input wait (`mf gui input …`) takes absolute priority over
       // every normal keybinding: its answer keys must reach the script and
       // never collide with a panel/global binding on the same letter (e.g.
-      // "n"), which the general matcher would otherwise rank higher.
-      const answer = inputWaitAnswer(store.ui.inputWait, combo);
+      // "n"), which the general matcher would otherwise rank higher. Not while
+      // a text input is focused, though — there the key is text the user is
+      // typing (the temporary answer bindings are text_input=false likewise).
+      const answer = textInput ? null : inputWaitAnswer(store.ui.inputWait, combo);
       if (answer) {
         event.preventDefault();
         event.stopPropagation();
@@ -123,11 +130,6 @@ export function installKeys() {
         matcher.setBindings(store.keytable);
         lastTable = store.keytable;
       }
-      // composedPath()[0] is the real focused element even inside a panel's
-      // Shadow DOM (document.activeElement would be the shadow host).
-      const path = event.composedPath();
-      const target = (path[0] as Element | undefined) ?? document.activeElement;
-      const textInput = inTextInputContext(target);
       const result = matcher.feed(combo, {
         panelType: focusedPanelType(),
         textInput,
