@@ -274,6 +274,15 @@ inline skip their prompt, so a fully-specified invocation
 interactive collection is a fallback for the missing tail, not a separate
 mode.
 
+The command-input autocomplete distinguishes the two kinds of command by the
+menu-item *ellipsis convention*: a command that, invoked bare, reopens the
+minibuffer to collect input shows a trailing =…= after its name; a command
+that acts immediately (selecting or opening a DOM element, toggling a panel)
+shows none. A command prompts when it declares arguments (the interactive
+collection above) or is one of the few builtins that reopen the input by hand
+(e.g. =tab:rename=). The marker is display-only — it is not part of the
+command name written into the input when a suggestion is accepted.
+
 ** Keybinding
 
 A mapping from a key combo (e.g. =ctrl+k=, =alt+x=, =g g= for a two-key
