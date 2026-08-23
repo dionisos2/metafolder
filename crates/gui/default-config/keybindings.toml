@@ -207,6 +207,7 @@
   { command = "file-manager:refresh", when = "file-manager" },
   { command = "trash:refresh", when = "trash" },
   { command = "recent:refresh", when = "recent" },
+  { command = "repos:refresh", when = "repos" },
 ]
 
 # Delete: send the selected metarecord's file to the trash (spec-trash.org),
