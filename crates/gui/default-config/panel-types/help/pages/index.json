@@ -58,7 +58,7 @@
     "title": "Queries",
     "file": "queries.html",
     "aliases": [
-      "query", "edit-query", "dsl", "normal-dsl", "matches", "match",
+      "query", "focus-query", "dsl", "normal-dsl", "matches", "match",
       "follows", "traversal", "present", "absent", "unknown", "osm", "osmd"
     ]
   },

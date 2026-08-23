@@ -43,7 +43,7 @@ function directMatch(manifest, name) {
  *
  *  Order: empty/`#`-prefixed → null; a direct id/alias hit; else, for a
  *  `prefix:rest` command name, the more specific `rest` taken as an alias
- *  (so `metarecord-list:edit-query` → the queries page), then the `prefix`
+ *  (so `metarecord-list:focus-query` → the queries page), then the `prefix`
  *  taken as a panel type (so every `panel:command` lands on at least its
  *  panel's page); else null.
  *

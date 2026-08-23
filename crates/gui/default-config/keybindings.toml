@@ -237,12 +237,12 @@
 # metarecord-list: selection, finder, query editing.
 "space" = { command = "metarecord-list:select-toggle", when = "metarecord-list" }
 "ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
-"/" = { command = "metarecord-list:find", when = "metarecord-list" }
-"ctrl+/" = { command = "metarecord-list:edit-query", when = "metarecord-list" }
+"/" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
+"ctrl+/" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
-"a" = { command = "metarecord:add-field", when = "metarecord-detail" }
+"a" = { command = "metarecord:open-add-field", when = "metarecord-detail" }
 "ctrl+n" = { command = "metarecord:create", when = "metarecord-detail" }
 
 # Command-input-driven field editing ("m" = metarecord edit; the status bar

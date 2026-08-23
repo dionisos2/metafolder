@@ -928,7 +928,7 @@ export async function mount(root, metafolder) {
     if (event.key === 'Enter') void applyColumns();
   });
   byId(root, 'bulk-open').addEventListener('click', () => {
-    void commands.invoke('metarecord-list:bulk-edit-form');
+    void commands.invoke('metarecord-list:open-bulk-edit');
   });
   byId(root, 'bulk-apply').addEventListener('click', () => void applyBulkEdit());
   byId(root, 'bulk-cancel').addEventListener('click', () => bulkForm.classList.remove('open'));
@@ -977,7 +977,7 @@ export async function mount(root, metafolder) {
       bodyEl.classList.toggle('grid', mode === 'grid');
     },
   });
-  void commands.register('metarecord-list:find', {
+  void commands.register('metarecord-list:focus-finder', {
     label: 'Metarecord list: focus the finder (quick ordered-substring filter)',
     handler: () => finderInput.focus(),
   });
@@ -987,7 +987,7 @@ export async function mount(root, metafolder) {
     // finder's input history; the debounced keystroke path does not.
     handler: () => applyFinder({ record: true }),
   });
-  void commands.register('metarecord-list:edit-query', {
+  void commands.register('metarecord-list:focus-query', {
     label: 'Metarecord list: focus the query input',
     handler: () => queryInput.focus(),
   });
@@ -995,7 +995,7 @@ export async function mount(root, metafolder) {
     label: 'Metarecord list: show/hide the normal DSL editor',
     handler: () => setNormalShown(!normalShown),
   });
-  void commands.register('metarecord-list:edit-columns', {
+  void commands.register('metarecord-list:focus-columns', {
     label: 'Metarecord list: focus the columns input',
     handler: () => columnsInput.focus(),
   });
@@ -1015,12 +1015,12 @@ export async function mount(root, metafolder) {
     },
   });
   // Two entry points to bulk editing (spec-gui "metarecord-list panel type"):
-  //  · `bulk-edit-form` — mouse-oriented: the in-panel form (op picker + value
+  //  · `open-bulk-edit` — mouse-oriented: the in-panel form (op picker + value
   //    widget), opened by the footer button.
   //  · `bulk-edit` — keyboard-oriented: collects the operation in the command
   //    input (completion), then delegates to the per-operation completion
   //    command, which collects its own field/value. Bound to `m b`.
-  void commands.register('metarecord-list:bulk-edit-form', {
+  void commands.register('metarecord-list:open-bulk-edit', {
     label: 'Metarecord list: open the bulk edit / delete form (set/append/remove/unset/delete)',
     reveal: true,
     handler: () => toggleBulkForm(),

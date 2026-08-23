@@ -1178,7 +1178,7 @@ export async function mount(root, metafolder) {
   byId(root, 'watch-reconcile').addEventListener('click', () => {
     void commands.invoke(needsWatch() ? 'metarecord:watch-reconcile' : 'metarecord:reconcile');
   });
-  byId(root, 'show-add').addEventListener('click', invoke('metarecord:add-field'));
+  byId(root, 'show-add').addEventListener('click', invoke('metarecord:open-add-field'));
   byId(root, 'add-append').addEventListener('click', () => void addField(false));
   byId(root, 'add-set').addEventListener('click', () => void addField(true));
   byId(root, 'add-cancel').addEventListener('click', () => addForm.classList.remove('open'));
@@ -1222,8 +1222,8 @@ export async function mount(root, metafolder) {
     label: "Reconcile the selected metarecord's subtree",
     handler: reconcileScoped,
   });
-  void commands.register('metarecord:add-field', {
-    label: 'Add a field to the selected metarecord (detail form)',
+  void commands.register('metarecord:open-add-field', {
+    label: 'Open the add-field form on the selected metarecord',
     reveal: true,
     handler: async () => {
       addForm.classList.add('open');
@@ -1231,41 +1231,6 @@ export async function mount(root, metafolder) {
       const repo = await repoForAdd();
       if (repo) await cache.fetchFields(repo); // warm the catalog for the type lock
       void syncTypeToName();
-    },
-  });
-  void commands.register('metarecord:batch-set', {
-    label: 'Set a field on all selected metarecords',
-    reveal: true,
-    handler: async (...args) => {
-      // Args: <name> <type> <value...>; or interactive prompt fallback.
-      const selected = /** @type {string[]} */ (
-        (await workspace.get('selected_metarecords')) ?? []
-      );
-      if (selected.length === 0) throw new Error('no metarecords selected (use Space in metarecord-list)');
-      let name = args[0];
-      let type = args[1] ?? 'string';
-      let raw = args.slice(2).join(' ');
-      if (!name) {
-        const answer = prompt('Batch set — "name type value" (e.g. rating int 5):');
-        if (!answer) return;
-        const [first, second, ...rest] = answer.split(/\s+/);
-        name = first;
-        type = second ?? 'string';
-        raw = rest.join(' ');
-      }
-      const value = parseRawValue(type, raw);
-      const repo = await repoForAdd();
-      // One server-side call: a uuid_in query targets the whole selection.
-      await daemon.call('POST', `/repos/${repo}/query/fields/set`, {
-        query: { type: 'uuid_in', uuids: selected },
-        name,
-        value,
-      });
-      void statusBar.message(
-        `Field "${name}" set on ${selected.length} metarecords.`,
-        statusMessageMs,
-      );
-      await dirty();
     },
   });
 
@@ -1289,7 +1254,7 @@ export async function mount(root, metafolder) {
     label: 'Delete the field under the cursor',
     handler: deleteCursorRow,
   });
-  void commands.register('metarecord:edit-cancel', {
+  void commands.register('metarecord:cancel-edit', {
     label: 'Cancel the current field edit or add form',
     log: false,
     handler: () => {
