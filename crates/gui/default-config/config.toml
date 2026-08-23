@@ -87,3 +87,17 @@ tag          = 'mf_schema = "tag"'
 negative_tag = 'mf_schema = "tag"'
 mixed_tag    = 'mf_schema = "tag"'
 # author       = 'mf_schema = "person"'
+
+# Ref value completion seeds (spec-gui "Ref value completion"). A `ref` field
+# points to a metarecord by uuid, which is unreadable to type by hand. This
+# table maps a `ref` field name to the name of a `tree_ref` field whose paths
+# seed the value completion of `m s`/`m a` and against which a typed path is
+# resolved back to the target uuid (a 32-char hex uuid is always accepted
+# directly). The tag model's three ref fields point at their `path` hierarchy,
+# so a tag is entered by its readable path (e.g. `animals/cats`). Add your own
+# the same way (e.g. the commented `author` example).
+[ref-completion-seeds]
+tag          = 'path'
+negative_tag = 'path'
+mixed_tag    = 'path'
+# author       = 'full_name'

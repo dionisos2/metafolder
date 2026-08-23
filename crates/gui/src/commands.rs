@@ -37,6 +37,10 @@ pub struct App {
     pub panel_settings: crate::config::PanelSettings,
     /// Per-field `ref` picker seed queries (config.toml `[picker-seeds]`).
     pub picker_seeds: std::collections::HashMap<String, String>,
+    /// Per-field `ref` value completion seeds (config.toml
+    /// `[ref-completion-seeds]`): field name → the `tree_ref` field to seed the
+    /// value completion and resolve typed paths against.
+    pub ref_completion_seeds: std::collections::HashMap<String, String>,
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
     pub input: Arc<crate::server::input_wait::InputWait>,
@@ -481,6 +485,15 @@ pub fn pick_cancel(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
     app.picker_seeds.get(&field).cloned()
+}
+
+/// The configured `ref` value completion seed for a field name (config.toml
+/// `[ref-completion-seeds]`): the `tree_ref` field whose paths seed the value
+/// completion and against which a typed path resolves to the target uuid, or
+/// null when none is set (spec-gui "Ref value completion").
+#[tauri::command]
+pub fn ref_completion_seed(app: AppHandle, field: String) -> Option<String> {
+    app.ref_completion_seeds.get(&field).cloned()
 }
 
 // ── Scripting waits ──────────────────────────────────────────────────────

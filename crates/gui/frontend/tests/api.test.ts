@@ -231,6 +231,14 @@ describe('panel api — misc surface', () => {
     expect(invoke).toHaveBeenCalledWith('expand_query', { text: 'jazz' });
   });
 
+  test('config seeds route to their commands', async () => {
+    const { api, invoke } = setup();
+    await api.config.pickerSeed('tag');
+    expect(invoke).toHaveBeenCalledWith('picker_seed', { field: 'tag' });
+    await api.config.refCompletionSeed('tag');
+    expect(invoke).toHaveBeenCalledWith('ref_completion_seed', { field: 'tag' });
+  });
+
   test('fs and statusBar route to their commands', async () => {
     const { api, invoke } = setup();
     await api.fs.readDir('/tmp');

@@ -138,6 +138,11 @@ pub struct GuiConfig {
     /// seeds"), read from the `[picker-seeds]` table: field name → query text
     /// (in the `metarecord-list` query box's syntax, where the seed is injected).
     pub picker_seeds: std::collections::HashMap<String, String>,
+    /// Per-field-name completion seeds for `ref` *values* (spec-gui "Ref value
+    /// completion"), read from the `[ref-completion-seeds]` table: field name →
+    /// the name of a `tree_ref` field whose paths seed the value completion and
+    /// against which a typed path is resolved back to the target uuid.
+    pub ref_completion_seeds: std::collections::HashMap<String, String>,
 }
 
 impl GuiConfig {
@@ -174,6 +179,7 @@ impl Default for GuiConfig {
             cache: CacheSizes::default(),
             panels: PanelSettings::default(),
             picker_seeds: std::collections::HashMap::new(),
+            ref_completion_seeds: std::collections::HashMap::new(),
         }
     }
 }
@@ -519,6 +525,21 @@ mod tests {
         assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("mf_schema = \"tag\""));
         assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("mf_schema = \"person\""));
         assert_eq!(parsed.picker_seeds.get("missing"), None);
+    }
+
+    #[test]
+    fn test_ref_completion_seeds_default_empty_and_parse() {
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert!(empty.ref_completion_seeds.is_empty());
+
+        let parsed: GuiConfig =
+            toml::from_str("[ref-completion-seeds]\ntag = 'path'\nauthor = 'full_name'\n").unwrap();
+        assert_eq!(parsed.ref_completion_seeds.get("tag").map(String::as_str), Some("path"));
+        assert_eq!(
+            parsed.ref_completion_seeds.get("author").map(String::as_str),
+            Some("full_name")
+        );
+        assert_eq!(parsed.ref_completion_seeds.get("missing"), None);
     }
 
     fn kb_dir() -> ConfigDir {

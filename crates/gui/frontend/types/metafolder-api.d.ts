@@ -150,6 +150,9 @@ declare namespace Metafolder {
     /** The configured `ref` picker seed query for a field, or null
      *  (config.toml `[picker-seeds]`). */
     pickerSeed(field: string): Promise<string | null>;
+    /** The configured `ref` value completion seed (a tree_ref field name) for a
+     *  field, or null (config.toml `[ref-completion-seeds]`). */
+    refCompletionSeed(field: string): Promise<string | null>;
   }
 
   interface Workspace {

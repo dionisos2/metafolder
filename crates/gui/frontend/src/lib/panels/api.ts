@@ -317,6 +317,10 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
       // Configured `ref` picker seed query for a field name, or null
       // (config.toml `[picker-seeds]`).
       pickerSeed: (field: string) => invoke('picker_seed', { field }) as Promise<string | null>,
+      // Configured `ref` value completion seed (a tree_ref field name) for a
+      // field name, or null (config.toml `[ref-completion-seeds]`).
+      refCompletionSeed: (field: string) =>
+        invoke('ref_completion_seed', { field }) as Promise<string | null>,
     },
 
     workspace: {

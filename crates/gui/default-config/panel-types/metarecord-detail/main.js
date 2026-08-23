@@ -15,6 +15,7 @@ import {
 import { schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
+import { resolveRefValue } from './ref-completion.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
@@ -36,7 +37,7 @@ import { createAnnotator } from './annotations.js';
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar, bench, cache } = metafolder;
+  const { daemon, workspace, commands, statusBar, bench, cache, config } = metafolder;
   // Status-message durations (config.toml `[panels]`), with the fallbacks used
   // before they were configurable.
   const { settings } = metafolder;
@@ -731,10 +732,36 @@ export async function mount(root, metafolder) {
     return /** @type {Metafolder.Value['type']} */ (type);
   }
 
+  /** The type to write for `field` on set/add: the current record's own row
+   *  type when present, otherwise the established type or, when none is known, a
+   *  type asked from the user — never a silent `string` fallback (spec-gui
+   *  "metarecord-detail panel type"). Returns null if the user cancels the ask.
+   *  @param {string} repo @param {string} field */
+  async function resolveOrAskType(repo, field) {
+    const existing = (metarecord?.fields ?? []).find(
+      (f) => f.name === field && f.value.type !== 'nothing',
+    );
+    if (existing) return existing.value.type;
+    return establishType(repo, field);
+  }
+
   /** Builds a Value of `type` from a one-line raw string. tree_ref is special:
    *  `raw` is a PATH, whose parent is resolved to a uuid via /tree/resolve-path.
+   *  ref is special when the field has a completion seed (spec-gui "Ref value
+   *  completion"): `raw` is a PATH in the seed tree_ref field, resolved to the
+   *  target uuid (a 32-hex `raw` is always taken as the uuid directly).
    *  @param {string} repo @param {string} field @param {string} type @param {string} raw */
   async function parseValueForField(repo, field, type, raw) {
+    if (type === 'ref') {
+      const seedField = await config.refCompletionSeed(field);
+      const value = await resolveRefValue(raw, seedField, async (f, p) => {
+        const res = /** @type {{uuid: string|null}} */ (
+          await daemon.call('POST', `/repos/${repo}/tree/resolve-path`, { field: f, path: p })
+        );
+        return res.uuid;
+      });
+      return { type, value };
+    }
     if (type !== 'tree_ref') return parseRawValue(type, raw);
     const path = raw.trim();
     const slash = path.lastIndexOf('/');
@@ -762,11 +789,19 @@ export async function mount(root, metafolder) {
     return [...paths].sort();
   }
 
-  /** Value completion for a set/add value arg: tree paths when the field is a
-   *  tree_ref, otherwise nothing. @param {string} field */
+  /** Value completion for a set/add value arg: the field's own forest paths when
+   *  it is a tree_ref; the seed field's forest paths when it is a ref with a
+   *  completion seed (spec-gui "Ref value completion"); otherwise nothing.
+   *  @param {string} field */
   async function valueCompletionFor(field) {
     const cur = requireCurrent();
-    return (await fieldTypeOf(field)) === 'tree_ref' ? treePathsForField(cur.repo, field) : [];
+    const type = await fieldTypeOf(field);
+    if (type === 'tree_ref') return treePathsForField(cur.repo, field);
+    if (type === 'ref') {
+      const seedField = await config.refCompletionSeed(field);
+      if (seedField) return treePathsForField(cur.repo, seedField);
+    }
+    return [];
   }
 
   /** @param {string} prompt */
@@ -792,7 +827,9 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, raw) => {
       const cur = requireCurrent();
-      const value = await parseValueForField(cur.repo, field, await fieldTypeOf(field), raw);
+      const type = await resolveOrAskType(cur.repo, field);
+      if (type === null) return; // user cancelled the type pick
+      const value = await parseValueForField(cur.repo, field, type, raw);
       const force = isReserved(field) ? { force: true } : {};
       await daemon.call('PUT', api(`/fields/${encodeURIComponent(field)}`), { value, ...force });
       await load();
@@ -813,7 +850,9 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, raw) => {
       const cur = requireCurrent();
-      const value = await parseValueForField(cur.repo, field, await fieldTypeOf(field), raw);
+      const type = await resolveOrAskType(cur.repo, field);
+      if (type === null) return; // user cancelled the type pick
+      const value = await parseValueForField(cur.repo, field, type, raw);
       const force = isReserved(field) ? { force: true } : {};
       await daemon.call('POST', api('/fields'), { name: field, value, ...force });
       await load();
