@@ -161,6 +161,40 @@ function extensionOf(pathOrName) {
   return (pathOrName.split('.').pop() ?? '').toLowerCase();
 }
 
+/**
+ * How many leading bytes `looksLikeText` inspects. git's own binary check uses
+ * the first ~8000 bytes; a prefix this size decides every real file while
+ * keeping the scan trivial even when the caller passes a larger buffer.
+ */
+export const TEXT_SNIFF_WINDOW = 8192;
+
+/**
+ * Content sniff: does this byte prefix look like a text file we can show in a
+ * `<pre>`? Used for files whose extension gives no answer (`.tid`, `.cmake`, a
+ * script with no extension…), so an unlisted-but-plain-text file is previewed
+ * instead of falling through to "no preview available".
+ *
+ * The heuristic is git's: a NUL byte (`0x00`) in the first `TEXT_SNIFF_WINDOW`
+ * bytes means binary; anything else is text. Real binaries (images, video,
+ * executables, archives) carry a NUL almost immediately, while text — ASCII,
+ * UTF-8, or single-byte encodings like latin-1 — never does, so this admits
+ * unknown text encodings without decoding them. Note the deliberate blind
+ * spot: UTF-16/UTF-32 text *does* hold NULs and is reported binary here; such
+ * files are meant to be recognised upstream by their explicit extension, never
+ * by this sniff. An empty prefix counts as text (an empty file previews as an
+ * empty document, not "no preview").
+ *
+ * @param {Uint8Array} bytes a prefix of the file (already length-capped by the caller)
+ * @returns {boolean}
+ */
+export function looksLikeText(bytes) {
+  const end = Math.min(bytes.length, TEXT_SNIFF_WINDOW);
+  for (let i = 0; i < end; i++) {
+    if (bytes[i] === 0) return false;
+  }
+  return true;
+}
+
 // Common file types → an emoji icon, so a panel can tell music from a PDF from
 // a video at a glance even where no real thumbnail is shown (the file-manager
 // list, and the fallback for grid tiles that are not image/video). Built from

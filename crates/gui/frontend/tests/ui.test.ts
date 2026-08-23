@@ -2,7 +2,7 @@
 // shared by the built-in panel types (spec-gui "The metafolder API").
 
 import { describe, expect, test, vi } from 'vitest';
-import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph } from '../../panel-shim/ui.js';
+import { el, field, fields, formatValue, valueEl, thumbnail, isThumbnailable, isVideoThumbnailable, fileTypeGlyph, looksLikeText } from '../../panel-shim/ui.js';
 
 describe('thumbnail', () => {
   test('isThumbnailable: only image extensions, case-insensitive', () => {
@@ -265,5 +265,43 @@ describe('field', () => {
     expect(fields(entry, 'rating')).toHaveLength(1);
     expect(fields(entry, 'missing')).toEqual([]);
     expect(fields({ uuid: 'u2' }, 'genre')).toEqual([]);
+  });
+});
+
+describe('looksLikeText', () => {
+  /** @param {string} s */
+  const utf8 = (s: string) => new TextEncoder().encode(s);
+
+  test('plain ASCII / UTF-8 text is text', () => {
+    expect(looksLikeText(utf8('hello world\n'))).toBe(true);
+    // A .cmake / .tid / extensionless script body: still just text.
+    expect(looksLikeText(utf8('cmake_minimum_required(VERSION 3.10)\n'))).toBe(true);
+    // Non-ASCII UTF-8 (accents, emoji) has high bytes but no NUL.
+    expect(looksLikeText(utf8('café — déjà vu 🎬\n'))).toBe(true);
+  });
+
+  test('latin-1 text (high bytes, no NUL) is text', () => {
+    // "café" in latin-1: 0xE9 for é, never a NUL.
+    expect(looksLikeText(new Uint8Array([0x63, 0x61, 0x66, 0xe9, 0x0a]))).toBe(true);
+  });
+
+  test('an empty file is text (renders as an empty preview, not "no preview")', () => {
+    expect(looksLikeText(new Uint8Array([]))).toBe(true);
+  });
+
+  test('a NUL byte marks binary', () => {
+    // The canonical binary signal: a PNG header carries a NUL immediately.
+    expect(looksLikeText(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00]))).toBe(
+      false,
+    );
+    // UTF-16 text is *not* recognised here (NUL every other byte); it is meant
+    // to be caught upstream by the explicit-extension fast path instead.
+    expect(looksLikeText(new Uint8Array([0x68, 0x00, 0x69, 0x00]))).toBe(false);
+  });
+
+  test('the NUL scan is bounded: a NUL past the sniff window does not flip a long text prefix', () => {
+    const big = new Uint8Array(20000).fill(0x41); // 'A' repeated
+    big[19000] = 0x00; // NUL only well past the 8 KiB sniff window
+    expect(looksLikeText(big)).toBe(true);
   });
 });

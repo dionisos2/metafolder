@@ -4,7 +4,7 @@
 // When the active path is a directory, its contents are shown as a
 // thumbnail grid the user can click into (drill-in, with a back button).
 
-import { byId, el, thumbnail } from '/__ui.js';
+import { byId, el, thumbnail, looksLikeText } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { fileMenuItems } from '/__file-actions.js';
 import {
@@ -29,6 +29,11 @@ const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma',
 const VIDEO = new Set([
   'mp4', 'webm', 'mkv', 'mov', 'avi', 'wmv', 'm4v', 'mpg', 'mpeg', 'flv', '3gp', 'ts', 'm2ts',
 ]);
+// Known text extensions: a *fast path* to the text preview (not the only way
+// in). A file with one of these is always rendered as text — this is also how
+// encodings the content sniff rejects still preview (UTF-16 holds NULs). Any
+// other extension (including none) is decided by `looksLikeText` on its bytes,
+// so `.tid`/`.cmake`/an extensionless script need not be listed here.
 const TEXT = new Set([
   'txt', 'md', 'org', 'json', 'toml', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'ts',
   'rs', 'py', 'sh', 'c', 'h', 'cpp', 'java', 'log', 'csv', 'ini', 'conf',
@@ -556,6 +561,46 @@ export async function mount(root, metafolder) {
     detachDirScroll = pager.attach(grid);
   }
 
+  // Text preview. Fetches only the first `TEXT_PREVIEW_LIMIT` bytes (the GUI
+  // server honours the Range header — 206 Partial Content — so even a multi-GB
+  // log only pulls this capped prefix into memory), then either renders it as a
+  // <pre> or, when `force` is false and the bytes look binary, gives up.
+  //
+  // `force` distinguishes the two callers: an explicit text extension (.txt,
+  // .md, …) is rendered as text unconditionally — that path also covers text
+  // encodings the content sniff cannot (UTF-16 carries NULs) — whereas an
+  // unknown/absent extension is only shown when `looksLikeText` accepts the
+  // prefix, so `.tid`/`.cmake`/an extensionless script preview while a real
+  // binary falls through to "no preview" instead of a wall of mojibake.
+  //
+  // We read arrayBuffer (not .text()) so the NUL sniff sees raw bytes and so
+  // the decode is non-fatal: stray/latin-1 bytes become replacement chars
+  // rather than throwing.
+  /** @param {string} url @param {number} generation @param {boolean} force */
+  async function renderText(url, generation, force) {
+    const current = () => generation === renderGeneration;
+    try {
+      const response = await fetch(url, {
+        headers: { range: `bytes=0-${TEXT_PREVIEW_LIMIT - 1}` },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!current()) return;
+      if (!force && !looksLikeText(bytes)) {
+        placeholder('no preview available for this format');
+        return;
+      }
+      const text = new TextDecoder().decode(bytes);
+      const pre = el('pre', {}, text);
+      viewer.replaceChildren(pre);
+      if (response.status === 206 && bytes.length >= TEXT_PREVIEW_LIMIT) {
+        pre.textContent += '\n… (truncated preview)';
+      }
+    } catch (error) {
+      if (current()) placeholder(`cannot load the file: ${messageOf(error)}`);
+    }
+  }
+
   async function renderViewer() {
     const generation = ++renderGeneration;
     // Release any media from the previous view before showing the next one.
@@ -617,22 +662,12 @@ export async function mount(root, metafolder) {
     } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
       await renderMedia(VIDEO.has(extension) ? 'video' : 'audio', path, url, generation);
     } else if (TEXT.has(extension)) {
-      try {
-        const response = await fetch(url, {
-          headers: { range: `bytes=0-${TEXT_PREVIEW_LIMIT - 1}` },
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const text = await response.text();
-        const pre = el('pre', {}, text);
-        viewer.replaceChildren(pre);
-        if (response.status === 206 && text.length >= TEXT_PREVIEW_LIMIT) {
-          pre.textContent += '\n… (truncated preview)';
-        }
-      } catch (error) {
-        placeholder(`cannot load the file: ${messageOf(error)}`);
-      }
+      // A known text extension: render as text unconditionally.
+      await renderText(url, generation, true);
     } else {
-      placeholder('no preview available for this format');
+      // Unknown/absent extension: sniff the bytes and preview it only if it
+      // looks like text (so plain-text files with an unlisted extension work).
+      await renderText(url, generation, false);
     }
   }
 
