@@ -12,6 +12,7 @@ use crate::notifier::FrontendNotifier;
 use layout::{LayoutView, Slot, SlotId, SlotPayload};
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{MessageEntry, Workspace, WorkspaceInfo};
@@ -28,6 +29,11 @@ fn default_panel_type(active_repo: Option<&str>) -> &'static str {
 
 pub struct GuiState {
     inner: Mutex<Inner>,
+    /// Shell scripts currently running, keyed by the workspace they were
+    /// launched from → a human label (spec-gui "Scripting" running indicator).
+    /// Kept out of `Inner` so the workspace/message lock is never held across
+    /// the notify that broadcasts the running set.
+    scripts: Mutex<HashMap<String, String>>,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
@@ -286,7 +292,31 @@ impl GuiState {
         inner
             .assign(&id, SlotId::Left)
             .expect("assigning the initial workspace cannot fail");
-        GuiState { inner: Mutex::new(inner), notifier }
+        GuiState { inner: Mutex::new(inner), scripts: Mutex::new(HashMap::new()), notifier }
+    }
+
+    /// Marks a shell script as running in `ws_id` under a human `label` and
+    /// broadcasts the running set, so the frontend can show a loading
+    /// indicator (spec-gui "Scripting"). Paired with [`Self::script_end`].
+    pub fn script_begin(&self, ws_id: &str, label: &str) {
+        self.scripts.lock_recover().insert(ws_id.to_string(), label.to_string());
+        self.emit_scripts();
+    }
+
+    /// Clears the running mark for `ws_id` and rebroadcasts.
+    pub fn script_end(&self, ws_id: &str) {
+        self.scripts.lock_recover().remove(ws_id);
+        self.emit_scripts();
+    }
+
+    fn emit_scripts(&self) {
+        let tasks: Vec<Value> = self
+            .scripts
+            .lock_recover()
+            .iter()
+            .map(|(ws, label)| json!({ "workspace_id": ws, "label": label }))
+            .collect();
+        self.notifier.emit(events::SCRIPT_TASK_CHANGED, json!({ "tasks": tasks }));
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {

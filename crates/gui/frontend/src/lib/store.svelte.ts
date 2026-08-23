@@ -87,6 +87,10 @@ export const store = $state({
     /// (spec-gui "Scripting"). Null when no input wait is active. `prompt` is
     /// always a display string (a generic label when the script gave none).
     inputWait: null as { prompt: string; keys: string[] } | null,
+    /// Shell scripts currently running (spec-gui "Scripting"): a loading
+    /// indicator so a slow script never looks frozen. Fed by
+    /// `script-task-changed`; empty when nothing runs.
+    scriptTasks: [] as { workspace_id: string; label: string }[],
   },
 });
 
@@ -100,6 +104,29 @@ export function inputWaitState(payload: {
 }): { prompt: string; keys: string[] } | null {
   if (!payload.active) return null;
   return { prompt: payload.prompt || 'Waiting for input', keys: payload.temp_keys ?? [] };
+}
+
+/** The awaited key that a pressed `combo` answers during a script input wait
+ *  (`mf gui input …`), or null when it matches none. `combo` is the normalized
+ *  lowercase combo from comboFromEvent; the script's key strings are compared
+ *  case-insensitively (a script may pass "Escape"). Pure, so it is unit-tested.
+ *  keys.ts uses it to give the wait absolute priority over normal keybindings,
+ *  so an answer key never collides with a panel/global binding on the same
+ *  letter (e.g. "n"). */
+export function inputWaitAnswer(
+  wait: { keys: string[] } | null,
+  combo: string | null,
+): string | null {
+  if (!wait || !combo) return null;
+  return wait.keys.find((k) => k.toLowerCase() === combo) ?? null;
+}
+
+/** Normalizes a `script-task-changed` payload to the running-scripts list. Pure,
+ *  so it is unit-tested. */
+export function scriptTasksState(payload: {
+  tasks?: { workspace_id: string; label: string }[];
+}): { workspace_id: string; label: string }[] {
+  return payload.tasks ?? [];
 }
 
 export function slotPayload(id: SlotId) {
@@ -214,6 +241,13 @@ export async function initStore() {
     'input-wait-changed',
     (event) => {
       store.ui.inputWait = inputWaitState(event.payload);
+    },
+  );
+  // Running shell scripts: drive the loading indicator in the task bar.
+  await listen<{ tasks?: { workspace_id: string; label: string }[] }>(
+    'script-task-changed',
+    (event) => {
+      store.ui.scriptTasks = scriptTasksState(event.payload);
     },
   );
   // An external POST /gui/command: run it through the very same dispatch()

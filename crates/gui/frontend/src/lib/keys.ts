@@ -11,7 +11,13 @@ import {
 import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen } from './commands';
 import { setHelpCursor } from './cursor';
-import { flashStatus, focusedPanelType, slotPayload, store } from './store.svelte';
+import {
+  flashStatus,
+  focusedPanelType,
+  inputWaitAnswer,
+  slotPayload,
+  store,
+} from './store.svelte';
 import type { SlotId } from './types';
 
 // The shell owns the single default context menu now (panels no longer run in
@@ -101,6 +107,17 @@ export function installKeys() {
       }
       const combo = comboFromEvent(event);
       if (!combo) return;
+      // A script's input wait (`mf gui input …`) takes absolute priority over
+      // every normal keybinding: its answer keys must reach the script and
+      // never collide with a panel/global binding on the same letter (e.g.
+      // "n"), which the general matcher would otherwise rank higher.
+      const answer = inputWaitAnswer(store.ui.inputWait, combo);
+      if (answer) {
+        event.preventDefault();
+        event.stopPropagation();
+        void dispatch(`answer:send ${answer}`);
+        return;
+      }
       // setBindings resets the sequence buffer: only on real changes.
       if (store.keytable !== lastTable) {
         matcher.setBindings(store.keytable);

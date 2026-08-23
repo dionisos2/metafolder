@@ -25,6 +25,12 @@ pub async fn run_to_completion(
         .spawn()
         .map_err(|e| format!("cannot run shell command: {e}"))?;
 
+    // Show a running indicator until this function returns (spec-gui
+    // "Scripting"). The guard clears it on every exit path — early `?`
+    // returns and panics included — so the spinner can never get stuck on.
+    gui.script_begin(&ws_id, &script_label(&command_line));
+    let _running = RunningGuard { gui: gui.clone(), ws_id: ws_id.clone() };
+
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
 
@@ -43,6 +49,36 @@ pub async fn run_to_completion(
         gui.append_message(&ws_id, &format!("[exit {code}]"))?;
     }
     Ok(())
+}
+
+/// Clears the running indicator for a workspace when dropped, so it is removed
+/// on every exit path of `run_to_completion` (including an early `?` return).
+struct RunningGuard {
+    gui: Arc<GuiState>,
+    ws_id: String,
+}
+
+impl Drop for RunningGuard {
+    fn drop(&mut self) {
+        self.gui.script_end(&self.ws_id);
+    }
+}
+
+/// A short human label for the running indicator: the script's base name for a
+/// `bash <path>` launch (the `script:run` builtin), otherwise the command line
+/// itself.
+pub fn script_label(command_line: &str) -> String {
+    let trimmed = command_line.trim();
+    if let Some(rest) = trimmed.strip_prefix("bash ") {
+        let first = rest.split_whitespace().next().unwrap_or("");
+        let path = first.trim_matches('\'').trim_matches('"');
+        if let Some(name) = std::path::Path::new(path).file_name().and_then(|n| n.to_str()) {
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    trimmed.to_string()
 }
 
 /// Streams one output pipe into the message log, echoing to the terminal
@@ -118,5 +154,44 @@ mod tests {
         assert!(run_to_completion(gui, "ws-99".into(), "echo hi".into())
             .await
             .is_err());
+    }
+
+    #[test]
+    fn test_script_label() {
+        // script:run: `bash <quoted path>` → the script's base name.
+        assert_eq!(
+            script_label("bash '/home/u/.config/metafolder/scripts/gui-tag-folder.sh'"),
+            "gui-tag-folder.sh",
+        );
+        assert_eq!(script_label("bash /tmp/x/foo.sh"), "foo.sh");
+        // A plain `!` shell command keeps its command line.
+        assert_eq!(script_label("echo hello"), "echo hello");
+    }
+
+    #[test]
+    fn test_running_indicator_begins_and_clears() {
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        gui.script_begin("ws-1", "gui-tag-folder.sh");
+        gui.script_end("ws-1");
+
+        let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        assert_eq!(payloads.len(), 2, "one emit for begin, one for end");
+        let running = payloads[0]["tasks"].as_array().unwrap();
+        assert_eq!(running.len(), 1);
+        assert_eq!(running[0]["label"], "gui-tag-folder.sh");
+        assert_eq!(running[0]["workspace_id"], "ws-1");
+        assert_eq!(payloads[1]["tasks"].as_array().unwrap().len(), 0, "cleared on end");
+    }
+
+    #[tokio::test]
+    async fn test_run_to_completion_clears_the_indicator() {
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        run_to_completion(gui.clone(), "ws-1".into(), "true".into()).await.unwrap();
+        // The last running-set broadcast is empty: nothing left running.
+        let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        assert!(!payloads.is_empty());
+        assert_eq!(payloads.last().unwrap()["tasks"].as_array().unwrap().len(), 0);
     }
 }

@@ -7,6 +7,7 @@
   // ones) is the point.
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
+  import { store } from '../lib/store.svelte';
 
   interface Task {
     id: string;
@@ -48,8 +49,14 @@
   }
 </script>
 
-{#if tasks.length > 0}
+{#if tasks.length > 0 || store.ui.scriptTasks.length > 0}
   <div class="task-bar" data-help-topic="task-bar">
+    {#each store.ui.scriptTasks as s (s.workspace_id)}
+      <div class="task">
+        <span class="label">{s.label}</span>
+        <span class="spinner"></span>
+      </div>
+    {/each}
     {#each tasks as t (t.id)}
       <div class="task">
         <span class="label">{label(t)}</span>

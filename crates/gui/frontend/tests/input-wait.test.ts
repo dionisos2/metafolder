@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { inputWaitState } from '../src/lib/store.svelte';
+import { inputWaitAnswer, inputWaitState } from '../src/lib/store.svelte';
 
 // The script input question (POST /gui/input) is derived into its own state,
 // shown in a dedicated bar so a status/error message can never hide it.
@@ -22,5 +22,28 @@ describe('inputWaitState', () => {
 
   it('is null when no wait is active', () => {
     expect(inputWaitState({ active: false, prompt: 'ignored', temp_keys: ['x'] })).toBeNull();
+  });
+});
+
+describe('inputWaitAnswer (input wait wins over normal keybindings)', () => {
+  const wait = { prompt: 'Which action?', keys: ['y', 'n', 's', 'escape'] };
+
+  it('returns the awaited key a pressed combo answers', () => {
+    expect(inputWaitAnswer(wait, 'n')).toBe('n');
+    expect(inputWaitAnswer(wait, 'escape')).toBe('escape');
+  });
+
+  it('preserves the script\'s original key spelling (case-insensitive match)', () => {
+    expect(inputWaitAnswer({ keys: ['Escape'] }, 'escape')).toBe('Escape');
+  });
+
+  it('returns null for a key the wait does not await (falls through to bindings)', () => {
+    expect(inputWaitAnswer(wait, 'x')).toBeNull();
+    expect(inputWaitAnswer(wait, 'ctrl+k')).toBeNull();
+  });
+
+  it('returns null when no wait is active or the combo is null', () => {
+    expect(inputWaitAnswer(null, 'n')).toBeNull();
+    expect(inputWaitAnswer(wait, null)).toBeNull();
   });
 });

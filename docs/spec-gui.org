@@ -760,7 +760,9 @@ Always-visible read-only area at the bottom. Shows:
 - Status messages after commands (e.g. ="Metarecord deleted."=).
 - Error messages from failed operations.
 - The last executed command name (dim text).
-- A spinner during long-running shell commands.
+
+A running shell script's loading indicator (spinner) lives in the *task bar*,
+not here (see [[*Task bar]]).
 
 Live progress of daemon /tasks/ (reconcile, query, flush) is *not* shown here
 but in a dedicated *task bar* just above the status bar, to avoid saturating it
@@ -779,6 +781,14 @@ reports =done=/=total=, a spinner otherwise, labelled by =kind=/=phase=. It is
 hidden when there are no tasks. Unlike the status bar it is not tied to a
 workspace: it surfaces every blocking task on the loaded repositories,
 including reconciles started from the CLI or another client.
+
+Running *shell scripts* (a =!= command, or the =script:run= builtin) also
+appear here as a loading indicator — a spinner labelled by the script's base
+name — for the whole time the subprocess runs, so a slow script never looks
+frozen. These are GUI-side, not daemon tasks: the GUI tracks them itself
+(=script-task-changed=) rather than polling =GET /tasks=. A script that emits
+progress does so through its streamed output / =mf gui message= lines (visible
+in the message panel); the indicator itself is a spinner.
 
 ** Command input
 
@@ -2167,16 +2177,20 @@ integer → auto-clears after that many milliseconds.
 *** =POST /gui/input=
 
 Registers an input wait and blocks until the =answer:send= command is
-executed (by any means: a temporary binding installed by this request, a
+executed (by any means: the awaited-key interception described below, a
 permanent user binding, or a manual invocation via the command input).
-No keystrokes are suppressed; all normal shortcuts continue to work.
 
-The optional =keys= array installs temporary global keybindings for the
-duration of the wait: each listed key is bound to =answer:send <key>=
-(scope: global, =text-input = false=). These bindings are removed when the
-request resolves or times out. If =keys= is absent or empty, no temporary
-bindings are installed; the user can still resolve the wait by typing
-=answer:send <value>= manually in the command input.
+The optional =keys= array is the set of keys the wait accepts. While the
+wait is active these keys take *absolute priority* over normal keybindings:
+pressing one answers the script (=answer:send <key>=) and never also fires a
+panel/global shortcut bound to the same key — so a script offering =y/n/s=
+is never in conflict with an =n= binding in the focused panel. Keys the wait
+does *not* list keep their normal behaviour. (The temporary bindings are
+also installed as a fallback for manual/user resolution, but the awaited
+keys are intercepted ahead of the matcher so scope precedence cannot let a
+more-specific binding win.) If =keys= is absent or empty, no keys are
+awaited; the user can still resolve the wait by typing =answer:send <value>=
+manually in the command input.
 
 The optional =prompt= is the *question* to show while the wait is active. It
 is displayed in a dedicated bar (see [[*Status bar]]), kept apart from the

@@ -11,3 +11,6 @@ pub const DAEMON_HEALTH_CHANGED: &str = "daemon-health-changed";
 pub const PROMPT_REQUESTED: &str = "prompt-requested";
 pub const INPUT_WAIT_CHANGED: &str = "input-wait-changed";
 pub const COMMAND_REQUESTED: &str = "command-requested";
+/// The set of shell scripts currently running (spec-gui "Scripting" running
+/// indicator): `{ "tasks": [{ "workspace_id", "label" }] }`.
+pub const SCRIPT_TASK_CHANGED: &str = "script-task-changed";
