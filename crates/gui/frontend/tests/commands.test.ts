@@ -31,6 +31,15 @@ describe('recent builtin', () => {
   });
 });
 
+// Like `recent`, `repos:switch` registers its argument spec at module load so
+// the command input collects the repository pick interactively (completing over
+// the daemon's loaded repositories).
+describe('repos:switch builtin', () => {
+  test('registers its repo argument spec at module load', () => {
+    expect(argSpecFor('repos:switch')?.map((s) => s.name)).toEqual(['repo']);
+  });
+});
+
 describe('parseInvocation', () => {
   test('plain command name', () => {
     expect(parseInvocation('tab:new')).toEqual({ name: 'tab:new', args: [] });

@@ -273,6 +273,56 @@ registerArgs('recent', [
   { name: 'metarecord', prompt: () => 'Recently viewed:', complete: () => recentCandidates() },
 ]);
 
+// ── Open a loaded repository (the `repos:switch` builtin) ───────────────────
+// A shell builtin (works from any focused panel) mirroring a click on a repo in
+// the repos panel: the `repo` argument completes over the daemon's loaded
+// repositories ("<name> — <root>"), and picking one opens it exactly like the
+// panel — adopting it in the focused workspace when that workspace has no repo
+// yet, otherwise opening it in a new workspace.
+
+/** Candidate display line → repo uuid, rebuilt on each completion pass. */
+const reposChoices = new Map<string, string>();
+
+/** Completion candidates for the `repo` argument: the daemon's loaded
+ *  repositories, one display line each. Also (re)builds `reposChoices`. */
+async function reposCandidates(): Promise<string[]> {
+  reposChoices.clear();
+  const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; name: string; root: string }[];
+  return repos.map((repo) => {
+    const line = `${repo.name} — ${repo.root}`;
+    if (!reposChoices.has(line)) reposChoices.set(line, repo.repo_uuid);
+    return line;
+  });
+}
+
+/** Opens the picked repository in the focused workspace, exactly like clicking
+ *  it in the repos panel: adopt it in place when the workspace has no repo yet,
+ *  otherwise open it in a new workspace. Accepts the full "<name> — <root>"
+ *  completion line, a bare repo name, or a repo uuid. */
+async function openRepoInWorkspace(choice: string, ws: string): Promise<void> {
+  let uuid = reposChoices.get(choice);
+  if (!uuid) {
+    const want = choice.trim();
+    const norm = want.replace(/-/g, '');
+    const repos = (await daemonJson('GET', '/repos')) as { repo_uuid: string; name: string }[];
+    uuid = repos.find(
+      (r) => r.name === want || r.repo_uuid === want || r.repo_uuid.replace(/-/g, '') === norm,
+    )?.repo_uuid;
+  }
+  if (!uuid) throw new Error(`no loaded repository matches "${choice}"`);
+  const current = workspaceById(ws)?.active_repo ?? null;
+  if (current === null) {
+    await invoke('adopt_repo', { wsId: ws, repo: uuid });
+    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });
+  } else {
+    await invoke('tab_new', { activeRepo: uuid });
+  }
+}
+
+registerArgs('repos:switch', [
+  { name: 'repo', prompt: () => 'Open repository:', complete: () => reposCandidates() },
+]);
+
 // ── Installed helper scripts (the `script:run` builtin) ─────────────────────
 // The shipped scripts live in ~/.config/metafolder/scripts/; a launchable one
 // carries a `# Summary:` header (spec-config "Shipped scripts"), enumerated by
@@ -735,6 +785,11 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'repos:open':
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'repos' });
+      return true;
+    case 'repos:switch':
+      // The `repo` argument was collected by dispatch (with completion);
+      // args[0] is the picked "<name> — <root>" line (or a bare name/uuid).
+      if (ws && args[0]) await openRepoInWorkspace(args[0], ws);
       return true;
     case 'file-manager:reveal-folder': {
       // Open the folder of the current selection in the file manager, replacing

@@ -103,6 +103,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("daemon:set-url", "Change the daemon URL", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
         (
+            "repos:switch",
+            "Open a loaded repository in the current or a new workspace",
+            true,
+        ),
+        (
             "file-manager:reveal-folder",
             "Open the selected metarecord's folder in the file manager (focused panel)",
             true,
