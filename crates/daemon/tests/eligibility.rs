@@ -105,6 +105,50 @@ fn test_default_patterns_ignore_metafolder_and_hidden() {
 }
 
 #[test]
+fn test_default_patterns_ignore_cargo_build_intermediates() {
+    // A root carrying the shipped default ignore patterns: cargo's intermediate
+    // build output under target/<profile>/{deps,build,incremental,.fingerprint,
+    // examples} (and the cross-compile target/<triple>/<profile>/… form) is
+    // excluded, while the final artifacts sitting directly in target/<profile>/
+    // (the binaries and libraries) stay tracked.
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let mut fields = vec![
+        Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
+        Field::new("mf_watch", Value::Bool(true)),
+    ];
+    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+        fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
+    }
+    w.create_metarecord(fields).unwrap();
+    w.commit().unwrap();
+
+    let mut cache = TreeCache::new(false);
+    let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
+
+    // Intermediates: ignored.
+    assert!(!elig("/target/debug/deps/libmetafolder_core-abc.rlib"));
+    assert!(!elig("/target/debug/build/foo-hash/out/bindings.rs"));
+    assert!(!elig("/target/debug/incremental/foo/bar.o"));
+    assert!(!elig("/target/release/deps/mf-123"));
+    assert!(!elig("/target/release/build/x/output"));
+    assert!(!elig("/target/debug/examples/demo-abc"));
+    assert!(
+        !elig("/target/x86_64-unknown-linux-gnu/release/deps/libfoo.rlib"),
+        "cross-compile: target/<triple>/<profile>/deps is also intermediate"
+    );
+
+    // Final artifacts sitting directly in the profile directory: kept.
+    assert!(elig("/target/debug/mf"), "the built binary is a final artifact");
+    assert!(elig("/target/release/metafolder-gui"));
+    assert!(elig("/target/debug/libmetafolder_core.rlib"), "the final .rlib is kept");
+
+    // Not a Rust target tree: a source directory that happens to be named `deps`.
+    assert!(elig("/src/deps/mod.rs"), "only intermediates *under target/* are ignored");
+}
+
+#[test]
 fn test_subdir_watch_false_blocks_subtree() {
     let mut f = Fixture::new(true);
     let root = f.root;

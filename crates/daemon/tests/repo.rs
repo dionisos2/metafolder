@@ -68,11 +68,14 @@ fn test_init_creates_structure_and_root_metarecord() {
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
     let patterns: Vec<&Value> = entry.get_all("mf_ignore");
-    assert_eq!(patterns.len(), 5, "five default ignore patterns");
+    assert_eq!(patterns.len(), 6, "six default ignore patterns");
     assert!(patterns.contains(&&Value::String(r"\.git(/.*)?$".into())));
     assert!(patterns.contains(&&Value::String(r"node_modules(/.*)?$".into())));
     assert!(patterns.contains(&&Value::String(r"__pycache__(/.*)?$".into())));
     assert!(patterns.contains(&&Value::String(r"\.metafolder(/.*)?$".into())));
+    assert!(patterns.contains(&&Value::String(
+        r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$".into()
+    )));
     assert!(patterns.contains(&&Value::String(r"(^|/)\.[^/]+".into())));
 
     // The root entry creation went through the event log.

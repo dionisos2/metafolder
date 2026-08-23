@@ -27,11 +27,19 @@ pub const INTERNAL_DIR: &str = "internal";
 /// The hidden-entry pattern (`(^|/)\.[^/]+`) already covers `.git` and
 /// `.metafolder`; the more specific patterns are kept as separate entries so a
 /// user can drop "ignore all hidden files" without also un-ignoring those.
+///
+/// The cargo pattern ignores the intermediate build output cargo regenerates
+/// on every `cargo build` — `deps/`, `build/`, `incremental/`, `.fingerprint/`,
+/// `examples/` under `target/<profile>/` (and the cross-compile
+/// `target/<triple>/<profile>/…` form) — while leaving the final artifacts that
+/// sit directly in `target/<profile>/` (the built binaries and libraries)
+/// tracked. It is one grouped entry so it can be dropped as a unit.
 pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     r"\.git(/.*)?$",
     r"node_modules(/.*)?$",
     r"__pycache__(/.*)?$",
     r"\.metafolder(/.*)?$",
+    r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$",
     r"(^|/)\.[^/]+",
 ];
 
