@@ -628,7 +628,8 @@ predicate =
   | df:datefield "since"   v:value               => $df >= @{str($v)}
   | df:datefield "before"  v:value               => $df < @{str($v)}
   | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "tag"                   => tag = "test"      # bare-word alias, kept as a fallback
+  | "##" v:value            => tag -> (type = "tag" AND path = {str($v)})   # exact tag
+  | "#"  v:value            => tag -> (type = "tag" AND path =>* {str($v)}) # tag or sub-tag
   | "fav"                   => rating >= 4
 
 # field aliases: map a few names, pass the rest through
@@ -652,8 +653,11 @@ dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
 #+END_SRC
 
 Ordering matters under ordered choice: the operator forms (=,= =!=,= =~=, =?=…)
-precede the bare-word aliases (=tag=, =fav=), so =tag=jazz= and =tag?= still
-parse as predicates and only a lone =tag= triggers its alias.
+precede the bare-word alias (=fav=). The tag macros =#X= (the tag =X= or any
+sub-tag — via the inclusive subtree =path =>* "X"=) and =##X= (exactly =X=) are
+distinct tokens under maximal munch (=#= vs =##=), so their order is
+immaterial; a nested tag path is quoted (=#"musique/jazz"=). To negate, keep a
+space (=! #musique=) — a bare =!#= lexes as one symbol token.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →

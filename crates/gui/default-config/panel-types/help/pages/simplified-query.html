@@ -32,8 +32,14 @@ genre=jazz OR genre=blues
     <tr><td><code>field!?</code></td><td>absent (value is <code>Nothing</code>)</td></tr>
     <tr><td><code>field??</code></td><td>unknown (never set)</td></tr>
     <tr><td><code>under <em>path</em></code></td><td>anywhere below a tree path (<code>mfr_path -&gt;* path</code>)</td></tr>
+    <tr><td><code>#<em>tag</em></code></td><td>has the tag <em>or any sub-tag</em> (the common case) — e.g. <code>#musique</code> also finds <code>musique/jazz</code></td></tr>
+    <tr><td><code>##<em>tag</em></code></td><td>has <em>exactly</em> that tag</td></tr>
   </tbody>
 </table>
+<p>
+  Quote a nested tag path: <code>#"musique/jazz"</code>. To negate, keep a space
+  — <code>! #musique</code> (a bare <code>!#</code> reads as one symbol).
+</p>
 
 <h3>Size and field aliases</h3>
 <ul>
@@ -59,7 +65,7 @@ genre=jazz OR genre=blues
 
 <h3>Handy shortcuts</h3>
 <ul>
-  <li><code>tag</code> → <code>tag = "test"</code>, <code>fav</code> → <code>rating &gt;= 4</code> (example rules — adapt them to your own repository).</li>
+  <li><code>#musique</code> → <code>tag -&gt; (type = "tag" AND path =&gt;* "musique")</code>, <code>fav</code> → <code>rating &gt;= 4</code> (example rules — adapt them to your own repository).</li>
 </ul>
 
 <h2>Simplified is not the DSL</h2>

@@ -470,9 +470,10 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
 
     #[test]
     fn shipped_grammar_parses_and_tag_macro_expands() {
-        // Guards the shipped default grammar: it must stay valid, and its `tag`
-        // macro must expand to the current tag model (a `tag` ref into the
-        // TreeRef `path` hierarchy).
+        // Guards the shipped default grammar: it must stay valid, and its tag
+        // macros must expand to the current tag model (a `tag` ref into the
+        // TreeRef `path` hierarchy). `#` is subsumption-aware (the tag or any
+        // sub-tag), `##` is that exact tag.
         let src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/default-config/query-grammar"
@@ -480,10 +481,17 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
         .unwrap();
         let g = parse_grammar(&src).unwrap();
         validate(&g).unwrap();
-        assert_eq!(expand(&g, "tag jazz").unwrap(), r#"tag -> (type = "tag" AND path = "jazz")"#);
         assert_eq!(
-            expand(&g, r#"tag "music/jazz""#).unwrap(),
-            r#"tag -> (type = "tag" AND path = "music/jazz")"#
+            expand(&g, "#jazz").unwrap(),
+            r#"tag -> (type = "tag" AND path =>* "jazz")"#
+        );
+        assert_eq!(
+            expand(&g, "##jazz").unwrap(),
+            r#"tag -> (type = "tag" AND path = "jazz")"#
+        );
+        assert_eq!(
+            expand(&g, r#"#"music/jazz""#).unwrap(),
+            r#"tag -> (type = "tag" AND path =>* "music/jazz")"#
         );
     }
 }

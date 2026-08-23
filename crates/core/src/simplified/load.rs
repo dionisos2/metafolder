@@ -125,6 +125,36 @@ mod tests {
     }
 
     #[test]
+    fn default_grammar_expands_tag_macros() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        // `#X` = the tag X or any sub-tag (subsumption, the common case): the
+        // tag entry's path subtree via `=>*`.
+        assert_eq!(
+            expand(&g, "#musique").unwrap(),
+            r#"tag -> (type = "tag" AND path =>* "musique")"#
+        );
+        // `##X` = exactly the tag X.
+        assert_eq!(
+            expand(&g, "##musique").unwrap(),
+            r#"tag -> (type = "tag" AND path = "musique")"#
+        );
+        // A nested tag path must be quoted (the value is a WORD or a STRING).
+        assert_eq!(
+            expand(&g, r#"#"musique/jazz""#).unwrap(),
+            r#"tag -> (type = "tag" AND path =>* "musique/jazz")"#
+        );
+        // Composes with the boolean skeleton like any other predicate.
+        assert_eq!(
+            expand(&g, "#musique rating>3").unwrap(),
+            r#"tag -> (type = "tag" AND path =>* "musique") AND rating > 3"#
+        );
+        // Every expansion is valid normal DSL.
+        for input in ["#musique", "##musique", r#"#"musique/jazz""#] {
+            crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
+        }
+    }
+
+    #[test]
     fn default_grammar_accepts_explicit_and() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let expected = "a = \"x\" AND b = \"y\"";

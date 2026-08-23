@@ -46,7 +46,12 @@ predicate =
   | df:datefield "since"   v:STRING               => $df >= @{str($v)}
   | df:datefield "before"  v:STRING               => $df < @{str($v)}
   | df:datefield "between" a:STRING "and" b:STRING => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "tag" v:value           => tag -> (type = "tag" AND path = {str($v)})
+  # Tags. `#X` matches the tag X *or any sub-tag* (subsumption — the common
+  # case, since tagging a file with `a/b` drops the redundant `a` ref); `##X`
+  # matches exactly the tag X. Quote a nested path (`#"musique/jazz"`). To
+  # negate, keep a space: `! #musique` (a bare `!#` lexes as one symbol).
+  | "##" v:value            => tag -> (type = "tag" AND path = {str($v)})
+  | "#"  v:value            => tag -> (type = "tag" AND path =>* {str($v)})
   | "fav"                   => rating >= 4
 
 # Field aliases: map a few names, pass the rest through.
