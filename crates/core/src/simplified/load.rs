@@ -131,22 +131,22 @@ mod tests {
         // tag entry's path subtree via `=>*`.
         assert_eq!(
             expand(&g, "#musique").unwrap(),
-            r#"tag -> (type = "tag" AND path =>* "musique")"#
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
         );
         // `##X` = exactly the tag X.
         assert_eq!(
             expand(&g, "##musique").unwrap(),
-            r#"tag -> (type = "tag" AND path = "musique")"#
+            r#"tag -> (mf_schema = "tag" AND path = "musique")"#
         );
         // A nested tag path must be quoted (the value is a WORD or a STRING).
         assert_eq!(
             expand(&g, r#"#"musique/jazz""#).unwrap(),
-            r#"tag -> (type = "tag" AND path =>* "musique/jazz")"#
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique/jazz")"#
         );
         // Composes with the boolean skeleton like any other predicate.
         assert_eq!(
             expand(&g, "#musique rating>3").unwrap(),
-            r#"tag -> (type = "tag" AND path =>* "musique") AND rating > 3"#
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique") AND rating > 3"#
         );
         // Every expansion is valid normal DSL.
         for input in ["#musique", "##musique", r#"#"musique/jazz""#] {

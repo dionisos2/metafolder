@@ -50,8 +50,8 @@ predicate =
   # case, since tagging a file with `a/b` drops the redundant `a` ref); `##X`
   # matches exactly the tag X. Quote a nested path (`#"musique/jazz"`). To
   # negate, keep a space: `! #musique` (a bare `!#` lexes as one symbol).
-  | "##" v:value            => tag -> (type = "tag" AND path = {str($v)})
-  | "#"  v:value            => tag -> (type = "tag" AND path =>* {str($v)})
+  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})
+  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)})
   | "fav"                   => rating >= 4
 
 # Field aliases: map a few names, pass the rest through.

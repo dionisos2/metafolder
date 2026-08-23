@@ -35,7 +35,7 @@ mf_gui_session_open metarecord-detail
 # match on the `path` TreeRef (a '/'-bearing path resolves to the one node). The
 # entry need not pre-exist — a non-matching condition just leaves every file with
 # "no opinion"; `mf tag add` creates the entry (and its ancestor chain) on apply.
-TAG_COND="(type = \"tag\" AND path = \"$TAG\")"
+TAG_COND="(mf_schema = \"tag\" AND path = \"$TAG\")"
 
 # Files with no opinion on this tag yet (NOT() is a complement, so files where
 # tag/negative_tag are unknown are included).

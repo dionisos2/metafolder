@@ -562,8 +562,8 @@ seed is injected:
 
 #+BEGIN_SRC toml
 [picker-seeds]
-tag    = 'type = "tag"'
-author = 'type = "person"'
+tag    = 'mf_schema = "tag"'
+author = 'mf_schema = "person"'
 #+END_SRC
 
 The map is exposed to panels through =metafolder.config.pickerSeed(field)= so a
@@ -1448,7 +1448,7 @@ debounce.
 
 The finder builds an OSM sub-query *OR-combined across a set of target fields*
 and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a
-structural query (e.g. =type = "tag"=) and a typed fragment compose. Each target
+structural query (e.g. =mf_schema = "tag"=) and a typed fragment compose. Each target
 carries its OSM mode: =osm= (path — a =tree_ref= field's assembled path) or
 =osmd= (direct — the field's own value). The mode is *explicit* in the default
 config (=field:path= / =field:direct=), so it never depends on the async field

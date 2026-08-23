@@ -461,7 +461,7 @@ mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
 mfr_path = "/music/jazz"                     # the one metarecord at this exact path
 tag -> (path = "music/jazz")                 # records carrying exactly this tag
 tag -> (path =>* "music/jazz")               # ... this tag or any tag beneath it
-type = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
+mf_schema = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
 #+END_SRC
 
 ** =mf query <predicate>=
@@ -628,8 +628,8 @@ predicate =
   | df:datefield "since"   v:value               => $df >= @{str($v)}
   | df:datefield "before"  v:value               => $df < @{str($v)}
   | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "##" v:value            => tag -> (type = "tag" AND path = {str($v)})   # exact tag
-  | "#"  v:value            => tag -> (type = "tag" AND path =>* {str($v)}) # tag or sub-tag
+  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})   # exact tag
+  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)}) # tag or sub-tag
   | "fav"                   => rating >= 4
 
 # field aliases: map a few names, pass the rest through

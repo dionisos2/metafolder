@@ -36,7 +36,7 @@ reconcile-poll-interval-ms = 200
 # tagging scripts use, so an omitted [tag] table changes nothing. Override a key
 # only if your repository names these fields differently.
 [tag]
-# type-field  = "type"            # field marking a metarecord as a tag entry
+# type-field  = "mf_schema"       # field marking a metarecord as a tag entry
 # entry-type  = "tag"             # its value
 # path-field  = "path"            # TreeRef: the tag's position in the hierarchy
 # positive    = "tag"             # multi-map ref: the record HAS the tag

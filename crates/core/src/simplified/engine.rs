@@ -483,15 +483,15 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
         validate(&g).unwrap();
         assert_eq!(
             expand(&g, "#jazz").unwrap(),
-            r#"tag -> (type = "tag" AND path =>* "jazz")"#
+            r#"tag -> (mf_schema = "tag" AND path =>* "jazz")"#
         );
         assert_eq!(
             expand(&g, "##jazz").unwrap(),
-            r#"tag -> (type = "tag" AND path = "jazz")"#
+            r#"tag -> (mf_schema = "tag" AND path = "jazz")"#
         );
         assert_eq!(
             expand(&g, r#"#"music/jazz""#).unwrap(),
-            r#"tag -> (type = "tag" AND path =>* "music/jazz")"#
+            r#"tag -> (mf_schema = "tag" AND path =>* "music/jazz")"#
         );
     }
 }

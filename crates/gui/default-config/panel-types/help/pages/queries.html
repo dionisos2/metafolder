@@ -110,7 +110,7 @@ author -&gt; (name = "Coltrane")</pre>
 
 <h2>Tags</h2>
 <p>
-  A tag is a metarecord marked <code>type = "tag"</code>; its place in the tag
+  A tag is a metarecord marked <code>mf_schema = "tag"</code>; its place in the tag
   hierarchy is a <strong>TreeRef field, <code>path</code></strong> (its display
   label may be left unset — never rely on a name). A record carries a tag through
   a Ref field — <code>tag</code> in the default schema — pointing at that entry.
@@ -151,7 +151,7 @@ author -&gt; (name = "Coltrane")</pre>
 mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
 mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
 tag -&gt; (path = "music/jazz")
-type = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))</pre>
+mf_schema = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))</pre>
 
 <p>
   See also: <a data-help-page="simplified-query">the simplified query language</a>,
