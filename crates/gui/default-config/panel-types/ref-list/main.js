@@ -189,7 +189,8 @@ export async function mount(root, metafolder) {
     const rootPath = r ? repoRoots.get(r) : undefined;
     const rel = relPathsOf(record)[0];
     if (!r || rootPath === undefined || rel === undefined) return {};
-    const abs = rel === '' ? rootPath : `${rootPath}/${rel}`;
+    // `rel` is leading-"/"-rooted ('' is the repo root), so concatenate directly.
+    const abs = rel === '' ? rootPath : `${rootPath}${rel}`;
     const typeValue = field(record, 'mfr_type')?.value;
     const isDir = typeValue?.type === 'string' && typeValue.value === 'dir';
     return { 'data-mf-path': abs, 'data-mf-isdir': isDir ? '1' : '0', 'data-mf-name': baseName(abs) };
@@ -238,7 +239,7 @@ export async function mount(root, metafolder) {
     const r = queryRepo();
     if (!r) return;
     const rootPath = await rootOf(r);
-    const paths = relPathsOf(record).map((rel) => (rel === '' ? rootPath : `${rootPath}/${rel}`));
+    const paths = relPathsOf(record).map((rel) => (rel === '' ? rootPath : `${rootPath}${rel}`));
     await workspace.set('selected_metarecord', { uuid: record.uuid, repo: r });
     await workspace.set('selected_paths', paths);
   }

@@ -3,6 +3,7 @@
 // (spec-gui "file-manager panel type").
 
 import { byId, el, fileTypeGlyph } from '/__ui.js';
+import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
 import {
@@ -290,6 +291,13 @@ export async function mount(root, metafolder) {
         '-',
         { label: 'Rename…', action: () => void renameSelected() },
         { label: 'Duplicate', action: () => void duplicateSelected() },
+        {
+          label: 'Copy full path',
+          action: () => {
+            void copyText(item.path);
+            void statusBar.message(`Copied ${item.path}`, statusMessageMs);
+          },
+        },
         { label: repo ? 'Move to trash' : 'Delete…', action: () => void deleteSelected() },
       );
     } else {
@@ -749,15 +757,54 @@ export async function mount(root, metafolder) {
   workspace.onChange('file-manager:reveal-path', () =>
     metafolder.whenVisible(() => void handleReveal()),
   );
-  async function onMetarecordsDirty() {
+  // Re-query the current directory's tracked status and repaint — the response
+  // to a change we did not learn through our own query round-trip (the change
+  // feed, or a mutation nudge). Cheap: one tree-cache-served children query.
+  async function refreshTracked() {
     if (currentDir === null) return; // not started yet (still hidden)
-    if (repo) await cache.sync(repo); // pick up the change before re-querying
     await reenrichVisible();
     render();
   }
+
+  // After a mutation the watcher reflects the on-disk change (and repairs the
+  // metarecord↔file link) only after its ~500 ms quiet period — well after our
+  // immediate refresh read the not-yet-repaired state, so a renamed file would
+  // linger as "untracked". Nudge the change feed a couple of times so the
+  // repaired tracked status is picked up promptly rather than only on the 7 s
+  // background poll; each nudge invalidates the cache and the subscription below
+  // repaints.
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  let catchupTimers = [];
+  function scheduleCatchupSync() {
+    for (const t of catchupTimers) clearTimeout(t); // supersede the previous nudge
+    catchupTimers = [700, 1800].map((delay) =>
+      setTimeout(() => void (repo && cache.sync(repo)), delay),
+    );
+  }
+
+  async function onMetarecordsDirty() {
+    if (currentDir === null) return; // not started yet (still hidden)
+    if (repo) await cache.sync(repo); // pick up the change before re-querying
+    await refreshTracked();
+    scheduleCatchupSync();
+  }
   workspace.onChange('metarecords:dirty', () => void onMetarecordsDirty());
+
+  // Keep the tracked badges live when the daemon reflects a change out of band
+  // from our own round-trip — chiefly the watcher repairing a rename's
+  // metarecord↔file link ~500 ms after the fs.move, or an external change. The
+  // background change-feed poll (and our catch-up nudges above) invalidate the
+  // cache; here we react by re-querying this directory's tracked status.
+  const unsubscribeCache = cache.subscribe(({ repo: changedRepo }) => {
+    if (changedRepo !== repo || currentDir === null) return;
+    metafolder.whenVisible(() => void refreshTracked());
+  });
 
   metafolder.whenVisible(deferredStart);
 
-  return () => detachScroll();
+  return () => {
+    detachScroll();
+    unsubscribeCache();
+    for (const t of catchupTimers) clearTimeout(t);
+  };
 }

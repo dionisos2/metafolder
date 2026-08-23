@@ -141,7 +141,7 @@ export function mount(root, metafolder) {
       const rel = cache.readTreeRef(r, 'mfr_path', e.uuid);
       const relPaths = rel === REFRESH ? [] : rel;
       const absPaths =
-        root_path === null ? [] : relPaths.map((p) => (p === '' ? root_path : `${root_path}/${p}`));
+        root_path === null ? [] : relPaths.map((p) => (p === '' ? root_path : `${root_path}${p}`));
       return {
         uuid: e.uuid,
         viewedAt: e.viewed_at,

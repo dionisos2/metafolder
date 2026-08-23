@@ -1066,12 +1066,14 @@ pub fn order(
         &format!("{base}/query/fields/resolve-tree"),
         &json!({ "query": {"type": "uuid_in", "uuids": [folder_uuid]} }),
     )?;
-    let rel_no_slash = resolved[&folder_uuid]
+    // The endpoint returns the folder's path in the leading-"/"-rooted form that
+    // `Follows` path targets expect (the repo root resolves to the empty string,
+    // which targets the root itself).
+    let rel = resolved[&folder_uuid]
         .as_array()
         .and_then(|paths| paths.first())
         .and_then(|p| p.as_str())
         .ok_or_else(|| CliError::Op("the folder has no resolvable mfr_path".into()))?;
-    let rel = format!("/{rel_no_slash}");
 
     // Direct children, with all their fields, in one paginated pass.
     let query = json!({ "type": "follows", "field": "mfr_path", "target": rel });
@@ -1390,9 +1392,9 @@ pub fn path(ctx: &Ctx, uuid: &str, relative: bool) -> Result<i32, CliError> {
         .and_then(|paths| paths.first())
         .and_then(|p| p.as_str())
         .ok_or_else(|| CliError::Op(format!("entry {key} has no resolvable mfr_path")))?;
-    // The endpoint returns root-relative paths without a leading slash; `mf path`
-    // uses "/…" (the root metarecord itself is "/").
-    let rel = format!("/{rel}");
+    // The endpoint returns filesystem paths leading-"/"-rooted already; the root
+    // metarecord itself resolves to the empty string, which `mf path` shows as "/".
+    let rel = if rel.is_empty() { "/".to_string() } else { rel.to_string() };
     if relative {
         println!("{rel}");
     } else {

@@ -42,8 +42,9 @@ fn trash_dir(internal: &str) -> TrashDir {
     TrashDir::new(Path::new(internal).join("trash"))
 }
 
-/// Absolute path of a repo-relative (root-relative, no leading slash — the
-/// [`paths_of`] shape) path returned by `resolve-tree`.
+/// Absolute path of a repo-root-relative path returned by `resolve-tree` (the
+/// [`paths_of`] shape — leading-`/`-rooted for the filesystem forest; the
+/// leading `/` is trimmed here so it joins onto `root`).
 fn abs_path(root: &str, rel: &str) -> PathBuf {
     PathBuf::from(root).join(rel.trim_start_matches('/'))
 }

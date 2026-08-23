@@ -68,8 +68,8 @@ fn test_paths_of_single_position() {
     let mut conn = test_conn();
     let (_root, _music, jazz, file) = build_tree(&mut conn);
     let mut cache = TreeCache::new(false);
-    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["music/jazz/file.mp3"]);
-    assert_eq!(cache.paths_of(&conn, "mfr_path", jazz).unwrap(), vec!["music/jazz"]);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["/music/jazz/file.mp3"]);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", jazz).unwrap(), vec!["/music/jazz"]);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn test_paths_of_root_level_value() {
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let top = tree_entry(&mut conn, "mfr_path", Some(root), "top.txt");
     let mut cache = TreeCache::new(false);
-    assert_eq!(cache.paths_of(&conn, "mfr_path", top).unwrap(), vec!["top.txt"]);
+    assert_eq!(cache.paths_of(&conn, "mfr_path", top).unwrap(), vec!["/top.txt"]);
 }
 
 #[test]
@@ -100,7 +100,9 @@ fn test_paths_of_multi_map() {
     let mut cache = TreeCache::new(false);
     let mut paths = cache.paths_of(&conn, "path", m.uuid).unwrap();
     paths.sort();
-    assert_eq!(paths.iter().map(String::as_str).collect::<Vec<_>>(), vec!["a.txt", "dir/b.txt"]);
+    // The empty-named root contributes a leading "/" (this forest is
+    // filesystem-shaped: root name = "").
+    assert_eq!(paths.iter().map(String::as_str).collect::<Vec<_>>(), vec!["/a.txt", "/dir/b.txt"]);
 }
 
 #[test]
@@ -292,7 +294,9 @@ fn test_populate_serves_reads_without_db() {
         cache.path_of(&conn, "mfr_path", file).unwrap(),
         Some("/music/jazz/file.mp3".to_string())
     );
-    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["music/jazz/file.mp3"]);
+    // `paths_of` now agrees with `path_of` above (leading "/" for the
+    // filesystem forest).
+    assert_eq!(cache.paths_of(&conn, "mfr_path", file).unwrap(), vec!["/music/jazz/file.mp3"]);
 
     let mut got = cache.descendants(&conn, "mfr_path", music).unwrap();
     got.sort();

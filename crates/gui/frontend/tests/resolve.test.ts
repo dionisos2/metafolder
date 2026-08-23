@@ -38,10 +38,19 @@ describe('createPathResolver', () => {
     expect(resolvePaths).toHaveBeenCalledTimes(2);
   });
 
-  test('resolveTreeRef resolves a raw value via its parent', async () => {
+  test('resolveTreeRef resolves a raw value via its parent (named-root forest)', async () => {
     const { resolver } = setup();
     const path = await resolver.resolveTreeRef({ parent: 'jazz', name: 'so-what.mp3' });
     expect(path).toBe('music/jazz/so-what.mp3');
+  });
+
+  test('resolveTreeRef leading-"/"-roots a top-level filesystem node', async () => {
+    // The empty repo root ('') means the filesystem forest: a top-level node is
+    // "/name", matching the daemon's paths_of and the DSL (`mfr_path = "/name"`).
+    const { resolver } = setup();
+    expect(await resolver.resolveTreeRef({ parent: 'root', name: '.config' })).toBe('/.config');
+    // A rootless node (the repo root itself) keeps its empty name.
+    expect(await resolver.resolveTreeRef({ parent: null, name: '' })).toBe('');
   });
 
   test('invalidate forces a re-resolve', async () => {

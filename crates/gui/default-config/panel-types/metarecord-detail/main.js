@@ -954,7 +954,7 @@ export async function mount(root, metafolder) {
   // as `metarecord-list:effective-query`. If that var is absent (the list has
   // not run), fall back to parsing the base query text.
 
-  /** @typedef {{repo: string, query: unknown, count: number|null, desc: string}} BulkTarget */
+  /** @typedef {{repo: string, query: unknown, count: number, explicit: boolean, desc: string}} BulkTarget */
 
   /** @param {string|null} repo @returns {Promise<string[]>} */
   async function catalogFieldNames(repo) {
@@ -980,8 +980,21 @@ export async function mount(root, metafolder) {
     return (await catalogType(repo, field)) === 'tree_ref' ? treePathsForField(repo, field) : [];
   }
 
+  /** Counts the metarecords a query matches (daemon-side COUNT, no page load).
+   *  @param {string} repo @param {unknown} query */
+  async function countMatches(repo, query) {
+    const result = /** @type {{total?: number|null}} */ (
+      await daemon.call('POST', `/repos/${repo}/query`, { query, select: '*', limit: 1, count: true })
+    );
+    return result.total ?? 0;
+  }
+
   /** Resolves what a bulk command targets: the explicit checkbox selection, or
-   *  the current query as a fallback. @returns {Promise<BulkTarget>} */
+   *  the current query as a fallback. `count` is always the number of
+   *  metarecords the target holds (the selection size, or a COUNT of the
+   *  query), so confirmations can name it. `explicit` distinguishes a
+   *  deliberate checkbox pick (acts immediately) from a broad query (confirmed
+   *  first). @returns {Promise<BulkTarget>} */
   async function bulkTarget() {
     const repo = await repoForAdd();
     if (!repo) throw new Error('no active repository');
@@ -991,27 +1004,40 @@ export async function mount(root, metafolder) {
         repo,
         query: { type: 'uuid_in', uuids: selected },
         count: selected.length,
+        explicit: true,
         desc: `${selected.length} selected metarecord${selected.length === 1 ? '' : 's'}`,
       };
     }
-    // The query the list actually shows (finder narrowing included).
+    // The query the list actually shows (finder narrowing included), else — if
+    // the list has not published one yet — its base query text.
     const effective = await workspace.get('metarecord-list:effective-query');
+    let query;
+    let all;
     if (effective && typeof effective === 'object') {
       // MATCH_ALL is the "empty query matches all" tautology (deep-equal check).
-      const all = JSON.stringify(effective) === JSON.stringify(MATCH_ALL);
-      return { repo, query: effective, count: null, desc: all ? 'ALL metarecords' : 'the current query' };
+      all = JSON.stringify(effective) === JSON.stringify(MATCH_ALL);
+      query = effective;
+    } else {
+      const raw = await workspace.get('metarecord-list:query');
+      const dsl = typeof raw === 'string' ? raw.trim() : '';
+      all = dsl === '';
+      query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
     }
-    // Fallback: the list has not published a query yet — parse its base text.
-    const raw = await workspace.get('metarecord-list:query');
-    const dsl = typeof raw === 'string' ? raw.trim() : '';
-    const query = dsl === '' ? MATCH_ALL : await daemon.parseQuery(dsl);
-    return { repo, query, count: null, desc: dsl === '' ? 'ALL metarecords' : 'the current query' };
+    const count = await countMatches(repo, query);
+    return { repo, query, count, explicit: false, desc: all ? 'ALL metarecords' : 'the current query' };
   }
 
-  /** A broad query-scope bulk write (no explicit selection) is confirmed first.
-   *  @param {BulkTarget} t @param {string} action */
-  function confirmBulk(t, action) {
-    return t.count !== null || confirm(`${action} on ${t.desc}?`);
+  /** A broad query-scope bulk write (no explicit selection) is confirmed first,
+   *  naming the number of metarecords it will affect; an explicit checkbox
+   *  selection acts immediately. Returns false when there is nothing to act on
+   *  (and says so). @param {BulkTarget} t @param {string} action */
+  async function confirmBulk(t, action) {
+    if (t.explicit) return true;
+    if (t.count === 0) {
+      void statusBar.message('No metarecords match — nothing to do.', statusMessageMs);
+      return false;
+    }
+    return confirm(`${action} on ${t.count} metarecord${t.count === 1 ? '' : 's'}?`);
   }
 
   void commands.register('metarecord:bulk-set-field', {
@@ -1022,16 +1048,19 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, raw) => {
       const t = await bulkTarget();
-      if (!confirmBulk(t, `Set "${field}"`)) return;
+      if (!(await confirmBulk(t, `Set "${field}"`))) return;
       const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
       const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('POST', `/repos/${t.repo}/query/fields/set`, {
-        query: t.query,
-        name: field,
-        value,
-        ...force,
-      });
-      void statusBar.message(`"${field}" set on ${t.desc}.`, statusMessageMs);
+      const resp = /** @type {{updated?: number}} */ (
+        await daemon.call('POST', `/repos/${t.repo}/query/fields/set`, {
+          query: t.query,
+          name: field,
+          value,
+          ...force,
+        })
+      );
+      const n = resp.updated ?? t.count;
+      void statusBar.message(`"${field}" set on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
       await dirty();
     },
   });
@@ -1044,16 +1073,19 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, raw) => {
       const t = await bulkTarget();
-      if (!confirmBulk(t, `Add a value to "${field}"`)) return;
+      if (!(await confirmBulk(t, `Add a value to "${field}"`))) return;
       const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
       const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('POST', `/repos/${t.repo}/query/fields/append`, {
-        query: t.query,
-        name: field,
-        value,
-        ...force,
-      });
-      void statusBar.message(`Value added to "${field}" on ${t.desc}.`, statusMessageMs);
+      const resp = /** @type {{updated?: number}} */ (
+        await daemon.call('POST', `/repos/${t.repo}/query/fields/append`, {
+          query: t.query,
+          name: field,
+          value,
+          ...force,
+        })
+      );
+      const n = resp.updated ?? t.count;
+      void statusBar.message(`Value added to "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
       await dirty();
     },
   });
@@ -1065,14 +1097,17 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field) => {
       const t = await bulkTarget();
-      if (!confirmBulk(t, `Remove "${field}"`)) return;
+      if (!(await confirmBulk(t, `Remove "${field}"`))) return;
       const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('POST', `/repos/${t.repo}/query/fields/unset`, {
-        query: t.query,
-        name: field,
-        ...force,
-      });
-      void statusBar.message(`"${field}" removed from ${t.desc}.`, statusMessageMs);
+      const resp = /** @type {{updated?: number}} */ (
+        await daemon.call('POST', `/repos/${t.repo}/query/fields/unset`, {
+          query: t.query,
+          name: field,
+          ...force,
+        })
+      );
+      const n = resp.updated ?? t.count;
+      void statusBar.message(`"${field}" removed from ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
       await dirty();
     },
   });
@@ -1089,16 +1124,19 @@ export async function mount(root, metafolder) {
     ],
     handler: async (field, raw) => {
       const t = await bulkTarget();
-      if (!confirmBulk(t, `Remove a value from "${field}"`)) return;
+      if (!(await confirmBulk(t, `Remove a value from "${field}"`))) return;
       const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
       const force = isReserved(field) ? { force: true } : {};
-      await daemon.call('POST', `/repos/${t.repo}/query/fields/remove`, {
-        query: t.query,
-        name: field,
-        value,
-        ...force,
-      });
-      void statusBar.message(`Value removed from "${field}" on ${t.desc}.`, statusMessageMs);
+      const resp = /** @type {{updated?: number}} */ (
+        await daemon.call('POST', `/repos/${t.repo}/query/fields/remove`, {
+          query: t.query,
+          name: field,
+          value,
+          ...force,
+        })
+      );
+      const n = resp.updated ?? t.count;
+      void statusBar.message(`Value removed from "${field}" on ${n} metarecord${n === 1 ? '' : 's'}.`, statusMessageMs);
       await dirty();
     },
   });
@@ -1107,10 +1145,18 @@ export async function mount(root, metafolder) {
     label: 'Delete the selected metarecords (or current query) — the files stay on disk',
     handler: async () => {
       const t = await bulkTarget();
-      // Always confirm: deletion is not undoable from the UI. Prefer the exact
-      // selection count, else the query description.
-      const what = t.count !== null ? `${t.count} metarecord${t.count === 1 ? '' : 's'}` : t.desc;
-      if (!confirm(`Delete ${what}? This removes the metarecords (any files stay on disk).`)) return;
+      if (t.count === 0) {
+        void statusBar.message('No metarecords match — nothing to delete.', statusMessageMs);
+        return;
+      }
+      // Always confirm, naming the count: deletion is not undoable from the UI.
+      if (
+        !confirm(
+          `Delete ${t.count} metarecord${t.count === 1 ? '' : 's'}? ` +
+            `This removes the metarecords (any files stay on disk).`,
+        )
+      )
+        return;
       const resp = /** @type {{deleted?: number}} */ (
         await daemon.call('POST', `/repos/${t.repo}/query/delete`, { query: t.query })
       );
