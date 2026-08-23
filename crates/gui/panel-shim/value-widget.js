@@ -98,7 +98,7 @@ function isValueType(type) {
 }
 
 /**
- * Value from its one-line raw form (metarecord:batch-set arguments).
+ * Value from its one-line raw form (interactive command arguments).
  *
  * @param {string} type
  * @param {string} raw

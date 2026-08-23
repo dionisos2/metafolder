@@ -6,6 +6,7 @@
     dispatch,
     filterCommands,
     filterCompletions,
+    promptsForInput,
     resolvePromptValue,
     resolveSubmission,
     setEditingTarget,
@@ -145,6 +146,11 @@
   // candidates so a huge set stays cheap to render); the CSS max-height makes
   // the list scroll, and typing narrows it toward the wanted value.
   const suggestions = $derived(matches);
+
+  // The suggestion list holds command names only when the command input is in
+  // its plain command mode (not a script/argument prompt, not bash completion).
+  // The "…" prompt marker is meaningful only there.
+  const listingCommands = $derived(store.ui.promptText === null && mode === 'command');
 
   // Typing returns the selection to the best (first) match.
   $effect(() => {
@@ -382,7 +388,12 @@
       {#each suggestions as suggestion, index (suggestion.name)}
         <li class:selected={index === selectedIndex}>
           <button onmousedown={(e) => e.preventDefault()} onclick={() => acceptSuggestion(suggestion.name)}>
-            <span class="name">{suggestion.name}</span>
+            <span class="name"
+              >{suggestion.name}{#if listingCommands && promptsForInput(suggestion.name)}<span
+                  class="prompts"
+                  title="Reopens the input to collect a value">…</span
+                >{/if}</span
+            >
             <span class="label">{suggestion.label}</span>
             {#if shortcutsFor(store.keytable, suggestion.name).length > 0}
               <span class="shortcut">{shortcutsFor(store.keytable, suggestion.name).join(', ')}</span>
@@ -482,6 +493,16 @@
   }
   .suggestions .name {
     font-family: var(--mf-font-mono, monospace);
+  }
+  /* The "…" marks a command that reopens the input to collect a value
+     (menu-item ellipsis convention); dimmed so it reads as a hint, not a
+     character of the command name. */
+  .suggestions .name .prompts {
+    color: var(--mf-fg-dim, #8a8a96);
+    font-weight: bold;
+  }
+  .suggestions li.selected .name .prompts {
+    color: rgba(255, 255, 255, 0.7);
   }
   .suggestions .label {
     color: var(--mf-fg-dim, #8a8a96);

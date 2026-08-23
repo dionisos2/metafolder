@@ -13,6 +13,7 @@ import {
   filterCompletions,
   needsMessagePanel,
   parseInvocation,
+  promptsForInput,
   registerArgs,
   resolvePromptValue,
   resolveSubmission,
@@ -263,6 +264,29 @@ describe('argSpecs registry', () => {
     registerArgs('p:cmd', [spec('a')]);
     registerArgs('p:cmd', []);
     expect(argSpecFor('p:cmd')).toBeUndefined();
+  });
+});
+
+describe('promptsForInput', () => {
+  // The autocomplete marks a command with a trailing "…" when invoking it
+  // reopens the minibuffer to collect input (spec-gui "Command"): the same
+  // ellipsis convention as menu items that open a dialog. The signal is the
+  // interactive-argument mechanism (a registered ArgSpec) plus the handful of
+  // builtins that reopen the input without declaring one.
+  afterEach(() => clearArgSpecs());
+
+  test('a command with a registered arg spec prompts', () => {
+    registerArgs('p:pick', [{ name: 'x', prompt: () => 'x?' }]);
+    expect(promptsForInput('p:pick')).toBe(true);
+  });
+
+  test('a plain action command does not prompt', () => {
+    expect(promptsForInput('panel:split')).toBe(false);
+    expect(promptsForInput('never:registered')).toBe(false);
+  });
+
+  test('builtins that reopen the minibuffer prompt without an arg spec', () => {
+    expect(promptsForInput('tab:rename')).toBe(true);
   });
 });
 

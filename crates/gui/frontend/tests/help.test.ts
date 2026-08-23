@@ -16,7 +16,7 @@ const MANIFEST = [
     id: 'queries',
     title: 'Queries',
     file: 'queries.html',
-    aliases: ['query', 'edit-query', 'simplified-query', 'grammar', 'dsl'],
+    aliases: ['query', 'focus-query', 'simplified-query', 'grammar', 'dsl'],
   },
   {
     id: 'metarecord-list',
@@ -33,13 +33,13 @@ describe('resolvePage', () => {
   });
 
   test('resolves by alias (case-insensitive)', () => {
-    expect(resolvePage(MANIFEST, 'edit-query')?.id).toBe('queries');
-    expect(resolvePage(MANIFEST, 'EDIT-QUERY')?.id).toBe('queries');
+    expect(resolvePage(MANIFEST, 'focus-query')?.id).toBe('queries');
+    expect(resolvePage(MANIFEST, 'FOCUS-QUERY')?.id).toBe('queries');
   });
 
   test('a namespaced command resolves via a direct alias when one exists', () => {
-    // `edit-query` is an alias, so `metarecord-list:edit-query` hits it directly.
-    expect(resolvePage(MANIFEST, 'metarecord-list:edit-query')?.id).toBe('queries');
+    // `focus-query` is an alias, so `metarecord-list:focus-query` hits it directly.
+    expect(resolvePage(MANIFEST, 'metarecord-list:focus-query')?.id).toBe('queries');
   });
 
   test('a namespaced command falls back to its panel-type prefix', () => {

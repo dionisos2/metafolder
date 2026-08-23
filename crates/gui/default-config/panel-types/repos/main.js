@@ -388,11 +388,11 @@ export async function mount(root, metafolder) {
     });
   }
 
-  void commands.register('repos:init', {
+  void commands.register('repos:open-init', {
     label: 'Repos: open the init form',
     handler: () => toggleForm(initForm, true),
   });
-  void commands.register('repos:load', {
+  void commands.register('repos:open-load', {
     label: 'Repos: open the load form',
     handler: () => toggleForm(loadForm, true),
   });
@@ -400,8 +400,8 @@ export async function mount(root, metafolder) {
     label: 'Repos: refresh the repository list',
     handler: () => refresh(),
   });
-  void commands.register('repos:retype', {
-    label: 'Repos: convert a field type across the active repository',
+  void commands.register('repos:open-retype', {
+    label: 'Repos: open the field-type conversion form for the active repository',
     reveal: true,
     handler: async () => {
       const repoUuid = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);

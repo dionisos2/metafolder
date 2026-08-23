@@ -662,7 +662,7 @@ export async function mount(root, metafolder) {
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   addButton.addEventListener('click', () => void addSelected());
 
-  void commands.register('file-manager:add', {
+  void commands.register('file-manager:track', {
     label: 'File manager: track the selected path (mf_watch = false)',
     handler: addSelected,
   });

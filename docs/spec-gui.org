@@ -239,9 +239,9 @@ registered command, and every edit zone has a command that focuses (or
 opens) it. So each top-level action button in a panel or the shell maps to a
 command (the button invokes it), and each text input has a focus command —
 the command input (=command-input:activate=), the metarecord-list query and
-columns inputs (=metarecord-list:edit-query=, =metarecord-list:edit-columns=),
+columns inputs (=metarecord-list:focus-query=, =metarecord-list:focus-columns=),
 the workspace rename (=tab:rename=), the metarecord-detail add-field form
-(=metarecord:add-field=). Shell controls map to the panel commands
+(=metarecord:open-add-field=). Shell controls map to the panel commands
 (=panel:set-type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
 controls *inside* a flow already opened by a command — a form's =Cancel=, a
 folder picker's navigation, a form's submit — and inherently positional
@@ -273,6 +273,34 @@ inline skip their prompt, so a fully-specified invocation
 (=metarecord:edit-field-value tag musique/jazz=) runs without prompting — the
 interactive collection is a fallback for the missing tail, not a separate
 mode.
+
+The command-input autocomplete distinguishes the two kinds of command by the
+menu-item *ellipsis convention*: a command that, invoked bare, reopens the
+minibuffer to collect input shows a trailing =…= after its name; a command
+that acts immediately (selecting or opening a DOM element, toggling a panel)
+shows none. A command prompts when it declares arguments (the interactive
+collection above) or is one of the few builtins that reopen the input by hand
+(e.g. =tab:rename=). The marker is display-only — it is not part of the
+command name written into the input when a suggestion is accepted.
+
+*Naming convention.* A command's name signals its interaction type through a
+leading verb, so the right command is findable without running it:
+- =open-X= — opens an in-panel *form or overlay* (mouse-oriented), e.g.
+  =metarecord:open-add-field=, =metarecord-list:open-bulk-edit=,
+  =repos:open-init= / =open-load= / =open-retype=.
+- =focus-X= — moves keyboard *focus* to an existing input field of the panel,
+  e.g. =metarecord-list:focus-query= / =focus-columns= / =focus-finder=.
+- =edit-= / =set-= / =add-= / =delete-X= (verb first) — a *minibuffer*
+  completion-driven edit (these declare arguments, so they carry the =…=),
+  e.g. =metarecord:edit-field-value=, =metarecord:set-field=,
+  =metarecord:bulk-set-field=.
+- =field-X= (noun first, the cursor family) — a direct action on the *row under
+  the cursor* (keyboard, no minibuffer), e.g. =metarecord:field-next= /
+  =field-edit= / =field-delete=.
+- a plain verb (=next=, =refresh=, =toggle-*=, =open=, =activate=, =track=…) —
+  a direct action with no further input.
+So =edit-= is reserved for minibuffer edits and never used for a command that
+merely focuses an input or opens a form.
 
 ** Keybinding
 
@@ -757,8 +785,8 @@ Behaviours:
 |----------------------+------------------------------------------------|
 | =daemon:set-url=     | Change daemon URL                              |
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
-| =repos:init=         | Open init-repo form                            |
-| =repos:load=         | Open load-repo form                            |
+| =repos:open-init=         | Open init-repo form                            |
+| =repos:open-load=         | Open load-repo form                            |
 | =tab:new=            | Create a new workspace, assign to both slots   |
 | =tab:close=          | Close the focused slot's workspace (slot falls back to the previous workspace) |
 | =tab:rename=         | Rename the focused slot's workspace            |
@@ -780,7 +808,7 @@ Behaviours:
 | =metarecord:field-next= / =metarecord:field-prev= | Move the field-row cursor (=metarecord-detail=) |
 | =metarecord:field-edit=   | Edit the field row under the cursor                 |
 | =metarecord:field-delete= | Delete the field row under the cursor               |
-| =metarecord:edit-cancel=  | Cancel the current field edit or add form           |
+| =metarecord:cancel-edit=  | Cancel the current field edit or add form           |
 | =metarecord:set-field [field] [value]= | Overwrite a field on the current metarecord (all its values) |
 | =metarecord:add-field-value [field] [value]= | Add one value to a field (multi-map) on the current metarecord |
 | =metarecord:edit-field-value [value] [new]= | Edit one value on the current metarecord (select by value) |
@@ -793,12 +821,12 @@ Behaviours:
 | =metarecord:bulk-remove-field [field]= | Remove a field entirely from the selection (or current query) |
 | =metarecord:bulk-delete= | Delete the metarecords in the selection (or current query); the files stay on disk |
 | =metarecord-list:bulk-edit [operation]= | Keyboard flow: pick a bulk operation (set/append/remove/unset/delete), then delegate to its command |
-| =metarecord-list:bulk-edit-form= | Mouse flow: open the in-panel bulk edit / delete form |
+| =metarecord-list:open-bulk-edit= | Mouse flow: open the in-panel bulk edit / delete form |
 | =metarecord-list:set-mode <mode>= | Switch metarecord-list display mode        |
 | =metarecord-list:set-page-size <n>= | Set the metarecord-list pagination page size |
-| =metarecord-list:find=        | Focus the finder (quick OSM filter) in metarecord-list |
-| =metarecord-list:edit-query=  | Focus the query input in metarecord-list        |
-| =metarecord-list:edit-columns= | Focus the columns input in metarecord-list     |
+| =metarecord-list:focus-finder=        | Focus the finder (quick OSM filter) in metarecord-list |
+| =metarecord-list:focus-query=  | Focus the query input in metarecord-list        |
+| =metarecord-list:focus-columns= | Focus the columns input in metarecord-list     |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
@@ -825,8 +853,7 @@ Behaviours:
 | =pick:cancel=             | Cancel the focused picker, returning to the calling form with no value |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =status:clear=            | Dismiss the transient status-bar message (default =ctrl+l=)   |
-| =metarecord:batch-set=         | Set a field on all =selected_metarecords=                         |
-| =file-manager:add=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
+| =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
 | =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
@@ -908,8 +935,8 @@ uppercase, so a zone cannot traverse out of the history directory.
 Every command is reachable from the keyboard. No command requires the mouse.
 
 Within =metarecord-list=:
-- =/= focuses the finder (=metarecord-list:find=); =Ctrl+/= the structural query
-  editor (=metarecord-list:edit-query=).
+- =/= focuses the finder (=metarecord-list:focus-finder=); =Ctrl+/= the structural query
+  editor (=metarecord-list:focus-query=).
 - =Up= / =Down= move the selection (updates =selected_metarecord=).
 - =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
   =selected_paths= is non-empty), opening the slot if hidden. See
@@ -926,7 +953,7 @@ fully keyboard-drivable):
   inline editor =Enter= confirms and =Escape= cancels.
 - =d= deletes the field row under the cursor (=metarecord:field-delete=, with
   confirmation).
-- =a= opens the add-field form (=metarecord:add-field=); =Ctrl-n= creates a new
+- =a= opens the add-field form (=metarecord:open-add-field=); =Ctrl-n= creates a new
   metarecord (=metarecord:create=) and selects it.
 All defaults are =when = metarecord-detail= suggestions (the weakest layer), so
 a user binding overrides them.
@@ -952,7 +979,7 @@ whether the list or the detail is focused.
 For bulk edits the =metarecord-list= panel offers two entry points. The
 *mouse-oriented* one is an in-panel form (operation picker + typed value widget +
 =force=), opened by the footer "edit / delete on query…" button
-(=metarecord-list:bulk-edit-form=). The *keyboard-oriented* one is
+(=metarecord-list:open-bulk-edit=). The *keyboard-oriented* one is
 =metarecord-list:bulk-edit= (bound to =m b=): it collects the *operation* in the
 command input (completion over =set / append / remove / unset / delete=), then
 delegates to the matching per-operation bulk command, which collects its own
@@ -977,7 +1004,7 @@ has ever been mounted.
   variable (with a nonce so an identical repeated topic still re-triggers). If
   =text= is an *exact name* — a page id, an alias, or a =panel:command= (the
   command's verb is tried first, then its panel-type prefix, so e.g.
-  =metarecord-list:edit-query= and =edit-query= both reach the queries page) —
+  =metarecord-list:focus-query= and =focus-query= both reach the queries page) —
   that page opens directly; otherwise the text greps across all pages. Prefixing
   =text= with =#= forces grep even on an exact name.
 - =help:help-cursor= arms a "click-to-help" mode: a =?= pointer (a
@@ -987,7 +1014,7 @@ has ever been mounted.
   DOM) for the nearest =data-help-topic= attribute; failing that, the nearest
   =data-slot-body= gives the clicked slot's panel type. Shell chrome and panels
   tag their zones with =data-help-topic= (e.g. the metarecord-list query box →
-  =edit-query=); everything else falls back to its panel type's page.
+  =focus-query=); everything else falls back to its panel type's page.
 
 The =help= panel renders a set of static HTML pages (=panel-types/help/pages/=,
 described by =pages/index.json= as ={id, title, file, aliases[]}=) with a grep
@@ -1369,7 +1396,7 @@ Repo indicator and the =repos= panel type.
 
 *** Init repo
 
-=repos:init= is a command of the =repos= panel type. It transforms the
+=repos:open-init= is a command of the =repos= panel type. It transforms the
 =repos= panel to show an inline form with an optional =name= input and a
 =root= input (the daemon API also accepts an external =metafolder= location,
 but the GUI does not expose it). The =root= input is paired with a *Browse…*
@@ -1386,7 +1413,7 @@ error message appears in the status bar and the form remains open.
 
 *** Load repo
 
-=repos:load= is a command of the =repos= panel type. It transforms the
+=repos:open-load= is a command of the =repos= panel type. It transforms the
 =repos= panel to show an inline form with a single =root= input, also paired
 with the *Browse…* folder picker. Submitting calls =POST /repos/load=. On
 success the loaded repo is adopted in place when the current workspace has no
@@ -1394,7 +1421,7 @@ success the loaded repo is adopted in place when the current workspace has no
 never spawns a workspace.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
-→ select a loaded repo or trigger =repos:init= / =repos:load= from there.
+→ select a loaded repo or trigger =repos:open-init= / =repos:open-load= from there.
 
 ** Metarecord management
 
@@ -1410,7 +1437,7 @@ Default display mode: =table= with columns =mfr_path:path= (resolved path),
 display modes.
 
 The columns input is a separate row below the query editor, with its own
-/Apply/ button (=metarecord-list:edit-columns= focuses it). The panel always
+/Apply/ button (=metarecord-list:focus-columns= focuses it). The panel always
 queries with =select: '*'=, so applying new columns is a pure re-render — no
 request.
 
@@ -1463,7 +1490,7 @@ A search box at the top of the panel — the /finder/ — is an incremental
 [[file:spec-query.org][OSM]] (ordered-substring) filter, the ergonomic way to
 find a metarecord by a fragment of its name/label and/or path. As the user
 types (debounced), it re-runs the query; the terms are the input split on
-whitespace. =metarecord-list:find= focuses it (default keybinding =/=; the
+whitespace. =metarecord-list:focus-finder= focuses it (default keybinding =/=; the
 structural query editor moves to =Ctrl+/=). The finder and the query input
 each keep a per-repository input history (see [[*Input history]]); an entry is
 recorded on explicit submission (=Enter= / the apply commands), not by the
@@ -1498,7 +1525,7 @@ forms, so the user can write quickly *and* drop to the full DSL when a query is
 too specific for the simplified surface — and learn the mapping by watching it.
 
 - *Zone A (simplified)* is always visible and has its own /Apply/ button;
-  =metarecord-list:edit-query= focuses it. An empty zone A matches all.
+  =metarecord-list:focus-query= focuses it. An empty zone A matches all.
 - A toggle reveals *zone B (normal DSL)* below A. While B is shown and **not
   frozen**, it is a read-only live mirror of =expand(A)= (debounced ~120–150 ms,
   via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples
@@ -1553,7 +1580,7 @@ confirmation).
 At the bottom of the panel:
 - /New metarecord/ button (or =metarecord:create= command) → creates a metarecord
   *immediately* with =POST .../metarecords= and sets it as =selected_metarecord=,
-  so the ordinary field-editing commands (=metarecord:add-field=,
+  so the ordinary field-editing commands (=metarecord:open-add-field=,
   =metarecord:set-field=, the =m …= sequence) apply to a live record from the
   start — there is no staged, not-yet-saved draft. The command first prompts for
   a schema type (blank = an empty record; a type seeds its template fields, one
@@ -1566,7 +1593,7 @@ At the bottom of the panel:
   =false= or absent. Sets =mf_watch = true= (=PATCH=), then calls
   =POST .../metarecords/:uuid/reconcile=. A spinner appears in the status bar
   during the operation; the result is appended to the =message= panel type.
-  Useful after adding a metarecord via =file-manager:add= to activate tracking and
+  Useful after adding a metarecord via =file-manager:track= to activate tracking and
   populate the subtree.
 
 Protected =mfr_*= fields are read-only by default; an advanced toggle exposes
@@ -1695,7 +1722,7 @@ anywhere.
 =active_repo= root. When unchecked, the user can navigate anywhere on the
 disk. Adding files to the DB is only available for paths inside the
 =active_repo= root; attempting it outside returns an error in the status bar.
-When =active_repo= is =null=, the checkbox is disabled and =file-manager:add=
+When =active_repo= is =null=, the checkbox is disabled and =file-manager:track=
 / =file-manager:goto-root= return an error.
 
 *Selection*: moving the cursor sets =workspace.selected_paths= to a
@@ -1756,7 +1783,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
-| =file-manager:add=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
+| =file-manager:track=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
 | =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
 | =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
@@ -1876,14 +1903,6 @@ switches the focused slot to =file-manager=; the =file-manager= panel stats the
 path to tell a directory from a file and navigates there (honouring the request
 both when it mounts and while already mounted, the =nonce= guaranteeing an
 identical repeated request re-triggers while the same request acts only once).
-
-*** Batch set
-
-When =selected_metarecords= is non-empty, =metarecord:batch-set= opens a dialog for
-field name and value and sets it on every selected metarecord. (v1
-implementation note: the query IR has no UUID predicate, so this is one
-=PATCH .../metarecords/:uuid= per selected metarecord rather than a single
-=POST .../set=; to be revisited if a UUID predicate is added.)
 
 ** Message view
 

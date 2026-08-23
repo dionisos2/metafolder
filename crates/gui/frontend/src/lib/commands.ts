@@ -167,6 +167,20 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
   return argSpecs.get(name);
 }
 
+// Builtins that reopen the command input to collect a value but do not declare
+// an ArgSpec (they prefill/await input inside their handler). Kept here so the
+// autocomplete's "…" marker matches what actually happens.
+const MINIBUFFER_PROMPT_BUILTINS = new Set(['tab:rename']);
+
+/** Whether invoking `name` reopens the minibuffer to collect input, rather than
+ *  acting immediately (spec-gui "Command"). Drives the trailing "…" the
+ *  autocomplete shows — the menu-item ellipsis convention. The signal is the
+ *  interactive-argument mechanism (a registered ArgSpec, the minibuffer
+ *  completion path) plus the few builtins that reopen the input by hand. */
+export function promptsForInput(name: string): boolean {
+  return argSpecFor(name) !== undefined || MINIBUFFER_PROMPT_BUILTINS.has(name);
+}
+
 /** Test hook: drop every registered arg spec. */
 export function clearArgSpecs(): void {
   argSpecs.clear();
