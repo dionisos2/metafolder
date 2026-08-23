@@ -99,6 +99,32 @@ mod tests {
     }
 
     #[test]
+    fn default_grammar_expands_osm_predicates() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        // Path-mode OSM over a tree_ref field; multi-term needs a quoted string.
+        assert_eq!(
+            expand(&g, r#"path osm "scien fic""#).unwrap(),
+            r#"osm(mfr_path, "scien fic")"#
+        );
+        // Direct-mode OSM over a field's own text.
+        assert_eq!(
+            expand(&g, r#"label osmd "sf""#).unwrap(),
+            r#"osmd(label, "sf")"#
+        );
+        // A single term may be a bare word (no quotes).
+        assert_eq!(expand(&g, "name osmd config").unwrap(), r#"osmd(name, "config")"#);
+        // Composes with the boolean skeleton like any other predicate.
+        assert_eq!(
+            expand(&g, r#"fav path osm "jazz""#).unwrap(),
+            r#"rating >= 4 AND osm(mfr_path, "jazz")"#
+        );
+        // Every expansion is valid normal DSL.
+        for input in [r#"path osm "scien fic""#, r#"label osmd "sf""#, "name osmd config"] {
+            crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
+        }
+    }
+
+    #[test]
     fn default_grammar_accepts_explicit_and() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         let expected = "a = \"x\" AND b = \"y\"";

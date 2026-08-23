@@ -26,6 +26,8 @@ genre=jazz OR genre=blues
     <tr><td><code>field!=value</code></td><td>inequality</td></tr>
     <tr><td><code>field&gt;n</code> <code>&gt;=n</code> <code>&lt;n</code> <code>&lt;=n</code></td><td>numeric comparisons</td></tr>
     <tr><td><code>field~text</code></td><td>regex match (<code>MATCHES</code>)</td></tr>
+    <tr><td><code>field osm "a b"</code></td><td>ordered substrings over a tree path (<code>osm</code>); quote several terms, a single one may be bare</td></tr>
+    <tr><td><code>field osmd "a b"</code></td><td>ordered substrings over the field's own text (<code>osmd</code>)</td></tr>
     <tr><td><code>field?</code></td><td>present</td></tr>
     <tr><td><code>field!?</code></td><td>absent (value is <code>Nothing</code>)</td></tr>
     <tr><td><code>field??</code></td><td>unknown (never set)</td></tr>
