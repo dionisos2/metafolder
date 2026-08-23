@@ -323,11 +323,13 @@ export async function mount(root, metafolder) {
     }
     // A tracked row is a metarecord too: offer the same "Metarecord" section the
     // metarecord list does (open in detail/file, Copy UUID). "Open folder in
-    // file manager" is dropped — this panel already IS the file manager. The
-    // `select(index)` above published the row as `selected_metarecord`, which the
-    // reveal commands read.
+    // file manager" is dropped — this panel already IS the file manager. This
+    // covers the synthetic "." / ".." rows as well: the current directory and its
+    // parent are ordinary tracked metarecords (their tree nodes), so right-clicking
+    // "." (e.g. at the repo root) must offer this section too. The `select(index)`
+    // above published the row as `selected_metarecord`, which the reveal commands read.
     const uuid = trackedPaths.get(item.path);
-    if (isEntry && repo && uuid) {
+    if (repo && uuid) {
       items.push('-', ...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
     }
     items.push(

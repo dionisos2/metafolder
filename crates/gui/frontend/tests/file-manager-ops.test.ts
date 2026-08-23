@@ -342,6 +342,31 @@ describe('file-manager filesystem operations', () => {
     expect(fs.move).not.toHaveBeenCalled();
   });
 
+  test('the "." row of a tracked directory offers the Metarecord section', async () => {
+    // The current directory itself is a tracked metarecord (its tree node), so
+    // right-clicking the synthetic "." row must offer the same "Metarecord"
+    // section a real entry does — even though "." is not a directory entry.
+    const s = stub('repo-1');
+    const captured: { header?: string; label?: string }[][] = [];
+    s.api.daemon.call = (async (_method: string, path: string) => {
+      if (path.includes('/tree/resolve-path')) return { uuid: 'dir-uuid' };
+      if (path.includes('/tree/children')) return [];
+      return { results: [], next_cursor: null };
+    }) as never;
+    s.api.contextMenu = Object.assign(
+      (_e: MouseEvent, items: { header?: string }[]) => captured.push(items),
+      { addDefaultItems: () => {} },
+    ) as never;
+    const root = shadowRoot();
+    const mod = await import('../../default-config/panel-types/file-manager/main.js');
+    await mod.mount(root, s.api as never);
+    await new Promise((r) => setTimeout(r, 0));
+    const dotRow = root.querySelectorAll('li')[0]; // the synthetic "." row
+    dotRow.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    const items = captured.at(-1)!;
+    expect(items.some((it) => it && it.header === 'Metarecord')).toBe(true);
+  });
+
   test('the row and background context menus build without throwing', async () => {
     for (const repo of ['repo-1', null] as const) {
       const { root } = await mount(repo);
