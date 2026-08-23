@@ -22,6 +22,15 @@ assert() { # <name> <command...>
     fi
 }
 
+assert_not() { # <name> <command...>  — pass iff the command FAILS
+    local name=$1; shift
+    if "$@"; then
+        fail=$((fail + 1)); printf 'FAIL %s\n' "$name"
+    else
+        pass=$((pass + 1)); printf 'ok   %s\n' "$name"
+    fi
+}
+
 assert_eq() { # <name> <expected> <got>
     if [ "$2" = "$3" ]; then
         pass=$((pass + 1)); printf 'ok   %s\n' "$1"

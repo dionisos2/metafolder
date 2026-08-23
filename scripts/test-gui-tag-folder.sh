@@ -101,4 +101,27 @@ err=$(bash "$SCRIPT" a b c 2>&1 >/dev/null); code=$?
 assert "usage: non-zero exit on 3 args" [ "$code" -ne 0 ]
 assert_contains "usage: prints a usage line" "$err" usage
 
+# ── Case 7: the ROOT folder ("/") uses the empty-string query form ───────────
+# The repository root's relative path is "/", but the mfr_path tree queries want
+# the root as "" — `mfr_path = "/"` / `->* "/"` match nothing on the real daemon
+# (verified by test-scripts-integration.sh). The script must map "/" → "".
+mock_reset
+mock_respond 'gui repo'                              'repo-1'
+mock_respond 'metarecord -q mfr_type = "dir" get*'   '/'          # completion (drained)
+mock_respond 'metarecord -q mfr_path = "" get'       'dir-root'   # root resolves via ""
+mock_respond 'gui layout left'                       'saved-left'
+mock_respond 'gui layout right'                      'saved-right'
+mock_respond 'gui workspace new*'                    'ws-1'
+mock_respond 'path --relative dir-root'              '/'
+mock_prompt '/'
+mock_input y
+bash "$SCRIPT" roottag >/dev/null; code=$?
+assert "root: exits 0" [ "$code" -eq 0 ]
+assert "root: resolves the folder via the empty-string form" \
+    [ "$(mock_count 'metarecord -q mfr_path = "" get')" -eq 1 ]
+assert "root: subtree tagged with the empty-string form" \
+    [ "$(mock_count 'tag -q mfr_path ->* "" add roottag')" -eq 1 ]
+assert "root: never uses the broken \"/\" tree-query form" \
+    [ "$(mock_count 'tag -q mfr_path ->* "/"*')" -eq 0 ]
+
 assert_summary

@@ -66,7 +66,7 @@ mf_gui_session_open metarecord-detail
 # call per scope; the subsumption is handled server-side across the whole set.
 apply_tree() { # <uuid> <treepath> <verb: add|deny>
     mf tag -i "$1" "$3" "$TAG" >/dev/null
-    mf tag -q "mfr_path ->* \"$2\"" "$3" "$TAG" >/dev/null
+    mf tag -q "mfr_path ->* \"$(mf_gui_query_path "$2")\"" "$3" "$TAG" >/dev/null
 }
 
 # handle_dir / handle_file return 1 to signal "stop the whole run".
@@ -106,7 +106,7 @@ while [ -z "$stop" ] && [ ${#QUEUE[@]} -gt 0 ]; do
         else
             handle_file "$child" "$ctp" "$cabs" || { stop=1; break; }
         fi
-    done < <(mf metarecord -q "mfr_path -> \"$parent_tp\"" get)
+    done < <(mf metarecord -q "mfr_path -> \"$(mf_gui_query_path "$parent_tp")\"" get)
 done
 
 [ -n "$stop" ] && echo "stopped." || echo "done tagging '$TAG' under $FOLDER_TP."

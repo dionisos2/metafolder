@@ -91,10 +91,20 @@ _mf_gui_prompt_mfr_path() { # <message> <predicate>
 mf_gui_prompt_folder() { _mf_gui_prompt_mfr_path "${1:-Folder: }" 'mfr_type = "dir"'; }
 mf_gui_prompt_file() { _mf_gui_prompt_mfr_path "${1:-File: }" 'mfr_type = "file"'; }
 
+# Convert a repository-relative tree path — as `mf path --relative` prints it
+# ("/" for the root, "/a/b" below) — to the form the `mfr_path` tree queries
+# (`= "…"`, `-> "…"`, `->* "…"`) expect: the root is the EMPTY string, every
+# descendant keeps its leading slash. Without this the root folder resolves to
+# the empty set (`mfr_path = "/"` / `->* "/"` match nothing), so a whole-repo
+# operation silently does nothing.
+mf_gui_query_path() { # <relpath>
+    if [ "$1" = "/" ]; then printf ''; else printf '%s' "$1"; fi
+}
+
 # Resolve an mfr_path tree-path (leading slash) to its metarecord uuid; prints
 # the uuid, or nothing (empty) when no tracked record sits at that path.
 mf_gui_path_uuid() { # <treepath>
-    mf metarecord -q "mfr_path = \"$1\"" get | head -n1
+    mf metarecord -q "mfr_path = \"$(mf_gui_query_path "$1")\"" get | head -n1
 }
 
 # Ask a question in the GUI and wait for one key:
