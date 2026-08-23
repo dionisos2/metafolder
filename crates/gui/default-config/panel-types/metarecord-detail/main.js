@@ -15,7 +15,7 @@ import {
 import { schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
-import { resolveRefValue } from './ref-completion.js';
+import { completionSourceField, resolveRefValue } from './ref-completion.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
@@ -789,19 +789,22 @@ export async function mount(root, metafolder) {
     return [...paths].sort();
   }
 
-  /** Value completion for a set/add value arg: the field's own forest paths when
-   *  it is a tree_ref; the seed field's forest paths when it is a ref with a
-   *  completion seed (spec-gui "Ref value completion"); otherwise nothing.
+  /** Path completions for a value of `type` on `field`: the field's own forest
+   *  when it is a tree_ref, the seed field's forest when it is a ref with a
+   *  completion seed (spec-gui "Ref value completion"), otherwise nothing.
+   *  Shared by the direct and bulk value-completion paths.
+   *  @param {string} repo @param {string} field @param {string} type */
+  async function completionPaths(repo, field, type) {
+    const seedField = type === 'ref' ? await config.refCompletionSeed(field) : null;
+    const source = completionSourceField(type, field, seedField);
+    return source ? treePathsForField(repo, source) : [];
+  }
+
+  /** Value completion for a set/add value arg (record-or-catalog type lookup).
    *  @param {string} field */
   async function valueCompletionFor(field) {
     const cur = requireCurrent();
-    const type = await fieldTypeOf(field);
-    if (type === 'tree_ref') return treePathsForField(cur.repo, field);
-    if (type === 'ref') {
-      const seedField = await config.refCompletionSeed(field);
-      if (seedField) return treePathsForField(cur.repo, seedField);
-    }
-    return [];
+    return completionPaths(cur.repo, field, await fieldTypeOf(field));
   }
 
   /** @param {string} prompt */
@@ -1011,12 +1014,13 @@ export async function mount(root, metafolder) {
     return t && t !== cache.REFRESH ? t : 'string';
   }
 
-  /** Value completion for a bulk value arg (repo-wide type lookup).
+  /** Value completion for a bulk value arg (repo-wide type lookup); mirrors the
+   *  direct-command completion, ref completion seeds included.
    *  @param {string} field */
   async function bulkValueCompletion(field) {
     const repo = await repoForAdd();
     if (!repo) return [];
-    return (await catalogType(repo, field)) === 'tree_ref' ? treePathsForField(repo, field) : [];
+    return completionPaths(repo, field, await catalogType(repo, field));
   }
 
   /** Counts the metarecords a query matches (daemon-side COUNT, no page load).
@@ -1088,7 +1092,9 @@ export async function mount(root, metafolder) {
     handler: async (field, raw) => {
       const t = await bulkTarget();
       if (!(await confirmBulk(t, `Set "${field}"`))) return;
-      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const type = await establishType(t.repo, field);
+      if (type === null) return; // user cancelled the type pick
+      const value = await parseValueForField(t.repo, field, type, raw);
       const force = isReserved(field) ? { force: true } : {};
       const resp = /** @type {{updated?: number}} */ (
         await daemon.call('POST', `/repos/${t.repo}/query/fields/set`, {
@@ -1113,7 +1119,9 @@ export async function mount(root, metafolder) {
     handler: async (field, raw) => {
       const t = await bulkTarget();
       if (!(await confirmBulk(t, `Add a value to "${field}"`))) return;
-      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const type = await establishType(t.repo, field);
+      if (type === null) return; // user cancelled the type pick
+      const value = await parseValueForField(t.repo, field, type, raw);
       const force = isReserved(field) ? { force: true } : {};
       const resp = /** @type {{updated?: number}} */ (
         await daemon.call('POST', `/repos/${t.repo}/query/fields/append`, {
@@ -1164,7 +1172,9 @@ export async function mount(root, metafolder) {
     handler: async (field, raw) => {
       const t = await bulkTarget();
       if (!(await confirmBulk(t, `Remove a value from "${field}"`))) return;
-      const value = await parseValueForField(t.repo, field, await catalogType(t.repo, field), raw);
+      const type = await establishType(t.repo, field);
+      if (type === null) return; // user cancelled the type pick
+      const value = await parseValueForField(t.repo, field, type, raw);
       const force = isReserved(field) ? { force: true } : {};
       const resp = /** @type {{updated?: number}} */ (
         await daemon.call('POST', `/repos/${t.repo}/query/fields/remove`, {

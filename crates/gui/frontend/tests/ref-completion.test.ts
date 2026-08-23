@@ -5,7 +5,11 @@
 // metarecord uuid — the symmetric of how tree_ref values are resolved.
 
 import { describe, expect, test, vi } from 'vitest';
-import { HEX32, resolveRefValue } from '../../default-config/panel-types/metarecord-detail/ref-completion.js';
+import {
+  HEX32,
+  completionSourceField,
+  resolveRefValue,
+} from '../../default-config/panel-types/metarecord-detail/ref-completion.js';
 
 const UUID = 'a'.repeat(32);
 
@@ -18,6 +22,24 @@ describe('HEX32', () => {
     expect(HEX32.test('animals/cats')).toBe(false);
     expect(HEX32.test('a'.repeat(31))).toBe(false);
     expect(HEX32.test('A'.repeat(32))).toBe(false);
+  });
+});
+
+describe('completionSourceField', () => {
+  test('a tree_ref field seeds completion from its own forest', () => {
+    expect(completionSourceField('tree_ref', 'mfr_path', null)).toBe('mfr_path');
+    // The seed argument is ignored for tree_ref (it has no completion seed).
+    expect(completionSourceField('tree_ref', 'mfr_path', 'other')).toBe('mfr_path');
+  });
+  test('a ref field with a seed sources completion from the seed field', () => {
+    expect(completionSourceField('ref', 'tag', 'path')).toBe('path');
+  });
+  test('a ref field without a seed offers no completion', () => {
+    expect(completionSourceField('ref', 'tag', null)).toBe(null);
+  });
+  test('other types offer no completion', () => {
+    expect(completionSourceField('string', 'title', null)).toBe(null);
+    expect(completionSourceField('int', 'rating', 'path')).toBe(null);
   });
 });
 

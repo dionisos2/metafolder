@@ -12,6 +12,24 @@
 export const HEX32 = /^[0-9a-f]{32}$/;
 
 /**
+ * The tree_ref field whose forest paths seed a value's completion, or null when
+ * the value type offers no path completion. A `tree_ref` value completes from
+ * its own forest; a `ref` value with a completion seed completes from the seed
+ * field; anything else has no path completion. Shared by the direct and bulk
+ * value-completion paths so they stay in step.
+ *
+ * @param {string} type the value type being entered
+ * @param {string} field the field being edited
+ * @param {string|null} seedField the field's ref completion seed, or null
+ * @returns {string|null} the field to source completion paths from, or null
+ */
+export function completionSourceField(type, field, seedField) {
+  if (type === 'tree_ref') return field;
+  if (type === 'ref' && seedField) return seedField;
+  return null;
+}
+
+/**
  * Resolves a raw `ref` value the user typed into a metarecord uuid.
  *
  * - A 32-hex string is taken as the uuid directly (an explicit uuid always wins
