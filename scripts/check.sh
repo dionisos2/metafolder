@@ -12,6 +12,8 @@
 #               and the only way it stays clean is if the first new warning
 #               fails the build. --lax downgrades them while you work.
 #   test        the Rust workspace suite.
+#   scripts     the shipped GUI helper scripts (the ones reachable from the
+#               GUI's `script:run`), driven against a mocked `mf` CLI + GUI.
 #   types       tsc --noEmit + svelte-check over the GUI frontend (the latter
 #               is the only thing that reads .svelte at all). Nothing else runs
 #               a compiler: vite strips the types without checking them.
@@ -103,6 +105,9 @@ fi
 
 # ── tests ────────────────────────────────────────────────────────────────────
 run test cargo test --workspace
+
+# ── shipped-script tests (fast, hermetic: they mock the `mf` CLI + GUI) ───────
+run scripts bash "$repo/scripts/test-shipped-scripts.sh"
 
 # node_modules lives at the repo root: the frontend is an npm workspace member.
 if [ -d node_modules ]; then
