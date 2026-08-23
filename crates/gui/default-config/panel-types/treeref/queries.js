@@ -12,6 +12,21 @@ export function childrenQuery(field, parentUuid) {
   return { type: 'follows', field, target: { type: 'uuid_in', uuids: [parentUuid] } };
 }
 
+// The display / query path of a forest node, from the ordered node names on the
+// path from a forest root to it. Matches the daemon's `paths_of` convention
+// (spec-gui "Path display"): the filesystem forest's empty-named root makes the
+// path leading-"/"-rooted ("/a/b", the root itself "/"); a named-root forest
+// (e.g. tags) has no leading slash ("domaine", "domaine/sub"). An empty list is
+// the empty string (no node selected). This is why the treeref breadcrumb and
+// ref-list target line never prefix a slash of their own — doing so
+// double-slashed the filesystem forest ("///projets") and wrongly slashed a
+// named root ("/domaine").
+/** @param {string[]} names @returns {string} */
+export function treeRefPath(names) {
+  if (names.length === 0) return '';
+  return names[0] === '' ? `/${names.slice(1).join('/')}` : names.join('/');
+}
+
 // The single name component a metarecord contributes to `field`'s forest (the
 // first tree_ref row of that field), or null when it carries no such position.
 /**

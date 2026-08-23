@@ -78,12 +78,13 @@ mf_gui_prompt_tag() { # <message>
 }
 
 # Internal: prompt for an mfr_path tree-path, completing over the repository's
-# tracked records matching <predicate>. The completions (and thus the confirmed
-# value) carry a leading slash — the form `mfr_path` queries expect and
-# `mf path --relative` prints (the resolve-tree endpoint omits it).
+# tracked records matching <predicate>. `--resolve-tree mfr_path` already prints
+# descendants with a leading slash (`/projets`) and the repository root as the
+# EMPTY string, so we only turn that empty root line into "/" — prefixing every
+# line (as this once did) double-slashes descendants ("//projets").
 _mf_gui_prompt_mfr_path() { # <message> <predicate>
     mf metarecord -q "$2" get --resolve-tree mfr_path \
-        | sed 's,^,/,' | sort -u | mf_gui_prompt "$1"
+        | sed 's,^$,/,' | sort -u | mf_gui_prompt "$1"
 }
 
 # Prompt for a tracked folder / file, completing over the repository's tree.

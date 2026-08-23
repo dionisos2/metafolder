@@ -4,7 +4,11 @@
 // panel fetches them from GET …/tree/roots instead.
 
 import { describe, expect, test } from 'vitest';
-import { childrenQuery, treeNameOf } from '../../default-config/panel-types/treeref/queries.js';
+import {
+  childrenQuery,
+  treeNameOf,
+  treeRefPath,
+} from '../../default-config/panel-types/treeref/queries.js';
 
 describe('childrenQuery', () => {
   test('a node uses a uuid_in sub-query (direct parent = node)', () => {
@@ -32,5 +36,27 @@ describe('treeNameOf', () => {
   test('returns null when the field has no tree_ref row', () => {
     expect(treeNameOf(record, 'mfr_path')).toBeNull();
     expect(treeNameOf({ uuid: 'x', fields: [] }, 'tag_path')).toBeNull();
+  });
+});
+
+describe('treeRefPath (spec-gui "Path display" convention)', () => {
+  test('filesystem forest: empty root makes descendants leading-"/"-rooted', () => {
+    expect(treeRefPath([''])).toBe('/'); // the repository root itself
+    expect(treeRefPath(['', 'projets'])).toBe('/projets');
+    expect(treeRefPath(['', 'projets', 'sub'])).toBe('/projets/sub');
+  });
+
+  test('named-root forest (e.g. tags): no leading slash', () => {
+    expect(treeRefPath(['domaine'])).toBe('domaine');
+    expect(treeRefPath(['domaine', 'sub'])).toBe('domaine/sub');
+  });
+
+  test('empty list is the empty string (no node selected)', () => {
+    expect(treeRefPath([])).toBe('');
+  });
+
+  test('never double-slashes and never slashes a named root', () => {
+    expect(treeRefPath(['', 'a', 'b'])).not.toContain('//');
+    expect(treeRefPath(['domaine']).startsWith('/')).toBe(false);
   });
 });

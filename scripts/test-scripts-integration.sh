@@ -118,4 +118,18 @@ hy_input escape            # stop at the first question
 cout=$(bash "$CLASSIFY" "$TOP" 2>&1)
 assert_contains "classify: completes against the real daemon" "$cout" "terminée"
 
+# ── folder completion must not double-slash mfr_path (regression) ────────────
+# `--resolve-tree mfr_path` already returns "/projets" and the root as "", so
+# the completion helper must show the root as "/" and never "//projets".
+comp=$(
+    # shellcheck source=shipped/lib/mf-gui.sh
+    source "$HERE/shipped/lib/mf-gui.sh"
+    mf_gui_prompt() { cat; }          # echo the completions instead of prompting
+    mf_gui_prompt_folder
+)
+dbl=$(printf '%s\n' "$comp" | grep -c '//' || true)
+root=$(printf '%s\n' "$comp" | grep -xc '/' || true)
+assert_eq "completion: no double-slashed folder path" 0 "$dbl"
+assert "completion: the repository root is offered as /" [ "$root" -ge 1 ]
+
 assert_summary

@@ -8,7 +8,7 @@ import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
-import { childrenQuery, treeNameOf } from './queries.js';
+import { childrenQuery, treeNameOf, treeRefPath } from './queries.js';
 
 const PAGE_DEFAULT = 200;
 const DEFAULT_FIELD = 'mfr_path';
@@ -184,7 +184,8 @@ export async function mount(root, metafolder) {
     const child = children[cursorIndex];
     if (!child) return;
     root.querySelector('li.cursor')?.scrollIntoView({ block: 'nearest' });
-    const path = [...stack.map((c) => c.name), child.name].filter((s) => s !== '').join('/');
+    // Publish the path in the daemon's convention (see treeRefPath).
+    const path = treeRefPath([...stack.map((c) => c.name), child.name]);
     await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
     await workspace.set('selected_treeref', { repo, field, uuid: child.uuid, path });
   }
@@ -216,11 +217,17 @@ export async function mount(root, metafolder) {
         : 'No children (leaf node).';
 
     breadcrumb.replaceChildren(
-      el('span', { class: 'crumb', onclick: () => gotoRoot() }, `${field}:/`),
-      ...stack.flatMap((crumb, depth) => [
-        el('span', {}, depth === 0 ? '' : '/'),
-        el('span', { class: 'crumb', onclick: () => gotoDepth(depth + 1) }, nodeLabel(crumb)),
-      ]),
+      el('span', { class: 'crumb', onclick: () => gotoRoot() }, `${field}:`),
+      ...stack.flatMap((crumb, depth) => {
+        // Separator before this crumb: none for the first node, and none right
+        // after the filesystem root (its label is already "/"), so we never
+        // double the slash ("mfr_path:///projets"). Otherwise a single "/".
+        const sep = depth === 0 || stack[depth - 1].name === '' ? '' : '/';
+        return [
+          el('span', {}, sep),
+          el('span', { class: 'crumb', onclick: () => gotoDepth(depth + 1) }, nodeLabel(crumb)),
+        ];
+      }),
     );
 
     entriesList.replaceChildren(

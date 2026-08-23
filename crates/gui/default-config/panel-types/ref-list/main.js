@@ -111,7 +111,10 @@ export async function mount(root, metafolder) {
     if (!target) {
       targetLine.textContent = 'No tree node selected.';
     } else {
-      targetLine.textContent = `${target.field}: /${target.path}`;
+      // `path` already carries the daemon convention (leading "/" for the
+      // filesystem forest, none for a named-root forest like tags), so do not
+      // prefix another slash.
+      targetLine.textContent = `${target.field}: ${target.path}`;
     }
   }
 
