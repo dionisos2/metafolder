@@ -67,6 +67,10 @@ export async function mount(root, metafolder) {
   // the directory's real entries.
   let syntheticCount = 2;
   let rendered = 0; // number of `listing` rows currently in the DOM (windowed)
+  /** The last directory-listing failure (disk error). Shown as a persistent
+   *  placeholder so the panel never sits silently on "Loading…". Cleared on the
+   *  next successful listing. @type {string|null} */
+  let loadError = null;
   let cursorIndex = -1;
   let constrainToRoot = true;
   let showHidden = false;
@@ -158,9 +162,18 @@ export async function mount(root, metafolder) {
     try {
       items = await fs.readDir(dir);
     } catch (error) {
+      // A failed listing must not leave the panel stuck on "Loading…": record
+      // it, clear the stale rows, and render a persistent error placeholder.
+      loadError = error instanceof Error ? error.message : String(error);
+      currentDir = dir;
+      listing = [];
+      rendered = 0;
+      cursorIndex = -1;
       await statusBar.error(error, statusErrorMs);
+      render();
       return;
     }
+    loadError = null; // a fresh listing arrived; clear any stale error state
     const synthetic = syntheticRows(dir, repoRoot, constrainToRoot);
     syntheticCount = synthetic.length;
     listing = [...synthetic, ...filterHidden(items, showHidden)];
@@ -180,7 +193,12 @@ export async function mount(root, metafolder) {
 
   function renderNow() {
     pathElement.textContent = currentDir ?? '';
-    placeholderElement.hidden = true;
+    // The placeholder shows only for a load failure (otherwise the listing owns
+    // the body); a successful listing hides it, empty or not.
+    const showError = loadError !== null;
+    placeholderElement.hidden = !showError;
+    placeholderElement.classList.toggle('error', showError);
+    if (showError) placeholderElement.textContent = `⚠ Could not list this folder\n${loadError}`;
     const selected = listing[cursorIndex];
     addButton.disabled =
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
@@ -733,9 +751,18 @@ export async function mount(root, metafolder) {
     const seedDir = await workspace.get('file-manager:start-dir');
     const seedStart = typeof seedDir === 'string' && seedDir ? seedDir : null;
     if (repo !== null) {
-      await cache.sync(repo); // fresh tracked status on display
-      repoRoot = await daemon.repoRoot(repo);
-      internalDir = await daemon.repoInternalDir(repo);
+      try {
+        await cache.sync(repo); // fresh tracked status on display
+        repoRoot = await daemon.repoRoot(repo);
+        internalDir = await daemon.repoInternalDir(repo);
+      } catch (error) {
+        // The daemon is unreachable or incompatible: degrade to disk-only
+        // browsing (no tracked badges) rather than aborting start() before the
+        // directory is ever listed — which would strand the panel on "Loading…".
+        repoRoot = null;
+        internalDir = null;
+        await statusBar.error(error, statusErrorMs);
+      }
     } else {
       // No repo: everything is untracked; browse from the reveal/seed or root.
       repoRoot = null;

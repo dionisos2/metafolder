@@ -231,12 +231,25 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      #status-line.error {
+        color: var(--mf-error, #c44c56);
+      }
       .placeholder {
         display: flex;
         height: 100%;
         align-items: center;
         justify-content: center;
         color: var(--mf-fg-dim, #8a8a96);
+      }
+      /* A failed fetch (daemon down, incompatible, query rejected): a
+         persistent, unmistakable state, never a silently empty list. */
+      .error-placeholder {
+        flex-direction: column;
+        gap: 6px;
+        padding: 12px;
+        text-align: center;
+        color: var(--mf-error, #c44c56);
+        white-space: pre-wrap;
       }
       /* author display rules override the [hidden] UA style */
       .placeholder[hidden] {
@@ -285,6 +298,7 @@
     </div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
+      <p class="placeholder error-placeholder" id="fetch-error" hidden></p>
       <table>
         <thead>
           <tr id="header-row"></tr>

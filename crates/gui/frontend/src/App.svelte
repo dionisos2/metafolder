@@ -58,6 +58,12 @@
         <div class="daemon-banner" data-help-topic="connection">
           Daemon unreachable at {store.daemonUrl} — daemon-dependent commands are disabled.
         </div>
+      {:else if !store.daemonCompatible}
+        <div class="daemon-banner" data-help-topic="connection">
+          Incompatible daemon: it speaks API version {store.daemonApiVersion ?? 'unknown'}, this
+          GUI expects {store.guiApiVersion ?? '?'}. Data may be missing or wrong — rebuild and
+          restart the GUI and daemon from the same source.
+        </div>
       {/if}
       <TabBar />
       <div class="slots" bind:this={slotsElement} style:grid-template-columns={columns}>

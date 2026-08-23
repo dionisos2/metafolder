@@ -99,6 +99,10 @@ export async function mount(root, metafolder) {
   // `start()` once a repo is present; reset on repo change so the new repo is
   // re-run from scratch.
   let queryRan = false;
+  /** The last fetch failure (daemon down/incompatible, query rejected), shown
+   *  as a persistent body state so a failed load is never mistaken for an
+   *  empty result. Cleared on the next successful fetch. @type {string|null} */
+  let fetchError = null;
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let livePreviewTimer;
   /** @type {SortKey[]} */
@@ -336,9 +340,14 @@ export async function mount(root, metafolder) {
           ...(nextCursor && { cursor: nextCursor }),
         });
       } catch (error) {
+        // A failed fetch must not read as "0 results": record it and render a
+        // persistent error state (the status-bar flash alone vanishes).
+        fetchError = error instanceof Error ? error.message : String(error);
         await statusBar.error(error);
+        render();
         return;
       }
+      fetchError = null; // a fresh page arrived; clear any stale error state
       // The page's metarecords are read from the cache the query just populated.
       const fetched = /** @type {Metafolder.Metarecord[]} */ (
         result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
@@ -504,13 +513,25 @@ export async function mount(root, metafolder) {
         return card;
       }),
     );
-    statusLine.textContent = !queryRan
-      ? '' // no active repo: nothing to show yet
-      : `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
-          (total ?? metarecords.length) === 1 ? '' : 's'
-        }` +
-        (nextCursor ? ' (more available — scroll down)' : '') +
-        (checked.size > 0 ? ` — ${checked.size} selected` : '');
+    // A fetch failure surfaces as a persistent body placeholder (only when the
+    // list is otherwise empty, so a partial page keeps its rows) and always in
+    // the status line — never a silently empty list.
+    const errorEl = byId(root, 'fetch-error');
+    const showErrorBody = fetchError !== null && metarecords.length === 0;
+    errorEl.hidden = !showErrorBody;
+    if (showErrorBody) {
+      errorEl.textContent = `⚠ Could not load metarecords\n${fetchError}`;
+    }
+    statusLine.classList.toggle('error', fetchError !== null);
+    statusLine.textContent = fetchError !== null
+      ? `⚠ ${fetchError}`
+      : !queryRan
+        ? '' // no active repo: nothing to show yet
+        : `${metarecords.length}${total !== null ? `/${total}` : ''} metarecord${
+            (total ?? metarecords.length) === 1 ? '' : 's'
+          }` +
+          (nextCursor ? ' (more available — scroll down)' : '') +
+          (checked.size > 0 ? ` — ${checked.size} selected` : '');
   }
 
   // ── Selection (workspace variables) ─────────────────────────────────────
@@ -1114,6 +1135,7 @@ export async function mount(root, metafolder) {
       repo = activeRepo;
       repoRoot = null;
       queryRan = false;
+      fetchError = null;
       metarecords = [];
       nextCursor = null;
       total = null;

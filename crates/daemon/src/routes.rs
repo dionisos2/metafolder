@@ -515,6 +515,10 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
     Json(json!({
         "status": "ok",
         "version": env!("CARGO_PKG_VERSION"),
+        // Wire-protocol version (spec-gui): a client compares this against its
+        // own `core::API_VERSION` and refuses/warns on a mismatch. Distinct
+        // from `version` (the crate semver), which does not track the contract.
+        "api_version": metafolder_core::API_VERSION,
         "repos": state.list_repos(false).len(),
     }))
 }
