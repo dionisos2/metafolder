@@ -36,6 +36,9 @@ const METARECORD = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)$/;
 const REPO_PREFIX = /^\/repos\/([^/]+)(?:\/|$)/;
 // A write targeting one metarecord (…/metarecords/:uuid and its sub-paths).
 const METARECORD_PREFIX = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)/;
+// A field-row write by DB id (…/fields/:id) — mutates a metarecord the URL
+// does not name (the owner is only in the response body, if any).
+const FIELD_ROW = /^\/repos\/([^/]+)\/fields\/\d+$/;
 
 /** A stable, fully recursive serialization (keys sorted at every level) — so
  *  different query bodies get different keys. (A `JSON.stringify` array replacer
@@ -167,6 +170,16 @@ export function createCache(opts: CacheOptions = {}) {
     fields.delete(repo); // the field catalog shares this coarse invalidation
   }
 
+  /** Drops every cached entity/treeRef of one repo, keeping queries. Used when a
+   *  write mutated a metarecord the URL does not name and no response body
+   *  identifies it (a field-row DELETE), so the owner cannot be pinpointed. */
+  function clearRepoEntities(repo: string) {
+    bumpEpoch(repo);
+    for (const map of [entities, treeRefs] as Map<string, unknown>[]) {
+      for (const key of map.keys()) if (key.startsWith(`${repo}|`)) map.delete(key);
+    }
+  }
+
   // ── Transparent interception ────────────────────────────────────────────
 
   async function request(
@@ -274,6 +287,23 @@ export function createCache(opts: CacheOptions = {}) {
         if (wm) invalidateMetarecord(wm[1], wm[2]); // …/metarecords/:uuid…
         const repoM = cleanPath.match(REPO_PREFIX);
         if (repoM) clearQueries(repoM[1]); // membership may have changed
+        // A field-row write (…/fields/:id) mutates a metarecord the URL does not
+        // name, so METARECORD_PREFIX misses it and the owning entity would stay
+        // stale until the next change-feed poll. PATCH returns the updated
+        // record — invalidate and repopulate it from the body (no round-trip);
+        // DELETE returns no body — drop the repo's entities and let the next
+        // read re-fetch.
+        const fr = cleanPath.match(FIELD_ROW);
+        if (fr) {
+          const repo = fr[1];
+          const record = res.body as { uuid?: unknown; fields?: unknown };
+          if (record && typeof record.uuid === 'string' && Array.isArray(record.fields)) {
+            invalidateMetarecord(repo, record.uuid);
+            putEntities(repo, [record as Metarecord]);
+          } else {
+            clearRepoEntities(repo);
+          }
+        }
       }
       return res;
     }

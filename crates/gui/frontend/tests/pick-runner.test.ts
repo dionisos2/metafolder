@@ -30,7 +30,7 @@ function stubMetafolder({ seed = null }: { seed?: string | null } = {}) {
 
 describe('createPickRunner', () => {
   it('opens a seeded metarecord-list for a ref and resolves with the uuid', async () => {
-    const stub = stubMetafolder({ seed: 'type = "tag"' });
+    const stub = stubMetafolder({ seed: 'mf_schema = "tag"' });
     stub.metafolder.pick.start = stub.start;
     const runner = createPickRunner(stub.metafolder);
 
@@ -41,7 +41,7 @@ describe('createPickRunner', () => {
     const spec = stub.start.mock.calls[0][0];
     expect(spec.repo).toBe('repo-1');
     expect(spec.panel.type).toBe('metarecord-list');
-    expect(spec.panel.vars['metarecord-list:query']).toBe('type = "tag"');
+    expect(spec.panel.vars['metarecord-list:query']).toBe('mf_schema = "tag"');
     const token = spec.token;
 
     stub.deliver({ token, uuid: 'abc' });

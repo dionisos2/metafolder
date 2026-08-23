@@ -24,6 +24,11 @@ predicate =
   | f:field "!=" "false"    => $f != false
   | f:field "!=" w:WORD     => $f != {str($w)}
   | f:field "~"  v:value    => $f MATCHES {str($v)}
+  # Ordered substring matching: every whitespace-separated term must appear, in
+  # order. `osm` walks a tree_ref path, `osmd` the field's own text. Quote the
+  # value for several terms (`path osm "scien fic"`); a single term may be bare.
+  | f:field "osm"  v:value  => osm($f, {str($v)})
+  | f:field "osmd" v:value  => osmd($f, {str($v)})
   | f:field ">=" n:number   => $f >= $n
   | f:field "<=" n:number   => $f <= $n
   | f:field ">"  n:number   => $f > $n
@@ -41,7 +46,12 @@ predicate =
   | df:datefield "since"   v:STRING               => $df >= @{str($v)}
   | df:datefield "before"  v:STRING               => $df < @{str($v)}
   | df:datefield "between" a:STRING "and" b:STRING => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "tag" v:value           => tag -> (type = "tag" AND path = {str($v)})
+  # Tags. `#X` matches the tag X *or any sub-tag* (subsumption — the common
+  # case, since tagging a file with `a/b` drops the redundant `a` ref); `##X`
+  # matches exactly the tag X. Quote a nested path (`#"musique/jazz"`). To
+  # negate, keep a space: `! #musique` (a bare `!#` lexes as one symbol).
+  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})
+  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)})
   | "fav"                   => rating >= 4
 
 # Field aliases: map a few names, pass the rest through.

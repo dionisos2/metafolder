@@ -730,7 +730,7 @@ affected metarecord). =-f=/=--force= is required for reserved =mfr_*= fields.
 
 Applies a *hierarchical tag convention* to the selected metarecord(s), owning
 the model the =gui-tag-*= scripts used to re-implement by hand. A *tag entry* is
-a metarecord =type = <entry_type>= (=tag=) whose position in the tag hierarchy is
+a metarecord =mf_schema = <entry_type>= (=tag=) whose position in the tag hierarchy is
 a =TreeRef= field =<path_field>= (=path=) — its resolved path (=musique/jazz=) is
 the tag's identity, and a nested path is a chain of tag-entry nodes (the CLI
 creates missing ancestors). Records reference entries through the multi-map =Ref=

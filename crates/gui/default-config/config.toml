@@ -83,7 +83,7 @@ task-poll-ms = 1500
 # own entry — all filtering to the tag entries; they are seeded by default
 # below. Add your own the same way (e.g. the commented `author` example).
 [picker-seeds]
-tag          = 'type = "tag"'
-negative_tag = 'type = "tag"'
-mixed_tag    = 'type = "tag"'
-# author       = 'type = "person"'
+tag          = 'mf_schema = "tag"'
+negative_tag = 'mf_schema = "tag"'
+mixed_tag    = 'mf_schema = "tag"'
+# author       = 'mf_schema = "person"'

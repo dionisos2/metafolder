@@ -286,6 +286,39 @@ describe('cache — write invalidation (own edits show immediately)', () => {
     expect(cache._stats().queries).toBe(0); // queries cleared
   });
 
+  test('a field-row PATCH refreshes the owning metarecord immediately', async () => {
+    const cache = createCache();
+    // POST populates the entity (version 1); the PATCH by field id returns the
+    // updated record (version 2), as the daemon's PATCH /fields/:id does.
+    const raw = vi.fn(async (m: string) =>
+      m === 'POST' ? ok({ results: [rec('a1', 1)] }) : ok(rec('a1', 2)),
+    );
+    await cache.query('r', { query: {} }, raw);
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1', 1));
+
+    await cache.request('PATCH', '/repos/r/fields/3', { value: 9 }, raw);
+    // The URL names no uuid, but the response body does: the owning entity is
+    // repopulated from it (no extra round-trip), not left stale.
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1', 2));
+    expect(cache._stats().queries).toBe(0); // queries cleared (membership may change)
+  });
+
+  test('a field-row DELETE (no body) drops the repo entities so a re-read refetches', async () => {
+    const cache = createCache();
+    const raw = vi.fn(async (m: string) =>
+      m === 'POST' ? ok({ results: [rec('a1'), rec('b2')] }) : { status: 204, body: null },
+    );
+    await cache.query('r', { query: {} }, raw);
+    expect(cache._stats().entities).toBe(2);
+
+    await cache.request('DELETE', '/repos/r/fields/3', null, raw);
+    // DELETE returns no record, so the cache cannot pinpoint the owner: it drops
+    // the repo's entities and lets the next read re-fetch.
+    expect(cache.readMetarecord('r', 'a1')).toBe(REFRESH);
+    expect(cache._stats().entities).toBe(0);
+    expect(cache._stats().queries).toBe(0);
+  });
+
   test('a failed write leaves the cache untouched', async () => {
     const cache = createCache();
     const raw = vi.fn(async (m: string) =>

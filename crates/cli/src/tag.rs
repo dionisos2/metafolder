@@ -4,7 +4,7 @@
 //! pure and unit-tested; the HTTP orchestration lives in `commands::tag_*`.
 //!
 //! Convention (all names configurable via the `[tag]` config table): a *tag
-//! entry* is a metarecord `type = <entry_type>` (`"tag"`) whose position in the
+//! entry* is a metarecord `mf_schema = <entry_type>` (`"tag"`) whose position in the
 //! tag hierarchy is a `TreeRef` field `<path_field>` (`"path"`) — its resolved
 //! path (`"musique/jazz"`) is the tag's identity, and an optional `label` may
 //! name it. Records reference entries through the multi-map Ref fields
@@ -23,9 +23,9 @@ use serde::Deserialize;
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "kebab-case", default, deny_unknown_fields)]
 pub struct TagConfig {
-    /// Field name holding the entry-type marker.
+    /// Field name holding the entry-type marker (the schema field by default).
     pub type_field: String,
-    /// `type` value marking a metarecord as a tag entry.
+    /// `mf_schema` value marking a metarecord as a tag entry.
     pub entry_type: String,
     /// The tag entry's hierarchy field — a `TreeRef` whose resolved path is the
     /// tag's identity.
@@ -45,7 +45,7 @@ pub struct TagConfig {
 impl Default for TagConfig {
     fn default() -> Self {
         TagConfig {
-            type_field: "type".into(),
+            type_field: "mf_schema".into(),
             entry_type: "tag".into(),
             path_field: "path".into(),
             positive: "tag".into(),

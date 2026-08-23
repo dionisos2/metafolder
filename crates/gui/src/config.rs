@@ -513,11 +513,11 @@ mod tests {
         assert!(empty.picker_seeds.is_empty());
 
         let parsed: GuiConfig = toml::from_str(
-            "[picker-seeds]\ntag = 'type = \"tag\"'\nauthor = 'type = \"person\"'\n",
+            "[picker-seeds]\ntag = 'mf_schema = \"tag\"'\nauthor = 'mf_schema = \"person\"'\n",
         )
         .unwrap();
-        assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("type = \"tag\""));
-        assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("type = \"person\""));
+        assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("mf_schema = \"tag\""));
+        assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("mf_schema = \"person\""));
         assert_eq!(parsed.picker_seeds.get("missing"), None);
     }
 

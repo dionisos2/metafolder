@@ -60,7 +60,7 @@ POS="$TMP/pos"
 NEG="$TMP/neg"
 
 mf tag list >"$UNIVERSE"
-[ -s "$UNIVERSE" ] || mf_die "no tag entries (type = \"tag\") in repository $REPO"
+[ -s "$UNIVERSE" ] || mf_die "no tag entries (mf_schema = \"tag\") in repository $REPO"
 
 yes=0 no=0
 while :; do

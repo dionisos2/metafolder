@@ -56,6 +56,9 @@ else
     [ -n "$FOLDER_UUID" ] || mf_die "no tracked folder at $FOLDER_TP"
 fi
 FOLDER_TP=$(mf path --relative "$FOLDER_UUID")
+# Absolute filesystem path for the preview (unset in the prompted branch, which
+# never touched the filesystem): derive it from the uuid, like the child walk.
+FOLDER_ABS=$(mf path "$FOLDER_UUID" 2>/dev/null || true)
 
 mf_gui_session_open metarecord-detail
 

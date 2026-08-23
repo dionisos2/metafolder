@@ -413,6 +413,13 @@ string    := '"' ... '"'
   literals.
 - Precedence: =NOT= binds tighter than =AND=, which binds tighter than =OR=;
   parentheses override.
+- String escapes: inside a =STRING= literal, =\"= and =\\= decode to the bare
+  character; any other backslash escape is passed through *verbatim* (the
+  backslash is kept). This lets a =MATCHES= pattern carry regex escapes —
+  =title MATCHES "\.config"= matches a literal =.config= (=\d=, =\w=, =\s=, …
+  reach the =regex= engine unchanged). To match a literal backslash in a regex,
+  write =\\\\= (the DSL decodes it to =\\=, which the regex reads as one
+  backslash).
 - =field -> "path"= compiles to =Follows= with a path right-hand side
   (=TreeRef= semantics); =field -> (predicate)= compiles to =Follows= with a
   sub-query right-hand side (the referent of a =Ref= row, or the direct
@@ -457,7 +464,7 @@ mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
 mfr_path = "/music/jazz"                     # the one metarecord at this exact path
 tag -> (path = "music/jazz")                 # records carrying exactly this tag
 tag -> (path =>* "music/jazz")               # ... this tag or any tag beneath it
-type = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
+mf_schema = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
 #+END_SRC
 
 ** =mf query <predicate>=
@@ -610,6 +617,8 @@ predicate =
   | f:field "!=" "false"    => $f != false
   | f:field "!=" w:WORD     => $f != {str($w)}
   | f:field "~"  v:value    => $f MATCHES {str($v)}
+  | f:field "osm"  v:value  => osm($f, {str($v)})
+  | f:field "osmd" v:value  => osmd($f, {str($v)})
   | f:field ">=" n:number   => $f >= $n
   | f:field "<=" n:number   => $f <= $n
   | f:field ">"  n:number   => $f > $n
@@ -622,7 +631,8 @@ predicate =
   | df:datefield "since"   v:value               => $df >= @{str($v)}
   | df:datefield "before"  v:value               => $df < @{str($v)}
   | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "tag"                   => tag = "test"      # bare-word alias, kept as a fallback
+  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})   # exact tag
+  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)}) # tag or sub-tag
   | "fav"                   => rating >= 4
 
 # field aliases: map a few names, pass the rest through
@@ -646,8 +656,11 @@ dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
 #+END_SRC
 
 Ordering matters under ordered choice: the operator forms (=,= =!=,= =~=, =?=…)
-precede the bare-word aliases (=tag=, =fav=), so =tag=jazz= and =tag?= still
-parse as predicates and only a lone =tag= triggers its alias.
+precede the bare-word alias (=fav=). The tag macros =#X= (the tag =X= or any
+sub-tag — via the inclusive subtree =path =>* "X"=) and =##X= (exactly =X=) are
+distinct tokens under maximal munch (=#= vs =##=), so their order is
+immaterial; a nested tag path is quoted (=#"musique/jazz"=). To negate, keep a
+space (=! #musique=) — a bare =!#= lexes as one symbol token.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →

@@ -1713,7 +1713,7 @@ mod tests {
 
     fn pick_spec(caller_ws: &str) -> PickSpec {
         let mut vars = Map::new();
-        vars.insert("metarecord-list:query".into(), json!("type = \"tag\""));
+        vars.insert("metarecord-list:query".into(), json!("mf_schema = \"tag\""));
         PickSpec {
             caller_ws: caller_ws.to_string(),
             token: json!(7),
@@ -1739,7 +1739,7 @@ mod tests {
         assert_eq!(request["picker_slot"], "right");
         assert_eq!(
             state.get_var(&picker, "metarecord-list:query").unwrap(),
-            json!("type = \"tag\"")
+            json!("mf_schema = \"tag\"")
         );
 
         let layout = state.layout();

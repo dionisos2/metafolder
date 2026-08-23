@@ -929,10 +929,10 @@ fn test_reconcile_computes_and_can_disable_mime() {
 #[test]
 fn test_query_values_prints_raw_scalars() {
     let (repo, _root) = init_repo("values");
-    create_metarecord(&repo, &["type:string=tag", "name:string=jazz"]);
-    create_metarecord(&repo, &["type:string=tag", "name:string=rock", "weight:int=3"]);
+    create_metarecord(&repo, &["mf_schema:string=tag", "name:string=jazz"]);
+    create_metarecord(&repo, &["mf_schema:string=tag", "name:string=rock", "weight:int=3"]);
 
-    let out = mf(&["-u", &repo, "metarecord", "-q", "type = \"tag\"", "get", "--select", "name", "--values"]);
+    let out = mf(&["-u", &repo, "metarecord", "-q", "mf_schema = \"tag\"", "get", "--select", "name", "--values"]);
     assert_ok(&out);
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort_unstable();
@@ -2882,16 +2882,16 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     // Vocabulary as a TreeRef forest on `path`: each tag is a node whose parent
     // is another tag entry. jazz is exclusive among musique's children.
     let mk_tag = |specs: &[&str]| create_metarecord(&repo, specs);
-    let musique = mk_tag(&["type:string=tag", "path:tree_ref=/musique"]);
+    let musique = mk_tag(&["mf_schema:string=tag", "path:tree_ref=/musique"]);
     let jazz = mk_tag(&[
-        "type:string=tag",
+        "mf_schema:string=tag",
         format!("path:tree_ref={musique}/jazz").as_str(),
         "exclusive:bool=true",
     ]);
-    let _rock = mk_tag(&["type:string=tag", format!("path:tree_ref={musique}/rock").as_str()]);
-    let _bebop = mk_tag(&["type:string=tag", format!("path:tree_ref={jazz}/bebop").as_str()]);
-    let admin = mk_tag(&["type:string=tag", "path:tree_ref=/administratif"]);
-    let _impots = mk_tag(&["type:string=tag", format!("path:tree_ref={admin}/impots").as_str()]);
+    let _rock = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={musique}/rock").as_str()]);
+    let _bebop = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={jazz}/bebop").as_str()]);
+    let admin = mk_tag(&["mf_schema:string=tag", "path:tree_ref=/administratif"]);
+    let _impots = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={admin}/impots").as_str()]);
 
     let tag = |args: &[&str]| {
         let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
