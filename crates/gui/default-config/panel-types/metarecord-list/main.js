@@ -641,6 +641,23 @@ export async function mount(root, metafolder) {
     await workspace.set('metarecord-list:normal-query', normalInput.value);
   }
 
+  /** Empties all three search fields and re-runs (empty query = match all). */
+  async function clearAllQueries() {
+    finderInput.value = '';
+    finderText = '';
+    queryInput.value = '';
+    normalInput.value = '';
+    queryError.textContent = '';
+    normalError.textContent = '';
+    // Back to mirroring the (now empty) simplified query, so B shows empty too.
+    if (normalFrozen) await setNormalFrozen(false);
+    await recomputeQuery(); // queryIR = null (match all)
+    await persistQueryState();
+    await workspace.set('metarecord-list:finder', '');
+    queryRan = true;
+    await fetchPage(true);
+  }
+
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
   function scheduleLivePreview() {
     if (!normalShown || normalFrozen) return;
@@ -898,8 +915,12 @@ export async function mount(root, metafolder) {
   byId(root, 'columns-apply').addEventListener('click', () => {
     void commands.invoke('metarecord-list:apply-columns');
   });
+  // Enter applies AND leaves the field (blur) so the panel accelerators resume;
+  // Shift+Enter applies but keeps the focus for another edit.
   queryInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyQuery();
+    if (event.key !== 'Enter') return;
+    void applyQuery();
+    if (!event.shiftKey) queryInput.blur();
   });
   queryInput.addEventListener('input', scheduleLivePreview);
 
@@ -943,10 +964,14 @@ export async function mount(root, metafolder) {
   normalToggle.addEventListener('click', () => void setNormalShown(!normalShown));
   normalFreeze.addEventListener('change', () => void setNormalFrozen(normalFreeze.checked));
   normalInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyQuery();
+    if (event.key !== 'Enter') return;
+    void applyQuery();
+    if (!event.shiftKey) normalInput.blur();
   });
   columnsInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') void applyColumns();
+    if (event.key !== 'Enter') return;
+    void applyColumns();
+    if (!event.shiftKey) columnsInput.blur();
   });
   byId(root, 'bulk-open').addEventListener('click', () => {
     void commands.invoke('metarecord-list:open-bulk-edit');
@@ -1019,6 +1044,62 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:focus-columns', {
     label: 'Metarecord list: focus the columns input',
     handler: () => columnsInput.focus(),
+  });
+  // Open the normal-DSL editor, freeze it (so it drives the query and is
+  // editable), and focus it for hand-editing — the counterpart of focus-finder
+  // / focus-query for the third search field.
+  void commands.register('metarecord-list:edit-normal', {
+    label: 'Metarecord list: open, freeze and focus the normal DSL editor',
+    handler: async () => {
+      await setNormalShown(true);
+      await setNormalFrozen(true);
+      normalInput.focus();
+    },
+  });
+  // Clear all three search fields (finder + simplified + normal) and re-run —
+  // an empty query matches everything, so this resets to the full repo.
+  void commands.register('metarecord-list:clear-queries', {
+    label: 'Metarecord list: clear the finder, simplified and normal query fields',
+    handler: () => clearAllQueries(),
+  });
+  // Clear-then-edit, one field at a time. The finder is a live filter, so
+  // clearing it re-runs immediately (widening the result); the DSL fields wait
+  // for an explicit Enter, matching their normal type-then-apply flow.
+  void commands.register('metarecord-list:clear-edit-finder', {
+    label: 'Metarecord list: clear the finder and focus it',
+    handler: async () => {
+      finderInput.value = '';
+      finderInput.focus();
+      await applyFinder();
+    },
+  });
+  void commands.register('metarecord-list:clear-edit-simplified', {
+    label: 'Metarecord list: clear the simplified query field and focus it',
+    handler: () => {
+      queryInput.value = '';
+      queryError.textContent = '';
+      queryInput.focus();
+    },
+  });
+  void commands.register('metarecord-list:clear-edit-normal', {
+    label: 'Metarecord list: open the normal DSL editor, clear it, freeze and focus it',
+    handler: async () => {
+      await setNormalShown(true);
+      await setNormalFrozen(true);
+      normalInput.value = '';
+      normalError.textContent = '';
+      normalInput.focus();
+    },
+  });
+  // Enter in the finder: re-run the filter AND leave the field (blur), so the
+  // panel accelerators resume without a separate Escape. `apply-finder` (bound
+  // to Shift+Enter) is the stay-focused variant.
+  void commands.register('metarecord-list:submit-finder', {
+    label: 'Metarecord list: re-run the finder filter and leave the field',
+    handler: async () => {
+      await applyFinder({ record: true });
+      finderInput.blur();
+    },
   });
   void commands.register('metarecord-list:apply-query', {
     label: 'Metarecord list: apply the query',

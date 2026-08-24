@@ -60,7 +60,9 @@
 
 # Panel slots. panel:split is available via the command input.
 "v" = { command = "panel:split-toggle" }
-"c" = { command = "panel:unsplit" }
+# `panel:unsplit` lives on `u` (not `c`) so `c` can prefix the metarecord-list
+# clear-then-edit chords (c f/c s/c q/c a) below.
+"u" = { command = "panel:unsplit" }
 "o" = { command = "panel:focus-next" }
 "x" = { command = "panel:swap" }
 
@@ -181,7 +183,10 @@
 # the filter immediately (bypassing the debounce).
 "enter" = [
   { command = "editing:confirm", text-input = true },
-  { command = "metarecord-list:apply-finder", focus = "finder" },
+  # In the finder, Enter re-runs the filter AND leaves the field (blur), so the
+  # panel accelerators work again without a separate Escape. Shift+Enter (below)
+  # re-runs but keeps the focus for another edit.
+  { command = "metarecord-list:submit-finder", focus = "finder" },
   { command = "metarecord-list:open", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },
@@ -245,6 +250,23 @@
 "ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
 "/" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "ctrl+/" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
+
+# Editing the three search fields by chord (in addition to `/` and `ctrl+/`).
+# Two mnemonic families, both `when = "metarecord-list"` so the `e`/`c` prefixes
+# only ever arm inside the list (elsewhere the single key does nothing):
+#   e = edit the field (focus it, keep its content)
+#   c = clear that field first, then edit it
+# The field letter is the same in both: f = finder, s = simplified query,
+# q = the normal DSL (its command opens + freezes the editor). c a clears all
+# three at once. Shift+Enter in the finder re-runs but keeps the focus.
+"shift+enter" = { command = "metarecord-list:apply-finder", focus = "finder" }
+"e f" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
+"e s" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
+"e q" = { command = "metarecord-list:edit-normal", when = "metarecord-list" }
+"c f" = { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" }
+"c s" = { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" }
+"c q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
+"c a" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:field-delete", when = "metarecord-detail" }

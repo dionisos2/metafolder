@@ -714,7 +714,7 @@ the layout has no focused workspace at all (the only meaningful split
 then). =panel:unsplit= hides the non-focused slot; the
 workspace remains in the tab bar. =panel:split-toggle= splits when a single
 slot is visible and unsplits when both are — the everyday command; default
-suggestions: =v= for =panel:split-toggle=, =c= for =panel:unsplit=, =o= for
+suggestions: =v= for =panel:split-toggle=, =u= for =panel:unsplit=, =o= for
 =panel:focus-next=, =x= for =panel:swap=. The focused slot has a visible indicator (border
 highlight — theme-controlled); focus switches via =panel:focus-next=.
 
@@ -869,6 +869,12 @@ Behaviours:
 | =metarecord-list:focus-finder=        | Focus the finder (quick OSM filter) in metarecord-list |
 | =metarecord-list:focus-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:focus-columns= | Focus the columns input in metarecord-list     |
+| =metarecord-list:edit-normal=  | Open, freeze and focus the normal DSL editor (zone B) for hand-editing |
+| =metarecord-list:clear-queries= | Clear all three search fields (finder + simplified + normal) and re-run (match all) |
+| =metarecord-list:clear-edit-finder= | Clear the finder and focus it (re-runs live) |
+| =metarecord-list:clear-edit-simplified= | Clear the simplified query field and focus it |
+| =metarecord-list:clear-edit-normal= | Open the normal DSL editor, clear it, freeze and focus it |
+| =metarecord-list:submit-finder= | Re-run the finder filter and leave the field (blur); the Enter binding, vs =apply-finder= which keeps focus |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
@@ -979,6 +985,14 @@ Every command is reachable from the keyboard. No command requires the mouse.
 Within =metarecord-list=:
 - =/= focuses the finder (=metarecord-list:focus-finder=); =Ctrl+/= the structural query
   editor (=metarecord-list:focus-query=).
+- Two chord families edit the three search fields (in addition to =/= and
+  =Ctrl+/=), both scoped to the panel: =e= edits a field (focus, keep content),
+  =c= clears it first. The field letter is shared: =f= finder, =s= simplified
+  query, =q= the normal DSL (opens + freezes it). So =e f= / =e s= / =e q= and
+  =c f= / =c s= / =c q=; =c a= clears all three at once (=clear-queries=).
+- =Enter= in any of the search fields applies and *leaves* the field (blur), so
+  the panel accelerators resume without a separate =Escape=; =Shift+Enter=
+  applies but keeps the focus for another edit.
 - =Up= / =Down= move the selection (updates =selected_metarecord=).
 - =Enter= or =Right= switches the other slot to =metarecord-detail= (or =file= if
   =selected_paths= is non-empty), opening the slot if hidden. See

@@ -143,6 +143,65 @@ fn test_panel_dir_resolution() {
     assert!(config.panel_dir("../escape").is_none());
 }
 
+// The metarecord-list search-field editing shortcuts (GUI: search commands).
+// `panel:unsplit` moved off `c` (freeing it for the clear-then-edit chords),
+// and the finder's Enter now leaves the field while Shift+Enter keeps it.
+#[test]
+fn test_search_field_editing_keybindings() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    let compiled = config.load_keybindings().unwrap().compiled();
+
+    let find = |keys: &[&str]| -> Vec<String> {
+        compiled
+            .iter()
+            .filter(|b| b.keys.iter().map(String::as_str).eq(keys.iter().copied()))
+            .map(|b| b.invocation.clone())
+            .collect()
+    };
+    let mlist = |keys: &[&str]| -> Option<String> {
+        compiled
+            .iter()
+            .find(|b| {
+                b.keys.iter().map(String::as_str).eq(keys.iter().copied())
+                    && b.when.as_deref() == Some("metarecord-list")
+            })
+            .map(|b| b.invocation.clone())
+    };
+
+    // `panel:unsplit` moved from `c` to `u`; `c` is now free (no global single).
+    assert_eq!(find(&["u"]), ["panel:unsplit"]);
+    assert!(
+        find(&["c"]).is_empty(),
+        "`c` must be free for the clear chords, got {:?}",
+        find(&["c"])
+    );
+
+    // Edit family (focus, keep content): e f / e s / e q.
+    assert_eq!(mlist(&["e", "f"]).as_deref(), Some("metarecord-list:focus-finder"));
+    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:focus-query"));
+    assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:edit-normal"));
+
+    // Clear-then-edit family: c f / c s / c q, and c a clears all three.
+    assert_eq!(mlist(&["c", "f"]).as_deref(), Some("metarecord-list:clear-edit-finder"));
+    assert_eq!(mlist(&["c", "s"]).as_deref(), Some("metarecord-list:clear-edit-simplified"));
+    assert_eq!(mlist(&["c", "q"]).as_deref(), Some("metarecord-list:clear-edit-normal"));
+    assert_eq!(mlist(&["c", "a"]).as_deref(), Some("metarecord-list:clear-queries"));
+
+    // Finder Enter leaves the field (submit-finder); Shift+Enter re-runs but
+    // keeps focus (apply-finder). Both are focus-scoped to the finder input.
+    let enter_finder = compiled
+        .iter()
+        .find(|b| b.keys == ["enter"] && b.focus.as_deref() == Some("finder"))
+        .map(|b| b.invocation.clone());
+    assert_eq!(enter_finder.as_deref(), Some("metarecord-list:submit-finder"));
+    let shift_enter_finder = compiled
+        .iter()
+        .find(|b| b.keys == ["shift+enter"] && b.focus.as_deref() == Some("finder"))
+        .map(|b| b.invocation.clone());
+    assert_eq!(shift_enter_finder.as_deref(), Some("metarecord-list:apply-finder"));
+}
+
 #[test]
 fn test_load_config_errors_without_a_config_file() {
     // Like the keybindings/style, a missing config.toml is an error (no
