@@ -27,13 +27,26 @@ fn default_panel_type(active_repo: Option<&str>) -> &'static str {
     }
 }
 
+/// One running shell script, as surfaced in the task bar (spec-gui
+/// "Scripting"). `done`/`total` drive a determinate progress bar when the
+/// script reports them (via `mf gui progress`); absent ⇒ a spinner.
+#[derive(Clone, Default)]
+struct ScriptTask {
+    ws_id: String,
+    label: String,
+    phase: Option<String>,
+    done: Option<u64>,
+    total: Option<u64>,
+}
+
 pub struct GuiState {
     inner: Mutex<Inner>,
-    /// Shell scripts currently running, keyed by the workspace they were
-    /// launched from → a human label (spec-gui "Scripting" running indicator).
+    /// Shell scripts currently running, keyed by a per-run id (the value of
+    /// `METAFOLDER_GUI_TASK` injected into the subprocess), so a script can
+    /// address its own progress regardless of which workspace is focused.
     /// Kept out of `Inner` so the workspace/message lock is never held across
     /// the notify that broadcasts the running set.
-    scripts: Mutex<HashMap<String, String>>,
+    scripts: Mutex<HashMap<String, ScriptTask>>,
     notifier: Arc<dyn FrontendNotifier>,
 }
 
@@ -295,17 +308,47 @@ impl GuiState {
         GuiState { inner: Mutex::new(inner), scripts: Mutex::new(HashMap::new()), notifier }
     }
 
-    /// Marks a shell script as running in `ws_id` under a human `label` and
-    /// broadcasts the running set, so the frontend can show a loading
-    /// indicator (spec-gui "Scripting"). Paired with [`Self::script_end`].
-    pub fn script_begin(&self, ws_id: &str, label: &str) {
-        self.scripts.lock_recover().insert(ws_id.to_string(), label.to_string());
+    /// Marks a shell script (run id `task_id`, launched from `ws_id`) as running
+    /// under a human `label` and broadcasts the running set, so the frontend can
+    /// show a loading indicator (spec-gui "Scripting"). Paired with
+    /// [`Self::script_end`].
+    pub fn script_begin(&self, task_id: &str, ws_id: &str, label: &str) {
+        self.scripts.lock_recover().insert(
+            task_id.to_string(),
+            ScriptTask { ws_id: ws_id.to_string(), label: label.to_string(), ..Default::default() },
+        );
         self.emit_scripts();
     }
 
-    /// Clears the running mark for `ws_id` and rebroadcasts.
-    pub fn script_end(&self, ws_id: &str) {
-        self.scripts.lock_recover().remove(ws_id);
+    /// Updates a running script's determinate progress (`mf gui progress`).
+    /// Only the provided fields are overwritten; unknown ids are ignored (a
+    /// script run outside the GUI reports to nothing). Rebroadcasts on a hit.
+    pub fn script_progress(
+        &self,
+        task_id: &str,
+        done: Option<u64>,
+        total: Option<u64>,
+        phase: Option<String>,
+    ) {
+        {
+            let mut scripts = self.scripts.lock_recover();
+            let Some(task) = scripts.get_mut(task_id) else { return };
+            if done.is_some() {
+                task.done = done;
+            }
+            if total.is_some() {
+                task.total = total;
+            }
+            if phase.is_some() {
+                task.phase = phase;
+            }
+        }
+        self.emit_scripts();
+    }
+
+    /// Clears the running mark for run id `task_id` and rebroadcasts.
+    pub fn script_end(&self, task_id: &str) {
+        self.scripts.lock_recover().remove(task_id);
         self.emit_scripts();
     }
 
@@ -314,7 +357,16 @@ impl GuiState {
             .scripts
             .lock_recover()
             .iter()
-            .map(|(ws, label)| json!({ "workspace_id": ws, "label": label }))
+            .map(|(id, t)| {
+                json!({
+                    "task": id,
+                    "workspace_id": t.ws_id,
+                    "label": t.label,
+                    "phase": t.phase,
+                    "done": t.done,
+                    "total": t.total,
+                })
+            })
             .collect();
         self.notifier.emit(events::SCRIPT_TASK_CHANGED, json!({ "tasks": tasks }));
     }

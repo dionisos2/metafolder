@@ -1086,11 +1086,11 @@ async fn test_list_fields_distinct_names_and_types() {
         "rating:int",
         "genre:string",
         "category:tree_ref",
-        // The init-time root metarecord contributes these.
+        // The init-time root metarecord contributes these. (It carries no
+        // mf_ignore any more — those patterns are applied client-side.)
         "mfr_path:tree_ref",
         "mfr_type:string",
         "mf_watch:bool",
-        "mf_ignore:string",
     ] {
         assert!(pairs.contains(expected), "missing {expected} in {pairs:?}");
     }

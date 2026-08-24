@@ -5,9 +5,12 @@ pub mod config_sync;
 pub mod date;
 pub mod dsl;
 pub mod hex;
+pub mod ignore;
+pub mod ignore_presets;
 pub mod metarecord;
 pub mod progress;
 pub mod query;
+pub mod repo_init;
 pub mod scripts;
 pub mod simplified;
 pub mod sync;
@@ -27,4 +30,4 @@ pub mod trash;
 /// changes do not require a bump. It is a single monotonic integer on purpose:
 /// same number ⇒ compatible, different number ⇒ refuse/ warn — no range
 /// negotiation.
-pub const API_VERSION: u32 = 1;
+pub const API_VERSION: u32 = 2;

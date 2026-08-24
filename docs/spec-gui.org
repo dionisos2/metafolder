@@ -783,12 +783,16 @@ workspace: it surfaces every blocking task on the loaded repositories,
 including reconciles started from the CLI or another client.
 
 Running *shell scripts* (a =!= command, or the =script:run= builtin) also
-appear here as a loading indicator — a spinner labelled by the script's base
-name — for the whole time the subprocess runs, so a slow script never looks
-frozen. These are GUI-side, not daemon tasks: the GUI tracks them itself
-(=script-task-changed=) rather than polling =GET /tasks=. A script that emits
-progress does so through its streamed output / =mf gui message= lines (visible
-in the message panel); the indicator itself is a spinner.
+appear here as a loading indicator for the whole time the subprocess runs, so a
+slow script never looks frozen. These are GUI-side, not daemon tasks: the GUI
+tracks them itself (=script-task-changed=) rather than polling =GET /tasks=.
+The entry is labelled by the script's base name; it is a spinner by default and
+becomes a *determinate progress bar* when the script reports =done=/=total= via
+=mf gui progress= (which also sets a =phase= label for the current step, e.g.
+the file being processed). When the GUI launches a script it injects a per-run
+id as =METAFOLDER_GUI_TASK=, which =mf gui progress= reads so a script addresses
+its own entry regardless of the focused workspace; outside the GUI the variable
+is unset and the call is a harmless no-op.
 
 ** Command input
 
@@ -2174,6 +2178,20 @@ Request body:
 =timeout_ms=: null → status bar message persists until the next message;
 integer → auto-clears after that many milliseconds.
 
+*** =POST /gui/progress=
+
+Updates the running script's loading indicator in the [[*Task bar]]. =task= is
+the run id the GUI injected as =METAFOLDER_GUI_TASK= when it launched the
+script; =done=/=total= drive a determinate progress bar, =phase= labels the
+current step. Only the provided fields are overwritten; an absent or unknown
+=task= is a lenient no-op (=200=), so a script may call it unconditionally —
+outside the GUI the variable is unset and nothing happens.
+
+Request body:
+#+BEGIN_SRC json
+{"task": "script-3", "done": 12, "total": 30, "phase": "/music/x.mp3"}
+#+END_SRC
+
 *** =POST /gui/input=
 
 Registers an input wait and blocks until the =answer:send= command is
@@ -2259,6 +2277,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui layout [<slot> [<ws or ->]]=                 | Prints both slots / one slot / assigns (=-= hides the slot)        |
 | =mf gui view <slot> [<type>] [--path] [--state]=     | Prints or sets the panel type of a slot                            |
 | =mf gui message <text> [--workspace] [--timeout-ms]= | Posts a status bar message                                         |
+| =mf gui progress [--done N] [--total M] [--phase P] [--task ID]= | Updates the running script's task-bar indicator (=--task= defaults to =METAFOLDER_GUI_TASK=; no-op outside the GUI) |
 | =mf gui command <invocation>... [--timeout-ms]=      | Runs a command invocation through the GUI (exit 1 on error/timeout) |
 | =mf gui bench [--clear]=                             | Prints the recorded bench measures (JSON), or clears the buffer    |
 | =mf gui input <key>... [--prompt <text>] [--timeout-ms]= | Waits for one of the keys, prints it (=--prompt= shows a question in the dedicated bar; exit 1 on timeout/close) |

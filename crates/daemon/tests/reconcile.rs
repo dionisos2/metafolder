@@ -31,10 +31,28 @@ fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf) {
         let mut conn = repo_state.conn.lock().unwrap();
         let mut w = Writer::begin(&mut conn, None).unwrap();
         w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
+        // The daemon no longer writes default mf_ignore at init (patterns come
+        // from the client-side `default` preset, spec-file-tracking "Ignore
+        // presets"); apply the representative default set so these tests keep a
+        // realistic repo fixture where hidden entries and .metafolder are ignored.
+        for pattern in DEFAULT_PATTERNS {
+            w.append_field(root_uuid, "mf_ignore", Value::String((*pattern).into())).unwrap();
+        }
         w.commit().unwrap();
     }
     (repo_state, root)
 }
+
+/// A representative default-like ignore set, mirroring the shipped `default`
+/// ignore preset (spec-file-tracking "Ignore presets").
+const DEFAULT_PATTERNS: &[&str] = &[
+    r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$",
+    r"node_modules(/.*)?$",
+    r"__pycache__(/.*)?$",
+    r"\.git(/.*)?$",
+    r"\.metafolder(/.*)?$",
+    r"(^|/)\.[^/]+",
+];
 
 fn write_file(root: &Path, rel: &str, content: &[u8]) {
     let path = root.join(rel.trim_start_matches('/'));

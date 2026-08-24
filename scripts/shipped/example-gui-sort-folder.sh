@@ -109,8 +109,14 @@ for abs in "$SORT_DIR"/*; do
     dest=$(destination "$uuid")
     if [ -n "$dest" ]; then
         mkdir -p "$dest"
-        mv -n -- "$abs" "$dest/"
-        mf gui message "moved $(basename "$abs") -> $dest" --timeout-ms 3000
+        # `mv -n` never overwrites, so an existing destination would be a silent
+        # no-op — detect it and report honestly instead of claiming "moved".
+        if [ -e "$dest/$(basename "$abs")" ]; then
+            mf gui message "skipped $(basename "$abs") — $dest/$(basename "$abs") exists" --timeout-ms 3000
+        else
+            mv -n -- "$abs" "$dest/"
+            mf gui message "moved $(basename "$abs") -> $dest" --timeout-ms 3000
+        fi
     else
         mf gui message "no rule matched for $(basename "$abs") — left in place" --timeout-ms 3000
     fi

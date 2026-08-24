@@ -72,6 +72,7 @@ apply_tree() { # <uuid> <treepath> <verb: add|deny>
 # handle_dir / handle_file return 1 to signal "stop the whole run".
 handle_dir() { # <uuid> <treepath> <abs>
     mf_gui_show_file "$3"
+    mf_gui_progress --phase "$2"
     case "$(mf_gui_ask "'$2' has tag '$TAG'?   [y] oui   [n] non   [m] mixed   [Esc] stop" y n m escape)" in
         y) apply_tree "$1" "$2" add ;;
         n) apply_tree "$1" "$2" deny ;;
@@ -81,6 +82,7 @@ handle_dir() { # <uuid> <treepath> <abs>
 }
 handle_file() { # <uuid> <treepath> <abs>
     mf_gui_show_file "$3"
+    mf_gui_progress --phase "$2"
     case "$(mf_gui_ask "'$2' has tag '$TAG'?   [y] oui   [n] non   [Esc] stop" y n escape)" in
         y) mf tag -i "$1" add "$TAG" >/dev/null ;;
         n) mf tag -i "$1" deny "$TAG" >/dev/null ;;

@@ -3,6 +3,7 @@
 //! log (message panel type) and to the terminal that launched the GUI.
 
 use crate::state::GuiState;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -17,9 +18,15 @@ pub async fn run_to_completion(
     // Fail fast on unknown workspaces (and log the invocation).
     gui.append_message(&ws_id, &format!("$ {command_line}"))?;
 
+    // A per-run id the subprocess can address its own progress with
+    // (`mf gui progress` reads it from METAFOLDER_GUI_TASK); session-unique.
+    static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
+    let task_id = format!("script-{}", RUN_SEQ.fetch_add(1, Ordering::Relaxed));
+
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(&command_line)
+        .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -28,8 +35,8 @@ pub async fn run_to_completion(
     // Show a running indicator until this function returns (spec-gui
     // "Scripting"). The guard clears it on every exit path — early `?`
     // returns and panics included — so the spinner can never get stuck on.
-    gui.script_begin(&ws_id, &script_label(&command_line));
-    let _running = RunningGuard { gui: gui.clone(), ws_id: ws_id.clone() };
+    gui.script_begin(&task_id, &ws_id, &script_label(&command_line));
+    let _running = RunningGuard { gui: gui.clone(), task_id: task_id.clone() };
 
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
@@ -55,12 +62,12 @@ pub async fn run_to_completion(
 /// on every exit path of `run_to_completion` (including an early `?` return).
 struct RunningGuard {
     gui: Arc<GuiState>,
-    ws_id: String,
+    task_id: String,
 }
 
 impl Drop for RunningGuard {
     fn drop(&mut self) {
-        self.gui.script_end(&self.ws_id);
+        self.gui.script_end(&self.task_id);
     }
 }
 
@@ -172,16 +179,37 @@ mod tests {
     fn test_running_indicator_begins_and_clears() {
         let notifier = Arc::new(RecordingNotifier::new());
         let gui = Arc::new(GuiState::new(notifier.clone()));
-        gui.script_begin("ws-1", "gui-tag-folder.sh");
-        gui.script_end("ws-1");
+        gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
+        gui.script_end("script-1");
 
         let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
         assert_eq!(payloads.len(), 2, "one emit for begin, one for end");
         let running = payloads[0]["tasks"].as_array().unwrap();
         assert_eq!(running.len(), 1);
+        assert_eq!(running[0]["task"], "script-1");
         assert_eq!(running[0]["label"], "gui-tag-folder.sh");
         assert_eq!(running[0]["workspace_id"], "ws-1");
         assert_eq!(payloads[1]["tasks"].as_array().unwrap().len(), 0, "cleared on end");
+    }
+
+    #[test]
+    fn test_script_progress_updates_done_total_phase() {
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        gui.script_begin("script-1", "ws-1", "gui-tag-pair.sh");
+        gui.script_progress("script-1", Some(3), Some(10), Some("/music/x.mp3".into()));
+        // A later call overwrites only the fields it provides (done here).
+        gui.script_progress("script-1", Some(4), None, None);
+        // An unknown run id is ignored (no panic, no new emit).
+        let before = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED).len();
+        gui.script_progress("nope", Some(9), Some(9), None);
+        assert_eq!(notifier.payloads(crate::events::SCRIPT_TASK_CHANGED).len(), before);
+
+        let last = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        let task = &last.last().unwrap()["tasks"][0];
+        assert_eq!(task["done"], 4);
+        assert_eq!(task["total"], 10, "total persists across a done-only update");
+        assert_eq!(task["phase"], "/music/x.mp3");
     }
 
     #[tokio::test]

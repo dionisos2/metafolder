@@ -23,26 +23,6 @@ pub const DB_FILE: &str = "db.sqlite";
 /// never feed back into the event stream.
 pub const INTERNAL_DIR: &str = "internal";
 
-/// Default `mf_ignore` patterns written on the root metarecord at init.
-/// The hidden-entry pattern (`(^|/)\.[^/]+`) already covers `.git` and
-/// `.metafolder`; the more specific patterns are kept as separate entries so a
-/// user can drop "ignore all hidden files" without also un-ignoring those.
-///
-/// The cargo pattern ignores the intermediate build output cargo regenerates
-/// on every `cargo build` — `deps/`, `build/`, `incremental/`, `.fingerprint/`,
-/// `examples/` under `target/<profile>/` (and the cross-compile
-/// `target/<triple>/<profile>/…` form) — while leaving the final artifacts that
-/// sit directly in `target/<profile>/` (the built binaries and libraries)
-/// tracked. It is one grouped entry so it can be dropped as a unit.
-pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
-    r"\.git(/.*)?$",
-    r"node_modules(/.*)?$",
-    r"__pycache__(/.*)?$",
-    r"\.metafolder(/.*)?$",
-    r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$",
-    r"(^|/)\.[^/]+",
-];
-
 /// An initialised or loaded repository: its config, its open (exclusive)
 /// database connection, and the location of its `.metafolder/` directory.
 #[derive(Debug)]
@@ -149,16 +129,16 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 }
 
 /// Creates the filesystem root metarecord: `mfr_path` root TreeRef, directory
-/// type, tracking disabled (opt-in), default ignore patterns.
+/// type, tracking disabled (opt-in). No `mf_ignore` is written: the daemon
+/// carries no built-in ignore policy (spec-config "No runtime fallback"); the
+/// default patterns are applied client-side as the `default` ignore preset by
+/// `mf repo init` / the GUI (spec-file-tracking "Ignore presets").
 fn create_root_entry(conn: &mut Connection) -> Result<()> {
-    let mut fields = vec![
+    let fields = vec![
         Field::new("mfr_path", Value::TreeRef { parent: None, name: String::new() }),
         Field::new("mfr_type", Value::String("dir".to_string())),
         Field::new("mf_watch", Value::Bool(false)),
     ];
-    for pattern in DEFAULT_IGNORE_PATTERNS {
-        fields.push(Field::new("mf_ignore", Value::String(pattern.to_string())));
-    }
     let mut writer = Writer::begin(conn, None)?;
     writer.create_metarecord(fields)?;
     writer.commit()

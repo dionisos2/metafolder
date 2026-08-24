@@ -280,24 +280,45 @@ export async function mount(root, metafolder) {
    * @param {HTMLElement} form @param {string} path @param {unknown} payload
    * @param {HTMLElement} errorElement
    */
+  // Shared post-creation flow: hide the form, refresh the list, and either adopt
+  // the new repo (if none is active) or announce it.
+  /** @param {HTMLElement} form @param {string} repoUuid */
+  async function onCreated(form, repoUuid) {
+    toggleForm(form, false);
+    await refresh();
+    const current = await workspace.get('active_repo');
+    if (current === null) {
+      await workspace.adoptRepo(repoUuid);
+      await commands.invoke('panel:set-type metarecord-list');
+    } else {
+      void statusBar.message(
+        `Repository ready: ${repoUuid.slice(0, 8)}… (open it from the list)`,
+        6000,
+      );
+    }
+  }
+
   async function submit(form, path, payload, errorElement) {
     errorElement.textContent = '';
     try {
       const created = /** @type {{repo_uuid: string}} */ (
         await daemon.call('POST', path, payload)
       );
-      toggleForm(form, false);
-      await refresh();
-      const current = await workspace.get('active_repo');
-      if (current === null) {
-        await workspace.adoptRepo(created.repo_uuid);
-        await commands.invoke('panel:set-type metarecord-list');
-      } else {
-        void statusBar.message(
-          `Repository ready: ${created.repo_uuid.slice(0, 8)}… (open it from the list)`,
-          6000,
-        );
-      }
+      await onCreated(form, created.repo_uuid);
+    } catch (error) {
+      errorElement.textContent = messageOf(error);
+    }
+  }
+
+  // Repo creation goes through daemon.initRepo (core::repo_init): it also applies
+  // the `default` ignore preset to the new root, which a raw POST /repos/init
+  // would skip (the daemon writes no default ignores itself).
+  /** @param {{root: string, name?: string}} opts */
+  async function submitInit(form, opts, errorElement) {
+    errorElement.textContent = '';
+    try {
+      const repoUuid = await daemon.initRepo(opts);
+      await onCreated(form, repoUuid);
     } catch (error) {
       errorElement.textContent = messageOf(error);
     }
@@ -362,8 +383,8 @@ export async function mount(root, metafolder) {
     event.preventDefault();
     const root_ = byId(root, 'init-root', HTMLInputElement).value.trim();
     const name = byId(root, 'init-name', HTMLInputElement).value.trim();
-    const payload = name ? { root: root_, name } : { root: root_ };
-    void submit(initForm, '/repos/init', payload, byId(root, 'init-error'));
+    const opts = name ? { root: root_, name } : { root: root_ };
+    void submitInit(initForm, opts, byId(root, 'init-error'));
   });
 
   loadForm.addEventListener('submit', (event) => {

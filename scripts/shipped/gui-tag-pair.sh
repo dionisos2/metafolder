@@ -42,10 +42,17 @@ TAG_COND="(mf_schema = \"tag\" AND path = \"$TAG\")"
 PREDICATE="mfr_path IS PRESENT AND mfr_type = \"file\" \
 AND NOT (tag -> $TAG_COND OR negative_tag -> $TAG_COND)"
 
-yes=0 no=0 skipped=0
-while read -r uuid; do
+# Collect the whole worklist up front so the progress indicator has a total.
+mapfile -t uuids < <(mf metarecord -q "$PREDICATE" get)
+total=${#uuids[@]}
+
+yes=0 no=0 skipped=0 i=0
+for uuid in "${uuids[@]}"; do
+    [ -n "$uuid" ] || continue
+    i=$((i + 1))
     abs=$(mf path "$uuid") || continue # the file disappeared meanwhile
     rel=$(mf path --relative "$uuid")
+    mf_gui_progress --done "$i" --total "$total" --phase "$rel"
     mf_gui_show_file "$abs"
     case "$(mf_gui_ask "[y] $TAG   [n] not $TAG   [s] skip   [Esc] quit — $rel" y n s escape)" in
         y) mf tag -i "$uuid" add "$TAG" >/dev/null; yes=$((yes + 1)) ;;
@@ -53,7 +60,7 @@ while read -r uuid; do
         s) skipped=$((skipped + 1)) ;;
         *) break ;; # escape
     esac
-done < <(mf metarecord -q "$PREDICATE" get)
+done
 
 SUMMARY="Tagging '$TAG' done: $yes yes, $no no, $skipped skipped"
 mf gui message "$SUMMARY" --timeout-ms 5000

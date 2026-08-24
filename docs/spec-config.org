@@ -37,6 +37,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   .gitignore
   core/                          ← shared configuration
     query-grammar                ← simplified-query grammar (client-side expansion)
+    ignore-presets.toml          ← named mf_ignore presets (client-side expansion)
   daemon/
     config.toml                  ← repos to auto-load
   gui/
@@ -190,6 +191,12 @@ file kind:
   when a client loads it (previously: the daemon installed a default if
   missing). An *empty* file stays valid (no rules = the simplified language
   accepts nothing). The normal DSL needs no grammar and is unaffected.
+- =core/ignore-presets.toml=: read **client-side** (CLI =mf ignore= / =mf repo
+  init=, GUI "create repo") — the daemon never reads it and carries no built-in
+  ignore policy. Missing or malformed ⇒ error when a client loads it (=mf repo
+  init --no-ignore= is the escape hatch that skips loading it). Preset →
+  patterns expansion is pure and client-side (=core::ignore_presets=). See
+  spec-file-tracking "Ignore presets".
 - =gui/style.css=: missing ⇒ error (previously: fall back to the embedded
   default).
 - =gui/keybindings.toml=: see below.

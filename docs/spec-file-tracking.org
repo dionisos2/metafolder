@@ -103,7 +103,9 @@ MinHash banding (above) remains the planned optimisation for repositories whose
 
 The daemon uses two =mf_*= fields on directory metarecords to determine which
 files and directories to track. Both are inherited from the nearest ancestor
-that defines them; the root metarecord always defines both.
+that defines them. The root metarecord always defines =mf_watch= (=false= at
+init); =mf_ignore= is *not* written by the daemon at all (see "Ignore presets"
+below) — it is applied by the client tooling from named presets.
 
 *** Fields
 
@@ -121,29 +123,109 @@ that defines them; the root metarecord always defines both.
   =mf_ignore= row provides the effective pattern set; patterns from different
   ancestors are *not* merged.
 
-At =repo init=, the root metarecord is created with =mf_watch = false= and the
-following default =mf_ignore= rows:
+At =repo init= the daemon writes =mf_watch = false= on the root and *no*
+=mf_ignore= rows: the daemon carries no built-in ignore policy (it stays
+consistent with the config system's "no embedded defaults / no runtime
+fallback" rule — spec-config). A bare =POST /repos/init= therefore yields a
+root with an empty ignore set; this is harmless because =mf_watch= is =false=,
+so nothing is tracked until the user opts in, at which point they also choose an
+ignore set. The familiar default patterns are applied by the client tooling as
+the =default= preset (below), so the normal =mf repo init= / GUI "create repo"
+flow ends up with exactly the same patterns as before — they are merely sourced
+from configuration instead of being baked into the daemon.
 
-#+BEGIN_SRC
-\.git(/.*)?$
-node_modules(/.*)?$
-__pycache__(/.*)?$
-\.metafolder(/.*)?$
-(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$
-(^|/)\.[^/]+
+*** Ignore presets
+
+Ignore *presets* are named, reusable groups of =mf_ignore= patterns living in
+the user configuration (=~/.config/metafolder/core/ignore-presets.toml=, shipped
+from =crates/core/default-config/= and installed by =metafolder-sync-config=,
+like the simplified-query grammar). They exist purely for naming, documentation
+and grouping: expansion (preset name → patterns) is a *pure, client-side*
+transformation performed by =core::ignore_presets= and shared by the CLI and the
+GUI; the daemon never sees a preset name — it only ever receives the final
+=mf_ignore= strings.
+
+A preset is either a *leaf* (a =patterns= list) or a *group* (a =pattern-set=
+list of other preset names), or both (their expansions are unioned). Groups are
+expanded recursively; a reference cycle is a hard error. The file is *required*:
+a missing or malformed =ignore-presets.toml= is a startup/usage error pointing
+at =metafolder-sync-config= (never a silent fallback — spec-config).
+
+#+BEGIN_SRC toml
+[rust-build]
+description = "Cargo build intermediates (keeps the final binaries)"
+patterns = ['(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$']
+
+[node]
+description = "npm dependencies"
+patterns = ['node_modules(/.*)?$']
+
+[python]
+description = "Python caches"
+patterns = ['__pycache__(/.*)?$']
+
+[git]
+description = "Git metadata"
+patterns = ['\.git(/.*)?$']
+
+[metafolder]
+description = "The .metafolder configuration directory"
+patterns = ['\.metafolder(/.*)?$']
+
+[hidden]
+description = "Every hidden (dot-prefixed) entry"
+patterns = ['(^|/)\.[^/]+']
+
+# … plus the shipped leaves node-build, julia, cpp, java, cache, os, editor
+# (abbreviated here; see crates/core/default-config/ignore-presets.toml).
+
+# A group preset: expands to the union of the referenced presets' patterns.
+[default]
+description = "The default set of mf_ignore patterns for a fresh root"
+pattern-set = ["rust-build", "node", "node-build", "python", "julia", "cpp",
+               "java", "cache", "os", "editor", "git", "metafolder", "hidden"]
 #+END_SRC
 
-The last row ignores every *hidden* entry (a path component starting with a
-dot); it already covers =.git= and =.metafolder=. The more specific =\.git= and
-=\.metafolder= rows are kept as separate entries so a user can drop "ignore all
-hidden files" without also un-ignoring those two.
+The shipped file defines a preset per common toolchain / junk source:
+=rust-build=, =node= / =node-build= (npm deps; JS-TS build caches and compiled
+native addons), =python= (bytecode + tool caches), =julia= (coverage/build/doc
+output), =cpp= (object files, precompiled headers, CMake files), =java=
+(=.class= + the Gradle cache), =cache= (generic caches/temp), =os= (=.DS_Store=,
+=Thumbs.db=, …), =editor= (swap/backup/autosave), and =git= / =metafolder= /
+=hidden=. It stays *conservative*: only clearly regenerable intermediates and
+junk are matched — never ambiguous names like =dist/= / =build/=, static
+libraries, or extension-less executables, which are often tracked deliverables.
 
-The =target/= row ignores the intermediate build output cargo regenerates on
-every =cargo build= — the =deps/=, =build/=, =incremental/=, =.fingerprint/= and
-=examples/= directories under =target/<profile>/= (and the cross-compile
+=git= and =metafolder= are kept as leaf presets distinct from =hidden= (which
+already subsumes them) so that dropping "ignore all hidden entries" from a
+target does not silently un-ignore =.git= / =.metafolder=.
+
+The =rust-build= patterns ignore the intermediate build output cargo regenerates
+on every =cargo build= — =deps/=, =build/=, =incremental/=, =.fingerprint/= and
+=examples/= under =target/<profile>/= (and the cross-compile
 =target/<triple>/<profile>/…= form) — while leaving the *final* artifacts that
 sit directly in =target/<profile>/= (the built binaries and libraries) tracked.
-It is a single grouped row so it can be dropped as a unit.
+Splitting the shipped =default= into named leaf presets lets a user apply a
+subset (e.g. just =rust-build,node=) or drop one group without touching the
+others.
+
+**** Applying presets
+
+Applying a preset expands it to patterns client-side and writes them into the
+target metarecord's =mf_ignore= set via the daemon API: =add= appends,
+=remove= deletes the matching rows, and =set= *replaces* the whole set (drops
+every current =mf_ignore= row on the target, then writes the expanded patterns).
+Because the effective set is the nearest
+ancestor's (patterns are never merged across ancestors — see below), a preset is
+normally applied at the tracking-scope root it should govern.
+
+The full "create a repo with its default ignores" flow — =POST /repos/init=
+followed by applying the =default= preset to the new root — lives in =core= (a
+=core::repo_init= orchestration over a thin =DaemonClient= trait, in the same
+spirit as =core::sync= / =core::trash=) and is reused verbatim by both the CLI
+(=mf repo init=) and the GUI "create repo" flow, so the two behave identically.
+The preset-application half is exposed separately (=core::ignore::apply=) for the
+=mf ignore= command.
 
 *** Eligibility algorithm
 

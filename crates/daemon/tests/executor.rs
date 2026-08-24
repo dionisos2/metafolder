@@ -159,7 +159,15 @@ fn test_create_directory_scans_its_existing_contents() {
 
 #[test]
 fn test_ineligible_paths_are_ignored() {
-    let (repo, root, _) = setup("ignored");
+    let (repo, root, root_uuid) = setup("ignored");
+    // The daemon writes no default mf_ignore any more (patterns come from the
+    // client-side `default` preset); set the `.git` pattern this test relies on.
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.append_field(root_uuid, "mf_ignore", Value::String(r"\.git(/.*)?$".into())).unwrap();
+        w.commit().unwrap();
+    }
     write_file(&root, ".git/config", b"x");
     enqueue(&repo, &[FsEvent::Create("/.git/config".into())]);
     executor::flush_pending(&repo).unwrap();

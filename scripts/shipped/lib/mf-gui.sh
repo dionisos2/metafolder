@@ -108,6 +108,13 @@ mf_gui_path_uuid() { # <treepath>
     mf metarecord -q "mfr_path = \"$(mf_gui_query_path "$1")\"" get | head -n1
 }
 
+# Update this script's entry in the GUI task bar (spec-gui "Scripting"): a
+# determinate progress bar with --done/--total, and/or a --phase label for the
+# current step. A no-op outside the GUI (METAFOLDER_GUI_TASK unset) and never
+# fatal, so scripts may call it unconditionally.
+#     mf_gui_progress --done 3 --total 10 --phase "/music/x.mp3"
+mf_gui_progress() { mf gui progress "$@" >/dev/null 2>&1 || :; }
+
 # Ask a question in the GUI and wait for one key:
 #     key=$(mf_gui_ask "message" y n escape)
 # Prints the pressed key; 'escape' on timeout or a closed GUI. Targets the

@@ -177,6 +177,13 @@ enum Command {
         #[command(subcommand)]
         verb: TagVerb,
     },
+    /// Named mf_ignore presets: apply/replace/remove them on a directory
+    /// (default: list). The target directory is chosen with -d <path>
+    /// (default: the repository root).
+    Ignore {
+        #[command(subcommand)]
+        command: Option<IgnoreCommand>,
+    },
     /// User schema commands
     Schema {
         #[command(subcommand)]
@@ -207,11 +214,22 @@ enum RepoCommand {
         all: bool,
     },
     /// Initialise a new repository and print its UUID
+    ///
+    /// Applies the `default` ignore preset to the new root (spec-file-tracking
+    /// "Ignore presets"); use --ignore to pick a different preset set, or
+    /// --no-ignore to leave the root's mf_ignore empty.
     Init {
         root: PathBuf,
         /// External database location (instead of <root>/.metafolder)
         #[arg(long)]
         metafolder: Option<PathBuf>,
+        /// Ignore presets to apply to the new root (comma/space separated;
+        /// default: "default")
+        #[arg(long = "ignore", value_name = "PRESETS", conflicts_with = "no_ignore")]
+        ignore: Vec<String>,
+        /// Leave the new root's mf_ignore set empty
+        #[arg(long = "no-ignore")]
+        no_ignore: bool,
     },
     /// Load an existing repository, wait for its warmup and print its UUID
     Load {
@@ -225,6 +243,35 @@ enum RepoCommand {
     },
     /// Unload the selected repository (stops its watcher, releases its DB lock)
     Unload,
+}
+
+/// Shared arguments for the `add`/`remove`/`set` ignore verbs.
+#[derive(clap::Args)]
+struct IgnoreArgs {
+    /// Preset names (comma- or space-separated), e.g. `rust-build,node`.
+    /// May be empty for `set` (which then clears the target's mf_ignore).
+    #[arg(value_name = "PRESETS")]
+    presets: Vec<String>,
+    /// Target directory (default: the repository root)
+    #[arg(short = 'd', long = "dir", value_name = "PATH")]
+    dir: Option<PathBuf>,
+}
+
+#[derive(Subcommand)]
+enum IgnoreCommand {
+    /// Append the presets' patterns to the target's mf_ignore set
+    Add(IgnoreArgs),
+    /// Remove the presets' patterns from the target's mf_ignore set
+    Remove(IgnoreArgs),
+    /// Replace the target's whole mf_ignore set with the presets' patterns
+    /// (with no preset, clears the set)
+    Set(IgnoreArgs),
+    /// List the available presets (with -d, also the target's active patterns)
+    List {
+        /// Target directory whose active patterns to also print
+        #[arg(short = 'd', long = "dir", value_name = "PATH")]
+        dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -589,6 +636,21 @@ enum GuiCommand {
         #[arg(long)]
         timeout_ms: Option<u64>,
     },
+    /// Report progress for the running script (updates its task-bar entry)
+    Progress {
+        /// Items processed so far (drives a determinate bar with --total)
+        #[arg(long)]
+        done: Option<u64>,
+        /// Total items to process
+        #[arg(long)]
+        total: Option<u64>,
+        /// Short label for the current step (e.g. the file being processed)
+        #[arg(long)]
+        phase: Option<String>,
+        /// Run id (default: the METAFOLDER_GUI_TASK the GUI injected)
+        #[arg(long)]
+        task: Option<String>,
+    },
     /// Print the recorded bench measures (JSON), or clear the buffer
     Bench {
         /// Empty the bench buffer instead of printing it
@@ -740,8 +802,8 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
     match command {
         Command::Repo { command } => match command.unwrap_or(RepoCommand::List { all: false }) {
             RepoCommand::List { all } => commands::repos(ctx, all),
-            RepoCommand::Init { root, metafolder } => {
-                commands::init(ctx, &root, metafolder.as_deref())
+            RepoCommand::Init { root, metafolder, ignore, no_ignore } => {
+                commands::init(ctx, &root, metafolder.as_deref(), ignore, no_ignore)
             }
             RepoCommand::Load { root, metafolder, no_wait } => {
                 commands::load(ctx, root.as_deref(), metafolder.as_deref(), no_wait)
@@ -789,6 +851,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         Command::Tag { query, id, eq, simplified, verb } => {
             dispatch_tag(ctx, query, id, eq, simplified, verb)
         }
+        Command::Ignore { command } => dispatch_ignore(ctx, command),
         Command::Schema { command } => match command {
             SchemaCommand::Check { predicate, json } => {
                 commands::schema_check(ctx, predicate.as_deref(), json)
@@ -918,6 +981,18 @@ fn dispatch_field(ctx: &Ctx, command: Option<FieldCommand>) -> CmdResult {
     }
 }
 
+fn dispatch_ignore(ctx: &Ctx, command: Option<IgnoreCommand>) -> CmdResult {
+    use metafolder_core::ignore::Mode;
+    match command.unwrap_or(IgnoreCommand::List { dir: None }) {
+        IgnoreCommand::List { dir } => commands::ignore_list(ctx, dir.as_deref()),
+        IgnoreCommand::Add(a) => commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Add),
+        IgnoreCommand::Remove(a) => {
+            commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Remove)
+        }
+        IgnoreCommand::Set(a) => commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Set),
+    }
+}
+
 fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
     match command {
         None => log::log(ctx, &log::LogArgs::default()),
@@ -1020,6 +1095,9 @@ fn dispatch_gui(gui_url: Option<String>, command: GuiCommand) -> CmdResult {
         }
         GuiCommand::View { slot, panel_type, path, state } => {
             gui::view(&gui_ctx, &slot, panel_type.as_deref(), path.as_deref(), state.as_deref())
+        }
+        GuiCommand::Progress { done, total, phase, task } => {
+            gui::progress(&gui_ctx, done, total, phase.as_deref(), task)
         }
         GuiCommand::Message { text, workspace, timeout_ms } => {
             gui::message(&gui_ctx, &text, workspace.as_deref(), timeout_ms)

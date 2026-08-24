@@ -62,14 +62,14 @@ fn parse_selected(value: &Value) -> Option<(String, String)> {
 // synchronous, so — like `core::sync` — it rides a blocking `ureq` client on a
 // `spawn_blocking` thread rather than the async [`DaemonProxy`]. Mirrors the
 // CLI's client (auth token, `{"error": …}` bodies → the message, transport too).
-struct BlockingClient {
+pub(crate) struct BlockingClient {
     base: String,
     token: Option<String>,
     agent: ureq::Agent,
 }
 
 impl BlockingClient {
-    fn new(base: String) -> Self {
+    pub(crate) fn new(base: String) -> Self {
         Self {
             base: base.trim_end_matches('/').to_string(),
             token: metafolder_core::auth::read_token("daemon").ok(),

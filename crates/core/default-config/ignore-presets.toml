@@ -1,0 +1,135 @@
+# Named mf_ignore presets (spec-file-tracking "Ignore presets").
+#
+# Each preset is either a *leaf* (a `patterns` list of regexes) or a *group*
+# (a `pattern-set` list of other preset names), or both (their expansions are
+# unioned). Expansion (preset name -> patterns) is a pure, client-side
+# transformation shared by the CLI (`mf ignore`, `mf repo init`) and the GUI;
+# the daemon never reads this file and carries no built-in ignore policy.
+#
+# Patterns are regexes matched against a candidate's repo-root-relative path
+# (leading slash, e.g. `/src/main.o`). Deliberately conservative: only clearly
+# regenerable build intermediates and junk are ignored — never ambiguous names
+# like `dist/`, `build/`, static libraries or extension-less executables, which
+# are often tracked deliverables.
+
+[rust-build]
+description = "Cargo build intermediates (keeps the final binaries and libraries)"
+patterns = ['(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$']
+
+[node]
+description = "npm dependencies"
+patterns = ['node_modules(/.*)?$']
+
+[node-build]
+description = "JS/TS build caches and compiled native addons (not node_modules)"
+patterns = [
+    '(^|/)\.next(/.*)?$',
+    '(^|/)\.nuxt(/.*)?$',
+    '(^|/)\.svelte-kit(/.*)?$',
+    '(^|/)\.turbo(/.*)?$',
+    '(^|/)\.parcel-cache(/.*)?$',
+    '(^|/)\.vite(/.*)?$',
+    '(^|/)build/Release(/.*)?$',
+    '\.tsbuildinfo$',
+    '\.node$',
+]
+
+[python]
+description = "Python bytecode and tool caches"
+patterns = [
+    '__pycache__(/.*)?$',
+    '\.py[cod]$',
+    '(^|/)\.pytest_cache(/.*)?$',
+    '(^|/)\.mypy_cache(/.*)?$',
+    '(^|/)\.ruff_cache(/.*)?$',
+    '(^|/)\.tox(/.*)?$',
+    '\.egg-info(/.*)?$',
+]
+
+[julia]
+description = "Julia coverage, build and doc-build artifacts"
+patterns = [
+    '\.jl(\.[^/]*)?\.cov$',
+    '\.jl\.mem$',
+    '(^|/)deps/build\.log$',
+    '(^|/)deps/deps\.jl$',
+    '(^|/)deps/(downloads|usr|src)(/.*)?$',
+    '(^|/)docs/build(/.*)?$',
+]
+
+[cpp]
+description = "C/C++ object files, precompiled headers and CMake build files"
+patterns = [
+    '\.(o|obj|lo|slo|ko)$',
+    '\.(gch|pch)$',
+    '(^|/)CMakeFiles(/.*)?$',
+    '(^|/)CMakeCache\.txt$',
+    '(^|/)cmake_install\.cmake$',
+]
+
+[java]
+description = "Compiled Java classes and the Gradle cache"
+patterns = [
+    '\.class$',
+    '(^|/)\.gradle(/.*)?$',
+]
+
+[cache]
+description = "Generic cache and temporary files"
+patterns = [
+    '(^|/)\.cache(/.*)?$',
+    '\.tmp$',
+    '\.temp$',
+]
+
+[os]
+description = "Operating-system metadata junk"
+patterns = [
+    '(^|/)\.DS_Store$',
+    '(^|/)\._[^/]+$',
+    '(^|/)Thumbs\.db$',
+    '(^|/)desktop\.ini$',
+]
+
+[editor]
+description = "Editor swap, backup and autosave files"
+patterns = [
+    '~$',
+    '\.sw[po]$',
+    '\.bak$',
+    '\.orig$',
+    '(^|/)#[^/]+#$',
+]
+
+[git]
+description = "Git metadata"
+patterns = ['\.git(/.*)?$']
+
+[metafolder]
+description = "The .metafolder configuration directory"
+patterns = ['\.metafolder(/.*)?$']
+
+[hidden]
+description = "Every hidden (dot-prefixed) entry"
+patterns = ['(^|/)\.[^/]+']
+
+# The default set applied to a fresh root by `mf repo init` / the GUI. `git` and
+# `metafolder` are kept distinct from `hidden` (which already subsumes them) so
+# dropping "ignore all hidden entries" does not silently un-ignore them.
+[default]
+description = "The default set of mf_ignore patterns for a fresh root"
+pattern-set = [
+    "rust-build",
+    "node",
+    "node-build",
+    "python",
+    "julia",
+    "cpp",
+    "java",
+    "cache",
+    "os",
+    "editor",
+    "git",
+    "metafolder",
+    "hidden",
+]

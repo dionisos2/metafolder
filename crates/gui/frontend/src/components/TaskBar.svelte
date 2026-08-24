@@ -51,10 +51,15 @@
 
 {#if tasks.length > 0 || store.ui.scriptTasks.length > 0}
   <div class="task-bar" data-help-topic="task-bar">
-    {#each store.ui.scriptTasks as s (s.workspace_id)}
+    {#each store.ui.scriptTasks as s (s.task)}
       <div class="task">
-        <span class="label">{s.label}</span>
-        <span class="spinner"></span>
+        <span class="label">{s.label}{s.phase ? ` · ${s.phase}` : ''}</span>
+        {#if s.done != null && s.total != null}
+          <progress class="bar" value={s.done} max={s.total}></progress>
+          <span class="counts">{s.done}/{s.total}</span>
+        {:else}
+          <span class="spinner"></span>
+        {/if}
       </div>
     {/each}
     {#each tasks as t (t.id)}

@@ -89,8 +89,9 @@ export const store = $state({
     inputWait: null as { prompt: string; keys: string[] } | null,
     /// Shell scripts currently running (spec-gui "Scripting"): a loading
     /// indicator so a slow script never looks frozen. Fed by
-    /// `script-task-changed`; empty when nothing runs.
-    scriptTasks: [] as { workspace_id: string; label: string }[],
+    /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`
+    /// are present when the script reports progress (`mf gui progress`).
+    scriptTasks: [] as ScriptTask[],
   },
 });
 
@@ -121,11 +122,21 @@ export function inputWaitAnswer(
   return wait.keys.find((k) => k.toLowerCase() === combo) ?? null;
 }
 
+/** One running shell script, as shown in the task bar. `done`/`total` drive a
+ *  determinate progress bar when the script reports them; `phase` labels the
+ *  current step (e.g. the file being processed). */
+export interface ScriptTask {
+  task: string;
+  workspace_id: string;
+  label: string;
+  phase?: string | null;
+  done?: number | null;
+  total?: number | null;
+}
+
 /** Normalizes a `script-task-changed` payload to the running-scripts list. Pure,
  *  so it is unit-tested. */
-export function scriptTasksState(payload: {
-  tasks?: { workspace_id: string; label: string }[];
-}): { workspace_id: string; label: string }[] {
+export function scriptTasksState(payload: { tasks?: ScriptTask[] }): ScriptTask[] {
   return payload.tasks ?? [];
 }
 
@@ -244,12 +255,9 @@ export async function initStore() {
     },
   );
   // Running shell scripts: drive the loading indicator in the task bar.
-  await listen<{ tasks?: { workspace_id: string; label: string }[] }>(
-    'script-task-changed',
-    (event) => {
-      store.ui.scriptTasks = scriptTasksState(event.payload);
-    },
-  );
+  await listen<{ tasks?: ScriptTask[] }>('script-task-changed', (event) => {
+    store.ui.scriptTasks = scriptTasksState(event.payload);
+  });
   // An external POST /gui/command: run it through the very same dispatch()
   // the command input and keybindings use, then report the outcome back so
   // the waiting HTTP handler resolves.

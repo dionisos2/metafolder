@@ -162,6 +162,23 @@ pub fn view(
     Ok(0)
 }
 
+/// `mf gui progress` — a running script updates its own task-bar entry. The run
+/// id defaults to `METAFOLDER_GUI_TASK` (injected by the GUI when it launched
+/// the script); outside the GUI it is unset and the daemon-side call is a
+/// harmless no-op, so scripts can call this unconditionally.
+pub fn progress(
+    ctx: &GuiCtx,
+    done: Option<u64>,
+    total: Option<u64>,
+    phase: Option<&str>,
+    task: Option<String>,
+) -> Result<i32, CliError> {
+    let task = task.or_else(|| std::env::var("METAFOLDER_GUI_TASK").ok());
+    let body = json!({"task": task, "done": done, "total": total, "phase": phase});
+    ctx.client.request("POST", "/gui/progress", &[], Some(&body))?;
+    Ok(0)
+}
+
 pub fn message(
     ctx: &GuiCtx,
     text: &str,

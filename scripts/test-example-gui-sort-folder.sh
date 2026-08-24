@@ -55,6 +55,20 @@ assert "jazz: file left the sort dir" [ ! -e "$sort_dir/song.mp3" ]
 assert "jazz: file landed under musique/jazz" [ -f "$dest_root/musique/jazz/song.mp3" ]
 assert_contains "jazz: reports done" "$out" "done"
 
+# ── Case 1b: destination already occupied — the file is NOT moved (mv -n) ────
+mock_reset
+setup_common
+sort_dir="$work/trier1b"; dest_root="$work/dest1b"
+mkdir -p "$sort_dir" "$dest_root/musique/jazz"
+printf 'x' >"$sort_dir/song.mp3"
+printf 'OLD' >"$dest_root/musique/jazz/song.mp3"     # pre-existing at the target
+mock_input y y n n n                                  # same jazz classification
+DEST_ROOT="$dest_root" bash "$SCRIPT" "$sort_dir" >/dev/null; code=$?
+assert "occupied: exits 0" [ "$code" -eq 0 ]
+assert "occupied: source file is left in place" [ -f "$sort_dir/song.mp3" ]
+assert_eq "occupied: the existing destination is not overwritten" \
+    OLD "$(cat "$dest_root/musique/jazz/song.mp3")"
+
 # ── Case 2: an unclassified file matches no rule and stays in place ───────────
 mock_reset
 setup_common

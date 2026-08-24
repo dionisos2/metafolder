@@ -203,17 +203,18 @@ async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> 
     let Some(relative) = path.strip_prefix(root).map(|p| p.trim_start_matches('/')) else {
         return Value::Null;
     };
-    let (parent, name) = match relative.rsplit_once('/') {
-        Some((parent, name)) => (format!("/{parent}"), name),
-        None => ("/".to_string(), relative),
-    };
+    // Query in the daemon's tree convention (spec-query "Exact-node equality"):
+    // the repository root is the EMPTY string and every descendant keeps a
+    // single leading slash. `mfr_path = "<path>"` on a tree_ref field resolves
+    // that exact node — the root's empty name matches "", a "/…" operand is
+    // path-resolved. A top-level child must therefore be "/name", never a
+    // `follows -> "/"` (whose "/" resolves to no node, since the root is "").
+    // This mirrors the shell-side `mf_gui_query_path` helper.
+    let tree_path = if relative.is_empty() { String::new() } else { format!("/{relative}") };
     let query = json!({
-        "type": "and",
-        "operands": [
-            {"type": "follows", "field": "mfr_path", "target": parent},
-            {"type": "matches", "field": "mfr_path",
-             "pattern": format!("^{}$", regex_escape(name))},
-        ],
+        "type": "eq",
+        "field": "mfr_path",
+        "value": {"type": "string", "value": tree_path},
     });
     match state
         .daemon
@@ -228,17 +229,6 @@ async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> 
         },
         _ => Value::Null,
     }
-}
-
-fn regex_escape(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    for c in input.chars() {
-        if "\\.+*?()|[]{}^$".contains(c) {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
 }
 
 pub async fn get_panel_view(
@@ -354,6 +344,35 @@ pub async fn post_message(
         Ok(()) => Json(json!({})).into_response(),
         Err(error) => map_state_error(error),
     }
+}
+
+// ── Script progress ───────────────────────────────────────────────────────
+
+/// `POST /gui/progress` — a running script updates its own task bar entry
+/// (spec-gui "Scripting"). `task` is the run id the GUI injected as
+/// `METAFOLDER_GUI_TASK`; an absent or unknown one is a lenient no-op, so a
+/// script run outside the GUI never fails on it.
+#[derive(Deserialize, Default)]
+pub struct ProgressBody {
+    #[serde(default)]
+    task: Option<String>,
+    #[serde(default)]
+    done: Option<u64>,
+    #[serde(default)]
+    total: Option<u64>,
+    #[serde(default)]
+    phase: Option<String>,
+}
+
+pub async fn post_progress(
+    State(state): State<ServerState>,
+    body: Option<Json<ProgressBody>>,
+) -> Response {
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    if let Some(task) = body.task.as_deref() {
+        state.gui.script_progress(task, body.done, body.total, body.phase);
+    }
+    Json(json!({})).into_response()
 }
 
 // ── Input and prompt waits ────────────────────────────────────────────────

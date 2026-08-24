@@ -19,6 +19,7 @@ pub mod notifier;
 pub mod proc;
 pub mod recent;
 pub mod reconcile;
+pub mod repo_init;
 pub mod sandbox;
 pub mod server;
 pub mod shell_exec;
@@ -470,6 +471,7 @@ pub fn run(options: Options) {
             sync::sync_plan,
             sync::sync_run,
             sync::sync_show,
+            repo_init::repo_init,
             trash::trash_list,
             trash::trash_selected_metarecord,
             trash::trash_path,

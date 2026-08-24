@@ -9,6 +9,19 @@ use metafolder_daemon::db;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+/// A representative default-like ignore set, mirroring the shipped `default`
+/// ignore preset (spec-file-tracking "Ignore presets"). Used to exercise the
+/// eligibility algorithm against a realistic pattern set; the daemon no longer
+/// ships these patterns itself (they are applied client-side at `mf repo init`).
+const DEFAULT_PATTERNS: &[&str] = &[
+    r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$",
+    r"node_modules(/.*)?$",
+    r"__pycache__(/.*)?$",
+    r"\.git(/.*)?$",
+    r"\.metafolder(/.*)?$",
+    r"(^|/)\.[^/]+",
+];
+
 struct Fixture {
     conn: Connection,
     cache: TreeCache,
@@ -86,7 +99,7 @@ fn test_default_patterns_ignore_metafolder_and_hidden() {
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
         Field::new("mf_watch", Value::Bool(true)),
     ];
-    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+    for pattern in DEFAULT_PATTERNS {
         fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
     }
     w.create_metarecord(fields).unwrap();
@@ -118,7 +131,7 @@ fn test_default_patterns_ignore_cargo_build_intermediates() {
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
         Field::new("mf_watch", Value::Bool(true)),
     ];
-    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+    for pattern in DEFAULT_PATTERNS {
         fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
     }
     w.create_metarecord(fields).unwrap();
@@ -146,6 +159,41 @@ fn test_default_patterns_ignore_cargo_build_intermediates() {
 
     // Not a Rust target tree: a source directory that happens to be named `deps`.
     assert!(elig("/src/deps/mod.rs"), "only intermediates *under target/* are ignored");
+}
+
+#[test]
+fn shipped_default_preset_patterns_compile_and_match() {
+    // Every pattern in the shipped `default` ignore preset must compile with the
+    // same engine eligibility uses (metafolder_daemon::regexp), and behave:
+    // regenerable build intermediates are ignored, real sources are kept.
+    const PRESETS: &str = include_str!("../../core/default-config/ignore-presets.toml");
+    let presets = metafolder_core::ignore_presets::Presets::parse(PRESETS)
+        .expect("shipped ignore-presets.toml parses");
+    let patterns = presets.expand(&["default"]).expect("default expands");
+    let compiled: Vec<_> = patterns
+        .iter()
+        .map(|p| {
+            metafolder_daemon::regexp::compile(p)
+                .unwrap_or_else(|e| panic!("shipped pattern {p:?} does not compile: {e}"))
+        })
+        .collect();
+    let ignored = |path: &str| compiled.iter().any(|re| re.is_match(path));
+
+    // Representative intermediates are ignored…
+    assert!(ignored("/src/main.o"), "C++ object file");
+    assert!(ignored("/Foo.jl.cov"), "Julia coverage");
+    assert!(ignored("/build/CMakeFiles/app.dir/main.o"), "CMake build files");
+    assert!(ignored("/com/example/App.class"), "Java class");
+    assert!(ignored("/notes.txt~"), "editor backup");
+    assert!(ignored("/.DS_Store"), "OS junk");
+    assert!(ignored("/frontend/.svelte-kit/output/x.js"), "JS build cache");
+    assert!(ignored("/target/debug/deps/libx.rlib"), "cargo deps");
+    assert!(ignored("/pkg/__pycache__/mod.cpython-311.pyc"), "python cache");
+    // …while real sources and final artifacts are kept.
+    assert!(!ignored("/src/main.cpp"), "C++ source kept");
+    assert!(!ignored("/src/Foo.jl"), "Julia source kept");
+    assert!(!ignored("/App.java"), "Java source kept");
+    assert!(!ignored("/target/debug/mf"), "final binary kept");
 }
 
 #[test]
@@ -192,7 +240,7 @@ fn test_direct_watch_reanchors_ignore_to_its_scope() {
         Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() }),
         Field::new("mf_watch", Value::Bool(true)),
     ];
-    for pattern in metafolder_daemon::repo::DEFAULT_IGNORE_PATTERNS {
+    for pattern in DEFAULT_PATTERNS {
         fields.push(Field::new("mf_ignore", Value::String((*pattern).into())));
     }
     let root = w.create_metarecord(fields).unwrap().uuid;

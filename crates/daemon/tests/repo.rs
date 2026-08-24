@@ -67,16 +67,11 @@ fn test_init_creates_structure_and_root_metarecord() {
     let entry = db::get_metarecord(&opened.conn, root_uuid).unwrap().unwrap();
     assert_eq!(entry.get("mfr_type"), Some(&Value::String("dir".into())));
     assert_eq!(entry.get("mf_watch"), Some(&Value::Bool(false)));
-    let patterns: Vec<&Value> = entry.get_all("mf_ignore");
-    assert_eq!(patterns.len(), 6, "six default ignore patterns");
-    assert!(patterns.contains(&&Value::String(r"\.git(/.*)?$".into())));
-    assert!(patterns.contains(&&Value::String(r"node_modules(/.*)?$".into())));
-    assert!(patterns.contains(&&Value::String(r"__pycache__(/.*)?$".into())));
-    assert!(patterns.contains(&&Value::String(r"\.metafolder(/.*)?$".into())));
-    assert!(patterns.contains(&&Value::String(
-        r"(^|/)target/([^/]+/)?[^/]+/(deps|build|incremental|examples|\.fingerprint)(/.*)?$".into()
-    )));
-    assert!(patterns.contains(&&Value::String(r"(^|/)\.[^/]+".into())));
+    // The daemon writes no mf_ignore at init: it carries no built-in ignore
+    // policy (spec-config "No runtime fallback"); the default patterns are
+    // applied client-side as the `default` ignore preset by `mf repo init` /
+    // the GUI (spec-file-tracking "Ignore presets").
+    assert!(entry.get_all("mf_ignore").is_empty(), "no ignore patterns are written at init");
 
     // The root entry creation went through the event log.
     let n_ops: i64 = opened

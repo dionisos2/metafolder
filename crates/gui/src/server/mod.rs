@@ -99,6 +99,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/gui/bench", get(gui_api::get_bench))
         .route("/gui/bench/clear", post(gui_api::clear_bench))
         .route("/gui/message", post(gui_api::post_message))
+        .route("/gui/progress", post(gui_api::post_progress))
         .route("/gui/input", post(gui_api::post_input))
         .route("/gui/prompt", post(gui_api::post_prompt))
         .route("/gui/status", get(gui_api::get_status))

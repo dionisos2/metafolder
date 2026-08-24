@@ -75,9 +75,10 @@ fn mf(args: &[&str]) -> Out {
     mf_full(args, None, &[], true)
 }
 
-/// `XDG_CONFIG_HOME` for a config dir with the shipped grammar installed at
-/// `metafolder/core/query-grammar`, so `mf query --simplified` can expand
-/// locally (the daemon no longer does).
+/// `XDG_CONFIG_HOME` for a config dir with the shipped `core/` config
+/// installed: the query-grammar (so `mf query --simplified` can expand locally)
+/// and the ignore-presets (so `mf repo init` / `mf ignore` can apply the
+/// `default` preset — the daemon no longer ships ignore patterns).
 fn config_xdg() -> &'static str {
     use std::sync::OnceLock;
     static XDG: OnceLock<String> = OnceLock::new();
@@ -88,6 +89,11 @@ fn config_xdg() -> &'static str {
         std::fs::copy(
             concat!(env!("CARGO_MANIFEST_DIR"), "/../core/default-config/query-grammar"),
             core.join("query-grammar"),
+        )
+        .unwrap();
+        std::fs::copy(
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../core/default-config/ignore-presets.toml"),
+            core.join("ignore-presets.toml"),
         )
         .unwrap();
         dir.to_str().unwrap().to_string()
@@ -113,10 +119,12 @@ fn temp_dir(prefix: &str) -> PathBuf {
     path
 }
 
-/// Initialises a fresh repository; returns (repo uuid, root path).
+/// Initialises a fresh repository; returns (repo uuid, root path). Runs with the
+/// hermetic config dir so `mf repo init` applies the `default` ignore preset
+/// (the daemon no longer writes default ignores itself).
 fn init_repo(prefix: &str) -> (String, PathBuf) {
     let root = temp_dir(prefix);
-    let out = mf(&["repo", "init", root.to_str().unwrap()]);
+    let out = mf_cfg(&["repo", "init", root.to_str().unwrap()]);
     assert_ok(&out);
     let uuid = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&uuid), "init should print a 32-hex uuid, got: '{uuid}'");
@@ -156,7 +164,7 @@ fn test_init_with_external_metafolder() {
     let root = temp_dir("init_ext_root");
     let external = temp_dir("init_ext_db");
     let out =
-        mf(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+        mf_cfg(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
     assert_ok(&out);
     assert!(is_hex_uuid(out.stdout.trim()));
     assert!(external.join("config.json").exists());
@@ -176,7 +184,7 @@ fn test_load_with_metafolder_flag() {
     let root = temp_dir("load_ext_root");
     let external = temp_dir("load_ext_db");
     let out =
-        mf(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+        mf_cfg(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
     assert_ok(&out);
     let repo = out.stdout.trim().to_string();
     let out = mf(&["repo", "load", "--metafolder", external.to_str().unwrap()]);
@@ -818,6 +826,80 @@ fn test_reconcile_reports_created_entries() {
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     assert_eq!(parsed["created"], 0);
     assert_eq!(parsed["moved"], 0);
+}
+
+// ── Ignore presets (spec-file-tracking "Ignore presets") ─────────────────────
+
+/// The root metarecord's mf_ignore rows, one per line.
+fn root_ignore(repo: &str) -> String {
+    let root_uuid = mf(&["-u", repo, "metarecord", "get"]).stdout.trim().to_string();
+    let out = mf(&["-u", repo, "metarecord", "-i", &root_uuid, "field", "get", "mf_ignore"]);
+    assert_ok(&out);
+    out.stdout
+}
+
+#[test]
+fn test_repo_init_applies_default_ignore_preset() {
+    let (repo, _root) = init_repo("ign_default");
+    let ignore = root_ignore(&repo);
+    // The default preset lands on the root: cargo build intermediates, git,
+    // and the hidden-entry pattern are all present.
+    assert!(ignore.contains("incremental"), "cargo pattern missing: {ignore}");
+    assert!(ignore.contains(r"\.git"), "git pattern missing: {ignore}");
+    assert!(ignore.contains(r"node_modules"), "node pattern missing: {ignore}");
+}
+
+#[test]
+fn test_repo_init_no_ignore_leaves_empty() {
+    let root = temp_dir("ign_none");
+    let out = mf_cfg(&["repo", "init", root.to_str().unwrap(), "--no-ignore"]);
+    assert_ok(&out);
+    let repo = out.stdout.trim().to_string();
+    assert!(root_ignore(&repo).trim().is_empty(), "root should have no mf_ignore rows");
+}
+
+#[test]
+fn test_ignore_list_shows_presets() {
+    let out = mf_cfg(&["ignore", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("rust-build"), "list: {}", out.stdout);
+    assert!(out.stdout.contains("default"), "list: {}", out.stdout);
+}
+
+#[test]
+fn test_ignore_set_add_remove_on_root() {
+    let (repo, _root) = init_repo("ign_ops");
+
+    // set replaces the whole set with just the `node` preset.
+    let out = mf_cfg(&["-u", &repo, "ignore", "set", "node"]);
+    assert_ok(&out);
+    let ignore = root_ignore(&repo);
+    assert!(ignore.contains("node_modules"));
+    assert!(!ignore.contains("incremental"), "set must have dropped the default patterns");
+
+    // add appends the `python` preset without dropping node.
+    assert_ok(&mf_cfg(&["-u", &repo, "ignore", "add", "python"]));
+    let ignore = root_ignore(&repo);
+    assert!(ignore.contains("node_modules"));
+    assert!(ignore.contains("__pycache__"));
+
+    // remove drops exactly the node pattern.
+    assert_ok(&mf_cfg(&["-u", &repo, "ignore", "remove", "node"]));
+    let ignore = root_ignore(&repo);
+    assert!(!ignore.contains("node_modules"), "node removed: {ignore}");
+    assert!(ignore.contains("__pycache__"), "python kept: {ignore}");
+
+    // comma-separated names are accepted in one argument.
+    assert_ok(&mf_cfg(&["-u", &repo, "ignore", "set", "node,git"]));
+    let ignore = root_ignore(&repo);
+    assert!(ignore.contains("node_modules") && ignore.contains(r"\.git"));
+}
+
+#[test]
+fn test_ignore_add_unknown_preset_is_usage_error() {
+    let (repo, _root) = init_repo("ign_bad");
+    let out = mf_cfg(&["-u", &repo, "ignore", "add", "does-not-exist"]);
+    assert_eq!(out.code, 2, "unknown preset should be a usage error (exit 2): {}", out.stderr);
 }
 
 #[test]

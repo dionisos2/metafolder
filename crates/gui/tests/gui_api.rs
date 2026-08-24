@@ -260,6 +260,77 @@ async fn test_panel_view_file_with_path_sets_selection() {
     assert_eq!(ctx.gui.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
 }
 
+/// A stub daemon that records every query body it receives and answers each
+/// with a single uuid, so a path→metarecord lookup can be asserted end to end:
+/// its outcome (`selected_metarecord` set) AND the exact query shape it sends.
+async fn spawn_recording_daemon(seen: Arc<std::sync::Mutex<Vec<Value>>>) -> String {
+    let router = axum::Router::new()
+        .route("/health", get(|| async { Json(json!({"status": "ok"})) }))
+        .route(
+            "/repos",
+            get(|| async {
+                Json(json!([{"repo_uuid": "feedfacefeedfacefeedfacefeedface",
+                             "root": "/tmp/stub", "name": "stub"}]))
+            }),
+        )
+        .route(
+            "/repos/:repo/query",
+            axum::routing::post(move |Json(body): Json<Value>| {
+                let seen = seen.clone();
+                async move {
+                    seen.lock().unwrap().push(body);
+                    Json(json!(["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]))
+                }
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        axum::serve(listener, router).await.unwrap();
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// `view file --path` on a **top-level** folder (a child directly under the
+/// repo root) must resolve its metarecord. The daemon's tree convention names
+/// the repo root the EMPTY string and every descendant with a single leading
+/// slash, so the exact-node lookup must query `mfr_path = "/projets"` — not a
+/// `follows mfr_path -> "/"`, whose "/" resolves to no node (the root is "").
+#[tokio::test]
+async fn test_panel_view_file_top_level_folder_resolves_metarecord() {
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let url = spawn_recording_daemon(seen.clone()).await;
+    let ctx = setup_with_daemon(&url).await;
+
+    // A workspace bound to the stub repo, shown in the left slot.
+    let ws = ctx.gui.create_workspace(Some("feedfacefeedfacefeedfacefeedface".into()));
+    ctx.gui.tab_assign(&ws, metafolder_gui::state::layout::SlotId::Left).unwrap();
+
+    let (status, _) = request(
+        &ctx.router,
+        "PUT",
+        "/gui/panels/left/view",
+        Some(json!({"type": "file", "path": "/tmp/stub/projets"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // The lookup succeeded (a real daemon would have matched the node).
+    assert_eq!(
+        ctx.gui.get_var(&ws, "selected_metarecord").unwrap(),
+        json!({"uuid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+               "repo": "feedfacefeedfacefeedfacefeedface"})
+    );
+    // And it asked in the daemon's exact-node convention (leading slash, no
+    // "/"-rooted follows).
+    let queries = seen.lock().unwrap();
+    assert_eq!(
+        queries[0]["query"],
+        json!({"type": "eq", "field": "mfr_path",
+               "value": {"type": "string", "value": "/projets"}})
+    );
+}
+
 // ── Messages ──────────────────────────────────────────────────────────────
 
 #[tokio::test]
@@ -297,6 +368,42 @@ async fn test_message_targets_focused_or_explicit_workspace() {
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Script progress ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_progress_updates_running_script() {
+    let ctx = setup().await;
+    // A running script, as run_shell registers it (with the injected run id).
+    ctx.gui.script_begin("script-1", "ws-1", "gui-tag-pair.sh");
+
+    let (status, _) = request(
+        &ctx.router,
+        "POST",
+        "/gui/progress",
+        Some(json!({"task": "script-1", "done": 3, "total": 10, "phase": "/music/x.mp3"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let payloads = ctx.notifier.payloads("script-task-changed");
+    let task = &payloads.last().unwrap()["tasks"][0];
+    assert_eq!(task["done"], 3);
+    assert_eq!(task["total"], 10);
+    assert_eq!(task["phase"], "/music/x.mp3");
+
+    // An unknown run id is a lenient no-op: still 200, and no new broadcast.
+    let before = ctx.notifier.payloads("script-task-changed").len();
+    let (status, _) = request(
+        &ctx.router,
+        "POST",
+        "/gui/progress",
+        Some(json!({"task": "nope", "done": 1})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(ctx.notifier.payloads("script-task-changed").len(), before);
 }
 
 // ── Input wait ────────────────────────────────────────────────────────────

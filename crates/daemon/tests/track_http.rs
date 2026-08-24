@@ -120,6 +120,16 @@ async fn test_full_reconcile_endpoint() {
         Some(json!({"value": {"type": "bool", "value": true}})),
     )
     .await;
+    // The daemon writes no default mf_ignore any more (patterns come from the
+    // client-side `default` preset); ignore .metafolder/ so this test isolates
+    // the two files it creates.
+    request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_ignore"),
+        Some(json!({"value": {"type": "string", "value": r"\.metafolder(/.*)?$"}})),
+    )
+    .await;
 
     std::fs::write(root.join("one.txt"), b"1").unwrap();
     std::fs::write(root.join("two.txt"), b"2").unwrap();
@@ -132,7 +142,7 @@ async fn test_full_reconcile_endpoint() {
     let task = poll_task(&app, &repo, &task_id).await;
     assert_eq!(task["status"], "done", "task: {task}");
     let result = &task["result"];
-    assert_eq!(result["created"], 2, "one.txt + two.txt (.metafolder ignored by default)");
+    assert_eq!(result["created"], 2, "one.txt + two.txt (.metafolder ignored via mf_ignore)");
     assert_eq!(result["moved"], 0);
     assert_eq!(result["candidates"], json!([]));
 

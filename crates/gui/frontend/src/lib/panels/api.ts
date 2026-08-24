@@ -250,6 +250,25 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         }
         return response.body;
       },
+      // Creates a repository and applies its ignore preset (spec-file-tracking
+      // "Ignore presets"): POST /repos/init then the `default` preset on the new
+      // root, via core::repo_init — the same flow as `mf repo init`. Returns the
+      // new repo's uuid. `daemon.call('POST', '/repos/init', ...)` would skip
+      // the ignore step, so repo creation must go through here.
+      initRepo: (opts: {
+        root: string;
+        name?: string;
+        metafolder?: string;
+        noIgnore?: boolean;
+        ignore?: string[];
+      }) =>
+        invoke('repo_init', {
+          root: opts.root,
+          name: opts.name ?? null,
+          metafolder: opts.metafolder ?? null,
+          noIgnore: opts.noIgnore ?? false,
+          ignore: opts.ignore ?? null,
+        }) as Promise<string>,
       parseQuery: (dsl: string) => api.query.parse(dsl),
       expandQuery: (s: string) => api.query.expand(s),
       resolvePath: (repo: string, uuid: string) => resolverFor(repo).resolveUuid(uuid),
