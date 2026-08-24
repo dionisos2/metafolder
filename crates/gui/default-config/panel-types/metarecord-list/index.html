@@ -88,6 +88,11 @@
         white-space: nowrap;
         margin-right: 8px;
       }
+      #orphans-btn {
+        font-size: 11px;
+        white-space: nowrap;
+        margin-right: 8px;
+      }
       #bulk-form {
         display: none;
         flex-direction: column;
@@ -217,6 +222,22 @@
         text-overflow: ellipsis;
         white-space: nowrap;
       }
+      #orphan-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        border-bottom: 1px solid var(--mf-orphan, #b07ad6);
+        color: var(--mf-orphan, #b07ad6);
+        font-size: 0.9em;
+      }
+      #orphan-banner[hidden] {
+        display: none;
+      }
+      #orphan-count {
+        flex: 1;
+      }
       #footer {
         display: flex;
         align-items: center;
@@ -296,6 +317,11 @@
       </div>
       <div id="columns-error" class="editor-error"></div>
     </div>
+    <div id="orphan-banner" hidden>
+      <span id="orphan-count"></span>
+      <button id="orphan-clear" type="button" title="Orphan these records: mfr_path → Nothing (origin kept in mfr_path_old)">Clear all</button>
+      <button id="orphan-exit" type="button" title="Return to the normal query view">Exit</button>
+    </div>
     <div id="scroll">
       <p class="placeholder" id="no-repo" hidden>No active repository — use the repos panel.</p>
       <p class="placeholder error-placeholder" id="fetch-error" hidden></p>
@@ -327,6 +353,7 @@
     </div>
     <div id="footer">
       <div id="status-line"></div>
+      <button id="orphans-btn" type="button" title="Scan the disk and show metarecords whose tracked file is missing">Orphans</button>
       <button id="bulk-open" type="button" title="Set, append, remove, or unset a field — or delete the whole metarecords — on every metarecord matching the current query">Edit / delete on query…</button>
     </div>
   </body>

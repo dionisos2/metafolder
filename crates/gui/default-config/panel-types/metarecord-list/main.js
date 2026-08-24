@@ -85,6 +85,12 @@ export async function mount(root, metafolder) {
   let loading = false;
   /** @type {Record<string, unknown>|null} null = match all (the structural base query) */
   let queryIR = null;
+  // Orphan view (spec-file-tracking "Orphan scan"): when on, `queryIR` is a
+  // `uuid_in` set from a daemon disk scan rather than the DSL editor; leaving it
+  // (Exit, or applying/clearing a query) restores the editor-driven query.
+  let orphanMode = false;
+  /** @type {string[]} the uuids the last orphan scan returned */
+  let orphanUuids = [];
   let finderText = ''; // quick OSM filter, AND-ed onto the base query
   /** @type {string[]} */
   let finderFields = DEFAULT_FINDER_FIELDS.slice();
@@ -119,6 +125,8 @@ export async function mount(root, metafolder) {
   const grid = byId(root, 'grid');
   const scroll = byId(root, 'scroll');
   const statusLine = byId(root, 'status-line');
+  const orphanBanner = byId(root, 'orphan-banner');
+  const orphanCountEl = byId(root, 'orphan-count');
   const finderInput = byId(root, 'finder-input', HTMLInputElement);
   const finderFieldsLabel = byId(root, 'finder-fields');
   const queryInput = byId(root, 'query-input', HTMLInputElement);
@@ -629,6 +637,9 @@ export async function mount(root, metafolder) {
   }
 
   async function applyQuery() {
+    // Applying an editor query leaves the orphan view (its uuid_in override).
+    orphanMode = false;
+    orphanBanner.hidden = true;
     queryRan = true;
     queryHistory.push(queryInput.value.trim());
     const ok = await recomputeQuery();
@@ -643,6 +654,8 @@ export async function mount(root, metafolder) {
 
   /** Empties all three search fields and re-runs (empty query = match all). */
   async function clearAllQueries() {
+    orphanMode = false;
+    orphanBanner.hidden = true;
     finderInput.value = '';
     finderText = '';
     queryInput.value = '';
@@ -656,6 +669,66 @@ export async function mount(root, metafolder) {
     await workspace.set('metarecord-list:finder', '');
     queryRan = true;
     await fetchPage(true);
+  }
+
+  // ── Orphan view (spec-file-tracking "Orphan scan") ────────────────────────
+
+  /** Enter (or refresh) the orphan view: scan the disk and show the missing-file
+   *  records via a `uuid_in` query. Exits to the normal view when none remain. */
+  async function showOrphans() {
+    const r = repo;
+    if (!r) return;
+    let resp;
+    try {
+      resp = /** @type {{orphans?: {uuid: string}[]}} */ (
+        await daemon.call('POST', `/repos/${r}/orphans/scan`, {})
+      );
+    } catch (error) {
+      await statusBar.error(error);
+      return;
+    }
+    orphanUuids = (resp.orphans ?? []).map((o) => o.uuid);
+    if (orphanUuids.length === 0) {
+      await statusBar.message('No orphans — every tracked file is present.', statusMessageMs);
+      await exitOrphans();
+      return;
+    }
+    orphanMode = true;
+    queryIR = { type: 'uuid_in', uuids: orphanUuids };
+    const n = orphanUuids.length;
+    orphanCountEl.textContent = `${n} orphaned metarecord${n === 1 ? '' : 's'} — the tracked file is missing`;
+    orphanBanner.hidden = false;
+    queryRan = true;
+    await fetchPage(true);
+  }
+
+  /** Leave the orphan view and restore the editor-driven query. */
+  async function exitOrphans() {
+    if (orphanMode) orphanMode = false;
+    orphanBanner.hidden = true;
+    await applyQuery();
+  }
+
+  /** Orphan the scanned records (mfr_path_old frozen, mfr_path → Nothing,
+   *  cascading), after confirmation, then re-scan. */
+  async function clearOrphans() {
+    const r = repo;
+    if (!r || !orphanMode || orphanUuids.length === 0) return;
+    const n = orphanUuids.length;
+    if (!confirm(`Orphan ${n} metarecord${n === 1 ? '' : 's'}? mfr_path becomes Nothing (its origin is kept in mfr_path_old). This can be rolled back.`)) {
+      return;
+    }
+    try {
+      const resp = /** @type {{cleared?: number}} */ (
+        await daemon.call('POST', `/repos/${r}/orphans/clear`, { uuids: orphanUuids })
+      );
+      await statusBar.message(`Cleared ${resp.cleared ?? 0} orphan(s).`, statusMessageMs);
+    } catch (error) {
+      await statusBar.error(error);
+      return;
+    }
+    await workspace.set('metarecords:dirty', Date.now()); // nudge other panels
+    await showOrphans(); // re-scan: shows any remainder, or exits if none
   }
 
   /** Debounced live mirror of expand(A) into B (preview only — does not run). */
@@ -973,6 +1046,9 @@ export async function mount(root, metafolder) {
     void applyColumns();
     if (!event.shiftKey) columnsInput.blur();
   });
+  byId(root, 'orphans-btn').addEventListener('click', () => void showOrphans());
+  byId(root, 'orphan-clear').addEventListener('click', () => void clearOrphans());
+  byId(root, 'orphan-exit').addEventListener('click', () => void exitOrphans());
   byId(root, 'bulk-open').addEventListener('click', () => {
     void commands.invoke('metarecord-list:open-bulk-edit');
   });
@@ -1061,6 +1137,10 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:clear-queries', {
     label: 'Metarecord list: clear the finder, simplified and normal query fields',
     handler: () => clearAllQueries(),
+  });
+  void commands.register('metarecord-list:orphans', {
+    label: 'Metarecord list: show orphaned metarecords (tracked file missing)',
+    handler: () => showOrphans(),
   });
   // Clear-then-edit, one field at a time. The finder is a live filter, so
   // clearing it re-runs immediately (widening the result); the DSL fields wait
