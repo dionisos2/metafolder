@@ -602,10 +602,21 @@ impl Apply<'_, '_> {
         }
         let descendants =
             self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
-        self.writer.set_field_as(OpType::FileDeleted, uuid, "mfr_path", Value::Nothing)?;
-        for descendant in descendants {
+        // Snapshot every path *before* any write: with an incomplete tree cache
+        // `path_of` walks the DB, and clearing a parent's `mfr_path` would break
+        // its descendants' walk. `mfr_path_old` is a frozen String recording
+        // where the orphan last lived (spec-file-tracking "Orphan origin").
+        let mut olds = Vec::with_capacity(descendants.len() + 1);
+        for &u in std::iter::once(&uuid).chain(descendants.iter()) {
+            olds.push((u, self.cache.path_of(self.writer.connection(), "mfr_path", u)?));
+        }
+        for (u, old) in olds {
+            if let Some(old) = old {
+                self.writer
+                    .set_field_as(OpType::FileDeleted, u, "mfr_path_old", Value::String(old))?;
+            }
             self.writer
-                .set_field_as(OpType::FileDeleted, descendant, "mfr_path", Value::Nothing)?;
+                .set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
         Ok(())

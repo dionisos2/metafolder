@@ -214,6 +214,48 @@ fn test_remove_sets_nothing_and_cascades() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn test_remove_records_mfr_path_old_for_the_whole_subtree() {
+    // Orphaning a subtree snapshots each metarecord's last real path into
+    // `mfr_path_old` (a frozen String) so the origin of every orphan is legible
+    // directly on the record. Captured only on the transition to Nothing.
+    let (repo, root, _) = setup("path_old");
+    write_file(&root, "d/one.txt", b"1");
+    write_file(&root, "d/sub/two.txt", b"2");
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Create("/d".into()),
+            FsEvent::Create("/d/one.txt".into()),
+            FsEvent::Create("/d/sub".into()),
+            FsEvent::Create("/d/sub/two.txt".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+    let d = resolve(&repo, "/d").unwrap();
+    let one = resolve(&repo, "/d/one.txt").unwrap();
+    let two = resolve(&repo, "/d/sub/two.txt").unwrap();
+
+    std::fs::remove_dir_all(root.join("d")).unwrap();
+    enqueue(&repo, &[FsEvent::Remove("/d".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    for (uuid, path) in [(d, "/d"), (one, "/d/one.txt"), (two, "/d/sub/two.txt")] {
+        assert_eq!(
+            field_value(&repo, uuid, "mfr_path"),
+            Some(Value::Nothing),
+            "the record must be orphaned"
+        );
+        assert_eq!(
+            field_value(&repo, uuid, "mfr_path_old"),
+            Some(Value::String(path.into())),
+            "mfr_path_old must snapshot the pre-orphan path"
+        );
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 // ── Rename ────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -241,6 +283,10 @@ fn test_rename_updates_tree_ref_and_children_follow() {
     );
     // One file_moved operation was logged.
     assert_eq!(count(&repo, "SELECT COUNT(*) FROM operation WHERE op_type = 'file_moved'"), 1);
+    // A plain move must NOT touch mfr_path_old: it is captured only on the
+    // transition to Nothing (orphaning), not on every rename.
+    assert_eq!(field_value(&repo, dir, "mfr_path_old"), None);
+    assert_eq!(field_value(&repo, file, "mfr_path_old"), None);
 
     std::fs::remove_dir_all(root).unwrap();
 }

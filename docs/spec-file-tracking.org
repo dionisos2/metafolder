@@ -501,9 +501,9 @@ individually.
 | Filesystem event   | Action                                                                                                     |
 |--------------------+------------------------------------------------------------------------------------------------------------|
 | =Create=           | Resolve the path first: if a metarecord already holds this =mfr_path=, refresh it as for =Modify(Data)= (idempotent — crash replay, or a file that appeared where the database already expected one, e.g. a cross-repo sync placement). Otherwise look up the parent UUID via the tree cache and create a metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
-| =Remove=           | Set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade =Nothing= to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
+| =Remove=           | Snapshot the current path into =mfr_path_old= (see "Orphan origin" below), then set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade both to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID) |
-| =Rename(From)=     | File definitively left the repository: set =mfr_path= to =Nothing=; if a directory, cascade =Nothing= to all descendants in the same transaction |
+| =Rename(From)=     | File definitively left the repository: snapshot =mfr_path_old= then set =mfr_path= to =Nothing= (as for =Remove=); if a directory, cascade both to all descendants in the same transaction |
 | =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned metarecords (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new metarecord |
 | =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash= and =mfr_full_hash= |
 | =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
@@ -530,6 +530,19 @@ This keeps redundant events (crash replay, or the watcher's echo of a change
 the daemon itself just recorded, e.g. a cross-repo sync file operation) from
 churning versions; a genuine change differs in =stat= and is applied
 normally.
+
+*Orphan origin.* When a metarecord is orphaned (=Remove= / =Rename(From)=, and
+their cascades), its last filesystem path is first captured into an
+=mfr_path_old= field — a frozen =String= (not a =TreeRef=: it does not
+participate in the =mfr_path= forest and is never rewritten by later moves), so
+the origin of every orphan is legible directly on the record without walking the
+event log. It is written only on the transition to =Nothing= (a plain move does
+not touch it), and overwritten on any subsequent orphaning. It is not cleared
+when an orphan is later re-homed, so it records where the record last lived
+before it was last orphaned. Because only the watcher and =force= writes orphan,
+reconcile never populates it; a file deleted while its subtree is unwatched
+keeps its stale =mfr_path= and gets no =mfr_path_old=. Like every daemon write
+it is snapshotted in the event log and restored exactly by rollback.
 
 Parent directory lookup on =Create= or =Rename(To)= uses the tree cache
 (see [[*Tree Cache]]); on cache miss, falls back to iterative indexed queries
