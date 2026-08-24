@@ -452,6 +452,15 @@ exclusion applies to the reconcile walk. The rest of =.metafolder/=
 (=config.json=, =schema.json=) is ordinary trackable content, subject to the
 normal eligibility rules.
 
+The watch backend's event callback does *no* work of its own: it translates the
+event and hands it to the watcher's ingest thread, which writes the buffer and
+places any new directory's watch. The backend delivers events and serves watch
+placements from a single thread, so a callback that waited on the repository
+connection would freeze every watch placement — and deadlock outright against a
+write that recomputes the watch set while holding that connection (see
+[[*Behaviour when =mf_watch= or =mf_ignore= changes]]). Nothing that can block
+may run on the callback.
+
 *** Event batching
 
 The watcher does not process events one by one. Instead, it writes incoming

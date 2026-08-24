@@ -177,3 +177,58 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
     std::fs::remove_dir_all(&secret).ok();
     std::fs::remove_dir_all(&root).ok();
 }
+
+/// Regression: creating a *directory* under a watched root must not wedge the
+/// daemon. The new directory needs its own inotify watch (watching is
+/// per-directory, not recursive), but notify's `watch()` cannot be called from
+/// inside its own event callback — it waits for the very event loop that is
+/// running the callback. Doing so blocks the watcher thread forever while it
+/// holds the repository connection, and every request then hangs behind it.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_new_directory_does_not_wedge_the_daemon() {
+    let app = routes::build(std::sync::Arc::new(AppState::new()));
+    let root: PathBuf = std::env::temp_dir().join(format!("metafolder_newdir_{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+
+    let (_, roots) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
+    )
+    .await;
+    let root_uuid = roots[0].as_str().unwrap().to_string();
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // A directory with a nested file: the watcher must ingest both and stay
+    // responsive. The timeout turns the deadlock into a failure instead of a
+    // test run that never ends.
+    std::fs::create_dir(root.join("A")).unwrap();
+    std::fs::write(root.join("A/B.txt"), b"bee").unwrap();
+    let nested = json!({"type": "matches", "field": "mfr_path", "pattern": "^B\\.txt$"});
+    tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, nested, 1))
+        .await
+        .expect("the daemon must stay responsive after a directory is created");
+
+    // The new directory got its own watch: a file created in it *after* the
+    // arrival was processed is tracked too (nothing rescans it later).
+    std::fs::write(root.join("A/C.txt"), b"cee").unwrap();
+    let later = json!({"type": "matches", "field": "mfr_path", "pattern": "^C\\.txt$"});
+    tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, later, 1))
+        .await
+        .expect("the new directory must be watched for its own future events");
+
+    std::fs::remove_dir_all(root).unwrap();
+}

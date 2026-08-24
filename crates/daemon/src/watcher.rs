@@ -12,6 +12,14 @@
 //! (`mf_watch = false`) is therefore watched nowhere at all. The set is
 //! recomputed by [`WatcherHandle::refresh`] whenever a manual write changes
 //! eligibility, and maintained incrementally as directories appear/disappear.
+//!
+//! **The notify event callback must never block.** notify's inotify backend
+//! serves `watch()`/`unwatch()` requests from the same thread that delivers
+//! events, so a callback that waits on a lock also stops every watch placement —
+//! and any thread that asks for one while holding that lock deadlocks with it
+//! (the repository connection is held across `refresh` at every route commit
+//! site). The callback therefore only translates the event and hands it to the
+//! ingest thread ([`start`]), which does the database and watch work.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -127,21 +135,38 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
         watched: Mutex::new(HashSet::new()),
     });
 
-    // Weaks: neither the callback nor anything it reaches may keep the
-    // repository (and its exclusive lock) or the watcher alive.
+    // Weaks: neither the ingest thread nor the callback may keep the repository
+    // (and its exclusive lock) or the watcher alive.
     let repo_weak = Arc::downgrade(repo);
     let inner_weak = Arc::downgrade(&inner);
+
+    // The ingest thread does everything that can block — the database enqueue
+    // and the watch maintenance for new directories. It ends when the sender
+    // dies with the notify watcher (repository unloaded).
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<(FsEvent, Option<i64>)>>();
+    let ingest_root = root.clone();
+    let ingest_internal = internal_dir.clone();
+    std::thread::spawn(move || {
+        while let Ok(events) = rx.recv() {
+            let Some(repo) = repo_weak.upgrade() else {
+                return; // Repository unloaded.
+            };
+            let inner = inner_weak.upgrade();
+            ingest(&repo, &ingest_root, &ingest_internal, &pinger, inner.as_deref(), events);
+        }
+    });
+
     let cb_root = root.clone();
     let cb_internal = internal_dir.clone();
-
     let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        // Runs on notify's event-loop thread: translate and hand off, never
+        // block (see the module documentation).
         match res {
             Ok(event) => {
-                let Some(repo) = repo_weak.upgrade() else {
-                    return; // Repository unloaded.
-                };
-                let inner = inner_weak.upgrade();
-                handle_event(&repo, &cb_root, &cb_internal, &pinger, inner.as_deref(), event)
+                let events = translate(&cb_root, &cb_internal, event);
+                if !events.is_empty() {
+                    let _ = tx.send(events); // The ingest thread is gone: unloaded.
+                }
             }
             Err(err) => eprintln!("[watcher] backend error: {err}"),
         }
@@ -280,14 +305,9 @@ fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<String> {
     }
 }
 
-fn handle_event(
-    repo: &RepoState,
-    root: &Path,
-    internal_dir: &Path,
-    pinger: &ExecutorPinger,
-    inner: Option<&WatcherInner>,
-    event: notify::Event,
-) {
+/// Translates one notify event into the internal [`FsEvent`] forms. Pure: no
+/// locks, no database, no watch calls — it runs on notify's event-loop thread.
+fn translate(root: &Path, internal_dir: &Path, event: notify::Event) -> Vec<(FsEvent, Option<i64>)> {
     use notify::event::{ModifyKind, RenameMode};
 
     let rel = |p: &Path| relative(root, internal_dir, p);
@@ -332,9 +352,19 @@ fn handle_event(
         _ => {}
     }
 
-    if events.is_empty() {
-        return;
-    }
+    events
+}
+
+/// Persists a batch of translated events and keeps the live watch set in step.
+/// Runs on the ingest thread — never on notify's event-loop thread.
+fn ingest(
+    repo: &RepoState,
+    root: &Path,
+    internal_dir: &Path,
+    pinger: &ExecutorPinger,
+    inner: Option<&WatcherInner>,
+    events: Vec<(FsEvent, Option<i64>)>,
+) {
     let conn = repo.conn.lock_recover();
     for (ev, tracker) in &events {
         if let Err(err) = executor::enqueue(&conn, ev, *tracker) {
@@ -387,28 +417,35 @@ fn maintain_watches(
     if arrivals.is_empty() {
         return;
     }
-    // Arrivals need eligibility checks (conn + cache).
-    let conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
-    let mut ec = EligibilityCache::default();
-    for rel in arrivals {
-        let abs = root.join(rel.trim_start_matches('/'));
-        // Only a real directory (not a symlink) that is eligible is watched.
-        match std::fs::symlink_metadata(&abs) {
-            Ok(md) if md.file_type().is_dir() => {}
-            _ => continue,
+    // Arrivals need eligibility checks (conn + cache). Collect the whole set
+    // first and release both locks before placing any watch: `watch()` waits for
+    // notify's event loop, which must never be made to wait for the connection
+    // (see the module documentation).
+    let mut subtree = HashSet::new();
+    {
+        let conn = repo.conn.lock_recover();
+        let mut cache = repo.lock_cache();
+        let mut ec = EligibilityCache::default();
+        for rel in arrivals {
+            let abs = root.join(rel.trim_start_matches('/'));
+            // Only a real directory (not a symlink) that is eligible is watched.
+            match std::fs::symlink_metadata(&abs) {
+                Ok(md) if md.file_type().is_dir() => {}
+                _ => continue,
+            }
+            match eligibility::is_eligible_cached(&conn, &mut cache, rel, &mut ec) {
+                Ok(true) => {}
+                _ => continue,
+            }
+            subtree.insert(abs);
+            let mut elig = std::time::Duration::ZERO;
+            collect_eligible_dirs(
+                &conn, &mut cache, root, internal_dir, rel, &mut ec, &mut subtree, &mut elig,
+            );
         }
-        match eligibility::is_eligible_cached(&conn, &mut cache, rel, &mut ec) {
-            Ok(true) => {}
-            _ => continue,
-        }
-        let mut subtree = HashSet::new();
-        subtree.insert(abs);
-        let mut elig = std::time::Duration::ZERO;
-        collect_eligible_dirs(&conn, &mut cache, root, internal_dir, rel, &mut ec, &mut subtree, &mut elig);
-        for dir in &subtree {
-            inner.watch_dir(dir);
-        }
+    }
+    for dir in &subtree {
+        inner.watch_dir(dir);
     }
 }
 
