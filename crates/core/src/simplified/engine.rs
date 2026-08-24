@@ -472,8 +472,10 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
     fn shipped_grammar_parses_and_tag_macro_expands() {
         // Guards the shipped default grammar: it must stay valid, and its tag
         // macros must expand to the current tag model (a `tag` ref into the
-        // TreeRef `path` hierarchy). `#` is subsumption-aware (the tag or any
-        // sub-tag), `##` is that exact tag.
+        // TreeRef `path` hierarchy). Bare `#X` is the fuzzy finder — ordered
+        // substring (osm) over the path, so you can name a leaf without its
+        // ancestors. `#=P` / `##=P` anchor the *full* path from the root: `#=`
+        // its subtree (`=>*`), `##=` that exact node (`=`).
         let src = std::fs::read_to_string(concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/default-config/query-grammar"
@@ -481,17 +483,29 @@ number = n:NUMBER "MB" => {num($n) * 1048576}
         .unwrap();
         let g = parse_grammar(&src).unwrap();
         validate(&g).unwrap();
+        // Fuzzy osm form: a slash is an osm term separator (ordered, not
+        // necessarily contiguous or root-anchored).
         assert_eq!(
             expand(&g, "#jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "jazz")"#
+            r#"tag -> (mf_schema = "tag" AND osm(path, "jazz"))"#
         );
         assert_eq!(
-            expand(&g, "##jazz").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path = "jazz")"#
+            expand(&g, "#domaine/divertissement").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND osm(path, "domaine divertissement"))"#
         );
+        // Full-path subtree (`#=`) and exact node (`##=`), slash kept.
+        assert_eq!(
+            expand(&g, "#=domaine/divertissement").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path =>* "domaine/divertissement")"#
+        );
+        assert_eq!(
+            expand(&g, "##=domaine/divertissement").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path = "domaine/divertissement")"#
+        );
+        // A quoted value is a single osm term (contiguous substring).
         assert_eq!(
             expand(&g, r#"#"music/jazz""#).unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "music/jazz")"#
+            r#"tag -> (mf_schema = "tag" AND osm(path, "music/jazz"))"#
         );
     }
 }
