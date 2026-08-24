@@ -60,6 +60,11 @@ export async function mount(root, metafolder) {
   let internalDir = null;
   /** @type {string|null} */
   let currentDir = null;
+  // True when this panel is a value picker resolving to a folder path (spec-gui
+  // "Value picker", e.g. the repos panel's "Browse…"): the right-click menu then
+  // offers "Pick this folder", so confirming does not depend on knowing the
+  // Ctrl+Enter keybinding.
+  let pickPathMode = false;
   /** @type {Entry[]} the synthetic rows ("." / "..") then the directory's entries */
   let listing = [];
   // How many synthetic rows lead `listing` (2 with "." and "..", 1 when ".." is
@@ -284,6 +289,15 @@ export async function mount(root, metafolder) {
     else await select(index);
   }
 
+  // Confirm a folder-path pick with `path` (spec-gui "Value picker"): publish it
+  // as the selection and run the global confirm command, which hands it back to
+  // the caller (e.g. the repos panel) as `pick_result`.
+  /** @param {string} path */
+  async function pickThisFolder(path) {
+    await workspace.set('selected_paths', [path]);
+    await commands.invoke('pick:confirm');
+  }
+
   // Right-click on a row: move the cursor there, then offer the row's actions
   // plus the directory-level create/paste actions.
   /** @param {MouseEvent} event @param {number} index */
@@ -294,6 +308,11 @@ export async function mount(root, metafolder) {
     const isEntry = item.name !== '.' && item.name !== '..';
     /** @type {Metafolder.MenuItem[]} */
     const items = [];
+    // In a folder pick, a directory row can be chosen directly from the menu.
+    if (pickPathMode && item.is_dir) {
+      const label = item.name === '.' ? 'Pick this folder' : `Pick “${item.name}”`;
+      items.push({ label, action: () => void pickThisFolder(item.path) }, '-');
+    }
     if (item.is_dir) items.push({ label: 'Open', action: () => void activate(index) }, '-');
     items.push({
       label: 'Track (mf_watch = false)',
@@ -352,6 +371,14 @@ export async function mount(root, metafolder) {
       '-',
       { label: 'Paste', disabled: !hasClipboard(), action: () => void paste() },
     ];
+    // In a folder pick, empty space chooses the current directory.
+    if (pickPathMode && currentDir) {
+      const dir = currentDir; // narrow for the closure (a `let` is not narrowed)
+      items.unshift(
+        { label: 'Pick this folder', action: () => void pickThisFolder(dir) },
+        '-',
+      );
+    }
     metafolder.contextMenu(event, items);
   }
 
@@ -752,6 +779,14 @@ export async function mount(root, metafolder) {
     // at — e.g. the repos panel's folder picker starts from the typed path.
     const seedDir = await workspace.get('file-manager:start-dir');
     const seedStart = typeof seedDir === 'string' && seedDir ? seedDir : null;
+    // Detect a folder-path pick session so the context menu can offer to confirm
+    // the choice (the picker workspace carries `pick_request`, set at start-up).
+    const pickReq = await workspace.get('pick_request');
+    pickPathMode = !!(
+      pickReq &&
+      typeof pickReq === 'object' &&
+      /** @type {{result?: string}} */ (pickReq).result === 'path'
+    );
     if (repo !== null) {
       try {
         await cache.sync(repo); // fresh tracked status on display
