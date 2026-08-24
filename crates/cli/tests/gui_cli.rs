@@ -301,7 +301,28 @@ fn test_gui_input_prints_the_answer() {
     let requests = gui.recorded.all();
     assert_eq!(
         requests[0],
-        ("POST".into(), "/gui/input".into(), json!({"keys": ["1", "2", "escape"], "timeout_ms": null}))
+        (
+            "POST".into(),
+            "/gui/input".into(),
+            json!({"keys": ["1", "2", "escape"], "prompt": null, "timeout_ms": null})
+        )
+    );
+}
+
+// `--prompt` carries the question shown in the GUI's dedicated input bar.
+#[test]
+fn test_gui_input_sends_the_prompt_question() {
+    let gui = stub();
+    let out = mf_gui(&gui, &["input", "y", "n", "--prompt", "Keep it? "]);
+    assert_ok(&out);
+    let requests = gui.recorded.all();
+    assert_eq!(
+        requests[0],
+        (
+            "POST".into(),
+            "/gui/input".into(),
+            json!({"keys": ["y", "n"], "prompt": "Keep it? ", "timeout_ms": null})
+        )
     );
 }
 
