@@ -11,6 +11,7 @@ pub mod index;
 pub mod log;
 pub mod metadata;
 pub mod metadata_map;
+pub mod orphans;
 pub mod pagination;
 pub mod query_exec;
 pub mod reconcile;

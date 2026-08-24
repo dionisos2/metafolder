@@ -23,6 +23,7 @@ use metafolder_core::query::Query as MetaQuery;
 use crate::db;
 use crate::error::ApiError;
 use crate::log::Writer;
+use crate::orphans;
 use crate::pagination::Page;
 use crate::query_exec::{self, SortKey};
 use crate::repo::RepoLocator;
@@ -92,6 +93,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
+        .route("/repos/:repo/orphans/scan", post(orphans_scan))
+        .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/track", post(track))
         // ── Cross-repo sync (spec-sync) ─────────────────────────────────────
         .route("/sync/:a/:b/links", get(sync_list_links).post(sync_create_link))
@@ -1593,6 +1596,50 @@ impl Default for ReconcileBody {
 /// concurrent reconcile is rejected with `409`. With `metarecord` in the body
 /// the reconcile is scoped to that metarecord's subtree; absent, it covers the
 /// whole repository.
+/// `POST /repos/:repo/orphans/scan`: read-only disk scan for tracked
+/// metarecords whose `mfr_path` is definitely gone (spec-file-tracking "Orphan
+/// scan"). Returns `{count, orphans: [{uuid, stale_path}]}`. Unlike reconcile it
+/// writes nothing; unlike a query it consults the filesystem, so it is a
+/// distinct operation rather than a predicate.
+async fn orphans_scan(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let orphans = orphans::scan_orphans(repo_state)?;
+        Ok(Json(json!({ "count": orphans.len(), "orphans": orphans })))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct OrphansClearBody {
+    /// The metarecords to orphan — typically the uuids a prior scan returned.
+    #[serde(default)]
+    uuids: Vec<String>,
+}
+
+/// `POST /repos/:repo/orphans/clear`: orphan the given metarecords whose file is
+/// still gone — snapshot `mfr_path_old`, set `mfr_path` to `Nothing`, cascade to
+/// descendants (spec-file-tracking "Orphan scan"). Re-verifies each against the
+/// disk, so a since-recreated file is skipped. Returns `{cleared}`.
+async fn orphans_clear(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<OrphansClearBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let Json(body) = payload?;
+    let uuids = body.uuids.iter().map(|s| parse_uuid(s)).collect::<Result<Vec<_>, _>>()?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let cleared = orphans::clear_orphans(repo_state, &uuids)?;
+        Ok(Json(json!({ "cleared": cleared })))
+    })
+    .await
+}
+
 async fn full_reconcile(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
