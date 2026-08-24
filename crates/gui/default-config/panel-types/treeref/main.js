@@ -133,9 +133,10 @@ export async function mount(root, metafolder) {
             limit: PAGE,
             ...(nextCursor && { cursor: nextCursor }),
           });
-          const fetched = /** @type {Metafolder.Metarecord[]} */ (
-            result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
-          ).map((m) => ({ uuid: m.uuid, name: treeNameOf(m, field) ?? '?' }));
+          const fetched = /** @type {Metafolder.Metarecord[]} */ (result.records).map((m) => ({
+            uuid: m.uuid,
+            name: treeNameOf(m, field) ?? '?',
+          }));
           children = children.concat(fetched);
           nextCursor = result.nextCursor;
         }

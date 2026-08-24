@@ -117,6 +117,52 @@ describe('cache — sync / invalidation', () => {
     expect(cache._lastHead('r')).toBe(12);
   });
 
+  test('a truncated delta does one coarse refresh instead of per-op invalidation', async () => {
+    const cache = createCache();
+    await seed(cache);
+    let head = 10;
+    let truncated = false;
+    let ops: { id: number; entity_uuid: string }[] = [];
+    const raw = vi.fn(async () => ok({ head, operations: ops, truncated }));
+    await cache.sync('r', raw); // baseline head=10
+
+    // The daemon signals an oversized delta (a large reconcile): head jumps,
+    // operations is empty, truncated is set.
+    head = 9000;
+    truncated = true;
+    ops = [];
+    const changes: { repo: string; uuids: string[] | null }[] = [];
+    const unsub = cache.subscribe((e) => changes.push(e));
+    await cache.sync('r', raw);
+    unsub();
+
+    expect(cache._stats().entities).toBe(0); // whole repo cleared
+    expect(cache._stats().queries).toBe(0);
+    expect(cache._lastHead('r')).toBe(9000);
+    expect(changes).toEqual([{ repo: 'r', uuids: null }]); // one coarse change
+  });
+
+  test('an oversized delta collapses to a coarse refresh client-side too', async () => {
+    // Defense in depth: even if the daemon streamed a large op list, the client
+    // must not invalidate it one metarecord at a time (quadratic over treeRefs).
+    const cache = createCache({ coarseThreshold: 3 });
+    await seed(cache);
+    let head = 10;
+    let ops: { id: number; entity_uuid: string }[] = [];
+    const raw = vi.fn(async () => ok({ head, operations: ops }));
+    await cache.sync('r', raw); // baseline
+
+    head = 20;
+    ops = [1, 2, 3, 4].map((id) => ({ id: 10 + id, entity_uuid: `u${id}` }));
+    const changes: { repo: string; uuids: string[] | null }[] = [];
+    const unsub = cache.subscribe((e) => changes.push(e));
+    await cache.sync('r', raw);
+    unsub();
+
+    expect(cache._stats().entities).toBe(0);
+    expect(changes).toEqual([{ repo: 'r', uuids: null }]); // coarse, not per-uuid
+  });
+
   test('head moved with an empty delta (rollback) clears the repo', async () => {
     const cache = createCache();
     await seed(cache);
@@ -233,11 +279,39 @@ describe('cache — explicit fetch/read API', () => {
     const cache = createCache();
     const raw = vi.fn(async () => ok({ results: [rec('a1'), rec('b2')], next_cursor: '2', total: 5 }));
     const res = await cache.query('r', { query: {}, select: '*', count: true }, raw);
-    expect(res).toEqual({ uuids: ['a1', 'b2'], nextCursor: '2', total: 5 });
+    expect(res).toEqual({
+      uuids: ['a1', 'b2'],
+      records: [rec('a1'), rec('b2')],
+      nextCursor: '2',
+      total: 5,
+    });
     // entities populated → readMetarecord hits without a daemon call.
     const calls = raw.mock.calls.length;
     expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1'));
     expect(raw.mock.calls.length).toBe(calls);
+  });
+
+  test('query returns the records even when a concurrent invalidation drops the cache population', async () => {
+    const cache = createCache();
+    // Hold the query open so an invalidation can land mid-flight.
+    let landQuery!: (v: { status: number; body: unknown }) => void;
+    const queryRaw = vi.fn(() => new Promise((resolve) => (landQuery = resolve)));
+    const inFlight = cache.query('r', { query: {}, select: '*' }, queryRaw as never);
+
+    // A concurrent write clears the repo while the query is in flight (bumps the
+    // epoch), so the response will not be written to the shared cache.
+    await cache.request('PUT', '/repos/r/metarecords/a1/fields/3', { value: 9 }, async () =>
+      ok({ ok: true }),
+    );
+
+    landQuery(ok({ results: [rec('a1'), rec('b2')], next_cursor: null }));
+    const res = await inFlight;
+
+    // The panel still gets the page's records directly (from the response body),
+    // so the list is not empty even though the cache stayed clean.
+    expect(res.uuids).toEqual(['a1', 'b2']);
+    expect(res.records).toEqual([rec('a1'), rec('b2')]);
+    expect(cache._stats().entities).toBe(0); // epoch guard intact: cache not polluted
   });
 
   test('the returned uuid list is a copy (panel owns it)', async () => {

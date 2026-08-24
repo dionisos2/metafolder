@@ -936,7 +936,16 @@ async fn get_log(
 struct SinceParams {
     #[serde(default)]
     op: Option<i64>,
+    /// Cap on the number of operations carried in one response. A delta larger
+    /// than this is not streamed: `truncated` is set and `operations` is empty,
+    /// so the client does one coarse whole-repo refresh instead of invalidating
+    /// tens of thousands of records op-by-op (a large reconcile).
+    #[serde(default)]
+    limit: Option<i64>,
 }
+
+/// Default cap on the change-feed delta size (see [`SinceParams::limit`]).
+const SINCE_DEFAULT_LIMIT: i64 = 500;
 
 /// Change feed for client caches: the current log `head` plus every operation
 /// created after `?op=<id>` (across all branches; each names its `entity_uuid`).
@@ -951,18 +960,28 @@ async fn get_log_since(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
+        let limit = params.limit.unwrap_or(SINCE_DEFAULT_LIMIT).max(0);
+        let mut truncated = false;
         let operations = match params.op {
             Some(since) => {
-                let ops = crate::log::ops_since(&conn, since)?;
-                let mut out = Vec::with_capacity(ops.len());
-                for op in &ops {
-                    out.push(op_json(&conn, op, false)?);
+                if crate::log::ops_since_count(&conn, since)? > limit {
+                    // Oversized delta: signal a coarse refresh instead of
+                    // streaming every operation (a large reconcile would flood
+                    // the client).
+                    truncated = true;
+                    Vec::new()
+                } else {
+                    let ops = crate::log::ops_since(&conn, since)?;
+                    let mut out = Vec::with_capacity(ops.len());
+                    for op in &ops {
+                        out.push(op_json(&conn, op, false)?);
+                    }
+                    out
                 }
-                out
             }
             None => Vec::new(),
         };
-        Ok(Json(json!({"head": head, "operations": operations})))
+        Ok(Json(json!({"head": head, "operations": operations, "truncated": truncated})))
     })
     .await
 }

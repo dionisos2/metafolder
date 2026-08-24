@@ -150,9 +150,7 @@ export async function mount(root, metafolder) {
         await statusBar.error(error);
         return;
       }
-      const fetched = /** @type {Metafolder.Metarecord[]} */ (
-        result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
-      );
+      const fetched = /** @type {Metafolder.Metarecord[]} */ (result.records);
       records = records.concat(fetched);
       nextCursor = result.nextCursor;
       // Resolve mfr_path for display / selected_paths (best-effort).

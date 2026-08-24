@@ -144,6 +144,14 @@ pub fn all_ops(conn: &rusqlite::Connection) -> Result<Vec<OpRow>> {
 /// (a new edit after a rollback is parented elsewhere but still has a larger
 /// id). The change delta a client polls to learn which metarecords were touched
 /// since it last synced (each op names its `entity_uuid`).
+/// How many operations are newer than `op_id`. Cheap count used by the change
+/// feed to decide whether a delta is small enough to stream op-by-op or must be
+/// collapsed to a coarse "everything changed" signal (a large reconcile would
+/// otherwise flood the client with tens of thousands of operations).
+pub fn ops_since_count(conn: &rusqlite::Connection, op_id: i64) -> Result<i64> {
+    Ok(conn.query_row("SELECT COUNT(*) FROM operation WHERE id > ?1", [op_id], |r| r.get(0))?)
+}
+
 pub fn ops_since(conn: &rusqlite::Connection, op_id: i64) -> Result<Vec<OpRow>> {
     let mut stmt =
         conn.prepare(&format!("SELECT {OP_COLUMNS} FROM operation WHERE id > ?1 ORDER BY id"))?;

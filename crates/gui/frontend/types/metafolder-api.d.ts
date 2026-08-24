@@ -100,11 +100,19 @@ declare namespace Metafolder {
   /** The shared daemon-data cache: `fetch*` (async, populates) then `read*`
    *  (sync, for render). Cached data is read-only — never mutate it. */
   interface Cache {
-    /** The page itself, not a DaemonResponse: uuids + cursor + optional total. */
+    /** The page itself, not a DaemonResponse: uuids + the records + cursor +
+     *  optional total. `records` come straight from the response body, so a
+     *  panel renders them directly without re-reading the cache (which a
+     *  concurrent change-feed invalidation may have left unpopulated). */
     query(
       repo: string,
       body: Record<string, unknown>,
-    ): Promise<{ uuids: string[]; nextCursor: string | null; total: number | null }>;
+    ): Promise<{
+      uuids: string[];
+      records: Metarecord[];
+      nextCursor: string | null;
+      total: number | null;
+    }>;
     /** Populates the cache; the data is then read back synchronously. */
     fetchMetarecords(repo: string, uuids: string[]): Promise<void>;
     fetchTreeRefs(repo: string, field: string, uuids: string[]): Promise<void>;

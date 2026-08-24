@@ -348,10 +348,10 @@ export async function mount(root, metafolder) {
         return;
       }
       fetchError = null; // a fresh page arrived; clear any stale error state
-      // The page's metarecords are read from the cache the query just populated.
-      const fetched = /** @type {Metafolder.Metarecord[]} */ (
-        result.uuids.map((u) => cache.readMetarecord(r, u)).filter((m) => m !== REFRESH)
-      );
+      // The page's metarecords come straight from the query result — not re-read
+      // from the cache, which a concurrent change-feed invalidation may have left
+      // unpopulated (that would drop every row and render an empty list).
+      const fetched = /** @type {Metafolder.Metarecord[]} */ (result.records);
       metarecords = metarecords.concat(fetched);
       nextCursor = result.nextCursor;
       await prepare(fetched); // pre-resolve display data; rendering stays sync

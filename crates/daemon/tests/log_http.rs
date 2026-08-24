@@ -685,4 +685,52 @@ async fn test_log_since_reports_head_and_delta() {
     assert!(ops.iter().all(|o| o["id"].as_i64().unwrap() > h0));
     // The delta names the changed metarecord (so the cache can invalidate it).
     assert!(ops.iter().any(|o| o["entity_uuid"] == uuid2));
+    // A small delta is not truncated.
+    assert_eq!(delta["truncated"], json!(false));
+}
+
+// A large delta (e.g. after a reconcile of thousands of files) must NOT be
+// streamed op-by-op — that floods the GUI. The daemon caps it and signals
+// truncation so the client does one coarse refresh instead.
+#[tokio::test]
+async fn test_log_since_truncates_oversized_delta() {
+    let (app, repo, _root) = setup("since_trunc").await;
+    // Baseline head before the burst.
+    let (_, base) = request(&app, "GET", &format!("/repos/{repo}/log/since"), None).await;
+    let h0 = base["head"].as_i64().unwrap();
+
+    // Five writes, each a separate operation.
+    for i in 0..5 {
+        create(
+            &app,
+            &repo,
+            json!([{"name": "n", "value": {"type": "int", "value": i}}]),
+        )
+        .await;
+    }
+
+    // With a limit below the delta size, the response is truncated: head still
+    // advances, but no operations are carried.
+    let (status, capped) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/log/since?op={h0}&limit=2"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(capped["head"].as_i64().unwrap() > h0);
+    assert_eq!(capped["truncated"], json!(true));
+    assert!(capped["operations"].as_array().unwrap().is_empty());
+
+    // With a generous limit, the full delta comes through untruncated.
+    let (_, full) = request(
+        &app,
+        "GET",
+        &format!("/repos/{repo}/log/since?op={h0}&limit=100"),
+        None,
+    )
+    .await;
+    assert_eq!(full["truncated"], json!(false));
+    assert!(full["operations"].as_array().unwrap().len() >= 5);
 }

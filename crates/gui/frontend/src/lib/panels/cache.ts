@@ -65,6 +65,12 @@ export interface CacheOptions {
   maxEntities?: number;
   maxTreeRefs?: number;
   maxQueries?: number;
+  /** A change-feed delta larger than this collapses to a coarse whole-repo
+   *  refresh instead of per-op invalidation (per-op invalidation scans the
+   *  treeRefs map, so a huge reconcile delta would be quadratic and freeze the
+   *  WebView). The daemon caps the delta first (its own default is lower); this
+   *  is the client-side backstop. */
+  coarseThreshold?: number;
 }
 
 export function createCache(opts: CacheOptions = {}) {
@@ -75,6 +81,7 @@ export function createCache(opts: CacheOptions = {}) {
   let maxEntities = opts.maxEntities ?? 20000;
   let maxTreeRefs = opts.maxTreeRefs ?? 20000;
   let maxQueries = opts.maxQueries ?? 256;
+  let coarseThreshold = opts.coarseThreshold ?? 1000;
 
   const entities = new Map<string, Metarecord>(); // `${repo}|${uuid}` → metarecord
   const treeRefs = new Map<string, string[]>(); // `${repo}|${field}|${uuid}` → [paths]
@@ -326,7 +333,11 @@ export function createCache(opts: CacheOptions = {}) {
       since == null ? `/repos/${repo}/log/since` : `/repos/${repo}/log/since?op=${since}`;
     const res = await raw('GET', path, null);
     if (res.status !== 200) return;
-    const { head, operations } = res.body as { head: number | null; operations: Op[] };
+    const { head, operations, truncated } = res.body as {
+      head: number | null;
+      operations: Op[];
+      truncated?: boolean;
+    };
     if (since !== undefined && head === since) return; // unchanged
 
     // Re-warm the field catalog after this refresh if a panel had already loaded
@@ -335,7 +346,14 @@ export function createCache(opts: CacheOptions = {}) {
     const hadFields = fields.has(repo);
     /** The change to broadcast once invalidation is done, or null for none. */
     let change: ChangeEvent | null = null;
-    if (operations.length > 0) {
+    if (truncated || operations.length > coarseThreshold) {
+      // Oversized delta (a large reconcile): the daemon truncated it, or it is
+      // still too big to invalidate op-by-op. Per-op invalidation scans the
+      // treeRefs map each time, so a huge delta is quadratic and freezes the
+      // WebView — collapse to one coarse whole-repo refresh instead.
+      clearRepo(repo);
+      change = { repo, uuids: null };
+    } else if (operations.length > 0) {
       for (const op of operations) invalidateMetarecord(repo, op.entity_uuid);
       clearQueries(repo);
       // Distinct touched uuids, in first-seen order.
@@ -373,11 +391,23 @@ export function createCache(opts: CacheOptions = {}) {
     repo: string,
     body: Record<string, unknown>,
     raw: RawFetcher,
-  ): Promise<{ uuids: string[]; nextCursor: string | null; total: number | null }> {
+  ): Promise<{
+    uuids: string[];
+    records: Metarecord[];
+    nextCursor: string | null;
+    total: number | null;
+  }> {
     const res = await request('POST', `/repos/${repo}/query`, body, raw);
     const b = (res.body ?? {}) as { results?: Metarecord[]; next_cursor?: string | null; total?: number };
+    // Return the page's records straight from the response body — the caller
+    // must not depend on the shared entity cache having been populated. The
+    // epoch guard in `request` intentionally skips that population when a
+    // concurrent invalidation lands mid-flight, which would otherwise leave a
+    // panel reading REFRESH for every uuid and rendering an empty list.
+    const records = b.results ?? [];
     return {
-      uuids: (b.results ?? []).map((r) => r.uuid),
+      uuids: records.map((r) => r.uuid),
+      records: records.slice(),
       nextCursor: b.next_cursor ?? null,
       total: b.total ?? null,
     };
@@ -452,6 +482,8 @@ export function createCache(opts: CacheOptions = {}) {
     if (typeof next.maxEntities === 'number' && next.maxEntities > 0) maxEntities = next.maxEntities;
     if (typeof next.maxTreeRefs === 'number' && next.maxTreeRefs > 0) maxTreeRefs = next.maxTreeRefs;
     if (typeof next.maxQueries === 'number' && next.maxQueries > 0) maxQueries = next.maxQueries;
+    if (typeof next.coarseThreshold === 'number' && next.coarseThreshold > 0)
+      coarseThreshold = next.coarseThreshold;
   }
 
   // `as const`: a mutable property would widen REFRESH from `unique symbol` to
