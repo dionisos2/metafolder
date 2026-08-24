@@ -273,11 +273,12 @@ fn decide_move(
 
 /// Decides a `file_deleted`/`file_modified` rollback step (spec-trash "rollback
 /// auto-restore"). When the trash holds the content this step's deletion
-/// displaced — matched by the metarecord *and* the version the step restores to
-/// (`entity_version_before`, present only on inverse steps) — the file is put
-/// back and `false` (no skip) is returned so the daemon applies the real inverse
-/// (mfr_path + version). Otherwise the step is skipped (metadata rewinds) and,
-/// if some content for the record is trashed, a recovery hint is printed.
+/// displaced — matched by the metarecord *and* the version the record held
+/// before the revision being undone (`entity_version_before_revision`, present
+/// only on inverse steps) — the file is put back and `false` (no skip) is
+/// returned so the daemon applies the real inverse (mfr_path + version).
+/// Otherwise the step is skipped (metadata rewinds) and, if some content for the
+/// record is trashed, a recovery hint is printed.
 fn decide_deleted(
     op: &Json,
     trash: &TrashDir,
@@ -298,7 +299,15 @@ fn decide_deleted(
     // the entity is a *descendant* recorded in the entry's subtree (a trashed
     // directory). Restoring the directory blob brings back the whole subtree's
     // content at once, whichever order the cascade's ops are navigated in.
-    let version = op["entity_version_before"].as_u64();
+    // The version the record held before the *whole* revision: one event can
+    // write several fields (orphaning writes `mfr_path` and `mfr_path_old`), so
+    // each op restores to its own intermediate version, while the trash entry
+    // recorded the version at the moment the file was trashed — the
+    // pre-revision one. Every op of the revision therefore reaches the same
+    // decision. Older daemons expose only the per-op version.
+    let version = op["entity_version_before_revision"]
+        .as_u64()
+        .or_else(|| op["entity_version_before"].as_u64());
     let pos = entries.iter().position(|e| {
         let is_top = e.metarecord.as_deref() == Some(entity)
             && version.is_some_and(|v| e.version == Some(v));
@@ -1054,6 +1063,40 @@ mod tests {
         assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
         assert!(entries.is_empty(), "the consumed entry is removed");
         assert!(trash.entry(&e.id).is_err(), "the manifest is gone");
+        std::fs::remove_dir_all(&base).ok();
+    }
+
+    // A revision that orphans a record writes several fields (mfr_path and
+    // mfr_path_old), so its operations restore to different versions while the
+    // trash entry records only the version the record had *before* the whole
+    // revision. Every op of the revision must reach the same decision, whichever
+    // is navigated first — otherwise the file comes back while the record it
+    // belongs to stays orphaned.
+    #[test]
+    fn deleted_steps_of_one_revision_share_the_pre_revision_version() {
+        let base = std::env::temp_dir().join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).unwrap();
+        let trash = TrashDir::new(base.join("trash"));
+        let file = base.join("doc.txt");
+        std::fs::write(&file, b"content").unwrap();
+        trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(0)).unwrap();
+        let mut entries = trash.entries().unwrap();
+        let mut restored = HashSet::new();
+
+        // Navigated first: the revision's *last* op, restoring to version 1.
+        let mut op = deleted_op("rec-1", Some(1));
+        op["entity_version_before_revision"] = json!(0);
+        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true).unwrap();
+        assert!(!skip, "the pre-revision version matches the trash entry: restore, don't skip");
+        assert_eq!(std::fs::read(&file).unwrap(), b"content", "the file is back");
+        assert!(entries.is_empty(), "the entry is consumed once");
+
+        // The revision's first op, restoring to version 0: the content is
+        // already back, so it applies the real inverse too.
+        let mut op = deleted_op("rec-1", Some(0));
+        op["entity_version_before_revision"] = json!(0);
+        let skip = decide_deleted(&op, &trash, &mut entries, &mut restored, true).unwrap();
+        assert!(!skip, "the record's content is restored: apply the inverse");
         std::fs::remove_dir_all(&base).ok();
     }
 

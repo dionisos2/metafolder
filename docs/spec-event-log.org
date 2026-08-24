@@ -324,16 +324,22 @@ Three op types require attention at rollback time:
   =mf trash restore=/=prune=).
 - =file_deleted=, =file_modified=: the content is gone *unless the change
   passed through the trash-bin*. On an inverse (rollback) step, the CLI looks
-  for a trash entry matching this metarecord and the version the step restores
-  to (=entity_version_before=, exposed on the op — see below); if found, it
-  moves the file back and calls =step {}= (the real inverse restores =mfr_path=
-  and the version), *auto-restoring* the exact deleted content. Otherwise the
-  content is truly gone: the CLI calls =step {"skip": true}= (metadata rewinds)
-  and, if some other content for the record is trashed, prints a
-  =mf trash restore= hint. See [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
-  For this correlation the daemon exposes =entity_version_before= on each
-  *inverse* step's op JSON (omitted on forward/redo steps, so auto-restore never
-  fires while re-applying a deletion).
+  for a trash entry matching this metarecord and the version the record held
+  *before the revision being undone* (=entity_version_before_revision=, exposed
+  on the op — see below); if found, it moves the file back and calls =step {}=
+  (the real inverse restores =mfr_path= and the version), *auto-restoring* the
+  exact deleted content. Otherwise the content is truly gone: the CLI calls
+  =step {"skip": true}= (metadata rewinds) and, if some other content for the
+  record is trashed, prints a =mf trash restore= hint. See
+  [[file:spec-trash.org][spec-trash.org]] "rollback auto-restore".
+  For this correlation the daemon exposes, on each *inverse* step's op JSON
+  (omitted on forward/redo steps, so auto-restore never fires while re-applying
+  a deletion), both =entity_version_before= — the version *this* step restores
+  to — and =entity_version_before_revision= — the lowest of them across the
+  revision's operations on that record, i.e. the version anything outside the
+  revision (a trash entry) observed. One event may write several fields of one
+  record, so only the latter is a stable correlation key: every operation of the
+  revision carries the same value and therefore reaches the same decision.
 
 When =skip: true= is used, the daemon *still applies the step's metadata change*
 (the inverse on a rollback step, the forward action on a redo step — maintaining
@@ -895,7 +901,7 @@ Target forms:
    - =move_file=: checks whether the file exists at =from=, applies the
      relevant policy (see below), then calls =step {}= or =step {"skip":true}=.
    - =file_deleted=, =file_modified=: if the trash-bin holds the content this
-     step deleted (matched by metarecord + =entity_version_before=), moves the
+     step deleted (matched by metarecord + =entity_version_before_revision=), moves the
      file back and calls =step {}= (auto-restore); otherwise calls
      =step {"skip": true}= — no filesystem action is possible and the
      restoration op corrects the metadata on the new branch.

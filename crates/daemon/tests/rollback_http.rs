@@ -157,6 +157,96 @@ async fn test_start_step_undoes_last_revision() {
     assert_eq!(rating(&app, &repo, &uuid).await, Some(3));
 }
 
+// An orphaning revision writes several fields of one record (`mfr_path` and
+// `mfr_path_old`), so each operation restores to its own version.
+// `entity_version_before_revision` is the record's version before the *whole*
+// revision — the version an external side-effect recorded when it last observed
+// the record (a trash entry's version, spec-trash "rollback auto-restore") —
+// and is identical on every operation of the revision.
+#[tokio::test]
+async fn test_inverse_step_exposes_the_pre_revision_version() {
+    use metafolder_daemon::executor::{self, FsEvent};
+
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = std::env::temp_dir().join(format!("metafolder_rbk_prerev_{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("doc.txt"), b"precious").unwrap();
+    let (status, body) =
+        request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
+    assert_eq!(status, StatusCode::OK, "init failed: {body}");
+    let repo = body["repo_uuid"].as_str().unwrap().to_string();
+    let repo_state = state.repo(Uuid::parse_str(&repo).unwrap()).unwrap();
+
+    // Tracking is opt-in: watch the root so the events are eligible.
+    let root_uuid = {
+        let conn = repo_state.conn.lock().unwrap();
+        metafolder_daemon::db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+    };
+    set(&app, &repo, &root_uuid.as_simple().to_string(), "mf_watch", json!({"type": "bool", "value": true}))
+        .await;
+
+    // Track the file, then orphan it — one revision, two operations.
+    {
+        let conn = repo_state.conn.lock().unwrap();
+        executor::enqueue(&conn, &FsEvent::Create("/doc.txt".into()), None).unwrap();
+    }
+    executor::flush_pending(&repo_state).unwrap();
+    let file_uuid = {
+        let conn = repo_state.conn.lock().unwrap();
+        let mut cache = repo_state.cache.lock().unwrap();
+        cache.resolve_path(&conn, "mfr_path", "/doc.txt").unwrap().expect("the tracked file")
+    };
+    let uuid = file_uuid.as_simple().to_string();
+    let before = {
+        let conn = repo_state.conn.lock().unwrap();
+        metafolder_daemon::db::get_version(&conn, file_uuid).unwrap().expect("version")
+    };
+
+    std::fs::remove_file(root.join("doc.txt")).unwrap();
+    {
+        let conn = repo_state.conn.lock().unwrap();
+        executor::enqueue(&conn, &FsEvent::Remove("/doc.txt".into()), None).unwrap();
+    }
+    executor::flush_pending(&repo_state).unwrap();
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/rollback/start"),
+        Some(json!({"target": {"prev_revision": true}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["op"]["entity_uuid"], uuid, "{body}");
+    // The last op of the revision is navigated first: it restores to a version
+    // *inside* the revision, while the pre-revision version is the record's
+    // state before any of it.
+    assert!(
+        body["op"]["entity_version_before"].as_u64().unwrap() > before,
+        "the first inverse step restores to an intra-revision version: {body}"
+    );
+    assert_eq!(
+        body["op"]["entity_version_before_revision"].as_u64(),
+        Some(before),
+        "every op of the revision exposes the pre-revision version: {body}"
+    );
+
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["op"]["entity_version_before"].as_u64(),
+        Some(before),
+        "the second op restores to the pre-revision version: {body}"
+    );
+    assert_eq!(
+        body["op"]["entity_version_before_revision"].as_u64(),
+        Some(before),
+        "same pre-revision version on the second op: {body}"
+    );
+}
+
 #[tokio::test]
 async fn test_lock_blocks_writes_but_allows_reads() {
     let (app, repo, _root) = setup("lock").await;

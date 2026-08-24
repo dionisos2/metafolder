@@ -87,6 +87,28 @@ pub struct OpRow {
     pub field_name: Option<String>,
 }
 
+/// The version `op`'s entity held *before the whole revision* `op` belongs to —
+/// the lowest `entity_version_before` among that revision's operations on it.
+///
+/// One event can write several fields of one record (orphaning writes both
+/// `mfr_path` and `mfr_path_old`), and each operation then restores to its own
+/// intermediate version. Anything that observed the record from *outside* the
+/// revision — a trash entry, which records the version at the moment the file
+/// was trashed — knows only this pre-revision version, so the rollback
+/// correlation must be made against it and not against a per-op version
+/// (spec-trash "rollback auto-restore").
+pub fn entity_version_before_revision(
+    conn: &rusqlite::Connection,
+    op: &OpRow,
+) -> Result<Option<u64>> {
+    let min: Option<i64> = conn.query_row(
+        "SELECT MIN(entity_version_before) FROM operation WHERE rev_id = ?1 AND entity_uuid = ?2",
+        params![op.rev_id, db::uuid_to_bytes(op.entity_uuid)],
+        |r| r.get(0),
+    )?;
+    Ok(min.map(|v| v as u64))
+}
+
 pub fn get_head(conn: &rusqlite::Connection) -> Result<Option<i64>> {
     Ok(conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?)
 }

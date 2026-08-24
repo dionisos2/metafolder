@@ -137,14 +137,25 @@ unambiguously even when a record has been trashed several times:
 
 - When =mf trash -f= trashes a path, it records the metarecord's current
   =version= on the entry (the "file present" version, before the watcher
-  records the deletion, whose =entity_version_before= equals it).
+  records the deletion).
 - During rollback, for a =file_deleted=/=file_modified= inverse step, the CLI
   looks for a trash entry whose =metarecord= and =version= equal the op's
-  =entity_uuid= and =entity_version_before= (see
+  =entity_uuid= and =entity_version_before_revision= (see
   [[file:spec-event-log.org][spec-event-log.org]] "Filesystem coordination"). On a match it moves the file
   back and lets the daemon apply the real inverse (=step {}=), which restores
   =mfr_path= and the version to match. With no match the step is skipped as
   before, plus a =mf trash restore= hint.
+
+The correlated version is the record's version *before the whole revision*, not
+before the individual operation. One filesystem event can write several fields
+of one record — orphaning writes =mfr_path_old= as well as =mfr_path=, each its
+own operation with its own =entity_version_before= — while the trash entry only
+ever saw the version the record held before any of it. Matching per operation
+would make every op of the revision but one miss, so the file would come back
+while the record that owns it stayed orphaned (and the watcher would then track
+the restored file as a duplicate). Every operation of the revision therefore
+carries the same =entity_version_before_revision= and reaches the same
+decision.
 
 The restored file's arrival is buffered by the rollback lock and, once the
 navigation's inverse has re-established =mfr_path=, reconciled as a plain

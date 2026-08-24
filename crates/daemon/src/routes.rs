@@ -1269,6 +1269,15 @@ fn action_op_json(
         if let Some(v) = op.entity_version_before {
             value["entity_version_before"] = json!(v);
         }
+        // One event can write several fields of one record (orphaning writes
+        // `mfr_path` *and* `mfr_path_old`), so each op restores to its own
+        // intermediate version while a trash entry only ever recorded the
+        // version the record held before the whole revision. Expose that one
+        // too: it is what the CLI correlates the entry against, identically on
+        // every op of the revision.
+        if let Some(v) = crate::log::entity_version_before_revision(conn, op)? {
+            value["entity_version_before_revision"] = json!(v);
+        }
     }
     if is_move {
         // Inverse: undo the move (after → before). Forward: redo (before → after).
