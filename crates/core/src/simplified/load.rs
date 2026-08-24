@@ -87,13 +87,14 @@ mod tests {
     fn default_grammar_expands_presence_predicates() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         // `?` present, `!?` absent (value is Nothing), `??` unknown (never set).
-        assert_eq!(expand(&g, "path ?").unwrap(), "mfr_path IS PRESENT");
-        assert_eq!(expand(&g, "path !?").unwrap(), "mfr_path IS ABSENT");
-        assert_eq!(expand(&g, "path ??").unwrap(), "mfr_path IS UNKNOWN");
+        // `p` is the alias for the file path field `mfr_path`.
+        assert_eq!(expand(&g, "p ?").unwrap(), "mfr_path IS PRESENT");
+        assert_eq!(expand(&g, "p !?").unwrap(), "mfr_path IS ABSENT");
+        assert_eq!(expand(&g, "p ??").unwrap(), "mfr_path IS UNKNOWN");
         // A bare field passes through; combines with other terms.
-        assert_eq!(expand(&g, "tag ?? path !?").unwrap(), "tag IS UNKNOWN AND mfr_path IS ABSENT");
+        assert_eq!(expand(&g, "tag ?? p !?").unwrap(), "tag IS UNKNOWN AND mfr_path IS ABSENT");
         // Every expansion is valid normal DSL.
-        for input in ["path ?", "path !?", "path ??"] {
+        for input in ["p ?", "p !?", "p ??"] {
             crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
         }
     }
@@ -101,9 +102,10 @@ mod tests {
     #[test]
     fn default_grammar_expands_osm_predicates() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
-        // Path-mode OSM over a tree_ref field; multi-term needs a quoted string.
+        // Path-mode OSM over a tree_ref field (`p` = mfr_path); multi-term
+        // needs a quoted string.
         assert_eq!(
-            expand(&g, r#"path osm "scien fic""#).unwrap(),
+            expand(&g, r#"p osm "scien fic""#).unwrap(),
             r#"osm(mfr_path, "scien fic")"#
         );
         // Direct-mode OSM over a field's own text.
@@ -115,11 +117,11 @@ mod tests {
         assert_eq!(expand(&g, "name osmd config").unwrap(), r#"osmd(name, "config")"#);
         // Composes with the boolean skeleton like any other predicate.
         assert_eq!(
-            expand(&g, r#"fav path osm "jazz""#).unwrap(),
+            expand(&g, r#"fav p osm "jazz""#).unwrap(),
             r#"rating >= 4 AND osm(mfr_path, "jazz")"#
         );
         // Every expansion is valid normal DSL.
-        for input in [r#"path osm "scien fic""#, r#"label osmd "sf""#, "name osmd config"] {
+        for input in [r#"p osm "scien fic""#, r#"label osmd "sf""#, "name osmd config"] {
             crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
         }
     }
@@ -127,29 +129,45 @@ mod tests {
     #[test]
     fn default_grammar_expands_tag_macros() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
-        // `#X` = the tag X or any sub-tag (subsumption, the common case): the
-        // tag entry's path subtree via `=>*`.
+        // Bare `#X` = the fuzzy finder: ordered-substring match (osm) over the
+        // tag path, so you can name a leaf without its ancestors. A `/` is an
+        // osm term separator, not a path anchor: `#a/b` matches a path with `a`
+        // then `b` in order, not necessarily contiguous or from the root.
         assert_eq!(
             expand(&g, "#musique").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
+            r#"tag -> (mf_schema = "tag" AND osm(path, "musique"))"#
         );
-        // `##X` = exactly the tag X.
         assert_eq!(
-            expand(&g, "##musique").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path = "musique")"#
+            expand(&g, "#musique/jazz").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND osm(path, "musique jazz"))"#
         );
-        // A nested tag path must be quoted (the value is a WORD or a STRING).
+        // A quoted value is one contiguous osm term.
         assert_eq!(
             expand(&g, r#"#"musique/jazz""#).unwrap(),
+            r#"tag -> (mf_schema = "tag" AND osm(path, "musique/jazz"))"#
+        );
+        // `#=P` anchors the *full* path from the root and matches its subtree
+        // (`=>*`); an unquoted slash-path is accepted.
+        assert_eq!(
+            expand(&g, "#=musique").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path =>* "musique")"#
+        );
+        assert_eq!(
+            expand(&g, "#=musique/jazz").unwrap(),
             r#"tag -> (mf_schema = "tag" AND path =>* "musique/jazz")"#
+        );
+        // `##=P` anchors the full path to that exact node (`=`).
+        assert_eq!(
+            expand(&g, "##=musique/jazz").unwrap(),
+            r#"tag -> (mf_schema = "tag" AND path = "musique/jazz")"#
         );
         // Composes with the boolean skeleton like any other predicate.
         assert_eq!(
             expand(&g, "#musique rating>3").unwrap(),
-            r#"tag -> (mf_schema = "tag" AND path =>* "musique") AND rating > 3"#
+            r#"tag -> (mf_schema = "tag" AND osm(path, "musique")) AND rating > 3"#
         );
         // Every expansion is valid normal DSL.
-        for input in ["#musique", "##musique", r#"#"musique/jazz""#] {
+        for input in ["#musique", "#musique/jazz", r#"#"musique/jazz""#, "#=musique/jazz", "##=musique/jazz"] {
             crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
         }
     }

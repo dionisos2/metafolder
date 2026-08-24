@@ -46,19 +46,34 @@ predicate =
   | df:datefield "since"   v:STRING               => $df >= @{str($v)}
   | df:datefield "before"  v:STRING               => $df < @{str($v)}
   | df:datefield "between" a:STRING "and" b:STRING => $df >= @{str($a)} AND $df <= @{str($b)}
-  # Tags. `#X` matches the tag X *or any sub-tag* (subsumption — the common
-  # case, since tagging a file with `a/b` drops the redundant `a` ref); `##X`
-  # matches exactly the tag X. Quote a nested path (`#"musique/jazz"`). To
+  # Tags. Bare `#X` is the fuzzy finder: ordered-substring matching (osm) over
+  # the tag path, so you can name a leaf without its ancestors (`#jazz`). A `/`
+  # is an osm term separator, not a path anchor — `#a/b` matches a path with `a`
+  # then `b` in order (not necessarily contiguous or root-anchored). Quote a
+  # value to match one contiguous substring (`#"jeux video"`). `#=P` / `##=P`
+  # anchor the *full* path from the root: `#=` its subtree, `##=` that exact
+  # node; an unquoted slash-path is fine (`#=musique/jazz`). Distinct tokens
+  # under maximal munch (`#` vs `#=` vs `##=`), so their order is immaterial. To
   # negate, keep a space: `! #musique` (a bare `!#` lexes as one symbol).
-  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})
-  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)})
+  | "##=" v:tagpath         => tag -> (mf_schema = "tag" AND path = {str($v)})
+  | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})
+  | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
   | "fav"                   => rating >= 4
 
-# Field aliases: map a few names, pass the rest through.
-field  = "path" => mfr_path
+# Field aliases: map a few names, pass the rest through. `p` = the file path
+# (`mfr_path`); `path` is left free so it reads as the tag hierarchy field.
+field  = "p"    => mfr_path
        | "size" => mfr_size
        | w:WORD => $w
 value  = STRING | WORD
+
+# Tag path values. `tagpath` keeps the slashes (a real path); `tagosm` turns
+# them into osm term separators (spaces). A quoted string is passed through
+# verbatim (one contiguous term / an exact path with spaces).
+tagpath = v:STRING       => $v
+        | ps:WORD ++ "/" => {join("/", $ps)}
+tagosm  = v:STRING       => $v
+        | ps:WORD ++ "/" => {join(" ", $ps)}
 number = n:NUMBER "MB"   => {num($n) * 1048576}
        | n:NUMBER "mins" => {num($n) * 60}
        | n:NUMBER        => $n

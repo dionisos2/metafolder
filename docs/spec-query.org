@@ -631,15 +631,23 @@ predicate =
   | df:datefield "since"   v:value               => $df >= @{str($v)}
   | df:datefield "before"  v:value               => $df < @{str($v)}
   | df:datefield "between" a:value "and" b:value => $df >= @{str($a)} AND $df <= @{str($b)}
-  | "##" v:value            => tag -> (mf_schema = "tag" AND path = {str($v)})   # exact tag
-  | "#"  v:value            => tag -> (mf_schema = "tag" AND path =>* {str($v)}) # tag or sub-tag
+  | "##=" v:tagpath         => tag -> (mf_schema = "tag" AND path = {str($v)})    # exact node, full path
+  | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})  # subtree, full path
+  | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)})) # fuzzy: osm over the path
   | "fav"                   => rating >= 4
 
-# field aliases: map a few names, pass the rest through
-field  = "path" => mfr_path
+# field aliases: map a few names, pass the rest through. `p` = the file path;
+# `path` is left free so it reads as the tag hierarchy field.
+field  = "p"    => mfr_path
        | "size" => mfr_size
        | w:WORD => $w
 value  = STRING | WORD
+# tag path values: `tagpath` keeps slashes (a real path), `tagosm` turns them
+# into osm term separators; a quoted string passes through verbatim.
+tagpath = v:STRING       => $v
+        | ps:WORD ++ "/" => {join("/", $ps)}
+tagosm  = v:STRING       => $v
+        | ps:WORD ++ "/" => {join(" ", $ps)}
 number = n:NUMBER "MB"   => {num($n) * 1048576}
        | n:NUMBER "mins" => {num($n) * 60}
        | n:NUMBER        => $n
@@ -656,11 +664,19 @@ dur_unit  = ("s" | "sec" | "secs" | "second" | "seconds") => 1000
 #+END_SRC
 
 Ordering matters under ordered choice: the operator forms (=,= =!=,= =~=, =?=…)
-precede the bare-word alias (=fav=). The tag macros =#X= (the tag =X= or any
-sub-tag — via the inclusive subtree =path =>* "X"=) and =##X= (exactly =X=) are
-distinct tokens under maximal munch (=#= vs =##=), so their order is
-immaterial; a nested tag path is quoted (=#"musique/jazz"=). To negate, keep a
-space (=! #musique=) — a bare =!#= lexes as one symbol token.
+precede the bare-word alias (=fav=). The tag macros come in two families. Bare
+=#X= is the *fuzzy finder*: ordered-substring matching (=osm=) over the tag
+path, so you can name a leaf without its ancestors (=#jazz= finds
+=musique/jazz=); a =/= is an osm term separator, not a path anchor
+(=#a/b= → =osm(path, "a b")=, matching =a= then =b= in order but not
+necessarily contiguous or root-anchored). A quoted value is one contiguous
+term (=#"jeux video"=). =#=P= and =##=P= *anchor the full path* from the root —
+=#=P= its subtree (=path =>* "P"=), =##=P= that exact node (=path = "P"=) — and
+accept an unquoted slash-path (=#=musique/jazz=). The four sigils =#=, =#==,
+=##=  are distinct tokens under maximal munch, so their order is immaterial. To
+negate, keep a space (=! #musique=) — a bare =!#= lexes as one symbol token.
+The file-path field is aliased to the terse =p= (=p osm "sci fi"=, =p ?=),
+leaving the word =path= to pass through as the tag hierarchy field name.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →
