@@ -724,6 +724,34 @@ field:
 {"path": "/archive/old_renamed.mp3", "fingerprint": "partial_hash", "score": 0.82}
 #+END_SRC
 
+** Orphan scan
+
+Reconcile re-homes moved files and leaves the rest stale; it never writes
+=Nothing=. But a metarecord whose file was deleted *while its subtree was
+unwatched* keeps a live-looking =mfr_path= and no =mfr_path_old= — invisible to a
+query, which sees only the database, never the disk. The *orphan scan* is the
+diagnostic for exactly this state, and *clear* is its cleanup.
+
+*Scan* (=POST /repos/:repo/orphans/scan=, read-only). Driven by the *tracked
+set*, not the eligible tree: every metarecord that still resolves an =mfr_path=
+is checked against the disk, so a subtree deleted while unwatched is still found.
+A record is reported *only when a readable ancestor directory proves the file is
+truly absent*: the scan climbs from the path to its nearest existing ancestor and
+reports an orphan only if that ancestor could be read (=read_dir= succeeded) and
+the path is absent below it. An unreadable (=EACCES=) or missing-mount ancestor —
+or a broken symlink still present at the path — yields "unknown", never an
+orphan. This guard is what makes it safe to null the paths afterwards: a
+transiently unmounted drive or a permission drop cannot mass-orphan a subtree.
+Response: ={"count": N, "orphans": [{"uuid": "<32hex>", "stale_path": "/…"}]}=.
+
+*Clear* (=POST /repos/:repo/orphans/clear=, body ={"uuids": ["<32hex>", …]}=).
+For each given metarecord *still* definitely gone (re-verified, so a
+since-recreated file is skipped), it performs the same transition the watcher
+makes on a live delete: snapshot =mfr_path_old=, set =mfr_path= to =Nothing=, and
+cascade both to every descendant — all in one revision. Response:
+={"cleared": N}=. This is a new, explicit component that writes =Nothing=,
+alongside the watcher and =force= writes; *reconcile still never does*.
+
 * CLI
 
 ** =mf reconcile=
@@ -766,6 +794,16 @@ parent chain up to the root metarecord (repository root from =GET /repos=).
 With =--relative=, prints the repo-root-relative path instead, starting
 with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
 metarecord has no =mfr_path= TreeRef (untracked or deleted file).
+
+** =mf orphan {list, clear}=
+
+Diagnoses and cleans up metarecords whose file is gone (see [[*Orphan scan]]).
+=list= (the default) calls =POST /orphans/scan= and prints =uuid <TAB>
+stale_path=, one per line, or a "no orphans" line. =clear [-y]= scans, prints the
+records to stderr, prompts for confirmation (skipped with =-y=), then calls
+=POST /orphans/clear= with the scanned uuids and prints =cleared N=. It is kept
+separate from =mf reconcile= on purpose: detection needs a disk scan, but the
+intent (diagnose / clean up missing files) is not reconcile's sync semantics.
 
 ** =mf order <folder> [--meta <field>] [--max-gap <n>] [--dry-run]=
 
