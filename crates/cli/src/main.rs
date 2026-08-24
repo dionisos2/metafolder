@@ -64,6 +64,17 @@ enum Command {
         #[command(subcommand)]
         command: Option<TrashCommand>,
     },
+    /// Orphans: list metarecords whose file is gone, or clear them (default: list)
+    ///
+    /// An orphan is a tracked metarecord whose `mfr_path` still resolves to a
+    /// path, but whose file no longer exists on disk (deleted while unwatched,
+    /// or left stale by reconcile). Detection needs a disk scan, so this is a
+    /// distinct command rather than a query. `clear` orphans them properly
+    /// (freezing `mfr_path_old`, setting `mfr_path` to Nothing).
+    Orphan {
+        #[command(subcommand)]
+        command: Option<OrphanCommand>,
+    },
     /// Metarecord operations: `mf metarecord [selector] <verb>`
     ///
     /// The selector picks the target metarecord(s) and precedes the verb:
@@ -525,6 +536,18 @@ enum TrashCommand {
 }
 
 #[derive(Subcommand)]
+enum OrphanCommand {
+    /// List orphaned metarecords (uuid, stale path) — the default
+    List,
+    /// Orphan the scanned records: freeze mfr_path_old, set mfr_path = Nothing
+    Clear {
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum SyncCommand {
     /// Compute a sync plan (into a freshly recreated plan repo)
     Plan {
@@ -818,6 +841,10 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Trash { file, command } => dispatch_trash(ctx, file, command),
+        Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
+            OrphanCommand::List => commands::orphan_list(ctx),
+            OrphanCommand::Clear { yes } => commands::orphan_clear(ctx, yes),
+        },
         Command::Metarecord { query, id, eq, simplified, verb } => {
             dispatch_metarecord(ctx, query, id, eq, simplified, verb)
         }

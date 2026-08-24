@@ -1539,6 +1539,50 @@ fn test_trash_add_rejects_a_missing_file() {
 }
 
 #[test]
+fn test_orphan_list_and_clear() {
+    let (repo, root) = init_repo("orphan");
+    let file = root.join("gone.txt");
+    std::fs::write(&file, b"data").unwrap();
+    let uuid = mf(&["-u", &repo, "track", file.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    // With the file present, nothing is orphaned.
+    let out = mf(&["-u", &repo, "orphan", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No orphans"), "stdout: {}", out.stdout);
+
+    // Delete the file behind the daemon's back → stale mfr_path.
+    std::fs::remove_file(&file).unwrap();
+
+    // `orphan` defaults to `list` and surfaces the record with its stale path.
+    let out = mf(&["-u", &repo, "orphan"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains(&uuid), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("/gone.txt"), "stdout: {}", out.stdout);
+
+    // Clear it (‑y skips the prompt); the count is reported.
+    let out = mf(&["-u", &repo, "orphan", "clear", "-y"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("cleared 1"), "stdout: {}", out.stdout);
+
+    // mfr_path is now Nothing and the origin is frozen in mfr_path_old.
+    let entry = get_entries(&repo, &uuid);
+    let field = |name: &str| {
+        entry[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == name).map(|f| &f["value"])
+    };
+    assert_eq!(field("mfr_path"), Some(&serde_json::json!({"type": "nothing"})));
+    assert_eq!(
+        field("mfr_path_old"),
+        Some(&serde_json::json!({"type": "string", "value": "/gone.txt"})),
+    );
+
+    // Nothing left to clear.
+    let out = mf(&["-u", &repo, "orphan", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No orphans"), "stdout: {}", out.stdout);
+}
+
+#[test]
 fn test_trash_add_requires_a_running_daemon() {
     // Port 1: nothing listening. The daemon check (repo_info) fails before any
     // filesystem move is attempted, so the path need not even exist.
