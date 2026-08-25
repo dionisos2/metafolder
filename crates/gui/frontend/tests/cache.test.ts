@@ -431,6 +431,65 @@ describe('cache — write invalidation (own edits show immediately)', () => {
   });
 });
 
+describe('cache — a POST that only reads is not a write', () => {
+  // Several daemon reads are POSTs because a body carries the query
+  // (spec-query "set layer"). Treating them as writes is not merely wasteful:
+  // the invalidation bumps the epoch, and a read already in flight is then
+  // thrown away instead of cached, so the panel that asked for it reads
+  // REFRESH and paints "no data" — a resolved path disappears and its row is
+  // marked orphaned. `POST /tree/resolve-path` is the one the file manager
+  // makes on every folder it opens.
+  const READ_POSTS = [
+    '/repos/r/tree/resolve-path',
+    '/repos/r/query/fields/resolve-tree',
+    '/repos/r/orphans/scan',
+    '/repos/r/schema/check',
+  ];
+
+  test.each(READ_POSTS)('%s leaves the cached data in place', async (path) => {
+    const cache = createCache();
+    const raw = vi.fn(async (_m: string, p: string) =>
+      p.endsWith('/query')
+        ? ok({ results: [rec('a1')], next_cursor: null })
+        : p.endsWith('/fields')
+          ? ok([{ name: 'x', type: 'string' }])
+          : ok({}),
+    );
+    await cache.query('r', { query: {} }, raw);
+    await cache.fetchFields('r', raw);
+    expect(cache._stats().queries).toBe(1);
+    expect(cache.readFields('r')).toEqual([{ name: 'x', type: 'string' }]);
+
+    await cache.request('POST', path, { field: 'mfr_path', path: '/x' }, raw);
+
+    expect(cache.readMetarecord('r', 'a1')).toEqual(rec('a1'));
+    expect(cache._stats().queries).toBe(1); // the query cache survives a read
+    expect(cache.readFields('r')).toEqual([{ name: 'x', type: 'string' }]);
+  });
+
+  test('a read POST in flight does not discard a concurrent read', async () => {
+    const cache = createCache();
+    // The tree resolve answers only once the read POST has completed, so the
+    // two overlap exactly as they do when two panels refresh together.
+    let releaseTree = () => {};
+    const treeDone = new Promise<void>((r) => (releaseTree = r));
+    const raw = vi.fn(async (_m: string, p: string) => {
+      if (p.endsWith('/query/fields/resolve-tree')) {
+        await treeDone;
+        return ok({ a1: ['/dir/file.txt'] });
+      }
+      return ok({});
+    });
+
+    const inFlight = cache.fetchTreeRefs('r', 'mfr_path', ['a1'], raw);
+    await cache.request('POST', '/repos/r/tree/resolve-path', { path: '/dir' }, raw);
+    releaseTree();
+    await inFlight;
+
+    expect(cache.readTreeRef('r', 'mfr_path', 'a1')).toEqual(['/dir/file.txt']);
+  });
+});
+
 describe('cache — LRU pruning bounds memory', () => {
   const fetchOne = (cache: ReturnType<typeof createCache>, u: string) =>
     cache.request('GET', `/repos/r/metarecords/${u}`, null, async () => ok(rec(u)));

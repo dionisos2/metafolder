@@ -203,7 +203,7 @@ describe('repos panel', () => {
   test('an empty daemon shows the empty notice and no rows', async () => {
     const { api } = setup();
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(0);
     expect((shadow.getElementById('empty') as HTMLElement).hidden).toBe(false);
@@ -212,7 +212,7 @@ describe('repos panel', () => {
   test('init creates the repository, lists it and adopts it in the workspace', async () => {
     const { api, daemon, vars, dispatch, initRepo } = setup({ activeRepo: null });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     openForm(shadow, 'show-init');
@@ -240,7 +240,7 @@ describe('repos panel', () => {
   test('a failed load shows the daemon error in the form, not a blank panel', async () => {
     const { api, daemon } = setup();
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     openForm(shadow, 'show-load');
@@ -261,7 +261,7 @@ describe('repos panel', () => {
     const { api, daemon, dispatch, vars } = setup({ activeRepo: 'other-repo' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     (shadow.querySelector('#repo-list .repo-head') as HTMLElement).click();
@@ -275,7 +275,7 @@ describe('repos panel', () => {
     const { api, daemon } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(1);
 
@@ -301,7 +301,7 @@ describe('repos panel — running tasks', () => {
       total: 40,
     });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     const task = shadow.querySelector('.repo-tasks .repo-task') as HTMLElement;
@@ -332,7 +332,7 @@ describe('repos panel — running tasks', () => {
       total: null,
     });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     const task = shadow.querySelector('.repo-tasks .repo-task') as HTMLElement;
@@ -346,7 +346,7 @@ describe('repos panel — field retype', () => {
     const { api, daemon, handlers, vars } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     await command(handlers, 'repos:open-retype')();
@@ -370,7 +370,7 @@ describe('repos panel — field retype', () => {
     const { api, daemon, handlers } = setup({ activeRepo: 'r1' });
     daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
     await command(handlers, 'repos:open-retype')();
     await settle();
@@ -385,7 +385,7 @@ describe('repos panel — field retype', () => {
   test('with no active repository the command says so instead of opening', async () => {
     const { api, handlers } = setup({ activeRepo: null });
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     await command(handlers, 'repos:open-retype')();
@@ -400,7 +400,7 @@ describe('repos panel — commands', () => {
   test('open-init and open-load reveal their forms', async () => {
     const { api, handlers } = setup();
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
 
     await command(handlers, 'repos:open-init')();
@@ -421,7 +421,7 @@ describe('repos panel — commands', () => {
   test('refresh picks up a repository loaded from elsewhere', async () => {
     const { api, daemon, handlers } = setup();
     const shadow = shadowForRepos();
-    await mount(shadow, api as never);
+    await mount(shadow, api);
     await settle();
     expect(shadow.querySelectorAll('#repo-list > li')).toHaveLength(0);
 

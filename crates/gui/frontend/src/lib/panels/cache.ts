@@ -39,6 +39,15 @@ const METARECORD_PREFIX = /^\/repos\/([^/]+)\/metarecords\/([0-9a-fA-F-]+)/;
 // A field-row write by DB id (…/fields/:id) — mutates a metarecord the URL
 // does not name (the owner is only in the response body, if any).
 const FIELD_ROW = /^\/repos\/([^/]+)\/fields\/\d+$/;
+/** Daemon *reads* that are POSTs because a body carries the query or the path
+ *  (spec-query "set layer"). They must not fall through to the write branch:
+ *  invalidating on a read is not merely wasteful, it bumps the epoch, and a read
+ *  already in flight is then thrown away instead of cached — the panel that
+ *  asked for it reads REFRESH and paints it as "no data" (a resolved path
+ *  vanishes and its row is marked orphaned). The file manager issues
+ *  `tree/resolve-path` for every folder it opens, so this is not a rare race. */
+const READ_POST =
+  /^\/repos\/[^/]+\/(query\/fields\/resolve-tree|tree\/resolve-path|orphans\/scan|schema\/check)$/;
 
 /** A stable, fully recursive serialization (keys sorted at every level) — so
  *  different query bodies get different keys. (A `JSON.stringify` array replacer
@@ -283,6 +292,9 @@ export function createCache(opts: CacheOptions = {}) {
       }
       return ok(out);
     }
+
+    // A read that happens to be a POST: pass it through untouched.
+    if (method === 'POST' && READ_POST.test(cleanPath)) return raw(method, path, body);
 
     // A write (any non-GET that wasn't a cacheable read above): run it, then
     // invalidate what it changed so the panel's own edit shows immediately,

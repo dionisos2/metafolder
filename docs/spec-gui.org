@@ -2417,6 +2417,17 @@ and query results cleared (coarse). A panel's own write invalidates the edited
 metarecord immediately. Memory is bounded by LRU eviction (reads keep an entry
 recent; an evicted datum is simply re-fetched on the next read).
 
+What counts as a write is decided by method and path: any non-GET that is not a
+recognised read. Several daemon *reads* are POSTs because a body carries the
+query or the path (=query=, =query/fields/resolve-tree=, =tree/resolve-path=,
+=orphans/scan=, =schema/check=), and they must be listed as such. Mistaking a
+read for a write is not merely wasteful: the invalidation moves the repository's
+cache epoch, and a read already in flight is then discarded rather than cached —
+the panel that asked for it reads =REFRESH= where it expected data. Panels must
+treat that as *unknown*, never as *absent*: a =readTreeRef= that has not landed
+yet says nothing about where a file is, and reading it as "no path" is how a
+perfectly healthy row ends up marked as an orphaned metarecord.
+
 ** Commands targeting an absent panel type
 
 Commands registered by a panel type whose instance is not mounted yet in
