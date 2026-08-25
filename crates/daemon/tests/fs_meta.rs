@@ -1,7 +1,6 @@
 //! Tests for file fingerprints (spec-file-tracking "File fingerprint") and
 //! the stat-derived `mfr_*` field values (spec-platform).
 
-use std::io::Write as _;
 use std::path::PathBuf;
 
 use metafolder_core::metarecord::Value;
@@ -9,11 +8,11 @@ use metafolder_daemon::fingerprint;
 use metafolder_daemon::fs_meta;
 use uuid::Uuid;
 
-fn temp_file(content: &[u8]) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_fp_{}", Uuid::new_v4()));
-    let mut f = std::fs::File::create(&path).unwrap();
-    f.write_all(content).unwrap();
-    path
+mod common;
+use common::{TempDir, TempFile};
+
+fn temp_file(content: &[u8]) -> TempFile {
+    TempFile::new("fp", content)
 }
 
 // ── Fingerprints ──────────────────────────────────────────────────────────────
@@ -141,8 +140,7 @@ fn test_btime_present_when_platform_supports_it() {
 
 #[test]
 fn test_stat_fields_for_a_directory() {
-    let dir = std::env::temp_dir().join(format!("metafolder_statdir_{}", Uuid::new_v4()));
-    std::fs::create_dir(&dir).unwrap();
+    let dir = TempDir::new("statdir");
     let fields = fs_meta::stat_fields(&dir).unwrap();
     let mfr_type = fields.iter().find(|f| f.name == "mfr_type").unwrap();
     assert_eq!(mfr_type.value, Value::String("dir".into()));

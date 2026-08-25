@@ -5,7 +5,6 @@
 //! deletion. (Matching is now CLI-side by TreeRef identity — see the CLI
 //! `sync plan` tests — so there is no daemon matcher to exercise here.)
 
-use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -17,10 +16,11 @@ use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_sync_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("sync_{prefix}"))
 }
 
 fn app() -> Router {
@@ -48,7 +48,7 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
 }
 
 /// Initialises a repository in a temp dir; returns (repo uuid, root path).
-async fn init_repo(app: &Router, prefix: &str) -> (String, PathBuf) {
+async fn init_repo(app: &Router, prefix: &str) -> (String, TempDir) {
     let root = temp_dir(prefix);
     let (status, body) =
         request(app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
@@ -57,7 +57,7 @@ async fn init_repo(app: &Router, prefix: &str) -> (String, PathBuf) {
 }
 
 /// Two repos on one app, returned in **canonical** order (`a < b`).
-async fn two_repos(app: &Router) -> (String, PathBuf, String, PathBuf) {
+async fn two_repos(app: &Router) -> (String, TempDir, String, TempDir) {
     let (x, xr) = init_repo(app, "x").await;
     let (y, yr) = init_repo(app, "y").await;
     if x < y {

@@ -1,7 +1,6 @@
 //! Tests for the user schema system (spec-schema): file loading and
 //! validation, delta validation on writes, check/reload endpoints.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -12,7 +11,9 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -55,9 +56,8 @@ fn film_schema() -> Value {
 
 /// Initialises a repo, writes a schema file, then loads it in a fresh
 /// daemon state (schemas are read at load time).
-async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, PathBuf) {
-    let root = std::env::temp_dir().join(format!("metafolder_sch_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, TempDir) {
+    let root = TempDir::new(&format!("sch_{prefix}"));
     {
         let first = app();
         let (status, body) = request(
@@ -227,8 +227,7 @@ async fn test_schema_with_default_loads_and_is_returned() {
 #[tokio::test]
 async fn test_repo_without_schema_returns_empty_schema() {
     let app = app();
-    let root = std::env::temp_dir().join(format!("metafolder_sch_none_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("sch_none");
     let (_, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     let repo = body["repo_uuid"].as_str().unwrap();
@@ -280,8 +279,7 @@ async fn test_invalid_schema_makes_load_fail() {
             "default",
         ),
     ] {
-        let root = std::env::temp_dir().join(format!("metafolder_sch_bad_{}", Uuid::new_v4()));
-        std::fs::create_dir_all(&root).unwrap();
+        let root = TempDir::new("sch_bad");
         {
             let first = app();
             request(&first, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))

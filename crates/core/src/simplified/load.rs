@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn load_grammar_with_source_returns_raw_text_and_a_valid_grammar() {
-        let dir = std::env::temp_dir().join(format!("mf-core-grammar-src-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-core-grammar-src-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("query-grammar");
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn load_grammar_errors_when_missing() {
-        let dir = std::env::temp_dir().join(format!("mf-core-grammar-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-core-grammar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("query-grammar");
         let err = load_grammar(&path).unwrap_err();

@@ -1,7 +1,6 @@
 //! Integration tests for the HTTP API: repository management, metadata CRUD,
 //! field operations, reserved-field enforcement, pagination.
 
-use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -13,10 +12,11 @@ use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_http_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("http_{prefix}"))
 }
 
 fn app() -> Router {
@@ -49,7 +49,7 @@ async fn request(
 }
 
 /// Initialises a repository in a temp dir; returns (app, repo segment, root).
-async fn app_with_repo(prefix: &str) -> (Router, String, PathBuf) {
+async fn app_with_repo(prefix: &str) -> (Router, String, TempDir) {
     let app = app();
     let root = temp_dir(prefix);
     let (status, body) =

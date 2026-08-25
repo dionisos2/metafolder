@@ -106,7 +106,7 @@ mod tests {
 
     #[test]
     fn read_required_reports_missing() {
-        let mut path = std::env::temp_dir();
+        let mut path = std::env::temp_dir().join("metafolder-tests");
         path.push(format!("metafolder-cfg-missing-{}", std::process::id()));
         path.push("nope.toml");
         let err = read_required(&path).unwrap_err();
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn read_required_reads_existing() {
-        let mut path = std::env::temp_dir();
+        let mut path = std::env::temp_dir().join("metafolder-tests");
         path.push(format!("metafolder-cfg-read-{}", std::process::id()));
         std::fs::create_dir_all(&path).unwrap();
         path.push("file.toml");

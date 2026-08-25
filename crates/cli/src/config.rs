@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_missing_file_yields_defaults() {
-        let path = std::env::temp_dir().join(format!(
+        let path = std::env::temp_dir().join("metafolder-tests").join(format!(
             "mf_cli_missing_{}.toml",
             uuid::Uuid::new_v4()
         ));
@@ -188,10 +188,11 @@ mod tests {
 
     #[test]
     fn test_malformed_file_is_an_error_naming_the_path() {
-        let path = std::env::temp_dir().join(format!(
+        let path = std::env::temp_dir().join("metafolder-tests").join(format!(
             "mf_cli_bad_{}.toml",
             uuid::Uuid::new_v4()
         ));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "this is = not = valid").unwrap();
         let err = read_config(&path).unwrap_err();
         assert!(err.contains(&path.display().to_string()), "got: {err}");

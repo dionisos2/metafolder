@@ -850,8 +850,7 @@ fn test_ancestry_detects_cycle() {
 fn test_prune_reclaims_disk_space() {
     use metafolder_daemon::log::{self, PruneMode};
 
-    let dir = std::env::temp_dir().join(format!("mf-prune-vacuum-{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
+    let dir = TempDir::new("prune-vacuum");
     let path = dir.join("db.sqlite");
     let mut conn = db::open_database(&path).unwrap();
     db::init_schema(&conn).unwrap();
@@ -1053,6 +1052,9 @@ fn test_op_type_string_roundtrip() {
 // ── next_version allocator (spec-data-model) ────────────────────────────────
 
 use metafolder_daemon::log;
+
+mod common;
+use common::TempDir;
 
 /// The value a field write assigns, read back from the row.
 fn set_field(conn: &mut Connection, uuid: Uuid, name: &str, v: Value) {

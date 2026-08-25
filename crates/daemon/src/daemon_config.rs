@@ -161,8 +161,9 @@ mod tests {
     use super::*;
 
     fn write_config(contents: &str) -> PathBuf {
-        let path = std::env::temp_dir()
-            .join(format!("mf_daemon_cfg_{}.toml", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("mf_daemon_cfg_{}.toml", uuid::Uuid::new_v4()));
         std::fs::write(&path, contents).unwrap();
         path
     }
@@ -199,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_missing_file_yields_defaults() {
-        let path = std::env::temp_dir()
+        let path = std::env::temp_dir().join("metafolder-tests")
             .join(format!("mf_daemon_missing_{}.toml", uuid::Uuid::new_v4()));
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings, DaemonSettings::default());
@@ -209,7 +210,7 @@ mod tests {
     /// An on-disk repository ready to be auto-loaded (init then unload), plus
     /// its name (the root directory's file name).
     fn on_disk_repo(prefix: &str) -> (crate::state::AppState, PathBuf, String) {
-        let root = std::env::temp_dir()
+        let root = std::env::temp_dir().join("metafolder-tests")
             .join(format!("mf_daemon_apply_{prefix}_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let state = crate::state::AppState::new();

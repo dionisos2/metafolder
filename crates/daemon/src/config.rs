@@ -74,7 +74,7 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> PathBuf {
-        let path = std::env::temp_dir().join(format!("metafolder_test_{}", Uuid::new_v4()));
+        let path = std::env::temp_dir().join("metafolder-tests").join(format!("metafolder_test_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         path
     }

@@ -472,7 +472,7 @@ mod tests {
 
     impl Fixture {
         fn new(watch: bool) -> Self {
-            let root = std::env::temp_dir()
+            let root = std::env::temp_dir().join("metafolder-tests")
                 .join(format!("metafolder_watch_{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let mut conn = db::open_in_memory().unwrap();
@@ -558,7 +558,7 @@ mod tests {
         // Wine `z: -> /` case. It must be neither watched nor followed, and must
         // not raise an error.
         let outside =
-            std::env::temp_dir().join(format!("metafolder_out_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join("metafolder-tests").join(format!("metafolder_out_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, fx.root.join("link")).unwrap();
 

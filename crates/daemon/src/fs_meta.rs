@@ -74,7 +74,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn stat_fields_describes_a_symlink_without_following_it() {
-        let dir = std::env::temp_dir().join(format!("mf-statlink-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-statlink-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let link = dir.join("link");
         // Target does not exist (and is outside any repo): following it would
@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn stat_fields_types_regular_files_and_dirs() {
-        let dir = std::env::temp_dir().join(format!("mf-stattype-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-stattype-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), b"hi").unwrap();
 

@@ -11,6 +11,8 @@ use metafolder_gui::history;
 use serde_json::json;
 use std::path::PathBuf;
 
+mod common;
+
 async fn spawn_stub_repos(internal_dir: PathBuf) -> String {
     let router = axum::Router::new().route(
         "/repos",
@@ -35,17 +37,18 @@ async fn spawn_stub_repos(internal_dir: PathBuf) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-fn temp_metafolder() -> PathBuf {
-    let dir = std::env::temp_dir()
-        .join(format!("metafolder_gui_history_resolve_{}", uuid::Uuid::new_v4()))
-        .join(".metafolder");
+/// A `.metafolder` directory inside a self-removing parent; the guard is
+/// returned with it, so the caller holds the directory for as long as it needs.
+fn temp_metafolder() -> (common::TempDir, PathBuf) {
+    let root = common::TempDir::new("gui_history_resolve");
+    let dir = root.join(".metafolder");
     std::fs::create_dir_all(&dir).unwrap();
-    dir
+    (root, dir)
 }
 
 #[tokio::test]
 async fn test_resolves_metafolder_dir_and_roundtrips_history() {
-    let metafolder = temp_metafolder();
+    let (_root, metafolder) = temp_metafolder();
     let url = spawn_stub_repos(metafolder.join("internal")).await;
     let proxy = DaemonProxy::new(url);
 
@@ -65,7 +68,7 @@ async fn test_resolves_metafolder_dir_and_roundtrips_history() {
 
 #[tokio::test]
 async fn test_unknown_repo_is_an_error() {
-    let metafolder = temp_metafolder();
+    let (_root, metafolder) = temp_metafolder();
     let url = spawn_stub_repos(metafolder.join("internal")).await;
     let proxy = DaemonProxy::new(url);
     let err = history::metafolder_dir_of(&proxy, "00000000000000000000000000000000")

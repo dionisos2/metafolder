@@ -1,7 +1,6 @@
 //! HTTP-level tests for the event log endpoints and the atomic rollback
 //! (spec-event-log): history reading, labels, navigation, pruning.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -12,7 +11,9 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -34,10 +35,9 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
     (status, value)
 }
 
-async fn setup(prefix: &str) -> (Router, String, PathBuf) {
+async fn setup(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(Arc::new(AppState::new()));
-    let root = std::env::temp_dir().join(format!("metafolder_log_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(&format!("log_{prefix}"));
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

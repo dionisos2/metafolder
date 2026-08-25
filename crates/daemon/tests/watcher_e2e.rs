@@ -2,7 +2,6 @@
 //! its root via inotify; file operations show up as metadata entries after
 //! the executor's quiet period.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -13,7 +12,9 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -129,11 +130,9 @@ async fn wait_for_paths(app: &Router, repo: &str, expected: &[&str]) {
 
 /// A repository initialised through the HTTP API with tracking enabled on its
 /// root — the state a user reaches right after creating their first repository.
-async fn watched_repo(prefix: &str) -> (Router, String, PathBuf) {
+async fn watched_repo(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root: PathBuf =
-        std::env::temp_dir().join(format!("metafolder_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(prefix);
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -161,9 +160,7 @@ async fn watched_repo(prefix: &str) -> (Router, String, PathBuf) {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_watcher_tracks_create_rename_delete() {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root: PathBuf =
-        std::env::temp_dir().join(format!("metafolder_e2e_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("e2e");
 
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
@@ -219,17 +216,14 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
     use std::os::unix::fs::PermissionsExt;
 
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root: PathBuf =
-        std::env::temp_dir().join(format!("metafolder_symlink_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("symlink");
 
     // A readable directory outside the repo that itself contains an *unreadable*
     // subdirectory, and a symlink to it inside the repo root. This mirrors the
     // real case `z: -> /` where `/` is readable but `/opt/containerd` is not:
     // following the symlink and trying to add an inotify watch on the deep
     // unreadable directory EACCESes.
-    let secret: PathBuf =
-        std::env::temp_dir().join(format!("metafolder_secret_{}", Uuid::new_v4()));
+    let secret = TempDir::new("secret");
     let locked = secret.join("locked");
     std::fs::create_dir_all(&locked).unwrap();
     std::os::unix::fs::symlink(&secret, root.join("z")).unwrap();
@@ -285,8 +279,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
 #[tokio::test(flavor = "multi_thread")]
 async fn test_new_directory_does_not_wedge_the_daemon() {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root: PathBuf = std::env::temp_dir().join(format!("metafolder_newdir_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("newdir");
 
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;

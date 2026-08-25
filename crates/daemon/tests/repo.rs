@@ -1,6 +1,5 @@
 //! Integration tests for repository initialisation and loading.
 
-use std::path::PathBuf;
 
 use metafolder_core::metarecord::Value;
 use metafolder_daemon::config::RepoConfig;
@@ -9,10 +8,11 @@ use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("metafolder_{prefix}"))
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn test_load_standard_form_restores_uuid() {
     let uuid = created.config.repo_uuid;
     drop(created);
 
-    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
     drop(loaded);
     std::fs::remove_dir_all(root).unwrap();
@@ -162,7 +162,7 @@ fn test_load_migrates_legacy_db_layout() {
     std::fs::remove_dir(&internal).unwrap();
     assert!(metafolder.join("db.sqlite").exists());
 
-    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
     assert!(internal.join("db.sqlite").exists());
     assert!(!metafolder.join("db.sqlite").exists());
@@ -194,7 +194,7 @@ fn test_load_migrates_legacy_table_names() {
     .unwrap();
     drop(conn);
 
-    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
     // The schema is migrated and functional: the root metarecord is readable
     // and its creation op uses the new op type.
@@ -241,7 +241,7 @@ fn test_load_migrates_record_era_table_names() {
     .unwrap();
     drop(conn);
 
-    let loaded = repo::load_repository(RepoLocator::Root(root.clone())).unwrap();
+    let loaded = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap();
     assert_eq!(loaded.config.repo_uuid, uuid);
     let root_uuid = db::find_tree_child(&loaded.conn, "mfr_path", None, "").unwrap().unwrap();
     assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
@@ -261,7 +261,7 @@ fn test_load_migrates_record_era_table_names() {
 #[test]
 fn test_load_fails_when_no_repository() {
     let root = temp_dir("noload");
-    let err = repo::load_repository(RepoLocator::Root(root.clone())).unwrap_err();
+    let err = repo::load_repository(RepoLocator::Root(root.to_path_buf())).unwrap_err();
     assert!(err.to_string().to_lowercase().contains("no repository"), "unexpected error: {err}");
     std::fs::remove_dir_all(root).unwrap();
 }

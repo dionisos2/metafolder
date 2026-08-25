@@ -5,7 +5,6 @@
 //! `mfr_path`) with ordinary `plan_*` user fields, including cross-repo
 //! `ExternalRef` values. Orchestration (what to write) is the CLI's job (v2).
 
-use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -17,10 +16,11 @@ use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_plan_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("plan_{prefix}"))
 }
 
 fn app() -> Router {

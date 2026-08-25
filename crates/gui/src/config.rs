@@ -543,7 +543,7 @@ mod tests {
     }
 
     fn kb_dir() -> ConfigDir {
-        let dir = std::env::temp_dir().join(format!("mf_gui_kb_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_kb_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         ConfigDir::at(dir)
     }
@@ -664,14 +664,14 @@ mod tests {
 
     #[test]
     fn test_load_config_errors_when_the_file_is_missing() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         let config = ConfigDir::at(dir);
         assert!(config.load_config().is_err());
     }
 
     #[test]
     fn test_load_config_reads_the_file() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.toml"), "gui-port = 7600\n").unwrap();
         let config = ConfigDir::at(dir.clone());

@@ -248,7 +248,7 @@ mod tests {
         if !crate::sandbox::available() || gst_inspect("autoaudiosink").is_none() {
             return;
         }
-        let dir = std::env::temp_dir().join("mf-probe-sandbox");
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-probe-sandbox");
         std::fs::create_dir_all(&dir).expect("mkdir");
         let clip = dir.join("clip.mp4");
         let made = std::process::Command::new("ffmpeg")

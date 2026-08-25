@@ -2,7 +2,6 @@
 //! (spec-event-log "Coordinated navigation"): plan/summary, the
 //! start/step/abort lock cycle, and the 423-Locked write guard.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -14,6 +13,9 @@ use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -32,10 +34,9 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
     (status, value)
 }
 
-async fn setup(prefix: &str) -> (Router, String, PathBuf) {
+async fn setup(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(Arc::new(AppState::new()));
-    let root = std::env::temp_dir().join(format!("metafolder_rbk_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(&format!("rbk_{prefix}"));
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");
@@ -169,8 +170,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
 
     let state = Arc::new(AppState::new());
     let app = routes::build(state.clone());
-    let root = std::env::temp_dir().join(format!("metafolder_rbk_prerev_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new("rbk_prerev");
     std::fs::write(root.join("doc.txt"), b"precious").unwrap();
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;

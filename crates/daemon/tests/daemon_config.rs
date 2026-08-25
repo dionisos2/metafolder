@@ -6,12 +6,12 @@ use std::path::{Path, PathBuf};
 use metafolder_daemon::daemon_config::{self, DaemonConfig};
 use metafolder_daemon::repo::{self, RepoLocator};
 use metafolder_daemon::state::AppState;
-use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("metafolder_{prefix}"))
 }
 
 fn write_config(dir: &Path, contents: &str) -> PathBuf {
@@ -109,7 +109,7 @@ fn test_apply_loads_listed_repos() {
 
     let state = AppState::new();
     let config = DaemonConfig {
-        load: vec![RepoLocator::Root(root.clone())],
+        load: vec![RepoLocator::Root(root.to_path_buf())],
         ..Default::default()
     };
     let warnings = daemon_config::apply(&state, config);
@@ -132,7 +132,7 @@ fn test_apply_warns_on_failure_and_loads_the_rest() {
     let config = DaemonConfig {
         load: vec![
             RepoLocator::Root(PathBuf::from("/nonexistent/metafolder/repo")),
-            RepoLocator::Root(root.clone()),
+            RepoLocator::Root(root.to_path_buf()),
         ],
         ..Default::default()
     };

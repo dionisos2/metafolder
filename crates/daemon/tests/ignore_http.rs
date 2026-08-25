@@ -9,7 +9,9 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -35,7 +37,7 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
 /// `work` directory tracked and given its own (replacing) pattern set.
 async fn setup() -> (Router, String) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root = std::env::temp_dir().join(format!("metafolder_ignhttp_{}", Uuid::new_v4()));
+    let root = TempDir::new("ignhttp");
     std::fs::create_dir_all(root.join("work")).unwrap();
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;

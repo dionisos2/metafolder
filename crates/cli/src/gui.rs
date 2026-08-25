@@ -287,7 +287,7 @@ mod tests {
 
     #[test]
     fn test_base_url_reads_gui_port_from_the_first_existing_config() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let missing = dir.join("missing/config.toml");
         let present = dir.join("config.toml");
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn test_base_url_ignores_a_config_without_a_gui_port() {
-        let dir = std::env::temp_dir().join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let no_port = dir.join("config.toml");
         std::fs::write(&no_port, "daemon-url = \"http://127.0.0.1:7523\"\n").unwrap();

@@ -342,7 +342,7 @@ mod tests {
     /// A throwaway working area under the system temp dir.
     fn scratch() -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!(
             "mf-sync-{}-{}",
             std::process::id(),
             n

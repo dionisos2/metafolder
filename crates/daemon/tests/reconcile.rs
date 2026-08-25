@@ -1,7 +1,7 @@
 //! Tests for reconcile (spec-file-tracking "Reconcile"): filesystem walk,
 //! fingerprint phase, candidates, creation of new entries.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::Value;
@@ -13,13 +13,14 @@ use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_rec_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("rec_{prefix}"))
 }
 
-fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf) {
+fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = temp_dir(prefix);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));

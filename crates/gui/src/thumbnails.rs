@@ -302,7 +302,7 @@ mod tests {
             return;
         }
 
-        let dir = std::env::temp_dir().join(format!("mf-thumb-test-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-thumb-test-{}", std::process::id()));
         let cache_dir = dir.join(".metafolder").join("internal").join("thumbnails");
         std::fs::create_dir_all(&dir).unwrap();
         let video = dir.join("clip.mp4");

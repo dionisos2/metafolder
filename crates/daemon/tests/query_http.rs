@@ -1,7 +1,6 @@
 //! HTTP-level tests for `POST /query` (select, sort, pagination envelope)
 //! and `POST /set` (batch set).
 
-use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -11,12 +10,12 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_qhttp_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("qhttp_{prefix}"))
 }
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -39,7 +38,7 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
     (status, value)
 }
 
-async fn setup(prefix: &str) -> (Router, String, PathBuf) {
+async fn setup(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
     let root = temp_dir(prefix);
     let (status, body) =

@@ -11,13 +11,14 @@ use metafolder_daemon::db;
 use metafolder_daemon::log::{self, OpType, Writer};
 use metafolder_daemon::repo;
 use metafolder_daemon::state::RepoState;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 /// Builds a repo with a file record moved from `/a.txt` to `/b.txt`, returning
 /// (repo, root_uuid, record_uuid, create_op_id, move_op_id).
 fn setup_move(prefix: &str) -> (Arc<RepoState>, i64, i64) {
-    let root = std::env::temp_dir().join(format!("metafolder_cskip_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(&format!("cskip_{prefix}"));
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo = Arc::new(RepoState::from_opened(opened));
 

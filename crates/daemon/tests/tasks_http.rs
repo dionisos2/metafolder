@@ -2,7 +2,6 @@
 //! global listing, single-task fetch, 404s. Tasks are seeded directly through
 //! the public registry so these tests don't depend on reconcile/query wiring.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -16,10 +15,11 @@ use serde_json::Value;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_tasks_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("tasks_{prefix}"))
 }
 
 async fn request(app: &Router, method: &str, uri: &str) -> (StatusCode, Value) {
@@ -314,7 +314,7 @@ async fn load_runs_an_observable_warmup_task() {
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
     assert_eq!(st, StatusCode::OK);
 
-    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     assert_eq!(body["repo_uuid"], repo, "load returns the uuid immediately");
 
@@ -346,7 +346,7 @@ async fn load_response_carries_the_warmup_task_id() {
     let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
     assert_eq!(st, StatusCode::OK);
 
-    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     let task_id = body["task_id"].as_str().expect("load returns the warmup task id");
 
@@ -367,7 +367,7 @@ async fn redundant_load_of_a_warm_repo_returns_no_task_id() {
     let root = temp_dir("loadwarm");
     let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
 
-    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root })).await;
+    let (st, body) = post(&app, "/repos/load", serde_json::json!({ "root": root.path() })).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     assert_eq!(body["repo_uuid"], repo);
     assert!(body["task_id"].is_null(), "warm repo: no warmup task, got {}", body["task_id"]);

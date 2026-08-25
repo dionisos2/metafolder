@@ -1,39 +1,19 @@
-//! Shared test helper: materialise the shipped defaults into a config dir,
-//! the way `metafolder-sync-config` would (a plain copy; no git). Used by the
-//! integration tests in place of the removed runtime install step.
+//! Disposable directories for the integration tests.
+//!
+//! Two things, for one reason: the suites used to scatter their throwaway
+//! repositories directly in `$TMPDIR` and remove them with an explicit
+//! `remove_dir_all` at the end of each test — which never runs when the test
+//! panics or is interrupted. Thousands of runs later, 31 000 stale
+//! repositories filled the disk, and a full disk is not a quiet failure: SQLite
+//! answers "database or disk is full", the watcher's flush fails, and (before
+//! its failure budget) retried that batch for ever.
+//!
+//! So: every test directory lives under one parent, and each one removes itself
+//! when its guard goes out of scope — panic included.
 
 #![allow(dead_code)] // each test binary uses its own subset
 
-use metafolder_gui::config::ConfigDir;
-use std::path::Path;
-
-/// Copies `crates/gui/default-config/` into `config.root()`.
-pub fn install_defaults(config: &ConfigDir) {
-    let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("default-config");
-    copy_tree(&source, config.root());
-}
-
-fn copy_tree(src: &Path, dst: &Path) {
-    std::fs::create_dir_all(dst).unwrap();
-    for entry in std::fs::read_dir(src).unwrap() {
-        let entry = entry.unwrap();
-        let from = entry.path();
-        let to = dst.join(entry.file_name());
-        if from.is_dir() {
-            copy_tree(&from, &to);
-        } else {
-            std::fs::copy(&from, &to).unwrap();
-        }
-    }
-}
-
-// ── Disposable directories ────────────────────────────────────────────────────
-//
-// Deliberately a copy of `crates/daemon/tests/common/mod.rs`: each `tests/` tree
-// is its own crate, and a test helper is not worth a shared crate in the build
-// graph. Keep them in step.
-
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
@@ -89,6 +69,42 @@ impl AsRef<Path> for TempDir {
 }
 
 impl std::fmt::Debug for TempDir {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.path.fmt(f)
+    }
+}
+
+/// A file in its own self-removing directory. Derefs to the *file's* path, so
+/// it is used exactly like the `PathBuf` it replaces.
+pub struct TempFile {
+    _dir: TempDir,
+    path: PathBuf,
+}
+
+impl TempFile {
+    /// Writes `content` to `$TMPDIR/metafolder-tests/<prefix>_<uuid>/file`.
+    pub fn new(prefix: &str, content: &[u8]) -> Self {
+        let dir = TempDir::new(prefix);
+        let path = dir.join("file");
+        std::fs::write(&path, content).expect("write the test file");
+        Self { _dir: dir, path }
+    }
+}
+
+impl std::ops::Deref for TempFile {
+    type Target = Path;
+    fn deref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl AsRef<Path> for TempFile {
+    fn as_ref(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl std::fmt::Debug for TempFile {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.path.fmt(f)
     }

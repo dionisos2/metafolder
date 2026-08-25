@@ -1,7 +1,7 @@
 //! Tests for the pending-event executor: compaction, revision grouping, and
 //! filesystem event semantics (spec-file-tracking "File Watcher").
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::Value;
@@ -13,15 +13,13 @@ use metafolder_daemon::state::RepoState;
 use metafolder_daemon::tasks::{TaskKind, TaskStatus};
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_exec_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
-}
+mod common;
+use common::TempDir;
 
-/// Initialises a repository with tracking enabled on the root.
-fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf, Uuid) {
-    let root = temp_dir(prefix);
+/// Initialises a repository with tracking enabled on the root. The returned
+/// directory removes itself when it goes out of scope, panic included.
+fn setup(prefix: &str) -> (Arc<RepoState>, TempDir, Uuid) {
+    let root = TempDir::new(&format!("exec_{prefix}"));
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));
 

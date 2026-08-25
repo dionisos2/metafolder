@@ -1140,7 +1140,7 @@ mod tests {
     }
 
     fn tmp() -> PathBuf {
-        let p = std::env::temp_dir()
+        let p = std::env::temp_dir().join("metafolder-tests")
             .join(format!("mf-trash-test-{}", uuid::Uuid::new_v4().as_simple()));
         fs::create_dir_all(&p).unwrap();
         p

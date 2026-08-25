@@ -649,7 +649,7 @@ mod tests {
         if !available() {
             return;
         }
-        let secret = std::env::temp_dir().join("mf-sandbox-secret.txt");
+        let secret = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-secret.txt");
         std::fs::write(&secret, "top secret").expect("write");
 
         let spec = Spec::new("sh").arg("-c").arg(format!("cat {}", secret.display()));
@@ -665,7 +665,7 @@ mod tests {
         if !available() {
             return;
         }
-        let file = std::env::temp_dir().join("mf-sandbox-ro.txt");
+        let file = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-ro.txt");
         std::fs::write(&file, "readable").expect("write");
 
         let read = run(&Spec::new("sh")
@@ -689,7 +689,7 @@ mod tests {
         if !available() {
             return;
         }
-        let dir = std::env::temp_dir().join("mf-sandbox-rw");
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-rw");
         std::fs::create_dir_all(&dir).expect("mkdir");
 
         let output = run(&Spec::new("sh")
@@ -728,7 +728,7 @@ mod tests {
         // A real read-write bind on disk, not the sandbox's tmpfs (which is
         // RAM-bounded on its own and would stop the write for the wrong
         // reason). Only RLIMIT_FSIZE can fail this one.
-        let dir = std::env::temp_dir().join("mf-sandbox-fsize");
+        let dir = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-fsize");
         std::fs::create_dir_all(&dir).expect("mkdir");
         let output = run(&Spec::new("sh")
             .arg("-c")

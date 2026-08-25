@@ -28,6 +28,9 @@ use metafolder_daemon::state::RepoState;
 use metafolder_daemon::{db, query_exec, reconcile, repo};
 use uuid::Uuid;
 
+mod common;
+use common::TempDir;
+
 /// `<repo>/benchmarks/bench_data_big` (50k files). `CARGO_MANIFEST_DIR` is
 /// `crates/daemon`, so climb two levels.
 fn bench_data_dir() -> PathBuf {
@@ -55,8 +58,7 @@ fn bench_index_build_and_folder_query() {
     assert!(root.is_dir(), "expected the benchmark tree at {root:?}");
 
     // External metafolder → nothing is written into the data folder.
-    let meta = std::env::temp_dir().join(format!("mf_bench_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&meta).unwrap();
+    let meta = TempDir::new("bench");
     let opened = repo::init_repository(&root, Some(&meta), Some("bench"), false).unwrap();
     let repo = Arc::new(RepoState::from_opened(opened));
 

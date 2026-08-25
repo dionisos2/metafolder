@@ -1,7 +1,6 @@
 //! HTTP-level tests for `POST /reconcile`, `POST /track` and the
 //! single-entry `POST /metadata/:uuid/reconcile`.
 
-use std::path::PathBuf;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -12,6 +11,9 @@ use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
 use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -33,10 +35,9 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
     (status, value)
 }
 
-async fn setup(prefix: &str) -> (Router, String, PathBuf) {
+async fn setup(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root = std::env::temp_dir().join(format!("metafolder_thttp_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(&format!("thttp_{prefix}"));
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
     assert_eq!(status, StatusCode::OK, "init failed: {body}");

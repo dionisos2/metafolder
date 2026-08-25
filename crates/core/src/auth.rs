@@ -229,7 +229,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(tag: &str) -> PathBuf {
-        let mut p = std::env::temp_dir();
+        let mut p = std::env::temp_dir().join("metafolder-tests");
         p.push(format!("metafolder-auth-{tag}-{}", std::process::id()));
         p
     }

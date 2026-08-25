@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn collecting_a_non_media_file_yields_nothing() {
-        let dir = std::env::temp_dir().join(format!("mf-meta-nonmedia-{}", std::process::id()));
+        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-meta-nonmedia-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("plain.txt");
         std::fs::write(&f, b"just some text, no tags").unwrap();

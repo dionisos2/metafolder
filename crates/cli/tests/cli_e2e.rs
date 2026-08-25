@@ -83,7 +83,7 @@ fn config_xdg() -> &'static str {
     use std::sync::OnceLock;
     static XDG: OnceLock<String> = OnceLock::new();
     XDG.get_or_init(|| {
-        let dir = std::env::temp_dir().join(format!("mf-cli-cfg-{}", std::process::id()));
+        let dir = common::tests_root().join(format!("cli-cfg-{}", std::process::id()));
         let core = dir.join("metafolder").join("core");
         std::fs::create_dir_all(&core).unwrap();
         std::fs::copy(
@@ -113,16 +113,14 @@ fn is_hex_uuid(s: &str) -> bool {
     s.len() == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_cli_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("cli_{prefix}"))
 }
 
 /// Initialises a fresh repository; returns (repo uuid, root path). Runs with the
 /// hermetic config dir so `mf repo init` applies the `default` ignore preset
 /// (the daemon no longer writes default ignores itself).
-fn init_repo(prefix: &str) -> (String, PathBuf) {
+fn init_repo(prefix: &str) -> (String, TempDir) {
     let root = temp_dir(prefix);
     let out = mf_cfg(&["repo", "init", root.to_str().unwrap()]);
     assert_ok(&out);
@@ -227,7 +225,7 @@ fn test_load_requires_exactly_one_locator() {
 
 #[test]
 fn test_repos_lists_loaded_repositories() {
-    let (repo, _) = init_repo("repos");
+    let (repo, _root) = init_repo("repos");
     let out = mf(&["repo", "list"]);
     assert_ok(&out);
     let parsed: serde_json::Value = serde_json::from_str(&out.stdout).expect("pretty JSON");
@@ -290,18 +288,21 @@ fn test_unreachable_daemon_is_operation_error() {
 // ── CLI config file (spec-config "cli/config.toml") ───────────────────────────
 
 /// A fresh `XDG_CONFIG_HOME` holding `metafolder/cli/config.toml` = `contents`.
-fn xdg_with_cli_config(contents: &str) -> String {
+/// The guard comes back with the path: dropping it would take the config dir
+/// away before the command under test reads it.
+fn xdg_with_cli_config(contents: &str) -> (TempDir, String) {
     let dir = temp_dir("cli_cfg");
     let cli = dir.join("metafolder").join("cli");
     std::fs::create_dir_all(&cli).unwrap();
     std::fs::write(cli.join("config.toml"), contents).unwrap();
-    dir.to_str().unwrap().to_string()
+    let path = dir.to_str().unwrap().to_string();
+    (dir, path)
 }
 
 #[test]
 fn test_config_default_repo_used_when_no_selector() {
     let (uuid, _root) = init_repo("cfgrepo");
-    let xdg = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
+    let (_cfg, xdg) = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
     // No -u/-n: the selector comes from the config's default [repo].
     let out = mf_full(&["metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
     assert_ok(&out);
@@ -310,7 +311,7 @@ fn test_config_default_repo_used_when_no_selector() {
 #[test]
 fn test_no_config_ignores_the_default_repo() {
     let (uuid, _root) = init_repo("cfgrepo_noconf");
-    let xdg = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
+    let (_cfg, xdg) = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
     // --no-config skips the file, so there is no selector → usage error (exit 2).
     let out = mf_full(
         &["--no-config", "metarecord", "get"],
@@ -325,7 +326,7 @@ fn test_no_config_ignores_the_default_repo() {
 fn test_explicit_selector_overrides_the_config_default_repo() {
     let (uuid, _root) = init_repo("cfgrepo_override");
     // The config points at a bogus repo; an explicit -u must still win.
-    let xdg = xdg_with_cli_config("[repo]\nname = \"does-not-exist\"\n");
+    let (_cfg, xdg) = xdg_with_cli_config("[repo]\nname = \"does-not-exist\"\n");
     let out = mf_full(
         &["-u", &uuid, "metarecord", "get"],
         None,
@@ -337,7 +338,7 @@ fn test_explicit_selector_overrides_the_config_default_repo() {
 
 #[test]
 fn test_malformed_config_is_usage_error_without_contacting_daemon() {
-    let xdg = xdg_with_cli_config("this is = not = valid toml");
+    let (_cfg, xdg) = xdg_with_cli_config("this is = not = valid toml");
     // Exit 2 before any round-trip, even against an unreachable daemon.
     let out = mf_full(&["-p", "1", "repo", "list"], None, &[("XDG_CONFIG_HOME", &xdg)], false);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
@@ -346,7 +347,7 @@ fn test_malformed_config_is_usage_error_without_contacting_daemon() {
 
 #[test]
 fn test_env_variables_are_honoured() {
-    let (repo, _) = init_repo("env");
+    let (repo, _root) = init_repo("env");
     let out = mf_full(
         &["metarecord", "get"],
         None,
@@ -359,7 +360,7 @@ fn test_env_variables_are_honoured() {
 
 #[test]
 fn test_daemon_error_goes_to_stderr() {
-    let (repo, _) = init_repo("daemon_err");
+    let (repo, _root) = init_repo("daemon_err");
     let missing = "00000000000000000000000000000099";
     let out = mf(&["-u", &repo, "metarecord", "-i", missing, "get"]);
     assert_eq!(out.code, 1);
@@ -371,7 +372,7 @@ fn test_daemon_error_goes_to_stderr() {
 
 #[test]
 fn test_create_and_get_by_uuid() {
-    let (repo, _) = init_repo("create");
+    let (repo, _root) = init_repo("create");
     let uuid = create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let entries = get_entries(&repo, &uuid);
     let list = entries.as_array().expect("a JSON array");
@@ -443,7 +444,7 @@ fn test_field_list_enumerates_names_and_types() {
 
 #[test]
 fn test_create_reserved_field_requires_force() {
-    let (repo, _) = init_repo("create_force");
+    let (repo, _root) = init_repo("create_force");
     let out = mf(&["-u", &repo, "metarecord", "add", "mfr_path:tree_ref=/created_name"]);
     assert_eq!(out.code, 1, "creating with mfr_* without --force must fail");
     assert!(out.stderr.starts_with("error:"), "stderr: {}", out.stderr);
@@ -458,7 +459,7 @@ fn test_create_reserved_field_requires_force() {
 
 #[test]
 fn test_get_with_fields_filter() {
-    let (repo, _) = init_repo("get_fields");
+    let (repo, _root) = init_repo("get_fields");
     let uuid = create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get", "--select", "genre"]);
     assert_ok(&out);
@@ -470,7 +471,7 @@ fn test_get_with_fields_filter() {
 
 #[test]
 fn test_get_with_predicate() {
-    let (repo, _) = init_repo("get_pred");
+    let (repo, _root) = init_repo("get_pred");
     let jazz = create_metarecord(&repo, &["genre:string=jazz"]);
     let _rock = create_metarecord(&repo, &["genre:string=rock"]);
     let entries = get_entries(&repo, r#"genre = "jazz""#);
@@ -481,7 +482,7 @@ fn test_get_with_predicate() {
 
 #[test]
 fn test_get_predicate_with_limit_and_sort() {
-    let (repo, _) = init_repo("get_limit_sort");
+    let (repo, _root) = init_repo("get_limit_sort");
     create_metarecord(&repo, &["rating:int=1"]);
     create_metarecord(&repo, &["rating:int=2"]);
     create_metarecord(&repo, &["rating:int=3"]);
@@ -509,7 +510,7 @@ fn test_get_predicate_with_limit_and_sort() {
 
 #[test]
 fn test_list_prints_uuids_one_per_line() {
-    let (repo, _) = init_repo("list");
+    let (repo, _root) = init_repo("list");
     let a = create_metarecord(&repo, &["x:int=1"]);
     let b = create_metarecord(&repo, &["x:int=2"]);
     let out = mf(&["-u", &repo, "metarecord", "get"]);
@@ -527,7 +528,7 @@ fn test_list_prints_uuids_one_per_line() {
 
 #[test]
 fn test_set_uuid_replaces_all_rows() {
-    let (repo, _) = init_repo("set");
+    let (repo, _root) = init_repo("set");
     let uuid = create_metarecord(&repo, &["tag:string=a", "tag:string=b"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "tag:string=c"]);
     assert_ok(&out);
@@ -541,7 +542,7 @@ fn test_set_uuid_replaces_all_rows() {
 
 #[test]
 fn test_set_with_predicate_prints_updated_count() {
-    let (repo, _) = init_repo("set_pred");
+    let (repo, _root) = init_repo("set_pred");
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
@@ -555,7 +556,7 @@ fn test_set_with_predicate_prints_updated_count() {
 
 #[test]
 fn test_set_reserved_field_requires_force() {
-    let (repo, _) = init_repo("set_force");
+    let (repo, _root) = init_repo("set_force");
     let uuid = create_metarecord(&repo, &["x:int=1"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "mfr_path:tree_ref=/forced_name"]);
     assert_eq!(out.code, 1, "writing mfr_* without --force must fail");
@@ -567,7 +568,7 @@ fn test_set_reserved_field_requires_force() {
 
 #[test]
 fn test_add_appends_multimap_row() {
-    let (repo, _) = init_repo("add");
+    let (repo, _root) = init_repo("add");
     let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "add", "genre:string=blues"]);
     assert_ok(&out);
@@ -578,7 +579,7 @@ fn test_add_appends_multimap_row() {
 
 #[test]
 fn test_add_with_predicate_appends_to_matches() {
-    let (repo, _) = init_repo("add_pred");
+    let (repo, _root) = init_repo("add_pred");
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
@@ -591,7 +592,7 @@ fn test_add_with_predicate_appends_to_matches() {
 
 #[test]
 fn test_remove_by_uuid_drops_only_matching_value_rows() {
-    let (repo, _) = init_repo("remove_uuid");
+    let (repo, _root) = init_repo("remove_uuid");
     let uuid = create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "delete", "tag:string=test"]);
     assert_ok(&out);
@@ -605,7 +606,7 @@ fn test_remove_by_uuid_drops_only_matching_value_rows() {
 
 #[test]
 fn test_remove_by_predicate_prints_changed_count() {
-    let (repo, _) = init_repo("remove_pred");
+    let (repo, _root) = init_repo("remove_pred");
     create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
     create_metarecord(&repo, &["tag:string=test"]);
     create_metarecord(&repo, &["tag:string=keep"]);
@@ -618,7 +619,7 @@ fn test_remove_by_predicate_prints_changed_count() {
 
 #[test]
 fn test_unset_deletes_single_row_by_id() {
-    let (repo, _) = init_repo("unset");
+    let (repo, _root) = init_repo("unset");
     let uuid = create_metarecord(&repo, &["genre:string=jazz", "genre:string=blues"]);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
@@ -639,7 +640,7 @@ fn test_unset_deletes_single_row_by_id() {
 
 #[test]
 fn test_delete_by_uuid_prints_count() {
-    let (repo, _) = init_repo("delete");
+    let (repo, _root) = init_repo("delete");
     let uuid = create_metarecord(&repo, &["x:int=1"]);
     let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "delete"]);
     assert_ok(&out);
@@ -650,7 +651,7 @@ fn test_delete_by_uuid_prints_count() {
 
 #[test]
 fn test_delete_predicate_asks_for_confirmation() {
-    let (repo, _) = init_repo("delete_confirm");
+    let (repo, _root) = init_repo("delete_confirm");
     create_metarecord(&repo, &["genre:string=del_me"]);
     create_metarecord(&repo, &["genre:string=del_me"]);
 
@@ -677,7 +678,7 @@ fn test_delete_predicate_asks_for_confirmation() {
 
 #[test]
 fn test_query_prints_matching_uuids() {
-    let (repo, _) = init_repo("query");
+    let (repo, _root) = init_repo("query");
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
     let out = mf(&["-u", &repo, "metarecord", "-q", "rating > 3", "get"]);
@@ -687,7 +688,7 @@ fn test_query_prints_matching_uuids() {
 
 #[test]
 fn test_query_simplified_expands_before_running() {
-    let (repo, _) = init_repo("query_simplified");
+    let (repo, _root) = init_repo("query_simplified");
     let high = create_metarecord(&repo, &["rating:int=5"]);
     let _low = create_metarecord(&repo, &["rating:int=1"]);
     // `rating=5` expands to `rating = 5` locally via the core grammar.
@@ -698,7 +699,7 @@ fn test_query_simplified_expands_before_running() {
 
 #[test]
 fn test_query_simplified_date_macro_filters() {
-    let (repo, _) = init_repo("query_date_macro");
+    let (repo, _root) = init_repo("query_date_macro");
     // mfr_btime is reserved, so set it with --force. The datetime field spec
     // parses the ISO string to Unix ms.
     let recent = mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2024-06-01", "--force"]);
@@ -714,7 +715,7 @@ fn test_query_simplified_date_macro_filters() {
 
 #[test]
 fn test_query_select_star_prints_objects() {
-    let (repo, _) = init_repo("query_star");
+    let (repo, _root) = init_repo("query_star");
     create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["-u", &repo, "metarecord", "-q", "rating = 5", "get", "--select", "*"]);
     assert_ok(&out);
@@ -726,7 +727,7 @@ fn test_query_select_star_prints_objects() {
 
 #[test]
 fn test_query_select_field_list_restricts_fields() {
-    let (repo, _) = init_repo("query_select");
+    let (repo, _root) = init_repo("query_select");
     create_metarecord(&repo, &["rating:int=5", "genre:string=jazz"]);
     let out = mf(&["-u", &repo, "metarecord", "-q", "rating = 5", "get", "--select", "genre"]);
     assert_ok(&out);
@@ -738,7 +739,7 @@ fn test_query_select_field_list_restricts_fields() {
 
 #[test]
 fn test_query_sort_and_limit() {
-    let (repo, _) = init_repo("query_sort");
+    let (repo, _root) = init_repo("query_sort");
     let r1 = create_metarecord(&repo, &["rating:int=1", "kind:string=s"]);
     let r3 = create_metarecord(&repo, &["rating:int=3", "kind:string=s"]);
     let r2 = create_metarecord(&repo, &["rating:int=2", "kind:string=s"]);
@@ -755,7 +756,7 @@ fn test_query_sort_and_limit() {
 
 #[test]
 fn test_query_bad_dsl_is_usage_error() {
-    let (repo, _) = init_repo("query_bad");
+    let (repo, _root) = init_repo("query_bad");
     let out = mf(&["-u", &repo, "metarecord", "-q", "a = 1 and b = 2", "get"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
     assert!(out.stderr.starts_with("error:"));
@@ -763,7 +764,7 @@ fn test_query_bad_dsl_is_usage_error() {
 
 #[test]
 fn test_query_bad_sort_is_usage_error() {
-    let (repo, _) = init_repo("query_bad_sort");
+    let (repo, _root) = init_repo("query_bad_sort");
     let out = mf(&["-u", &repo, "metarecord", "-q", "a = 1", "get", "--sort", "rating:sideways"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
@@ -1170,7 +1171,7 @@ fn test_schema_reload_invalid_file_fails() {
 
 #[test]
 fn test_log_lists_revisions_most_recent_first() {
-    let (repo, _) = init_repo("log_list");
+    let (repo, _root) = init_repo("log_list");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
@@ -1185,7 +1186,7 @@ fn test_log_lists_revisions_most_recent_first() {
 
 #[test]
 fn test_log_graph_renders_branches_default_hides_them() {
-    let (repo, _) = init_repo("log_graph");
+    let (repo, _root) = init_repo("log_graph");
     let uuid = create_metarecord(&repo, &["rating:int=1"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=2"]));
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=3"]));
@@ -1214,7 +1215,7 @@ fn test_log_graph_renders_branches_default_hides_them() {
 
 #[test]
 fn test_log_ops_expands_operations() {
-    let (repo, _) = init_repo("log_ops");
+    let (repo, _root) = init_repo("log_ops");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
@@ -1226,7 +1227,7 @@ fn test_log_ops_expands_operations() {
 
 #[test]
 fn test_log_show_displays_before_and_after() {
-    let (repo, _) = init_repo("log_show");
+    let (repo, _root) = init_repo("log_show");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
@@ -1246,14 +1247,14 @@ fn test_log_show_displays_before_and_after() {
 
 #[test]
 fn test_log_show_rejects_bad_target() {
-    let (repo, _) = init_repo("log_show_bad");
+    let (repo, _root) = init_repo("log_show_bad");
     let out = mf(&["-u", &repo, "log", "show", "notanumber"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_prune_linearize_with_no_branches_removes_nothing() {
-    let (repo, _) = init_repo("prune_lin");
+    let (repo, _root) = init_repo("prune_lin");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
@@ -1267,7 +1268,7 @@ fn test_prune_linearize_with_no_branches_removes_nothing() {
 
 #[test]
 fn test_prune_before_makes_target_the_root() {
-    let (repo, _) = init_repo("prune_before");
+    let (repo, _root) = init_repo("prune_before");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=7"]));
@@ -1282,14 +1283,14 @@ fn test_prune_before_makes_target_the_root() {
 
 #[test]
 fn test_prune_requires_a_target() {
-    let (repo, _) = init_repo("prune_notarget");
+    let (repo, _root) = init_repo("prune_notarget");
     let out = mf(&["-u", &repo, "log", "prune", "before"]);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
 #[test]
 fn test_rollback_plan_previews_operations() {
-    let (repo, _) = init_repo("rbk_plan");
+    let (repo, _root) = init_repo("rbk_plan");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
     let out = mf(&["-u", &repo, "log", "rollback", "plan"]);
@@ -1300,7 +1301,7 @@ fn test_rollback_plan_previews_operations() {
 
 #[test]
 fn test_rollback_undoes_last_revision_and_releases_lock() {
-    let (repo, _) = init_repo("rbk_run");
+    let (repo, _root) = init_repo("rbk_run");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
 
@@ -1319,7 +1320,7 @@ fn test_rollback_undoes_last_revision_and_releases_lock() {
 
 #[test]
 fn test_rollback_bad_move_policy_is_usage_error() {
-    let (repo, _) = init_repo("rbk_policy");
+    let (repo, _root) = init_repo("rbk_policy");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
     let out = mf(&["-u", &repo, "log", "rollback", "--on-move-available", "bogus"]);
@@ -1328,7 +1329,7 @@ fn test_rollback_bad_move_policy_is_usage_error() {
 
 #[test]
 fn test_prune_without_force_aborts_on_no() {
-    let (repo, _) = init_repo("prune_confirm");
+    let (repo, _root) = init_repo("prune_confirm");
     let uuid = create_metarecord(&repo, &["rating:int=3"]);
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
     let out = mf_full(
@@ -1364,7 +1365,7 @@ fn test_repo_selected_by_name() {
 
 #[test]
 fn test_metarecord_set_overwrites_whole_record_and_needs_force() {
-    let (repo, _) = init_repo("mset");
+    let (repo, _root) = init_repo("mset");
     let uuid = create_metarecord(&repo, &["a:int=1", "b:string=keep"]);
 
     // Without -f it refuses and changes nothing.
@@ -1382,7 +1383,7 @@ fn test_metarecord_set_overwrites_whole_record_and_needs_force() {
 
 #[test]
 fn test_field_multi_value_set_and_unset() {
-    let (repo, _) = init_repo("fmulti");
+    let (repo, _root) = init_repo("fmulti");
     let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
 
     // Set two values of `tag` at once (multi-map).
@@ -1403,7 +1404,7 @@ fn test_field_multi_value_set_and_unset() {
 
 #[test]
 fn test_field_by_id_get_set_delete() {
-    let (repo, _) = init_repo("fbyid");
+    let (repo, _root) = init_repo("fbyid");
     let uuid = create_metarecord(&repo, &["rating:int=5"]);
     let entries = get_entries(&repo, &uuid);
     let id = entries.as_array().unwrap()[0]["fields"][0]["id"].as_i64().unwrap().to_string();
@@ -1431,6 +1432,9 @@ fn test_field_by_id_get_set_delete() {
 // ── mf trash ────────────────────────────────────────────────────────────────
 
 use metafolder_cli::trash::{Reason, TrashDir};
+
+mod common;
+use common::{TempDir, TempFile};
 
 /// The repo's `internal/trash/` directory (matches the daemon-reported path).
 fn repo_trash(root: &std::path::Path) -> TrashDir {
@@ -2225,8 +2229,9 @@ fn plan_repo_uuid(out: &Out) -> String {
 
 /// Inits a repo, writes `files` (relative path → bytes), enables tracking on the
 /// root and reconciles, so file records get realistic `mfr_path` children.
-/// Returns the repo uuid.
-fn tracked_repo(prefix: &str, files: &[(&str, &[u8])]) -> String {
+/// Returns the repo uuid *and* the directory guard — the caller has to keep the
+/// latter, or the files go away with it.
+fn tracked_repo(prefix: &str, files: &[(&str, &[u8])]) -> (String, TempDir) {
     let (repo, root) = init_repo(prefix);
     for (rel, content) in files {
         let p = root.join(rel);
@@ -2239,7 +2244,7 @@ fn tracked_repo(prefix: &str, files: &[(&str, &[u8])]) -> String {
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
     assert_ok(&mf(&["-u", &repo, "reconcile"]));
-    repo
+    (repo, root)
 }
 
 /// The single uuid matching a DSL query in a repo (asserts exactly one).
@@ -2251,19 +2256,19 @@ fn query_one(repo: &str, dsl: &str) -> String {
     uuids[0].to_string()
 }
 
-/// Writes an intents TOML to a fresh temp file; returns its path.
-fn write_intents(prefix: &str, content: &str) -> PathBuf {
-    let path = temp_dir(prefix).join("intents.toml");
-    std::fs::write(&path, content).unwrap();
-    path
+/// Writes an intents TOML to a fresh temp file. The returned guard *is* the
+/// path (it derefs to one) and removes the file with its directory when the
+/// test ends — so keep it bound: a temporary would take the file with it.
+fn write_intents(prefix: &str, content: &str) -> TempFile {
+    TempFile::new(prefix, content.as_bytes())
 }
 
 #[test]
 fn test_sync_plan_exact_match_writes_create_link() {
     // Same relative path on both sides, *different bytes* — so a match can only
     // be by TreeRef identity (path), never by content.
-    let a = tracked_repo("plan_ex_a", &[("song.mp3", b"aaa")]);
-    let b = tracked_repo("plan_ex_b", &[("song.mp3", b"bbb")]);
+    let (a, _adir) = tracked_repo("plan_ex_a", &[("song.mp3", b"aaa")]);
+    let (b, _bdir) = tracked_repo("plan_ex_b", &[("song.mp3", b"bbb")]);
     let rec_a = query_one(&a, "mfr_path = \"song.mp3\"");
     let rec_b = query_one(&b, "mfr_path = \"song.mp3\"");
 
@@ -2308,8 +2313,8 @@ fn op_endpoints(op: &serde_json::Value) -> Vec<String> {
 #[test]
 fn test_sync_plan_no_match_allocates_bare_record() {
     // In scope in A, with no counterpart at the same path in B → bare record.
-    let a = tracked_repo("plan_bare_a", &[("lonely.mp3", b"x")]);
-    let b = tracked_repo("plan_bare_b", &[]);
+    let (a, _adir) = tracked_repo("plan_bare_a", &[("lonely.mp3", b"x")]);
+    let (b, _bdir) = tracked_repo("plan_bare_b", &[]);
     let rec_a = query_one(&a, "mfr_path = \"lonely.mp3\"");
     let intents = write_intents("plan_bare", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
 
@@ -2365,8 +2370,8 @@ fn test_sync_plan_no_match_allocates_bare_record() {
 #[test]
 fn test_sync_plan_closes_over_no_identity_ref_target() {
     // A file X (in scope) refs an abstract, out-of-scope, identity-less record.
-    let a = tracked_repo("clos_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("clos_b", &[("doc.txt", b"y")]);
+    let (a, _adir) = tracked_repo("clos_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("clos_b", &[("doc.txt", b"y")]);
     let x = query_one(&a, "mfr_path = \"doc.txt\"");
     let person = create_metarecord(&a, &["name:string=alice"]); // no tree_ref → no identity
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", &format!("author:ref={person}")]));
@@ -2449,8 +2454,8 @@ fn test_sync_plan_case0_ambiguous_stays_bare() {
 fn test_sync_plan_writes_sync_op_on_field_diff() {
     // Same file (matched by path) but a user field on one side only → a `sync`
     // op propagates it, alongside the create-link.
-    let a = tracked_repo("syncop_a", &[("doc.txt", b"same")]);
-    let b = tracked_repo("syncop_b", &[("doc.txt", b"same")]);
+    let (a, _adir) = tracked_repo("syncop_a", &[("doc.txt", b"same")]);
+    let (b, _bdir) = tracked_repo("syncop_b", &[("doc.txt", b"same")]);
     let x = query_one(&a, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", "tag:string=jazz"]));
 
@@ -2471,8 +2476,8 @@ fn test_sync_plan_writes_sync_op_on_field_diff() {
 #[test]
 fn test_sync_plan_no_sync_op_when_fields_equal() {
     // Matched files with no user-field difference → no sync op (only create-link).
-    let a = tracked_repo("nosync_a", &[("doc.txt", b"aaa")]);
-    let b = tracked_repo("nosync_b", &[("doc.txt", b"aaa")]);
+    let (a, _adir) = tracked_repo("nosync_a", &[("doc.txt", b"aaa")]);
+    let (b, _bdir) = tracked_repo("nosync_b", &[("doc.txt", b"aaa")]);
     let intents = write_intents("nosync", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
@@ -2487,8 +2492,8 @@ fn test_sync_plan_no_sync_op_when_fields_equal() {
 fn test_sync_plan_conflict_resolved_by_on_conflict() {
     // Matched files, same field with different values on each side → a conflict,
     // resolved non-interactively by --on-conflict prefer:<repo_a>.
-    let a = tracked_repo("conf_a", &[("doc.txt", b"same")]);
-    let b = tracked_repo("conf_b", &[("doc.txt", b"same")]);
+    let (a, _adir) = tracked_repo("conf_a", &[("doc.txt", b"same")]);
+    let (b, _bdir) = tracked_repo("conf_b", &[("doc.txt", b"same")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
@@ -2523,8 +2528,8 @@ fn test_sync_plan_conflict_resolved_by_on_conflict() {
 #[test]
 fn test_sync_plan_resyncs_existing_link() {
     // A pre-existing link (as if from a prior sync) is re-synced, not recreated.
-    let a = tracked_repo("resync_a", &[("doc.txt", b"same")]);
-    let b = tracked_repo("resync_b", &[("doc.txt", b"same")]);
+    let (a, _adir) = tracked_repo("resync_a", &[("doc.txt", b"same")]);
+    let (b, _bdir) = tracked_repo("resync_b", &[("doc.txt", b"same")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
@@ -2552,8 +2557,8 @@ fn test_sync_plan_resyncs_existing_link() {
 fn test_sync_plan_keeps_out_of_scope_link() {
     // An existing link whose endpoints are out of the current scope is left
     // untouched (persistent state) — never dropped.
-    let a = tracked_repo("keep_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("keep_b", &[("doc.txt", b"x")]);
+    let (a, _adir) = tracked_repo("keep_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("keep_b", &[("doc.txt", b"x")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     let out = mf(&["sync", "link", &a, &b, &xa, &xb]);
@@ -2579,8 +2584,8 @@ fn test_sync_plan_keeps_out_of_scope_link() {
 fn test_sync_plan_move_op_on_diverged_path() {
     // Two linked files whose positions diverge (a.txt ↔ b.txt) → a move op. This
     // is the state after a rename on one side, or a manual cross-path link.
-    let a = tracked_repo("move_a", &[("a.txt", b"content")]);
-    let b = tracked_repo("move_b", &[("b.txt", b"content")]);
+    let (a, _adir) = tracked_repo("move_a", &[("a.txt", b"content")]);
+    let (b, _bdir) = tracked_repo("move_b", &[("b.txt", b"content")]);
     let xa = query_one(&a, "mfr_path = \"a.txt\"");
     let xb = query_one(&b, "mfr_path = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
@@ -2600,8 +2605,8 @@ fn test_sync_plan_move_op_on_diverged_path() {
 #[test]
 fn test_sync_plan_delete_op_on_deleted_endpoint() {
     // A linked record deleted on side A → a delete op removing the surviving B.
-    let a = tracked_repo("del_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("del_b", &[("doc.txt", b"x")]);
+    let (a, _adir) = tracked_repo("del_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("del_b", &[("doc.txt", b"x")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
@@ -2630,8 +2635,8 @@ fn test_sync_plan_delete_op_on_deleted_endpoint() {
 fn test_sync_plan_conflict_query_scoped_rule() {
     // A [[conflict]] rule scoped by a query (matching one endpoint) resolves the
     // conflict without --on-conflict.
-    let a = tracked_repo("cq_a", &[("doc.txt", b"same")]);
-    let b = tracked_repo("cq_b", &[("doc.txt", b"same")]);
+    let (a, _adir) = tracked_repo("cq_a", &[("doc.txt", b"same")]);
+    let (b, _bdir) = tracked_repo("cq_b", &[("doc.txt", b"same")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
@@ -2660,8 +2665,8 @@ fn test_sync_plan_conflict_query_scoped_rule() {
 #[test]
 fn test_sync_run_creates_file_in_target() {
     // plan then run: a file present only in A is materialised in B (record + bytes).
-    let a = tracked_repo("run_a", &[("hello.txt", b"world")]);
-    let b = tracked_repo("run_b", &[]);
+    let (a, _adir) = tracked_repo("run_a", &[("hello.txt", b"world")]);
+    let (b, _bdir) = tracked_repo("run_b", &[]);
     let intents = write_intents("run", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
 
@@ -2703,8 +2708,8 @@ fn repo_root_of(repo: &str) -> PathBuf {
 fn test_sync_run_propagates_deletion() {
     // A linked record deleted in A → run trashes B's file and removes B's record
     // and the link. Nothing is destroyed (the file lands in B's trash).
-    let a = tracked_repo("rundel_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("rundel_b", &[("doc.txt", b"x")]);
+    let (a, _adir) = tracked_repo("rundel_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("rundel_b", &[("doc.txt", b"x")]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let xb = query_one(&b, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
@@ -2732,8 +2737,8 @@ fn test_sync_run_propagates_deletion() {
 fn test_sync_run_resync_propagates_field() {
     // First sync links the pair and commits a snapshot; then a field added on A
     // propagates to B on the next plan+run (re-sync direction).
-    let a = tracked_repo("rerun_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("rerun_b", &[("doc.txt", b"x")]);
+    let (a, _adir) = tracked_repo("rerun_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("rerun_b", &[("doc.txt", b"x")]);
     let intents = write_intents("rerun", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
@@ -2770,8 +2775,8 @@ fn field_value_of(repo: &str, uuid: &str, field: &str) -> Option<String> {
 fn test_sync_run_applies_conflict_resolution() {
     // After a first sync, both sides change the same field → conflict resolved by
     // --on-conflict prefer:<repo_a>, so repo_a's value wins on both sides at run.
-    let a = tracked_repo("cfr_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("cfr_b", &[("doc.txt", b"x")]);
+    let (a, _adir) = tracked_repo("cfr_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("cfr_b", &[("doc.txt", b"x")]);
     let intents = write_intents("cfr", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
@@ -2793,8 +2798,8 @@ fn test_sync_run_applies_conflict_resolution() {
 fn test_sync_run_external_divergence_reported() {
     // A file to create where the target subtree is external → metafolder writes no
     // file; the metadata still syncs and the divergence is reported.
-    let a = tracked_repo("ext_a", &[("doc.txt", b"aaa")]);
-    let b = tracked_repo("ext_b", &[]);
+    let (a, _adir) = tracked_repo("ext_a", &[("doc.txt", b"aaa")]);
+    let (b, _bdir) = tracked_repo("ext_b", &[]);
     let b_root = mf(&["-u", &b, "metarecord", "get"]).stdout.trim().to_string();
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &b_root, "field", "set", "mf_sync:string=external", "--force"]));
 
@@ -2815,8 +2820,8 @@ fn test_sync_run_external_divergence_reported() {
 fn test_sync_run_translates_ref() {
     // A file X refs an abstract record; both are materialised in B and X_B's ref
     // is translated to person_B (the linked counterpart), not left dangling.
-    let a = tracked_repo("tref_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("tref_b", &[]);
+    let (a, _adir) = tracked_repo("tref_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("tref_b", &[]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let person_a = create_metarecord(&a, &["name:string=alice"]);
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", &format!("author:ref={person_a}")]));
@@ -2838,8 +2843,8 @@ fn test_sync_run_moves_diverged_file() {
     // Two files linked across different paths (a.txt ↔ b.txt) — the state after a
     // rename. Never synced → A wins; run moves the canonical-B file and record to
     // the canonical-A path. Nothing is destroyed.
-    let a = tracked_repo("mvrun_a", &[("a.txt", b"content")]);
-    let b = tracked_repo("mvrun_b", &[("b.txt", b"content")]);
+    let (a, _adir) = tracked_repo("mvrun_a", &[("a.txt", b"content")]);
+    let (b, _bdir) = tracked_repo("mvrun_b", &[("b.txt", b"content")]);
     let xa = query_one(&a, "mfr_path = \"a.txt\"");
     let xb = query_one(&b, "mfr_path = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
@@ -2860,8 +2865,8 @@ fn test_sync_run_moves_diverged_file() {
 fn test_sync_show_renders_plan_status() {
     // After a plan, show lists the ops as green (baselines current); changing a
     // planned record flips its ops to red (will be skipped).
-    let a = tracked_repo("show_a", &[("doc.txt", b"x")]);
-    let b = tracked_repo("show_b", &[]);
+    let (a, _adir) = tracked_repo("show_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("show_b", &[]);
     let intents = write_intents("show", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
 

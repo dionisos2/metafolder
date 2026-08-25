@@ -3,7 +3,7 @@
 //! reported, while records under an unreadable/missing-mount ancestor are left
 //! as "unknown" (never falsely orphaned).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use metafolder_core::metarecord::Value;
@@ -13,15 +13,16 @@ use metafolder_daemon::{db, reconcile, repo};
 use metafolder_daemon::state::RepoState;
 use uuid::Uuid;
 
-fn temp_dir(prefix: &str) -> PathBuf {
-    let path = std::env::temp_dir().join(format!("metafolder_orph_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&path).unwrap();
-    path
+mod common;
+use common::TempDir;
+
+fn temp_dir(prefix: &str) -> TempDir {
+    TempDir::new(&format!("orph_{prefix}"))
 }
 
 const DEFAULT_PATTERNS: &[&str] = &[r"\.metafolder(/.*)?$", r"(^|/)\.[^/]+"];
 
-fn setup(prefix: &str) -> (Arc<RepoState>, PathBuf) {
+fn setup(prefix: &str) -> (Arc<RepoState>, TempDir) {
     let root = temp_dir(prefix);
     let opened = repo::init_repository(&root, None, None, false).unwrap();
     let repo_state = Arc::new(RepoState::from_opened(opened));

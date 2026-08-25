@@ -923,7 +923,7 @@ mod tests {
 
     fn test_trash() -> TrashDir {
         TrashDir::new(
-            std::env::temp_dir().join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
+            std::env::temp_dir().join("metafolder-tests").join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
         )
     }
 
@@ -932,7 +932,7 @@ mod tests {
     // erroring or rewinding to a location the file is not at (review #6).
     #[test]
     fn apply_on_a_gone_file_keeps_the_rolled_back_path_without_moving() {
-        let tmp = std::env::temp_dir().join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
         let from = tmp.join("gone.txt");
         let to = tmp.join("target.txt");
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
@@ -947,7 +947,7 @@ mod tests {
     // a `step {skip:true}` (rewind), never touching the filesystem.
     #[test]
     fn skip_is_available_for_a_gone_file() {
-        let from = std::env::temp_dir().join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
+        let from = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
         let op = move_op(from.to_str().unwrap(), "/whatever");
         let skip =
             decide_move(&op, &policies(Policy::Skip, Policy::Skip), &test_trash(), true).unwrap();
@@ -957,7 +957,7 @@ mod tests {
     // `apply` on a present file performs the `mv` and produces `step {}`.
     #[test]
     fn apply_on_a_present_file_moves_it() {
-        let tmp = std::env::temp_dir().join(format!("mf_present_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_present_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("moved.txt");
@@ -975,7 +975,7 @@ mod tests {
     // its content survives the overwrite (spec-trash.org).
     #[test]
     fn apply_trashes_an_occupied_destination() {
-        let tmp = std::env::temp_dir().join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("victim.txt");
@@ -1047,7 +1047,7 @@ mod tests {
     // is auto-restored (no skip); the daemon then applies the real inverse.
     #[test]
     fn deleted_step_auto_restores_the_matching_version() {
-        let base = std::env::temp_dir().join(format!("mf_del_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -1074,7 +1074,7 @@ mod tests {
     // belongs to stays orphaned.
     #[test]
     fn deleted_steps_of_one_revision_share_the_pre_revision_version() {
-        let base = std::env::temp_dir().join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -1104,7 +1104,7 @@ mod tests {
     // not restore: the step is skipped and the file stays trashed.
     #[test]
     fn deleted_step_skips_on_version_mismatch() {
-        let base = std::env::temp_dir().join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -1129,7 +1129,7 @@ mod tests {
     // rollback.
     #[test]
     fn apply_skips_when_a_directory_occupies_the_destination() {
-        let tmp = std::env::temp_dir().join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("blocking_dir");

@@ -15,7 +15,6 @@
 //! turn tracking on, then do what a user does in a file manager — add, rename,
 //! move, nest, delete.
 
-use std::path::PathBuf;
 use std::time::Duration;
 
 use axum::body::Body;
@@ -26,7 +25,9 @@ use metafolder_daemon::routes;
 use metafolder_daemon::state::AppState;
 use serde_json::{json, Value};
 use tower::util::ServiceExt;
-use uuid::Uuid;
+
+mod common;
+use common::TempDir;
 
 async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
@@ -62,11 +63,9 @@ fn default_ignore_patterns() -> Vec<String> {
 
 /// A repository as a user gets one: created on an existing folder, with the
 /// default ignore set applied client-side, and tracking turned on.
-async fn journey_repo(prefix: &str) -> (Router, String, PathBuf) {
+async fn journey_repo(prefix: &str) -> (Router, String, TempDir) {
     let app = routes::build(std::sync::Arc::new(AppState::new()));
-    let root: PathBuf =
-        std::env::temp_dir().join(format!("metafolder_journey_{prefix}_{}", Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    let root = TempDir::new(&format!("journey_{prefix}"));
 
     let (status, body) =
         request(&app, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()}))).await;
