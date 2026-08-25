@@ -1148,6 +1148,17 @@ export async function mount(root, metafolder) {
       normalInput.focus();
     },
   });
+  // Focus the simplified query field for hand-editing — and unfreeze the normal
+  // DSL editor first: while B is frozen it is authoritative, so typing in A
+  // would have no effect on the query (spec-gui "Query editor"). Unfreezing
+  // discards any manual edit to B, which re-mirrors expand(A).
+  void commands.register('metarecord-list:edit-simplified', {
+    label: 'Metarecord list: unfreeze the normal DSL editor and focus the simplified query field',
+    handler: async () => {
+      await setNormalFrozen(false);
+      queryInput.focus();
+    },
+  });
   // Clear all three search fields (finder + simplified + normal) and re-run —
   // an empty query matches everything, so this resets to the full repo.
   void commands.register('metarecord-list:clear-queries', {
@@ -1170,10 +1181,13 @@ export async function mount(root, metafolder) {
     },
   });
   void commands.register('metarecord-list:clear-edit-simplified', {
-    label: 'Metarecord list: clear the simplified query field and focus it',
-    handler: () => {
+    label: 'Metarecord list: clear the simplified query field, unfreeze zone B and focus it',
+    handler: async () => {
       queryInput.value = '';
       queryError.textContent = '';
+      // Same reason as `edit-simplified`: a frozen B would ignore the field we
+      // just handed the focus to.
+      await setNormalFrozen(false);
       queryInput.focus();
     },
   });

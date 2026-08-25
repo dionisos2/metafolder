@@ -869,10 +869,11 @@ Behaviours:
 | =metarecord-list:focus-finder=        | Focus the finder (quick OSM filter) in metarecord-list |
 | =metarecord-list:focus-query=  | Focus the query input in metarecord-list        |
 | =metarecord-list:focus-columns= | Focus the columns input in metarecord-list     |
+| =metarecord-list:edit-simplified= | Unfreeze the normal DSL editor (zone B) and focus the simplified query field (zone A) |
 | =metarecord-list:edit-normal=  | Open, freeze and focus the normal DSL editor (zone B) for hand-editing |
 | =metarecord-list:clear-queries= | Clear all three search fields (finder + simplified + normal) and re-run (match all) |
 | =metarecord-list:clear-edit-finder= | Clear the finder and focus it (re-runs live) |
-| =metarecord-list:clear-edit-simplified= | Clear the simplified query field and focus it |
+| =metarecord-list:clear-edit-simplified= | Clear the simplified query field, unfreeze zone B and focus it |
 | =metarecord-list:clear-edit-normal= | Open the normal DSL editor, clear it, freeze and focus it |
 | =metarecord-list:submit-finder= | Re-run the finder filter and leave the field (blur); the Enter binding, vs =apply-finder= which keeps focus |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
@@ -988,7 +989,9 @@ Within =metarecord-list=:
 - Two chord families edit the three search fields (in addition to =/= and
   =Ctrl+/=), both scoped to the panel: =e= edits a field (focus, keep content),
   =c= clears it first. The field letter is shared: =f= finder, =s= simplified
-  query, =q= the normal DSL (opens + freezes it). So =e f= / =e s= / =e q= and
+  query (=e s= / =c s= *unfreeze* B — a frozen B stays authoritative, so typing
+  in A would otherwise change nothing), =q= the normal DSL (opens + freezes
+  it). So =e f= / =e s= / =e q= and
   =c f= / =c s= / =c q=; =c a= clears all three at once (=clear-queries=).
 - =Enter= in any of the search fields applies and *leaves* the field (blur), so
   the panel accelerators resume without a separate =Escape=; =Shift+Enter=
@@ -1589,7 +1592,9 @@ forms, so the user can write quickly *and* drop to the full DSL when a query is
 too specific for the simplified surface — and learn the mapping by watching it.
 
 - *Zone A (simplified)* is always visible and has its own /Apply/ button;
-  =metarecord-list:focus-query= focuses it. An empty zone A matches all.
+  =metarecord-list:focus-query= focuses it; =metarecord-list:edit-simplified=
+  (=e s=) focuses it *and* unfreezes B first, so what is typed in A drives the
+  query again. An empty zone A matches all.
 - A toggle reveals *zone B (normal DSL)* below A. While B is shown and **not
   frozen**, it is a read-only live mirror of =expand(A)= (debounced ~120–150 ms,
   via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples

@@ -179,7 +179,7 @@ fn test_search_field_editing_keybindings() {
 
     // Edit family (focus, keep content): e f / e s / e q.
     assert_eq!(mlist(&["e", "f"]).as_deref(), Some("metarecord-list:focus-finder"));
-    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:focus-query"));
+    assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:edit-simplified"));
     assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:edit-normal"));
 
     // Clear-then-edit family: c f / c s / c q, and c a clears all three.

@@ -166,6 +166,30 @@ describe('search-field editing commands', () => {
     expect(p.shadow.activeElement).toBe(p.query);
   });
 
+  test('edit-simplified unfreezes the normal editor and focuses the simplified field', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:edit-normal'); // shows + freezes zone B
+    expect(p.normalFreeze.checked).toBe(true);
+
+    await p.invoke('metarecord-list:edit-simplified');
+
+    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.normal.readOnly).toBe(true);
+    expect(p.shadow.activeElement).toBe(p.query);
+  });
+
+  test('clear-edit-simplified unfreezes the normal editor too', async () => {
+    const p = await mountPanel();
+    await p.invoke('metarecord-list:edit-normal');
+    p.query.value = 'rating>3';
+
+    await p.invoke('metarecord-list:clear-edit-simplified');
+
+    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.query.value).toBe('');
+    expect(p.shadow.activeElement).toBe(p.query);
+  });
+
   test('clear-edit-finder empties the finder and focuses it', async () => {
     const p = await mountPanel();
     p.finder.value = 'foo';
