@@ -286,6 +286,16 @@ export async function mount(root, metafolder) {
     return rel.map((p) => (p === '' ? rootPath : `${rootPath}${p}`));
   }
 
+  // Whether the cache can currently answer for a metarecord's mfr_path
+  // positions. False while a fresh resolution is pending (REFRESH): an
+  // invalidation landing on an in-flight resolve makes the cache drop that
+  // answer, and the gap is not evidence about the file.
+  /** @param {Metafolder.Metarecord} metarecord */
+  function pathsResolved(metarecord) {
+    const r = repo;
+    return !!r && cache.readTreeRef(r, 'mfr_path', metarecord.uuid) !== REFRESH;
+  }
+
   // Whether a metarecord's mfr_type is a directory (picks the paste target for
   // the file-actions menu).
   /** @param {Metafolder.Metarecord} metarecord */
@@ -461,6 +471,12 @@ export async function mount(root, metafolder) {
   /** Marks the row/card when the metarecord's tracked file is gone (async).
    *  @param {HTMLElement} node @param {Metafolder.Metarecord} metarecord */
   function fillOrphan(node, metarecord) {
+    // An mfr_path the cache has not resolved yet says nothing about the file.
+    // Reading that gap as "no paths" would make the orphan check conclude the
+    // file is missing and paint a healthy row as an orphan — leave it unmarked
+    // and decide on a later render, once the path is known. Nothing is cached
+    // either, so the verdict is genuinely re-taken.
+    if (hasTreeRef(metarecord, 'mfr_path') && !pathsResolved(metarecord)) return;
     let state = orphanCache.get(metarecord.uuid);
     if (!state) {
       state = orphanState(metarecord, orphanCtx).catch(() => null);
