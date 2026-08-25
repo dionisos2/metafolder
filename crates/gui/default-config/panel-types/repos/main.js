@@ -276,10 +276,6 @@ export async function mount(root, metafolder) {
     }
   }
 
-  /**
-   * @param {HTMLElement} form @param {string} path @param {unknown} payload
-   * @param {HTMLElement} errorElement
-   */
   // Shared post-creation flow: hide the form, refresh the list, and either adopt
   // the new repo (if none is active) or announce it.
   /** @param {HTMLElement} form @param {string} repoUuid */
@@ -298,6 +294,10 @@ export async function mount(root, metafolder) {
     }
   }
 
+  /**
+   * @param {HTMLElement} form @param {string} path @param {unknown} payload
+   * @param {HTMLElement} errorElement
+   */
   async function submit(form, path, payload, errorElement) {
     errorElement.textContent = '';
     try {
@@ -313,7 +313,10 @@ export async function mount(root, metafolder) {
   // Repo creation goes through daemon.initRepo (core::repo_init): it also applies
   // the `default` ignore preset to the new root, which a raw POST /repos/init
   // would skip (the daemon writes no default ignores itself).
-  /** @param {{root: string, name?: string}} opts */
+  /**
+   * @param {HTMLElement} form @param {{root: string, name?: string}} opts
+   * @param {HTMLElement} errorElement
+   */
   async function submitInit(form, opts, errorElement) {
     errorElement.textContent = '';
     try {

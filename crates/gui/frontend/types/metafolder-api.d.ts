@@ -91,6 +91,17 @@ declare namespace Metafolder {
     repoInternalDir(repo: string): Promise<string>;
     /** Absolute paths (multi-map: a file may sit at several tree positions). */
     metarecordPaths(repo: string, metarecord: { uuid: string }): Promise<string[]>;
+    /** Creates a repository *and* applies its ignore preset (spec-file-tracking
+     *  "Ignore presets"), the same orchestration `mf repo init` uses; returns the
+     *  new repo's uuid. `call('POST', '/repos/init', …)` would skip the ignore
+     *  step, so repository creation must go through here. */
+    initRepo(opts: {
+      root: string;
+      name?: string;
+      metafolder?: string;
+      noIgnore?: boolean;
+      ignore?: string[];
+    }): Promise<string>;
   }
 
   /** Returned by a synchronous cache read when the datum is absent: render a
