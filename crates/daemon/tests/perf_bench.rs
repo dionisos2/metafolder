@@ -9,6 +9,13 @@
 //!   #2 folder open: `and(follows(dir), matches(^(name1|…)$))` served by the
 //!      SQL engine with a full-repo REGEXP scan (old) vs `follows(dir)` served
 //!      by the bitmap index (new).
+//!   #3 the watcher's initial directory walk, eligibility from DB vs cache.
+//!   #4 index refresh after one write: the whole ancestor chain (old,
+//!      `log::ancestry_ops`) vs a walk that stops at the anchor (new,
+//!      `ancestry_ops_until`, at the real `REBUILD_OVER` budget) — the cost
+//!      every query paid after any write, on a long log.
+//!   #5 exact-node path (`mfr_path = "/a/b.txt"`): a full SQL scan (old) vs the
+//!      bitmap index seeded with the node resolved through the tree cache (new).
 //!
 //! Run against the persistent 50k-file tree:
 //!   cargo test -p metafolder-daemon --test perf_bench --release -- --ignored --nocapture
@@ -228,6 +235,79 @@ fn bench_index_build_and_folder_query() {
         total_warm.saturating_sub(elig_warm)
     );
 
+    // ── #4: index refresh after a single write, on this repo's long log ─────
+    // Every query following a write brings the index to HEAD first. The delta
+    // is one operation; the question is what reading it costs.
+    let head = db::current_head(&conn).unwrap().unwrap();
+    let op_count: i64 = conn.query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0)).unwrap();
+    eprintln!("#4 index refresh after one write, log of {op_count} operations:");
+
+    let t = Instant::now();
+    let chain = metafolder_daemon::log::ancestry_ops(&conn, head).unwrap();
+    let old_walk = t.elapsed();
+
+    // The anchor a one-operation delta has: HEAD's parent. The budget is the
+    // real `REBUILD_OVER`, so this measures what `forward_delta` actually runs —
+    // a generous budget must not make the walk read up to it.
+    let anchor = chain[1].id;
+    let t = Instant::now();
+    let bounded =
+        metafolder_daemon::log::ancestry_ops_until(&conn, head, anchor, 20_000).unwrap().unwrap();
+    let new_walk = t.elapsed();
+
+    assert_eq!(bounded.len(), 1, "a one-operation delta");
+    assert_eq!(chain[0].id, bounded[0].id, "both walks must start at HEAD");
+    eprintln!("   OLD  whole ancestor chain ({} ops) : {old_walk:?}", chain.len());
+    eprintln!("   NEW  walk stopping at the anchor ({} op) : {new_walk:?}", bounded.len());
+    eprintln!(
+        "   speedup                             : {:.0}x\n",
+        old_walk.as_secs_f64() / new_walk.as_secs_f64()
+    );
+    assert!(new_walk < old_walk, "the bounded walk must not cost more than the full chain");
+
+    // ── #5: exact-node path equality — "find this one file" ─────────────────
+    let mut cache = repo.cache.lock().unwrap();
+    let file_path = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT metarecord_uuid FROM field \
+                 WHERE field_name = 'mfr_path' AND value_type = 'tree_ref' \
+                   AND value_name LIKE '%.%' LIMIT 1",
+            )
+            .unwrap();
+        let uuid: Uuid = stmt
+            .query_row([], |r| Ok(db::bytes_to_uuid(r.get::<_, Vec<u8>>(0).unwrap()).unwrap()))
+            .unwrap();
+        cache.path_of(&conn, "mfr_path", uuid).unwrap().unwrap()
+    };
+    let node_query =
+        Query::Eq { field: "mfr_path".into(), value: Value::String(file_path.clone()) };
+    eprintln!("#5 exact-node path query, {file_path:?}:");
+
+    // OLD: Unsupported by the index → the SQL engine scans every mfr_path row.
+    let t = Instant::now();
+    let (old_hits, _) =
+        query_exec::execute(&conn, &mut cache, &node_query, &[], None, None).unwrap();
+    let old_q = t.elapsed();
+
+    // NEW: the node is resolved through the tree cache and handed to the index.
+    let mut roots = QueryRoots::new();
+    let node = cache.resolve_path(&conn, "mfr_path", &file_path).unwrap();
+    roots.node.insert(("mfr_path".into(), file_path.clone()), node);
+    let t = Instant::now();
+    let (new_hits, _) =
+        index.evaluate_page_with_roots(&node_query, &[], None, None, &roots).unwrap();
+    let new_q = t.elapsed();
+
+    assert_eq!(old_hits, new_hits, "both engines must find the same metarecord");
+    eprintln!("   OLD  Eq path via SQL scan  : {old_q:?}  ({} hits)", old_hits.len());
+    eprintln!("   NEW  Eq path via the index : {new_q:?}  ({} hits)", new_hits.len());
+    eprintln!(
+        "   speedup                    : {:.0}x\n",
+        old_q.as_secs_f64() / new_q.as_secs_f64()
+    );
+
+    drop(cache);
     drop(conn);
     let _ = std::fs::remove_dir_all(&meta);
 }

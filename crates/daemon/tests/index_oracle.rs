@@ -10,7 +10,7 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::{collect_path_targets, QueryRoots, RepoIndex, SortBy};
+use metafolder_daemon::index::{collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::TreeCache;
@@ -653,11 +653,11 @@ fn reverse_tree_follows_transitive() {
 }
 
 #[test]
-fn exact_node_path_equality_defers_to_sql() {
+fn exact_node_path_equality_defers_to_sql_without_roots() {
     // On a tree_ref field, an Eq/Neq string operand containing '/' is an
-    // exact-node match resolved through the tree cache — outside the index, which
-    // must report Unsupported so the route falls back to SQL (rather than answer
-    // with the wrong value_name-based bitmap).
+    // exact-node match resolved through the tree cache — outside the index. With
+    // no caller-resolved node it must report Unsupported so the route falls back
+    // to SQL (rather than answer with the wrong value_name-based bitmap).
     let (o, _) = forest();
     let index = RepoIndex::build(&o.conn).unwrap();
     assert!(index.evaluate(&eq("loc", s("root/b"))).is_err());
@@ -666,6 +666,54 @@ fn exact_node_path_equality_defers_to_sql() {
     assert!(index.evaluate(&eq("loc", s("b"))).is_ok());
     // On a plain string field, '/' is literal equality — still the index's job.
     assert!(index.evaluate(&eq("tag", s("a/b"))).is_ok());
+}
+
+#[test]
+fn exact_node_path_equality_matches_sql_with_node_roots() {
+    // The shape a "find this one file" query takes (`mfr_path = "/a/b.txt"`).
+    // Once the caller resolves the node through the tree cache and hands it in
+    // as a node root, the index serves it — and must agree with the SQL engine,
+    // including on a path that resolves to nothing and inside a boolean.
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    for path in ["root/b", "root/b/c", "root/d", "root/nope", "nope/at/all"] {
+        for q in [
+            eq("loc", s(path)),
+            Query::And { operands: vec![eq("loc", s(path)), eq("kind", s("file"))] },
+            Query::Not { operand: Box::new(eq("loc", s(path))) },
+        ] {
+            // Resolve the node exactly as `run_query_filter` does.
+            let mut targets = Vec::new();
+            collect_node_paths(&q, &mut targets);
+            assert!(!targets.is_empty(), "the collector must see the Eq in {q:?}");
+            let mut roots = QueryRoots::new();
+            for (field, target) in targets {
+                let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
+                roots.node.insert((field, target), node);
+            }
+            let index = RepoIndex::build(&o.conn).unwrap();
+
+            let (mut sql, _) =
+                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut got, _) =
+                index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            sql.sort();
+            got.sort();
+            assert_eq!(got, sql, "exact-node divergence on {q:?}");
+
+            assert_eq!(
+                index.count_with_roots(&q, &roots).unwrap() as usize,
+                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                "count divergence on {q:?}"
+            );
+        }
+    }
+    // Neq is not rewritten: it still defers to SQL even with the node resolved.
+    let mut roots = QueryRoots::new();
+    let node = o.cache.resolve_path(&o.conn, "loc", "root/b").unwrap();
+    roots.node.insert(("loc".to_string(), "root/b".to_string()), node);
+    let neq_path = Query::Neq { field: "loc".into(), value: s("root/b") };
+    let index = RepoIndex::build(&o.conn).unwrap();
+    assert!(index.evaluate_page_with_roots(&neq_path, &[], None, None, &roots).is_err());
 }
 
 #[test]

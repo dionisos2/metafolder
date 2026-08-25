@@ -87,6 +87,76 @@ async fn test_query_returns_uuids_by_default() {
 }
 
 #[tokio::test]
+async fn test_exact_node_path_query_is_served_by_the_index() {
+    // `mfr_path = "/a/b.txt"` — "find this one file". The route resolves the
+    // node through the tree cache and hands it to the bitmap index, so this must
+    // return exactly the metarecord at that path (and nothing for a path that is
+    // no node), the same answer the SQL engine gives. Without the node seed the
+    // index reports Unsupported and the whole query falls back to a full scan,
+    // which is correct but the reason this shape used to be slow.
+    let (app, repo, root) = setup("exactnode").await;
+    let tref = |parent: Option<&str>, name: &str| {
+        json!([{"name": "mfr_path",
+                "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}}])
+    };
+    let create_forced = |fields: Value| {
+        let (app, repo) = (app.clone(), repo.clone());
+        async move {
+            let (status, body) = request(
+                &app,
+                "POST",
+                &format!("/repos/{repo}/metarecords"),
+                Some(json!({"fields": fields, "force": true})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "create failed: {body}");
+            body["uuid"].as_str().unwrap().to_string()
+        }
+    };
+    // The repository's own filesystem root metarecord is already the forest root.
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    assert_eq!(status, StatusCode::OK, "tree roots failed: {body}");
+    let dir_root = body[0]["uuid"].as_str().unwrap().to_string();
+    let music = create_forced(tref(Some(&dir_root), "music")).await;
+    let dance = create_forced(tref(Some(&dir_root), "dance")).await;
+    let jazz = create_forced(tref(Some(&music), "jazz")).await;
+    let _jazz2 = create_forced(tref(Some(&dance), "jazz")).await;
+
+    let ask = |path: &str| {
+        let (app, repo, path) = (app.clone(), repo.clone(), path.to_string());
+        async move {
+            let (status, body) = request(
+                &app,
+                "POST",
+                &format!("/repos/{repo}/query"),
+                Some(json!({"query": {"type": "eq", "field": "mfr_path",
+                                      "value": {"type": "string", "value": path}}})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "query failed: {body}");
+            body
+        }
+    };
+
+    assert_eq!(ask("/music/jazz").await, json!([jazz]));
+    assert_eq!(ask("/music/rock").await, json!([]));
+    // A separator-free operand keeps the value_name convention: both "jazz" nodes.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "eq", "field": "mfr_path",
+                              "value": {"type": "string", "value": "jazz"}}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "query failed: {body}");
+    assert_eq!(body.as_array().unwrap().len(), 2, "value_name match: {body}");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_matches_query_paginates_across_count_boundary() {
     // The metarecord-list asks for `count` on the first page only. The engine
     // choice must not depend on `count`, or page 1 (with count) and page 2

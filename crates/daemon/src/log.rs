@@ -242,6 +242,63 @@ pub fn ancestry_ops(conn: &rusqlite::Connection, from: i64) -> Result<Vec<OpRow>
     Ok(ops)
 }
 
+/// The ancestor chain from `from` (inclusive) back to — but *excluding* —
+/// `until`, HEAD-first; `None` if `until` was not reached within `max`
+/// operations (it is not on the chain, or the delta is larger than the budget).
+///
+/// Unlike [`ancestry_ops`] the recursion *stops* at the anchor instead of
+/// materialising the whole chain up to the root, and unlike
+/// [`ancestry_ops_limited`] it never reads `max` rows just because the budget
+/// allows it. This is what the bitmap index's forward delta needs: after a write
+/// the delta is one or two operations, and it is read on the read path before
+/// every query that follows a write — walking to the root there made every such
+/// query cost O(total log length). Like the bounded walk it does not validate
+/// the chain against cycles (the budget bounds it).
+pub fn ancestry_ops_until(
+    conn: &rusqlite::Connection,
+    from: i64,
+    until: i64,
+    max: usize,
+) -> Result<Option<Vec<OpRow>>> {
+    if from == until {
+        return Ok(Some(Vec::new()));
+    }
+    // `c.id <> ?2` stops the expansion once the anchor is reached, so the anchor
+    // itself is the last row produced and its parent is never visited. `max + 1`
+    // rows leaves room for that trailing anchor row on a maximal delta.
+    let mut stmt = conn.prepare_cached(
+        "WITH RECURSIVE chain(id, depth) AS (
+             SELECT ?1, 0
+             UNION ALL
+             SELECT o.parent_id, c.depth + 1
+             FROM chain c JOIN operation o ON o.id = c.id
+             WHERE o.parent_id IS NOT NULL AND c.id <> ?2
+             LIMIT ?3
+         )
+         SELECT o.id, o.parent_id, o.rev_id, o.seq, o.op_type, o.entity_uuid,
+                o.entity_version_before, o.entity_version_after, o.field_name
+         FROM chain c JOIN operation o ON o.id = c.id
+         ORDER BY c.depth",
+    )?;
+    let mut ops = stmt
+        .query_map(params![from, until, max as i64 + 1], row_to_op)?
+        .map(|r| {
+            let (mut op, entity) = r?;
+            op.entity_uuid = db::bytes_to_uuid(entity)?;
+            Ok(op)
+        })
+        .collect::<Result<Vec<OpRow>>>()?;
+    match ops.last() {
+        // The anchor closed the walk: drop it, the delta is what sits on top.
+        Some(last) if last.id == until => {
+            ops.pop();
+            Ok(Some(ops))
+        }
+        // Ran out of budget, or reached the root without meeting the anchor.
+        _ => Ok(None),
+    }
+}
+
 /// The most-recent `max` operations of the ancestor chain from `from`
 /// (inclusive), HEAD-first: `from` and its `max - 1` nearest ancestors. Unlike
 /// [`ancestry_ops`] the walk is bounded by a small `LIMIT`, so it stays O(max)

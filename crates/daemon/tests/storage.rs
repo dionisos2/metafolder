@@ -1183,6 +1183,42 @@ fn test_ancestry_ops_limited_returns_the_most_recent() {
 }
 
 #[test]
+fn test_ancestry_ops_until_stops_at_the_anchor() {
+    use metafolder_daemon::log;
+    // The index's forward delta: the operations a write appended on top of a
+    // known anchor. Reading them must cost the delta, not the whole log — so the
+    // walk stops at the anchor instead of running to the root.
+    let mut conn = test_conn();
+    let m = create(&mut conn, vec![Field::new("s", Value::Int(0))]);
+    for i in 1..=4 {
+        set_field(&mut conn, m.uuid, "s", Value::Int(i));
+    }
+    let head = log::get_head(&conn).unwrap().unwrap();
+    let full = log::ancestry_ops(&conn, head).unwrap();
+    assert_eq!(full.len(), 5, "create + four sets");
+    let anchor = full[2].id; // two operations behind HEAD
+
+    // HEAD-first, anchor excluded: exactly the two operations on top of it.
+    let delta = log::ancestry_ops_until(&conn, head, anchor, 100).unwrap().unwrap();
+    assert_eq!(
+        delta.iter().map(|o| o.id).collect::<Vec<_>>(),
+        full.iter().take(2).map(|o| o.id).collect::<Vec<_>>(),
+    );
+    // An anchor that *is* HEAD is an empty delta, not a miss.
+    assert!(log::ancestry_ops_until(&conn, head, head, 100).unwrap().unwrap().is_empty());
+    // Too far for the budget → None (the caller rebuilds instead).
+    assert!(log::ancestry_ops_until(&conn, head, anchor, 1).unwrap().is_none());
+    // An id that is not on the chain at all → None, whatever the budget.
+    assert!(log::ancestry_ops_until(&conn, head, 999_999, 100).unwrap().is_none());
+    // The root has no parent: walking past it must not loop or error.
+    let root = full.last().unwrap().id;
+    assert_eq!(
+        log::ancestry_ops_until(&conn, head, root, 100).unwrap().unwrap().len(),
+        full.len() - 1,
+    );
+}
+
+#[test]
 fn test_index_build_progress_tracks_field_ids() {
     use metafolder_daemon::index::RepoIndex;
     use std::cell::RefCell;

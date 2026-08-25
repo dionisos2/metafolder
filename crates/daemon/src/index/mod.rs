@@ -52,14 +52,25 @@ pub type PathRoots = HashMap<(String, String), Uuid>;
 /// in; the index then expands each node's subtree by bitmap and unions them.
 pub type OsmRoots = HashMap<(String, String), Vec<Uuid>>;
 
+/// Pre-resolved `(field, path)` → the metarecord at exactly that TreeRef path,
+/// for the *exact-node* `Eq` operands of a query (spec-query "Exact-node
+/// equality": a `/`-bearing string operand on a `tree_ref` field). Resolution
+/// lives in the tree cache, so — as with [`PathRoots`] — the caller does it and
+/// hands the node in. Unlike the other two maps the value is an `Option`: an
+/// entry mapping to `None` says "the caller resolved this path and it is not a
+/// node" (an empty result), while a *missing* entry says "nobody resolved it",
+/// which keeps the operand `Unsupported` and defers to the SQL engine.
+pub type NodeRoots = HashMap<(String, String), Option<Uuid>>;
+
 /// The caller-resolved seeds a query needs the index to evaluate the shapes it
-/// cannot resolve on its own: `Path` targets (through the tree cache) and
-/// single-term `Osm` `Path` term nodes (through FTS). Bundled so the evaluation
-/// threads one context.
+/// cannot resolve on its own: `Path` targets and exact-node `Eq` operands
+/// (through the tree cache) and single-term `Osm` `Path` term nodes (through
+/// FTS). Bundled so the evaluation threads one context.
 #[derive(Default)]
 pub struct QueryRoots {
     pub path: PathRoots,
     pub osm: OsmRoots,
+    pub node: NodeRoots,
 }
 
 impl QueryRoots {
@@ -85,6 +96,36 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
             operands.iter().for_each(|o| collect_path_targets(o, out));
         }
         Query::Not { operand } => collect_path_targets(operand, out),
+        _ => {}
+    }
+}
+
+/// Collects the `(field, path)` of every *exact-node* `Eq` operand in `q` — a
+/// string operand containing the path separator, which on a `tree_ref` field is
+/// a node match rather than a `value_name` compare (spec-query "Exact-node
+/// equality"). The caller resolves each through the tree cache into
+/// [`NodeRoots`]; the index then answers `mfr_path = "/a/b.txt"` from a single
+/// interned id instead of deferring the whole query to a full SQL scan.
+///
+/// A `/`-bearing operand on a plain *string* field is ordinary literal equality
+/// and is collected too — harmlessly, since it resolves to no node and the
+/// index's type check never consults the entry.
+pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
+    match q {
+        Query::Eq { field, value: Value::String(s) } => {
+            if s.contains('/') {
+                out.push((field.clone(), s.clone()));
+            }
+        }
+        Query::And { operands } | Query::Or { operands } => {
+            operands.iter().for_each(|o| collect_node_paths(o, out));
+        }
+        Query::Not { operand } => collect_node_paths(operand, out),
+        Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
+            if let FollowTarget::Condition(c) = target {
+                collect_node_paths(c, out);
+            }
+        }
         _ => {}
     }
 }
@@ -335,6 +376,16 @@ impl RepoIndex {
     /// the HEAD parent chain, oldest first — or `None` if `built_at_head` is not
     /// an ancestor of `current_head` (history was rewritten), an op type is not
     /// one we replay, or the delta is large enough that a rebuild is cheaper.
+    ///
+    /// The walk *stops at* `built_at_head` ([`crate::log::ancestry_ops_until`])
+    /// rather than materialising the whole ancestor chain, so it costs the delta
+    /// — normally one or two operations — and not the length of the log. This
+    /// runs on the read path before every query that follows a write, so walking
+    /// to the root here made every such query cost O(total log length) no matter
+    /// how few metarecords it matched (measurably: ~90 ms on a 50 k-operation
+    /// log, ~6 ms once pruned). Not reaching `built_at_head` within
+    /// `REBUILD_OVER` operations is treated like an oversized delta: a full
+    /// rebuild, always correct.
     fn forward_delta(
         &self,
         conn: &Connection,
@@ -353,19 +404,20 @@ impl RepoIndex {
         ];
         const REBUILD_OVER: usize = 20_000;
 
-        let mut delta = Vec::new();
-        let mut reached = false;
-        for op in crate::log::ancestry_ops(conn, current_head)? {
-            if Some(op.id) == self.built_at_head {
-                reached = true;
-                break;
-            }
-            if !KNOWN.contains(&op.op_type.as_str()) || delta.len() >= REBUILD_OVER {
-                return Ok(None);
-            }
-            delta.push(op);
-        }
-        if !reached {
+        // No anchor to replay from (the index was built on an empty log): the
+        // unbounded walk could never have matched either, so rebuild.
+        let built_at_head = match self.built_at_head {
+            Some(id) => id,
+            None => return Ok(None),
+        };
+
+        let mut delta =
+            match crate::log::ancestry_ops_until(conn, current_head, built_at_head, REBUILD_OVER)? {
+                Some(ops) => ops,
+                // Not on the chain (history was rewritten) or beyond the budget.
+                None => return Ok(None),
+            };
+        if delta.iter().any(|op| !KNOWN.contains(&op.op_type.as_str())) {
             return Ok(None);
         }
         delta.reverse();
@@ -630,12 +682,12 @@ impl RepoIndex {
                 Ok(r)
             }
 
-            Query::Eq { field, value } => self.compare(field, CmpOp::Eq, value),
-            Query::Neq { field, value } => self.compare(field, CmpOp::Neq, value),
-            Query::Lt { field, value } => self.compare(field, CmpOp::Lt, value),
-            Query::Lte { field, value } => self.compare(field, CmpOp::Lte, value),
-            Query::Gt { field, value } => self.compare(field, CmpOp::Gt, value),
-            Query::Gte { field, value } => self.compare(field, CmpOp::Gte, value),
+            Query::Eq { field, value } => self.compare(field, CmpOp::Eq, value, roots),
+            Query::Neq { field, value } => self.compare(field, CmpOp::Neq, value, roots),
+            Query::Lt { field, value } => self.compare(field, CmpOp::Lt, value, roots),
+            Query::Lte { field, value } => self.compare(field, CmpOp::Lte, value, roots),
+            Query::Gt { field, value } => self.compare(field, CmpOp::Gt, value, roots),
+            Query::Gte { field, value } => self.compare(field, CmpOp::Gte, value, roots),
 
             Query::And { operands } => self.combine(operands, true, roots),
             Query::Or { operands } => self.combine(operands, false, roots),
@@ -837,20 +889,43 @@ impl RepoIndex {
     /// Dispatches a comparison to the field's encoding. A field with no
     /// non-`Nothing` rows has no encoding, so the comparison is empty — exactly
     /// the SQL result (the `value_type` filter excludes every `Nothing` row).
-    fn compare(&self, field: &str, op: CmpOp, value: &Value) -> Result<RoaringBitmap, Unsupported> {
+    fn compare(
+        &self,
+        field: &str,
+        op: CmpOp,
+        value: &Value,
+        roots: Option<&QueryRoots>,
+    ) -> Result<RoaringBitmap, Unsupported> {
         if matches!(value, Value::Nothing) {
             return Err(unsupported("comparison with 'nothing'"));
         }
         // Exact-node path (spec-query "Exact-node equality"): on a tree_ref field
         // an Eq/Neq string operand containing '/' is a path-resolved node match,
-        // not a value_name compare. That resolution lives in the tree cache, not
-        // the index, so defer to the SQL engine rather than answer with the
-        // (wrong, value_name-based) bitmap. A string field keeps literal equality
-        // (the index handles it).
+        // not a value_name compare. The resolution lives in the tree cache, not
+        // the index, so `Eq` is served only from a caller-supplied [`NodeRoots`]
+        // entry; without one — and for `Neq`, whose multi-map negation the
+        // rewrite does not cover — defer to the SQL engine rather than answer
+        // with the (wrong, value_name-based) bitmap. A string field keeps literal
+        // equality (the index handles it).
         if matches!(op, CmpOp::Eq | CmpOp::Neq) {
             if let Value::String(s) = value {
                 if s.contains('/') && self.types.get(field) == Some(&"tree_ref") {
-                    return Err(unsupported("exact-node tree_ref path equality"));
+                    let resolved = roots
+                        .filter(|_| matches!(op, CmpOp::Eq))
+                        .and_then(|r| r.node.get(&(field.to_string(), s.clone())));
+                    return match resolved {
+                        // The node itself, restricted to the metarecords that do
+                        // carry a value for this field — the SQL match is on a
+                        // `field_name` row of type tree_ref, so a node whose rows
+                        // are all `Nothing` matches nothing there either.
+                        Some(Some(node)) => Ok(match self.registry.id(*node) {
+                            Some(id) => RoaringBitmap::from_iter([id]) & self.present_of(field),
+                            None => RoaringBitmap::new(),
+                        }),
+                        // Resolved by the caller to no node: an empty result.
+                        Some(None) => Ok(RoaringBitmap::new()),
+                        None => Err(unsupported("exact-node tree_ref path equality")),
+                    };
                 }
             }
         }

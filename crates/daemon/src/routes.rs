@@ -1983,6 +1983,16 @@ fn prepare_indexed_query(
             roots.path.insert((field, path), uuid);
         }
     }
+    // Exact-node `Eq` operands (`mfr_path = "/a/b.txt"`): resolved through the
+    // same cache, but the entry is always inserted — including a `None` for a
+    // path that is no node — so the index can tell "resolved to nothing" (empty
+    // result) from "nobody resolved it" (defer to SQL).
+    let mut node_paths = Vec::new();
+    crate::index::collect_node_paths(query, &mut node_paths);
+    for (field, path) in node_paths {
+        let node = cache.resolve_path(conn, &field, &path)?;
+        roots.node.insert((field, path), node);
+    }
     let mut osm_targets = Vec::new();
     crate::index::collect_osm_path_targets(query, &mut osm_targets);
     let has_indexable_osm = !osm_targets.is_empty();

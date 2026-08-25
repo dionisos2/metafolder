@@ -104,7 +104,11 @@ otherwise required an =Eq= with a =tree_ref= JSON value. Path resolution and
 anchoring follow the =->= / =->*= path-string convention (=mfr_path= is
 =/=-rooted, so =mfr_path = "/music/jazz"=; a named-root forest like a tag tree
 has no leading =/=, so =path = "music/jazz"=). A path that resolves to nothing
-matches no rows. A single forest-root node (whose path has no separator) cannot
+matches no rows. =Eq= is served by the bitmap index (the daemon resolves the
+node through the tree cache and hands it in — see
+[[file:spec-indexing.org][spec-indexing.org]]), so pinning one file by its path
+costs a single lookup; =Neq= falls back to the SQL engine.
+A single forest-root node (whose path has no separator) cannot
 be pinned this way — use =field -> "parent" AND field = "name"=, or accept the
 =value_name= match. The IR is unchanged (=Eq= with a =String= operand): the
 daemon disambiguates by the field's value type, since only it — not the DSL

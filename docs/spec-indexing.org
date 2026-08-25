@@ -351,7 +351,17 @@ cursors included. =Path=-target =Follows=/=FollowsTransitive= are *supported*:
 =run_query_filter= resolves each path to its root metarecord through the
 (eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
 bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
-served fully in memory. The index is built at repository load (best-effort) by
+served fully in memory. *Exact-node equality* (=mfr_path = "/a/b.txt"=, see
+[[file:spec-query.org][spec-query.org]]) is supported the same way: the caller
+resolves the operand to its node through the tree cache and passes it in as
+=NodeRoots=, and the index answers from that single interned id. The =Option=
+in that map is load-bearing — an entry mapping to =None= means "resolved, and it
+is no node" (an empty result), a *missing* entry means "nobody resolved it" and
+keeps the operand unsupported, so the shape can never be answered from the
+wrong (=value_name=-based) bitmap. =Neq= on a path is not rewritten and still
+defers to SQL. Without this the whole query fell back to the SQL engine, whose
+=_repo= universe CTE scans every row of the field: "find this one file" was the
+*slowest* query in the repository, not the fastest. The index is built at repository load (best-effort) by
 the background warmup — an observable =load= task (phases =tree cache= then
 =index=) so the GUI shows a load progress bar (see
 [[file:spec-tasks.org][spec-tasks.org]]) — so the first query pays no build cost;
@@ -361,7 +371,14 @@ Freshness is maintained by
 HEAD (the common case — writes appended), it replays that forward delta
 incrementally, recomputing only the touched =(metarecord, field)= cells from
 their current DB rows (the log's before-snapshots supply the old values to clear
-emptied buckets). A rewritten history (rollback / prune), an unrecognised op, or
+emptied buckets). Reading that delta *stops at the built HEAD*
+(=log::ancestry_ops_until=) instead of materialising the ancestor chain up to
+the root: the delta after a write is one or two operations, but this runs on the
+read path before every query that follows a write, so an unbounded walk made
+every such query cost O(total log length) — the same query answering in 0.5 ms
+warm and 90 ms after any write, on a 50 k-operation log, whatever it matched.
+Neither must it read up to the =REBUILD_OVER= budget just because the budget
+allows it. A rewritten history (rollback / prune), an unrecognised op, or
 an oversized delta falls back to a full rebuild — always correct. The replay
 happens lazily on the read path, not on the write path, but the effect is the
 spec's "single write path updates both": every write advances HEAD, and the next
