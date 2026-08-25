@@ -4,6 +4,7 @@
 //! resulting operation type (one revision per group), and applies the event
 //! semantics to the data tables through the logged write flow.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -394,6 +395,7 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
                 cache: &mut cache,
                 root: &repo.config.root,
                 departed: &departed,
+                departed_index: None,
             };
             for ev in group {
                 apply.apply(ev)?;
@@ -493,6 +495,27 @@ struct Apply<'a, 'c> {
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
     departed: &'a [String],
+    /// `departed` indexed by the stat a rename preserves, built on first use.
+    /// Without it the pairing costs one stat and one database read per
+    /// (arrival, departure) *pair*: a batch that both loses and gains a few
+    /// hundred files then holds the connection for minutes, and every query
+    /// queues behind it.
+    departed_index: Option<HashMap<StatKey, Vec<String>>>,
+}
+
+/// The stat a rename preserves exactly — kind, size, mtime — as a lookup key.
+type StatKey = (String, i64, i64);
+
+/// The key of a record (or of a freshly stat-ed path), or `None` when one of
+/// the three is missing or of another type: without all three there is nothing
+/// to match a departure against.
+fn stat_key(kind: Option<&Value>, size: Option<&Value>, mtime: Option<&Value>) -> Option<StatKey> {
+    match (kind, size, mtime) {
+        (Some(Value::String(k)), Some(Value::Int(s)), Some(Value::DateTime(m))) => {
+            Some((k.clone(), *s, *m))
+        }
+        _ => None,
+    }
 }
 
 impl Apply<'_, '_> {
@@ -778,38 +801,59 @@ impl Apply<'_, '_> {
     /// serve here: a metarecord the watcher created has no stored hashes, and
     /// its file has already left the old path, so there is nothing left to hash.
     fn find_departed_match(&mut self, rel: &str) -> Result<Option<String>> {
-        let departed = self.departed;
-        if departed.is_empty() {
+        if self.departed.is_empty() {
             return Ok(None);
         }
         let Ok(arriving) = fs_meta::stat_fields(&self.abs(rel)) else {
             return Ok(None); // Vanished mid-flush: nothing to re-pair.
         };
-        let field = |fields: &[Field], name: &str| {
-            fields.iter().find(|f| f.name == name).map(|f| f.value.clone())
+        let of = |name: &str| arriving.iter().find(|f| f.name == name).map(|f| &f.value);
+        let Some(key) = stat_key(of("mfr_type"), of("mfr_size"), of("mfr_mtime")) else {
+            return Ok(None);
         };
-        let (kind, size, mtime) = (
-            field(&arriving, "mfr_type"),
-            field(&arriving, "mfr_size"),
-            field(&arriving, "mfr_mtime"),
-        );
+        self.index_departures()?;
+        let candidates = match self.departed_index.as_ref().and_then(|m| m.get(&key)) {
+            Some(paths) => paths.clone(),
+            None => return Ok(None),
+        };
+        for from in candidates {
+            // Still tracked? An earlier arrival in this batch may have taken it.
+            if self.resolve(&from)?.is_some() {
+                return Ok(Some(from));
+            }
+        }
+        Ok(None)
+    }
+
+    /// Builds [`Apply::departed_index`] once per group: the batch's departures
+    /// that are gone from disk and still tracked, keyed by their stat. One pass
+    /// over the departures, so an arrival costs a hash lookup rather than a walk
+    /// over all of them.
+    fn index_departures(&mut self) -> Result<()> {
+        if self.departed_index.is_some() {
+            return Ok(());
+        }
+        let departed = self.departed; // a plain `&[String]`: not borrowed from `self`
+        let mut index: HashMap<StatKey, Vec<String>> = HashMap::new();
         for from in departed {
-            // Still there: it did not leave, so this is not its other half.
+            // Still there: it did not leave, so it is nobody's other half.
             if std::fs::symlink_metadata(self.abs(from)).is_ok() {
                 continue;
             }
             let Some(uuid) = self.resolve(from)? else {
-                continue; // Already re-homed by an earlier arrival, or untracked.
+                continue; // Untracked, or already re-homed.
             };
             let Some(record) = db::get_metarecord(self.writer.connection(), uuid)? else {
                 continue;
             };
-            let same = |name: &str, want: &Option<Value>| record.get(name).cloned() == *want;
-            if same("mfr_type", &kind) && same("mfr_size", &size) && same("mfr_mtime", &mtime) {
-                return Ok(Some(from.clone()));
+            let key =
+                stat_key(record.get("mfr_type"), record.get("mfr_size"), record.get("mfr_mtime"));
+            if let Some(key) = key {
+                index.entry(key).or_default().push(from.clone());
             }
         }
-        Ok(None)
+        self.departed_index = Some(index);
+        Ok(())
     }
 
     /// Fingerprint search among orphaned metarecords (`mfr_path` = Nothing):

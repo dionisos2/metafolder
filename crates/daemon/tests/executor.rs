@@ -721,3 +721,73 @@ fn test_an_unapplicable_batch_is_dropped_instead_of_stopping_the_watcher() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// A flush must stay linear in the size of its batch.
+//
+// Re-pairing a move whose destination the watcher could not see compares an
+// arriving path against the paths renamed away in the same batch. Done per
+// pair, that is one filesystem stat and one database read for every
+// (arrival, departure) combination — a batch that both loses and gains a few
+// hundred files then takes a minute, holding the repository connection for all
+// of it, so every query queues up behind it. That is what it looks like from
+// the GUI: a `flush` task that never ends, and each new selection adding a
+// query that never runs.
+//
+// The bound is a *ratio*, not a duration: the same arrivals are flushed twice,
+// once with no departures and once with as many departures as arrivals. Linear
+// pairing adds next to nothing to the baseline; per-pair pairing multiplied it
+// by twelve at N = 800 on the machine this was written on. A wall-clock
+// threshold would only have measured that machine.
+#[test]
+fn test_departures_do_not_make_a_flush_superlinear() {
+    const N: usize = 400;
+
+    /// Flushes a batch of `N` arrivals (a directory whose content the scan
+    /// finds), optionally alongside `N` departures, and returns how long the
+    /// flush took.
+    fn timed_flush(prefix: &str, with_departures: bool) -> std::time::Duration {
+        let (repo, root, _) = setup(prefix);
+
+        // N tracked files under `old/` — the departures, when asked for.
+        let mut creates = vec![FsEvent::Create("/old".into())];
+        for i in 0..N {
+            write_file(&root, &format!("old/f{i}.txt"), format!("old-{i}").as_bytes());
+            creates.push(FsEvent::Create(format!("/old/f{i}.txt")));
+        }
+        enqueue(&repo, &creates);
+        executor::flush_pending(&repo).unwrap();
+        assert!(resolve(&repo, "/old/f0.txt").is_some(), "the files are tracked");
+
+        // A directory arrives with N files inside; its content is found by the
+        // scan, not by its own events.
+        for i in 0..N {
+            write_file(&root, &format!("new/g{i}.txt"), format!("new-{i}").as_bytes());
+        }
+        enqueue(&repo, &[FsEvent::Create("/new".into())]);
+        if with_departures {
+            // The Create comes first, so the departures are still tracked when
+            // the arrivals are ingested — the worst case for the pairing.
+            std::fs::remove_dir_all(root.join("old")).unwrap();
+            let departures: Vec<FsEvent> =
+                (0..N).map(|i| FsEvent::RenameFrom(format!("/old/f{i}.txt"))).collect();
+            enqueue(&repo, &departures);
+        }
+
+        let start = std::time::Instant::now();
+        executor::flush_pending(&repo).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(resolve(&repo, "/new/g0.txt").is_some(), "the arriving files are tracked");
+        std::fs::remove_dir_all(root).unwrap();
+        elapsed
+    }
+
+    let baseline = timed_flush("linear_base", false);
+    let with_departures = timed_flush("linear_dep", true);
+
+    assert!(
+        with_departures < baseline * 3,
+        "{N} arrivals took {baseline:?} alone but {with_departures:?} \
+         alongside {N} departures — the re-pairing is not linear",
+    );
+}

@@ -578,6 +578,12 @@ event is applied as an ordinary move (one =file_moved=, no orphan, no
 duplicate); a moved *directory* carries its whole subtree with it, since
 children reference their parent by uuid.
 
+The batch's departures are indexed by that key once, not walked per arrival:
+a flush holds the repository connection for its whole duration, so a pairing
+that cost a =stat= and a database read per (arrival, departure) *pair* turned a
+batch that both loses and gains a few hundred files into a minute of held
+connection — with every query queuing behind it.
+
 *Orphan origin.* When a metarecord is orphaned (=Remove= / =Rename(From)=, and
 their cascades), its last filesystem path is first captured into an
 =mfr_path_old= field — a frozen =String= (not a =TreeRef=: it does not
