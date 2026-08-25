@@ -21,10 +21,10 @@ export interface PresetInfo {
 }
 
 /** The Tauri `invoke` shape these helpers need (injected, so tests can stub). */
-type Invoke = <T>(cmd: string, args?: any) => Promise<T>;
+type Invoke = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
 /** The daemon-call shape these helpers need: `metafolder.daemon.call`. */
-type DaemonCall = (method: string, path: string, body?: unknown) => Promise<any>;
+type DaemonCall = (method: string, path: string, body?: unknown) => Promise<unknown>;
 
 /** The installed presets, fetched once per session (a config file changes only
  *  through `metafolder-sync-config`, i.e. between runs). */
@@ -101,12 +101,14 @@ export async function targetDir(opts: TargetDirOptions): Promise<string> {
     if (rel !== null) return rel;
   }
   if (selected?.uuid) {
-    const record = await call('GET', `/repos/${repo}/metarecords/${selected.uuid}`);
-    const type = record?.fields?.find((f: any) => f.name === 'mfr_type')?.value?.value;
-    const resolved = await call(
+    const record = (await call('GET', `/repos/${repo}/metarecords/${selected.uuid}`)) as {
+      fields?: { name: string; value?: { value?: unknown } }[];
+    };
+    const type = record?.fields?.find((f) => f.name === 'mfr_type')?.value?.value;
+    const resolved = (await call(
       'GET',
       `/repos/${repo}/metarecords/${selected.uuid}/fields/mfr_path/resolve-tree`,
-    );
+    )) as { paths?: string[] };
     const path: string | undefined = resolved?.paths?.[0];
     if (typeof path === 'string') {
       if (type === 'dir') return path;

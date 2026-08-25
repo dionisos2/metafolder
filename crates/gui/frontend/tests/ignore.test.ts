@@ -15,7 +15,7 @@ import {
 } from '../src/lib/ignore';
 
 function setup() {
-  const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }) as unknown);
+  const invoke = vi.fn(async (_cmd: string, _args?: unknown) => ({ status: 200, body: null }));
   const instance = createPanelApi(
     {
       invoke,
@@ -128,7 +128,7 @@ describe('target resolution and copy-on-write', () => {
       confirm,
     });
     expect(confirm).toHaveBeenCalledTimes(1);
-    const question = confirm.mock.calls[0][0] as unknown as string;
+    const question = confirm.mock.calls[0][0];
     expect(question).toContain('2');
     expect(question).toContain('/work/live');
     expect(target).toEqual({ uuid: 'dir-uuid', relPath: '/work/live', copied: ['p1', 'p2'] });
@@ -190,7 +190,7 @@ describe('the command target directory', () => {
 
   test('the file manager’s directory wins, as a repo-relative path', async () => {
     const rel = await targetDir({
-      call: call({}, 'dir') as any,
+      call: call({}, 'dir'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: '/home/u/music/live/2024',
@@ -201,7 +201,7 @@ describe('the command target directory', () => {
 
   test('the repository root itself is the empty path', async () => {
     const rel = await targetDir({
-      call: call({}, 'dir') as any,
+      call: call({}, 'dir'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: '/home/u/music',
@@ -212,7 +212,7 @@ describe('the command target directory', () => {
 
   test('a directory outside the repo falls back to the selection, then the root', async () => {
     const rel = await targetDir({
-      call: call({}, 'dir') as any,
+      call: call({}, 'dir'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: '/etc',
@@ -223,7 +223,7 @@ describe('the command target directory', () => {
 
   test('a selected directory targets itself', async () => {
     const rel = await targetDir({
-      call: call({ u1: ['/live'] }, 'dir') as any,
+      call: call({ u1: ['/live'] }, 'dir'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: null,
@@ -234,7 +234,7 @@ describe('the command target directory', () => {
 
   test('a selected file targets its containing directory', async () => {
     const rel = await targetDir({
-      call: call({ u1: ['/live/set.flac'] }, 'file') as any,
+      call: call({ u1: ['/live/set.flac'] }, 'file'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: null,
@@ -245,7 +245,7 @@ describe('the command target directory', () => {
 
   test('a selected file at the top level targets the repository root', async () => {
     const rel = await targetDir({
-      call: call({ u1: ['/set.flac'] }, 'file') as any,
+      call: call({ u1: ['/set.flac'] }, 'file'),
       repo: 'r',
       repoRoot: '/home/u/music',
       fmDir: null,

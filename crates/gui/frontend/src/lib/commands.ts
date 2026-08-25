@@ -385,12 +385,13 @@ async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
   }
   const ws = focusedWs();
   const fmDir = ws
-    ? ((await invoke('ws_get_var', { wsId: ws, key: 'file-manager:dir' })) as string | null)
+    ? await invoke<string | null>('ws_get_var', { wsId: ws, key: 'file-manager:dir' })
     : null;
   const selected = ws
-    ? ((await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' })) as {
-        uuid: string;
-      } | null)
+    ? await invoke<{ uuid: string } | null>('ws_get_var', {
+        wsId: ws,
+        key: 'selected_metarecord',
+      })
     : null;
   const dir = await targetDir({
     call: daemonJson,
@@ -432,12 +433,12 @@ async function runIgnore(choice: string, mode: 'add' | 'remove' | 'set'): Promis
       patterns: target.copied,
     });
   }
-  const result = (await invoke('ignore_apply', {
+  const result = await invoke<string[]>('ignore_apply', {
     repo: context.repo,
     target: target.uuid,
     presets: [preset],
     mode,
-  })) as string[];
+  });
   await status(
     `Ignore: ${preset} ${mode === 'remove' ? 'removed from' : 'applied to'} ` +
       `${context.dir || '/'} — ${result.length} pattern(s)`,
@@ -453,11 +454,8 @@ async function listIgnore(): Promise<void> {
   if (!context) return;
   const ws = focusedWs();
   if (!ws) return;
-  const presets = (await invoke('ignore_presets')) as {
-    name: string;
-    description: string;
-    patterns: string[];
-  }[];
+  const presets =
+    await invoke<{ name: string; description: string; patterns: string[] }[]>('ignore_presets');
   const lines = ['Ignore presets:'];
   for (const preset of presets) {
     lines.push(`  ${preset.name.padEnd(14)}${preset.description} (${preset.patterns.length})`);
@@ -466,6 +464,7 @@ async function listIgnore(): Promise<void> {
     'GET',
     `/repos/${context.repo}/ignore/effective?path=${encodeURIComponent(context.dir)}`,
   )) as { source: string | null; direct: boolean; patterns: string[] };
+
   const here = context.dir || '/';
   const source = effective.source === '' ? '/' : effective.source;
   lines.push(
