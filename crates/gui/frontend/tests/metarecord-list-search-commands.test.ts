@@ -138,7 +138,7 @@ describe('search-field editing commands', () => {
     await p.invoke('metarecord-list:edit-normal');
 
     expect(p.normalEditor.hidden).toBe(false);
-    expect((p.normalFreeze as HTMLInputElement).checked).toBe(true);
+    expect(p.normalFreeze.checked).toBe(true);
     expect(p.normal.readOnly).toBe(false);
     expect(p.shadow.activeElement).toBe(p.normal);
   });
@@ -183,7 +183,7 @@ describe('search-field editing commands', () => {
     await p.invoke('metarecord-list:clear-edit-normal');
 
     expect(p.normalEditor.hidden).toBe(false);
-    expect((p.normalFreeze as HTMLInputElement).checked).toBe(true);
+    expect(p.normalFreeze.checked).toBe(true);
     expect(p.normal.value).toBe('');
     expect(p.shadow.activeElement).toBe(p.normal);
   });

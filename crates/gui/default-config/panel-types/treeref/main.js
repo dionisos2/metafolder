@@ -22,10 +22,6 @@ const DEFAULT_FIELD = 'mfr_path';
  */
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, cache } = metafolder;
-  // Annotated: an unannotated `const x = cache.REFRESH` widens the unique symbol
-  // to plain `symbol`, and `value === x` then narrows nothing.
-  /** @type {Metafolder.Refresh} */
-  const REFRESH = cache.REFRESH;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
 
   /** @type {string|null} */

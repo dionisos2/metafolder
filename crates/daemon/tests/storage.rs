@@ -114,7 +114,7 @@ fn test_field_rows_for_matches_per_record_reads() {
         assert_eq!(versions.get(&uuid).copied(), db::get_version(&conn, uuid).unwrap());
     }
     // An unknown uuid contributes no rows and no version.
-    assert!(rows.get(&absent).map_or(true, |v| v.is_empty()));
+    assert!(rows.get(&absent).is_none_or(|v| v.is_empty()));
     assert_eq!(versions.get(&absent), None);
 }
 

@@ -210,7 +210,7 @@ fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
                     unregister(&mut create, &a, i);
                     insert(&mut create, &b, i);
                 } else if let Some(i) = last(&rename_by_to, &a)
-                    .filter(|&i| !last(&rename_by_from, &b).is_some_and(|j| j > i))
+                    .filter(|&i| last(&rename_by_from, &b).is_none_or(|j| j <= i))
                 {
                     // Rename X→A, Rename A→B → Rename X→B.
                     //

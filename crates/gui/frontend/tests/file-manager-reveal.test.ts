@@ -140,7 +140,10 @@ describe('file-manager reveal-folder', () => {
     await mount(s);
     s.fs.readDir.mockClear();
     // The command sets the variable, then the panel's onChange fires.
-    s.api.workspace.set('file-manager:reveal-path', { path: '/repo/sub/song.mp3', nonce: 7 });
+    await s.api.workspace.set('file-manager:reveal-path', {
+      path: '/repo/sub/song.mp3',
+      nonce: 7,
+    });
     s.subscriptions.get('file-manager:reveal-path')!({ path: '/repo/sub/song.mp3', nonce: 7 });
     await new Promise((r) => setTimeout(r, 0));
     expect(s.fs.readDir).toHaveBeenCalledWith('/repo/sub');
