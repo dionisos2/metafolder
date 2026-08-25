@@ -174,6 +174,9 @@ fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
     let mut rename_from: HashMap<String, BTreeSet<usize>> = HashMap::new();
     let mut rename_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
     let mut rename_by_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    // Renames indexed by their *source*, to spot the collapse that would create
+    // a cycle (see the chain branch below).
+    let mut rename_by_from: HashMap<String, BTreeSet<usize>> = HashMap::new();
     let mut modify_data: HashMap<String, BTreeSet<usize>> = HashMap::new();
     let mut modify_meta: HashMap<String, BTreeSet<usize>> = HashMap::new();
 
@@ -206,14 +209,26 @@ fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
                     out[i] = Some(FsEvent::Create(b.clone()));
                     unregister(&mut create, &a, i);
                     insert(&mut create, &b, i);
-                } else if let Some(i) = last(&rename_by_to, &a) {
+                } else if let Some(i) = last(&rename_by_to, &a)
+                    .filter(|&i| !last(&rename_by_from, &b).is_some_and(|j| j > i))
+                {
                     // Rename X→A, Rename A→B → Rename X→B.
+                    //
+                    // Not when B is the source of a rename that has not been
+                    // applied yet (a later index): collapsing would hoist the
+                    // arrival at B in front of B's own departure, and the two
+                    // renames would form a cycle — the swap `a→tmp, b→a, tmp→b`
+                    // becomes `a→b, b→a`, which no sequential order can honour
+                    // (one metarecord per tree position). Keeping the hop
+                    // through the intermediate path costs one extra `file_moved`
+                    // and breaks the cycle, exactly as it did on disk.
                     let Some(FsEvent::Rename(x, _)) = out[i].clone() else { unreachable!() };
                     out[i] = Some(FsEvent::Rename(x, b.clone()));
                     unregister(&mut rename_by_to, &a, i);
                     insert(&mut rename_by_to, &b, i);
                 } else {
                     insert(&mut rename_by_to, &b, out.len());
+                    insert(&mut rename_by_from, &a, out.len());
                     out.push(Some(FsEvent::Rename(a, b)));
                 }
             }
@@ -299,6 +314,18 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     let events = compact(correlate_renames(events));
     let n_events = events.len();
 
+    // Paths renamed away with no matching arrival in this batch. Either the
+    // file really left the repository, or it moved into a directory the watcher
+    // was not yet watching — `Apply::find_departed_match` tells the two apart
+    // when the destination turns up in a new directory's scan.
+    let departed: Vec<String> = events
+        .iter()
+        .filter_map(|ev| match ev {
+            FsEvent::RenameFrom(p) => Some(p.clone()),
+            _ => None,
+        })
+        .collect();
+
     // Group by kind, keeping groups ordered by first occurrence.
     let mut groups: Vec<(GroupKind, Vec<FsEvent>)> = Vec::new();
     for ev in events {
@@ -324,6 +351,7 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
                 writer,
                 cache: &mut cache,
                 root: &repo.config.root,
+                departed: &departed,
             };
             for ev in group {
                 apply.apply(ev)?;
@@ -420,6 +448,9 @@ struct Apply<'a, 'c> {
     writer: Writer<'c>,
     cache: &'a mut TreeCache,
     root: &'a Path,
+    /// Paths renamed *out of* a watched directory in this same batch, whose
+    /// destination the watcher never saw. See [`Apply::find_departed_match`].
+    departed: &'a [String],
 }
 
 impl Apply<'_, '_> {
@@ -552,6 +583,15 @@ impl Apply<'_, '_> {
                 return Ok(true);
             }
         }
+        // The other half of a move whose destination the watcher could not see
+        // (a directory created in this same batch): re-pair it rather than let
+        // the file arrive as a stranger. Tried after the fingerprint search — an
+        // exact hash is stronger evidence — and it is the only chance a moved
+        // *directory* gets.
+        if let Some(from) = self.find_departed_match(rel)? {
+            self.apply_rename(&from, rel)?;
+            return Ok(true);
+        }
         self.create_record(rel)?;
         Ok(true)
     }
@@ -600,6 +640,14 @@ impl Apply<'_, '_> {
         if !self.eligible(rel)? {
             return Ok(()); // Out of watch scope: metadata left unchanged.
         }
+        self.orphan_subtree(uuid)
+    }
+
+    /// Orphans `uuid` and every descendant: `mfr_path` becomes Nothing, the
+    /// metarecords themselves are preserved. Used when the content behind a
+    /// path is gone — a deletion, a departure, or a file destroyed by something
+    /// else being moved on top of it.
+    fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
         let descendants =
             self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
         // Snapshot every path *before* any write: with an incomplete tree cache
@@ -630,6 +678,18 @@ impl Apply<'_, '_> {
         if !self.eligible(to)? {
             return Ok(()); // Moved out of scope: keep the stale path.
         }
+        // The destination was itself tracked: the rename destroyed the file
+        // that was there (`mv a b`, a download, an editor saving atomically), so
+        // its metarecord is orphaned exactly as a deletion would — its content
+        // is gone. Skipping this is not an option: one metarecord may hold a
+        // given tree position, so the move would fail the tree constraint, and
+        // with it the whole flush — whose batch is then retried forever, leaving
+        // the watcher recording nothing at all for this repository.
+        if let Some(occupant) = self.resolve(to)? {
+            if occupant != src {
+                self.orphan_subtree(occupant)?;
+            }
+        }
         let parent = self.ensure_parents(to)?;
         let (_, name) = Self::split_parent(to);
         self.writer.set_field_as(
@@ -654,6 +714,60 @@ impl Apply<'_, '_> {
             self.scan_dir(rel)?;
         }
         Ok(())
+    }
+
+    /// The path a file now arriving at `rel` was renamed away from earlier in
+    /// this same batch, if any.
+    ///
+    /// inotify reports a move as a From/To pair that [`correlate_renames`] fuses
+    /// back into one `Rename`. When the destination directory is *itself* new —
+    /// "create a folder, drop a file into it", the most ordinary file-manager
+    /// gesture — its watch cannot be in place before the kernel has told us the
+    /// directory exists, so only the `From` half is ever delivered. The move
+    /// would then decay into "the file left the repository" plus "an unrelated
+    /// file appeared", which loses the metarecord: every tag, rating and note
+    /// the user attached stays behind on an orphan while the file is tracked
+    /// anew. The destination is found instead by the new directory's scan
+    /// ([`Self::scan_dir`]), and this re-pairs the two halves.
+    ///
+    /// Candidates are only the paths renamed away in *this* batch that are gone
+    /// from disk and still tracked; identity is settled on what a rename
+    /// preserves exactly — kind, size and mtime. The fingerprint search cannot
+    /// serve here: a metarecord the watcher created has no stored hashes, and
+    /// its file has already left the old path, so there is nothing left to hash.
+    fn find_departed_match(&mut self, rel: &str) -> Result<Option<String>> {
+        let departed = self.departed;
+        if departed.is_empty() {
+            return Ok(None);
+        }
+        let Ok(arriving) = fs_meta::stat_fields(&self.abs(rel)) else {
+            return Ok(None); // Vanished mid-flush: nothing to re-pair.
+        };
+        let field = |fields: &[Field], name: &str| {
+            fields.iter().find(|f| f.name == name).map(|f| f.value.clone())
+        };
+        let (kind, size, mtime) = (
+            field(&arriving, "mfr_type"),
+            field(&arriving, "mfr_size"),
+            field(&arriving, "mfr_mtime"),
+        );
+        for from in departed {
+            // Still there: it did not leave, so this is not its other half.
+            if std::fs::symlink_metadata(self.abs(from)).is_ok() {
+                continue;
+            }
+            let Some(uuid) = self.resolve(from)? else {
+                continue; // Already re-homed by an earlier arrival, or untracked.
+            };
+            let Some(record) = db::get_metarecord(self.writer.connection(), uuid)? else {
+                continue;
+            };
+            let same = |name: &str, want: &Option<Value>| record.get(name).cloned() == *want;
+            if same("mfr_type", &kind) && same("mfr_size", &size) && same("mfr_mtime", &mtime) {
+                return Ok(Some(from.clone()));
+            }
+        }
+        Ok(None)
     }
 
     /// Fingerprint search among orphaned metarecords (`mfr_path` = Nothing):
@@ -956,6 +1070,24 @@ mod tests {
         );
     }
 
+    // A swap through a temporary name. Collapsing `a→tmp` with `tmp→b` would
+    // leave `[a→b, b→a]`: a cycle, and no sequential order can apply it — one
+    // metarecord holds a given tree position, so whichever move goes first
+    // lands on a position the other still occupies. The hop through the
+    // intermediate path is what breaks the cycle, exactly as it did on disk.
+    #[test]
+    fn compact_keeps_the_hop_that_breaks_a_rename_cycle() {
+        assert_eq!(
+            compact(vec![rename("/a", "/tmp"), rename("/b", "/a"), rename("/tmp", "/b")]),
+            vec![rename("/a", "/tmp"), rename("/b", "/a"), rename("/tmp", "/b")]
+        );
+        // The chain still collapses when its destination is nobody's source.
+        assert_eq!(
+            compact(vec![rename("/a", "/tmp"), rename("/tmp", "/b"), rename("/c", "/d")]),
+            vec![rename("/a", "/b"), rename("/c", "/d")]
+        );
+    }
+
     #[test]
     fn compact_collapses_repeated_modify() {
         assert_eq!(compact(vec![mdata("/a"), mdata("/a"), mmeta("/a"), mmeta("/a")]), vec![mdata("/a"), mmeta("/a")]);
@@ -1009,6 +1141,13 @@ mod tests {
                         out[i] = Some(FsEvent::Create(b));
                     } else if let Some(i) =
                         find_last(&out, &|e| matches!(e, FsEvent::Rename(_, q) if *q == a))
+                            // The cycle guard: not when a rename still to be
+                            // applied (a later index) starts from `b`.
+                            .filter(|&i| {
+                                !out.iter().skip(i + 1).any(|e| {
+                                    matches!(e, Some(FsEvent::Rename(src, _)) if *src == b)
+                                })
+                            })
                     {
                         let Some(FsEvent::Rename(x, _)) = out[i].clone() else { unreachable!() };
                         out[i] = Some(FsEvent::Rename(x, b));
