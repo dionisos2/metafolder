@@ -96,6 +96,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/track", post(track))
+        .route("/repos/:repo/eligibility", post(eligibility_explain))
+        .route("/repos/:repo/ignore/effective", get(effective_ignore))
         // ── Cross-repo sync (spec-sync) ─────────────────────────────────────
         .route("/sync/:a/:b/links", get(sync_list_links).post(sync_create_link))
         .route("/sync/:a/:b/links/:link", get(sync_get_link).delete(sync_delete_link))
@@ -1718,6 +1720,99 @@ async fn full_reconcile(
 struct TrackBody {
     path: PathBuf,
 }
+
+#[derive(Deserialize)]
+struct EligibilityBody {
+    paths: Vec<String>,
+}
+
+/// The most paths one `POST /eligibility` call may explain. A directory
+/// listing is the intended unit; a bigger batch is a client bug, and each path
+/// costs an ancestor-chain walk under the repo's cache lock.
+const ELIGIBILITY_MAX_PATHS: usize = 1000;
+
+/// `POST /repos/:repo/eligibility`: read-only dry run of the watch/ignore
+/// algorithm for a batch of repo-root-relative paths, each with the reason it
+/// was decided (spec-file-tracking "Eligibility explain"). The whole batch
+/// shares one `EligibilityCache`, so ancestor fields and compiled patterns are
+/// read once for a listing.
+async fn eligibility_explain(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<EligibilityBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    if body.paths.len() > ELIGIBILITY_MAX_PATHS {
+        return Err(ApiError::bad_request(format!(
+            "at most {ELIGIBILITY_MAX_PATHS} paths per call, got {}",
+            body.paths.len()
+        )));
+    }
+    for path in &body.paths {
+        if !path.is_empty() && !path.starts_with('/') {
+            return Err(ApiError::bad_request(format!(
+                "path must be repo-root-relative with a leading slash: {path:?}"
+            )));
+        }
+    }
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let mut ec = crate::eligibility::EligibilityCache::default();
+        let mut results = Vec::with_capacity(body.paths.len());
+        for path in &body.paths {
+            let e = crate::eligibility::explain_cached(&conn, &mut cache, path, &mut ec)?;
+            results.push(json!({
+                "path": path,
+                "eligible": e.eligible,
+                "reason": e.reason.as_str(),
+                "watch_scope": e.watch_scope,
+                "ignore_source": e.ignore_source,
+                "pattern": e.pattern,
+            }));
+        }
+        Ok(Json(json!({ "results": results })))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct EffectiveIgnoreParams {
+    #[serde(default)]
+    path: String,
+}
+
+/// `GET /repos/:repo/ignore/effective?path=<rel>`: the `mf_ignore` set that
+/// governs a directory and where it comes from (spec-file-tracking "Effective
+/// ignore set") — what a client needs to warn that writing here would shadow an
+/// inherited set rather than extend it.
+async fn effective_ignore(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<EffectiveIgnoreParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    if !params.path.is_empty() && !params.path.starts_with('/') {
+        return Err(ApiError::bad_request(format!(
+            "path must be repo-root-relative with a leading slash: {:?}",
+            params.path
+        )));
+    }
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let e = crate::eligibility::effective_ignore(&conn, &mut cache, &params.path)?;
+        Ok(Json(json!({
+            "source": e.source,
+            "source_uuid": e.source_uuid.map(hex),
+            "direct": e.direct,
+            "patterns": e.patterns,
+        })))
+    })
+    .await
+}
+
 
 /// Creates the metarecord for a single filesystem path without activating
 /// tracking (spec-file-tracking "Single-metarecord track"). Parents are created

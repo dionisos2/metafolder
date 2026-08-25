@@ -322,3 +322,133 @@ fn test_mf_sync_inherits_with_nearest_ancestor_override() {
     assert_eq!(of(&mut f, "/projects/build/out.o"), "internal", "nearest ancestor wins");
     assert_eq!(of(&mut f, "/other/x"), "internal", "absent everywhere ⇒ internal");
 }
+
+// ── Explain: the reasoned form of the algorithm (spec-file-tracking
+// "Eligibility explain") ─────────────────────────────────────────────────────
+
+#[test]
+fn test_explain_reports_the_deciding_step() {
+    use metafolder_daemon::eligibility::{explain, Reason};
+    let mut f = Fixture::new(true);
+    let root = f.root;
+    let _work = f.entry(
+        root,
+        "work",
+        vec![Field::new("mf_ignore", Value::String(r"target(/.*)?$".into()))],
+    );
+
+    let e = explain(&f.conn, &mut f.cache, "/notes.txt").unwrap();
+    assert!(e.eligible);
+    assert_eq!(e.reason, Reason::Tracked);
+    assert_eq!(e.watch_scope.as_deref(), Some(""));
+    assert_eq!(e.ignore_source.as_deref(), Some(""), "the root provides the set");
+    assert_eq!(e.pattern, None);
+
+    let e = explain(&f.conn, &mut f.cache, "/.git/config").unwrap();
+    assert!(!e.eligible);
+    assert_eq!(e.reason, Reason::Ignored);
+    assert_eq!(e.pattern.as_deref(), Some(r"\.git(/.*)?$"));
+    assert_eq!(e.ignore_source.as_deref(), Some(""));
+
+    // Below /work the nearest ignore ancestor is /work, and its set replaces
+    // the root's (no merging) — the explanation must name /work, not the root.
+    let e = explain(&f.conn, &mut f.cache, "/work/target/debug").unwrap();
+    assert!(!e.eligible);
+    assert_eq!(e.reason, Reason::Ignored);
+    assert_eq!(e.ignore_source.as_deref(), Some("/work"));
+    assert_eq!(e.pattern.as_deref(), Some(r"target(/.*)?$"));
+
+    let e = explain(&f.conn, &mut f.cache, "/work/.git/config").unwrap();
+    assert!(e.eligible, "the root's pattern does not reach below /work");
+    assert_eq!(e.reason, Reason::Tracked);
+}
+
+#[test]
+fn test_explain_reports_watch_reasons() {
+    use metafolder_daemon::eligibility::{explain, Reason};
+    let mut f = Fixture::new(false);
+    let e = explain(&f.conn, &mut f.cache, "/file.txt").unwrap();
+    assert!(!e.eligible);
+    assert_eq!(e.reason, Reason::WatchFalse);
+    assert_eq!(e.watch_scope.as_deref(), Some(""));
+
+    // A directly-watched hidden directory: tracked unconditionally (step 3),
+    // and it becomes the tracking scope of its descendants.
+    let mut f = Fixture::new(true);
+    let root = f.root;
+    let config = f.entry(root, ".config", vec![Field::new("mf_watch", Value::Bool(true))]);
+    let _ = config;
+    let e = explain(&f.conn, &mut f.cache, "/.config").unwrap();
+    assert!(e.eligible);
+    assert_eq!(e.reason, Reason::DirectWatch);
+    assert_eq!(e.watch_scope.as_deref(), Some("/.config"));
+
+    let e = explain(&f.conn, &mut f.cache, "/.config/init.lua").unwrap();
+    assert!(e.eligible, "matched relative to the watched dir, so the leading dot is stripped");
+    assert_eq!(e.watch_scope.as_deref(), Some("/.config"));
+}
+
+#[test]
+fn test_explain_no_watch_anywhere() {
+    use metafolder_daemon::eligibility::{explain, Reason};
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
+        .unwrap();
+    w.commit().unwrap();
+    let mut cache = TreeCache::new(false);
+    let e = explain(&conn, &mut cache, "/file.txt").unwrap();
+    assert!(!e.eligible);
+    assert_eq!(e.reason, Reason::NoWatch);
+    assert_eq!(e.watch_scope, None);
+}
+
+// ── Effective ignore set (spec-file-tracking "Effective ignore set") ─────────
+
+#[test]
+fn test_effective_ignore_set_and_its_source() {
+    use metafolder_daemon::eligibility::effective_ignore;
+    let mut f = Fixture::new(true);
+    let root = f.root;
+    let work = f.entry(
+        root,
+        "work",
+        vec![Field::new("mf_ignore", Value::String(r"target(/.*)?$".into()))],
+    );
+    let _live = f.entry(work, "live", vec![]);
+
+    // The repository root: its own set.
+    let e = effective_ignore(&f.conn, &mut f.cache, "").unwrap();
+    assert!(e.direct);
+    assert_eq!(e.source.as_deref(), Some(""));
+    assert_eq!(e.patterns, vec![r"\.git(/.*)?$".to_string()]);
+
+    // A directory with its own set: direct, so editing it changes nothing else.
+    let e = effective_ignore(&f.conn, &mut f.cache, "/work").unwrap();
+    assert!(e.direct);
+    assert_eq!(e.source.as_deref(), Some("/work"));
+    assert_eq!(e.patterns, vec![r"target(/.*)?$".to_string()]);
+
+    // A directory with none of its own: the inherited set, named.
+    let e = effective_ignore(&f.conn, &mut f.cache, "/work/live").unwrap();
+    assert!(!e.direct, "inherited: a write here would drop the whole set");
+    assert_eq!(e.source.as_deref(), Some("/work"));
+    assert_eq!(e.patterns, vec![r"target(/.*)?$".to_string()]);
+}
+
+#[test]
+fn test_effective_ignore_set_when_nothing_is_defined() {
+    use metafolder_daemon::eligibility::effective_ignore;
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
+        .unwrap();
+    w.commit().unwrap();
+    let mut cache = TreeCache::new(false);
+    let e = effective_ignore(&conn, &mut cache, "/anywhere").unwrap();
+    assert_eq!(e.source, None);
+    assert!(!e.direct);
+    assert!(e.patterns.is_empty());
+}

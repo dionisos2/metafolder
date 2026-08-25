@@ -24,6 +24,53 @@ pub struct EligibilityCache {
     ignore: HashMap<Uuid, Vec<String>>,
 }
 
+/// Why [`explain`] decided the way it did — the step of the eligibility
+/// algorithm (spec-file-tracking "Eligibility algorithm") that settled it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// No `mf_watch` anywhere on the ancestor chain: the opt-in default.
+    NoWatch,
+    /// The nearest `mf_watch` is `false` (step 2).
+    WatchFalse,
+    /// `mf_watch` is set directly on the path: tracked unconditionally (step 3).
+    DirectWatch,
+    /// A pattern of the effective ignore set matched (step 5).
+    Ignored,
+    /// Nothing excluded it (step 6).
+    Tracked,
+}
+
+impl Reason {
+    /// The wire form used by `POST /repos/:repo/eligibility`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::NoWatch => "no_watch",
+            Reason::WatchFalse => "watch_false",
+            Reason::DirectWatch => "direct_watch",
+            Reason::Ignored => "ignored",
+            Reason::Tracked => "tracked",
+        }
+    }
+}
+
+/// A reasoned eligibility decision: the verdict plus what produced it, so a
+/// client can show *why* a path is (not) tracked without re-implementing the
+/// walk or re-running the patterns in another regex dialect.
+#[derive(Debug, Clone)]
+pub struct Explanation {
+    pub eligible: bool,
+    pub reason: Reason,
+    /// Path of the tracking-scope root — the metarecord whose `mf_watch`
+    /// decided, and the anchor patterns are matched against. `None` when no
+    /// `mf_watch` was found at all.
+    pub watch_scope: Option<String>,
+    /// Path of the metarecord providing the effective ignore set, `None` when
+    /// none does (or when the decision came before step 4).
+    pub ignore_source: Option<String>,
+    /// The pattern that matched, set only for [`Reason::Ignored`].
+    pub pattern: Option<String>,
+}
+
 /// Evaluates eligibility for `rel_path` (repo-root-relative, `/`-separated,
 /// leading slash; `""` is the root itself). Single-shot: compiles regexes and
 /// reads ancestor fields fresh. Hot loops (the reconcile walk) should use
@@ -40,6 +87,23 @@ pub fn is_eligible_cached(
     rel_path: &str,
     ec: &mut EligibilityCache,
 ) -> Result<bool> {
+    Ok(explain_cached(conn, cache, rel_path, ec)?.eligible)
+}
+
+/// [`explain_cached`] with a throwaway cache.
+pub fn explain(conn: &Connection, cache: &mut TreeCache, rel_path: &str) -> Result<Explanation> {
+    explain_cached(conn, cache, rel_path, &mut EligibilityCache::default())
+}
+
+/// The eligibility algorithm itself, keeping the reason it stopped at. Every
+/// eligibility decision in the daemon goes through this function — the verdict
+/// and its explanation can therefore never disagree.
+pub fn explain_cached(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    rel_path: &str,
+    ec: &mut EligibilityCache,
+) -> Result<Explanation> {
     let full_idx = rel_path.split('/').count() - 1;
     let chain = ancestor_chain(conn, cache, rel_path)?;
     // The path's own metarecord, when it already exists.
@@ -57,14 +121,34 @@ pub fn is_eligible_cached(
         }
     }
     let Some((watch_idx, watch_entry, watch_value)) = watch else {
-        return Ok(false); // No mf_watch anywhere: opt-in default.
+        // No mf_watch anywhere: opt-in default.
+        return Ok(Explanation {
+            eligible: false,
+            reason: Reason::NoWatch,
+            watch_scope: None,
+            ignore_source: None,
+            pattern: None,
+        });
     };
+    let scope = prefix_path(rel_path, watch_idx);
     if !watch_value {
-        return Ok(false);
+        return Ok(Explanation {
+            eligible: false,
+            reason: Reason::WatchFalse,
+            watch_scope: Some(scope),
+            ignore_source: None,
+            pattern: None,
+        });
     }
     // Step 3: mf_watch set directly on the metarecord → tracked unconditionally.
     if own_entry == Some(watch_entry) {
-        return Ok(true);
+        return Ok(Explanation {
+            eligible: true,
+            reason: Reason::DirectWatch,
+            watch_scope: Some(scope),
+            ignore_source: None,
+            pattern: None,
+        });
     }
 
     // The path against which ignore patterns are tested: `rel_path` re-anchored
@@ -87,14 +171,79 @@ pub fn is_eligible_cached(
         if patterns.is_empty() {
             continue;
         }
+        let source = prefix_path(rel_path, *i);
         for pattern in &patterns {
             if cached_regex(ec, pattern)?.is_match(&scoped) {
-                return Ok(false);
+                return Ok(Explanation {
+                    eligible: false,
+                    reason: Reason::Ignored,
+                    watch_scope: Some(scope),
+                    ignore_source: Some(source),
+                    pattern: Some(pattern.clone()),
+                });
             }
         }
-        return Ok(true);
+        return Ok(Explanation {
+            eligible: true,
+            reason: Reason::Tracked,
+            watch_scope: Some(scope),
+            ignore_source: Some(source),
+            pattern: None,
+        });
     }
-    Ok(true)
+    Ok(Explanation {
+        eligible: true,
+        reason: Reason::Tracked,
+        watch_scope: Some(scope),
+        ignore_source: None,
+        pattern: None,
+    })
+}
+
+/// The `mf_ignore` set that *governs* `rel_path`, and where it comes from
+/// (spec-file-tracking "Effective ignore set").
+#[derive(Debug, Clone)]
+pub struct EffectiveIgnore {
+    /// Path of the metarecord providing the set, `None` when nothing on the
+    /// chain (the path included) has an `mf_ignore` row.
+    pub source: Option<String>,
+    pub source_uuid: Option<Uuid>,
+    /// Whether the source *is* `rel_path` itself — i.e. writing here replaces
+    /// its own set rather than shadowing an inherited one.
+    pub direct: bool,
+    pub patterns: Vec<String>,
+}
+
+/// Resolves the effective ignore set of `rel_path`. Unlike the eligibility walk
+/// this *includes* the path itself: the question is "which set governs writes
+/// here", not "which set filtered this entry" (the algorithm's step 4 excludes
+/// the entry, which only matters for a file being tested).
+pub fn effective_ignore(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    rel_path: &str,
+) -> Result<EffectiveIgnore> {
+    let full_idx = rel_path.split('/').count() - 1;
+    let chain = ancestor_chain(conn, cache, rel_path)?;
+    for (i, uuid) in chain.iter().rev() {
+        let patterns = db::string_fields(conn, *uuid, "mf_ignore")?;
+        if patterns.is_empty() {
+            continue;
+        }
+        return Ok(EffectiveIgnore {
+            source: Some(prefix_path(rel_path, *i)),
+            source_uuid: Some(*uuid),
+            direct: *i == full_idx,
+            patterns,
+        });
+    }
+    Ok(EffectiveIgnore { source: None, source_uuid: None, direct: false, patterns: Vec::new() })
+}
+
+/// The prefix of `rel_path` down to component `idx` — the path of the ancestor
+/// the chain's `(idx, uuid)` pair denotes (`""` for the repository root).
+fn prefix_path(rel_path: &str, idx: usize) -> String {
+    rel_path.split('/').take(idx + 1).collect::<Vec<_>>().join("/")
 }
 
 /// The metarecords existing along `rel_path`, as `(component_index, uuid)` from

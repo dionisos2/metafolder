@@ -799,6 +799,82 @@ cascade both to every descendant — all in one revision. Response:
 ={"cleared": N}=. This is a new, explicit component that writes =Nothing=,
 alongside the watcher and =force= writes; *reconcile still never does*.
 
+** Eligibility explain
+
+#+BEGIN_SRC
+POST /repos/:repo_uuid/eligibility
+#+END_SRC
+
+Read-only *dry run* of the [[*Eligibility algorithm]] for a list of paths, with
+the reason attached. The algorithm's inputs (=mf_watch= / =mf_ignore= on the
+ancestor chain, the re-anchoring at the tracking-scope root, the
+nearest-ancestor-wins rule) are entirely daemon-side, so a client that wants to
+show *why* a path is or is not tracked — the GUI file manager greying out the
+entries an ignore pattern excludes, or answering "why is this file not tracked?"
+— must ask the daemon rather than re-implement the walk and re-run the regexes
+in another engine's dialect.
+
+Request body: repo-root-relative paths (leading slash, =""= is the root), at
+most 1000 per call:
+#+BEGIN_SRC json
+{"paths": ["/music/track.flac", "/target/debug/deps"]}
+#+END_SRC
+
+Response: one result per requested path, in the order given.
+#+BEGIN_SRC json
+{"results": [
+  {"path": "/music/track.flac", "eligible": true,  "reason": "tracked",
+   "watch_scope": "", "ignore_source": "", "pattern": null},
+  {"path": "/target/debug/deps", "eligible": false, "reason": "ignored",
+   "watch_scope": "", "ignore_source": "", "pattern": "(^|/)target/…"}
+]}
+#+END_SRC
+
+- =reason= — the algorithm step that decided: =no_watch= (no =mf_watch= anywhere
+  on the chain: the opt-in default), =watch_false= (the nearest =mf_watch= is
+  =false=), =direct_watch= (=mf_watch= set directly on the path: tracked
+  unconditionally, step 3), =ignored= (a pattern matched, step 5), =tracked=
+  (step 6).
+- =watch_scope= — the path of the tracking-scope root (the metarecord whose
+  =mf_watch= decided), against which patterns are matched; =null= when no
+  =mf_watch= was found.
+- =ignore_source= — the path of the nearest ancestor providing the effective
+  pattern set, =null= when none has one.
+- =pattern= — the pattern that matched, only for =reason = "ignored"=.
+
+Evaluating a path costs an ancestor-chain walk served by the tree cache; the
+call compiles each pattern once for the whole batch (the reconcile walk's
+=EligibilityCache=), so a directory listing is one request.
+
+** Effective ignore set
+
+#+BEGIN_SRC
+GET /repos/:repo_uuid/ignore/effective?path=<repo-root-relative>
+#+END_SRC
+
+The =mf_ignore= pattern set that *governs* the given directory, and where it
+comes from. Since sets are never merged across ancestors (the nearest ancestor
+with at least one row wins), writing a single pattern onto a directory that has
+none silently drops the whole inherited set for that subtree — a trap this
+endpoint exists to let a client show and avoid (spec-gui "Ignore patterns"
+describes the copy-on-write flow built on it).
+
+#+BEGIN_SRC json
+{"source": "/music", "source_uuid": "<32hex>", "direct": false,
+ "patterns": ["\\.git(/.*)?$", "…"]}
+#+END_SRC
+
+- =source= — the path of the metarecord providing the set, =null= when no
+  ancestor (nor the directory itself) has any =mf_ignore= row.
+- =direct= — whether =source= *is* the requested path (its own set, so editing
+  it changes nothing else) rather than an inherited one.
+- =patterns= — the source's rows, in order.
+
+Unlike the eligibility walk, the search *includes* the requested path itself:
+the question is "which set governs writes here", not "which set filtered this
+entry" (the algorithm's step 4 excludes the entry itself, which matters only for
+a file being tested).
+
 * CLI
 
 ** =mf reconcile=

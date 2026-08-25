@@ -880,6 +880,10 @@ Behaviours:
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
+| =ignore:list=        | Show the installed ignore presets and the target's active patterns in the =message= panel — see [[*Ignore patterns]] |
+| =ignore:add <preset>= | Append an ignore preset's patterns to the target directory (completes over the installed presets) |
+| =ignore:remove <preset>= | Remove an ignore preset's patterns from the target directory |
+| =ignore:set <preset>= | Replace the target directory's whole ignore set with a preset's patterns |
 | =log:rollback=       | Rollback to the selected revision              |
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
@@ -2000,6 +2004,103 @@ completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.
+
+** Ignore patterns
+
+The GUI counterpart of =mf ignore= (spec-file-tracking "Ignore presets"). Two
+things are exposed: applying *named presets* to a directory, and the ad-hoc
+"ignore this, here" gesture from the file manager. Both end up writing the same
+thing — the =mf_ignore= rows of one metarecord.
+
+*** Backend commands
+
+Preset expansion is a pure client-side transformation reading a config file
+(=core::ignore_presets=), and a panel cannot read files, so the GUI backend
+exposes it as Tauri commands (=ignore.rs=, alongside =repo_init.rs=, reusing the
+same blocking =DaemonClient=). They add no logic of their own: =core::ignore=
+already implements add/remove/set over the daemon API for the CLI.
+
+| Command                | Result                                                       |
+|------------------------+--------------------------------------------------------------|
+| =ignore_presets=       | =[{name, description, patterns}]= — the installed presets, each fully expanded (groups included), sorted by name |
+| =ignore_current=       | The target metarecord's own =mf_ignore= rows, in order       |
+| =ignore_effective=     | =GET …/ignore/effective= for a directory: ={source, source_uuid, direct, patterns}= |
+| =ignore_apply=         | Expands the named presets and writes them with =add= / =remove= / =set=; returns the resulting rows |
+| =ignore_write=         | Writes an explicit pattern list (ad-hoc patterns, reordering, deletion); an empty list unsets the field |
+| =ignore_target=        | Resolves a *path* to the metarecord an ignore write should target — the directory itself, or the repo root when no path is given |
+| =eligibility_explain=  | =POST …/eligibility= for a batch of paths (see below)         |
+
+A missing or malformed =ignore-presets.toml= is an error naming
+=metafolder-sync-config=, never a silent fallback (spec-config).
+
+*** Commands
+
+Four global commands mirror the CLI verbs one-to-one. Each declares its
+arguments (see [[*Interactive command arguments (command mode)]]), so invoking
+one from the command input prompts for what is missing, with completion:
+
+- =ignore:add <preset>= — append the preset's patterns to the target.
+- =ignore:remove <preset>= — remove exactly those patterns from the target.
+- =ignore:set <preset>= — replace the target's whole set with them.
+- =ignore:list= — show the installed presets and the target's active set in the
+  =message= panel (the read-only, non-destructive entry point).
+
+The =preset= argument completes over the installed presets as
+="<name> — <description>"= lines, the same shape =script:run= uses; a bare name
+typed by hand (or coming from a keybinding) is accepted too.
+
+The *target* is not an argument: it is the current context — the file manager's
+current directory when the focused panel is a =file-manager=, else the selected
+metarecord when it is a directory, else the repository root. The command's
+status message always names the target it resolved (="Ignore: +13 patterns on
+/music"=), because applying a preset to the wrong directory is silent otherwise.
+
+*** Inherited sets and copy-on-write
+
+Ignore sets are *replaced, never merged* across ancestors: the nearest ancestor
+with at least one row wins. So writing a single pattern onto a directory that has
+none silently drops the whole inherited set for that subtree — the one trap of
+the feature, and the reason the GUI does more here than the CLI.
+
+Before any write to a target whose set is *inherited* (=ignore_effective= reports
+=direct = false= with a non-empty =patterns=), the GUI asks, naming the source
+and the count:
+
+#+BEGIN_SRC
+/music/live has no ignore patterns of its own; it inherits 13 from /.
+  [Copy the 13 inherited patterns here, then apply]   (default)
+  [Start from an empty set here]
+  [Cancel]
+#+END_SRC
+
+Choosing the first writes the inherited rows onto the target *before* the
+requested operation, so the visible behaviour is "add one more pattern here"
+rather than "silently un-ignore everything else". A target that already has its
+own set, or that inherits nothing, is written without a prompt.
+
+*** File manager integration
+
+The =file-manager= panel is where ignoring is naturally decided, so it both
+*shows* and *offers* it:
+
+- *Showing.* After a listing is enriched, the panel batches its entries into one
+  =eligibility_explain= call and marks the excluded ones (dimmed row + a muted
+  =ignored= marker, with the matching pattern and its source in the row's
+  tooltip). Only =reason = "ignored"= is marked: an untracked entry in a repo
+  that simply is not watched yet is not "ignored", and dimming the whole listing
+  would be noise. The call is skipped when there is no active repo.
+- *Offering.* The row context menu gains an *Ignore* submenu: /this path
+  exactly/, /every =<ext>= here/, and /apply a preset…/. The first two build the
+  pattern from the row's path re-anchored at the tracking scope
+  (=watch_scope= from the same explain call — patterns are matched relative to
+  it, not to the repo root), regex-escaping the literal parts. Both go through
+  the copy-on-write prompt above, and both target the *current directory*, not
+  the row.
+
+The listing is re-enriched after any ignore write, so the effect is visible
+immediately rather than at the next reconcile. Ignoring a path never deletes an
+existing metarecord: it only stops future tracking (spec-file-tracking
+"Behaviour when =mf_watch= or =mf_ignore= changes").
 
 ** Event log
 
