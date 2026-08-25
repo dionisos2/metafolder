@@ -4,6 +4,7 @@
 
 import { osmMatch } from '../../../panel-shim/finder.js';
 import { setHelpCursor } from './cursor';
+import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
 import { recentLine } from './recent';
@@ -355,6 +356,131 @@ async function scriptCandidates(): Promise<string[]> {
     scriptChoices.set(line, s.path);
     return line;
   });
+}
+
+// ── Ignore presets (the `ignore:*` builtins) ────────────────────────────────
+// The GUI half of `mf ignore` (spec-gui "Ignore patterns"). Preset expansion
+// lives in the backend (it reads a config file); the target directory and the
+// copy-on-write prompt are shared with the file manager's Ignore menu
+// (`lib/ignore.ts`).
+
+registerArgs('ignore:add', [
+  { name: 'preset', prompt: () => 'Ignore preset to add:', complete: () => ignorePresetCandidates(invoke) },
+]);
+registerArgs('ignore:remove', [
+  { name: 'preset', prompt: () => 'Ignore preset to remove:', complete: () => ignorePresetCandidates(invoke) },
+]);
+registerArgs('ignore:set', [
+  { name: 'preset', prompt: () => 'Replace the ignore set with:', complete: () => ignorePresetCandidates(invoke) },
+]);
+
+/** The directory the `ignore:*` commands act on, as a repo-root-relative path,
+ *  plus the repo it belongs to. Null (with a status message) when there is no
+ *  active repository. */
+async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
+  const repo = focusedRepo();
+  if (!repo) {
+    await status('no active repository');
+    return null;
+  }
+  const ws = focusedWs();
+  const fmDir = ws
+    ? ((await invoke('ws_get_var', { wsId: ws, key: 'file-manager:dir' })) as string | null)
+    : null;
+  const selected = ws
+    ? ((await invoke('ws_get_var', { wsId: ws, key: 'selected_metarecord' })) as {
+        uuid: string;
+      } | null)
+    : null;
+  const dir = await targetDir({
+    call: daemonJson,
+    repo,
+    repoRoot: await repoRoot(repo),
+    fmDir: typeof fmDir === 'string' ? fmDir : null,
+    selected: selected?.uuid ? { uuid: selected.uuid } : null,
+  });
+  return { repo, dir };
+}
+
+/** Applies one preset to the context directory with the given mode, reporting
+ *  the target it resolved — applying a preset to the wrong directory would be
+ *  silent otherwise. */
+async function runIgnore(choice: string, mode: 'add' | 'remove' | 'set'): Promise<void> {
+  const context = await ignoreContext();
+  if (!context) return;
+  const preset = await resolvePresetName(choice, invoke);
+  if (!preset) {
+    await status(`no such ignore preset: ${choice}`);
+    return;
+  }
+  const target = await ignoreTarget({
+    call: daemonJson,
+    repo: context.repo,
+    relPath: context.dir,
+    confirm: (question) => window.confirm(question),
+    // A whole-set replacement drops the inherited patterns on purpose.
+    copy: mode !== 'set',
+  });
+  if (!target) {
+    await status(`${context.dir || '/'} is not tracked: nothing to write the patterns on`);
+    return;
+  }
+  if (target.copied.length > 0) {
+    await invoke('ignore_write', {
+      repo: context.repo,
+      target: target.uuid,
+      patterns: target.copied,
+    });
+  }
+  const result = (await invoke('ignore_apply', {
+    repo: context.repo,
+    target: target.uuid,
+    presets: [preset],
+    mode,
+  })) as string[];
+  await status(
+    `Ignore: ${preset} ${mode === 'remove' ? 'removed from' : 'applied to'} ` +
+      `${context.dir || '/'} — ${result.length} pattern(s)`,
+    'info',
+  );
+}
+
+/** `ignore:list`: the installed presets and the target's active set, in the
+ *  message panel (read-only, so it is also the safe way to look before
+ *  applying). */
+async function listIgnore(): Promise<void> {
+  const context = await ignoreContext();
+  if (!context) return;
+  const ws = focusedWs();
+  if (!ws) return;
+  const presets = (await invoke('ignore_presets')) as {
+    name: string;
+    description: string;
+    patterns: string[];
+  }[];
+  const lines = ['Ignore presets:'];
+  for (const preset of presets) {
+    lines.push(`  ${preset.name.padEnd(14)}${preset.description} (${preset.patterns.length})`);
+  }
+  const effective = (await daemonJson(
+    'GET',
+    `/repos/${context.repo}/ignore/effective?path=${encodeURIComponent(context.dir)}`,
+  )) as { source: string | null; direct: boolean; patterns: string[] };
+  const here = context.dir || '/';
+  const source = effective.source === '' ? '/' : effective.source;
+  lines.push(
+    '',
+    effective.source === null
+      ? `No ignore patterns govern ${here}.`
+      : effective.direct
+        ? `Patterns of ${here} (its own):`
+        : `Patterns governing ${here} (inherited from ${source}):`,
+  );
+  for (const pattern of effective.patterns) lines.push(`  ${pattern}`);
+  if (needsMessagePanel(store.layout, ws)) {
+    await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
+  }
+  await invoke('append_message', { wsId: ws, text: lines.join('\n') });
 }
 
 registerArgs('script:run', [
@@ -753,6 +879,17 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     case 'config:open':
       store.ui.configOpen = true;
+      return true;
+    case 'ignore:add':
+    case 'ignore:remove':
+    case 'ignore:set': {
+      // The `preset` argument was collected by dispatch (with completion).
+      const choice = args.join(' ').trim();
+      if (choice) await runIgnore(choice, name.slice('ignore:'.length) as 'add' | 'remove' | 'set');
+      return true;
+    }
+    case 'ignore:list':
+      await listIgnore();
       return true;
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });

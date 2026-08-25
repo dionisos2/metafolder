@@ -7,6 +7,7 @@ import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
 import {
+  relPath,
   loadTrackedChildren,
   loadDirMetarecord,
   parentDir,
@@ -15,6 +16,8 @@ import {
   filterHidden,
   syntheticRows,
 } from './tracked.js';
+import { loadEligibility, scopedPath } from './ignored.js';
+import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
 import {
   joinPath,
   dedupeName,
@@ -81,6 +84,13 @@ export async function mount(root, metafolder) {
   let showHidden = false;
   /** @type {Map<string, string>} absolute path -> metarecord uuid (children of currentDir only) */
   let trackedPaths = new Map();
+  /** Entries of the current listing an `mf_ignore` pattern excludes, and why
+   *  (spec-gui "Ignore patterns"). Absolute path -> {pattern, source}.
+   *  @type {Map<string, {pattern: string, source: string|null}>} */
+  let ignoredPaths = new Map();
+  /** The current directory's tracking scope — patterns are matched relative to
+   *  it, so an ad-hoc pattern must be written in that frame. @type {string|null} */
+  let watchScope = null;
   /** The nonce of the last handled `file-manager:reveal-path` request, so the
    *  same request is never acted on twice (start + onChange).
    *  @type {unknown} */
@@ -144,12 +154,26 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // Which listed entries an ignore pattern excludes (spec-gui "Ignore
+  // patterns"): one daemon call for the whole window, run after the tracked
+  // status so the rows are already on screen.
+  async function refreshEligibility() {
+    const dir = currentDir;
+    if (dir === null) return;
+    const paths = listing.slice(0, rendered).map((item) => item.path);
+    const result = await loadEligibility(daemon, repo, repoRoot, dir, paths);
+    if (currentDir !== dir) return; // the user navigated away meanwhile
+    ignoredPaths = result.ignored;
+    watchScope = result.scope;
+  }
+
   // Re-query the tracked status of the current directory (after a write, or an
   // external change): drop the stale map and refill it from the daemon.
   async function reenrichVisible() {
     trackedPaths = new Map();
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
+    await refreshEligibility();
   }
 
   /** @param {string} dir @returns {Promise<void>} */
@@ -184,11 +208,17 @@ export async function mount(root, metafolder) {
     listing = [...synthetic, ...filterHidden(items, showHidden)];
     currentDir = dir;
     trackedPaths = new Map();
+    ignoredPaths = new Map();
+    watchScope = null;
     cursorIndex = -1;
     rendered = Math.min(PAGE, listing.length);
     render(); // rows appear at once; tracked badges fill in just below
+    // Published so the shell's `ignore:*` commands know which directory the
+    // user is looking at (spec-gui "Ignore patterns").
+    await workspace.set('file-manager:dir', dir);
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
+    await refreshEligibility();
     render();
   }
 
@@ -211,6 +241,13 @@ export async function mount(root, metafolder) {
     entriesList.replaceChildren(
       ...listing.slice(0, rendered).map((item, index) => {
         const internal = isWithin(item.path, internalDir);
+        const ignored = ignoredPaths.get(item.path);
+        const title = internal
+          ? 'always excluded from tracking (live database)'
+          : ignored
+            ? `ignored by ${ignored.pattern}` +
+              (ignored.source === null ? '' : ` (set on ${ignored.source || '/'})`)
+            : null;
         return el(
           'li',
           {
@@ -218,18 +255,25 @@ export async function mount(root, metafolder) {
               index === cursorIndex && 'cursor',
               trackedPaths.has(item.path) && 'tracked',
               internal && 'internal',
+              ignored && 'ignored',
             ],
             onclick: () => select(index),
             ondblclick: () => activate(index),
             oncontextmenu: (/** @type {MouseEvent} */ event) => rowMenu(event, index),
-            ...(internal && { title: 'always excluded from tracking (live database)' }),
+            ...(title && { title }),
           },
           el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
           el('span', { class: 'name' }, item.name),
           el(
             'span',
             { class: 'badge' },
-            internal ? 'internal' : trackedPaths.has(item.path) ? 'tracked' : '',
+            internal
+              ? 'internal'
+              : ignored
+                ? 'ignored'
+                : trackedPaths.has(item.path)
+                  ? 'tracked'
+                  : '',
           ),
         );
       }),
@@ -351,6 +395,7 @@ export async function mount(root, metafolder) {
     if (repo && uuid) {
       items.push('-', ...metarecordMenuItems({ metafolder, uuid, hasFile: true, revealFolder: false }));
     }
+    if (isEntry) items.push(...ignoreMenuItems(item));
     items.push(
       '-',
       { label: 'New folder…', action: () => void newFolder() },
@@ -405,6 +450,94 @@ export async function mount(root, metafolder) {
     render();
     await select(cursorIndex);
     await workspace.set('metarecords:dirty', Date.now());
+  }
+
+  // ── Ignore patterns (spec-gui "Ignore patterns") ───────────────────────────
+  // Adding a pattern always targets the *current directory*, never the row: an
+  // ignore set governs a subtree, and writing it on the row would be both
+  // useless (a file's own set is never consulted for itself) and a trap.
+
+  /** @param {string} pattern @param {string} what */
+  async function addIgnorePattern(pattern, what) {
+    if (!repo || currentDir === null || repoRoot === null) {
+      void statusBar.message('no active repository', 4000);
+      return;
+    }
+    const dirRel = relPath(currentDir, repoRoot);
+    if (dirRel === null) return;
+    try {
+      const target = await ignoreTarget({
+        call: (method, path, body) => daemon.call(method, path, body),
+        repo,
+        relPath: dirRel,
+        confirm: (question) => window.confirm(question),
+      });
+      if (!target) {
+        void statusBar.message(
+          `${dirRel || '/'} is not tracked: nothing to write the patterns on`,
+          statusErrorMs,
+        );
+        return;
+      }
+      // When the user accepted the copy, the inherited rows are the base the new
+      // pattern extends; otherwise the target's own set is (empty when it just
+      // declined the copy).
+      const base = target.copied.length
+        ? target.copied
+        : await metafolder.ignore.current(repo, target.uuid);
+      if (base.includes(pattern)) {
+        void statusBar.message(`already ignored here: ${pattern}`, statusMessageMs);
+        return;
+      }
+      await metafolder.ignore.write(repo, target.uuid, [...base, pattern]);
+      void statusBar.message(`Ignored ${what} in ${dirRel || '/'}`, statusMessageMs);
+    } catch (error) {
+      await statusBar.error(error, statusErrorMs);
+      return;
+    }
+    await reenrichVisible();
+    render();
+  }
+
+  /** The lowercase extension of a filename, or '' when it has none. */
+  /** @param {string} name */
+  function extensionOf(name) {
+    const dot = name.lastIndexOf('.');
+    return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  }
+
+  /** The "Ignore" section of a row's context menu — empty outside a repo.
+   *  @param {Entry} item @returns {Metafolder.MenuItem[]} */
+  function ignoreMenuItems(item) {
+    if (!repo || currentDir === null || repoRoot === null) return [];
+    const rel = relPath(item.path, repoRoot);
+    const dirRel = relPath(currentDir, repoRoot);
+    if (rel === null || dirRel === null) return [];
+    /** @type {Metafolder.MenuItem[]} */
+    const items = ['-', { header: 'Ignore' }];
+    items.push({
+      label: `Ignore “${item.name}” here`,
+      action: () =>
+        void addIgnorePattern(patternForPath(scopedPath(rel, watchScope)), item.name),
+    });
+    const ext = extensionOf(item.name);
+    if (!item.is_dir && ext) {
+      items.push({
+        label: `Ignore *.${ext} here`,
+        action: () =>
+          void addIgnorePattern(
+            patternForExtension(scopedPath(dirRel, watchScope), ext),
+            `*.${ext}`,
+          ),
+      });
+    }
+    // The preset choice is the `ignore:add` command's own argument prompt
+    // (completing over the installed presets) — no second picker here.
+    items.push({
+      label: 'Apply an ignore preset…',
+      action: () => void commands.invoke('ignore:add'),
+    });
+    return items;
   }
 
   async function gotoRoot() {

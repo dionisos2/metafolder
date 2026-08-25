@@ -427,6 +427,22 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     /** Cross-repo synchronisation (spec-sync): the shared `core::sync`
      *  orchestration, driven through the sync Tauri commands. `plan`/`run` run
      *  non-interactively (conflicts are left for `plan_resolve` editing). */
+    /** Ignore presets (spec-gui "Ignore patterns"): preset expansion reads a
+     *  config file, so it goes through the backend; the eligibility/effective
+     *  introspection endpoints are plain `daemon.call`s. */
+    ignore: {
+      presets: () =>
+        invoke('ignore_presets') as Promise<
+          { name: string; description: string; patterns: string[] }[]
+        >,
+      current: (repo: string, target: string) =>
+        invoke('ignore_current', { repo, target }) as Promise<string[]>,
+      apply: (repo: string, target: string, presets: string[], mode: 'add' | 'remove' | 'set') =>
+        invoke('ignore_apply', { repo, target, presets, mode }) as Promise<string[]>,
+      write: (repo: string, target: string, patterns: string[]) =>
+        invoke('ignore_write', { repo, target, patterns }) as Promise<void>,
+    },
+
     sync: {
       status: (repoA: string, repoB: string) =>
         invoke('sync_status', { repoA, repoB }) as Promise<Record<string, unknown>>,

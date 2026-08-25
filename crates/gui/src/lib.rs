@@ -19,6 +19,7 @@ pub mod notifier;
 pub mod proc;
 pub mod recent;
 pub mod reconcile;
+pub mod ignore;
 pub mod repo_init;
 pub mod sandbox;
 pub mod server;
@@ -116,6 +117,10 @@ fn register_builtins(registry: &CommandRegistry) {
         ("recent", "Open a recently-viewed metarecord", true),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
+        ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
+        ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
+        ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),
+        ("ignore:set", "Replace the target directory's ignore set with a preset", true),
         ("metarecord:trash", "Send the selected metarecord's file to the trash", true),
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
@@ -472,6 +477,10 @@ pub fn run(options: Options) {
             sync::sync_run,
             sync::sync_show,
             repo_init::repo_init,
+            ignore::ignore_presets,
+            ignore::ignore_current,
+            ignore::ignore_apply,
+            ignore::ignore_write,
             trash::trash_list,
             trash::trash_selected_metarecord,
             trash::trash_path,

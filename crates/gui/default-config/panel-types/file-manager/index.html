@@ -87,6 +87,17 @@
       li.internal .badge {
         color: var(--mf-error, #c44c56);
       }
+      /* Excluded by an mf_ignore pattern: dimmed, the pattern in the tooltip
+         (spec-gui "Ignore patterns"). Only real ignores are marked — an
+         untracked entry in an unwatched repo is not one. */
+      li.ignored .name,
+      li.ignored .icon {
+        opacity: 0.45;
+      }
+      li.ignored .name {
+        text-decoration: line-through;
+        text-decoration-thickness: 1px;
+      }
       .badge {
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);

@@ -2020,15 +2020,18 @@ exposes it as Tauri commands (=ignore.rs=, alongside =repo_init.rs=, reusing the
 same blocking =DaemonClient=). They add no logic of their own: =core::ignore=
 already implements add/remove/set over the daemon API for the CLI.
 
-| Command                | Result                                                       |
-|------------------------+--------------------------------------------------------------|
-| =ignore_presets=       | =[{name, description, patterns}]= — the installed presets, each fully expanded (groups included), sorted by name |
-| =ignore_current=       | The target metarecord's own =mf_ignore= rows, in order       |
-| =ignore_effective=     | =GET …/ignore/effective= for a directory: ={source, source_uuid, direct, patterns}= |
-| =ignore_apply=         | Expands the named presets and writes them with =add= / =remove= / =set=; returns the resulting rows |
-| =ignore_write=         | Writes an explicit pattern list (ad-hoc patterns, reordering, deletion); an empty list unsets the field |
-| =ignore_target=        | Resolves a *path* to the metarecord an ignore write should target — the directory itself, or the repo root when no path is given |
-| =eligibility_explain=  | =POST …/eligibility= for a batch of paths (see below)         |
+| Command          | Result                                                             |
+|------------------+--------------------------------------------------------------------|
+| =ignore_presets= | =[{name, description, patterns}]= — the installed presets, each fully expanded (groups included), sorted by name |
+| =ignore_current= | The target metarecord's own =mf_ignore= rows, in order             |
+| =ignore_apply=   | Expands the named presets and writes them with =add= / =remove= / =set=; returns the resulting rows |
+| =ignore_write=   | Writes an explicit pattern list (ad-hoc patterns, reordering, deletion); an empty list unsets the field |
+
+Nothing else is added: the two introspection endpoints
+(=POST …/eligibility=, =GET …/ignore/effective=) are plain daemon calls a panel
+makes through =metafolder.daemon=, and a *target* is resolved from a path with
+=POST …/tree/resolve-path= (=mfr_path=), the same call the file manager already
+uses. Only the presets file justifies a backend command.
 
 A missing or malformed =ignore-presets.toml= is an error naming
 =metafolder-sync-config=, never a silent fallback (spec-config).

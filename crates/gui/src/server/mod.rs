@@ -37,6 +37,7 @@ const HELP_JS: &str = include_str!("../../panel-shim/help.js");
 const COALESCE_JS: &str = include_str!("../../panel-shim/coalesce.js");
 const SELECT_JS: &str = include_str!("../../panel-shim/select.js");
 const FILE_ACTIONS_JS: &str = include_str!("../../panel-shim/file-actions.js");
+const IGNORE_JS: &str = include_str!("../../panel-shim/ignore.js");
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -55,6 +56,7 @@ pub struct ServerState {
 pub fn build_router(state: ServerState) -> Router {
     Router::new()
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
+        .route("/__ignore.js", get(|| async { javascript(IGNORE_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))
         .route("/__paged-list.js", get(|| async { javascript(PAGED_LIST_JS) }))

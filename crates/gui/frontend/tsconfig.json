@@ -22,7 +22,8 @@
       "/__help.js": ["../panel-shim/help.js"],
       "/__coalesce.js": ["../panel-shim/coalesce.js"],
       "/__select.js": ["../panel-shim/select.js"],
-      "/__file-actions.js": ["../panel-shim/file-actions.js"]
+      "/__file-actions.js": ["../panel-shim/file-actions.js"],
+      "/__ignore.js": ["../panel-shim/ignore.js"]
     }
   },
   "include": ["src", "tests", "types", "../panel-shim", "../default-config/panel-types"]

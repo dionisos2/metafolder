@@ -1,0 +1,60 @@
+<h1>Ignore patterns</h1>
+<p>
+  Not everything under a watched directory deserves a metarecord: build output,
+  dependency trees, editor droppings. A directory's <code>mf_ignore</code> field
+  holds regex patterns; a path that matches one is skipped by the watcher and by
+  <a data-help-page="tracking">reconcile</a>.
+</p>
+
+<h2>Presets</h2>
+<p>
+  Patterns are grouped into named <strong>presets</strong> — <code>rust-build</code>,
+  <code>node</code>, <code>python</code>, <code>git</code>, <code>hidden</code>… —
+  living in <code>~/.config/metafolder/core/ignore-presets.toml</code>. The
+  <code>default</code> preset is what a new repository starts with. Four commands
+  apply them, each completing over the installed presets:
+</p>
+<ul>
+  <li><code>ignore:list</code> — the available presets and the patterns currently
+    governing the target directory (read-only: look before you write).</li>
+  <li><code>ignore:add</code> — append a preset's patterns.</li>
+  <li><code>ignore:remove</code> — remove exactly those patterns.</li>
+  <li><code>ignore:set</code> — replace the whole set with them.</li>
+</ul>
+<p>
+  The <strong>target</strong> is the directory you are looking at: the
+  <a data-help-page="file-manager">file manager</a>'s current directory, else the
+  selected metarecord's directory, else the repository root. The status message
+  always names the directory it wrote to.
+</p>
+
+<h2>From the file manager</h2>
+<p>
+  Entries an ignore pattern excludes are shown dimmed and struck through, with
+  the pattern and the directory it comes from in the tooltip. Right-clicking a
+  row offers an <strong>Ignore</strong> section: ignore that path, ignore every
+  file with its extension, or apply a preset. Both ad-hoc gestures write onto the
+  <em>current directory</em>, not the row — an ignore set governs a subtree.
+</p>
+
+<h2>The one trap: sets are not merged</h2>
+<p>
+  The <em>nearest ancestor</em> with at least one <code>mf_ignore</code> row
+  provides the patterns; ancestors are never merged. Writing a single pattern
+  onto a directory that has none therefore drops the whole inherited set for that
+  subtree.
+</p>
+<p>
+  The GUI catches this: when the target only inherits its patterns, it offers to
+  <strong>copy the inherited set here first</strong>, so your new pattern extends
+  what applied instead of replacing it. Declining starts that directory from an
+  empty set — which is occasionally what you want, and never what you get by
+  accident.
+</p>
+
+<h2>What ignoring does not do</h2>
+<p>
+  It stops <em>future</em> tracking; it never deletes an existing metarecord. A
+  file already tracked keeps its metarecord (and its metadata) until you remove
+  it yourself.
+</p>

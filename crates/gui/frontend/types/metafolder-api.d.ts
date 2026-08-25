@@ -296,6 +296,25 @@ declare namespace Metafolder {
    *  positionally (name or UUID), order-independent. `plan`/`run` run
    *  non-interactively — conflicts are left unresolved for `plan_resolve`
    *  editing in the plan repo. */
+  /** Ignore presets (spec-gui "Ignore patterns"): the GUI half of `mf ignore`.
+   *  Expansion reads a config file, so it goes through the backend; the
+   *  eligibility / effective-set introspection are plain `daemon.call`s. */
+  interface Ignore {
+    /** The installed presets, each fully expanded (groups included). */
+    presets(): Promise<{ name: string; description: string; patterns: string[] }[]>;
+    /** The target metarecord's own `mf_ignore` rows, in order. */
+    current(repo: string, target: string): Promise<string[]>;
+    /** Applies named presets to the target; returns the resulting rows. */
+    apply(
+      repo: string,
+      target: string,
+      presets: string[],
+      mode: 'add' | 'remove' | 'set',
+    ): Promise<string[]>;
+    /** Writes an explicit pattern list (empty unsets the field). */
+    write(repo: string, target: string, patterns: string[]): Promise<void>;
+  }
+
   interface Sync {
     /** The raw `/status` body: `{ links: [{ uuid, state }, …] }`. */
     status(repoA: string, repoB: string): Promise<Record<string, unknown>>;
@@ -399,6 +418,7 @@ declare namespace Metafolder {
     readonly fs: Fs;
     readonly trash: Trash;
     readonly sync: Sync;
+    readonly ignore: Ignore;
     readonly history: History;
     readonly recent: Recent;
     readonly statusBar: StatusBar;

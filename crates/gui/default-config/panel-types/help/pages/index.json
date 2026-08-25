@@ -24,9 +24,18 @@
     "title": "Tracking files",
     "file": "tracking.html",
     "aliases": [
-      "tracking", "track", "watch", "mf_watch", "ignore", "mf_ignore",
+      "tracking", "track", "watch", "mf_watch",
       "reconcile", "reconcile:run", "task", "tasks", "task-bar", "mfr_path",
       "untracked"
+    ]
+  },
+  {
+    "id": "ignore",
+    "title": "Ignore patterns",
+    "file": "ignore.html",
+    "aliases": [
+      "ignore", "mf_ignore", "ignores", "preset", "presets", "ignore-presets",
+      "ignore:list", "ignore:add", "ignore:remove", "ignore:set", "excluded"
     ]
   },
   {
