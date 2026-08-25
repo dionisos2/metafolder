@@ -51,6 +51,13 @@ pub struct RepoState {
     /// consulted while fresh — so it never serves stale results. `None` until
     /// the first query builds it.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
+    /// Consecutive failures of the pending-event flush. The buffer is
+    /// persistent by design (it survives a crash), which also means a batch the
+    /// executor cannot apply is retried for ever — and while it is stuck, no
+    /// filesystem event is ever recorded again for this repository, restart
+    /// included. After [`crate::executor::FLUSH_FAILURE_BUDGET`] attempts the
+    /// batch is dropped so tracking resumes; see `crate::executor::flush_pending`.
+    pub flush_failures: std::sync::atomic::AtomicU32,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -96,6 +103,7 @@ impl RepoState {
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
+            flush_failures: std::sync::atomic::AtomicU32::new(0),
         }
     }
 

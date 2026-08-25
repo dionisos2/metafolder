@@ -471,6 +471,14 @@ no new events. This default is configurable per repository.
 The =pending_operation= table persists across daemon restarts: any buffered
 events present at startup are replayed before the daemon accepts new requests.
 
+That persistence has a sharp edge: a batch the executor *cannot* apply would be
+retried for ever, and while it is stuck no filesystem event is recorded for the
+repository any more — a restart does not help, since the buffer is replayed at
+load. Tracking would simply stop, with nothing but a log line to say so. A batch
+is therefore retried a bounded number of times (three) and then **dropped**,
+loudly: the events it carried are lost, and a reconcile recovers them, where a
+dead watcher recovers nothing.
+
 Rationale: a user pasting N files into a directory generates N =Create= events
 in rapid succession. Batching them into one revision makes the operation
 rollbackable as a unit.

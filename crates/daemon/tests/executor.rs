@@ -678,3 +678,46 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+// ── Resilience ────────────────────────────────────────────────────────────────
+
+// A batch the executor cannot apply must not switch tracking off for good.
+// The pending buffer is persistent so a crash loses no event, which also means
+// a batch that always fails is retried for ever — and while it is stuck, no
+// filesystem event is ever recorded again for this repository, not even after a
+// restart (the buffer is replayed at load). After a bounded number of attempts
+// the batch is dropped: those events are lost (a reconcile recovers them) but
+// the watcher lives.
+#[test]
+fn test_an_unapplicable_batch_is_dropped_instead_of_stopping_the_watcher() {
+    let (repo, root, _) = setup("poison");
+
+    // A buffered event the executor cannot even parse: every flush fails on it.
+    {
+        let conn = repo.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pending_operation (op_type, path) VALUES ('fs_bogus', '/nowhere')",
+            [],
+        )
+        .unwrap();
+    }
+    write_file(&root, "a.txt", b"a");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+
+    // The batch is retried while the budget lasts…
+    for attempt in 1..=executor::FLUSH_FAILURE_BUDGET {
+        assert!(
+            executor::flush_pending(&repo).is_err(),
+            "attempt {attempt} must fail on the unapplicable batch",
+        );
+    }
+    assert!(resolve(&repo, "/a.txt").is_none(), "nothing was applied while it failed");
+
+    // …then it is dropped, and the watcher records again.
+    write_file(&root, "b.txt", b"b");
+    enqueue(&repo, &[FsEvent::Create("/b.txt".into())]);
+    executor::flush_pending(&repo).expect("the buffer is clear again");
+    assert!(resolve(&repo, "/b.txt").is_some(), "tracking must resume once the batch is dropped");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
