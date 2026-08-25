@@ -1846,6 +1846,11 @@ fn resolve_ignore_target(
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let abs = path.canonicalize().map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
     let rel = repo_rel(Path::new(root), &abs)?;
+    // The repository root has no parent directory, so the exact-path lookup
+    // cannot find it: `-d <root>` must resolve like an omitted `-d`.
+    if rel.is_empty() {
+        return metafolder_core::ignore::repo_root_metarecord(client, repo).map_err(ignore_err);
+    }
     let hex = metafolder_core::trash::metarecord_at_path(client, repo, &rel)
         .map_err(trash_daemon_err)?
         .ok_or_else(|| {

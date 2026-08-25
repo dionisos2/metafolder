@@ -896,6 +896,21 @@ fn test_ignore_set_add_remove_on_root() {
 }
 
 #[test]
+fn test_ignore_targets_the_repo_root_given_as_an_explicit_dir() {
+    // `-d <repo root>` and no `-d` must name the same target: the root has no
+    // parent directory, so the exact-path lookup cannot resolve it.
+    let (repo, root) = init_repo("ign_root_dir");
+    let out = mf_cfg(&["-u", &repo, "ignore", "set", "node", "-d", root.to_str().unwrap()]);
+    assert_ok(&out);
+    let ignore = root_ignore(&repo);
+    assert!(ignore.contains("node_modules"), "written on the root: {ignore}");
+
+    let out = mf_cfg(&["-u", &repo, "ignore", "list", "-d", root.to_str().unwrap()]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("node_modules"), "active patterns listed: {}", out.stdout);
+}
+
+#[test]
 fn test_ignore_add_unknown_preset_is_usage_error() {
     let (repo, _root) = init_repo("ign_bad");
     let out = mf_cfg(&["-u", &repo, "ignore", "add", "does-not-exist"]);
