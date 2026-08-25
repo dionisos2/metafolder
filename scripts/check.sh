@@ -11,7 +11,8 @@
 #   clippy      lints rustc cannot see. Run with -D warnings: the tree is clean,
 #               and the only way it stays clean is if the first new warning
 #               fails the build. --lax downgrades them while you work.
-#   test        the Rust workspace suite.
+#   test        the Rust workspace suite, via scripts/run-tests.sh (which adds
+#               the global total cargo never prints).
 #   scripts     the shipped GUI helper scripts (the ones reachable from the
 #               GUI's `script:run`), driven against a mocked `mf` CLI + GUI.
 #   types       tsc --noEmit + svelte-check over the GUI frontend (the latter
@@ -104,7 +105,9 @@ else
 fi
 
 # ── tests ────────────────────────────────────────────────────────────────────
-run test cargo test --workspace
+run test bash "$repo/scripts/run-tests.sh"
+# One "ok" hides forty suites: surface the wrapper's global total either way.
+sed -n 's/^  \(ok\|FAILED\) — /             /p' "$log/test"
 
 # ── shipped-script tests (fast, hermetic: they mock the `mf` CLI + GUI) ───────
 run scripts bash "$repo/scripts/test-shipped-scripts.sh"

@@ -45,7 +45,7 @@ help:
 	@echo ''
 	@echo '  run-daemon         run the daemon from the build tree'
 	@echo '  run-gui            build frontend + run the GUI from the build tree'
-	@echo '  test / check       cargo test  /  scripts/check.sh (all static checks)'
+	@echo '  test / check       run the suite (+ a global total)  /  all static checks'
 	@echo '  clean / prune      cargo clean  /  scripts/prune-target.sh'
 	@echo ''
 	@echo '  PREFIX=$(PREFIX)  BINDIR=$(BINDIR)'
@@ -123,8 +123,10 @@ run-gui: frontend
 	$(CARGO) run --release -p metafolder-gui
 
 .PHONY: test
+# scripts/run-tests.sh is `cargo test --workspace` plus the report cargo never
+# prints: the totals across every test binary, and which tests failed where.
 test:
-	$(CARGO) test --workspace
+	@CARGO='$(CARGO)' scripts/run-tests.sh
 
 .PHONY: check
 check:

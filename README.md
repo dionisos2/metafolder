@@ -128,6 +128,10 @@ Re-run it after pulling new built-in panels or default keybindings. See
 cargo build
 cargo test
 
+# The same suite plus a global report — cargo prints one result line per test
+# binary and no total, this adds the totals and which tests failed where:
+make test          # or: scripts/run-tests.sh [extra cargo test args]
+
 # GUI frontend tests (vitest). Install the npm dependencies first — vitest and
 # the other test tools live in devDependencies, so `npm test` fails without it:
 npm --prefix crates/gui/frontend install   # once (or after package.json changes)
