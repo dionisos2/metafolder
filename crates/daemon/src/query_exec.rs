@@ -7,7 +7,7 @@
 
 use anyhow::Result;
 use rusqlite::types::Value as SqlValue;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -575,22 +575,37 @@ fn all_tree_ref_nodes(conn: &Connection, field: &str) -> Result<Vec<Uuid>, ApiEr
 /// (every candidate lies under a node whose name holds the term), while
 /// multi-term (order-sensitive) and all-short-term queries verify the assembled
 /// path. Rejects a non-`tree_ref` field with 400, like the engine.
+/// The value type of `field` when it holds a value that is neither `Nothing` nor
+/// a `tree_ref` — the case `osm` path mode rejects with a 400. `None` when the
+/// field is a forest or has no data at all (a vacuously empty result).
+///
+/// Asked as "which types does this field hold?" rather than "is there a row
+/// with another type?": the first is answered from `idx_field_name_type` alone,
+/// the second fetched every row of the field to read its `value_type` — 81 ms on
+/// a 50 k-row field, which was the entire cost of a multi-term OSM path query.
+fn non_tree_ref_type(conn: &Connection, field: &str) -> Result<Option<String>, ApiError> {
+    let mut stmt = conn
+        .prepare_cached("SELECT DISTINCT value_type FROM field WHERE field_name = ?1")
+        .map_err(anyhow::Error::from)?;
+    let types = stmt
+        .query_map([field], |row| row.get::<_, String>(0))
+        .map_err(anyhow::Error::from)?;
+    for value_type in types {
+        let value_type = value_type.map_err(anyhow::Error::from)?;
+        if value_type != "nothing" && value_type != "tree_ref" {
+            return Ok(Some(value_type));
+        }
+    }
+    Ok(None)
+}
+
 pub fn osm_path_matches(
     conn: &Connection,
     cache: &mut TreeCache,
     field: &str,
     terms: &[String],
 ) -> Result<Vec<Uuid>, ApiError> {
-    if let Some(other) = conn
-        .query_row(
-            "SELECT value_type FROM field \
-             WHERE field_name = ?1 AND value_type NOT IN ('nothing', 'tree_ref') LIMIT 1",
-            [field],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(anyhow::Error::from)?
-    {
+    if let Some(other) = non_tree_ref_type(conn, field)? {
         return Err(ApiError::bad_request(format!(
             "osm path mode requires a tree_ref field, but '{field}' holds {other} values; \
              use osmd for direct string matching"
@@ -1028,16 +1043,7 @@ impl<'a> Compiler<'a> {
     /// non-`tree_ref` value — the case `osm` path mode rejects (400). `None` when
     /// the field is a `tree_ref` or has no data (vacuously empty result).
     fn osm_non_tree_ref_type(&self, field: &str) -> Result<Option<String>, ApiError> {
-        Ok(self
-            .conn
-            .query_row(
-                "SELECT value_type FROM field \
-                 WHERE field_name = ?1 AND value_type NOT IN ('nothing', 'tree_ref') LIMIT 1",
-                [field],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map_err(anyhow::Error::from)?)
+        non_tree_ref_type(self.conn, field)
     }
 
     /// Whether `field` holds any `tree_ref` value — i.e. is a tree forest. Backs

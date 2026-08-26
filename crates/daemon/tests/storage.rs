@@ -314,6 +314,26 @@ fn test_value_type_probe_seeks_via_index() {
 }
 
 #[test]
+fn test_distinct_value_types_are_read_from_the_index_alone() {
+    // "Which value types does this field hold?" gates `osm` path mode. Asked as
+    // "is there a row of another type?" it fetched every row of the field to
+    // read its `value_type` — 81 ms on a 50k-row field, which was the whole cost
+    // of a multi-term OSM path query. Asked as a DISTINCT it is answered from
+    // the covering index, touching no table row at all.
+    let conn = test_conn();
+    let plan =
+        query_plan(&conn, "SELECT DISTINCT value_type FROM field WHERE field_name = 'mfr_path'");
+    assert!(
+        plan.contains("idx_field_name_type"),
+        "the type probe should use the covering index, plan was: {plan}"
+    );
+    assert!(
+        plan.contains("COVERING"),
+        "the type probe should not touch the table, plan was: {plan}"
+    );
+}
+
+#[test]
 fn test_field_name_predicate_seeks_not_scans() {
     // IsPresent/Eq-style predicates filter the EAV `field` table by field_name.
     // Without an index leftmost on field_name this is a full table scan (the

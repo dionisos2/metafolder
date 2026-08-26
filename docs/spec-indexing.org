@@ -381,7 +381,12 @@ from =sam= onwards). The order-sensitive forms — several terms, or one term
 containing the separator — are resolved by a walk of the resident forest in the
 tree cache (see [[file:spec-file-tracking.org][spec-file-tracking.org]]), which
 carries the greedy match position down each branch and takes a whole subtree at
-once when a branch has consumed every term.
+once when a branch has consumed every term. Path mode is =tree_ref=-only, and
+the gate that enforces it (a 400 with the "use osmd" hint) asks the database
+*which types the field holds* rather than *whether a row of another type
+exists*: the first is answered from the covering =idx_field_name_type= alone,
+the second fetched every row of the field to read its =value_type= — 81 ms on a
+50 k-row field, which was the entire cost of a multi-term query.
 
 =Path=-target =Follows=/=FollowsTransitive= are *supported*:
 =run_query_filter= resolves each path to its root metarecord through the

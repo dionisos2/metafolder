@@ -195,7 +195,8 @@ fn ensure_perf_indexes(conn: &Connection) -> Result<()> {
         return Ok(());
     }
     conn.execute_batch(
-        "CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);",
+        "CREATE INDEX IF NOT EXISTS idx_field_name ON field(field_name, metarecord_uuid);
+         CREATE INDEX IF NOT EXISTS idx_field_name_type ON field(field_name, value_type);",
     )
     .context("Failed to ensure performance indexes")?;
     // Back-fill the single-mfr_path invariant on existing databases too.
@@ -321,6 +322,9 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         -- range instead of scanning the whole EAV table. metarecord_uuid second
         -- makes it cover the `DISTINCT metarecord_uuid` projection.
         CREATE INDEX idx_field_name ON field(field_name, metarecord_uuid);
+        -- Covering: the value types a field holds are read from the index
+        -- itself, instead of one table lookup per row of the field.
+        CREATE INDEX idx_field_name_type ON field(field_name, value_type);
         CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
             WHERE value_type IN ('ref', 'externalref');
         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
