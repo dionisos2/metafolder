@@ -845,6 +845,20 @@ impl RepoIndex {
         terms: &[String],
         roots: Option<&QueryRoots>,
     ) -> Result<RoaringBitmap, Unsupported> {
+        // `osm` path mode is tree_ref-only: a field holding any other type is a
+        // user error the SQL engine reports as a 400 with the "use osmd" hint
+        // (spec-query). Defer to it rather than answering with an empty bitmap,
+        // which would turn that mistake into a silent "no rows". A field with no
+        // values at all is vacuously empty in both engines.
+        if self.types.get(field).is_some_and(|t| *t != "tree_ref") {
+            return Err(unsupported("osm path on a non-tree_ref field"));
+        }
+        // A blank query (the search box emptied) matches every metarecord with a
+        // path in this forest — the SQL engine scans for `value_type='tree_ref'`,
+        // which on a tree_ref field is exactly the `present` set.
+        if terms.is_empty() {
+            return Ok(self.present_of(field));
+        }
         let Some(term) = osm_path_indexable(terms) else {
             return Err(unsupported("multi-term or short-term osm path"));
         };

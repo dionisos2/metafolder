@@ -87,6 +87,34 @@ async fn test_query_returns_uuids_by_default() {
 }
 
 #[tokio::test]
+async fn test_osm_path_on_a_string_field_is_rejected() {
+    // `osm` path mode is tree_ref-only: on a string field the daemon answers 400
+    // with the "use osmd" hint (spec-query). The rejection lives in the SQL
+    // engine, so it must survive whatever the index decides to accelerate — an
+    // index that quietly answers "no rows" would turn a user error into a silent
+    // empty result.
+    let (app, repo, root) = setup("osmtype").await;
+    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "jazz"}}]))
+        .await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "osm", "field": "label",
+                              "terms": ["jaz"], "mode": "path"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "expected a 400, got {body}");
+    assert!(
+        body["error"].as_str().unwrap_or_default().contains("osmd"),
+        "the error should point at osmd: {body}"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_exact_node_path_query_is_served_by_the_index() {
     // `mfr_path = "/a/b.txt"` — "find this one file". The route resolves the
     // node through the tree cache and hands it to the bitmap index, so this must

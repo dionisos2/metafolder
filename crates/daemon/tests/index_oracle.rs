@@ -799,6 +799,41 @@ fn osm_path_q(field: &str, terms: &[&str]) -> Query {
 }
 
 #[test]
+fn osm_path_empty_terms_matches_sql() {
+    // A blank OSM path query (the search box emptied) matches every metarecord
+    // with a path in the forest — the same set as `is_present`. The index must
+    // serve it on its own, with no caller-resolved nodes: it used to defer to
+    // SQL, which made "everything" the slowest query in the repository.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let sci = o.create(vec![tref("loc", Some(root), "science")]);
+    let _file = o.create(vec![tref("loc", Some(sci), "ep.mkv")]);
+    // A metarecord whose `loc` is explicitly Nothing, and one with no `loc` at
+    // all: neither has a path, so neither matches.
+    let _nothing = o.create(vec![Field::new("loc", Value::Nothing)]);
+    let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
+
+    let q = osm_path_q("loc", &[]);
+    let index = RepoIndex::build(&o.conn).unwrap();
+    let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+    let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
+    sql.sort();
+    got.sort();
+    assert_eq!(got, sql, "empty-terms osm path divergence");
+    assert_eq!(
+        index.count(&q).unwrap() as usize,
+        query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+        "empty-terms osm path count divergence"
+    );
+    // It is exactly `is_present` on the field.
+    assert_eq!(got, {
+        let mut p = index.to_uuids(&index.evaluate(&Query::IsPresent { field: "loc".into() }).unwrap());
+        p.sort();
+        p
+    });
+}
+
+#[test]
 fn osm_path_single_term_matches_sql() {
     // A single-term OSM path ("every metarecord whose path contains the term")
     // is a union of subtrees — the index serves it by expanding, from the
