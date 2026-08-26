@@ -836,6 +836,84 @@ fn keyset_pagination_over_path_target_with_sort() {
     o.check_paginated_with_roots(&q, &[("rate", false), ("loc", true)], 2);
 }
 
+#[test]
+fn matches_and_osm_direct_are_served_by_the_index() {
+    // The two text predicates the index used to refuse, which sent the whole
+    // query — however selective its other operands — to a full SQL scan. They
+    // are a scan of the field's *distinct* values, so they must agree with SQL
+    // on a string field (value_text), on a tree_ref field (value_name), on a
+    // field with no text at all, and on a field that does not exist.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root"), Field::new("label", s("Root Label"))]);
+    let sci = o.create(vec![tref("loc", Some(root), "science"), Field::new("rate", i(3))]);
+    let _f = o.create(vec![
+        tref("loc", Some(sci), "ep.mkv"),
+        Field::new("label", s("sci-fi episode")),
+        Field::new("rate", i(9)),
+    ]);
+    let _plain = o.create(vec![Field::new("label", s("plain")), Field::new("kind", s("file"))]);
+    let _nothing = o.create(vec![Field::new("label", Value::Nothing)]);
+    // A newline between the terms: `osm_regex`'s `.*` does not cross one, so a
+    // hand-rolled ordered-substring check would diverge here.
+    let _multiline = o.create(vec![Field::new("label", s("sci\nfi"))]);
+
+    let matches = |field: &str, pattern: &str| Query::Matches {
+        field: field.into(),
+        pattern: pattern.into(),
+    };
+    let osmd = |field: &str, terms: &[&str]| Query::Osm {
+        field: field.into(),
+        terms: terms.iter().map(|t| t.to_string()).collect(),
+        mode: OsmMode::Direct,
+    };
+
+    for q in [
+        matches("label", "sci"),
+        matches("label", "^sci"),
+        matches("label", "(?i)ROOT"),
+        matches("label", "l$"),
+        matches("loc", "sci"),
+        matches("loc", "^ep\\..*$"),
+        matches("rate", "9"),
+        matches("absent", "x"),
+        matches("kind", "^f.le$"),
+        osmd("label", &["sci"]),
+        osmd("label", &["sci", "fi"]),
+        osmd("label", &["fi", "sci"]),
+        osmd("label", &[]),
+        osmd("loc", &["ep", "mkv"]),
+        osmd("rate", &["9"]),
+        osmd("absent", &["x"]),
+        // Inside a boolean, next to an index-served operand: these are the
+        // shapes the candidate restriction rewires, so the ordering, the `Not`
+        // complement and the nesting all have to survive it.
+        Query::And { operands: vec![matches("label", "sci"), eq("rate", i(9))] },
+        Query::And { operands: vec![eq("rate", i(9)), matches("label", "sci")] },
+        Query::And { operands: vec![matches("label", "sci"), matches("label", "fi")] },
+        Query::And {
+            operands: vec![
+                follows_t("loc", eq("loc", s("root"))),
+                Query::Or { operands: vec![matches("loc", "ep"), osmd("label", &["sci"])] },
+            ],
+        },
+        Query::And {
+            operands: vec![
+                Query::Not { operand: Box::new(matches("label", "sci")) },
+                Query::IsPresent { field: "label".into() },
+            ],
+        },
+        Query::And {
+            operands: vec![eq("rate", i(9)), Query::Not { operand: Box::new(osmd("loc", &["ep"])) }],
+        },
+        Query::Or { operands: vec![matches("label", "plain"), osmd("loc", &["scien"])] },
+        Query::Not { operand: Box::new(matches("label", "sci")) },
+        // A text predicate as the target condition of a traversal.
+        follows("loc", matches("label", "Root")),
+    ] {
+        o.check(&q);
+    }
+}
+
 fn osm_path_q(field: &str, terms: &[&str]) -> Query {
     Query::Osm {
         field: field.into(),

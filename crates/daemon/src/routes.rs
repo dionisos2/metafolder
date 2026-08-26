@@ -2050,14 +2050,12 @@ fn run_query_filter(
         })
         .collect();
 
-    // Resolve the query's index seeds (Path targets, Osm-Path term nodes) and
-    // pre-resolve its text leaves — the shared preparation. The engine choice
-    // must be a function of the query *shape* alone (`full_set = false` here, so
-    // the rewrite is driven only by an index-served Osm-Path): the list asks for
-    // `count` on the first page only, and if that toggled the rewrite, page 1
-    // (index) and page 2 (SQL) would run on different engines and reject each
-    // other's cursor. A bare text leaf without an Osm-Path therefore stays on the
-    // SQL engine for the whole paginated session, count included.
+    // Resolve the query's index seeds (Path targets, exact-node operands) and
+    // pre-resolve the text leaves the index cannot serve. The engine choice must
+    // be a function of the query *shape* alone (`full_set = false` here): the
+    // list asks for `count` on the first page only, and if that toggled the
+    // preparation, page 1 and page 2 could run on different engines and reject
+    // each other's cursor.
     let (roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
 
     let mut index_guard = repo_state.index.lock_recover();
@@ -2068,23 +2066,25 @@ fn run_query_filter(
         return Err(ApiError::conflict("query cancelled"));
     }
 
-    match index.evaluate_page_with_roots(&indexed_query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
-    {
-        Ok((uuids, next_cursor)) => {
-            // The page came from the index; the count normally does too. If the
-            // index ever reports the count `Unsupported` (a future asymmetry
-            // between the two paths), fall back to the SQL count rather than
-            // panicking on a live request.
-            let total = if body.count {
-                match index.count_with_roots(&indexed_query, &roots) {
-                    Ok(n) => Some(n as usize),
-                    Err(_unsupported) => Some(query_exec::count(conn, cache, &body.query)?),
-                }
-            } else {
-                None
-            };
-            Ok((uuids, next_cursor, total))
-        }
+    // With `count` the page and the total come from a single evaluation; without
+    // it, only the page is computed.
+    let paged = if body.count {
+        index
+            .page_and_count(&indexed_query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
+            .map(|(uuids, next, total)| (uuids, next, Some(total as usize)))
+    } else {
+        index
+            .evaluate_page_with_roots(
+                &indexed_query,
+                &sort_by,
+                body.limit,
+                body.cursor.as_deref(),
+                &roots,
+            )
+            .map(|(uuids, next)| (uuids, next, None))
+    };
+    match paged {
+        Ok(page) => Ok(page),
         Err(_unsupported) => {
             let (uuids, next_cursor) = query_exec::execute(
                 conn,
@@ -2094,10 +2094,14 @@ fn run_query_filter(
                 body.limit,
                 body.cursor.as_deref(),
             )?;
-            let total = body
-                .count
-                .then(|| query_exec::count(conn, cache, &body.query))
-                .transpose()?;
+            // Counting here means running the whole CTE chain a second time, so
+            // skip it when the page already proves the total: a first page that
+            // came back short is the entire match set.
+            let total = match (body.count, body.cursor.is_none() && next_cursor.is_none()) {
+                (false, _) => None,
+                (true, true) => Some(uuids.len()),
+                (true, false) => Some(query_exec::count(conn, cache, &body.query)?),
+            };
             Ok((uuids, next_cursor, total))
         }
     }

@@ -164,6 +164,35 @@ pub fn contains_osm_path(q: &Query) -> bool {
     }
 }
 
+/// One sort key's resolved lookups: the field's encoding (for a BSI
+/// representative) and its small sort store (for every other encoding).
+struct KeyLookup<'a> {
+    field: Option<&'a FieldIndex>,
+    store: Option<&'a SortReps>,
+    want_max: bool,
+}
+
+impl KeyLookup<'_> {
+    /// A metarecord's representative for this key. A BSI field reads it from the
+    /// bit-slices; every other encoding uses the sort store.
+    fn rep(&self, id: u32) -> Option<SortRep> {
+        self.field
+            .and_then(|fi| fi.bsi_sort_rep(id, self.want_max))
+            .or_else(|| self.store.and_then(|s| s.rep(id, self.want_max)).cloned())
+    }
+}
+
+/// Whether a node is a text predicate — one answered by scanning the field's
+/// distinct values. These are the only operands a candidate restriction makes
+/// cheaper, so [`RepoIndex::intersect`] evaluates them last.
+fn is_text_predicate(q: &Query) -> bool {
+    matches!(
+        q,
+        Query::Matches { .. }
+            | Query::Osm { mode: metafolder_core::query::OsmMode::Direct, .. }
+    )
+}
+
 /// A metarecord's position in a sort order: one representative per sort key
 /// (`None` = the field is absent, which sorts last) plus the uuid tiebreak.
 /// This is what a keyset cursor encodes, so pagination resumes *after* a known
@@ -587,6 +616,24 @@ impl RepoIndex {
         self.page(q, sort, limit, cursor, Some(roots))
     }
 
+    /// One evaluation answering both the page and the total, for a request that
+    /// asks for `count`. Evaluating twice — once for the rows, once to count
+    /// them — doubled the cost of every counted query, and the list asks for a
+    /// count on its first page.
+    pub fn page_and_count(
+        &self,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
+        roots: &QueryRoots,
+    ) -> Result<(Vec<Uuid>, Option<String>, u64), Unsupported> {
+        let matched = self.eval(q, Some(roots))?;
+        let total = matched.len();
+        let (page, next) = self.page_of(matched, q, sort, limit, cursor)?;
+        Ok((page, next, total))
+    }
+
     fn page(
         &self,
         q: &Query,
@@ -594,6 +641,19 @@ impl RepoIndex {
         limit: Option<usize>,
         cursor: Option<&str>,
         roots: Option<&QueryRoots>,
+    ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
+        let matched = self.eval(q, roots)?;
+        self.page_of(matched, q, sort, limit, cursor)
+    }
+
+    /// Sorts, cuts and paginates an already-evaluated match set.
+    fn page_of(
+        &self,
+        matched: RoaringBitmap,
+        q: &Query,
+        sort: &[SortBy],
+        limit: Option<usize>,
+        cursor: Option<&str>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
         let guard = page_guard(q, sort);
@@ -609,14 +669,34 @@ impl RepoIndex {
             }
         };
 
-        let matched = self.eval(q, roots)?;
-        let mut entries: Vec<SortEntry> = matched.iter().map(|id| self.entry_of(id, sort)).collect();
+        // Column-major: one flat run of representatives (`keys.len()` per
+        // metarecord) and one of uuids, ordered by a permutation of indices.
+        // A `Vec` per metarecord — the obvious shape — meant one heap allocation
+        // for every row of the match set, on every page.
+        let keys = self.key_lookups(sort);
+        let width = keys.len();
+        let mut reps: Vec<Option<SortRep>> = Vec::with_capacity(matched.len() as usize * width);
+        let mut uuids: Vec<Uuid> = Vec::with_capacity(matched.len() as usize);
+        for id in &matched {
+            reps.extend(keys.iter().map(|k| k.rep(id)));
+            uuids.push(self.registry.uuid(id).expect("interned id"));
+        }
+        let row = |i: usize| &reps[i * width..(i + 1) * width];
+        let cmp = |a: &u32, b: &u32| {
+            let (a, b) = (*a as usize, *b as usize);
+            cmp_reps(row(a), uuids[a], row(b), uuids[b], sort)
+        };
+
+        let mut order: Vec<u32> = (0..uuids.len() as u32).collect();
         // Keyset: keep only what sorts strictly after the cursor position.
         if let Some(after) = &after {
-            entries.retain(|e| cmp_entry(e, after, sort) == Ordering::Greater);
+            order.retain(|&i| {
+                let i = i as usize;
+                cmp_reps(row(i), uuids[i], &after.0, after.1, sort) == Ordering::Greater
+            });
         }
 
-        let total = entries.len();
+        let total = order.len();
         let end = match limit {
             Some(l) => l.min(total),
             None => total,
@@ -627,35 +707,32 @@ impl RepoIndex {
         // whole match set. When the page is the whole set the partition is a
         // no-op and this is the plain sort.
         if end > 0 && end < total {
-            entries.select_nth_unstable_by(end - 1, |a, b| cmp_entry(a, b, sort));
+            order.select_nth_unstable_by(end - 1, cmp);
         }
-        entries[..end].sort_by(|a, b| cmp_entry(a, b, sort));
+        order[..end].sort_by(cmp);
 
-        let page = entries[..end].iter().map(|e| e.1).collect();
+        let page = order[..end].iter().map(|&i| uuids[i as usize]).collect();
         let next = match limit {
-            Some(_) if end > 0 && end < total => Some(encode_cursor(guard, &entries[end - 1])),
+            Some(_) if end > 0 && end < total => {
+                let last = order[end - 1] as usize;
+                Some(encode_cursor(guard, &(row(last).to_vec(), uuids[last])))
+            }
             _ => None,
         };
         Ok((page, next))
     }
 
-    /// A metarecord's [`SortEntry`] under `sort` (its representative per key +
-    /// uuid). The representative is the max for a descending key, the min for an
-    /// ascending one — the same one the SQL sort picks.
-    fn entry_of(&self, id: u32, sort: &[SortBy]) -> SortEntry {
-        let reps = sort
-            .iter()
-            .map(|k| {
-                let want_max = !k.ascending;
-                // A BSI field reads its representative from the bit-slices;
-                // every other encoding uses the small sort store.
-                self.fields
-                    .get(&k.field)
-                    .and_then(|fi| fi.bsi_sort_rep(id, want_max))
-                    .or_else(|| self.sort.get(&k.field).and_then(|s| s.rep(id, want_max)).cloned())
+    /// A sort key with its two lookups already resolved. Resolving them per
+    /// metarecord meant two string-keyed hash lookups for every row of the match
+    /// set on every page; the field is the same for all of them.
+    fn key_lookups<'a>(&'a self, sort: &[SortBy]) -> Vec<KeyLookup<'a>> {
+        sort.iter()
+            .map(|k| KeyLookup {
+                field: self.fields.get(&k.field),
+                store: self.sort.get(&k.field),
+                want_max: !k.ascending,
             })
-            .collect();
-        (reps, self.registry.uuid(id).expect("interned id"))
+            .collect()
     }
 
     /// Evaluates a query to the bitmap of matching dense ids (path targets
@@ -668,7 +745,30 @@ impl RepoIndex {
     /// `Some(map)` once the caller has resolved the query's `Path` targets (see
     /// [`PathRoots`]); `None` means they have not, so a `Path` target is
     /// reported `Unsupported` and the caller falls back to the SQL engine.
+    ///
+    /// Every variant of the IR is handled here — the match is exhaustive on
+    /// purpose, so a new one cannot be added without deciding whether the index
+    /// serves it. What is left to the SQL engine is now a property of the
+    /// *operand* (an unresolved path, a pattern that will not compile, a
+    /// comparison the encoding cannot answer), never of the node type.
     fn eval(&self, q: &Query, roots: Option<&QueryRoots>) -> Result<RoaringBitmap, Unsupported> {
+        self.eval_within(q, roots, None)
+    }
+
+    /// [`Self::eval`] restricted to a candidate set: the answer is intersected
+    /// with `restrict`, and a text predicate uses it to skip the values that
+    /// cannot contribute. Only the text scans read it; everything else is a
+    /// bitmap operation already, and intersecting afterwards costs the same.
+    ///
+    /// It propagates through `And` and `Or` — `(a ∪ b) ∩ r = (a ∩ r) ∪ (b ∩ r)`
+    /// — and stops at `Not` and at a `Follows` target, where a restricted
+    /// operand would give the wrong complement or the wrong traversal seed.
+    fn eval_within(
+        &self,
+        q: &Query,
+        roots: Option<&QueryRoots>,
+        restrict: Option<&RoaringBitmap>,
+    ) -> Result<RoaringBitmap, Unsupported> {
         match q {
             Query::IsPresent { field } => Ok(self.present_of(field)),
             Query::IsAbsent { field } => Ok(self.absent_of(field)),
@@ -688,11 +788,23 @@ impl RepoIndex {
             Query::Gt { field, value } => self.compare(field, CmpOp::Gt, value, roots),
             Query::Gte { field, value } => self.compare(field, CmpOp::Gte, value, roots),
 
-            Query::And { operands } => self.combine(operands, true, roots),
-            Query::Or { operands } => self.combine(operands, false, roots),
+            Query::And { operands } => self.intersect(operands, roots, restrict),
+            Query::Or { operands } => {
+                let mut acc = RoaringBitmap::new();
+                for operand in operands {
+                    acc |= self.eval_within(operand, roots, restrict)?;
+                }
+                if operands.is_empty() {
+                    return Err(unsupported("'and'/'or' need an operand"));
+                }
+                Ok(acc)
+            }
             Query::Not { operand } => {
                 let mut r = self.universe.clone();
                 r -= &self.eval(operand, roots)?;
+                if let Some(restrict) = restrict {
+                    r &= restrict;
+                }
                 Ok(r)
             }
 
@@ -718,8 +830,41 @@ impl RepoIndex {
                 Ok(r)
             }
 
-            other => Err(unsupported(format!("{other:?}"))),
+            Query::Matches { field, pattern } => self.text_scan(field, pattern, restrict),
+            // OSM `Direct` matches the row's own text with the very regex the
+            // SQL engine hands its `REGEXP` UDF, so the two cannot drift — in
+            // particular over `.`, which does not cross a newline.
+            Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Direct } => {
+                self.text_scan(field, &crate::query_exec::osm_regex(terms), restrict)
+            }
+
         }
+        .map(|mut bm| {
+            // Every branch above either consumed `restrict` itself (the text
+            // scans, the combinators) or ignored it; intersecting again is
+            // idempotent and keeps the contract in one place.
+            if let Some(restrict) = restrict {
+                bm &= restrict;
+            }
+            bm
+        })
+    }
+
+    /// A regex text predicate (`Matches`, OSM `Direct`) answered by scanning the
+    /// field's *distinct* values in memory — its cardinality, not its row count,
+    /// and no SQL at all. An invalid or oversized pattern is left to the SQL
+    /// engine, which reports it as a 400.
+    fn text_scan(
+        &self,
+        field: &str,
+        pattern: &str,
+        restrict: Option<&RoaringBitmap>,
+    ) -> Result<RoaringBitmap, Unsupported> {
+        let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
+        let re = crate::regexp::compile(pattern)
+            .map_err(|e| unsupported(format!("pattern the index cannot compile: {e}")))?;
+        fi.scan_text(&|text| re.is_match(text), restrict)
+            .ok_or_else(|| unsupported("text scan on a field with no indexed values"))
     }
 
     /// Direct `Follows`: referrers of every metarecord matching the sub-query.
@@ -871,24 +1016,35 @@ impl RepoIndex {
         Ok(self.expand_subtrees(fi, seeds, true))
     }
 
-    fn combine(
+    /// `And`, evaluated cheapest-first: the operands that are pure bitmap work
+    /// go first, and the running intersection is then handed to the text scans
+    /// as their candidate set. This is what makes "this folder, name matching X"
+    /// cost the folder's size rather than the repository's — the scan skips
+    /// every value whose bitmap misses the candidates.
+    ///
+    /// The order is a property of the query shape, so it does not change what a
+    /// paginated session is served by.
+    fn intersect(
         &self,
         operands: &[Query],
-        is_and: bool,
         roots: Option<&QueryRoots>,
+        restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
-        let mut it = operands.iter();
-        let first = it.next().ok_or_else(|| unsupported("'and'/'or' need an operand"))?;
-        let mut acc = self.eval(first, roots)?;
-        for operand in it {
-            let bm = self.eval(operand, roots)?;
-            if is_and {
-                acc &= &bm;
-            } else {
-                acc |= &bm;
-            }
+        if operands.is_empty() {
+            return Err(unsupported("'and'/'or' need an operand"));
         }
-        Ok(acc)
+        let (text, rest): (Vec<&Query>, Vec<&Query>) =
+            operands.iter().partition(|o| is_text_predicate(o));
+
+        let mut acc: Option<RoaringBitmap> = restrict.cloned();
+        for operand in rest.into_iter().chain(text) {
+            let bm = self.eval_within(operand, roots, acc.as_ref())?;
+            acc = Some(match acc {
+                None => bm,
+                Some(prev) => prev & bm,
+            });
+        }
+        Ok(acc.expect("at least one operand"))
     }
 
     /// Dispatches a comparison to the field's encoding. A field with no
@@ -1039,10 +1195,16 @@ fn page_guard(q: &Query, sort: &[SortBy]) -> u64 {
 
 /// Total order over [`SortEntry`]s: per key the representative compared in the
 /// key's direction (`None`/field-absent last in both), then uuid ascending.
-fn cmp_entry(a: &SortEntry, b: &SortEntry, sort: &[SortBy]) -> std::cmp::Ordering {
+fn cmp_reps(
+    a: &[Option<SortRep>],
+    a_uuid: Uuid,
+    b: &[Option<SortRep>],
+    b_uuid: Uuid,
+    sort: &[SortBy],
+) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     for (idx, key) in sort.iter().enumerate() {
-        let ord = match (&a.0[idx], &b.0[idx]) {
+        let ord = match (&a[idx], &b[idx]) {
             (Some(x), Some(y)) => {
                 if key.ascending {
                     x.cmp(y)
@@ -1058,7 +1220,7 @@ fn cmp_entry(a: &SortEntry, b: &SortEntry, sort: &[SortBy]) -> std::cmp::Orderin
             return ord;
         }
     }
-    a.1.cmp(&b.1)
+    a_uuid.cmp(&b_uuid)
 }
 
 /// Keyset cursor: the guard, then the last returned entry's sort key (one
@@ -1137,10 +1299,10 @@ fn decode_rep(r: &mut Reader<'_>) -> Option<SortRep> {
     Some(match r.u8()? {
         0 => SortRep::Bool(r.u8()? != 0),
         1 => SortRep::Num(f64::from_bits(r.u64()?)),
-        2 => SortRep::Str(text(r)?),
+        2 => SortRep::Str(text(r)?.into()),
         3 => SortRep::DateTime(r.u64()? as i64),
         4 => SortRep::Ref(r.take(16)?.try_into().ok()?),
-        5 => SortRep::Tree(text(r)?),
+        5 => SortRep::Tree(text(r)?.into()),
         _ => return None,
     })
 }

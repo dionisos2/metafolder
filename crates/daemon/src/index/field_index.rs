@@ -9,6 +9,7 @@
 //! answer is a union of the per-value bitmaps that match.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use metafolder_core::metarecord::{Value, ZERO_UUID};
 use roaring::RoaringBitmap;
@@ -156,6 +157,30 @@ impl FieldIndex {
         }
     }
 
+    /// The ids whose textual value satisfies `keep` — the in-memory form of
+    /// SQL's text predicates, which look at `value_text` on a `string` row and
+    /// `value_name` on a `tree_ref` one and nowhere else. A numeric or reference
+    /// encoding has neither, so it matches nothing, exactly as the `value_type`
+    /// guard decides in SQL.
+    ///
+    /// `None` when the encoding cannot answer — a field seen only through
+    /// `Nothing` values has no partition to scan — so the caller defers to SQL
+    /// rather than mistake "nothing indexed" for "no match".
+    pub fn scan_text(
+        &self,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> Option<RoaringBitmap> {
+        match self {
+            FieldIndex::Categorical(c) => Some(c.scan_text(keep, restrict)),
+            FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef => {
+                Some(r.scan_names(keep, restrict))
+            }
+            FieldIndex::Reverse(_) | FieldIndex::Bsi(_) => Some(RoaringBitmap::new()),
+            FieldIndex::Unimplemented(_) => None,
+        }
+    }
+
     /// Whether `FollowsTransitive` applies: only `tree_ref` forests.
     pub fn supports_transitive(&self) -> bool {
         matches!(self, FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef)
@@ -207,10 +232,12 @@ pub(super) fn sum_bytes<'a>(bitmaps: impl Iterator<Item = &'a RoaringBitmap>) ->
 pub enum SortRep {
     Bool(bool),
     Num(f64),
-    Str(String),
+    /// `Arc<str>`, not `String`: a representative is cloned once per matched
+    /// metarecord on every page of a sorted query, so cloning must not allocate.
+    Str(Arc<str>),
     DateTime(i64),
     Ref([u8; 16]),
-    Tree(String),
+    Tree(Arc<str>),
 }
 
 impl SortRep {
@@ -254,11 +281,11 @@ fn sort_rep(value: &Value) -> Option<SortRep> {
         Value::Bool(b) => Some(SortRep::Bool(*b)),
         Value::Int(n) => Some(SortRep::Num(norm(*n as f64))),
         Value::Float(f) => Some(SortRep::Num(norm(*f))),
-        Value::String(s) => Some(SortRep::Str(s.clone())),
+        Value::String(s) => Some(SortRep::Str(s.as_str().into())),
         Value::DateTime(ms) => Some(SortRep::DateTime(*ms)),
         Value::Ref(u) | Value::RefBase(u) => Some(SortRep::Ref(*u.as_bytes())),
         Value::ExternalRef { metarecord, .. } => Some(SortRep::Ref(*metarecord.as_bytes())),
-        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.clone())),
+        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.as_str().into())),
         Value::Nothing => None,
     }
 }
@@ -370,6 +397,24 @@ impl CategoricalIndex {
             CmpOp::Neq => Ok(self.neq(value)),
             _ => self.ordered(value, op),
         }
+    }
+
+    /// The ids whose *string* value satisfies `keep` — SQL's
+    /// `value_type = 'string' AND value_text …`, so bool values never match.
+    fn scan_text(
+        &self,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
+        scan_partition(
+            &self.by_value,
+            |k| match k {
+                CatKey::Str(s) => Some(s.as_str()),
+                CatKey::Bool(_) => None,
+            },
+            keep,
+            restrict,
+        )
     }
 
     /// `value_type` + value match, any single row (multi-map): the one bitmap.
@@ -693,23 +738,37 @@ fn value_uuid_of(value: &Value) -> Option<Uuid> {
 /// shared core of every in-memory text scan (`Matches`, OSM, term nodes).
 fn scan_partition<K>(
     partition: &HashMap<K, RoaringBitmap>,
-    text_of: impl Fn(&K) -> &str,
+    text_of: impl Fn(&K) -> Option<&str>,
     keep: &dyn Fn(&str) -> bool,
     restrict: Option<&RoaringBitmap>,
 ) -> RoaringBitmap {
     let mut out = RoaringBitmap::new();
     for (key, ids) in partition {
-        if restrict.is_some_and(|r| r.is_disjoint(ids)) {
+        if restrict.is_some_and(|r| !intersects(r, ids)) {
             continue;
         }
-        if keep(text_of(key)) {
-            match restrict {
-                Some(r) => out |= ids & r,
-                None => out |= ids,
-            }
+        // A key with no textual form (a bool) is what SQL's `value_type` guard
+        // excludes: it is never a `value_text` or a `value_name`.
+        let Some(text) = text_of(key) else { continue };
+        if keep(text) {
+            out |= ids;
         }
     }
+    if let Some(restrict) = restrict {
+        out &= restrict;
+    }
     out
+}
+
+/// Whether two bitmaps share an id, iterating the smaller and probing the
+/// larger. `RoaringBitmap::is_disjoint` merges the two containers, so its cost
+/// follows the *bigger* side — and this runs once per distinct value, where the
+/// bitmaps are usually one id against a whole candidate set. Probing from the
+/// smaller side makes the common case a single lookup instead of a scan of the
+/// candidates.
+fn intersects(a: &RoaringBitmap, b: &RoaringBitmap) -> bool {
+    let (small, large) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    small.iter().any(|id| large.contains(id))
 }
 
 pub struct ReverseIndex {
@@ -752,7 +811,7 @@ impl ReverseIndex {
         keep: &dyn Fn(&str) -> bool,
         restrict: Option<&RoaringBitmap>,
     ) -> RoaringBitmap {
-        scan_partition(&self.by_name, |name| name.as_str(), keep, restrict)
+        scan_partition(&self.by_name, |name| Some(name.as_str()), keep, restrict)
     }
 
     fn insert(&mut self, value: &Value, id: u32) {

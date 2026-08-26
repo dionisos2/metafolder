@@ -87,6 +87,28 @@ async fn test_query_returns_uuids_by_default() {
 }
 
 #[tokio::test]
+async fn test_invalid_regex_is_rejected() {
+    // `matches` is served by the bitmap index now, so the index sees the pattern
+    // first. An unusable one must still reach the user as a 400 and not as an
+    // empty result: the index defers, and the SQL engine reports it.
+    let (app, repo, root) = setup("badregex").await;
+    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "x"}}])).await;
+
+    for pattern in ["(unclosed", "a{5000000}"] {
+        let (status, body) = request(
+            &app,
+            "POST",
+            &format!("/repos/{repo}/query"),
+            Some(json!({"query": {"type": "matches", "field": "label", "pattern": pattern}})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "pattern {pattern:?} gave {body}");
+    }
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[tokio::test]
 async fn test_osm_path_on_a_string_field_is_rejected() {
     // `osm` path mode is tree_ref-only: on a string field the daemon answers 400
     // with the "use osmd" hint (spec-query). The rejection lives in the SQL

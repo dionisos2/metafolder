@@ -345,9 +345,45 @@ concerns.
 *Implementation status (increments 5–6).* =RepoIndex= lives in =RepoState=
 behind a mutex and carries the =log_head.op_id= it was built at. The query route
 (=run_query_filter=) consults it only while it reflects the current HEAD, so it
-never serves stale results; supported query shapes go through it (filter / sort /
-count / paginate) and unsupported ones (=Matches=) fall back to the SQL engine,
-cursors included. =Path=-target =Follows=/=FollowsTransitive= are *supported*:
+never serves stale results; *every* node type of the IR goes through it (filter /
+sort / count / paginate) — the match in =eval= is exhaustive on purpose, so a
+new node type cannot be added without deciding whether the index serves it. What
+still falls back to the SQL engine, cursors included, is a property of the
+*operand*, not of the node type: an unresolved path, a pattern that will not
+compile, a comparison the field's encoding cannot answer.
+
+The text predicates (=Matches=, =Osm= =Direct=, and the "term nodes" of an =Osm=
+=Path=) are answered by scanning the field's *distinct values* — the
+=CategoricalIndex= =by_value= and =ReverseIndex= =by_name= partitions, which hold
+one bitmap per value — so they cost the field's cardinality and not its row
+count. `value_text` for a string row and `value_name` for a tree_ref one, which
+is exactly what the SQL =value_type= guard selects. This replaced the FTS5
+trigram pre-filter on the index path: measured on the 50 k bench repo the
+in-memory scan won in every case, including a strong literal on a field with
+50 000 distinct names (28 → 8 ms) and overwhelmingly without one (166 →
+1 ms, where the pre-filter cannot help at all). The pre-filter remains in the
+SQL engine, which stays the oracle.
+
+Inside an =And=, the text operands are evaluated *last* and receive the running
+intersection as a candidate restriction: a value whose bitmap misses every
+candidate is skipped without running the predicate. This is the minimal form of
+the adaptive planner deferred below — no statistics, just "bitmap work first,
+scans afterwards, over what is left". It is what makes "this folder, name
+matching X" cost the folder rather than the repository (207 → 10 ms). The
+membership test probes from the smaller of the two bitmaps: =is_disjoint= merges
+the containers, so its cost follows the *bigger* side, and this runs once per
+distinct value. An =Osm= =Path= needs no caller preparation any more: an empty =terms= list is
+=IsPresent= on the field, and a single separator-free term of *any length*
+resolves its term nodes from the in-memory name partition — the FTS trigram's
+three-character floor used to make the first two keystrokes of every search
+20-30× slower than the rest (808 ms for =s= on the bench repo, against 23 ms
+from =sam= onwards). The order-sensitive forms — several terms, or one term
+containing the separator — are resolved by a walk of the resident forest in the
+tree cache (see [[file:spec-file-tracking.org][spec-file-tracking.org]]), which
+carries the greedy match position down each branch and takes a whole subtree at
+once when a branch has consumed every term.
+
+=Path=-target =Follows=/=FollowsTransitive= are *supported*:
 =run_query_filter= resolves each path to its root metarecord through the
 (eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
 bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
@@ -385,7 +421,14 @@ spec's "single write path updates both": every write advances HEAD, and the next
 query reconciles the index to it. Pagination is *keyset*: the cursor encodes the
 last entry's sort key (one representative per key) and uuid, so the next page
 resumes strictly after it — stable under concurrent inserts/deletes, matching the
-SQL engine. Deleted metarecords leave dense-id tombstones on the incremental
+SQL engine. A request asking for =count= gets the page and the total from a
+*single* evaluation; evaluating twice doubled the cost of every counted query,
+and the list asks for a count on its first page. The sort itself is
+column-major — one flat run of representatives and one of uuids, ordered through
+a permutation of indices — because a =Vec= per metarecord meant one heap
+allocation for every row of the match set on every page; and a representative is
+an =Arc<str>= rather than a =String=, since it is cloned once per matched
+metarecord per page. Deleted metarecords leave dense-id tombstones on the incremental
 path; when they exceed a fraction of the interned ids a refresh rebuilds and
 reclaims them. For Int/Float/DateTime fields the sort representative is read
 *from the BSI bit-slices* (the order-preserving key inverted back to its value),
