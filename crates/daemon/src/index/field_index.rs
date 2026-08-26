@@ -142,6 +142,20 @@ impl FieldIndex {
         matches!(self, FieldIndex::Bsi(_))
     }
 
+    /// The ids whose `value_name` satisfies `keep`, for a `tree_ref` field — the
+    /// in-memory `value_name REGEXP` scan (see [`ReverseIndex::scan_names`]).
+    /// Empty for any other encoding, which has no name partition.
+    pub fn scan_names(
+        &self,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
+        match self {
+            FieldIndex::Reverse(r) => r.scan_names(keep, restrict),
+            _ => RoaringBitmap::new(),
+        }
+    }
+
     /// Whether `FollowsTransitive` applies: only `tree_ref` forests.
     pub fn supports_transitive(&self) -> bool {
         matches!(self, FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef)
@@ -674,6 +688,30 @@ fn value_uuid_of(value: &Value) -> Option<Uuid> {
     }
 }
 
+/// Unions the bitmaps of a value partition whose key satisfies `keep`, skipping
+/// any bucket disjoint from `restrict` and intersecting the result with it. The
+/// shared core of every in-memory text scan (`Matches`, OSM, term nodes).
+fn scan_partition<K>(
+    partition: &HashMap<K, RoaringBitmap>,
+    text_of: impl Fn(&K) -> &str,
+    keep: &dyn Fn(&str) -> bool,
+    restrict: Option<&RoaringBitmap>,
+) -> RoaringBitmap {
+    let mut out = RoaringBitmap::new();
+    for (key, ids) in partition {
+        if restrict.is_some_and(|r| r.is_disjoint(ids)) {
+            continue;
+        }
+        if keep(text_of(key)) {
+            match restrict {
+                Some(r) => out |= ids & r,
+                None => out |= ids,
+            }
+        }
+    }
+    out
+}
+
 pub struct ReverseIndex {
     kind: RefKind,
     has_value: RoaringBitmap,
@@ -698,6 +736,23 @@ impl ReverseIndex {
 
     fn supports_follows(&self) -> bool {
         matches!(self.kind, RefKind::Ref | RefKind::TreeRef)
+    }
+
+    /// The ids whose `value_name` satisfies `keep` — the in-memory equivalent of
+    /// a `value_name REGEXP` scan (`tree_ref` only). It walks the *distinct*
+    /// names, so it costs the field's cardinality and not its row count, which
+    /// is what lets the text predicates leave the SQL engine.
+    ///
+    /// `restrict` narrows the answer to a candidate set: a name whose ids are
+    /// all outside it cannot contribute, so `keep` is never called for it. That
+    /// is what makes a text predicate cheap once a sibling `and` operand has
+    /// already cut the universe down.
+    fn scan_names(
+        &self,
+        keep: &dyn Fn(&str) -> bool,
+        restrict: Option<&RoaringBitmap>,
+    ) -> RoaringBitmap {
+        scan_partition(&self.by_name, |name| name.as_str(), keep, restrict)
     }
 
     fn insert(&mut self, value: &Value, id: u32) {

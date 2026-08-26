@@ -214,9 +214,9 @@ fn is_index_text_leaf(q: &Query) -> bool {
     match q {
         Query::Matches { .. } => true,
         Query::Osm { mode: OsmMode::Direct, .. } => true,
-        Query::Osm { mode: OsmMode::Path, terms, .. } => {
-            !matches!(terms.as_slice(), [only] if only.chars().count() >= 3)
-        }
+        // A single-term (any length) and an empty Osm Path are served natively
+        // by the index; only the order-sensitive multi-term form needs resolving.
+        Query::Osm { mode: OsmMode::Path, terms, .. } => terms.len() > 1,
         _ => false,
     }
 }

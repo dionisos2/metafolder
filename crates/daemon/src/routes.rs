@@ -1962,13 +1962,13 @@ fn ensure_index<'g>(
 /// Resolves a query's index seeds and rewrites its index-unsupported text leaves
 /// — the shared preparation feeding the bitmap index, used by both the paginated
 /// query path ([`run_query_filter`]) and the whole-set resolution
-/// ([`resolve_query_uuids`]). Path targets resolve to root metarecords through
-/// the tree cache; single-term Osm-Path term nodes resolve through FTS; the
-/// remaining text leaves (Matches, Osm Direct, multi-term Osm Path) are
-/// pre-resolved to `UuidIn` sets. `full_set` forces that rewrite (a whole-set
-/// resolution wants every match, so the SQL early-`limit` optimisation that
-/// keeps a bare-leaf *page* cheaper does not apply); an index-served Osm-Path
-/// present in the query always forces it too.
+/// ([`resolve_query_uuids`]). Path targets and exact-node operands resolve to
+/// metarecords through the tree cache; the text leaves the index cannot serve
+/// (Matches, Osm Direct, multi-term Osm Path) are pre-resolved to `UuidIn` sets.
+/// `full_set` forces that rewrite (a whole-set resolution wants every match, so
+/// the SQL early-`limit` optimisation that keeps a bare-leaf *page* cheaper does
+/// not apply); an index-served Osm-Path present in the query always forces it
+/// too, since the rest of the query is then worth keeping on the index.
 fn prepare_indexed_query(
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
@@ -1993,13 +1993,7 @@ fn prepare_indexed_query(
         let node = cache.resolve_path(conn, &field, &path)?;
         roots.node.insert((field, path), node);
     }
-    let mut osm_targets = Vec::new();
-    crate::index::collect_osm_path_targets(query, &mut osm_targets);
-    let has_indexable_osm = !osm_targets.is_empty();
-    for (field, term) in osm_targets {
-        let nodes = query_exec::osm_name_nodes(conn, &field, &term)?;
-        roots.osm.insert((field, term), nodes);
-    }
+    let has_indexable_osm = crate::index::contains_index_served_osm_path(query);
     let indexed = if full_set || has_indexable_osm {
         query_exec::resolve_index_leaves(conn, cache, query)?
     } else {

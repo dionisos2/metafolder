@@ -45,13 +45,6 @@ pub struct SortBy {
 /// map resolved to nothing and yields an empty result, matching the SQL engine.
 pub type PathRoots = HashMap<(String, String), Uuid>;
 
-/// Pre-resolved `(field, term)` → the "term nodes" (TreeRef nodes whose *name*
-/// contains the term) of a single-term `Osm` `Path` query. The index has no
-/// substring-of-name index, so — as with [`PathRoots`] — the caller resolves
-/// these nodes (via `query_exec::osm_name_nodes`, an FTS lookup) and hands them
-/// in; the index then expands each node's subtree by bitmap and unions them.
-pub type OsmRoots = HashMap<(String, String), Vec<Uuid>>;
-
 /// Pre-resolved `(field, path)` → the metarecord at exactly that TreeRef path,
 /// for the *exact-node* `Eq` operands of a query (spec-query "Exact-node
 /// equality": a `/`-bearing string operand on a `tree_ref` field). Resolution
@@ -63,13 +56,12 @@ pub type OsmRoots = HashMap<(String, String), Vec<Uuid>>;
 pub type NodeRoots = HashMap<(String, String), Option<Uuid>>;
 
 /// The caller-resolved seeds a query needs the index to evaluate the shapes it
-/// cannot resolve on its own: `Path` targets and exact-node `Eq` operands
-/// (through the tree cache) and single-term `Osm` `Path` term nodes (through
-/// FTS). Bundled so the evaluation threads one context.
+/// cannot resolve on its own — both are tree-cache lookups: `Path` targets and
+/// exact-node `Eq`/`Neq` operands. Bundled so the evaluation threads one
+/// context.
 #[derive(Default)]
 pub struct QueryRoots {
     pub path: PathRoots,
-    pub osm: OsmRoots,
     pub node: NodeRoots,
 }
 
@@ -131,38 +123,34 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// Whether a `terms` list is the single ≥3-char term the index accelerates for
-/// `Osm` `Path` (a shorter term has no trigram pre-filter, a multi-term query is
-/// order-sensitive; both defer to the SQL engine). The single-term case is
-/// exact: every metarecord under a node whose name contains the term has the
-/// term in its path, so the subtree union *is* the match set.
+/// Whether a `terms` list is the single term the index serves natively for
+/// `Osm` `Path`: the union of the subtrees rooted at the nodes whose name
+/// contains it *is* the match set, no ordered verification needed. Any length —
+/// the name scan is in memory, so the FTS trigram's three-character floor no
+/// longer applies. Several terms are order-sensitive and stay with the caller.
 fn osm_path_indexable(terms: &[String]) -> Option<&str> {
     match terms {
-        [only] if only.chars().count() >= 3 => Some(only.as_str()),
+        [only] => Some(only.as_str()),
         _ => None,
     }
 }
 
-/// Collects the `(field, term)` of every index-accelerable single-term `Osm`
-/// `Path` in `q`, so the caller can resolve their term nodes before evaluation
-/// (mirrors [`collect_path_targets`]).
-pub fn collect_osm_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
+/// Whether `q` contains an `Osm` `Path` the index serves natively. The caller
+/// uses it to decide whether resolving the query's remaining text leaves is
+/// worth it, so the choice stays a function of the query *shape* alone.
+pub fn contains_index_served_osm_path(q: &Query) -> bool {
     match q {
-        Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Path } => {
-            if let Some(term) = osm_path_indexable(terms) {
-                out.push((field.clone(), term.to_string()));
-            }
+        Query::Osm { terms, mode: metafolder_core::query::OsmMode::Path, .. } => {
+            osm_path_indexable(terms).is_some()
         }
         Query::And { operands } | Query::Or { operands } => {
-            operands.iter().for_each(|o| collect_osm_path_targets(o, out));
+            operands.iter().any(contains_index_served_osm_path)
         }
-        Query::Not { operand } => collect_osm_path_targets(operand, out),
+        Query::Not { operand } => contains_index_served_osm_path(operand),
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
-            if let FollowTarget::Condition(c) = target {
-                collect_osm_path_targets(c, out);
-            }
+            matches!(target, FollowTarget::Condition(c) if contains_index_served_osm_path(c))
         }
-        _ => {}
+        _ => false,
     }
 }
 
@@ -704,7 +692,7 @@ impl RepoIndex {
             }
 
             Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Path } => {
-                self.osm_path(field, terms, roots)
+                self.osm_path(field, terms)
             }
 
             Query::UuidIn { uuids } => {
@@ -835,17 +823,11 @@ impl RepoIndex {
     }
 
     /// Single-term `Osm` `Path`: the union of the subtrees rooted at the term
-    /// nodes (nodes whose name contains the term), which the caller resolved into
-    /// `roots.osm`. Every such node's descendants have the term in their path, so
-    /// the inclusive subtree union *is* the match set — no per-path verification.
-    /// Multi-term (order-sensitive) or a `roots`-less call is `Unsupported`, so
-    /// the caller falls back to the SQL engine.
-    fn osm_path(
-        &self,
-        field: &str,
-        terms: &[String],
-        roots: Option<&QueryRoots>,
-    ) -> Result<RoaringBitmap, Unsupported> {
+    /// nodes — the nodes whose name contains the term. Every such node's
+    /// descendants have the term in their path, so the inclusive subtree union
+    /// *is* the match set, with no per-path verification. Multi-term is
+    /// order-sensitive and stays `Unsupported` (the caller resolves it).
+    fn osm_path(&self, field: &str, terms: &[String]) -> Result<RoaringBitmap, Unsupported> {
         // `osm` path mode is tree_ref-only: a field holding any other type is a
         // user error the SQL engine reports as a 400 with the "use osmd" hint
         // (spec-query). Defer to it rather than answering with an empty bitmap,
@@ -861,23 +843,21 @@ impl RepoIndex {
             return Ok(self.present_of(field));
         }
         let Some(term) = osm_path_indexable(terms) else {
-            return Err(unsupported("multi-term or short-term osm path"));
+            return Err(unsupported("multi-term osm path"));
         };
-        let nodes = match roots {
-            None => return Err(unsupported("osm path (no resolved term nodes)")),
-            Some(roots) => roots.osm.get(&(field.to_string(), term.to_string())),
-        };
-        let Some(nodes) = nodes else { return Ok(RoaringBitmap::new()) }; // no term node
         let Some(fi) = self.fields.get(field) else { return Ok(RoaringBitmap::new()) };
         if !fi.supports_transitive() {
             return Ok(RoaringBitmap::new());
         }
-        let mut seeds = RoaringBitmap::new();
-        for uuid in nodes {
-            if let Some(id) = self.registry.id(*uuid) {
-                seeds.insert(id);
-            }
-        }
+        // The "term nodes" — those whose *name* contains the term — resolved
+        // from the in-memory name partition. The SQL engine finds them with
+        // `value_name REGEXP '(?i)<escaped term>'`, so use that very regex on
+        // each distinct name: same case folding, same escaping, no divergence.
+        // It also works below the FTS trigram's three-character floor, which is
+        // where the first keystrokes of a search used to fall off a cliff.
+        let re = crate::regexp::compile(&format!("(?i){}", regex::escape(term)))
+            .map_err(|e| unsupported(format!("osm term is not a usable pattern: {e}")))?;
+        let seeds = fi.scan_names(&|name| re.is_match(name), None);
         Ok(self.expand_subtrees(fi, seeds, true))
     }
 

@@ -882,42 +882,41 @@ fn osm_path_empty_terms_matches_sql() {
 #[test]
 fn osm_path_single_term_matches_sql() {
     // A single-term OSM path ("every metarecord whose path contains the term")
-    // is a union of subtrees — the index serves it by expanding, from the
-    // caller-resolved term nodes, exactly as `run_query_filter` will. Each term
-    // must agree with the SQL engine on both the set and the count.
+    // is a union of subtrees, which the index expands from the nodes whose name
+    // contains the term. It resolves those itself from the in-memory name map —
+    // no caller-supplied roots, and *no minimum term length*: the one- and
+    // two-character terms are the first keystrokes of every finder search, and
+    // they used to be the slowest (no FTS trigram below three characters).
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let sci = o.create(vec![tref("loc", Some(root), "science")]);
     let sub = o.create(vec![tref("loc", Some(sci), "fiction")]);
     let _file = o.create(vec![tref("loc", Some(sub), "ep.mkv")]);
     let _music = o.create(vec![tref("loc", Some(root), "music")]);
+    // Case folding and a regex metacharacter in the term must behave like the
+    // SQL `(?i)` + `regex::escape` convention.
+    let _caps = o.create(vec![tref("loc", Some(root), "SCIENCE.and.Co")]);
 
-    for term in ["sci", "science", "root", "fic", "nope", "mus"] {
+    for term in ["s", "sc", "sci", "science", "SCI", "root", "fic", "nope", "mus", ".", "e.a"] {
         let q = osm_path_q("loc", &[term]);
-        // Resolve the OSM term nodes exactly as `run_query_filter` does.
-        let mut roots = QueryRoots::new();
-        let nodes = query_exec::osm_name_nodes(&o.conn, "loc", term).unwrap();
-        roots.osm.insert(("loc".to_string(), term.to_string()), nodes);
         let index = RepoIndex::build(&o.conn).unwrap();
 
         let (mut sql, _) =
             query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-        let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+        let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "osm path divergence on term {term:?}");
 
         let sql_count = query_exec::count(&o.conn, &mut o.cache, &q).unwrap();
         assert_eq!(
-            index.count_with_roots(&q, &roots).unwrap() as usize,
+            index.count(&q).unwrap() as usize,
             sql_count,
             "osm path count divergence on term {term:?}"
         );
     }
 
     let index = RepoIndex::build(&o.conn).unwrap();
-    // Without resolved OSM roots the bitmap path defers to SQL.
-    assert!(index.evaluate(&osm_path_q("loc", &["sci"])).is_err(), "needs resolved osm nodes");
     // Multi-term OSM path (order-sensitive) is not accelerated — index defers.
     let multi = osm_path_q("loc", &["science", "fiction"]);
     assert!(
@@ -974,12 +973,11 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
         ],
     };
 
-    // Rewrite the index-unsupported osmd leaf, and resolve the osm-path nodes —
-    // exactly as `run_query_filter` does.
+    // Rewrite the index-unsupported osmd leaf, exactly as `run_query_filter`
+    // does; the osm-path leaf needs no preparation, the index resolves its term
+    // nodes itself.
     let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
-    let mut roots = QueryRoots::new();
-    let nodes = query_exec::osm_name_nodes(&o.conn, "loc", "science").unwrap();
-    roots.osm.insert(("loc".to_string(), "science".to_string()), nodes);
+    let roots = QueryRoots::new();
 
     let index = RepoIndex::build(&o.conn).unwrap();
     let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
