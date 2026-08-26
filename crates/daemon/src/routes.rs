@@ -1983,8 +1983,8 @@ fn prepare_indexed_query(
             roots.path.insert((field, path), uuid);
         }
     }
-    // Exact-node `Eq` operands (`mfr_path = "/a/b.txt"`): resolved through the
-    // same cache, but the entry is always inserted — including a `None` for a
+    // Exact-node `Eq`/`Neq` operands (`mfr_path = "/a/b.txt"`): resolved through
+    // the same cache, but the entry is always inserted — including a `None` for a
     // path that is no node — so the index can tell "resolved to nothing" (empty
     // result) from "nobody resolved it" (defer to SQL).
     let mut node_paths = Vec::new();

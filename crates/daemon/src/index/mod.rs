@@ -100,9 +100,9 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// Collects the `(field, path)` of every *exact-node* `Eq` operand in `q` — a
-/// string operand containing the path separator, which on a `tree_ref` field is
-/// a node match rather than a `value_name` compare (spec-query "Exact-node
+/// Collects the `(field, path)` of every *exact-node* `Eq`/`Neq` operand in `q`
+/// — a string operand containing the path separator, which on a `tree_ref` field
+/// is a node match rather than a `value_name` compare (spec-query "Exact-node
 /// equality"). The caller resolves each through the tree cache into
 /// [`NodeRoots`]; the index then answers `mfr_path = "/a/b.txt"` from a single
 /// interned id instead of deferring the whole query to a full SQL scan.
@@ -112,7 +112,8 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 /// index's type check never consults the entry.
 pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
     match q {
-        Query::Eq { field, value: Value::String(s) } => {
+        Query::Eq { field, value: Value::String(s) }
+        | Query::Neq { field, value: Value::String(s) } => {
             if s.contains('/') {
                 out.push((field.clone(), s.clone()));
             }
@@ -924,22 +925,34 @@ impl RepoIndex {
         if matches!(op, CmpOp::Eq | CmpOp::Neq) {
             if let Value::String(s) = value {
                 if s.contains('/') && self.types.get(field) == Some(&"tree_ref") {
-                    let resolved = roots
-                        .filter(|_| matches!(op, CmpOp::Eq))
-                        .and_then(|r| r.node.get(&(field.to_string(), s.clone())));
-                    return match resolved {
-                        // The node itself, restricted to the metarecords that do
-                        // carry a value for this field — the SQL match is on a
-                        // `field_name` row of type tree_ref, so a node whose rows
-                        // are all `Nothing` matches nothing there either.
-                        Some(Some(node)) => Ok(match self.registry.id(*node) {
+                    // A missing entry means nobody resolved this path: defer.
+                    let resolved =
+                        roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
+                    let Some(node) = resolved else {
+                        return Err(unsupported("exact-node tree_ref path equality"));
+                    };
+                    // The node itself, restricted to the metarecords that do
+                    // carry a value for this field — the SQL match is on a
+                    // `field_name` row of type tree_ref, so a node whose rows
+                    // are all `Nothing` matches nothing there either. An entry
+                    // mapping to `None` resolved to no node: no match at all.
+                    let eq = match node {
+                        Some(node) => match self.registry.id(*node) {
                             Some(id) => RoaringBitmap::from_iter([id]) & self.present_of(field),
                             None => RoaringBitmap::new(),
-                        }),
-                        // Resolved by the caller to no node: an empty result.
-                        Some(None) => Ok(RoaringBitmap::new()),
-                        None => Err(unsupported("exact-node tree_ref path equality")),
+                        },
+                        None => RoaringBitmap::new(),
                     };
+                    if matches!(op, CmpOp::Eq) {
+                        return Ok(eq);
+                    }
+                    // `Neq` is *not* the complement: SQL asks for ≥1 non-Nothing
+                    // row that is not the `Eq` match, so a metarecord with no
+                    // value for the field is in neither. On a tree_ref field
+                    // that is every path-bearing metarecord but the node.
+                    let mut out = self.present_of(field);
+                    out -= &eq;
+                    return Ok(out);
                 }
             }
         }

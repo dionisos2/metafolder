@@ -707,13 +707,59 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
             );
         }
     }
-    // Neq is not rewritten: it still defers to SQL even with the node resolved.
-    let mut roots = QueryRoots::new();
-    let node = o.cache.resolve_path(&o.conn, "loc", "root/b").unwrap();
-    roots.node.insert(("loc".to_string(), "root/b".to_string()), node);
-    let neq_path = Query::Neq { field: "loc".into(), value: s("root/b") };
+}
+
+#[test]
+fn exact_node_path_inequality_matches_sql_with_node_roots() {
+    // `Neq` on an exact-node path is *not* the complement of `Eq`: the SQL
+    // engine compiles it as "at least one non-Nothing row that is not the Eq
+    // match", so on a tree_ref field it is every path-bearing metarecord except
+    // the node — a metarecord with no value for the field is in neither.
+    let (mut o, [_root, _b, _c, _d]) = forest();
+    // A metarecord with an explicit Nothing and one with no `loc` at all: both
+    // are outside `Neq`, though they are in the universe (so a naive
+    // `universe − Eq` would wrongly include them).
+    let _nothing = o.create(vec![Field::new("loc", Value::Nothing)]);
+    let _unrelated = o.create(vec![Field::new("kind", s("file"))]);
+
+    for path in ["root/b", "root/b/c", "root/nope"] {
+        for q in [
+            Query::Neq { field: "loc".into(), value: s(path) },
+            Query::And {
+                operands: vec![
+                    Query::Neq { field: "loc".into(), value: s(path) },
+                    eq("kind", s("file")),
+                ],
+            },
+        ] {
+            let mut targets = Vec::new();
+            collect_node_paths(&q, &mut targets);
+            assert!(!targets.is_empty(), "the collector must see the Neq in {q:?}");
+            let mut roots = QueryRoots::new();
+            for (field, target) in targets {
+                let node = o.cache.resolve_path(&o.conn, &field, &target).unwrap();
+                roots.node.insert((field, target), node);
+            }
+            let index = RepoIndex::build(&o.conn).unwrap();
+
+            let (mut sql, _) =
+                query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+            let (mut got, _) =
+                index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            sql.sort();
+            got.sort();
+            assert_eq!(got, sql, "exact-node Neq divergence on {q:?}");
+
+            assert_eq!(
+                index.count_with_roots(&q, &roots).unwrap() as usize,
+                query_exec::count(&o.conn, &mut o.cache, &q).unwrap(),
+                "count divergence on {q:?}"
+            );
+        }
+    }
+    // Without a resolved node it still defers to SQL.
     let index = RepoIndex::build(&o.conn).unwrap();
-    assert!(index.evaluate_page_with_roots(&neq_path, &[], None, None, &roots).is_err());
+    assert!(index.evaluate(&Query::Neq { field: "loc".into(), value: s("root/b") }).is_err());
 }
 
 #[test]
