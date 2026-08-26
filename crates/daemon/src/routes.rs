@@ -1967,8 +1967,8 @@ fn ensure_index<'g>(
 /// (Matches, Osm Direct, multi-term Osm Path) are pre-resolved to `UuidIn` sets.
 /// `full_set` forces that rewrite (a whole-set resolution wants every match, so
 /// the SQL early-`limit` optimisation that keeps a bare-leaf *page* cheaper does
-/// not apply); an index-served Osm-Path present in the query always forces it
-/// too, since the rest of the query is then worth keeping on the index.
+/// not apply); an Osm-Path leaf anywhere in the query forces it too — see
+/// [`crate::index::contains_osm_path`].
 fn prepare_indexed_query(
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
@@ -1993,8 +1993,8 @@ fn prepare_indexed_query(
         let node = cache.resolve_path(conn, &field, &path)?;
         roots.node.insert((field, path), node);
     }
-    let has_indexable_osm = crate::index::contains_index_served_osm_path(query);
-    let indexed = if full_set || has_indexable_osm {
+    let has_osm_path = crate::index::contains_osm_path(query);
+    let indexed = if full_set || has_osm_path {
         query_exec::resolve_index_leaves(conn, cache, query)?
     } else {
         query.clone()

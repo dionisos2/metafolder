@@ -93,6 +93,47 @@ pub enum OsmMode {
     Path,
 }
 
+/// How far a greedy ordered match has got along a string: the number of terms
+/// consumed and the byte offset just past the last one. Carrying it lets a
+/// longer string resume a prefix's scan instead of starting over — which is what
+/// walking a tree of paths needs, each child extending its parent's path.
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+pub struct OsmProgress {
+    pub matched: usize,
+    pub from: usize,
+}
+
+/// Consumes as many further terms as `haystack_lower` allows, left to right.
+/// Both the haystack and the terms must already be lower-cased.
+///
+/// Greedy is optimal for an ordered, non-overlapping embedding — taking a term
+/// as early as possible never blocks a later one — so resuming from a prefix's
+/// progress gives the same answer as scanning the whole string, which is what
+/// makes the incremental form sound.
+pub fn osm_advance(haystack_lower: &str, terms_lower: &[String], mut at: OsmProgress) -> OsmProgress {
+    while at.matched < terms_lower.len() {
+        let needle = &terms_lower[at.matched];
+        match haystack_lower[at.from..].find(needle.as_str()) {
+            Some(offset) => {
+                at.from += offset + needle.len();
+                at.matched += 1;
+            }
+            None => break,
+        }
+    }
+    at
+}
+
+/// Whether `terms` occur in `haystack_lower` as ordered, non-overlapping
+/// substrings — the OSM matching rule. `haystack_lower` must already be
+/// lower-cased; the terms are lower-cased here. On a path, a term free of the
+/// separator can never straddle one, so the `/` barrier holds automatically;
+/// a term that *contains* the separator is meant to cross it.
+pub fn osm_ordered_match(haystack_lower: &str, terms: &[String]) -> bool {
+    let lowered: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+    osm_advance(haystack_lower, &lowered, OsmProgress::default()).matched == lowered.len()
+}
+
 /// Splits an OSM query string into terms on whitespace, dropping empty runs.
 /// The single, shared term-splitting rule (used by the DSL and any client).
 pub fn split_terms(input: &str) -> Vec<String> {

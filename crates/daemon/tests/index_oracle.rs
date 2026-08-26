@@ -926,6 +926,36 @@ fn osm_path_single_term_matches_sql() {
 }
 
 #[test]
+fn osm_path_separator_term_defers_and_matches_sql() {
+    // `path = "music/jazz"` is *one* term containing the separator (the tag
+    // syntax's anchored form). It can only match across segments, so no single
+    // node name contains it: seeding the subtree expansion from name matches
+    // would answer "nothing". The index must defer, and the leaf rewrite must
+    // then produce the same set as the SQL engine.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let music = o.create(vec![tref("loc", Some(root), "music")]);
+    let jazz = o.create(vec![tref("loc", Some(music), "jazz")]);
+    let _track = o.create(vec![tref("loc", Some(jazz), "take-five.flac")]);
+    let _other = o.create(vec![tref("loc", Some(root), "jazz")]);
+
+    for term in ["music/jazz", "root/music", "zz/take"] {
+        let q = osm_path_q("loc", &[term]);
+        let index = RepoIndex::build(&o.conn).unwrap();
+        assert!(index.evaluate(&q).is_err(), "a separator-bearing term must defer: {term:?}");
+
+        let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut got, _) =
+            index.evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new()).unwrap();
+        sql.sort();
+        got.sort();
+        assert_eq!(got, sql, "separator-term divergence on {term:?}");
+        assert!(!sql.is_empty(), "term {term:?} should match something");
+    }
+}
+
+#[test]
 fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
     // A multi-term OSM path is order-sensitive, so the index can't do it alone;
     // `resolve_index_leaves` pre-resolves it to a UuidIn (without the SQL VALUES

@@ -16,6 +16,8 @@
 //!      every query paid after any write, on a long log.
 //!   #5 exact-node path (`mfr_path = "/a/b.txt"`): a full SQL scan (old) vs the
 //!      bitmap index seeded with the node resolved through the tree cache (new).
+//!   #6 OSM path: the forest walk backing the multi-term form, phase by phase.
+//!   #7 the text predicates still served by the SQL engine.
 //!
 //! Run against the persistent 50k-file tree:
 //!   cargo test -p metafolder-daemon --test perf_bench --release -- --ignored --nocapture
@@ -307,7 +309,67 @@ fn bench_index_build_and_folder_query() {
         old_q.as_secs_f64() / new_q.as_secs_f64()
     );
 
+    // ── #6: OSM path, the finder's query shape ──────────────────────────────
+    // Single-term is served by the index (a name scan + subtree expansion);
+    // multi-term is order-sensitive and resolved by one walk of the resident
+    // forest. Time each phase separately so the walk's real cost is visible.
+    let terms = |list: &[&str]| -> Vec<String> { list.iter().map(|t| t.to_string()).collect() };
+    eprintln!("#6 OSM path over {n} metarecords:");
+
+    let t = Instant::now();
+    let type_check: Option<String> = conn
+        .query_row(
+            "SELECT value_type FROM field \
+             WHERE field_name = 'mfr_path' AND value_type NOT IN ('nothing', 'tree_ref') LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .ok();
+    eprintln!("   the tree_ref type check alone   : {:?}  ({type_check:?})", t.elapsed());
+
+    for list in [vec!["sample"], vec!["drafts", "sample"], vec!["zzzz", "yyyy"]] {
+        let ts = terms(&list);
+        let t = Instant::now();
+        let walked = repo.cache.lock().unwrap().osm_path_matches("mfr_path", &ts).unwrap();
+        eprintln!(
+            "   forest walk {list:?} : {:?}  ({} hits)",
+            t.elapsed(),
+            walked.map(|v| v.len()).unwrap_or(0)
+        );
+    }
+
+    let mut cache = repo.cache.lock().unwrap();
+    for list in [vec!["sample"], vec!["drafts", "sample"]] {
+        let ts = terms(&list);
+        let t = Instant::now();
+        let all = query_exec::osm_path_matches(&conn, &mut cache, "mfr_path", &ts).unwrap();
+        eprintln!("   osm_path_matches {list:?} : {:?}  ({} hits)", t.elapsed(), all.len());
+    }
     drop(cache);
+
+    // ── #7: the text predicates the SQL engine still serves ─────────────────
+    let mut cache = repo.cache.lock().unwrap();
+    for (label, q) in [
+        ("matches, strong literal", Query::Matches {
+            field: "mfr_path".into(),
+            pattern: "sample_1".into(),
+        }),
+        ("matches, no literal", Query::Matches {
+            field: "mfr_type".into(),
+            pattern: "^f.$".into(),
+        }),
+        ("osm direct", Query::Osm {
+            field: "mfr_path".into(),
+            terms: terms(&["sample"]),
+            mode: metafolder_core::query::OsmMode::Direct,
+        }),
+    ] {
+        let t = Instant::now();
+        let (hits, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
+        eprintln!("#7 {label:<24} via SQL : {:?}  ({} hits)", t.elapsed(), hits.len());
+    }
+    drop(cache);
+
     drop(conn);
     let _ = std::fs::remove_dir_all(&meta);
 }

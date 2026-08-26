@@ -127,28 +127,38 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
 /// `Osm` `Path`: the union of the subtrees rooted at the nodes whose name
 /// contains it *is* the match set, no ordered verification needed. Any length —
 /// the name scan is in memory, so the FTS trigram's three-character floor no
-/// longer applies. Several terms are order-sensitive and stay with the caller.
-fn osm_path_indexable(terms: &[String]) -> Option<&str> {
+/// longer applies.
+///
+/// Two shapes are excluded. Several terms are order-sensitive. And a term
+/// *containing the separator* (`path = "music/jazz"` is one term, the tag
+/// syntax's anchored form) can only match across segments, so no single node
+/// name ever contains it — seeding from name matches would silently answer
+/// "nothing". Both stay with the caller, which checks the assembled path.
+pub fn osm_path_indexable(terms: &[String]) -> Option<&str> {
     match terms {
-        [only] => Some(only.as_str()),
+        [only] if !only.contains('/') => Some(only.as_str()),
         _ => None,
     }
 }
 
-/// Whether `q` contains an `Osm` `Path` the index serves natively. The caller
-/// uses it to decide whether resolving the query's remaining text leaves is
+/// Whether `q` contains an `Osm` `Path` leaf at all, served natively or not.
+/// The caller uses it to decide whether resolving the query's text leaves is
 /// worth it, so the choice stays a function of the query *shape* alone.
-pub fn contains_index_served_osm_path(q: &Query) -> bool {
+///
+/// It answers yes for both kinds on purpose. A natively served one means the
+/// rest of the query is worth keeping on the index. One the index cannot serve
+/// is resolved by a walk of the whole forest, which costs the same with or
+/// without a `limit` — so leaving it to the SQL engine buys nothing and costs a
+/// second walk whenever `count` is asked for.
+pub fn contains_osm_path(q: &Query) -> bool {
     match q {
-        Query::Osm { terms, mode: metafolder_core::query::OsmMode::Path, .. } => {
-            osm_path_indexable(terms).is_some()
-        }
+        Query::Osm { mode: metafolder_core::query::OsmMode::Path, .. } => true,
         Query::And { operands } | Query::Or { operands } => {
-            operands.iter().any(contains_index_served_osm_path)
+            operands.iter().any(contains_osm_path)
         }
-        Query::Not { operand } => contains_index_served_osm_path(operand),
+        Query::Not { operand } => contains_osm_path(operand),
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
-            matches!(target, FollowTarget::Condition(c) if contains_index_served_osm_path(c))
+            matches!(target, FollowTarget::Condition(c) if contains_osm_path(c))
         }
         _ => false,
     }

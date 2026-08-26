@@ -11,6 +11,8 @@ use anyhow::Result;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+use metafolder_core::query::OsmProgress;
+
 use crate::db;
 use crate::log::MAX_TREE_DEPTH;
 
@@ -315,6 +317,99 @@ impl TreeCache {
             }
         }
         Ok(paths)
+    }
+
+    /// The metarecords of `field`'s forest whose assembled path matches `terms`
+    /// as ordered, non-overlapping, case-insensitive substrings — the OSM `Path`
+    /// semantics of spec-query, answered by one walk of the resident forest.
+    ///
+    /// `None` while the cache is incomplete: the walk visits every node, so
+    /// without the forest in memory it would be a database query per node and
+    /// the caller's candidate-pruning path is the right one.
+    ///
+    /// Each node is visited once per *position* (a multi-map TreeRef has one
+    /// path per position, and a node is reached from each of its parents),
+    /// carrying its parent's match progress — so no path is assembled or
+    /// rescanned from the start. Once a branch has consumed every term the whole
+    /// subtree below it matches, since a descendant's path only extends it: it
+    /// is taken wholesale and the walk prunes there.
+    pub fn osm_path_matches(&self, field: &str, terms: &[String]) -> Result<Option<Vec<Uuid>>> {
+        if !self.complete {
+            return Ok(None);
+        }
+        let Some(ft) = self.fields.get(field) else {
+            return Ok(Some(Vec::new()));
+        };
+        let terms_lower: Vec<String> = terms.iter().map(|t| t.to_lowercase()).collect();
+        let mut matched: HashSet<Uuid> = HashSet::new();
+        // The accumulated lower-cased path of the branch being walked. Segments
+        // are lower-cased one by one, which agrees with lower-casing the whole
+        // path: the separator is a word boundary, so no context-dependent casing
+        // straddles it.
+        let mut path = String::new();
+
+        enum Step {
+            Enter(usize, OsmProgress, usize),
+            /// Truncate the accumulated path back to a parent's length.
+            Leave(usize),
+        }
+        let start = OsmProgress::default();
+        let mut stack: Vec<Step> =
+            ft.roots.values().map(|&node| Step::Enter(node, start, 0)).collect();
+
+        while let Some(step) = stack.pop() {
+            let (node, inherited, depth) = match step {
+                Step::Leave(len) => {
+                    path.truncate(len);
+                    continue;
+                }
+                Step::Enter(node, at, depth) => (node, at, depth),
+            };
+            if depth >= MAX_TREE_DEPTH {
+                anyhow::bail!("TreeRef chain deeper than {MAX_TREE_DEPTH} in field '{field}'");
+            }
+            let node = self.node(node);
+            let parent_len = path.len();
+            // A root's path is its bare name; every other node joins with '/'.
+            if depth > 0 {
+                path.push('/');
+            }
+            // Lower-casing dominates this walk (one pass per node), and node
+            // names are overwhelmingly ASCII: fold those in place, byte-wise,
+            // and keep the Unicode iterator for the rest.
+            let name_start = path.len();
+            path.push_str(&node.name);
+            if node.name.is_ascii() {
+                path[name_start..].make_ascii_lowercase();
+            } else {
+                let lowered: String = node.name.chars().flat_map(char::to_lowercase).collect();
+                path.truncate(name_start);
+                path.push_str(&lowered);
+            }
+
+            let at = metafolder_core::query::osm_advance(&path, &terms_lower, inherited);
+            if at.matched == terms_lower.len() {
+                matched.insert(node.uuid);
+                self.collect_subtree(node, &mut matched);
+                path.truncate(parent_len);
+                continue;
+            }
+            stack.push(Step::Leave(parent_len));
+            for &child in node.children.values() {
+                stack.push(Step::Enter(child, at, depth + 1));
+            }
+        }
+        Ok(Some(matched.into_iter().collect()))
+    }
+
+    /// Adds every metarecord below `node` (excluding it) to `out`.
+    fn collect_subtree(&self, node: &Node, out: &mut HashSet<Uuid>) {
+        let mut frontier: Vec<usize> = node.children.values().copied().collect();
+        while let Some(idx) = frontier.pop() {
+            let child = self.node(idx);
+            out.insert(child.uuid);
+            frontier.extend(child.children.values().copied());
+        }
     }
 
     /// Collects all descendants of a metarecord (excluding itself), walking the

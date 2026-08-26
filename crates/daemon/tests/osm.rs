@@ -179,6 +179,56 @@ fn chain(f: &mut Fixture, root: Uuid, segments: &[&str]) -> Uuid {
 }
 
 #[test]
+fn test_osm_path_agrees_between_cache_states() {
+    // The path match has two implementations — a walk of the in-memory forest
+    // (production, complete cache) and the candidate-pruning DB path (cold
+    // cache) — so they need an oracle against each other. Multi-term shapes are
+    // where they can drift: ordering, terms landing in the same segment, a term
+    // spanning the `/` separator, case folding, and terms shorter than the FTS
+    // trigram floor.
+    let mut f = Fixture::new();
+    let root = f.node(None, "", vec![]);
+    let video = f.node(Some(root), "video", vec![]);
+    let series = f.node(Some(video), "series", vec![]);
+    f.node(Some(series), "science-fiction", vec![]);
+    f.node(Some(series), "Science.and.Society", vec![]);
+    let music = f.node(Some(root), "music", vec![]);
+    f.node(Some(music), "jazz", vec![]);
+    let deep = chain(&mut f, root, &["a", "ab", "abc", "abcd"]);
+    f.node(Some(deep), "science", vec![]);
+
+    const BATTERY: [&str; 20] = [
+        "", "s", "sc", "sci", "science", "SCIENCE", "video scien", "scien video",
+        "ser vid", "a b", "video/series", "series/science", "ce-fi", "zz", "a a a",
+        "science fiction", "music jazz", "jazz music", "nope", "vid ser scien",
+    ];
+    // Cold first — the cache only ever populates lazily here, never completely.
+    let cold: Vec<Vec<Uuid>> = BATTERY
+        .iter()
+        .map(|terms| {
+            let mut hits = f.run(&osm("mfr_path", terms));
+            hits.sort();
+            hits
+        })
+        .collect();
+    assert!(!f.cache.is_complete(), "the cold run must not complete the cache");
+
+    // Guard against a battery that proves nothing because everything is empty.
+    assert!(
+        cold.iter().filter(|hits| !hits.is_empty()).count() >= 12,
+        "too few discriminating terms in the battery"
+    );
+
+    f.cache.populate(&f.conn).unwrap();
+    assert!(f.cache.is_complete());
+    for (terms, want) in BATTERY.iter().zip(cold) {
+        let mut got = f.run(&osm("mfr_path", terms));
+        got.sort();
+        assert_eq!(got, want, "cache-state divergence on terms {terms:?}");
+    }
+}
+
+#[test]
 fn test_osm_path_with_complete_cache() {
     // Mirrors production: the tree cache is eagerly populated (is_complete()),
     // so descendants/paths come from memory, not the DB walk the other tests use.

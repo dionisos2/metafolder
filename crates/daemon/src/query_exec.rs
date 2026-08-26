@@ -214,9 +214,12 @@ fn is_index_text_leaf(q: &Query) -> bool {
     match q {
         Query::Matches { .. } => true,
         Query::Osm { mode: OsmMode::Direct, .. } => true,
-        // A single-term (any length) and an empty Osm Path are served natively
-        // by the index; only the order-sensitive multi-term form needs resolving.
-        Query::Osm { mode: OsmMode::Path, terms, .. } => terms.len() > 1,
+        // An empty Osm Path is `IsPresent` and a single separator-free term is a
+        // subtree union: the index serves both natively. Everything else needs
+        // the assembled path, so it is resolved here.
+        Query::Osm { mode: OsmMode::Path, terms, .. } => {
+            !terms.is_empty() && crate::index::osm_path_indexable(terms).is_none()
+        }
         _ => false,
     }
 }
@@ -597,8 +600,16 @@ pub fn osm_path_matches(
     if terms.is_empty() {
         return all_tree_ref_nodes(conn, field);
     }
+    // The production path: one walk of the resident forest, no SQL at all.
+    if let Some(matched) = cache.osm_path_matches(field, terms)? {
+        return Ok(matched);
+    }
+    // Pruning by node *name* is only sound for a term that fits inside one
+    // segment: a term containing the separator can only match across segments,
+    // so no name contains it and it would prune everything away.
+    let prunable = |t: &&String| t.chars().count() >= 3 && !t.contains('/');
     let mut candidates: Option<std::collections::HashSet<Uuid>> = None;
-    for term in terms.iter().filter(|t| t.chars().count() >= 3) {
+    for term in terms.iter().filter(prunable) {
         let mut reachable = std::collections::HashSet::new();
         for node in osm_name_nodes(conn, field, term)? {
             reachable.insert(node);
@@ -614,9 +625,10 @@ pub fn osm_path_matches(
             return Ok(Vec::new());
         }
     }
-    // A single ≥3-char term needs no ordered check: every candidate lies under a
-    // node whose name contains the term, so its path contains the term.
-    if matches!(terms, [only] if only.chars().count() >= 3) {
+    // A single ≥3-char, separator-free term needs no ordered check: every
+    // candidate lies under a node whose name contains the term, so its path
+    // contains the term.
+    if matches!(terms, [only] if prunable(&only)) {
         return Ok(candidates.map(|s| s.into_iter().collect()).unwrap_or_default());
     }
     // Otherwise verify the ordered match on the real path. With no ≥3-char term
@@ -628,7 +640,7 @@ pub fn osm_path_matches(
     let mut matched = Vec::new();
     for uuid in candidates {
         for path in cache.paths_of(conn, field, uuid)? {
-            if osm_ordered_match(&path.to_lowercase(), terms) {
+            if metafolder_core::query::osm_ordered_match(&path.to_lowercase(), terms) {
                 matched.push(uuid);
                 break;
             }
@@ -641,25 +653,9 @@ pub fn osm_path_matches(
 /// `["con", "def"]` → `(?i)con.*def`. Terms are regex-escaped; empty `terms`
 /// yields `(?i)`, which matches any string ("present" semantics). Unanchored
 /// (`REGEXP` searches), so this is exactly "con then def, non-overlapping".
-fn osm_regex(terms: &[String]) -> String {
+pub(crate) fn osm_regex(terms: &[String]) -> String {
     let body = terms.iter().map(|t| regex::escape(t)).collect::<Vec<_>>().join(".*");
     format!("(?i){body}")
-}
-
-/// Whether `terms` occur in `haystack` as ordered, non-overlapping substrings.
-/// `haystack` must already be lower-cased; the terms are lower-cased here. This
-/// is the OSM `Path` verifier: since a term never contains `/`, a term match
-/// can never straddle a path separator, so the `/` barrier holds automatically.
-fn osm_ordered_match(haystack_lower: &str, terms: &[String]) -> bool {
-    let mut from = 0;
-    for term in terms {
-        let needle = term.to_lowercase();
-        match haystack_lower[from..].find(&needle) {
-            Some(at) => from += at + needle.len(),
-            None => return false,
-        }
-    }
-    true
 }
 
 fn hex_decode(s: &str) -> Result<Vec<u8>, ApiError> {
