@@ -375,6 +375,28 @@ describe('collectArgs', () => {
     expect(fn).not.toHaveBeenCalled();
   });
 
+  // Building a candidate list can be expensive (every path of a TreeRef forest
+  // is one daemon round-trip plus tens of thousands of strings). Awaiting it
+  // before opening the input froze the GUI for seconds on a large repository —
+  // the prompt must appear at once and take the candidates when they land.
+  test('a slow completion source does not delay the prompt', async () => {
+    let release: (list: string[]) => void = () => {};
+    const slow: ArgSpec = {
+      name: 'value',
+      prompt: () => 'Value?',
+      complete: () => new Promise<string[]>((resolve) => (release = resolve)),
+    };
+    const { fn, requests } = scriptedPrompt(['typed-by-hand']);
+
+    const result = await collectArgs([slow], [], fn);
+
+    // Prompted and answered while the candidates were still being built.
+    expect(result).toEqual(['typed-by-hand']);
+    expect(requests).toHaveLength(1);
+    release(['a', 'b']);
+    await expect(Promise.resolve(requests[0].completions)).resolves.toEqual(['a', 'b']);
+  });
+
   test('absent initial/complete yield empty initial and no completions', async () => {
     const bare: ArgSpec = { name: 'x', prompt: () => 'X?' };
     const { fn, requests } = scriptedPrompt(['v']);

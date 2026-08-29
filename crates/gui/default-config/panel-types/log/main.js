@@ -52,6 +52,10 @@ export async function mount(root, metafolder) {
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
   const graphCheckbox = byId(root, 'graph', HTMLInputElement);
+  const statusLine = byId(root, 'status-line');
+  /** Repository-wide log size (`GET /log` totals), independent of the window
+   *  actually fetched. @type {{operations: number, revisions: number}|null} */
+  let totals = null;
 
   async function refresh() {
     if (!repo) {
@@ -67,10 +71,15 @@ export async function mount(root, metafolder) {
       const query = graphMode ? '?mode=tree' : `?mode=active&limit=${limit}`;
       const log = /** @type {{operations?: Operation[], head?: number,
        *                      revisions?: {id: number, timestamp: number,
-       *                                  label: string|null}[]}} */ (
+       *                                  label: string|null}[],
+       *                      total_operations?: number, total_revisions?: number}} */ (
         await daemon.call('GET', `/repos/${repo}/log${query}`)
       );
       operations = log.operations ?? [];
+      totals =
+        typeof log.total_operations === 'number' && typeof log.total_revisions === 'number'
+          ? { operations: log.total_operations, revisions: log.total_revisions }
+          : null;
       const head = log.head;
       /** @type {Map<number, number>} */
       const opCount = new Map();
@@ -95,8 +104,30 @@ export async function mount(root, metafolder) {
       moreBox.hidden = graphMode || operations.length < limit;
     } catch (error) {
       moreBox.hidden = true;
+      totals = null;
+      statusLine.textContent = '';
       placeholderElement.textContent = error instanceof Error ? error.message : String(error);
     }
+  }
+
+  /** How much log there is: what is on screen, and — when the fetched window is
+   *  only part of it — the repository-wide totals it was cut from. */
+  function renderStatusLine() {
+    if (!repo) {
+      statusLine.textContent = '';
+      return;
+    }
+    const shownRevs = revisions.length;
+    const shownOps = operations.length;
+    const parts = [
+      `${shownRevs} revision${shownRevs === 1 ? '' : 's'}`,
+      `${shownOps} operation${shownOps === 1 ? '' : 's'}`,
+    ];
+    let line = parts.join(' · ');
+    if (totals && (totals.revisions > shownRevs || totals.operations > shownOps)) {
+      line += ` — of ${totals.revisions} / ${totals.operations} in the repository`;
+    }
+    statusLine.textContent = line;
   }
 
   /** Selects a revision; with toggleOps, also expands/collapses its operations.
@@ -208,6 +239,7 @@ export async function mount(root, metafolder) {
             expandedRev === rev.id ? [revisionRow(rev), operationsRow(rev)] : [revisionRow(rev)],
           )),
     );
+    renderStatusLine();
   }
 
   // Navigation restores the state as of the END of the selected revision.

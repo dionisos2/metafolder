@@ -41,6 +41,8 @@ pub struct App {
     /// `[ref-completion-seeds]`): field name → the `tree_ref` field to seed the
     /// value completion and resolve typed paths against.
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
+    /// External programs offered by `file:open-with` (config.toml `open-with`).
+    pub open_with: Vec<String>,
     pub daemon: Arc<DaemonProxy>,
     /// Shared /gui/input + /gui/prompt wait lock.
     pub input: Arc<crate::server::input_wait::InputWait>,
@@ -494,6 +496,14 @@ pub fn picker_seed(app: AppHandle, field: String) -> Option<String> {
 #[tauri::command]
 pub fn ref_completion_seed(app: AppHandle, field: String) -> Option<String> {
     app.ref_completion_seeds.get(&field).cloned()
+}
+
+/// The external programs `file:open-with` offers as completions (config.toml
+/// `open-with`, spec-gui "Opening a file with another program"). Candidates
+/// only — the prompt accepts any command line the user types.
+#[tauri::command]
+pub fn open_with_programs(app: AppHandle) -> Vec<String> {
+    app.open_with.clone()
 }
 
 // ── Scripting waits ──────────────────────────────────────────────────────

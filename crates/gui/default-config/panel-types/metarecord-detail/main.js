@@ -173,7 +173,10 @@ export async function mount(root, metafolder) {
 
   /** @param {string} name */
   const isReserved = (name) => name.startsWith('mfr_');
-  const dirty = () => workspace.set('metarecords:dirty', Date.now());
+  const dirty = () => {
+    forgetTreePaths(); // our own write may have moved a node in some forest
+    return workspace.set('metarecords:dirty', Date.now());
+  };
 
   /** @param {string|null} message */
   function showError(message) {
@@ -775,18 +778,39 @@ export async function mount(root, metafolder) {
     return { type, value: { parent: res.uuid, name } };
   }
 
+  /** Memoized forest paths, keyed `repo|field`. Building one is a whole-forest
+   *  `resolve-tree` plus tens of thousands of strings (~1 s on a 50 000-record
+   *  repository); `m s` / `m a` / `m v` would each pay it again. The promise is
+   *  cached, so concurrent prompts share one round-trip. Dropped whenever the
+   *  data changes — a stale candidate list would offer paths that no longer
+   *  exist. @type {Map<string, Promise<string[]>>} */
+  const treePathsCache = new Map();
+  function forgetTreePaths() {
+    treePathsCache.clear();
+  }
+
   /** Every path in `field`'s forest, for tree_ref value completion (a static
    *  list filtered client-side; bounded by the forest size). @param {string} repo @param {string} field */
-  async function treePathsForField(repo, field) {
-    const body = /** @type {Record<string, string[]>} */ (
-      await daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
-        query: { type: 'is_present', field },
-        field,
-      })
-    );
-    const paths = new Set();
-    for (const list of Object.values(body)) for (const p of list) paths.add(p);
-    return [...paths].sort();
+  function treePathsForField(repo, field) {
+    const key = `${repo}|${field}`;
+    const hit = treePathsCache.get(key);
+    if (hit) return hit;
+    const pending = (async () => {
+      const body = /** @type {Record<string, string[]>} */ (
+        await daemon.call('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+          query: { type: 'is_present', field },
+          field,
+        })
+      );
+      const paths = new Set();
+      for (const list of Object.values(body)) for (const p of list) paths.add(p);
+      return [...paths].sort();
+    })();
+    // A failed build must not be cached, or the field completes to nothing
+    // until the panel is remounted.
+    pending.catch(() => treePathsCache.delete(key));
+    treePathsCache.set(key, pending);
+    return pending;
   }
 
   /** Path completions for a value of `type` on `field`: the field's own forest
@@ -1383,14 +1407,21 @@ export async function mount(root, metafolder) {
   // reads fresh data even when the change came from a non-metarecord write
   // (e.g. a rollback, which the per-write invalidation can't pinpoint).
   async function onMetarecordsDirty() {
+    forgetTreePaths();
     if (editingField !== null || addFieldInProgress()) return;
     if (current?.repo) await cache.sync(current.repo);
     void load();
   }
   workspace.onChange('metarecords:dirty', () => void onMetarecordsDirty());
 
+  // A daemon-side change nobody in the GUI raised (a rename made outside it,
+  // picked up by the change feed) must drop the memoized forest paths too, or
+  // the value completion would keep offering positions that no longer exist.
+  const unsubscribeCache = cache.subscribe(() => forgetTreePaths());
+
   current = /** @type {Selection|null} */ ((await workspace.get('selected_metarecord')) ?? null);
   await load();
+  return () => unsubscribeCache();
 }
 
 /** The payload a Value carries, or undefined for `nothing` (which has none) —

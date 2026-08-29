@@ -11,6 +11,15 @@ daemon-port = 7523
 # `mf gui` CLI reads this same value to reach the GUI (no gui.port file).
 gui-port = 7524
 
+# External programs offered by `file:open-with` ("g w", and "Open with…" in the
+# right-click menu of any file row) to open the selected file or folder. These
+# are completion candidates, not a whitelist: the prompt accepts any command
+# line, and the whole line is run verbatim with the selected paths appended
+# (so entries may carry flags, e.g. "gimp -n"). Output goes to the message
+# panel, exactly like a `!` command. Defaults to the desktop's own handler.
+open-with = ["xdg-open"]
+# open-with = ["xdg-open", "mpv", "gimp", "libreoffice", "gimp -n"]
+
 # Progressive list loading: how many rows/tiles each list panel renders per
 # window before more are fetched/revealed on scroll (a footer shows
 # "loaded/total"). Smallest for metarecord-list (each row needs several daemon

@@ -13,6 +13,11 @@
   --mf-ok: #56c44c;
   /* orphaned metarecords: the tracked file no longer exists on disk */
   --mf-orphan: #b07ad6;
+  /* Row selection. Two distinct fills, so "where the keyboard cursor is" and
+     "which rows a bulk edit would touch" never have to be told apart by a
+     hairline outline. */
+  --mf-cursor: #39408c;
+  --mf-checked: #24402a;
   --mf-tab-focused: #56c44c;
   --mf-tab-unfocused: #c44c56;
   --mf-font: sans-serif;

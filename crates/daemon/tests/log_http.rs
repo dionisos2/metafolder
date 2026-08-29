@@ -126,6 +126,35 @@ async fn test_log_linear_and_filters() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// The log response carries the repository-wide totals, so a client showing a
+/// bounded window (the GUI log panel fetches the most recent `limit`
+/// operations) can still say how much log there is. The totals count the whole
+/// log, not the returned window, and are unaffected by `limit`/`mode`.
+#[tokio::test]
+async fn test_log_reports_repository_wide_totals() {
+    let (app, repo, root) = setup("totals").await;
+    let entry = create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}]))
+        .await;
+    let uuid = entry["uuid"].as_str().unwrap();
+    for n in 2..6 {
+        patch(&app, &repo, uuid, "a", json!({"type": "int", "value": n})).await;
+    }
+
+    let full = get_log(&app, &repo, "").await;
+    let operations = full["operations"].as_array().unwrap().len() as i64;
+    let revisions = full["revisions"].as_array().unwrap().len() as i64;
+    assert_eq!(full["total_operations"], operations);
+    assert_eq!(full["total_revisions"], revisions);
+
+    // A bounded window still reports the whole log's size.
+    let limited = get_log(&app, &repo, "?mode=active&limit=2").await;
+    assert_eq!(limited["operations"].as_array().unwrap().len(), 2);
+    assert_eq!(limited["total_operations"], operations);
+    assert_eq!(limited["total_revisions"], revisions);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[tokio::test]
 async fn test_log_active_line_through_head() {
     let (app, repo, root) = setup("active").await;

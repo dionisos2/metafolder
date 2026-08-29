@@ -932,7 +932,24 @@ async fn get_log(
                 }
             }
         }
-        Ok(Json(json!({"head": head, "operations": op_values, "revisions": revisions})))
+        // Repository-wide totals, so a client showing a bounded window (the GUI
+        // log panel fetches only the most recent `limit` operations) can still
+        // report how much log there is. Two counts off the primary keys — not
+        // the size of the returned window, and unaffected by `limit`/`mode`.
+        let total_operations: i64 = conn
+            .query_row("SELECT COUNT(*) FROM operation", [], |r| r.get(0))
+            .map_err(anyhow::Error::from)?;
+        let total_revisions: i64 = conn
+            .query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))
+            .map_err(anyhow::Error::from)?;
+
+        Ok(Json(json!({
+            "head": head,
+            "operations": op_values,
+            "revisions": revisions,
+            "total_operations": total_operations,
+            "total_revisions": total_revisions,
+        })))
     })
     .await
 }

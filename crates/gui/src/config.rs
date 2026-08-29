@@ -143,6 +143,11 @@ pub struct GuiConfig {
     /// the name of a `tree_ref` field whose paths seed the value completion and
     /// against which a typed path is resolved back to the target uuid.
     pub ref_completion_seeds: std::collections::HashMap<String, String>,
+    /// External programs offered by `file:open-with` (spec-gui "Opening a file
+    /// with another program"), read from the top-level `open-with` array. They
+    /// are completion candidates, not a whitelist: any command line may be
+    /// typed. Defaults to the desktop's own handler.
+    pub open_with: Vec<String>,
 }
 
 impl GuiConfig {
@@ -180,6 +185,7 @@ impl Default for GuiConfig {
             panels: PanelSettings::default(),
             picker_seeds: std::collections::HashMap::new(),
             ref_completion_seeds: std::collections::HashMap::new(),
+            open_with: vec!["xdg-open".to_string()],
         }
     }
 }
@@ -540,6 +546,18 @@ mod tests {
             Some("full_name")
         );
         assert_eq!(parsed.ref_completion_seeds.get("missing"), None);
+    }
+
+    #[test]
+    fn test_open_with_defaults_to_the_desktop_handler_and_parses() {
+        // Omitted: the system's default handler, always available on a desktop
+        // — so "Open with…" offers something out of the box.
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert_eq!(empty.open_with, vec!["xdg-open".to_string()]);
+
+        let parsed: GuiConfig =
+            toml::from_str("open-with = ['mpv', 'gimp', 'xdg-open']\n").unwrap();
+        assert_eq!(parsed.open_with, vec!["mpv", "gimp", "xdg-open"]);
     }
 
     fn kb_dir() -> ConfigDir {

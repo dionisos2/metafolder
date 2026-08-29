@@ -210,6 +210,20 @@ describe('file-actions shared operations', () => {
     expect(trash.trashPath).not.toHaveBeenCalled();
   });
 
+  test('Open with… publishes the clicked path, then runs the file:open-with builtin', async () => {
+    const { metafolder, workspace, commands } = mockMf();
+    const menu = fileMenuItems({ metafolder, repo: 'r', path: '/dir/a.txt', name: 'a.txt', isDir: false });
+    expect(labels(menu)).toContain('Open with…');
+
+    item(menu, 'Open with…').action!();
+    // The builtin acts on `selected_paths`, so the right-clicked row must
+    // become the selection before it runs — not whatever the cursor sat on.
+    await vi.waitFor(() =>
+      expect(workspace.set).toHaveBeenCalledWith('selected_paths', ['/dir/a.txt']),
+    );
+    await vi.waitFor(() => expect(commands.invoke).toHaveBeenCalledWith('file:open-with'));
+  });
+
   test('the default menu falls back to metarecords:dirty when no onChanged is given', async () => {
     const { metafolder, fs, workspace } = mockMf();
     setClipboard({ paths: ['/a/one.txt'], mode: 'copy' });

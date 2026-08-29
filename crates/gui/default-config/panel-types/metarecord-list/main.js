@@ -519,7 +519,11 @@ export async function mount(root, metafolder) {
         const card = el(
           'div',
           {
-            class: ['card', index === cursorIndex && 'cursor'],
+            class: [
+              'card',
+              index === cursorIndex && 'cursor',
+              checked.has(metarecord.uuid) && 'checked',
+            ],
             onclick: () => setCursor(index),
             ondblclick: () => openSelected(),
           },

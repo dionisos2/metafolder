@@ -22,16 +22,20 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** @param {unknown} raw an Entry, or null when the log was cleared */
+  /** Newest first (spec-gui "Message view"): a new entry goes on TOP, so the
+   *  latest output is where the eye already is and no scrolling is needed.
+   *  @param {unknown} raw an Entry, or null when the log was cleared */
   function append(raw) {
     const entry = /** @type {Entry|null} */ (raw);
     if (entry === null) {
       log.replaceChildren(); // log cleared
       return;
     }
-    const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 10;
-    log.appendChild(line(entry));
-    if (atBottom) log.scrollTop = log.scrollHeight;
+    // Only follow the newest entry when the reader is already at the top;
+    // someone scrolled down into the history keeps their position.
+    const atTop = log.scrollTop <= 10;
+    log.prepend(line(entry));
+    if (atTop) log.scrollTop = 0;
   }
 
   byId(root, 'clear').addEventListener('click', () => {
@@ -39,8 +43,10 @@ export async function mount(root, metafolder) {
   });
 
   messages.onAppend(append);
-  for (const entry of await messages.list()) {
-    log.appendChild(line(/** @type {Entry} */ (entry)));
+  // `messages.list()` is oldest-first; the panel shows the reverse.
+  const history = await messages.list();
+  for (let i = history.length - 1; i >= 0; i--) {
+    log.appendChild(line(/** @type {Entry} */ (history[i])));
   }
-  log.scrollTop = log.scrollHeight;
+  log.scrollTop = 0;
 }

@@ -526,12 +526,20 @@ Response body:
   "revisions": [
     {"id": 1, "timestamp": 1700000000000, "label": null},
     {"id": 2, "timestamp": 1700000001000, "label": "before-cleanup"}
-  ]
+  ],
+  "total_operations": 3,
+  "total_revisions": 2
 }
 #+END_SRC
 
 Only revisions referenced by at least one returned operation are included in
 =revisions=.
+
+=total_operations= and =total_revisions= count the *whole* log of the
+repository, not the returned window: they are unaffected by =mode=, =limit=,
+=metarecord_uuid= and the time filters. A client showing a bounded window (the
+GUI log panel fetches only the most recent =limit= operations) reports how much
+log there is from them.
 
 *** =GET /repos/:repo_uuid/log/revisions/:rev_id=
 

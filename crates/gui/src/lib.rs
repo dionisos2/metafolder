@@ -115,6 +115,11 @@ fn register_builtins(registry: &CommandRegistry) {
             true,
         ),
         ("recent", "Open a recently-viewed metarecord", true),
+        (
+            "file:open-with",
+            "Open the selected file or folder with an external program",
+            true,
+        ),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
@@ -196,6 +201,7 @@ pub fn run(options: Options) {
     let page_sizes = gui_config.page_size.clone();
     let picker_seeds = gui_config.picker_seeds.clone();
     let ref_completion_seeds = gui_config.ref_completion_seeds.clone();
+    let open_with = gui_config.open_with.clone();
     let settings = gui_config.settings.clone();
     let cache_sizes = gui_config.cache.clone();
     let panel_settings = gui_config.panels.clone();
@@ -242,6 +248,7 @@ pub fn run(options: Options) {
                 page_sizes: page_sizes.clone(),
                 picker_seeds: picker_seeds.clone(),
                 ref_completion_seeds: ref_completion_seeds.clone(),
+                open_with: open_with.clone(),
                 settings: settings.clone(),
                 cache_sizes: cache_sizes.clone(),
                 panel_settings: panel_settings.clone(),
@@ -494,6 +501,7 @@ pub fn run(options: Options) {
             commands::pick_cancel,
             commands::picker_seed,
             commands::ref_completion_seed,
+            commands::open_with_programs,
             commands::command_done,
             commands::bench_record,
             commands::prompt_resolve,

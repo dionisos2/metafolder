@@ -90,6 +90,15 @@
         text-align: center;
         color: var(--mf-fg-dim, #8a8a96);
       }
+      #status-line {
+        padding: 3px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+        font-size: 0.9em;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
     </style>
   </head>
   <body>
@@ -114,5 +123,6 @@
         <button id="show-more">Show older operations</button>
       </div>
     </div>
+    <div id="status-line"></div>
   </body>
 </html>

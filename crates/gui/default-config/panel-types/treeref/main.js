@@ -43,15 +43,11 @@ export async function mount(root, metafolder) {
   /** @type {string|null} the repo repoRootPath was fetched for */
   let repoRootFor = null;
 
-  // `fetchChildren` is a hoisted function declaration, so onChange can name it.
+  // `setField` is a hoisted function declaration, so onChange can name it.
   const fieldSelect = createSelect(byId(root, 'field'), {
     value: field,
     options: [{ value: field }],
-    onChange: (v) => {
-      field = v;
-      stack = [];
-      void fetchChildren(true);
-    },
+    onChange: (v) => void setField(v),
   });
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
@@ -64,7 +60,9 @@ export async function mount(root, metafolder) {
 
   // ── Field picker ──────────────────────────────────────────────────────────
 
-  async function loadFields() {
+  /** The repo's TreeRef field names, the current one always among them (it
+   *  stays selectable even if the catalog is momentarily empty). */
+  async function treeRefFieldNames() {
     /** @type {{name: string}[]} */
     let list = [];
     try {
@@ -75,8 +73,23 @@ export async function mount(root, metafolder) {
       await statusBar.error(error);
     }
     const names = list.map((f) => f.name);
-    // The current field stays selectable even if the list is momentarily empty.
     if (!names.includes(field)) names.unshift(field);
+    return names;
+  }
+
+  /** Switches the explored forest to `name` and reloads from its roots. Shared
+   *  by the drop-down's onChange and the `treeref:set-field` command.
+   *  @param {string} name */
+  async function setField(name) {
+    if (name === field) return;
+    field = name;
+    stack = [];
+    fieldSelect.setValue(name); // mirror the command into the drop-down
+    await fetchChildren(true);
+  }
+
+  async function loadFields() {
+    const names = await treeRefFieldNames();
     fieldSelect.setOptions(
       names.map((name) => ({ value: name })),
       field,
@@ -299,6 +312,20 @@ export async function mount(root, metafolder) {
   void commands.register('treeref:refresh', {
     label: 'TreeRef explorer: reload from the daemon',
     handler: () => refresh(),
+  });
+  // The drop-down's keyboard equivalent: pick the TreeRef field to explore
+  // without leaving the keyboard (spec-gui "treeref panel type").
+  void commands.register('treeref:set-field', {
+    label: 'TreeRef explorer: explore another TreeRef field',
+    args: [
+      {
+        name: 'field',
+        prompt: () => 'TreeRef field to explore?',
+        initial: () => field,
+        complete: () => treeRefFieldNames(),
+      },
+    ],
+    handler: (name) => setField(name.trim()),
   });
 
   // Keybindings for this panel live in keybindings.toml (when = "treeref").

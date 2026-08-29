@@ -139,12 +139,18 @@ export interface ArgSpec {
   complete?: (partial: string, prior: string[]) => string[] | Promise<string[]>;
 }
 
-/** One argument's fully-resolved prompt, handed to the prompt driver. */
+/** One argument's resolved prompt, handed to the prompt driver.
+ *
+ *  `completions` may still be *pending*: building a candidate list can cost a
+ *  daemon round-trip and tens of thousands of strings (every path of a TreeRef
+ *  forest), and waiting for it before opening the input froze the GUI for
+ *  seconds on a large repository. The driver opens the prompt at once and
+ *  fills the list in when it lands. */
 export interface ArgPromptRequest {
   argName: string;
   prompt: string;
   initial: string;
-  completions: string[];
+  completions: string[] | Promise<string[]>;
 }
 
 /** Drives one interactive argument prompt; resolves to the entered string,
@@ -500,6 +506,47 @@ async function resolveScriptPath(choice: string): Promise<string | null> {
   return hit?.path ?? null;
 }
 
+// ── Opening a file with another program (the `file:open-with` builtin) ──────
+// A shell builtin, so it works from whichever panel carries the selection
+// (`selected_paths`). The program is collected in the command input, completing
+// over the configured `open-with` list — candidates, not a whitelist: any
+// command line may be typed, and it is run exactly as a `!` command is (output
+// in the message panel), without stealing the focused slot.
+
+/** The configured `open-with` candidates (config.toml), or none on failure. */
+async function openWithPrograms(): Promise<string[]> {
+  try {
+    return await invoke<string[]>('open_with_programs');
+  } catch {
+    return [];
+  }
+}
+
+/** Runs `<commandLine> <paths…>`. `commandLine` is inserted verbatim (so
+ *  `gimp -n` or `env FOO=1 mpv` work); only the paths are quoted. */
+async function openWith(commandLine: string, ws: string | null): Promise<void> {
+  const program = commandLine.trim();
+  if (!program) return;
+  if (!ws) return;
+  const paths = await invoke('ws_get_var', { wsId: ws, key: 'selected_paths' });
+  const files = (Array.isArray(paths) ? paths : []).filter(
+    (p): p is string => typeof p === 'string' && p !== '',
+  );
+  if (files.length === 0) {
+    await status('no file or folder is selected');
+    return;
+  }
+  await runShell([program, ...files.map(shellQuote)].join(' '));
+}
+
+registerArgs('file:open-with', [
+  {
+    name: 'program',
+    prompt: () => 'Open with which program?',
+    complete: () => openWithPrograms(),
+  },
+]);
+
 /** Single-quote a path for `sh -c`, escaping embedded single quotes. */
 function shellQuote(path: string): string {
   return `'${path.replace(/'/g, `'\\''`)}'`;
@@ -537,11 +584,15 @@ export async function collectArgs(
       continue;
     }
     const spec = specs[i];
+    // `prompt` and `initial` are awaited — they are what the input shows and
+    // pre-fills. `complete` is NOT: it is handed over as it comes (an array, or
+    // a promise the driver resolves once the input is already open), so a slow
+    // candidate list never delays the prompt.
     const answer = await promptFn({
       argName: spec.name,
       prompt: await spec.prompt(result),
       initial: spec.initial ? await spec.initial(result) : '',
-      completions: spec.complete ? await spec.complete('', result) : [],
+      completions: spec.complete ? spec.complete('', result) : [],
     });
     if (answer === null) return null;
     result.push(answer);
@@ -687,9 +738,23 @@ async function promptForArg(request: ArgPromptRequest): Promise<string | null> {
   return new Promise<string | null>((resolve) => {
     store.ui.promptResolver = resolve;
     store.ui.promptText = request.prompt;
-    store.ui.promptCompletions = request.completions;
+    store.ui.promptCompletions = [];
     store.ui.promptInitial = request.initial;
     store.ui.commandInputFocusTick += 1;
+    // Pending candidates land later; ignore them if the user has meanwhile
+    // answered or cancelled and another prompt owns the input.
+    if (Array.isArray(request.completions)) {
+      store.ui.promptCompletions = request.completions;
+    } else {
+      void request.completions.then(
+        (list) => {
+          if (store.ui.promptResolver === resolve) store.ui.promptCompletions = list;
+        },
+        () => {
+          /* a failed candidate list just means no completions */
+        },
+      );
+    }
   });
 }
 
@@ -951,6 +1016,12 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // The `metarecord` argument was collected by dispatch (with completion);
       // args[0] is the picked display line.
       if (ws && args[0]) await openRecent(args[0], ws);
+      return true;
+    case 'file:open-with':
+      // The `program` argument was collected by dispatch (completing over the
+      // configured list); the whole tail is the command line, so `gimp -n` and
+      // any other flags survive.
+      await openWith(args.join(' '), ws);
       return true;
     case 'script:run': {
       // The `script` argument was collected by dispatch (with completion);

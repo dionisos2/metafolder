@@ -880,6 +880,7 @@ Behaviours:
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
+| =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
 | =ignore:list=        | Show the installed ignore presets and the target's active patterns in the =message= panel — see [[*Ignore patterns]] |
 | =ignore:add <preset>= | Append an ignore preset's patterns to the target directory (completes over the installed presets) |
 | =ignore:remove <preset>= | Remove an ignore preset's patterns from the target directory |
@@ -1109,9 +1110,10 @@ metarecord is replaced by the =devtools:open= command, which opens the WebKit
 inspector (no default keybinding; the =devtools= Tauri feature keeps it
 available in release builds).
 
-Panels backed by files prepend the shared *file actions* — Cut, Copy, Paste,
-Rename, Duplicate, Copy full path (the entry's absolute OS path, to the text
-clipboard) and Move to trash — for the right-clicked metarecord's file
+Panels backed by files prepend the shared *file actions* — Open with…, Cut,
+Copy, Paste, Rename, Duplicate, Copy full path (the entry's absolute OS path,
+to the text clipboard) and Move to trash — for the right-clicked metarecord's
+file
 (the file-manager, metarecord-list, metarecord-detail, file, recent, ref-list
 and the =mfr_path= treeref). They come from =/__file-actions.js=, whose
 clipboard is one realm-wide singleton, so a Cut/Copy in any of them pastes in
@@ -1877,7 +1879,10 @@ by the daemon. The primary use is observing a tag hierarchy.
 
 *Field picker*: a dropdown of the repo's TreeRef field names
 (=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
-default. Changing the field resets navigation to the roots.
+default. Changing the field resets navigation to the roots. =treeref:set-field=
+(=f=) is its keyboard equivalent: it asks for the field name in the command
+input, completing over the same list and pre-filled with the current field, and
+mirrors the pick back into the dropdown.
 
 *Navigation*: by *parent UUID*, not by path string, so a name containing =/=
 is handled correctly. The view *starts at the forest roots*, fetched from
@@ -1898,7 +1903,7 @@ so =metarecord-detail= follows) and =selected_treeref=
 (=\{repo, field, uuid, path\}=, consumed by =ref-list=).
 
 *Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
-=Backspace=/=Left= go up; =r= refreshes.
+=Backspace=/=Left= go up; =r= refreshes; =f= picks the explored field.
 
 | Command            | Description                                  |
 |--------------------+----------------------------------------------|
@@ -1906,6 +1911,7 @@ so =metarecord-detail= follows) and =selected_treeref=
 | =treeref:parent=   | Go up one level                              |
 | =treeref:root=     | Jump to the forest roots                     |
 | =treeref:refresh=  | Reload the field list and current children   |
+| =treeref:set-field= | Explore another TreeRef field (arg: field name) |
 
 *** =ref-list= panel type
 
@@ -1979,7 +1985,11 @@ identical repeated request re-triggers while the same request acts only once).
 
 ** Message view
 
-The =message= panel type is a scrollable, append-only log, *per-workspace*.
+The =message= panel type is a scrollable, append-only log, *per-workspace*,
+shown *newest first* (anti-chronological): a new entry is prepended, so the
+latest output is always at the top with no scrolling. The view follows the
+newest entry only while the reader is already at the top — someone who
+scrolled down into the history keeps their position.
 It receives:
 - All messages posted to the active workspace's status bar (with timestamp).
 - Every command invocation dispatched in this workspace, echoed as
@@ -1994,6 +2004,28 @@ It receives:
 
 The log is cleared by the =message:clear= command. It is not persisted across
 sessions.
+
+** Opening a file with another program
+
+Everything the GUI cannot show itself is handed to an external program.
+=file:open-with= (default =g w=, and *Open with…* in the right-click menu of
+any file row) asks for the program in the command input and runs it on the
+current selection.
+
+- *Target*: =selected_paths= — so it works from whichever panel carries the
+  selection (list, detail, file, file-manager, recent, ref-list, treeref). The
+  menu item publishes the right-clicked row as the selection first, exactly
+  like the reveal commands do. With nothing selected it reports "no file or
+  folder is selected" and does nothing.
+- *Program*: the argument completes over the top-level =open-with= array of the
+  GUI =config.toml= (default =["xdg-open"]=, the desktop's own handler). Those
+  are *candidates, not a whitelist*: any command line may be typed, and the
+  whole line is inserted verbatim so flags survive (=gimp -n=). Only the paths
+  are shell-quoted, and they are appended after the line.
+- *Execution*: the same subprocess path as a =!= command (output in the
+  =message= panel, a spinner in the [[*Task bar]]) — but the focused slot is
+  *not* switched to the =message= panel: launching a viewer must not disturb
+  what is on screen.
 
 ** Reconcile
 
@@ -2125,6 +2157,12 @@ A click — or =up= / =down= (also =k= / =j=), via =log:prev= / =log:next= —
 moves the selection (over every listed node, in either presentation). A double
 click or =Enter= (=log:toggle-ops=) expands the revision to show its individual
 operations (and collapses it again).
+
+A status line under the list says how much log there is: the number of
+revisions and operations currently listed and, when the fetched window is only
+part of the log, the repository-wide totals it was cut from
+(=total_revisions= / =total_operations= of =GET .../log=) — so "Show older
+operations" has a visible destination.
 
 *** Revision commands
 

@@ -52,7 +52,7 @@ fn test_load_keybindings_reads_the_single_file_as_the_full_set() {
 
     // The shipped file carries the default binding.
     let set = config.load_keybindings().unwrap();
-    let t = set.compiled().into_iter().find(|b| b.keys == ["t"]).unwrap();
+    let t = set.compiled().into_iter().find(|b| b.keys == ["ctrl+t"]).unwrap();
     assert_eq!(t.invocation, "tab:new");
 }
 
@@ -72,7 +72,7 @@ fn test_set_user_keybinding_upserts_and_persists() {
     let reloaded = config.load_keybindings().unwrap();
     let compiled = reloaded.compiled();
     assert!(compiled.iter().any(|b| b.keys == ["alt+t"] && b.invocation == "panel:split"));
-    assert!(compiled.iter().any(|b| b.keys == ["t"] && b.invocation == "tab:new"));
+    assert!(compiled.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "tab:new"));
 }
 
 #[test]
@@ -144,8 +144,8 @@ fn test_panel_dir_resolution() {
 }
 
 // The metarecord-list search-field editing shortcuts (GUI: search commands).
-// `panel:unsplit` moved off `c` (freeing it for the clear-then-edit chords),
-// and the finder's Enter now leaves the field while Shift+Enter keeps it.
+// `panel:unsplit` moved off `c`, and the finder's Enter now leaves the field
+// while Shift+Enter keeps it.
 #[test]
 fn test_search_field_editing_keybindings() {
     let (_guard, config) = temp_config();
@@ -169,11 +169,12 @@ fn test_search_field_editing_keybindings() {
             .map(|b| b.invocation.clone())
     };
 
-    // `panel:unsplit` moved from `c` to `u`; `c` is now free (no global single).
+    // `panel:unsplit` moved from `c` to `u`; every remaining `c` binding is
+    // panel-scoped (no global single), so the clear keys never fire elsewhere.
     assert_eq!(find(&["u"]), ["panel:unsplit"]);
     assert!(
-        find(&["c"]).is_empty(),
-        "`c` must be free for the clear chords, got {:?}",
+        compiled.iter().filter(|b| b.keys == ["c"]).all(|b| b.when.is_some()),
+        "`c` must stay panel-scoped, got {:?}",
         find(&["c"])
     );
 
@@ -182,11 +183,13 @@ fn test_search_field_editing_keybindings() {
     assert_eq!(mlist(&["e", "s"]).as_deref(), Some("metarecord-list:edit-simplified"));
     assert_eq!(mlist(&["e", "q"]).as_deref(), Some("metarecord-list:edit-normal"));
 
-    // Clear-then-edit family: c f / c s / c q, and c a clears all three.
-    assert_eq!(mlist(&["c", "f"]).as_deref(), Some("metarecord-list:clear-edit-finder"));
-    assert_eq!(mlist(&["c", "s"]).as_deref(), Some("metarecord-list:clear-edit-simplified"));
-    assert_eq!(mlist(&["c", "q"]).as_deref(), Some("metarecord-list:clear-edit-normal"));
-    assert_eq!(mlist(&["c", "a"]).as_deref(), Some("metarecord-list:clear-queries"));
+    // Clear-then-edit family: the bare field letter clears and edits that
+    // field, and `c` clears all three. All scoped to the list, so the single
+    // letters do nothing in any other panel.
+    assert_eq!(mlist(&["f"]).as_deref(), Some("metarecord-list:clear-edit-finder"));
+    assert_eq!(mlist(&["s"]).as_deref(), Some("metarecord-list:clear-edit-simplified"));
+    assert_eq!(mlist(&["q"]).as_deref(), Some("metarecord-list:clear-edit-normal"));
+    assert_eq!(mlist(&["c"]).as_deref(), Some("metarecord-list:clear-queries"));
 
     // Finder Enter leaves the field (submit-finder); Shift+Enter re-runs but
     // keeps focus (apply-finder). Both are focus-scoped to the finder input.

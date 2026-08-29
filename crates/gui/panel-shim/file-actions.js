@@ -238,8 +238,19 @@ async function trashPath(metafolder, repo, path, label, onChanged, statusMs) {
 }
 
 /**
- * The Cut / Copy / Paste / Rename / Duplicate / Move-to-trash menu items for a
- * metarecord's file at `path`. `isDir` (when known) picks the paste target;
+ * Opens `path` with an external program: publishes it as the selection, then
+ * runs the `file:open-with` builtin, which asks for the program in the command
+ * input (completing over the configured `open-with` list).
+ * @param {MetafolderApi} metafolder @param {string} path
+ */
+async function openWithExternal(metafolder, path) {
+  await metafolder.workspace.set('selected_paths', [path]);
+  await metafolder.commands.invoke('file:open-with');
+}
+
+/**
+ * The Open-with / Cut / Copy / Paste / Rename / Duplicate / Move-to-trash menu
+ * items for a metarecord's file at `path`. `isDir` (when known) picks the paste target;
  * `onChanged` is called after any successful mutation.
  *
  * @param {{ metafolder: MetafolderApi, repo: string, path: string,
@@ -274,6 +285,13 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
       action: () => void pasteInto(metafolder, path, isDir, nudge, statusMs),
     },
     '-',
+    {
+      // The `file:open-with` builtin acts on `selected_paths`, so the
+      // right-clicked row becomes the selection first — the same handoff
+      // `rowActionsProvider` already does for the reveal commands.
+      label: 'Open with…',
+      action: () => void openWithExternal(metafolder, path),
+    },
     { label: 'Rename…', action: () => void renamePath(metafolder, path, nudge, statusMs) },
     { label: 'Duplicate', action: () => void duplicatePath(metafolder, path, nudge, statusMs) },
     {

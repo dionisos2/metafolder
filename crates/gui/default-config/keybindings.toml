@@ -98,6 +98,13 @@
 # with each script's `# Summary:` as the description. Global, like `g r`.
 "g s" = { command = "script:run" }
 
+# Open the selected file/folder with an external program ("g w" = go → with):
+# asks for the program in the command input, completing over the `open-with`
+# list of the GUI config.toml (candidates, not a whitelist — any command line
+# may be typed). Acts on `selected_paths`, so it works from any panel carrying
+# a selection; the same action sits in the right-click menu as "Open with…".
+"g w" = { command = "file:open-with" }
+
 # Open a loaded repository ("g o" = go → open): opens the `repos:switch` picker
 # in the command input, completing over the daemon's loaded repositories. Picks
 # it like a click in the repos panel (adopt in place, else a new workspace).
@@ -265,7 +272,12 @@
 "e f" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "e s" = { command = "metarecord-list:edit-simplified", when = "metarecord-list" }
 "e q" = { command = "metarecord-list:edit-normal", when = "metarecord-list" }
-"f" = { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" }
+"f" = [
+  { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" },
+  # treeref: pick which TreeRef field's forest the panel explores (the
+  # drop-down's keyboard equivalent; the field name completes).
+  { command = "treeref:set-field", when = "treeref" },
+]
 "s" = { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" }
 "q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
 "c" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
