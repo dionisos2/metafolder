@@ -730,12 +730,28 @@ mod tests {
         // reason). Only RLIMIT_FSIZE can fail this one.
         let dir = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-fsize");
         std::fs::create_dir_all(&dir).expect("mkdir");
+        // `trap "" XFSZ` for the *test only*: an ignored disposition survives
+        // exec, so the write past the limit returns EFBIG instead of killing
+        // the writer. Production keeps the kill; here it would make the
+        // kernel run the core_pattern helper (systemd-coredump) once per run,
+        // flooding the journal with "terminated abnormally" entries for a
+        // test that passed. What is under test — the write is capped — is
+        // unchanged either way.
         let output = run(&Spec::new("sh")
             .arg("-c")
-            .arg(format!("dd if=/dev/zero of={}/runaway bs=1M count=256 2>/dev/null", dir.display()))
+            .arg(format!(
+                "trap \"\" XFSZ; dd if=/dev/zero of={}/runaway bs=1M count=256 2>/dev/null",
+                dir.display()
+            ))
             .read_write(&dir));
 
-        assert!(!output.status.success(), "a write past the file-size limit must be killed");
+        assert!(!output.status.success(), "a write past the file-size limit must fail");
+        let code = output.status.code().unwrap_or(-1);
+        assert!(
+            (1..128).contains(&code),
+            "the write must fail cleanly, not by a fatal signal (128 + signo), or every run \
+             leaves a coredump entry in the journal; got exit status {code}"
+        );
         let written = std::fs::metadata(dir.join("runaway")).map(|meta| meta.len()).unwrap_or(0);
         assert!(written < 256 * 1024 * 1024, "the write must have been cut short, got {written}");
         let _ = std::fs::remove_dir_all(&dir);
