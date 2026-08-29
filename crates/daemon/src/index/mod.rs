@@ -60,12 +60,19 @@ pub type NodeRoots = HashMap<(String, String), Option<Uuid>>;
 /// exact-node `Eq`/`Neq` operands. Bundled so the evaluation threads one
 /// context.
 #[derive(Default)]
-pub struct QueryRoots {
+pub struct QueryRoots<'a> {
     pub path: PathRoots,
     pub node: NodeRoots,
+    /// Resolver for the full-path sort keys of a `tree_ref` sort key. Like the
+    /// two maps above it is a tree-cache lookup the index cannot do itself, but
+    /// it is a *resolver* rather than a map: which metarecords need a key is
+    /// only known once the query has been evaluated. `None` — or a resolver
+    /// whose forest is not fully resident — makes a `tree_ref` sort
+    /// [`Unsupported`], deferring to the SQL engine.
+    pub keys: Option<&'a crate::tree_cache::SortKeys<'a>>,
 }
 
-impl QueryRoots {
+impl QueryRoots<'_> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -165,17 +172,26 @@ pub fn contains_osm_path(q: &Query) -> bool {
 }
 
 /// One sort key's resolved lookups: the field's encoding (for a BSI
-/// representative) and its small sort store (for every other encoding).
+/// representative) and its small sort store (for every other encoding) — or,
+/// on a `tree_ref` field, the tree-cache resolver that rebuilds full-path keys.
 struct KeyLookup<'a> {
     field: Option<&'a FieldIndex>,
     store: Option<&'a SortReps>,
+    /// Set on a `tree_ref` field: `(field name, resolver)`. A tree value sorts
+    /// on its whole path, which is not stored anywhere (a directory rename
+    /// would stale it), so it is rebuilt per query from the tree cache.
+    tree: Option<(&'a str, &'a crate::tree_cache::SortKeys<'a>)>,
     want_max: bool,
 }
 
 impl KeyLookup<'_> {
     /// A metarecord's representative for this key. A BSI field reads it from the
-    /// bit-slices; every other encoding uses the sort store.
-    fn rep(&self, id: u32) -> Option<SortRep> {
+    /// bit-slices, a tree field from the path resolver, every other encoding
+    /// from the sort store.
+    fn rep(&self, id: u32, uuid: Uuid) -> Option<SortRep> {
+        if let Some((field, keys)) = self.tree {
+            return keys.pick(field, uuid, self.want_max).map(SortRep::Tree);
+        }
         self.field
             .and_then(|fi| fi.bsi_sort_rep(id, self.want_max))
             .or_else(|| self.store.and_then(|s| s.rep(id, self.want_max)).cloned())
@@ -214,6 +230,15 @@ fn unsupported(what: impl Into<String>) -> Unsupported {
 /// the separate sort store.
 fn is_bsi_value(value: &Value) -> bool {
     matches!(value, Value::Int(_) | Value::Float(_) | Value::DateTime(_))
+}
+
+/// Whether a value needs an entry in the separate sort store. Two kinds do not:
+/// a BSI value reads its representative from the bit-slices, and a `TreeRef`
+/// sorts on its whole path, rebuilt per query from the tree cache
+/// (`tree_cache::SortKeys`) — the bare name the store would hold is not that
+/// key, and on `mfr_path` it would be the store's single biggest population.
+fn stores_sort_rep(value: &Value) -> bool {
+    !is_bsi_value(value) && !matches!(value, Value::TreeRef { .. })
 }
 
 pub struct RepoIndex {
@@ -331,9 +356,7 @@ impl RepoIndex {
                 value => {
                     present.entry(row.name.clone()).or_default().insert(id);
                     types.entry(row.name.clone()).or_insert_with(|| value.type_str());
-                    // BSI fields derive their sort representative from the
-                    // bit-slices, so they skip the separate sort store.
-                    if !is_bsi_value(&value) {
+                    if stores_sort_rep(&value) {
                         sort.entry(row.name.clone()).or_default().insert(&value, id);
                     }
                     fields
@@ -546,20 +569,19 @@ impl RepoIndex {
         if let Some(&first) = non_nothing.first() {
             self.present.entry(field.to_string()).or_default().insert(id);
             self.types.insert(field.to_string(), first.type_str());
-            let is_bsi = {
+            {
                 let enc = self
                     .fields
                     .entry(field.to_string())
                     .or_insert_with(|| FieldIndex::for_value(first));
                 enc.set_member(id, &non_nothing);
-                enc.is_bsi()
-            };
-            // BSI fields read their sort representative from the bit-slices,
-            // so they keep no entry in the separate sort store.
-            if !is_bsi {
+            }
+            if non_nothing.iter().any(|v| stores_sort_rep(v)) {
                 let sr = self.sort.entry(field.to_string()).or_default();
                 for &v in &non_nothing {
-                    sr.insert(v, id);
+                    if stores_sort_rep(v) {
+                        sr.insert(v, id);
+                    }
                 }
             }
         }
@@ -630,7 +652,7 @@ impl RepoIndex {
     ) -> Result<(Vec<Uuid>, Option<String>, u64), Unsupported> {
         let matched = self.eval(q, Some(roots))?;
         let total = matched.len();
-        let (page, next) = self.page_of(matched, q, sort, limit, cursor)?;
+        let (page, next) = self.page_of(matched, q, sort, limit, cursor, Some(roots))?;
         Ok((page, next, total))
     }
 
@@ -643,7 +665,7 @@ impl RepoIndex {
         roots: Option<&QueryRoots>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         let matched = self.eval(q, roots)?;
-        self.page_of(matched, q, sort, limit, cursor)
+        self.page_of(matched, q, sort, limit, cursor, roots)
     }
 
     /// Sorts, cuts and paginates an already-evaluated match set.
@@ -654,6 +676,7 @@ impl RepoIndex {
         sort: &[SortBy],
         limit: Option<usize>,
         cursor: Option<&str>,
+        roots: Option<&QueryRoots<'_>>,
     ) -> Result<(Vec<Uuid>, Option<String>), Unsupported> {
         use std::cmp::Ordering;
         let guard = page_guard(q, sort);
@@ -673,13 +696,14 @@ impl RepoIndex {
         // metarecord) and one of uuids, ordered by a permutation of indices.
         // A `Vec` per metarecord — the obvious shape — meant one heap allocation
         // for every row of the match set, on every page.
-        let keys = self.key_lookups(sort);
+        let keys = self.key_lookups(sort, roots)?;
         let width = keys.len();
         let mut reps: Vec<Option<SortRep>> = Vec::with_capacity(matched.len() as usize * width);
         let mut uuids: Vec<Uuid> = Vec::with_capacity(matched.len() as usize);
         for id in &matched {
-            reps.extend(keys.iter().map(|k| k.rep(id)));
-            uuids.push(self.registry.uuid(id).expect("interned id"));
+            let uuid = self.registry.uuid(id).expect("interned id");
+            reps.extend(keys.iter().map(|k| k.rep(id, uuid)));
+            uuids.push(uuid);
         }
         let row = |i: usize| &reps[i * width..(i + 1) * width];
         let cmp = |a: &u32, b: &u32| {
@@ -725,12 +749,31 @@ impl RepoIndex {
     /// A sort key with its two lookups already resolved. Resolving them per
     /// metarecord meant two string-keyed hash lookups for every row of the match
     /// set on every page; the field is the same for all of them.
-    fn key_lookups<'a>(&'a self, sort: &[SortBy]) -> Vec<KeyLookup<'a>> {
+    fn key_lookups<'a>(
+        &'a self,
+        sort: &'a [SortBy],
+        roots: Option<&'a QueryRoots<'a>>,
+    ) -> Result<Vec<KeyLookup<'a>>, Unsupported> {
         sort.iter()
-            .map(|k| KeyLookup {
-                field: self.fields.get(&k.field),
-                store: self.sort.get(&k.field),
-                want_max: !k.ascending,
+            .map(|k| {
+                let tree = if self.types.get(k.field.as_str()) == Some(&"tree_ref") {
+                    // A tree sort needs the whole forest in memory to rebuild
+                    // the paths; without it the SQL engine (which reconstructs
+                    // them in SQL) is the only engine that can answer.
+                    let keys = roots
+                        .and_then(|r| r.keys)
+                        .filter(|keys| keys.is_resident())
+                        .ok_or_else(|| unsupported("tree_ref sort without a resident forest"))?;
+                    Some((k.field.as_str(), keys))
+                } else {
+                    None
+                };
+                Ok(KeyLookup {
+                    field: self.fields.get(&k.field),
+                    store: self.sort.get(&k.field),
+                    tree,
+                    want_max: !k.ascending,
+                })
             })
             .collect()
     }

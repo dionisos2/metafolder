@@ -348,9 +348,34 @@ Sort semantics per metarecord for a sort field =F=:
 - All non-=Nothing= rows of =F= share one value type (see [[*One value type per
   field name]]), so values compare within that single type by its natural order:
   numeric for =Int=/=Float=/=DateTime= (the Unix-ms =value_int=), lexicographic
-  for =String=, =value_name= for =TreeRef=, UUID bytes for the reference types.
-  No cross-type precedence is needed (it cannot arise within one field); only the
-  =Nothing=/unknown-last rule above applies.
+  for =String=, the *whole path* for =TreeRef= (below), UUID bytes for the
+  reference types. No cross-type precedence is needed (it cannot arise within one
+  field); only the =Nothing=/unknown-last rule above applies.
+
+**** Sorting a =TreeRef= field
+
+A =TreeRef= sorts on its metarecord's *whole root-relative path*, not on the
+=value_name= the string predicates of [[file:spec-query.org][spec-query.org]] compare against: an order
+by last component alone interleaves every directory and reads as arbitrary.
+
+Two paths compare *component by component*, each component lexicographically,
+and a path that is a prefix of another comes first. So =/photos/2021/a.jpg= <
+=/photos/z.jpg= < =/photos-old/a.jpg= — a directory and everything under it stay
+together, which comparing the literal path strings would not give (=-= sorts
+before =/=). The multi-map rule applies to paths like to any other value: a
+metarecord at several locations sorts on its smallest path ascending, its
+largest descending.
+
+Implementation note: both engines reduce a path to one *sort key* — its
+components joined by =U+0001=, a separator below every character a name may
+hold, which makes a plain byte comparison of two keys the component-wise
+comparison above. The key is internal (compared, and carried inside opaque
+cursors; never displayed). It is never stored: renaming a directory changes the
+path of its whole subtree while touching a single field row, so a materialised
+key would go stale behind the index's incremental refresh. The in-memory index
+rebuilds it from the (resident) tree cache, memoising ancestors; the SQL engine
+rebuilds it with a recursive CTE, and takes over whenever the forest is not
+fully resident.
 
 *** Response envelope
 

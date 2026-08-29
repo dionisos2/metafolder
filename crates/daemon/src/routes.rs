@@ -1969,12 +1969,12 @@ fn ensure_index<'g>(
 /// the SQL early-`limit` optimisation that keeps a bare-leaf *page* cheaper does
 /// not apply); an Osm-Path leaf anywhere in the query forces it too — see
 /// [`crate::index::contains_osm_path`].
-fn prepare_indexed_query(
+fn prepare_indexed_query<'a>(
     conn: &rusqlite::Connection,
     cache: &mut crate::tree_cache::TreeCache,
     query: &MetaQuery,
     full_set: bool,
-) -> Result<(crate::index::QueryRoots, MetaQuery), ApiError> {
+) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
     let mut roots = crate::index::QueryRoots::new();
     let mut path_targets = Vec::new();
     crate::index::collect_path_targets(query, &mut path_targets);
@@ -2056,7 +2056,12 @@ fn run_query_filter(
     // list asks for `count` on the first page only, and if that toggled the
     // preparation, page 1 and page 2 could run on different engines and reject
     // each other's cursor.
-    let (roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
+    let (mut roots, indexed_query) = prepare_indexed_query(conn, cache, &body.query, false)?;
+    // Full-path sort keys for a `tree_ref` sort key, rebuilt from the resident
+    // forest (spec-data-model "Sort specification"). Borrows the cache, so the
+    // borrow must end before the SQL fallback below takes it mutably again.
+    let sort_keys = crate::tree_cache::SortKeys::new(cache);
+    roots.keys = Some(&sort_keys);
 
     let mut index_guard = repo_state.index.lock_recover();
     let index = ensure_index(conn, &mut index_guard, cancel)?;

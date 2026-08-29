@@ -137,12 +137,6 @@ impl FieldIndex {
         }
     }
 
-    /// Whether this encoding derives its sort representative from the BSI (so it
-    /// must NOT also be added to the separate sort store).
-    pub fn is_bsi(&self) -> bool {
-        matches!(self, FieldIndex::Bsi(_))
-    }
-
     /// The ids whose `value_name` satisfies `keep`, for a `tree_ref` field — the
     /// in-memory `value_name REGEXP` scan (see [`ReverseIndex::scan_names`]).
     /// Empty for any other encoding, which has no name partition.

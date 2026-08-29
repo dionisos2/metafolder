@@ -87,11 +87,17 @@ string or a sub-query, both are =TreeRef=-only. The subtree form is the natural
 way to select a metarecord together with everything under it — e.g. a tag and
 all of its narrower tags (=tag -> (path =>* "music/jazz")=).
 
-String operations on a =TreeRef= row apply to =value_name= (the single name
-component) — the same convention everywhere: comparisons (=Eq=/=Neq= and the
-ordered operators) with a string operand, =Matches=, and sorting. So
+String *predicates* on a =TreeRef= row apply to =value_name= (the single name
+component) — the same convention for all of them: comparisons (=Eq=/=Neq= and
+the ordered operators) with a string operand, and =Matches=. So
 =mfr_path = "2021"= matches every metarecord whose =mfr_path= name is exactly
 =2021=, wherever it sits in the tree.
+
+*Sorting is the exception*: a =TreeRef= sort key orders on the *whole path*, not
+on the name (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.org]]). A predicate
+selects, and selecting by name — anywhere in the tree — is a useful thing to
+ask; an order by name alone is not, it just interleaves every directory. The
+path-shaped predicates are the =/=-bearing operand and =->*= below.
 
 *Exact-node equality.* There is one refinement of that convention: when the
 =Eq=/=Neq= string operand contains the path separator =/=, it is not a

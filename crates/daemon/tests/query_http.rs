@@ -1002,3 +1002,53 @@ async fn test_unsupported_query_falls_back_to_sql() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[tokio::test]
+async fn test_query_sort_on_tree_ref_uses_the_full_path() {
+    // End to end: a sort on a `tree_ref` field orders by the whole path,
+    // component by component (spec-data-model "Sorting a `TreeRef` field") —
+    // not by the last name component, which would interleave the directories.
+    let (app, repo, root) = setup("treesort").await;
+    let node = |parent: Option<&str>, name: &str| {
+        json!([
+            {"name": "cat",
+             "value": {"type": "tree_ref", "value": {"parent": parent, "name": name}}},
+            {"name": "k", "value": {"type": "string", "value": "x"}},
+        ])
+    };
+    let top = create(&app, &repo, node(None, "top")).await;
+    let photos = create(&app, &repo, node(Some(&top), "photos")).await;
+    let y2021 = create(&app, &repo, node(Some(&photos), "2021")).await;
+    let jpg = create(&app, &repo, node(Some(&y2021), "a.jpg")).await;
+    let zjpg = create(&app, &repo, node(Some(&photos), "z.jpg")).await;
+    let old = create(&app, &repo, node(Some(&top), "photos-old")).await;
+    let old_jpg = create(&app, &repo, node(Some(&old), "a.jpg")).await;
+
+    let q = json!({"type": "eq", "field": "k", "value": {"type": "string", "value": "x"}});
+    let (status, page) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": q, "sort": [{"field": "cat", "order": "asc"}], "limit": 50})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let results: Vec<&str> =
+        page["results"].as_array().unwrap().iter().map(|v| v.as_str().unwrap()).collect();
+    assert_eq!(
+        results,
+        vec![
+            top.as_str(),
+            photos.as_str(),
+            y2021.as_str(),
+            jpg.as_str(),
+            zjpg.as_str(),
+            old.as_str(),
+            old_jpg.as_str(),
+        ],
+        "top, top/photos, top/photos/2021, top/photos/2021/a.jpg, top/photos/z.jpg, \
+         then the whole top/photos-old subtree"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}

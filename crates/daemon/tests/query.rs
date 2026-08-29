@@ -208,8 +208,9 @@ fn test_ordered_string_comparison_on_tree_ref_name() {
         Value::TreeRef { parent: Some(root), name: "2022".into() },
     )]);
 
-    // Same convention as sorting: tree_ref rows order by their name.
-    // root's name is "" and also sorts before "2022".
+    // A string *predicate* on a tree_ref row compares the name (sorting is the
+    // exception — it uses the whole path). root's name is "" and so also
+    // compares before "2022".
     assert_same_set(
         f.run(&Query::Lt { field: "mfr_path".into(), value: s("2022") }),
         vec![root, y2021],
@@ -1017,4 +1018,73 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
     )
     .unwrap_err();
     assert!(err.message.contains("cursor"), "unexpected error: {}", err.message);
+}
+
+/// Builds a small `mfr_path` forest and returns the metarecords in the order a
+/// full-path sort must produce (ascending). The names are chosen so that the
+/// *name-only* order (the old convention) and the *plain path string* order both
+/// differ from it: `photos-old` interleaves with `photos/…` under a literal `/`
+/// separator, and `b` / `b.txt` invert.
+fn tree_fixture(f: &mut Fixture) -> Vec<Uuid> {
+    let node = |f: &mut Fixture, parent: Option<Uuid>, name: &str| {
+        f.create(vec![
+            Field::new("mfr_path", Value::TreeRef { parent, name: name.into() }),
+            Field::new("k", s("x")),
+        ])
+    };
+    let root = node(f, None, "");
+    let a = node(f, Some(root), "a");
+    let a_b_dir = node(f, Some(a), "b");
+    let a_b_c = node(f, Some(a_b_dir), "c.txt");
+    let a_btxt = node(f, Some(a), "b.txt");
+    let photos = node(f, Some(root), "photos");
+    let y2021 = node(f, Some(photos), "2021");
+    let y2021_a = node(f, Some(y2021), "a.jpg");
+    let photos_z = node(f, Some(photos), "z.jpg");
+    let old = node(f, Some(root), "photos-old");
+    let old_a = node(f, Some(old), "a.jpg");
+    vec![root, a, a_b_dir, a_b_c, a_btxt, photos, y2021, y2021_a, photos_z, old, old_a]
+}
+
+#[test]
+fn test_sort_tree_ref_orders_by_full_path() {
+    let mut f = Fixture::new();
+    let expected = tree_fixture(&mut f);
+    let all = Query::Eq { field: "k".into(), value: s("x") };
+
+    assert_eq!(
+        f.run_sorted(&all, &[sort_asc("mfr_path")]),
+        expected,
+        "tree_ref sorts on the whole path, component by component"
+    );
+    let mut reversed = expected.clone();
+    reversed.reverse();
+    assert_eq!(f.run_sorted(&all, &[sort_desc("mfr_path")]), reversed);
+}
+
+#[test]
+fn test_sort_tree_ref_multimap_uses_min_path_for_asc() {
+    // A metarecord at two locations sorts on its smallest path ascending and on
+    // its largest descending — the multi-map rule, applied to full paths.
+    let mut f = Fixture::new();
+    let root =
+        f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "".into() })]);
+    let mk = |f: &mut Fixture, name: &str| {
+        f.create(vec![
+            Field::new("loc", Value::TreeRef { parent: Some(root), name: name.into() }),
+            Field::new("k", s("x")),
+        ])
+    };
+    let a = mk(&mut f, "a");
+    let m = mk(&mut f, "m");
+    // `both` lives at /a/x and /m/x: min path "/a/x" < "/m/…", max "/m/x" > "/a/…".
+    let both = f.create(vec![
+        Field::new("loc", Value::TreeRef { parent: Some(a), name: "x".into() }),
+        Field::new("loc", Value::TreeRef { parent: Some(m), name: "x".into() }),
+        Field::new("k", s("x")),
+    ]);
+
+    let all = Query::Eq { field: "k".into(), value: s("x") };
+    assert_eq!(f.run_sorted(&all, &[sort_asc("loc")]), vec![a, both, m], "asc: min = /a/x");
+    assert_eq!(f.run_sorted(&all, &[sort_desc("loc")]), vec![both, m, a], "desc: max = /m/x");
 }

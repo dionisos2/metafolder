@@ -13,7 +13,7 @@ use metafolder_daemon::db;
 use metafolder_daemon::index::{collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
-use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -144,21 +144,14 @@ impl Oracle {
         assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
     }
 
-    /// Like [`Self::check_paginated`] but for a query carrying `Path`-target
-    /// follows: the path roots are resolved through the tree cache and supplied
-    /// to the index exactly as `run_query_filter` does, so this exercises the
-    /// GUI's real scenario (browse a subtree, paginate by a sort key). The SQL
-    /// engine resolves paths itself, so it takes the query unchanged.
+    /// Like [`Self::check_paginated`] but supplying the index every seed
+    /// `run_query_filter` resolves through the tree cache: the roots of a
+    /// `Path`-target follow, and the full-path sort keys of a `tree_ref` sort
+    /// key. This is the GUI's real scenario (browse a subtree, paginate by a
+    /// sort key). The SQL engine resolves both itself, so it takes the query
+    /// unchanged.
     fn check_paginated_with_roots(&mut self, q: &Query, by: &[(&str, bool)], limit: usize) {
         let index = RepoIndex::build(&self.conn).unwrap();
-        let mut targets = Vec::new();
-        collect_path_targets(q, &mut targets);
-        let mut roots = QueryRoots::new();
-        for (field, path) in targets {
-            if let Some(uuid) = self.cache.resolve_path(&self.conn, &field, &path).unwrap() {
-                roots.path.insert((field, path), uuid);
-            }
-        }
         let sql_keys: Vec<SortKey> = by
             .iter()
             .map(|(f, asc)| SortKey {
@@ -168,20 +161,6 @@ impl Oracle {
             .collect();
         let idx_keys: Vec<SortBy> =
             by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
-
-        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
-        let mut cursor: Option<String> = None;
-        loop {
-            let (page, next) = index
-                .evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor.as_deref(), &roots)
-                .unwrap();
-            ipages.push(page);
-            match next {
-                Some(c) => cursor = Some(c),
-                None => break,
-            }
-            assert!(ipages.len() < 10_000, "runaway index pagination");
-        }
 
         let mut spages: Vec<Vec<Uuid>> = Vec::new();
         let mut scursor: Option<String> = None;
@@ -203,7 +182,36 @@ impl Oracle {
             assert!(spages.len() < 10_000, "runaway sql pagination");
         }
 
-        assert_eq!(ipages, spages, "path-target pagination divergence on {q:?} by {by:?}");
+        let mut targets = Vec::new();
+        collect_path_targets(q, &mut targets);
+        let mut resolved = Vec::new();
+        for (field, path) in targets {
+            if let Some(uuid) = self.cache.resolve_path(&self.conn, &field, &path).unwrap() {
+                resolved.push(((field, path), uuid));
+            }
+        }
+        // The daemon warms the whole forest at repo load; a tree sort needs it.
+        self.cache.populate(&self.conn).unwrap();
+        let keys = SortKeys::new(&self.cache);
+        let mut roots = QueryRoots::new();
+        roots.path.extend(resolved);
+        roots.keys = Some(&keys);
+
+        let mut ipages: Vec<Vec<Uuid>> = Vec::new();
+        let mut cursor: Option<String> = None;
+        loop {
+            let (page, next) = index
+                .evaluate_page_with_roots(q, &idx_keys, Some(limit), cursor.as_deref(), &roots)
+                .unwrap();
+            ipages.push(page);
+            match next {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+            assert!(ipages.len() < 10_000, "runaway index pagination");
+        }
+
+        assert_eq!(ipages, spages, "pagination divergence on {q:?} by {by:?} limit {limit}");
     }
 }
 
@@ -1241,4 +1249,108 @@ fn cursor_is_bound_to_query_and_sort() {
     assert!(index.evaluate_page(&present("all"), &by_kind, Some(2), Some(&cursor)).is_err());
     // Against the original query+sort it is accepted.
     assert!(index.evaluate_page(&present("all"), &by_rate, Some(2), Some(&cursor)).is_ok());
+}
+
+// ── Sorting on a tree_ref field (full path) ──────────────────────────────────
+
+/// A forest whose *name* order, *plain path string* order and *component-wise*
+/// order all differ, so a sort that regressed to any of the first two is caught.
+fn tree_sorted() -> Oracle {
+    let mut o = Oracle::new();
+    let node = |o: &mut Oracle, parent: Option<Uuid>, name: &str| {
+        o.create(vec![
+            Field::new("mfr_path", Value::TreeRef { parent, name: name.into() }),
+            Field::new("k", Value::String("x".into())),
+        ])
+    };
+    let root = node(&mut o, None, "");
+    let a = node(&mut o, Some(root), "a");
+    let b = node(&mut o, Some(a), "b");
+    node(&mut o, Some(b), "c.txt");
+    node(&mut o, Some(a), "b.txt");
+    let photos = node(&mut o, Some(root), "photos");
+    let y2021 = node(&mut o, Some(photos), "2021");
+    node(&mut o, Some(y2021), "a.jpg");
+    node(&mut o, Some(photos), "z.jpg");
+    let old = node(&mut o, Some(root), "photos-old");
+    node(&mut o, Some(old), "a.jpg");
+    o
+}
+
+#[test]
+fn tree_ref_sort_matches_sql_engine() {
+    let mut o = tree_sorted();
+    let all = Query::Eq { field: "k".into(), value: Value::String("x".into()) };
+    for limit in [1, 3, 4, 100] {
+        o.check_paginated_with_roots(&all, &[("mfr_path", true)], limit);
+        o.check_paginated_with_roots(&all, &[("mfr_path", false)], limit);
+    }
+    // Secondary key: the tree key decides only the ties of the first one.
+    o.check_paginated_with_roots(&all, &[("k", true), ("mfr_path", true)], 3);
+}
+
+#[test]
+fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
+    // No resolver (or an unpopulated cache) ⇒ the index refuses the sort and the
+    // caller falls back to the SQL engine, which rebuilds the paths in SQL.
+    let o = tree_sorted();
+    let index = RepoIndex::build(&o.conn).unwrap();
+    let all = Query::Eq { field: "k".into(), value: Value::String("x".into()) };
+    let by = [SortBy { field: "mfr_path".into(), ascending: true }];
+    assert!(index.evaluate_sorted(&all, &by, None).is_err(), "no resolver at all");
+
+    let keys = SortKeys::new(&o.cache); // never populated ⇒ not resident
+    let mut roots = QueryRoots::new();
+    roots.keys = Some(&keys);
+    assert!(
+        index.evaluate_page_with_roots(&all, &by, None, None, &roots).is_err(),
+        "resolver over an incomplete forest"
+    );
+    // A non-tree sort is unaffected by the absence of a resolver.
+    let by = [SortBy { field: "k".into(), ascending: true }];
+    assert!(index.evaluate_sorted(&all, &by, None).is_ok());
+}
+
+#[test]
+fn tree_ref_sort_with_a_multi_position_directory() {
+    // A directory at two locations: the tree cache links each child under its
+    // parent's *first* position, and the SQL engine's path CTE must pick the
+    // same one — otherwise the two engines order the subtree differently.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let side = o.create(vec![tref("loc", Some(root), "side")]);
+    let dir = o.create(vec![
+        tref("loc", Some(root), "dir"),
+        tref("loc", Some(side), "dir"),
+        Field::new("k", s("x")),
+    ]);
+    for name in ["a", "b"] {
+        o.create(vec![tref("loc", Some(dir), name), Field::new("k", s("x"))]);
+    }
+    let all = eq("k", s("x"));
+    o.check_paginated_with_roots(&all, &[("loc", true)], 2);
+    o.check_paginated_with_roots(&all, &[("loc", false)], 2);
+}
+
+#[test]
+fn tree_ref_sort_with_a_detached_node() {
+    // A node whose parent lost its own TreeRef row (a forced write; reconcile
+    // and the watcher cascade instead). The cache leaves it detached — treated
+    // as a root — and the SQL path walk must stop there too.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let gone = o.create(vec![tref("loc", Some(root), "gone")]);
+    // Named so that a detached node read as a root ("zzz") and one read as an
+    // unresolvable path (a NULL key, which SQL would sort first) land at
+    // opposite ends of the order.
+    o.create(vec![tref("loc", Some(gone), "zzz"), Field::new("k", s("x"))]);
+    o.create(vec![tref("loc", Some(root), "other"), Field::new("k", s("x"))]);
+    {
+        let mut w = Writer::begin(&mut o.conn, None).unwrap();
+        w.delete_fields_named(gone, "loc").unwrap();
+        w.commit().unwrap();
+    }
+    let all = eq("k", s("x"));
+    o.check_paginated_with_roots(&all, &[("loc", true)], 1);
+    o.check_paginated_with_roots(&all, &[("loc", false)], 1);
 }

@@ -5,7 +5,9 @@
 //! eviction when the node limit is exceeded.
 
 use std::cmp::Reverse;
+use std::cell::RefCell;
 use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::sync::Arc;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -19,6 +21,18 @@ use crate::log::MAX_TREE_DEPTH;
 /// Default node limit, sized so that the cache stays around the spec's
 /// 100 MB default (~200 bytes per node).
 pub const DEFAULT_MAX_NODES: usize = 500_000;
+
+/// Separator joining the components of a *sort key* — the form a `tree_ref`
+/// value takes when a query sorts on it (spec-data-model "Sort specification").
+///
+/// It is deliberately not `/`: a path separator that sorts *below* every
+/// character a name can contain turns a plain byte comparison of two keys into a
+/// component-by-component comparison of the two paths, so a directory and its
+/// contents stay together (`photos/2021` before `photos-old`, which a literal
+/// `/` would interleave since `-` < `/`). Keys are internal — they are never
+/// displayed, only compared and carried inside opaque cursors — and the SQL
+/// engine builds the identical key (`query_exec::path_key_cte`).
+pub const PATH_KEY_SEP: char = '\u{1}';
 
 struct Node {
     field: String,
@@ -794,4 +808,119 @@ impl TreeCache {
         }
         false
     }
+}
+
+
+/// Resolver handing out the full-path *sort keys* of a forest's nodes
+/// ([`PATH_KEY_SEP`]), for the duration of one query.
+///
+/// The keys are rebuilt on demand rather than stored in the index: a directory
+/// rename changes the path of its whole subtree while touching a single field
+/// row, so a materialised key would go stale behind the index's incremental
+/// refresh. Rebuilding is cheap because ancestors are memoised — a directory's
+/// key is assembled once and then shared by every file in it — while leaves,
+/// which are the bulk of a match set and are each needed once, are not kept.
+pub struct SortKeys<'a> {
+    cache: &'a TreeCache,
+    dirs: RefCell<HashMap<usize, Arc<str>>>,
+}
+
+impl<'a> SortKeys<'a> {
+    pub fn new(cache: &'a TreeCache) -> Self {
+        Self { cache, dirs: RefCell::new(HashMap::new()) }
+    }
+
+    /// Whether the keys can be served at all — the forest is fully resident
+    /// ([`TreeCache::is_complete`]). Checked once per sort key rather than per
+    /// metarecord.
+    pub fn is_resident(&self) -> bool {
+        self.cache.complete
+    }
+
+    /// The sort key `uuid` takes in `field`'s forest for the requested
+    /// direction — the multi-map rule over its positions: the smallest path
+    /// ascending, the largest descending. `None` when the metarecord is not in
+    /// the forest (it then sorts last, like any missing value).
+    ///
+    /// Only ever called after [`Self::is_resident`]; it returns the chosen key
+    /// rather than the list so the common single-position row costs no
+    /// allocation beyond its own key.
+    pub fn pick(&self, field: &str, uuid: Uuid, want_max: bool) -> Option<Arc<str>> {
+        let idxs = self.cache.fields.get(field)?.by_uuid.get(&uuid)?;
+        let mut best: Option<Arc<str>> = None;
+        for &idx in idxs {
+            let key = self.key_at(idx);
+            let better = match &best {
+                None => true,
+                Some(b) => {
+                    if want_max {
+                        key > *b
+                    } else {
+                        key < *b
+                    }
+                }
+            };
+            if better {
+                best = Some(key);
+            }
+        }
+        best
+    }
+
+    /// The key of one node: its parent's key (memoised) plus its own name. The
+    /// repo root's empty name gives the leading separator that mirrors the
+    /// leading "/" of `path_of_at`.
+    fn key_at(&self, idx: usize) -> Arc<str> {
+        let node = self.cache.node(idx);
+        match node.parent {
+            None => node.name.as_str().into(),
+            Some(parent) => join_key(&self.dir_key(parent), &node.name),
+        }
+    }
+
+    /// The memoised key of an ancestor node. Walks up to the nearest node whose
+    /// key is already known (or to a root), then fills the chain downward, so a
+    /// deep directory is assembled once per query however many files hang off it.
+    fn dir_key(&self, idx: usize) -> Arc<str> {
+        if let Some(k) = self.dirs.borrow().get(&idx) {
+            return k.clone();
+        }
+        let mut chain = Vec::new();
+        // The key of the topmost chain node's parent, when the walk stopped on a
+        // memoised ancestor rather than on a root.
+        let mut base: Option<Arc<str>> = None;
+        let mut cur = idx;
+        for _ in 0..MAX_TREE_DEPTH {
+            chain.push(cur);
+            match self.cache.node(cur).parent {
+                None => break,
+                Some(parent) => {
+                    if let Some(k) = self.dirs.borrow().get(&parent) {
+                        base = Some(k.clone());
+                        break;
+                    }
+                    cur = parent;
+                }
+            }
+        }
+        let mut key = base;
+        for &i in chain.iter().rev() {
+            let name = &self.cache.node(i).name;
+            let k = match &key {
+                None => Arc::from(name.as_str()),
+                Some(parent) => join_key(parent, name),
+            };
+            self.dirs.borrow_mut().insert(i, k.clone());
+            key = Some(k);
+        }
+        key.expect("the chain holds at least `idx`")
+    }
+}
+
+fn join_key(parent_key: &str, name: &str) -> Arc<str> {
+    let mut key = String::with_capacity(parent_key.len() + name.len() + 1);
+    key.push_str(parent_key);
+    key.push(PATH_KEY_SEP);
+    key.push_str(name);
+    key.into()
 }

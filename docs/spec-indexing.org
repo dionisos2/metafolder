@@ -277,6 +277,16 @@ extrapolating to ~1 GB at 2 M — over budget. Folding the sort key into the BSI
 instead of a standalone store is the pending compaction before 2 M. Cursor
 pagination over the sort key is also deferred.
 
+*Tree sort keys are not stored.* A =tree_ref= sorts on its whole path
+(spec-data-model "Sorting a =TreeRef= field"), and a directory rename rewrites
+the path of its entire subtree while touching one field row — so a stored
+representative would go stale behind the incremental refresh. The index instead
+rebuilds each matched metarecord's key from the resident tree cache
+(=tree_cache::SortKeys=, memoising ancestors so a directory's path is assembled
+once per query), and reports =Unsupported= when the forest is not fully
+resident, deferring to the SQL engine's recursive CTE. It costs nothing in
+steady-state memory and is paid only by the queries that sort on a tree field.
+
 ** Counts are exact (implemented)
 
 The original design proposed *approximate* / "k+" counts to dodge the COUNT wall.

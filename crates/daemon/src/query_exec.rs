@@ -43,6 +43,64 @@ fn default_order() -> SortOrder {
 /// ordering between two real values.
 const NUM_SENTINEL: &str = "-9e99";
 
+/// The recursive CTE that reconstructs the full-path sort key of every
+/// `tree_ref` row of sort key `i`'s field, for the rows of the filtered universe
+/// `_res`. Emitted for every sort key: on a non-`tree_ref` field the base case
+/// selects nothing, so it costs one empty scan.
+///
+/// Each step prepends the parent's name, so a row's *terminal* tuple — the one
+/// the walk could not extend — carries the components of its whole path joined
+/// by [`crate::tree_cache::PATH_KEY_SEP`], a separator below every character a
+/// name can hold, which makes a plain byte comparison of two keys a
+/// component-by-component comparison of the two paths (spec-data-model "Sorting
+/// a `TreeRef` field").
+///
+/// Two details exist only to reproduce, row for row, what the tree cache does
+/// with the same forest — the in-memory index builds its keys from it
+/// (`tree_cache::SortKeys`) and the two engines must not diverge
+/// (`tests/index_oracle.rs`):
+///
+/// - a node is linked under its parent's *first* position, so the step joins the
+///   lowest-id row of the parent rather than all of them;
+/// - a node whose parent has no `tree_ref` row is left detached, i.e. treated as
+///   a root — so the walk stops there too, which is what the terminal predicate
+///   [`path_key_terminal`] adds to "the parent is the root sentinel".
+fn path_key_cte(i: usize) -> String {
+    let sep = crate::tree_cache::PATH_KEY_SEP as u32;
+    let max_depth = crate::log::MAX_TREE_DEPTH;
+    format!(
+        "SELECT f.id, f.value_uuid, f.value_name, 0 \
+           FROM field f JOIN _res ON _res.uuid = f.metarecord_uuid \
+          WHERE f.field_name = ? AND f.value_type = 'tree_ref' \
+         UNION ALL \
+         SELECT p.id, pf.value_uuid, pf.value_name || char({sep}) || p.path_key, p.depth + 1 \
+           FROM _p{i} p JOIN field pf ON pf.id = ({FIRST_TREE_ROW}) \
+          WHERE p.depth < {max_depth} AND p.parent != {ZERO_BLOB_SQL}"
+    )
+}
+
+/// The join condition selecting a row's *terminal* path tuple out of
+/// [`path_key_cte`]'s chain: the walk stopped either at a root or at a parent
+/// carrying no `tree_ref` row (a detached node, which the tree cache treats as a
+/// root as well).
+fn path_key_terminal(i: usize) -> String {
+    format!(
+        "_p{i}.id = field.id AND (_p{i}.parent = {ZERO_BLOB_SQL} \
+             OR NOT EXISTS (SELECT 1 FROM field x \
+                  WHERE x.metarecord_uuid = _p{i}.parent \
+                    AND x.field_name = ? AND x.value_type = 'tree_ref'))"
+    )
+}
+
+/// The lowest-id `tree_ref` row of the node `p.parent` — the position the tree
+/// cache links a child under when its parent is itself multi-position.
+const FIRST_TREE_ROW: &str = "SELECT MIN(x.id) FROM field x \
+     WHERE x.metarecord_uuid = p.parent AND x.field_name = ? AND x.value_type = 'tree_ref'";
+
+/// The 16 zero bytes a root `tree_ref` row stores as its parent
+/// ([`metafolder_core::metarecord::ZERO_UUID`]), as a SQL blob literal.
+const ZERO_BLOB_SQL: &str = "x'00000000000000000000000000000000'";
+
 /// Upper bound on the number of nodes in a single query. A safety valve
 /// against a query that is cheap to send but expensive to *compile* (a wide
 /// `And`/`Or`, deep nesting): it would otherwise build a giant CTE chain and
@@ -333,10 +391,22 @@ pub fn execute(
         let num = "CASE WHEN field.value_type IN ('bool', 'int', 'datetime') \
                 THEN CAST(field.value_int AS REAL) \
              WHEN field.value_type = 'float' THEN field.value_real END";
-        let text = "CASE WHEN field.value_type = 'string' THEN field.value_text \
-             WHEN field.value_type = 'tree_ref' THEN field.value_name END";
+        // A `tree_ref` sorts on its *whole* path, not on the last component
+        // (spec-data-model "Sorting a `TreeRef` field"): `_p{i}` reconstructs
+        // one key per row of the sort field, walking the parent chain up to a
+        // root. The in-memory engine builds the same key from the tree cache.
+        let text = format!(
+            "CASE WHEN field.value_type = 'string' THEN field.value_text \
+             WHEN field.value_type = 'tree_ref' THEN _p{i}.path_key END"
+        );
         let blob = "CASE WHEN field.value_type IN ('ref', 'refbase', 'externalref') \
              THEN field.value_uuid END";
+        ctes.push((format!("_p{i}(id, parent, path_key, depth)"), path_key_cte(i)));
+        // The two `?` of `_p{i}`: the base case's field name, then the
+        // recursive step's (inside `FIRST_TREE_ROW`).
+        params.push(SqlValue::Text(key.field.clone()));
+        params.push(SqlValue::Text(key.field.clone()));
+        let terminal = path_key_terminal(i);
         ctes.push((
             format!("_s{i}"),
             format!(
@@ -350,9 +420,12 @@ pub fn execute(
                    FROM _res LEFT JOIN field \
                      ON field.metarecord_uuid = _res.uuid \
                         AND field.field_name = ? AND field.value_type != 'nothing' \
+                   LEFT JOIN _p{i} ON {terminal} \
                  ) WHERE rn = 1"
             ),
         ));
+        // `_s{i}`'s two `?`: the `field` join's name, then `terminal`'s.
+        params.push(SqlValue::Text(key.field.clone()));
         params.push(SqlValue::Text(key.field.clone()));
 
         // `_s0` is the driver; later keys join 1:1 on uuid (same uuid set).
@@ -398,7 +471,7 @@ pub fn execute(
             })
             .collect();
     let mut sql = format!(
-        "WITH {} SELECT * FROM (SELECT {select_cols} FROM {driver}{joins}){where_clause} ORDER BY {}",
+        "WITH RECURSIVE {} SELECT * FROM (SELECT {select_cols} FROM {driver}{joins}){where_clause} ORDER BY {}",
         cte_sql.join(", "),
         order_by.join(", ")
     );
