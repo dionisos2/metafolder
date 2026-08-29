@@ -35,15 +35,21 @@ rules:
     languages: [rust]
     severity: ERROR
     message: >-
-      Only the watcher (executor.rs) and manual `force` writes may set
-      `mfr_path` to Nothing — reconcile leaves stale TreeRefs in place
-      (spec-file-tracking). Writing Nothing here would erase a path on a file
-      that merely became ineligible.
+      Only the watcher (executor.rs), the orphan sweep (orphans.rs) and manual
+      `force` writes may set `mfr_path` to Nothing — reconcile leaves stale
+      TreeRefs in place (spec-file-tracking). Writing Nothing here would erase a
+      path on a file that merely became ineligible.
     paths:
       include:
         - crates/daemon/src/**
       exclude:
+        # The two deliberate writers of Nothing. The watcher clears the path of a
+        # file it saw disappear; `mf orphan clear` does the same on demand for
+        # the ones it did not see go (a path present but no file behind it) —
+        # that write *is* the feature. What the rule guards against is reconcile,
+        # or any new caller, doing it silently.
         - crates/daemon/src/executor.rs
+        - crates/daemon/src/orphans.rs
     pattern-either:
       - pattern: $W.set_field_as($OP, $E, "mfr_path", Value::Nothing)
       - pattern: $W.set_field($E, "mfr_path", Value::Nothing)
@@ -60,9 +66,11 @@ rules:
       include:
         - crates/daemon/src/watcher.rs
         - crates/daemon/src/executor.rs
-    pattern-either:
-      - pattern: Arc::clone($REPO)
-      - pattern: Arc::new($REPO)
+    # Only `Arc::clone`: a background task can only get a second owning handle on
+    # an *existing* `Arc<RepoState>` by cloning it. `Arc::new` was matched here
+    # too, but it constructs a fresh value — it flagged the watcher's own
+    # `Arc::new(WatcherInner { .. })`, which owns no repository.
+    pattern: Arc::clone($REPO)
 
   - id: mf-unsandboxed-decoder
     languages: [rust]
