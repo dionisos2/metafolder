@@ -29,8 +29,8 @@
 # BOTH panels together so the two slots never drift onto different
 # workspaces unnoticed; splitting across workspaces needs an explicit tab
 # click or the focused-slot tab:next/tab:prev commands.
-"t" = { command = "tab:new" }
-"w" = { command = "tab:close" }
+"ctrl+t" = { command = "tab:new" }
+"ctrl+w" = { command = "tab:close" }
 "n" = { command = "workspace:next" }
 "p" = { command = "workspace:prev" }
 "1" = { command = "tab:goto 1" }
@@ -68,20 +68,20 @@
 
 # Panel type switching: "s" then one letter (the status bar lists the
 # continuations while the sequence is pending; escape cancels it).
-"s l" = { command = "panel:set-type metarecord-list" }
-"s d" = { command = "panel:set-type metarecord-detail" }
-"s f" = { command = "panel:set-type file" }
-"s m" = { command = "panel:set-type file-manager" }
-"s o" = { command = "panel:set-type log" }
-"s r" = { command = "panel:set-type repos" }
-"s g" = { command = "panel:set-type message" }
-"s w" = { command = "panel:set-type workspace-info" }
-"s t" = { command = "panel:set-type treeref" }
-"s e" = { command = "panel:set-type ref-list" }
-"s b" = { command = "panel:set-type trash" }
-"s y" = { command = "panel:set-type sync" }
-"s p" = { command = "panel:set-type help" }
-"s v" = { command = "panel:set-type recent" }
+"t l" = { command = "panel:set-type metarecord-list" }
+"t d" = { command = "panel:set-type metarecord-detail" }
+"t f" = { command = "panel:set-type file" }
+"t m" = { command = "panel:set-type file-manager" }
+"t o" = { command = "panel:set-type log" }
+"t r" = { command = "panel:set-type repos" }
+"t g" = { command = "panel:set-type message" }
+"t w" = { command = "panel:set-type workspace-info" }
+"t t" = { command = "panel:set-type treeref" }
+"t e" = { command = "panel:set-type ref-list" }
+"t b" = { command = "panel:set-type trash" }
+"t y" = { command = "panel:set-type sync" }
+"t p" = { command = "panel:set-type help" }
+"t v" = { command = "panel:set-type recent" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:help" }
@@ -265,10 +265,10 @@
 "e f" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "e s" = { command = "metarecord-list:edit-simplified", when = "metarecord-list" }
 "e q" = { command = "metarecord-list:edit-normal", when = "metarecord-list" }
-"c f" = { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" }
-"c s" = { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" }
-"c q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
-"c a" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
+"f" = { command = "metarecord-list:clear-edit-finder", when = "metarecord-list" }
+"s" = { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" }
+"q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
+"c" = { command = "metarecord-list:clear-queries", when = "metarecord-list" }
 
 # metarecord-detail: field actions and record creation.
 "d" = { command = "metarecord:field-delete", when = "metarecord-detail" }
@@ -313,9 +313,9 @@
 # in the command input with completion. From the detail panel the per-operation
 # commands are bound directly (there is no umbrella there).
 "m b" = { command = "metarecord-list:bulk-edit", when = "metarecord-list" }
-"m b s" = { command = "metarecord:bulk-set-field", when = "metarecord-detail" }
-"m b a" = { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" }
-"m b r" = { command = "metarecord:bulk-remove-field", when = "metarecord-detail" }
+"m m s" = { command = "metarecord:bulk-set-field", when = "metarecord-detail" }
+"m m a" = { command = "metarecord:bulk-add-field-value", when = "metarecord-detail" }
+"m m r" = { command = "metarecord:bulk-remove-field", when = "metarecord-detail" }
 
 # file: image zoom controls.
 "plus" = { command = "file:zoom-in", when = "file" }
