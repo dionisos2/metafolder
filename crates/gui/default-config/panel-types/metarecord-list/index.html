@@ -320,10 +320,11 @@
       <div class="editor-row">
         <input id="query-input" placeholder='simplified query, e.g. fav genre=jazz (empty = all)' />
         <button id="query-apply">Apply</button>
-        <button id="normal-toggle" type="button">Show normal DSL</button>
+        <button id="normal-toggle" type="button">Hide normal DSL</button>
       </div>
       <div id="query-error" class="editor-error"></div>
-      <div id="normal-editor" hidden>
+      <!-- Revealed by default (mount hides it only for a stored preference). -->
+      <div id="normal-editor">
         <div class="editor-row">
           <input id="normal-input" readonly placeholder="normal DSL" />
           <label class="freeze-label" title="Freeze to edit the normal DSL by hand; it then drives the query. Unfreeze to mirror the simplified query again.">

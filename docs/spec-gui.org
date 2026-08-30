@@ -1031,8 +1031,10 @@ current values), the new value and the type through the minibuffer, with
 completion and the current value pre-filled. =TreeRef= values are edited as
 paths (completed against the field's forest, resolved through
 =POST …/tree/resolve-path= on commit); =ref= values with a completion seed are
-edited the same way (see [[*Ref value completion]]). This value completion and
-resolution is shared by the direct and the bulk value commands alike. When a
+edited the same way (see [[*Ref value completion]]). A =bool= value completes
+over its closed set — =false= / =true= — with no repository lookup. This value
+completion and resolution is shared by the direct and the bulk value commands
+alike. When a
 value command targets a field whose value type cannot be determined
 automatically (no row on the record, nothing in the schema-aware catalog), the
 type is *asked* through the command input rather than silently defaulting to
@@ -1602,9 +1604,11 @@ too specific for the simplified surface — and learn the mapping by watching it
   =metarecord-list:focus-query= focuses it; =metarecord-list:edit-simplified=
   (=e s=) focuses it *and* unfreezes B first, so what is typed in A drives the
   query again. An empty zone A matches all.
-- A toggle reveals *zone B (normal DSL)* below A. While B is shown and **not
-  frozen**, it is a read-only live mirror of =expand(A)= (debounced ~120–150 ms,
-  via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples
+- *Zone B (normal DSL)* below A is *revealed by default* — the expanded DSL is
+  what actually runs, so showing it teaches the mapping — and a toggle hides it
+  again; the choice persists per workspace (only an explicitly stored =false=
+  hides it). While B is shown and **not frozen**, it is a read-only live mirror
+  of =expand(A)= (debounced ~120–150 ms, via =metafolder.query.expand=). A *Freeze* checkbox next to B decouples
   it: B becomes editable and authoritative, and editing A no longer changes it.
   Unfreezing re-syncs B from =expand(A)= — manual edits to B are then discarded
   (accepted).
@@ -1624,7 +1628,7 @@ can be set by scripts:
 | Variable                        | Meaning                                                                    |
 |---------------------------------+----------------------------------------------------------------------------|
 | =metarecord-list:query=         | zone A text (simplified)                                                   |
-| =metarecord-list:normal-shown=  | whether zone B is revealed                                                 |
+| =metarecord-list:normal-shown=  | whether zone B is revealed (unset = revealed)                               |
 | =metarecord-list:normal-frozen= | whether zone B is frozen (decoupled, authoritative)                        |
 | =metarecord-list:normal-query=  | zone B text — authoritative while frozen, otherwise a cache of =expand(A)= |
 

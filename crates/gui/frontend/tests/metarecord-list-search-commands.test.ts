@@ -32,9 +32,9 @@ function shadowFor(): ShadowRoot {
 type Handler = (arg?: unknown) => unknown;
 
 /** A stub API that records registered command handlers and a workspace store. */
-function stubApi(handlers: Map<string, Handler>) {
+function stubApi(handlers: Map<string, Handler>, initial: Record<string, unknown> = {}) {
   const noop = () => {};
-  const store = new Map<string, unknown>();
+  const store = new Map<string, unknown>(Object.entries(initial));
   return {
     ready: Promise.resolve(),
     workspaceId: 'ws-1',
@@ -98,11 +98,11 @@ function stubApi(handlers: Map<string, Handler>) {
   };
 }
 
-async function mountPanel() {
+async function mountPanel(initial: Record<string, unknown> = {}) {
   const shadow = shadowFor();
   const handlers = new Map<string, Handler>();
   const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
-  await mod.mount(shadow, stubApi(handlers) as never);
+  await mod.mount(shadow, stubApi(handlers, initial) as never);
   const el = <T extends HTMLElement = HTMLInputElement>(id: string) =>
     shadow.getElementById(id) as unknown as T;
   return {
@@ -112,6 +112,7 @@ async function mountPanel() {
     query: el('query-input'),
     normal: el('normal-input'),
     normalEditor: el<HTMLElement>('normal-editor'),
+    normalToggle: el<HTMLButtonElement>('normal-toggle'),
     normalFreeze: el('normal-freeze'),
     columns: el('columns-input'),
     invoke: async (name: string, arg?: unknown) => {
@@ -131,8 +132,23 @@ describe('search-field editing commands', () => {
     document.body.replaceChildren();
   });
 
-  test('edit-normal opens + freezes + focuses the normal DSL editor', async () => {
+  test('the normal DSL editor is revealed by default (no stored preference)', async () => {
     const p = await mountPanel();
+    expect(p.normalEditor.hidden).toBe(false);
+    expect(p.normalToggle.textContent).toBe('Hide normal DSL');
+    // Revealed, but still the read-only mirror of the simplified zone.
+    expect(p.normalFreeze.checked).toBe(false);
+    expect(p.normal.readOnly).toBe(true);
+  });
+
+  test('a stored preference to hide it is honoured', async () => {
+    const p = await mountPanel({ 'metarecord-list:normal-shown': false });
+    expect(p.normalEditor.hidden).toBe(true);
+    expect(p.normalToggle.textContent).toBe('Show normal DSL');
+  });
+
+  test('edit-normal opens + freezes + focuses the normal DSL editor', async () => {
+    const p = await mountPanel({ 'metarecord-list:normal-shown': false });
     expect(p.normalEditor.hidden).toBe(true);
 
     await p.invoke('metarecord-list:edit-normal');

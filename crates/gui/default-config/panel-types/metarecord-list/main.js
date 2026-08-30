@@ -96,7 +96,7 @@ export async function mount(root, metafolder) {
   let finderFields = DEFAULT_FINDER_FIELDS.slice();
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let finderTimer;
-  let normalShown = false; // zone B (normal DSL) revealed?
+  let normalShown = true; // zone B (normal DSL) revealed? (default: yes)
   let normalFrozen = false; // zone B decoupled (hand-edited, authoritative)?
   let queryInitialized = false; // first query compiled on first display
   // The list runs its query eagerly on first display (and whenever a repo
@@ -1444,7 +1444,12 @@ export async function mount(root, metafolder) {
   normalFrozen = (await workspace.get('metarecord-list:normal-frozen')) === true;
   normalFreeze.checked = normalFrozen;
   normalInput.readOnly = !normalFrozen;
-  normalShown = (await workspace.get('metarecord-list:normal-shown')) === true;
+  // Zone B is revealed by default: the expanded DSL is what actually runs, so
+  // showing it teaches the mapping. Only an explicit stored `false` hides it.
+  const storedNormalShown = await workspace.get('metarecord-list:normal-shown');
+  normalShown = storedNormalShown === null || storedNormalShown === undefined
+    ? true
+    : storedNormalShown === true;
   normalEditor.hidden = !normalShown;
   normalToggle.textContent = normalShown ? 'Hide normal DSL' : 'Show normal DSL';
 
