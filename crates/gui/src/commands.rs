@@ -122,33 +122,36 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
     })
 }
 
-// ── Tabs ─────────────────────────────────────────────────────────────────
+// ── Workspaces ───────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub async fn tab_new(app: AppHandle<'_>, active_repo: Option<String>) -> Result<String, String> {
+pub async fn workspace_new(
+    app: AppHandle<'_>,
+    active_repo: Option<String>,
+) -> Result<String, String> {
     // Resolve the repo's human name so the new tab is auto-named after it;
     // no repo means the focused workspace's repo (and name) are inherited.
     let repo_name = match &active_repo {
         Some(uuid) => app.daemon.repo_name(uuid).await,
         None => None,
     };
-    Ok(app.gui.tab_new_named(active_repo, repo_name))
+    Ok(app.gui.workspace_new_named(active_repo, repo_name))
 }
 
 #[tauri::command]
-pub fn tab_close(app: AppHandle) -> Result<(), String> {
-    app.gui.tab_close()
+pub fn workspace_close(app: AppHandle) -> Result<(), String> {
+    app.gui.workspace_close()
 }
 
 /// Mouse path: the tab's close button targets its own workspace, which
-/// is not necessarily the focused one (unlike `tab:close`).
+/// is not necessarily the focused one (unlike `workspace:close`).
 #[tauri::command]
-pub fn tab_close_ws(app: AppHandle, ws_id: String) -> Result<(), String> {
+pub fn workspace_close_ws(app: AppHandle, ws_id: String) -> Result<(), String> {
     app.gui.close_workspace(&ws_id)
 }
 
 #[tauri::command]
-pub fn tab_rename(app: AppHandle, ws_id: String, name: String) -> Result<(), String> {
+pub fn workspace_rename(app: AppHandle, ws_id: String, name: String) -> Result<(), String> {
     app.gui.rename_workspace(&ws_id, &name)
 }
 
@@ -158,18 +161,18 @@ pub fn tab_assign(app: AppHandle, ws_id: String, slot: SlotId) -> Result<(), Str
 }
 
 #[tauri::command]
-pub fn tab_next(app: AppHandle) -> Result<(), String> {
-    app.gui.tab_next()
+pub fn workspace_next_in_slot(app: AppHandle) -> Result<(), String> {
+    app.gui.workspace_next_in_slot()
 }
 
 #[tauri::command]
-pub fn tab_prev(app: AppHandle) -> Result<(), String> {
-    app.gui.tab_prev()
+pub fn workspace_prev_in_slot(app: AppHandle) -> Result<(), String> {
+    app.gui.workspace_prev_in_slot()
 }
 
 #[tauri::command]
-pub fn tab_goto(app: AppHandle, n: usize) -> Result<(), String> {
-    app.gui.tab_goto(n)
+pub fn workspace_goto(app: AppHandle, n: usize) -> Result<(), String> {
+    app.gui.workspace_goto(n)
 }
 
 #[tauri::command]

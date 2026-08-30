@@ -53,7 +53,7 @@ fn test_load_keybindings_reads_the_single_file_as_the_full_set() {
     // The shipped file carries the default binding.
     let set = config.load_keybindings().unwrap();
     let t = set.compiled().into_iter().find(|b| b.keys == ["ctrl+t"]).unwrap();
-    assert_eq!(t.invocation, "tab:new");
+    assert_eq!(t.invocation, "workspace:new");
 }
 
 #[test]
@@ -72,7 +72,7 @@ fn test_set_user_keybinding_upserts_and_persists() {
     let reloaded = config.load_keybindings().unwrap();
     let compiled = reloaded.compiled();
     assert!(compiled.iter().any(|b| b.keys == ["alt+t"] && b.invocation == "panel:split"));
-    assert!(compiled.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "tab:new"));
+    assert!(compiled.iter().any(|b| b.keys == ["ctrl+t"] && b.invocation == "workspace:new"));
 }
 
 #[test]

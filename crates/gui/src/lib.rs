@@ -81,14 +81,22 @@ fn register_builtins(registry: &CommandRegistry) {
         ("editing:confirm", "Confirm the focused text input", false),
         ("editing:goto-line-start", "Move the cursor to the line start", false),
         ("editing:goto-line-end", "Move the cursor to the line end", false),
-        ("tab:new", "Create a workspace in the focused slot", true),
-        ("tab:close", "Close the focused slot's workspace", true),
-        ("tab:rename", "Rename the focused slot's workspace", true),
-        ("tab:next", "Move the focused panel to the next workspace", true),
-        ("tab:prev", "Move the focused panel to the previous workspace", true),
-        ("tab:goto", "Move both panels to workspace number N", true),
+        ("workspace:new", "Create a workspace and show it in both slots", true),
+        ("workspace:close", "Close the focused slot's workspace", true),
+        ("workspace:rename", "Rename the focused slot's workspace", true),
+        ("workspace:goto", "Move both panels to workspace number N", true),
         ("workspace:next", "Move both panels to the next workspace", true),
         ("workspace:prev", "Move both panels to the previous workspace", true),
+        (
+            "workspace:next-in-slot",
+            "Show the next workspace in the focused slot only",
+            true,
+        ),
+        (
+            "workspace:prev-in-slot",
+            "Show the previous workspace in the focused slot only",
+            true,
+        ),
         ("panel:split", "Show the second panel slot", true),
         ("panel:unsplit", "Hide the non-focused panel slot", true),
         ("panel:hide", "Hide the focused panel slot", true),
@@ -424,14 +432,14 @@ pub fn run(options: Options) {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_initial_state,
-            commands::tab_new,
-            commands::tab_close,
-            commands::tab_close_ws,
-            commands::tab_rename,
+            commands::workspace_new,
+            commands::workspace_close,
+            commands::workspace_close_ws,
+            commands::workspace_rename,
             commands::tab_assign,
-            commands::tab_next,
-            commands::tab_prev,
-            commands::tab_goto,
+            commands::workspace_next_in_slot,
+            commands::workspace_prev_in_slot,
+            commands::workspace_goto,
             commands::workspace_next,
             commands::workspace_prev,
             commands::panel_split,
@@ -541,11 +549,11 @@ mod tests {
     fn test_workspace_and_fullscreen_commands_are_builtins() {
         let registry = CommandRegistry::new();
         register_builtins(&registry);
-        for name in ["workspace:next", "workspace:prev", "tab:goto", "panel:fullscreen"] {
+        for name in ["workspace:next", "workspace:prev", "workspace:goto", "panel:fullscreen"] {
             assert!(registry.get(name).is_some(), "{name} registered");
         }
         // The parameter-in-name form is gone.
-        assert!(registry.get("tab:goto-N").is_none());
+        assert!(registry.get("workspace:goto-N").is_none());
     }
 
     #[test]

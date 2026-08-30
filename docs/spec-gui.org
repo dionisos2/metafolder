@@ -48,8 +48,8 @@ variables from becoming invalid due to a repo switch.
 One of two fixed content areas in the window (left and right). Each slot is
 assigned at most one workspace. An unassigned slot remains visible but shows a
 centred "No workspace selected" message; the user can assign a workspace by
-clicking a tab or using =tab:new=. A workspace can be assigned to zero, one,
-or both slots simultaneously.
+clicking a tab or using =workspace:new=. A workspace can be assigned to zero,
+one, or both slots simultaneously.
 
 When both slots display the same workspace, each slot independently selects
 which panel type to show. This enables, for example, =metarecord-list= on the left
@@ -240,14 +240,14 @@ opens) it. So each top-level action button in a panel or the shell maps to a
 command (the button invokes it), and each text input has a focus command —
 the command input (=command-input:activate=), the metarecord-list query and
 columns inputs (=metarecord-list:focus-query=, =metarecord-list:focus-columns=),
-the workspace rename (=tab:rename=), the metarecord-detail add-field form
-(=metarecord:open-add-field=). Shell controls map to the panel commands
+the workspace rename (=workspace:rename=), the metarecord-detail add-field
+form (=metarecord:open-add-field=). Shell controls map to the panel commands
 (=panel:set-type=, =panel:swap=, =panel:split=, =panel:hide=). Transient
 controls *inside* a flow already opened by a command — a form's =Cancel=, a
 folder picker's navigation, a form's submit — and inherently positional
 controls — an individual tab or a specific slot's =×= (their action is
-covered by =tab:goto= / =tab:close= / =panel:hide=) — need not each carry
-their own command.
+covered by =workspace:goto= / =workspace:close= / =panel:hide=) — need not
+each carry their own command.
 
 Each command carries a =log= flag (default =true=): when set, every
 invocation is echoed to the workspace [[*Message view][message panel]] as
@@ -280,7 +280,7 @@ minibuffer to collect input shows a trailing =…= after its name; a command
 that acts immediately (selecting or opening a DOM element, toggling a panel)
 shows none. A command prompts when it declares arguments (the interactive
 collection above) or is one of the few builtins that reopen the input by hand
-(e.g. =tab:rename=). The marker is display-only — it is not part of the
+(e.g. =workspace:rename=). The marker is display-only — it is not part of the
 command name written into the input when a suggestion is accepted.
 
 *Naming convention.* A command's name signals its interaction type through a
@@ -378,7 +378,7 @@ when the same combo maps to a different command depending on the focused panel
 "escape"  = { command = "editing:unfocus",         text-input = true              }
 "ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
-"ctrl+t"  = { command = "tab:new"                                                  }
+"ctrl+t"  = { command = "workspace:new"                                            }
 
 # The same combo, several scopes: one array, one entry per `when`.
 "j" = [
@@ -668,26 +668,27 @@ Color indicators show the current slot assignments:
 *Left-click* on a tab: assigns that workspace to the focused slot (the slot
 keeps focus). *Right-click*: assigns that workspace to the non-focused slot.
 Each tab carries a *close button* (=×=) that closes its workspace — the
-mouse equivalent of =tab:close=, except it targets the clicked tab's
+mouse equivalent of =workspace:close=, except it targets the clicked tab's
 workspace rather than the focused slot's.
 
-| Command           | Description                                               |
-|-------------------+-----------------------------------------------------------|
-| =tab:new=         | Create a workspace in BOTH slots (inherits the focused repo unless one is given) |
-| =tab:close=       | Close the focused slot's workspace (removes its tab; its slots switch to the previous workspace — the next one for the first tab — or become unassigned when none remains) |
-| =tab:rename=      | Rename the focused slot's workspace                       |
-| =tab:next=        | Assign the next workspace to the focused slot (wraps)     |
-| =tab:prev=        | Assign the previous workspace to the focused slot         |
-| =tab:goto=        | Move BOTH panels to workspace N (1-based; N is a parameter) |
-| =workspace:next=  | Move BOTH panels to the next workspace (wraps)            |
-| =workspace:prev=  | Move BOTH panels to the previous workspace                |
+| Command                  | Description                                      |
+|--------------------------+--------------------------------------------------|
+| =workspace:new=          | Create a workspace in BOTH slots (inherits the focused repo unless one is given) |
+| =workspace:close=        | Close the focused slot's workspace (removes its tab; its slots switch to the previous workspace — the next one for the first tab — or become unassigned when none remains) |
+| =workspace:rename=       | Rename the focused slot's workspace              |
+| =workspace:goto=         | Move BOTH panels to workspace N (1-based; N is a parameter) |
+| =workspace:next=         | Move BOTH panels to the next workspace (wraps)   |
+| =workspace:prev=         | Move BOTH panels to the previous workspace       |
+| =workspace:next-in-slot= | Assign the next workspace to the focused slot only (wraps) |
+| =workspace:prev-in-slot= | Assign the previous workspace to the focused slot only |
 
-Default keybinding suggestions: =t= for =tab:new=, =w= for =tab:close=,
-=n= / =p= for =workspace:next= / =workspace:prev=, =1= … =9= for =tab:goto=.
-The default navigation keys move both panels together: the two slots only
-end up on different workspaces through an explicit tab click or the
-focused-slot =tab:next= / =tab:prev= commands (no default binding). Command
-names never bake in a parameter — =tab:goto= takes N as an argument.
+Default keybinding suggestions: =t= for =workspace:new=, =w= for
+=workspace:close=, =n= / =p= for =workspace:next= / =workspace:prev=, =1= … =9=
+for =workspace:goto=. The default navigation keys move both panels together:
+the two slots only end up on different workspaces through an explicit tab
+click or the focused-slot =workspace:next-in-slot= / =workspace:prev-in-slot=
+commands (no default binding). Command names never bake in a parameter —
+=workspace:goto= takes N as an argument.
 
 Default bindings use plain keys: modifier combos (=ctrl+…=, =alt+…=) are
 reserved for bindings with =text-input = true=, which must fire while a
@@ -720,18 +721,18 @@ highlight — theme-controlled); focus switches via =panel:focus-next=.
 
 *Per-workspace panel count.* Each workspace remembers whether it was last
 shown with one or two panels, and the navigation commands that move both
-panels together (=tab:goto=, =workspace:next= / =workspace:prev=, and =tab:new=)
-restore that count: returning to a workspace left split reopens its second
-panel, returning to one left single keeps a single panel — the second slot
-still remembers its workspace but stays hidden. A new workspace defaults to a
+panels together (=workspace:goto=, =workspace:next= / =workspace:prev=, and
+=workspace:new=) restore that count: returning to a workspace left split
+reopens its second panel, returning to one left single keeps a single panel —
+the second slot still remembers its workspace but stays hidden. A new workspace defaults to a
 single panel. The count is recorded only while the workspace *owns the window*
 — it occupies the focused slot with the other slot hidden or showing the same
 workspace — so =panel:split= / =panel:unsplit= and closing a slot update it,
 while a mixed layout (the two slots on different workspaces, reachable through
-a tab click or the focused-slot =tab:next= / =tab:prev=) records nothing and
-leaves each workspace's remembered count untouched. Only the count is
-per-workspace; the divider width ratio remains window state (see
-[[*Panel slot]]).
+a tab click or the focused-slot =workspace:next-in-slot= /
+=workspace:prev-in-slot=) records nothing and leaves each workspace's
+remembered count untouched. Only the count is per-workspace; the divider
+width ratio remains window state (see [[*Panel slot]]).
 
 Each slot has a thin header bar showing the current panel type name and the
 repo indicator. The header contains a dropdown that lists all available panel
@@ -829,14 +830,14 @@ Behaviours:
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:open-init=         | Open init-repo form                            |
 | =repos:open-load=         | Open load-repo form                            |
-| =tab:new=            | Create a new workspace, assign to both slots   |
-| =tab:close=          | Close the focused slot's workspace (slot falls back to the previous workspace) |
-| =tab:rename=         | Rename the focused slot's workspace            |
-| =tab:next=           | Assign the next workspace to the focused slot  |
-| =tab:prev=           | Assign the previous workspace to the focused slot |
-| =tab:goto=           | Move both panels to workspace N (parameter)    |
+| =workspace:new=      | Create a new workspace, assign to both slots   |
+| =workspace:close=    | Close the focused slot's workspace (slot falls back to the previous workspace) |
+| =workspace:rename=   | Rename the focused slot's workspace            |
+| =workspace:goto=     | Move both panels to workspace N (parameter)    |
 | =workspace:next=     | Move both panels to the next workspace         |
 | =workspace:prev=     | Move both panels to the previous workspace     |
+| =workspace:next-in-slot= | Assign the next workspace to the focused slot only |
+| =workspace:prev-in-slot= | Assign the previous workspace to the focused slot only |
 | =panel:split=        | Show the right slot (focused workspace if unassigned) |
 | =panel:unsplit=      | Hide the non-focused slot (workspace preserved) |
 | =panel:hide=         | Hide the focused slot (workspace preserved)    |

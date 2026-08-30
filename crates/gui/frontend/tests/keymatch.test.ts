@@ -69,8 +69,8 @@ describe('comboFromEvent', () => {
 
 describe('createMatcher', () => {
   test('matches a simple global binding', () => {
-    const matcher = createMatcher([b(['ctrl+t'], 'tab:new')]);
-    expect(matcher.feed('ctrl+t', noInput)).toEqual({ invocation: 'tab:new' });
+    const matcher = createMatcher([b(['ctrl+t'], 'workspace:new')]);
+    expect(matcher.feed('ctrl+t', noInput)).toEqual({ invocation: 'workspace:new' });
     expect(matcher.feed('ctrl+x', noInput)).toBeNull();
   });
 
@@ -187,10 +187,10 @@ describe('createMatcher', () => {
 
   test('a pending prefix swallows an unrelated single-key binding (s then t)', () => {
     const setType = b(['s', 'l'], 'panel:set-type metarecord-list');
-    const tab = b(['t'], 'tab:new');
+    const tab = b(['t'], 'workspace:new');
     const matcher = createMatcher([setType, tab]);
     expect(matcher.feed('s', noInput)).toMatchObject({ pending: true, prefix: ['s'] });
-    // 't' would fire tab:new on its own, but the 's' combo is in progress.
+    // 't' would fire workspace:new on its own, but the 's' combo is in progress.
     expect(matcher.feed('t', noInput)).toEqual({ unknown: true, sequence: ['s', 't'] });
   });
 

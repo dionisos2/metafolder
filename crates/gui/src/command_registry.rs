@@ -89,13 +89,13 @@ mod tests {
     #[test]
     fn test_builtin_is_always_listed() {
         let registry = CommandRegistry::new();
-        registry.register_builtin("tab:new", "New workspace tab", true);
+        registry.register_builtin("workspace:new", "New workspace tab", true);
 
-        let def = registry.get("tab:new").unwrap();
+        let def = registry.get("workspace:new").unwrap();
         assert_eq!(def.owner, None);
         assert!(!def.reveal);
         assert!(def.log);
-        assert!(registry.list().iter().any(|c| c.name == "tab:new"));
+        assert!(registry.list().iter().any(|c| c.name == "workspace:new"));
     }
 
     #[test]
@@ -138,12 +138,12 @@ mod tests {
     #[test]
     fn test_list_is_sorted_by_name() {
         let registry = CommandRegistry::new();
-        registry.register_builtin("tab:new", "b", true);
+        registry.register_builtin("workspace:new", "b", true);
         registry.register_panel("p", "panel:split", "a", false, true);
         registry.register_builtin("quit", "c", true);
 
         let names: Vec<String> = registry.list().into_iter().map(|c| c.name).collect();
-        assert_eq!(names, vec!["panel:split", "quit", "tab:new"]);
+        assert_eq!(names, vec!["panel:split", "quit", "workspace:new"]);
     }
 
     #[test]

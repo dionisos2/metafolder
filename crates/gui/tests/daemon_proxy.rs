@@ -247,7 +247,7 @@ async fn test_reconcile_run_posts_status_and_logs() {
             .is_err()
     );
 
-    let ws = gui.tab_new(Some("abc123".into()));
+    let ws = gui.workspace_new(Some("abc123".into()));
     notifier.clear();
     metafolder_gui::reconcile::run(gui.clone(), proxy, ws.clone(), Default::default())
         .await

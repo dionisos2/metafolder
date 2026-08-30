@@ -267,7 +267,7 @@ describe('repos panel', () => {
     (shadow.querySelector('#repo-list .repo-head') as HTMLElement).click();
     await settle();
 
-    expect(dispatch).toHaveBeenCalledWith('tab:new r1');
+    expect(dispatch).toHaveBeenCalledWith('workspace:new r1');
     expect(vars.get('active_repo')).toBe('other-repo'); // unchanged
   });
 

@@ -35,14 +35,14 @@
 
   async function commitRename() {
     if (renaming !== null && renameDraft.trim() !== '') {
-      await invoke('tab_rename', { wsId: renaming, name: renameDraft.trim() });
+      await invoke('workspace_rename', { wsId: renaming, name: renameDraft.trim() });
     }
     renaming = null;
   }
 
   async function closeWs(wsId: string) {
     try {
-      await invoke('tab_close_ws', { wsId });
+      await invoke('workspace_close_ws', { wsId });
     } catch {
       /* errors surface via the status bar */
     }
@@ -92,7 +92,7 @@
       {/if}
     </button>
   {/each}
-  <button class="tab new-tab" title="tab:new" onclick={() => void dispatch('tab:new')}>+</button>
+  <button class="tab new-tab" title="workspace:new" onclick={() => void dispatch('workspace:new')}>+</button>
 </nav>
 
 <style>

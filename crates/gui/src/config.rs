@@ -643,7 +643,7 @@ mod tests {
         let config = kb_dir();
         std::fs::write(
             config.keybindings_path(),
-            "\"j\" = { command = \"metarecord-list:next\", when = \"metarecord-list\" }\n\"t\" = { command = \"tab:new\" }\n",
+            "\"j\" = { command = \"metarecord-list:next\", when = \"metarecord-list\" }\n\"t\" = { command = \"workspace:new\" }\n",
         )
         .unwrap();
 

@@ -177,7 +177,7 @@ export function argSpecFor(name: string): ArgSpec[] | undefined {
 // Builtins that reopen the command input to collect a value but do not declare
 // an ArgSpec (they prefill/await input inside their handler). Kept here so the
 // autocomplete's "…" marker matches what actually happens.
-const MINIBUFFER_PROMPT_BUILTINS = new Set(['tab:rename']);
+const MINIBUFFER_PROMPT_BUILTINS = new Set(['workspace:rename']);
 
 /** Whether invoking `name` reopens the minibuffer to collect input, rather than
  *  acting immediately (spec-gui "Command"). Drives the trailing "…" the
@@ -322,7 +322,7 @@ async function openRepoInWorkspace(choice: string, ws: string): Promise<void> {
     await invoke('adopt_repo', { wsId: ws, repo: uuid });
     await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });
   } else {
-    await invoke('tab_new', { activeRepo: uuid });
+    await invoke('workspace_new', { activeRepo: uuid });
   }
 }
 
@@ -869,34 +869,34 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       }
       return true;
     }
-    case 'tab:new':
+    case 'workspace:new':
       // Optional parameter: the repo UUID of the new workspace
       // (used by the repos panel).
-      await invoke('tab_new', { activeRepo: args[0] ?? null });
+      await invoke('workspace_new', { activeRepo: args[0] ?? null });
       return true;
-    case 'tab:close':
-      await invoke('tab_close');
+    case 'workspace:close':
+      await invoke('workspace_close');
       return true;
-    case 'tab:rename':
+    case 'workspace:rename':
       if (args.length === 0) {
         // No name given: prefill the command input instead.
-        if (ws) store.inputDrafts[ws] = 'tab:rename ';
+        if (ws) store.inputDrafts[ws] = 'workspace:rename ';
         store.ui.commandInputFocusTick += 1;
         return true;
       }
-      if (ws) await invoke('tab_rename', { wsId: ws, name: args.join(' ') });
+      if (ws) await invoke('workspace_rename', { wsId: ws, name: args.join(' ') });
       return true;
-    case 'tab:next':
-      await invoke('tab_next');
+    case 'workspace:next-in-slot':
+      await invoke('workspace_next_in_slot');
       return true;
-    case 'tab:prev':
-      await invoke('tab_prev');
+    case 'workspace:prev-in-slot':
+      await invoke('workspace_prev_in_slot');
       return true;
-    case 'tab:goto': {
+    case 'workspace:goto': {
       // The 1-based workspace position is the parameter (no longer baked
       // into the command name). Moves BOTH panels.
       const n = Number(args[0]);
-      if (Number.isInteger(n)) await invoke('tab_goto', { n });
+      if (Number.isInteger(n)) await invoke('workspace_goto', { n });
       return true;
     }
     case 'workspace:next':

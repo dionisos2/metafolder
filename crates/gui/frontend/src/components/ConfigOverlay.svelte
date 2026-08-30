@@ -95,7 +95,7 @@
       <h3>Keybindings</h3>
       <div class="binding-form">
         <input placeholder="combo (e.g. ctrl+k or g g)" bind:value={combo} />
-        <input placeholder="command (e.g. tab:new)" bind:value={command} />
+        <input placeholder="command (e.g. workspace:new)" bind:value={command} />
         <input placeholder="when (panel type, empty = global)" bind:value={when} />
         <input placeholder="focus (widget, empty = none)" bind:value={focus} />
         <label><input type="checkbox" bind:checked={textInput} /> text-input</label>

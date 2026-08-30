@@ -247,7 +247,7 @@ mod tests {
 "ctrl+a"  = { command = "editing:goto-line-start", text-input = true              }
 "j"       = { command = "metarecord-list:next",         when = "metarecord-list"            }
 "ctrl+e"  = { command = "my-panel:edit",           when = "my-panel", text-input = true }
-"ctrl+t"  = { command = "tab:new"                                                  }
+"ctrl+t"  = { command = "workspace:new"                                                  }
 "#;
 
     #[test]
@@ -278,7 +278,7 @@ mod tests {
         assert!(ctrl_e.text_input);
 
         let ctrl_t = find(&["ctrl+t"]);
-        assert_eq!(ctrl_t.command, "tab:new");
+        assert_eq!(ctrl_t.command, "workspace:new");
         assert_eq!(ctrl_t.when, None);
         assert!(!ctrl_t.text_input);
     }
@@ -302,7 +302,7 @@ mod tests {
   { command = "editing:confirm", text-input = true },
   { command = "metarecord-list:open", when = "metarecord-list" },
 ]
-"t" = { command = "tab:new" }
+"t" = { command = "workspace:new" }
 "#;
         let entries = parse_toml(source).unwrap();
         // 2 (j) + 2 (enter) + 1 (t)
@@ -322,7 +322,7 @@ mod tests {
         // The single-table form still works alongside arrays.
         assert!(entries
             .iter()
-            .any(|(k, s)| k == &vec!["t".to_string()] && s.command == "tab:new"));
+            .any(|(k, s)| k == &vec!["t".to_string()] && s.command == "workspace:new"));
     }
 
     #[test]
@@ -410,8 +410,8 @@ mod tests {
 
     #[test]
     fn test_user_overrides_default_for_same_combo() {
-        let defaults = r#""ctrl+t" = { command = "tab:new" }
-"alt+w" = { command = "tab:close" }"#;
+        let defaults = r#""ctrl+t" = { command = "workspace:new" }
+"alt+w" = { command = "workspace:close" }"#;
         let user = r#""ctrl+t" = { command = "panel:split" }"#;
         let set = KeybindingSet::from_sources(defaults, user).unwrap();
         let table = set.compiled();
@@ -420,7 +420,7 @@ mod tests {
         assert_eq!(ctrl_t.invocation, "panel:split");
         // Untouched default survives.
         let alt_w = table.iter().find(|b| b.keys == ["alt+w"]).unwrap();
-        assert_eq!(alt_w.invocation, "tab:close");
+        assert_eq!(alt_w.invocation, "workspace:close");
         assert_eq!(table.len(), 2);
     }
 
@@ -486,7 +486,7 @@ mod tests {
         let defaults = include_str!("../default-config/keybindings.toml");
         let set = KeybindingSet::from_sources(defaults, "").unwrap();
         let table = set.compiled();
-        assert!(table.iter().any(|b| b.invocation == "tab:new"));
+        assert!(table.iter().any(|b| b.invocation == "workspace:new"));
         assert!(table.iter().any(|b| b.keys == [":"]));
         assert!(table.iter().any(|b| b.keys == ["x"] && b.invocation == "panel:swap"));
 

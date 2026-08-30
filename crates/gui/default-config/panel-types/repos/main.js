@@ -268,7 +268,7 @@ export async function mount(root, metafolder) {
         await workspace.adoptRepo(repoUuid);
         await commands.invoke('panel:set-type metarecord-list');
       } else {
-        await commands.invoke(`tab:new ${repoUuid}`);
+        await commands.invoke(`workspace:new ${repoUuid}`);
       }
       void announceSchemaConflicts(repoUuid); // once-per-repo heads-up
     } catch (error) {

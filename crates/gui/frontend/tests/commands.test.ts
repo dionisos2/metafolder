@@ -42,7 +42,7 @@ describe('repos:switch builtin', () => {
 
 describe('parseInvocation', () => {
   test('plain command name', () => {
-    expect(parseInvocation('tab:new')).toEqual({ name: 'tab:new', args: [] });
+    expect(parseInvocation('workspace:new')).toEqual({ name: 'workspace:new', args: [] });
   });
 
   test('command with parameters', () => {
@@ -57,8 +57,8 @@ describe('parseInvocation', () => {
   });
 
   test('double-quoted parameters keep spaces', () => {
-    expect(parseInvocation('tab:rename "My music workspace"')).toEqual({
-      name: 'tab:rename',
+    expect(parseInvocation('workspace:rename "My music workspace"')).toEqual({
+      name: 'workspace:rename',
       args: ['My music workspace'],
     });
   });
@@ -75,7 +75,7 @@ describe('parseInvocation', () => {
   });
 
   test('extra whitespace is tolerated', () => {
-    expect(parseInvocation('  tab:goto 3  ')).toEqual({ name: 'tab:goto', args: ['3'] });
+    expect(parseInvocation('  workspace:goto 3  ')).toEqual({ name: 'workspace:goto', args: ['3'] });
   });
 });
 
@@ -127,7 +127,7 @@ describe('shortcutsFor', () => {
     text_input: false,
   });
   const table = [
-    binding(['alt+t'], 'tab:new'),
+    binding(['alt+t'], 'workspace:new'),
     binding(['ctrl+g'], 'metarecord-list:set-mode grid'),
     binding(['down'], 'metarecord-list:next'),
     binding(['j'], 'metarecord-list:next'),
@@ -135,7 +135,7 @@ describe('shortcutsFor', () => {
   ];
 
   test('exact invocation match', () => {
-    expect(shortcutsFor(table, 'tab:new')).toEqual(['alt+t']);
+    expect(shortcutsFor(table, 'workspace:new')).toEqual(['alt+t']);
   });
 
   test('parameterized invocations count for the bare command', () => {
@@ -151,7 +151,7 @@ describe('shortcutsFor', () => {
   });
 
   test('no binding yields an empty list, not a partial-name match', () => {
-    expect(shortcutsFor(table, 'tab:close')).toEqual([]);
+    expect(shortcutsFor(table, 'workspace:close')).toEqual([]);
     expect(shortcutsFor(table, 'metarecord-list:go')).toEqual([]);
   });
 });
@@ -160,7 +160,7 @@ describe('shouldLogCommand', () => {
   const commands = [
     { name: 'reconcile:run', log: true },
     { name: 'editing:confirm', log: false },
-    { name: 'tab:goto', log: true },
+    { name: 'workspace:goto', log: true },
   ];
 
   test('logs a command whose definition opts in', () => {
@@ -180,8 +180,8 @@ describe('filterCommands', () => {
   const all = [
     { name: 'panel:unsplit', label: 'Hide the non-focused panel slot' },
     { name: 'panel:split', label: 'Show the second panel slot' },
-    { name: 'tab:close', label: "Close the focused slot's workspace" },
-    { name: 'tab:new', label: 'Create a workspace' },
+    { name: 'quit', label: 'Exit the GUI' },
+    { name: 'message:clear', label: 'Clear the workspace message log' },
   ];
 
   test('prefix matches come first, then substring matches', () => {
@@ -207,7 +207,7 @@ describe('filterCommands', () => {
     expect(names).toEqual(['panel:split', 'panel:unsplit']);
     // Terms must appear in order, without overlapping.
     expect(filterCommands(all, 'spl pan')).toEqual([]);
-    expect(filterCommands(all, 'tab close').map((c) => c.name)).toEqual(['tab:close']);
+    expect(filterCommands(all, 'mes cle').map((c) => c.name)).toEqual(['message:clear']);
   });
 
   test('matching is case-insensitive', () => {
@@ -295,7 +295,7 @@ describe('promptsForInput', () => {
   });
 
   test('builtins that reopen the minibuffer prompt without an arg spec', () => {
-    expect(promptsForInput('tab:rename')).toBe(true);
+    expect(promptsForInput('workspace:rename')).toBe(true);
   });
 });
 

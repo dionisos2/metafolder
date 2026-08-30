@@ -82,7 +82,7 @@
     }
   });
 
-  // Pick up drafts injected by commands (e.g. bare `tab:rename`). Suspended
+  // Pick up drafts injected by commands (e.g. bare `workspace:rename`). Suspended
   // while a prompt owns the input, so an interactive argument's pre-filled
   // `initial` value is not clobbered by a stale workspace draft.
   $effect(() => {

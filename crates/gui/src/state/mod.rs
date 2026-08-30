@@ -481,7 +481,7 @@ impl GuiState {
         Ok(vars)
     }
 
-    // ── Workspace / tab commands ─────────────────────────────────────────
+    // ── Workspace commands ───────────────────────────────────────────────
 
     /// Creates a workspace without assigning it to a slot (GUI HTTP API).
     pub fn create_workspace(&self, active_repo: Option<String>) -> String {
@@ -499,19 +499,24 @@ impl GuiState {
         self.update(|inner| (inner.new_workspace(active_repo, repo_name), Emit::WORKSPACES))
     }
 
-    /// `tab:new` — creates a workspace and assigns it to the focused slot.
+    /// `workspace:new` — creates a workspace and shows it in both slots.
     /// Without an explicit repo, the focused workspace's repo is inherited:
     /// staying on the same repo is the expected default, and switching
     /// costs the same single action either way.
-    pub fn tab_new(&self, active_repo: Option<String>) -> String {
-        self.tab_new_named(active_repo, None)
+    pub fn workspace_new(&self, active_repo: Option<String>) -> String {
+        self.workspace_new_named(active_repo, None)
     }
 
-    /// [`tab_new`](Self::tab_new) carrying the repository's human name (resolved
+    /// [`workspace_new`](Self::workspace_new) carrying the repository's human
+    /// name (resolved
     /// by the caller from the daemon) so the workspace is auto-named after it.
     /// When no repo is given the focused workspace's repo *and* its name are
     /// both inherited, so an inherited tab is numbered under the same base.
-    pub fn tab_new_named(&self, active_repo: Option<String>, repo_name: Option<String>) -> String {
+    pub fn workspace_new_named(
+        &self,
+        active_repo: Option<String>,
+        repo_name: Option<String>,
+    ) -> String {
         self.update(|inner| {
             let (active_repo, repo_name) = match active_repo {
                 Some(repo) => (Some(repo), repo_name),
@@ -569,8 +574,8 @@ impl GuiState {
         })
     }
 
-    /// `tab:close` — closes the focused slot's workspace.
-    pub fn tab_close(&self) -> Result<(), String> {
+    /// `workspace:close` — closes the focused slot's workspace.
+    pub fn workspace_close(&self) -> Result<(), String> {
         let ws_id = self
             .focused_workspace_id()
             .ok_or("no workspace in the focused slot")?;
@@ -598,15 +603,16 @@ impl GuiState {
         })
     }
 
-    /// `tab:next` — assigns the next workspace (tab order, wrapping) to the
-    /// focused slot.
-    pub fn tab_next(&self) -> Result<(), String> {
-        self.tab_step(1)
+    /// `workspace:next-in-slot` — assigns the next workspace (tab order,
+    /// wrapping) to the focused slot only.
+    pub fn workspace_next_in_slot(&self) -> Result<(), String> {
+        self.workspace_step_in_slot(1)
     }
 
-    /// `tab:prev` — assigns the previous workspace (wrapping).
-    pub fn tab_prev(&self) -> Result<(), String> {
-        self.tab_step(-1)
+    /// `workspace:prev-in-slot` — assigns the previous workspace (wrapping) to
+    /// the focused slot only.
+    pub fn workspace_prev_in_slot(&self) -> Result<(), String> {
+        self.workspace_step_in_slot(-1)
     }
 
     /// `workspace:next` — moves BOTH panels to the next workspace (wrapping).
@@ -619,7 +625,7 @@ impl GuiState {
         self.workspace_step(-1)
     }
 
-    fn tab_step(&self, direction: isize) -> Result<(), String> {
+    fn workspace_step_in_slot(&self, direction: isize) -> Result<(), String> {
         self.step(direction, false)
     }
 
@@ -629,7 +635,8 @@ impl GuiState {
 
     /// Steps the focused-slot workspace by `direction` (wrapping); `both`
     /// moves the two panels together (keyboard navigation), otherwise only
-    /// the focused slot (the explicit `tab:next`/`tab:prev` commands).
+    /// the focused slot (the explicit `workspace:next-in-slot` /
+    /// `workspace:prev-in-slot` commands).
     fn step(&self, direction: isize, both: bool) -> Result<(), String> {
         self.mutate(|inner| {
             if inner.workspaces.is_empty() {
@@ -654,8 +661,8 @@ impl GuiState {
         })
     }
 
-    /// `tab:goto` — moves BOTH panels to workspace N (1-based tab position).
-    pub fn tab_goto(&self, n: usize) -> Result<(), String> {
+    /// `workspace:goto` — moves BOTH panels to workspace N (1-based tab position).
+    pub fn workspace_goto(&self, n: usize) -> Result<(), String> {
         self.mutate(|inner| {
             if n == 0 || n > inner.workspaces.len() {
                 return Err(format!("no workspace at position {n}"));
@@ -1163,13 +1170,13 @@ mod tests {
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
     }
 
-    // ── Tabs ─────────────────────────────────────────────────────────────
+    // ── Workspaces ───────────────────────────────────────────────────────
 
     #[test]
-    fn test_tab_new_assigns_focused_slot_and_notifies() {
+    fn test_workspace_new_assigns_focused_slot_and_notifies() {
         let (notifier, state) = state();
         notifier.clear();
-        let id = state.tab_new(Some("repo-1".into()));
+        let id = state.workspace_new(Some("repo-1".into()));
         assert_eq!(id, "ws-2");
 
         let workspaces = state.workspaces();
@@ -1187,10 +1194,10 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_new_inherits_the_focused_repo() {
+    fn test_workspace_new_inherits_the_focused_repo() {
         let (_, state) = state();
-        state.tab_new(Some("repo-9".into())); // focused now shows a repo-9 workspace
-        let id = state.tab_new(None);
+        state.workspace_new(Some("repo-9".into())); // focused now shows a repo-9 workspace
+        let id = state.workspace_new(None);
         let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
         // Staying on the same repo is the expected default; picking
         // another one costs the same single action either way.
@@ -1200,7 +1207,7 @@ mod tests {
     #[test]
     fn test_workspace_named_after_its_repo() {
         let (_, state) = state();
-        let id = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let id = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
         let info = state.workspaces().into_iter().find(|w| w.id == id).unwrap();
         assert_eq!(info.name, "my_repo 1");
         assert_eq!(info.active_repo.as_deref(), Some("uuid-a"));
@@ -1209,9 +1216,9 @@ mod tests {
     #[test]
     fn test_repo_workspaces_are_numbered_per_repo() {
         let (_, state) = state();
-        let a1 = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
-        let a2 = state.tab_new_named(Some("uuid-a".into()), Some("my_repo".into()));
-        let b1 = state.tab_new_named(Some("uuid-b".into()), Some("other_repo".into()));
+        let a1 = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let a2 = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
+        let b1 = state.workspace_new_named(Some("uuid-b".into()), Some("other_repo".into()));
         let name = |id: &str| {
             state.workspaces().into_iter().find(|w| w.id == id).unwrap().name
         };
@@ -1272,11 +1279,11 @@ mod tests {
     #[test]
     fn test_workspace_numbering_reuses_freed_number_after_close() {
         let (_, state) = state();
-        let id2 = state.tab_new(None);
+        let id2 = state.workspace_new(None);
         assert_eq!(id2, "ws-2");
         state.close_workspace(&id2).unwrap();
         // The freed number 2 is the lowest available, so it is reused.
-        let reused = state.tab_new(None);
+        let reused = state.workspace_new(None);
         assert_eq!(reused, "ws-2");
         assert_eq!(state.workspaces().last().unwrap().name, "Workspace 2");
     }
@@ -1284,14 +1291,14 @@ mod tests {
     #[test]
     fn test_workspace_numbering_fills_lowest_gap() {
         let (_, state) = state();
-        let id2 = state.tab_new(None);
-        let _id3 = state.tab_new(None);
+        let id2 = state.workspace_new(None);
+        let _id3 = state.workspace_new(None);
         // Close the middle one: the gap at 2 is the lowest available number.
         state.close_workspace(&id2).unwrap();
-        let filled = state.tab_new(None);
+        let filled = state.workspace_new(None);
         assert_eq!(filled, "ws-2");
         // A further workspace takes the next free number above the others.
-        let next = state.tab_new(None);
+        let next = state.workspace_new(None);
         assert_eq!(next, "ws-4");
     }
 
@@ -1315,8 +1322,8 @@ mod tests {
     #[test]
     fn test_close_workspace_switches_its_slots_to_the_previous_one() {
         let (_, state) = state();
-        state.tab_new(None); // ws-2
-        state.tab_new(None); // ws-3, shown in the focused (left) slot
+        state.workspace_new(None); // ws-2
+        state.workspace_new(None); // ws-3, shown in the focused (left) slot
         state.close_workspace("ws-3").unwrap();
         assert_eq!(state.layout().left.workspace_id.as_deref(), Some("ws-2"));
 
@@ -1329,7 +1336,7 @@ mod tests {
     #[test]
     fn test_close_workspace_keeps_a_hidden_slot_hidden() {
         let (_, state) = state();
-        let id2 = state.tab_new(None); // ws-2 in the focused (left) slot
+        let id2 = state.workspace_new(None); // ws-2 in the focused (left) slot
         state.panel_split().unwrap(); // right shows ws-2 too
         state.panel_unsplit().unwrap(); // right hidden, still on ws-2
         state.close_workspace(&id2).unwrap();
@@ -1342,18 +1349,18 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_close_closes_focused_workspace() {
+    fn test_workspace_close_closes_focused_workspace() {
         let (_, state) = state();
-        state.tab_new(None);
-        state.tab_close().unwrap();
+        state.workspace_new(None);
+        state.workspace_close().unwrap();
         assert_eq!(state.workspaces().len(), 1);
         // The slot switches to the remaining workspace, so closing keeps
         // working until none remains.
         assert_eq!(state.layout().left.workspace_id.as_deref(), Some("ws-1"));
-        state.tab_close().unwrap();
+        state.workspace_close().unwrap();
         assert_eq!(state.layout().left.workspace_id, None);
-        // Focused slot now unassigned: tab:close errors.
-        assert!(state.tab_close().is_err());
+        // Focused slot now unassigned: workspace:close errors.
+        assert!(state.workspace_close().is_err());
     }
 
     #[test]
@@ -1365,52 +1372,52 @@ mod tests {
     }
 
     #[test]
-    fn test_tab_next_and_prev_wrap() {
+    fn test_workspace_next_in_slot_and_prev_wrap() {
         let (_, state) = state();
-        state.tab_new(None); // ws-2, focused slot shows it
-        state.tab_new(None); // ws-3
+        state.workspace_new(None); // ws-2, focused slot shows it
+        state.workspace_new(None); // ws-3
         state.tab_assign("ws-1", SlotId::Left).unwrap();
 
-        state.tab_next().unwrap();
+        state.workspace_next_in_slot().unwrap();
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-2"));
-        state.tab_next().unwrap();
+        state.workspace_next_in_slot().unwrap();
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-3"));
-        state.tab_next().unwrap(); // wraps
+        state.workspace_next_in_slot().unwrap(); // wraps
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
-        state.tab_prev().unwrap(); // wraps back
+        state.workspace_prev_in_slot().unwrap(); // wraps back
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-3"));
     }
 
     #[test]
-    fn test_tab_goto_is_one_based() {
+    fn test_workspace_goto_is_one_based() {
         let (_, state) = state();
-        state.tab_new(None); // ws-2
-        state.tab_goto(1).unwrap();
+        state.workspace_new(None); // ws-2
+        state.workspace_goto(1).unwrap();
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-1"));
-        state.tab_goto(2).unwrap();
+        state.workspace_goto(2).unwrap();
         assert_eq!(state.focused_workspace_id().as_deref(), Some("ws-2"));
-        assert!(state.tab_goto(0).is_err());
-        assert!(state.tab_goto(3).is_err());
+        assert!(state.workspace_goto(0).is_err());
+        assert!(state.workspace_goto(3).is_err());
     }
 
     #[test]
-    fn test_tab_goto_moves_both_panels() {
+    fn test_workspace_goto_moves_both_panels() {
         // Keyboard navigation keeps the two panels on the same workspace so
         // the user never ends up split across workspaces unknowingly.
         let (_, state) = state();
-        state.tab_new(None); // ws-2, focused
+        state.workspace_new(None); // ws-2, focused
         state.panel_split().unwrap(); // both slots on ws-2
-        state.tab_goto(1).unwrap();
+        state.workspace_goto(1).unwrap();
         let layout = state.layout();
         assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-1"));
         assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
     }
 
     #[test]
-    fn test_tab_new_moves_both_panels() {
+    fn test_workspace_new_moves_both_panels() {
         let (_, state) = state();
         state.panel_split().unwrap(); // both slots on ws-1
-        let id = state.tab_new(Some("repo-1".into()));
+        let id = state.workspace_new(Some("repo-1".into()));
         let layout = state.layout();
         // Both slots follow the new workspace (so a later split shows it, not a
         // stale one)...
@@ -1425,10 +1432,10 @@ mod tests {
     #[test]
     fn test_workspace_next_and_prev_move_both_panels() {
         let (_, state) = state();
-        state.tab_new(None); // ws-2
-        state.tab_new(None); // ws-3, focused
+        state.workspace_new(None); // ws-2
+        state.workspace_new(None); // ws-3, focused
         state.panel_split().unwrap(); // both on ws-3
-        state.tab_goto(1).unwrap(); // both on ws-1
+        state.workspace_goto(1).unwrap(); // both on ws-1
         state.workspace_next().unwrap();
         let layout = state.layout();
         assert_eq!(layout.left.workspace_id.as_deref(), Some("ws-2"));
@@ -1444,7 +1451,7 @@ mod tests {
     #[test]
     fn test_panel_split_shows_focused_workspace_without_creating_one() {
         let (_, state) = state();
-        state.tab_new(Some("repo-9".into())); // focused shows ws-2 (repo-9)
+        state.workspace_new(Some("repo-9".into())); // focused shows ws-2 (repo-9)
         let count = state.workspaces().len();
         state.panel_split().unwrap();
 
@@ -1470,7 +1477,7 @@ mod tests {
     #[test]
     fn test_assign_collision_falls_back_to_typeless_when_record_detail_taken() {
         let (_, state) = state();
-        let ws1 = state.tab_new(Some("repo-1".into()));
+        let ws1 = state.workspace_new(Some("repo-1".into()));
         state.panel_split().unwrap(); // right: ws1 metarecord-detail
         // Remember metarecord-detail as ws1's right-slot panel type.
         state.set_panel_type(SlotId::Right, "metarecord-detail").unwrap();
@@ -1488,7 +1495,7 @@ mod tests {
     #[test]
     fn test_panel_swap_exchanges_the_two_panel_types() {
         let (notifier, state) = state();
-        state.tab_new(Some("repo-1".into())); // left: metarecord-list
+        state.workspace_new(Some("repo-1".into())); // left: metarecord-list
         state.panel_split().unwrap(); // right: metarecord-detail
         notifier.clear();
         state.panel_swap().unwrap();
@@ -1508,12 +1515,12 @@ mod tests {
     #[test]
     fn test_panel_swap_updates_the_last_panel_memory() {
         let (_, state) = state();
-        let ws = state.tab_new(Some("repo-1".into()));
+        let ws = state.workspace_new(Some("repo-1".into()));
         state.panel_split().unwrap(); // left: metarecord-list, right: metarecord-detail
         state.panel_swap().unwrap(); // left: metarecord-detail, right: metarecord-list
 
         // Switching away and back restores the swapped types.
-        state.tab_new(None);
+        state.workspace_new(None);
         state.tab_assign(&ws, SlotId::Left).unwrap();
         assert_eq!(state.layout().left.panel_type.as_deref(), Some("metarecord-detail"));
     }
@@ -1594,7 +1601,7 @@ mod tests {
         assert_eq!(state.layout().left.panel_type.as_deref(), Some("log"));
 
         // Assign another workspace, then come back: panel type restored.
-        state.tab_new(None);
+        state.workspace_new(None);
         assert_eq!(state.layout().left.panel_type.as_deref(), Some("repos"));
         state.tab_assign("ws-1", SlotId::Left).unwrap();
         assert_eq!(state.layout().left.panel_type.as_deref(), Some("log"));
@@ -1619,7 +1626,7 @@ mod tests {
     #[test]
     fn test_set_panel_type_evicts_same_type_from_a_hidden_other_slot() {
         let (_, state) = state();
-        state.tab_new(Some("repo-1".into())); // ws-2, left: metarecord-list
+        state.workspace_new(Some("repo-1".into())); // ws-2, left: metarecord-list
         state.panel_split().unwrap(); // right: metarecord-detail
         state.panel_unsplit().unwrap(); // right hidden, remembers metarecord-detail
         // Switching the visible slot to the type the hidden slot remembers must
@@ -1662,19 +1669,19 @@ mod tests {
     #[test]
     fn test_workspace_restores_its_panel_count_on_navigation() {
         let (_, state) = state();
-        let ws2 = state.tab_new(Some("repo-1".into())); // ws-2, single
-        let ws3 = state.tab_new(Some("repo-1".into())); // ws-3, single, focused
+        let ws2 = state.workspace_new(Some("repo-1".into())); // ws-2, single
+        let ws3 = state.workspace_new(Some("repo-1".into())); // ws-3, single, focused
         // Split ws-3 into two panels.
         state.panel_split().unwrap();
         assert!(state.layout().right.visible);
 
         // Navigate to ws-2 (left single): the second panel closes.
-        state.tab_goto(2).unwrap();
+        state.workspace_goto(2).unwrap();
         assert!(!state.layout().right.visible);
         assert_eq!(state.layout().left.workspace_id.as_deref(), Some(ws2.as_str()));
 
         // Back to ws-3: its second panel is restored.
-        state.tab_goto(3).unwrap();
+        state.workspace_goto(3).unwrap();
         let layout = state.layout();
         assert!(layout.right.visible);
         assert_eq!(layout.left.workspace_id.as_deref(), Some(ws3.as_str()));
@@ -1684,33 +1691,33 @@ mod tests {
     #[test]
     fn test_unsplit_makes_the_workspace_reopen_single() {
         let (_, state) = state();
-        state.tab_new(Some("repo-1".into())); // ws-2, focused
+        state.workspace_new(Some("repo-1".into())); // ws-2, focused
         state.panel_split().unwrap(); // two panels
         state.panel_unsplit().unwrap(); // back to a single panel
         // Move away and back: the workspace stays single.
-        state.tab_goto(1).unwrap();
-        state.tab_goto(2).unwrap();
+        state.workspace_goto(1).unwrap();
+        state.workspace_goto(2).unwrap();
         assert!(!state.layout().right.visible);
     }
 
     #[test]
     fn test_closing_a_panel_makes_the_workspace_reopen_single() {
         let (_, state) = state();
-        state.tab_new(Some("repo-1".into())); // ws-2, focused
+        state.workspace_new(Some("repo-1".into())); // ws-2, focused
         state.panel_split().unwrap(); // two panels
         // Close the right panel via its × button (hide_slot).
         state.hide_slot(SlotId::Right);
         assert!(!state.layout().right.visible);
         // The workspace now reopens single.
-        state.tab_goto(1).unwrap();
-        state.tab_goto(2).unwrap();
+        state.workspace_goto(1).unwrap();
+        state.workspace_goto(2).unwrap();
         assert!(!state.layout().right.visible);
     }
 
     #[test]
     fn test_mixed_layout_does_not_record_a_split() {
         let (_, state) = state();
-        let ws2 = state.tab_new(Some("repo-1".into())); // ws-2, focused left, single
+        let ws2 = state.workspace_new(Some("repo-1".into())); // ws-2, focused left, single
         // Right-click a tab: assign ws-1 to the non-focused right slot → the
         // two slots show different workspaces (a mixed, two-panel layout).
         state.tab_assign("ws-1", SlotId::Right).unwrap();
@@ -1720,8 +1727,8 @@ mod tests {
         assert_eq!(layout.right.workspace_id.as_deref(), Some("ws-1"));
 
         // A mixed layout owns nothing, so ws-2 kept its single-panel memory.
-        state.tab_goto(1).unwrap(); // both slots to ws-1
-        state.tab_goto(2).unwrap(); // both slots to ws-2
+        state.workspace_goto(1).unwrap(); // both slots to ws-1
+        state.workspace_goto(2).unwrap(); // both slots to ws-2
         assert!(!state.layout().right.visible);
     }
 
@@ -1752,7 +1759,7 @@ mod tests {
     #[test]
     fn test_active_repo_is_a_readonly_standard_variable() {
         let (_, state) = state();
-        let id = state.tab_new(Some("repo-7".into()));
+        let id = state.workspace_new(Some("repo-7".into()));
         // Readable through the variable store (spec-gui standard vars)...
         assert_eq!(state.get_var(&id, "active_repo").unwrap(), json!("repo-7"));
         assert_eq!(state.get_var("ws-1", "active_repo").unwrap(), Value::Null);
@@ -1872,7 +1879,7 @@ mod tests {
     #[test]
     fn test_pick_confirm_restores_a_previously_split_other_slot() {
         let (_, state) = state();
-        let other = state.tab_new(Some("repo-1".into())); // ws-2, focused left
+        let other = state.workspace_new(Some("repo-1".into())); // ws-2, focused left
         state.panel_split().unwrap(); // right shows ws-2 too (metarecord-detail)
         // Picker opens in the right slot, displacing ws-2's detail view.
         let picker = state.pick_start(pick_spec(&other)).unwrap();
