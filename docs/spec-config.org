@@ -97,8 +97,8 @@ binary never holds its own defaults (see "No runtime fallback").
 *** Shipped scripts
 
 Beside the per-crate subdirectories there is one *crate-agnostic* top-level
-category: the user-facing helper scripts (the =gui-*= tag/classification
-drivers and their shared =lib/=). They are not tied to any single crate — a
+category: the user-facing helper scripts (the =gui-*= drivers — tagging,
+classification, un-watching a folder — and their shared =lib/=). They are not tied to any single crate — a
 script may drive the GUI, the CLI, or both — so they do not belong under any
 =<crate>/= subdir.
 

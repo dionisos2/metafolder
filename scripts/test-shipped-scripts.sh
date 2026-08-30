@@ -17,6 +17,7 @@ suites=(
     test-gui-tag-folder.sh
     test-gui-tag-classify.sh
     test-example-gui-sort-folder.sh
+    test-gui-unwatch-folder.sh
     test-scripts-integration.sh  # real daemon; SKIPs if binaries not built
 )
 

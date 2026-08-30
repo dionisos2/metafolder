@@ -28,6 +28,7 @@ fi
 FOLDER="$HERE/shipped/gui-tag-folder.sh"
 PAIR="$HERE/shipped/gui-tag-pair.sh"
 CLASSIFY="$HERE/shipped/gui-tag-classify.sh"
+UNWATCH="$HERE/shipped/gui-unwatch-folder.sh"
 
 # ── Build a fixture repo:  /  ├ top.txt   └ sub/ ├ inner.txt ──────────────────
 REPO_DIR=$(mktemp -d "${TMPDIR:-/tmp}/mf-fix.XXXXXX")
@@ -131,5 +132,23 @@ dbl=$(printf '%s\n' "$comp" | grep -c '//' || true)
 root=$(printf '%s\n' "$comp" | grep -xc '/' || true)
 assert_eq "completion: no double-slashed folder path" 0 "$dbl"
 assert "completion: the repository root is offered as /" [ "$root" -ge 1 ]
+
+# ── gui-unwatch-folder on /sub: the folder survives, its contents do not ─────
+# Runs LAST: it deletes metarecords the earlier cases rely on. Exercises the
+# real `mfr_path ->* "<path>"` subtree query (strict descendants) and the
+# mf_watch write, against the daemon.
+hy_reset
+export MF_UNWATCH_SETTLE=0
+hy_prompt /sub
+hy_input y
+uout=$(bash "$UNWATCH" 2>&1)
+assert_contains "unwatch: reports the deletion" "$uout" "deleted 1 metarecords"
+assert "unwatch: the folder metarecord survives" [ "$(df_mf path --relative "$SUB" 2>/dev/null)" = /sub ]
+assert_eq "unwatch: mf_watch is false on the folder" \
+    "false" "$(df_mf metarecord -i "$SUB" field get mf_watch 2>/dev/null | head -1)"
+inner_gone() { ! df_mf metarecord -i "$INNER" get >/dev/null 2>&1; }
+assert "unwatch: the file inside is gone" inner_gone
+assert "unwatch: a file OUTSIDE the folder survives" \
+    [ "$(df_mf path --relative "$TOP" 2>/dev/null)" = /top.txt ]
 
 assert_summary
