@@ -899,8 +899,8 @@ Behaviours:
 | =command-input:activate=  | Focus the command input in command mode (default =:=)         |
 | =bash-input:activate=     | Focus the command input in bash mode (default =!=)            |
 | =editing:unfocus=         | Remove focus from the active text input (=text-input = true=) |
-| =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) |
-| =editing:confirm=         | Confirm the current text input (=text-input = true=)          |
+| =editing:discard=         | Clear the active text input, then remove focus (default =ctrl+q=; =text-input = true=) — the command input when it holds the focus, otherwise the focused panel input |
+| =editing:confirm=         | Confirm the current text input (=text-input = true=) — the *command input only*: elsewhere the key is left to the panel form's own handler |
 | =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |

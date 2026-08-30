@@ -7,6 +7,7 @@ import {
   type ArgPromptRequest,
   type ArgSpec,
   argSpecFor,
+  discardActiveInput,
   clearArgSpecs,
   collectArgs,
   filterCommands,
@@ -37,6 +38,55 @@ describe('recent builtin', () => {
 describe('repos:switch builtin', () => {
   test('registers its repo argument spec at module load', () => {
     expect(argSpecFor('repos:switch')?.map((s) => s.name)).toEqual(['repo']);
+  });
+});
+
+// `editing:discard` (ctrl+q) on a PANEL input: the shell command input handles
+// it through its registered editing target, but a panel's own input (the
+// metarecord-list query box, a metarecord-detail inline editor…) has no such
+// target, so the command falls back to the deep-focused element — spec-gui:
+// "Clear the active text input, then remove focus".
+describe('discardActiveInput', () => {
+  afterEach(() => document.body.replaceChildren());
+
+  test('clears a focused input, notifies listeners and blurs it', () => {
+    const input = document.createElement('input');
+    input.value = 'jazz';
+    document.body.append(input);
+    input.focus();
+    const seen: string[] = [];
+    input.addEventListener('input', () => seen.push(input.value));
+
+    expect(discardActiveInput(input)).toBe(true);
+
+    expect(input.value).toBe('');
+    expect(seen).toEqual(['']); // the panel sees the change (its own listener)
+    expect(document.activeElement).not.toBe(input);
+  });
+
+  test('clears a textarea the same way', () => {
+    const area = document.createElement('textarea');
+    area.value = 'two\nlines';
+    document.body.append(area);
+    area.focus();
+
+    expect(discardActiveInput(area)).toBe(true);
+    expect(area.value).toBe('');
+  });
+
+  test('a non-text element is only blurred, never emptied', () => {
+    const button = document.createElement('button');
+    button.textContent = 'keep me';
+    document.body.append(button);
+    button.focus();
+
+    expect(discardActiveInput(button)).toBe(false);
+    expect(button.textContent).toBe('keep me');
+    expect(document.activeElement).not.toBe(button);
+  });
+
+  test('nothing focused is a no-op', () => {
+    expect(discardActiveInput(null)).toBe(false);
   });
 });
 

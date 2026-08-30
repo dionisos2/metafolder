@@ -631,6 +631,22 @@ export function deepActiveElement(): Element | null {
   return el;
 }
 
+/** `editing:discard` on an element with no registered editing target — a
+ *  panel's own input. Empties it (firing `input`, so the panel's own listener
+ *  sees the change like a user deletion) and removes the focus; a non-text
+ *  element has nothing to empty and is only blurred. Returns whether anything
+ *  was cleared. */
+export function discardActiveInput(el: Element | null): boolean {
+  if (!el) return false;
+  const cleared = el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement;
+  if (cleared) {
+    el.value = '';
+    el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  }
+  (el as HTMLElement).blur?.();
+  return cleared;
+}
+
 // ── Panel dispatch hook (wired by PanelHost) ───────────────────────────
 
 export type PanelDispatch = (command: CommandDef, args: string[]) => Promise<void>;
@@ -842,14 +858,15 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       return true;
     // editing:* acts on the shell command input (editingTarget) when set,
     // otherwise on the deep-focused panel input (replacing the old per-iframe
-    // shim handlers). confirm/discard stay command-input-only — panel inputs
-    // keep native Enter/Escape for their own keydown handlers (see keys.ts).
+    // shim handlers). Only `confirm` stays command-input-only — Enter must
+    // reach a panel form's own keydown handler (see keys.ts).
     case 'editing:unfocus':
       if (editingTarget) editingTarget.unfocus();
       else (deepActiveElement() as HTMLElement | null)?.blur();
       return true;
     case 'editing:discard':
-      editingTarget?.discard();
+      if (editingTarget) editingTarget.discard();
+      else discardActiveInput(deepActiveElement());
       return true;
     case 'editing:confirm':
       editingTarget?.confirm();

@@ -152,14 +152,13 @@ export function installKeys() {
       }
       if (!result) return;
       // editing:* acts on the shell command input (editingTarget) when set.
-      // Without it, dispatch falls back to the deep-focused panel input for
-      // unfocus/goto-line-*, but Enter/Escape stay native so panel forms keep
-      // their own keydown handlers (e.g. the metarecord-list query input).
+      // Without it, dispatch falls back to the deep-focused panel input
+      // (unfocus, discard, goto-line-*). Only `confirm` stays out of the way:
+      // Enter must reach a panel form's own keydown handler (e.g. the
+      // metarecord-list query input, which applies the query on Enter).
       if ('invocation' in result && result.invocation.startsWith('editing:') && !hasEditingTarget()) {
         if (!textInput) return;
-        if (result.invocation === 'editing:confirm' || result.invocation === 'editing:discard') {
-          return;
-        }
+        if (result.invocation === 'editing:confirm') return;
       }
       // Any outcome the matcher claims — fired, pending or cancelled — swallows
       // the key; only a fired one dispatches.
