@@ -8,6 +8,7 @@ import {
   TYPES,
   createTypePicker,
   parseRawValue,
+  rawValueCompletions,
   widgetFor,
   bulkSetBody,
   MATCH_ALL,
@@ -118,6 +119,28 @@ describe('parseRawValue', () => {
 
   test('rejects unknown types', () => {
     expect(() => parseRawValue('banana', 'x')).toThrow(/banana/);
+  });
+});
+
+describe('rawValueCompletions', () => {
+  test('a bool value completes over its only two raw forms', () => {
+    // The completion must round-trip through parseRawValue: "true" is the one
+    // string that parses to true, and "false" the conventional spelling of the
+    // other case.
+    expect(rawValueCompletions('bool')).toEqual(['false', 'true']);
+    expect(parseRawValue('bool', rawValueCompletions('bool')[1])).toEqual({
+      type: 'bool',
+      value: true,
+    });
+    expect(parseRawValue('bool', rawValueCompletions('bool')[0])).toEqual({
+      type: 'bool',
+      value: false,
+    });
+  });
+
+  test('types with an open value set have no static completion', () => {
+    for (const type of ['string', 'int', 'float', 'datetime', 'ref', 'tree_ref', 'nothing'])
+      expect(rawValueCompletions(type)).toEqual([]);
   });
 });
 

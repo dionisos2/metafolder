@@ -98,6 +98,21 @@ function isValueType(type) {
 }
 
 /**
+ * The complete list of raw forms a value of `type` can take, for the value
+ * completion of the interactive field commands — empty when the type's value
+ * set is open (a string, a number, a date) or completed from the repository
+ * (a `ref`/`tree_ref` forest, see the panel's `completionPaths`). Only `bool`
+ * has a closed, repository-independent set; the two entries are exactly what
+ * `parseRawValue` reads back.
+ *
+ * @param {string} type
+ * @returns {string[]}
+ */
+export function rawValueCompletions(type) {
+  return type === 'bool' ? ['false', 'true'] : [];
+}
+
+/**
  * Value from its one-line raw form (interactive command arguments).
  *
  * @param {string} type

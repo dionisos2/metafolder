@@ -7,6 +7,7 @@ import { orphanState, orphanLabel } from '/__orphan.js';
 import {
   createTypePicker,
   parseRawValue,
+  rawValueCompletions,
   widgetFor,
   createPickRunner,
   TYPES,
@@ -819,6 +820,9 @@ export async function mount(root, metafolder) {
    *  Shared by the direct and bulk value-completion paths.
    *  @param {string} repo @param {string} field @param {string} type */
   async function completionPaths(repo, field, type) {
+    // A closed value set (bool: true/false) needs no repository lookup.
+    const closed = rawValueCompletions(type);
+    if (closed.length > 0) return closed;
     const seedField = type === 'ref' ? await config.refCompletionSeed(field) : null;
     const source = completionSourceField(type, field, seedField);
     return source ? treePathsForField(repo, source) : [];
@@ -903,10 +907,14 @@ export async function mount(root, metafolder) {
           const r = rowForLabel(p[0]);
           return r ? rawOfValue(cur.repo, cur.uuid, r.name, r.value) : '';
         },
-        complete: (_partial, p) => {
+        complete: async (_partial, p) => {
           const cur = requireCurrent();
           const r = rowForLabel(p[0]);
-          return r && r.value.type === 'tree_ref' ? treePathsForField(cur.repo, r.name) : [];
+          if (!r) return [];
+          // A Nothing row carries no type of its own: fall back to the field's
+          // established one, so re-giving an absent bool a value still completes.
+          const type = r.value.type === 'nothing' ? await fieldTypeOf(r.name) : r.value.type;
+          return completionPaths(cur.repo, r.name, type);
         },
       },
     ],
