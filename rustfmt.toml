@@ -1,0 +1,11 @@
+# The project is dense by choice: wide struct literals, method chains and match
+# arms stay on one line where they fit. `use_small_heuristics = "Max"` derives
+# every sub-width (fn_call_width, chain_width, struct_lit_width…) from
+# max_width instead of rustfmt's much narrower defaults, which is what keeps
+# the formatted result close to the hand-written style this codebase had
+# before rustfmt was adopted — it cut the adoption diff from 2252 hunks to 877.
+#
+# Enforced by scripts/check.sh (`fmt`), so an accidental `cargo fmt` can no
+# longer produce a reformatting diff on top of a real change.
+max_width = 100
+use_small_heuristics = "Max"
