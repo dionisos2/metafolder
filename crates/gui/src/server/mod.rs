@@ -207,10 +207,11 @@ struct MediaProbeParams {
     path: String,
 }
 
-/// `GET /__media-probe?path=…` — per-file codec probe for the `file`
-/// panel, requested only after a media element has failed to play, to
-/// report the missing decoders. `gst-discoverer-1.0` runs out of process,
-/// so off the async runtime via `spawn_blocking`.
+/// `GET /__media-probe?path=…` — per-file codec probe for the `file` panel,
+/// requested before a media element is created: it reports the decoders this
+/// file needs and lacks, and whether the decoder GStreamer would pick is too
+/// slow for the stream. `gst-discoverer-1.0` runs out of process, so off the
+/// async runtime via `spawn_blocking`.
 async fn media_probe(
     axum::extract::Query(params): axum::extract::Query<MediaProbeParams>,
 ) -> axum::response::Response {

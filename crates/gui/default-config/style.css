@@ -11,6 +11,9 @@
   --mf-focus-border: #4c56c4;
   --mf-error: #c44c56;
   --mf-ok: #56c44c;
+  /* Something worth saying that is not a failure — e.g. a media file that
+     plays, but whose only available decoder is too slow for it. */
+  --mf-warning: #d8a657;
   /* orphaned metarecords: the tracked file no longer exists on disk */
   --mf-orphan: #b07ad6;
   /* Row selection. Two distinct fills, so "where the keyboard cursor is" and

@@ -1712,7 +1712,11 @@ path is reached.
 Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer
 elements are missing, shows an explanatory message instead of attempting
-playback (see [[*Media codec support]]).
+playback (see [[*Media codec support]]). It then probes the file itself with
+=GET /__media-probe=: a missing decoder replaces the preview with a message
+naming it, while a decoder that is merely *too slow* for the stream raises a
+warning bar above the viewer and plays the file anyway (see
+[[*Slow decoders]]).
 
 When an image or video is previewed, a toolbar offers zoom controls, mirrored
 by commands and default keybindings (active only while the =file= panel is
@@ -2802,4 +2806,42 @@ process). Two defenses are implemented:
   all canonical state, so the session survives. A second termination
   within 10 seconds of the previous one is assumed to be a reload-crash
   loop and is not followed by another reload.
+
+*** Slow decoders
+
+A *present* decoder is not necessarily a *usable* one, and the difference is
+invisible to every check above: =gst-discoverer-1.0= reports no missing
+plugin, the element is created, the file plays — at a few frames per second.
+The user sees a video that stutters and looks degraded in the GUI while
+playing perfectly in mpv or smplayer, with nothing anywhere to explain why.
+The cause is that those players decode through ffmpeg, and the GUI through
+whatever GStreamer element WebKit picks, which for some codecs is a much
+slower implementation.
+
+=GET /__media-probe= therefore also returns =slow=: a message when the
+codec's *fallback* decoder is known to be slow, no fast alternative is
+installed, and the stream's pixel rate (=width × height × fps=) exceeds a
+budget. It is =null= otherwise, and always =null= when =missing= is
+non-empty (a decoder that is absent cannot also be slow). The panel shows it
+as a warning bar and still plays the file.
+
+The judgement is deliberately narrow — a warning that fires on files that
+play fine is worse than no warning — so a codec is listed only once it has
+been *measured*. One entry so far:
+
+| Codec | Fallback              | Fast decoders                         | Package            |
+|-------+-----------------------+---------------------------------------+--------------------|
+| AV1   | libaom =av1dec=       | =dav1ddec=, =avdec_av1=, VA-API/NVDEC | =gst-plugin-dav1d= |
+
+=av1dec= is the only AV1 decoder in =gst-plugins-bad= and is single-threaded:
+on a 4-core reference box it decoded a 3840×2160 stream at 25 fps (≈207
+Mpx/s) against dav1d's 75 fps through ffmpeg — below the 29.97 fps the file
+needs, before the WebView's own RGBA conversion (33 MB per 4K frame) and
+compositing. The budget is 150 Mpx/s: 1080p60 (124 Mpx/s) stays silent,
+1440p60 and 4K30 (221 and 248 Mpx/s) do not.
+
+Decoder presence is probed with =gst-inspect-1.0= and memoized per process.
+Unlike the sink probe, an undeterminable answer counts as *present* (no
+warning): there the cost of being wrong is a false alarm, whereas a wrong
+sink verdict is a GUI-freezing crash.
 

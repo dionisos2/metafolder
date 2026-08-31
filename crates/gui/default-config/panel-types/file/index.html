@@ -175,6 +175,17 @@
       .placeholder {
         color: var(--mf-fg-dim, #8a8a96);
       }
+      /* Playback-quality warning: the file plays, so this sits above the
+         viewer rather than replacing it (a placeholder would hide the very
+         media the user asked for). */
+      #media-warning {
+        flex: 0 0 auto;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-warning, #d8a657);
+        border-bottom: 1px solid var(--mf-bg, #1e1e24);
+        font-size: 0.85em;
+      }
       /* Directory grid footer: "200/5000" progressive-loading indicator. */
       #dir-footer {
         flex: 0 0 auto;
@@ -200,6 +211,7 @@
       </label>
       <span id="resume-hint" hidden></span>
     </div>
+    <div id="media-warning" hidden></div>
     <div id="viewer" data-help-topic="file"><p class="placeholder">No file selected</p></div>
     <div id="dir-footer" hidden></div>
   </body>

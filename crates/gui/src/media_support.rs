@@ -51,15 +51,19 @@ pub fn system() -> &'static MediaSupport {
 
 /// Per-file codec probe result. Unlike [`MediaSupport`] (a once-per-process
 /// sink check that prevents the WebKit crash), this depends on the actual
-/// file's streams: the `file` panel requests it only when an `<audio>`/
-/// `<video>` element has already failed to play, to explain *why* — a
-/// missing decoder does not crash WebKit, it just fails the element.
+/// file's streams: the `file` panel requests it before creating the element,
+/// and reports either a decoder that is missing (the element would fail) or
+/// one that is too slow for the stream (the element plays, badly).
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct MediaProbe {
     /// Human-readable descriptions of the missing decoders (empty when no
     /// missing plugin was reported — the failure was something else, e.g.
     /// a corrupt file).
     pub missing: Vec<String>,
+    /// Set when every decoder is present but the one GStreamer would pick is
+    /// too slow for this stream: the file plays, badly. `None` when playback
+    /// should be smooth, or when no verdict could be reached.
+    pub slow: Option<String>,
 }
 
 /// Parses `gst-discoverer-1.0` output into the missing-decoder list. Pure:
@@ -90,7 +94,150 @@ pub fn parse_discoverer(output: &str) -> MediaProbe {
             None => in_missing_block = false,
         }
     }
-    MediaProbe { missing }
+    MediaProbe { missing, slow: None }
+}
+
+/// The shape of a file's first video stream, as `gst-discoverer-1.0` reports
+/// it. Enough to decide whether the decoder GStreamer would pick can sustain
+/// real-time playback.
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct VideoStream {
+    /// Codec name as the discoverer prints it (`AV1`, `H.264`, `VP9`…).
+    pub codec: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps_num: u32,
+    pub fps_den: u32,
+}
+
+impl VideoStream {
+    /// Pixels per second the decoder must sustain to play in real time.
+    pub fn pixel_rate(&self) -> f64 {
+        if self.fps_den == 0 {
+            return 0.0;
+        }
+        f64::from(self.width) * f64::from(self.height) * f64::from(self.fps_num)
+            / f64::from(self.fps_den)
+    }
+}
+
+/// Whether a trimmed line opens a stream block (`video #1: AV1`).
+fn stream_header(line: &str) -> bool {
+    ["video #", "audio #", "subtitle #", "container #"].iter().any(|kind| line.starts_with(kind))
+}
+
+/// Extracts the first video stream from a `gst-discoverer-1.0` report, whose
+/// block looks like:
+///   ```text
+///   video #1: AV1
+///     Width: 3840
+///     Height: 2160
+///     Frame rate: 30000/1001
+///   ```
+/// Pure: no I/O. `None` for an audio-only file, or when the block carries no
+/// usable dimensions — nothing to judge, so no verdict is reached.
+pub fn parse_video_stream(output: &str) -> Option<VideoStream> {
+    let mut video: Option<VideoStream> = None;
+    for line in output.lines() {
+        let trimmed = line.trim();
+        if stream_header(trimmed) {
+            // Only the first video stream matters: reaching any further
+            // header means its block is over.
+            if video.is_some() {
+                break;
+            }
+            if let Some((_, codec)) =
+                trimmed.strip_prefix("video #").and_then(|rest| rest.split_once(": "))
+            {
+                video = Some(VideoStream {
+                    codec: codec.trim().to_string(),
+                    width: 0,
+                    height: 0,
+                    fps_num: 0,
+                    fps_den: 1,
+                });
+            }
+            continue;
+        }
+        let Some(stream) = video.as_mut() else { continue };
+        let field = |name: &str| trimmed.strip_prefix(name).map(str::trim);
+        if let Some(value) = field("Width:") {
+            stream.width = value.parse().unwrap_or(0);
+        } else if let Some(value) = field("Height:") {
+            stream.height = value.parse().unwrap_or(0);
+        } else if let Some(value) = field("Frame rate:") {
+            if let Some((num, den)) = value.split_once('/') {
+                stream.fps_num = num.trim().parse().unwrap_or(0);
+                stream.fps_den = den.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    let video = video?;
+    let unusable =
+        video.width == 0 || video.height == 0 || video.fps_num == 0 || video.fps_den == 0;
+    (!unusable).then_some(video)
+}
+
+/// A codec whose commonly packaged *fallback* GStreamer decoder is slow
+/// enough to matter, with the elements that decode it at a usable speed.
+struct SlowFallback {
+    /// Codec name as `gst-discoverer-1.0` prints it.
+    codec: &'static str,
+    /// Decoder elements that sustain real-time playback; any one present
+    /// clears the verdict.
+    fast: &'static [&'static str],
+    /// What GStreamer falls back to when none of `fast` is installed.
+    fallback: &'static str,
+    /// The package that provides a fast decoder.
+    package: &'static str,
+}
+
+/// Only AV1 is listed, and only because it is measurably broken: on a 4-core
+/// reference box, libaom's `av1dec` — the sole AV1 decoder shipped by
+/// `gst-plugins-bad`, and single-threaded — decoded a 3840×2160 stream at
+/// 25 fps (≈207 Mpx/s) against dav1d's 75 fps through ffmpeg, which is why
+/// such a file stutters here while mpv (dav1d, no GStreamer) plays it
+/// cleanly. Codecs whose fallback is a threaded libav decoder do not belong
+/// here: a warning that fires on files that play fine is worse than none.
+const SLOW_FALLBACKS: &[SlowFallback] = &[SlowFallback {
+    codec: "AV1",
+    // dav1d (gst-plugins-rs), libav, and the VA-API / NVDEC hardware decoders.
+    fast: &["dav1ddec", "avdec_av1", "vaav1dec", "vaav1lpdec", "nvav1dec", "nvav1sldec"],
+    fallback: "libaom (av1dec, single-threaded)",
+    package: "gst-plugin-dav1d",
+}];
+
+/// Pixel rate above which a slow fallback decoder is assumed not to keep up.
+/// libaom sustained ≈207 Mpx/s on the reference box with nothing else
+/// running; inside the WebView the same frames are also converted to RGBA
+/// (33 MB per 4K frame) and composited, which roughly halves that. This
+/// budget therefore still warns late rather than early: 1080p60 (124 Mpx/s)
+/// stays silent, 1440p60 and 4K30 (221 and 248 Mpx/s) do not.
+const SLOW_FALLBACK_PIXEL_RATE: f64 = 150_000_000.0;
+
+/// A warning when `video` will decode too slowly to play smoothly, given
+/// which decoder elements are installed. `None` when the codec has no known
+/// slow fallback, when a fast decoder is installed, or when the stream is
+/// small enough that even the slow one keeps up.
+///
+/// This is deliberately *not* what [`parse_discoverer`] reports: a missing
+/// decoder makes the element fail outright, while a slow one leaves a file
+/// that plays — badly, and with nothing to tell the user why.
+pub fn decode_warning(video: &VideoStream, present: impl Fn(&str) -> bool) -> Option<String> {
+    let entry = SLOW_FALLBACKS.iter().find(|entry| entry.codec == video.codec)?;
+    if entry.fast.iter().any(|element| present(element)) {
+        return None;
+    }
+    if video.pixel_rate() < SLOW_FALLBACK_PIXEL_RATE {
+        return None;
+    }
+    let fps = f64::from(video.fps_num) / f64::from(video.fps_den);
+    Some(format!(
+        "slow playback expected: {} {}×{} at {:.0} fps, and no fast {} decoder is installed \
+         — GStreamer falls back to {}, which cannot decode it in real time. Install {} for \
+         smooth playback (a player that does not use GStreamer, such as mpv, is unaffected).",
+        video.codec, video.width, video.height, fps, video.codec, entry.fallback, entry.package,
+    ))
 }
 
 /// Probes a single file for decodable streams, cached by `(path, mtime)`
@@ -165,19 +312,48 @@ fn discoverer_spec(path: &std::path::Path) -> crate::sandbox::Spec {
 /// codec info (the panel shows its generic message) rather than a demuxer
 /// parsing an untrusted file unconfined.
 fn run_discoverer(path: &std::path::Path) -> MediaProbe {
+    let empty = MediaProbe { missing: Vec::new(), slow: None };
     let Some(cmd) = crate::sandbox::command(&discoverer_spec(path)) else {
-        return MediaProbe { missing: Vec::new() };
+        return empty;
     };
     match crate::proc::run_with_timeout(cmd, DISCOVERER_TIMEOUT) {
         Some(output) => {
             let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
             text.push_str(&String::from_utf8_lossy(&output.stderr));
-            parse_discoverer(&text)
+            let missing = parse_discoverer(&text).missing;
+            // A missing decoder is the bigger problem and the panel reports
+            // that instead: there is no playback for a slow one to spoil.
+            let slow = match missing.is_empty() {
+                true => parse_video_stream(&text)
+                    .and_then(|video| decode_warning(&video, decoder_present)),
+                false => None,
+            };
+            MediaProbe { missing, slow }
         }
         // discoverer unavailable or timed out: no codec info, panel shows a
         // generic message.
-        None => MediaProbe { missing: Vec::new() },
+        None => empty,
     }
+}
+
+/// Decoder presence for [`decode_warning`], memoized (the check asks about
+/// several elements per file, each answered by a `gst-inspect-1.0` process,
+/// and plugin installation does not change while the GUI runs).
+///
+/// Unlike the sink probe in [`element_present`], an undeterminable answer
+/// counts as **present**: a false alarm on a file that plays fine is worse
+/// than a missing warning. The sink probe fails the other way because there
+/// the cost of being wrong is a GUI-freezing crash.
+fn decoder_present(element: &str) -> bool {
+    static CACHE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, bool>>> =
+        std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(known) = cache.lock_recover().get(element) {
+        return *known;
+    }
+    let present = gst_inspect(element).unwrap_or(true);
+    cache.lock_recover().insert(element.to_string(), present);
+    present
 }
 
 /// `gst-inspect-1.0 --exists`, falling back to a plugin-file scan when
@@ -356,5 +532,92 @@ Properties:
   container: Matroska
 ";
         assert_eq!(parse_discoverer(output).missing, vec!["H.264 decoder".to_string()]);
+    }
+
+    /// The video stream's shape is parsed out of the discoverer report: it is
+    /// what decides whether the decoder GStreamer would pick can keep up.
+    #[test]
+    fn test_parse_video_stream() {
+        let output = "\
+Properties:
+  Duration: 0:02:36.181000000
+  container #0: WebM
+    video #1: AV1
+      Width: 3840
+      Height: 2160
+      Frame rate: 30000/1001
+      Interlaced: false
+    audio #2: Opus
+      Sample rate: 48000
+";
+        let video = parse_video_stream(output).expect("a video stream");
+        assert_eq!(video.codec, "AV1");
+        assert_eq!((video.width, video.height), (3840, 2160));
+        assert_eq!((video.fps_num, video.fps_den), (30000, 1001));
+        // 3840 x 2160 x 29.97 = 248 Mpx/s.
+        assert!((video.pixel_rate() - 248_400_000.0).abs() < 1_000_000.0, "{}", video.pixel_rate());
+    }
+
+    #[test]
+    fn test_parse_video_stream_absent_when_audio_only() {
+        let output = "\
+Properties:
+  container #0: Matroska
+    audio #2: Opus
+      Sample rate: 48000
+";
+        assert!(parse_video_stream(output).is_none());
+    }
+
+    /// A block without usable dimensions is no basis for a verdict.
+    #[test]
+    fn test_parse_video_stream_without_dimensions() {
+        let output = "\
+Properties:
+    video #1: AV1
+      Interlaced: false
+";
+        assert!(parse_video_stream(output).is_none());
+    }
+
+    fn stream(codec: &str, width: u32, height: u32, fps: u32) -> VideoStream {
+        VideoStream { codec: codec.to_string(), width, height, fps_num: fps, fps_den: 1 }
+    }
+
+    /// 4K AV1 with only libaom's `av1dec` installed: measured at 25 fps
+    /// against a 30 fps stream. The panel must say so, rather than let the
+    /// user believe the file itself is broken.
+    #[test]
+    fn test_decode_warning_for_4k_av1_without_a_fast_decoder() {
+        let warning = decode_warning(&stream("AV1", 3840, 2160, 30), |_| false)
+            .expect("4K AV1 on libaom cannot keep up");
+        assert!(warning.contains("AV1"), "{warning}");
+        assert!(warning.contains("gst-plugin-dav1d"), "{warning}");
+    }
+
+    #[test]
+    fn test_no_decode_warning_when_a_fast_decoder_is_installed() {
+        assert!(decode_warning(&stream("AV1", 3840, 2160, 30), |e| e == "dav1ddec").is_none());
+    }
+
+    /// Below the budget even the slow fallback keeps up: a warning on every
+    /// AV1 file would be noise.
+    #[test]
+    fn test_no_decode_warning_for_a_small_av1_stream() {
+        assert!(decode_warning(&stream("AV1", 1280, 720, 30), |_| false).is_none());
+    }
+
+    /// Only codecs whose fallback decoder is known to be too slow are judged:
+    /// 4K H.264 decodes fine through gst-libav.
+    #[test]
+    fn test_no_decode_warning_for_a_codec_with_no_known_slow_fallback() {
+        assert!(decode_warning(&stream("H.264", 3840, 2160, 30), |_| false).is_none());
+    }
+
+    /// An undeterminable decoder probe must not produce a warning: a wrong
+    /// warning on a file that plays fine is worse than none.
+    #[test]
+    fn test_decoder_presence_is_assumed_when_undeterminable() {
+        assert!(decode_warning(&stream("AV1", 3840, 2160, 30), |_| true).is_none());
     }
 }

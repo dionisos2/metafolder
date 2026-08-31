@@ -86,6 +86,7 @@ export async function mount(root, metafolder) {
   const viewer = byId(root, 'viewer');
   const dirFooter = byId(root, 'dir-footer');
   const mediaToolbar = byId(root, 'media-toolbar');
+  const mediaWarning = byId(root, 'media-warning');
   const zoomLabel = byId(root, 'zoom-label');
   const resumeHint = byId(root, 'resume-hint');
   const gifAnimateWrap = byId(root, 'gif-animate-wrap');
@@ -147,6 +148,15 @@ export async function mount(root, metafolder) {
   function placeholder(text) {
     clearZoomTarget();
     viewer.replaceChildren(el('p', { class: 'placeholder' }, text));
+  }
+
+  // A playback-quality warning shown above the viewer, or null to clear it.
+  // Unlike `placeholder`, this does not replace the preview: the file does
+  // play, it just plays badly, and hiding it would be worse than the warning.
+  /** @param {string|null} text */
+  function setMediaWarning(text) {
+    mediaWarning.textContent = text ?? '';
+    mediaWarning.hidden = text === null;
   }
 
   // --- Zoom -----------------------------------------------------------------
@@ -485,6 +495,11 @@ export async function mount(root, metafolder) {
       );
       return;
     }
+    // Every decoder is present, but the one GStreamer will pick cannot keep
+    // up with this stream: play it anyway (the user may only want to seek
+    // through it) and say why it stutters, so a slow decoder is not mistaken
+    // for a broken file — the symptom that motivated this check.
+    if (probe && probe.slow) setMediaWarning(probe.slow);
     // `preload="metadata"`: a preview does not autoplay, so fetch only enough
     // for the first frame and duration — never buffer/decode the whole stream.
     const media = el(kind, { controls: true, preload: 'metadata', src: url });
@@ -612,6 +627,8 @@ export async function mount(root, metafolder) {
       detachDirScroll = null;
     }
     dirFooter.hidden = true;
+    // The previous file's playback warning does not apply to the next one.
+    setMediaWarning(null);
     // Any zoomable media from the previous view is gone; the image/video
     // branches below re-arm it. The GIF checkbox only applies to the GIF
     // branch, which un-hides it.
