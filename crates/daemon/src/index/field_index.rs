@@ -318,7 +318,11 @@ impl SortReps {
     /// min for ascending. `None` when the metarecord has no non-`Nothing` value
     /// for this field (it then sorts last, like the SQL `nf` flag).
     pub fn rep(&self, id: u32, want_max: bool) -> Option<&SortRep> {
-        if want_max { self.max.get(&id) } else { self.min.get(&id) }
+        if want_max {
+            self.max.get(&id)
+        } else {
+            self.min.get(&id)
+        }
     }
 
     /// Drops a metarecord's representatives (incremental maintenance): the
@@ -413,9 +417,7 @@ impl CategoricalIndex {
 
     /// `value_type` + value match, any single row (multi-map): the one bitmap.
     fn eq(&self, value: &Value) -> RoaringBitmap {
-        cat_key(value)
-            .and_then(|k| self.by_value.get(&k).cloned())
-            .unwrap_or_default()
+        cat_key(value).and_then(|k| self.by_value.get(&k).cloned()).unwrap_or_default()
     }
 
     /// At least one non-`Nothing` row differing from `value` — the union of all
@@ -610,7 +612,9 @@ impl BsiIndex {
 
     fn compare(&self, op: CmpOp, value: &Value) -> RoaringBitmap {
         match op {
-            CmpOp::Eq => self.key_of(value).and_then(|k| self.exact.get(&k).cloned()).unwrap_or_default(),
+            CmpOp::Eq => {
+                self.key_of(value).and_then(|k| self.exact.get(&k).cloned()).unwrap_or_default()
+            }
             CmpOp::Neq => self.neq(value),
             _ => self.range(op, value),
         }
@@ -877,16 +881,16 @@ impl ReverseIndex {
             Value::String(s) if self.kind == RefKind::TreeRef => {
                 self.by_name.get(s).cloned().unwrap_or_default()
             }
-            _ => target_key(value)
-                .and_then(|k| self.exact.get(&k).cloned())
-                .unwrap_or_default(),
+            _ => target_key(value).and_then(|k| self.exact.get(&k).cloned()).unwrap_or_default(),
         }
     }
 
     fn neq(&self, value: &Value) -> RoaringBitmap {
         match value {
             // tree_ref vs a string operand: differ by name.
-            Value::String(s) if self.kind == RefKind::TreeRef => union_except(&self.by_name, Some(s)),
+            Value::String(s) if self.kind == RefKind::TreeRef => {
+                union_except(&self.by_name, Some(s))
+            }
             // A reference operand partitions by the full key; a type-mismatched
             // operand keys to nothing, so every row differs → has_value.
             _ => {
@@ -921,7 +925,9 @@ impl ReverseIndex {
             Value::Ref(_)
             | Value::RefBase(_)
             | Value::TreeRef { .. }
-            | Value::ExternalRef { .. } => Err(Unsupported("ordered comparison on a reference".into())),
+            | Value::ExternalRef { .. } => {
+                Err(Unsupported("ordered comparison on a reference".into()))
+            }
             // Any other operand finds no matching rows in a reference field.
             _ => Ok(RoaringBitmap::new()),
         }

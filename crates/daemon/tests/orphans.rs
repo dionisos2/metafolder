@@ -9,8 +9,8 @@ use std::sync::Arc;
 use metafolder_core::metarecord::Value;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::orphans::{self, OrphanEntry};
-use metafolder_daemon::{db, reconcile, repo};
 use metafolder_daemon::state::RepoState;
+use metafolder_daemon::{db, reconcile, repo};
 use uuid::Uuid;
 
 mod common;
@@ -169,10 +169,7 @@ fn clear_orphans_a_deleted_file_and_records_its_origin() {
     // mfr_path is now the explicit-absence Nothing; the origin is frozen in
     // mfr_path_old; the metarecord itself is preserved.
     assert!(matches!(field_value(&repo, gone, "mfr_path"), Some(Value::Nothing)));
-    assert_eq!(
-        field_value(&repo, gone, "mfr_path_old"),
-        Some(Value::String("/gone.txt".into()))
-    );
+    assert_eq!(field_value(&repo, gone, "mfr_path_old"), Some(Value::String("/gone.txt".into())));
 
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -44,10 +44,7 @@ pub async fn run_to_completion(
     let out_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), stdout, false));
     let err_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), stderr, true));
 
-    let status = child
-        .wait()
-        .await
-        .map_err(|e| format!("shell command failed: {e}"))?;
+    let status = child.wait().await.map_err(|e| format!("shell command failed: {e}"))?;
     let _ = out_task.await;
     let _ = err_task.await;
 
@@ -148,9 +145,7 @@ mod tests {
     #[tokio::test]
     async fn test_nonzero_exit_is_logged() {
         let gui = gui();
-        run_to_completion(gui.clone(), "ws-1".into(), "exit 3".into())
-            .await
-            .unwrap();
+        run_to_completion(gui.clone(), "ws-1".into(), "exit 3".into()).await.unwrap();
         let log = gui.messages("ws-1").unwrap();
         assert!(log.iter().any(|m| m.text.contains("exit") && m.text.contains('3')));
     }
@@ -158,9 +153,7 @@ mod tests {
     #[tokio::test]
     async fn test_unknown_workspace_errors() {
         let gui = gui();
-        assert!(run_to_completion(gui, "ws-99".into(), "echo hi".into())
-            .await
-            .is_err());
+        assert!(run_to_completion(gui, "ws-99".into(), "echo hi".into()).await.is_err());
     }
 
     #[test]

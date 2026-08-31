@@ -124,9 +124,7 @@ pub const MAX_COMBINATOR_OPERANDS: usize = 500;
 /// nesting depth, so a parsed `Query` is shallow enough to walk safely.
 fn node_count(q: &Query) -> usize {
     let children: usize = match q {
-        Query::And { operands } | Query::Or { operands } => {
-            operands.iter().map(node_count).sum()
-        }
+        Query::And { operands } | Query::Or { operands } => operands.iter().map(node_count).sum(),
         Query::Not { operand } => node_count(operand),
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => match target {
             FollowTarget::Condition(c) => node_count(c),
@@ -240,11 +238,7 @@ pub fn assemble_selected(
 
 /// Counts the matching metarecords without fetching them: the same CTE chain
 /// as `execute`, wrapped in a `COUNT(*)` (no sort CTEs, no pagination).
-pub fn count(
-    conn: &Connection,
-    cache: &mut TreeCache,
-    query: &Query,
-) -> Result<usize, ApiError> {
+pub fn count(conn: &Connection, cache: &mut TreeCache, query: &Query) -> Result<usize, ApiError> {
     check_query_size(query)?;
     validate_query(query)?;
     let mut compiler = Compiler::new(conn, cache);
@@ -457,19 +451,18 @@ pub fn execute(
         where_clause = format!(" WHERE {}", keyset_predicate(&components, &values, &mut params));
     }
 
-    let cte_sql: Vec<String> =
-        ctes
-            .into_iter()
-            .map(|(name, body)| {
-                // Force materialisation of the filtered universe: it is joined
-                // to `field` once per sort CTE (and is the driver when there is
-                // no sort), and re-evaluating it per reference (SQLite's default
-                // for an inlined view) re-runs the whole filter each time —
-                // catastrophic when the filter is itself a tree walk.
-                let hint = if name == "_res" { " MATERIALIZED" } else { "" };
-                format!("{name} AS{hint} ({body})")
-            })
-            .collect();
+    let cte_sql: Vec<String> = ctes
+        .into_iter()
+        .map(|(name, body)| {
+            // Force materialisation of the filtered universe: it is joined
+            // to `field` once per sort CTE (and is the driver when there is
+            // no sort), and re-evaluating it per reference (SQLite's default
+            // for an inlined view) re-runs the whole filter each time —
+            // catastrophic when the filter is itself a tree walk.
+            let hint = if name == "_res" { " MATERIALIZED" } else { "" };
+            format!("{name} AS{hint} ({body})")
+        })
+        .collect();
     let mut sql = format!(
         "WITH RECURSIVE {} SELECT * FROM (SELECT {select_cols} FROM {driver}{joins}){where_clause} ORDER BY {}",
         cte_sql.join(", "),
@@ -483,9 +476,8 @@ pub fn execute(
     // Execute; keep each row's key components to build the next cursor from
     // the last *returned* row (the lookahead row is discarded).
     let mut stmt = conn.prepare(&sql).map_err(anyhow::Error::from)?;
-    let mut rows = stmt
-        .query(rusqlite::params_from_iter(params.iter()))
-        .map_err(anyhow::Error::from)?;
+    let mut rows =
+        stmt.query(rusqlite::params_from_iter(params.iter())).map_err(anyhow::Error::from)?;
     let mut page: Vec<(Uuid, Vec<serde_json::Value>)> = Vec::new();
     while let Some(row) = rows.next().map_err(anyhow::Error::from)? {
         let uuid = db::bytes_to_uuid(row.get::<_, Vec<u8>>(0).map_err(anyhow::Error::from)?)?;
@@ -500,7 +492,9 @@ pub fn execute(
                         serde_json::json!(row.get::<_, i64>(col).map_err(anyhow::Error::from)?)
                     }
                     2 => float_to_cursor(row.get::<_, f64>(col).map_err(anyhow::Error::from)?),
-                    3 => serde_json::json!(row.get::<_, String>(col).map_err(anyhow::Error::from)?),
+                    3 => {
+                        serde_json::json!(row.get::<_, String>(col).map_err(anyhow::Error::from)?)
+                    }
                     _ => serde_json::json!(hex_encode(
                         &row.get::<_, Vec<u8>>(col).map_err(anyhow::Error::from)?
                     )),
@@ -660,9 +654,8 @@ fn non_tree_ref_type(conn: &Connection, field: &str) -> Result<Option<String>, A
     let mut stmt = conn
         .prepare_cached("SELECT DISTINCT value_type FROM field WHERE field_name = ?1")
         .map_err(anyhow::Error::from)?;
-    let types = stmt
-        .query_map([field], |row| row.get::<_, String>(0))
-        .map_err(anyhow::Error::from)?;
+    let types =
+        stmt.query_map([field], |row| row.get::<_, String>(0)).map_err(anyhow::Error::from)?;
     for value_type in types {
         let value_type = value_type.map_err(anyhow::Error::from)?;
         if value_type != "nothing" && value_type != "tree_ref" {
@@ -815,10 +808,7 @@ impl<'a> Compiler<'a> {
     /// the repository (one repository per database file). It both isolates
     /// results and serves as the complement base for `Not`.
     fn new(conn: &'a Connection, cache: &'a mut TreeCache) -> Self {
-        let ctes = vec![(
-            "_repo".to_string(),
-            "SELECT uuid FROM metarecord".to_string(),
-        )];
+        let ctes = vec![("_repo".to_string(), "SELECT uuid FROM metarecord".to_string())];
         Self { conn, cache, ctes, params: Vec::new(), counter: 0 }
     }
 
@@ -913,15 +903,12 @@ impl<'a> Compiler<'a> {
             Query::Or { operands } => self.combine(operands, "UNION"),
             Query::Not { operand } => {
                 let sub = self.compile_node(operand)?;
-                Ok(self.add(format!(
-                    "SELECT uuid FROM _repo EXCEPT SELECT uuid FROM {sub}"
-                )))
+                Ok(self.add(format!("SELECT uuid FROM _repo EXCEPT SELECT uuid FROM {sub}")))
             }
 
             Query::Matches { field, pattern } => {
-                crate::regexp::compile(pattern).map_err(|e| {
-                    ApiError::bad_request(format!("invalid regex pattern: {e}"))
-                })?;
+                crate::regexp::compile(pattern)
+                    .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
                 // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
                 // match must contain a literal substring (≥ 3 chars), restrict
                 // the REGEXP scan to the rows the FTS index reports containing it
@@ -1024,10 +1011,7 @@ impl<'a> Compiler<'a> {
                     .iter()
                     .map(|u| format!("(x'{}')", hex_encode(u.as_bytes())))
                     .collect();
-                Ok(self.add(format!(
-                    "SELECT column1 AS uuid FROM (VALUES {})",
-                    literals.join(",")
-                )))
+                Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
             }
 
             Query::UuidIn { uuids } => {
@@ -1036,10 +1020,8 @@ impl<'a> Compiler<'a> {
                 }
                 // Inline the uuids as literals (no bound-parameter limit) and
                 // intersect with `_repo` so non-owned / unknown uuids drop out.
-                let literals: Vec<String> = uuids
-                    .iter()
-                    .map(|u| format!("(x'{}')", hex_encode(u.as_bytes())))
-                    .collect();
+                let literals: Vec<String> =
+                    uuids.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
                 Ok(self.add(format!(
                     "SELECT uuid FROM _repo WHERE uuid IN (SELECT column1 FROM (VALUES {}))",
                     literals.join(",")
@@ -1259,8 +1241,7 @@ impl<'a> Compiler<'a> {
                 if op.is_ordered() {
                     return Err(ordered_only_eq("tree_ref"));
                 }
-                self.params
-                    .push(SqlValue::Blob(db::uuid_to_bytes(parent.unwrap_or(ZERO_UUID))));
+                self.params.push(SqlValue::Blob(db::uuid_to_bytes(parent.unwrap_or(ZERO_UUID))));
                 self.push_text(name);
                 Ok("value_type = 'tree_ref' AND value_uuid = ? AND value_name = ?".to_string())
             }
@@ -1334,8 +1315,7 @@ mod tests {
         assert_eq!(node_count(&nested), 6);
 
         // At the limit passes; one over is rejected.
-        let at_limit =
-            Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
+        let at_limit = Query::Or { operands: (0..MAX_QUERY_NODES - 1).map(|_| leaf()).collect() };
         assert_eq!(node_count(&at_limit), MAX_QUERY_NODES);
         assert!(check_query_size(&at_limit).is_ok());
 

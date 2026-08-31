@@ -29,7 +29,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -162,8 +167,7 @@ async fn reconcile_agrees(app: &Router, repo: &str, label: &str) {
     let task_id = body["task_id"].as_str().unwrap().to_string();
     let mut task = Value::Null;
     for _ in 0..400 {
-        let (_, body) =
-            request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await;
+        let (_, body) = request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await;
         if body["status"] == "done" || body["status"] == "failed" {
             task = body;
             break;
@@ -240,14 +244,7 @@ async fn test_first_minutes_of_a_repository() {
     settle_on(
         &app,
         &repo,
-        &[
-            "",
-            "photos",
-            "photos/2024",
-            "photos/2024/a.jpg",
-            "photos/2024/b.jpg",
-            "notes-2024.txt",
-        ],
+        &["", "photos", "photos/2024", "photos/2024/a.jpg", "photos/2024/b.jpg", "notes-2024.txt"],
     )
     .await;
     reconcile_agrees(&app, &repo, "renamed file").await;

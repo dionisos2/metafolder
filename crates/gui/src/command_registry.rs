@@ -35,9 +35,7 @@ impl CommandRegistry {
     }
 
     fn insert(&self, def: CommandDef) {
-        self.commands
-            .lock_recover()
-            .insert(def.name.clone(), def);
+        self.commands.lock_recover().insert(def.name.clone(), def);
     }
 
     /// Registers a shell builtin. `log` controls whether invocations are
@@ -55,7 +53,14 @@ impl CommandRegistry {
     /// Registers a command from a panel type. Re-registering the same
     /// name replaces the previous definition (panels re-register on
     /// iframe reload).
-    pub fn register_panel(&self, panel_type: &str, name: &str, label: &str, reveal: bool, log: bool) {
+    pub fn register_panel(
+        &self,
+        panel_type: &str,
+        name: &str,
+        label: &str,
+        reveal: bool,
+        log: bool,
+    ) {
         self.insert(CommandDef {
             name: name.to_string(),
             label: label.to_string(),
@@ -66,10 +71,7 @@ impl CommandRegistry {
     }
 
     pub fn get(&self, name: &str) -> Option<CommandDef> {
-        self.commands
-            .lock_recover()
-            .get(name)
-            .cloned()
+        self.commands.lock_recover().get(name).cloned()
     }
 
     /// Autocomplete listing: every registered command, sorted by name
@@ -116,7 +118,13 @@ mod tests {
         // command is invocable (and listed) even when another panel is
         // focused or the owner is not displayed at all.
         let registry = CommandRegistry::new();
-        registry.register_panel("metarecord-list", "metarecord-list:next", "Next entry", false, true);
+        registry.register_panel(
+            "metarecord-list",
+            "metarecord-list:next",
+            "Next entry",
+            false,
+            true,
+        );
 
         let def = registry.get("metarecord-list:next").unwrap();
         assert_eq!(def.owner.as_deref(), Some("metarecord-list"));

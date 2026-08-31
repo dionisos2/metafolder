@@ -60,12 +60,7 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    Ok(StatInfo {
-        path,
-        is_dir: metadata.is_dir(),
-        size: metadata.len(),
-        mtime,
-    })
+    Ok(StatInfo { path, is_dir: metadata.is_dir(), size: metadata.len(), mtime })
 }
 
 // ── Write operations (spec-gui "file-manager panel type") ────────────────────

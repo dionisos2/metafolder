@@ -274,7 +274,10 @@ fn smoke_test() -> Result<(), String> {
 
 /// The startup decision, given the environment and whether the sandbox probe
 /// succeeded. Pure — [`preflight`] supplies the two facts.
-fn preflight_result(disable_env: Option<OsString>, sandbox: Result<(), String>) -> Result<(), String> {
+fn preflight_result(
+    disable_env: Option<OsString>,
+    sandbox: Result<(), String>,
+) -> Result<(), String> {
     if disable_env.is_some() {
         return Err(format!(
             "{WEBKIT_DISABLE} is set: the WebView would decode untrusted media \
@@ -431,12 +434,8 @@ fn proc_table() -> Vec<ProcRow> {
             let pid: u32 = entry.file_name().to_string_lossy().parse().ok()?;
             let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
             let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
-            let ppid = status
-                .lines()
-                .find_map(|line| line.strip_prefix("PPid:"))?
-                .trim()
-                .parse()
-                .ok()?;
+            let ppid =
+                status.lines().find_map(|line| line.strip_prefix("PPid:"))?.trim().parse().ok()?;
             Some((pid, ppid, comm.trim().to_string()))
         })
         .collect()
@@ -507,9 +506,9 @@ mod tests {
         let spec = Spec::new("gst-discoverer-1.0").env("GST_REGISTRY", "/tmp/registry.bin");
         let args = strings(&spec);
         assert!(args.contains(&"--clearenv".to_string()));
-        assert!(args.windows(3).any(|w| w[0] == "--setenv"
-            && w[1] == "GST_REGISTRY"
-            && w[2] == "/tmp/registry.bin"));
+        assert!(args
+            .windows(3)
+            .any(|w| w[0] == "--setenv" && w[1] == "GST_REGISTRY" && w[2] == "/tmp/registry.bin"));
     }
 
     #[test]
@@ -668,10 +667,8 @@ mod tests {
         let file = std::env::temp_dir().join("metafolder-tests").join("mf-sandbox-ro.txt");
         std::fs::write(&file, "readable").expect("write");
 
-        let read = run(&Spec::new("sh")
-            .arg("-c")
-            .arg(format!("cat {}", file.display()))
-            .read_only(&file));
+        let read =
+            run(&Spec::new("sh").arg("-c").arg(format!("cat {}", file.display())).read_only(&file));
         assert!(read.status.success(), "a read-only bind must be readable");
         assert_eq!(String::from_utf8_lossy(&read.stdout), "readable");
 
@@ -711,7 +708,8 @@ mod tests {
             return;
         }
         // `dd` allocates its whole block size up front: far past the limit.
-        let output = run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/dev/null bs=8G count=1"));
+        let output =
+            run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/dev/null bs=8G count=1"));
         assert!(
             !output.status.success(),
             "an allocation past the address-space limit must fail, not succeed"
@@ -764,7 +762,8 @@ mod tests {
         if !available() {
             return;
         }
-        let output = run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/tmp/ok bs=1M count=8"));
+        let output =
+            run(&Spec::new("sh").arg("-c").arg("dd if=/dev/zero of=/tmp/ok bs=1M count=8"));
         assert!(output.status.success(), "an ordinary write must still succeed: {output:?}");
     }
 
@@ -777,8 +776,7 @@ mod tests {
         // is not the point — reaching another host is. `sh` has no networking
         // built in, so probe /proc-free: the interface list is empty except lo.
         let output = run(&Spec::new("sh").arg("-c").arg("ip -o link 2>/dev/null | wc -l"));
-        let count: i32 =
-            String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(i32::MAX);
+        let count: i32 = String::from_utf8_lossy(&output.stdout).trim().parse().unwrap_or(i32::MAX);
         assert!(count <= 1, "the sandbox must have no network interface but loopback");
     }
 }

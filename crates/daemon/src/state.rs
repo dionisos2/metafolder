@@ -216,7 +216,10 @@ impl RepoState {
                 true
             }
             Err(e) => {
-                eprintln!("warning: failed to build query index for {}: {e}", self.config.repo_uuid);
+                eprintln!(
+                    "warning: failed to build query index for {}: {e}",
+                    self.config.repo_uuid
+                );
                 false // a bailed scan leaves `forest` partial — do not trust it
             }
         };
@@ -227,7 +230,10 @@ impl RepoState {
         if built {
             let n = forest.len();
             self.lock_cache().populate_from_forest(forest);
-            eprintln!("[warmup {who}] tree cache: {:?} ({n} nodes, from the index scan)", t.elapsed());
+            eprintln!(
+                "[warmup {who}] tree cache: {:?} ({n} nodes, from the index scan)",
+                t.elapsed()
+            );
         } else if let Err(e) = self.lock_cache().populate(&conn) {
             eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
         }
@@ -324,10 +330,8 @@ impl AppState {
         if let Some(src) = self.seed_schema_path.as_deref() {
             repo::seed_schema_file(&opened.metafolder_dir, src);
         }
-        let repo_state = self.activate(Arc::new(RepoState::from_opened_with(
-            opened,
-            &self.settings,
-        )))?;
+        let repo_state =
+            self.activate(Arc::new(RepoState::from_opened_with(opened, &self.settings)))?;
         // A fresh repository is tiny, so warm it synchronously (no progress bar).
         repo_state.warmup(&|_, _, _| {});
         self.repos.lock_recover().insert(uuid, repo_state);
@@ -339,9 +343,8 @@ impl AppState {
     /// the watcher and its executor (spec: the buffer is replayed before the
     /// repository serves requests).
     fn activate(&self, repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
-        let schema =
-            crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
-                .map_err(ApiError::bad_request)?;
+        let schema = crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
+            .map_err(ApiError::bad_request)?;
         *repo_state.schema.lock_recover() = schema;
         // Load the per-repo metadata map, seeding the file when absent
         // (spec-platform "Configuration"). A malformed file fails this repo's
@@ -382,10 +385,8 @@ impl AppState {
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
-        let repo_state = self.activate(Arc::new(RepoState::from_opened_with(
-            opened,
-            &self.settings,
-        )))?;
+        let repo_state =
+            self.activate(Arc::new(RepoState::from_opened_with(opened, &self.settings)))?;
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }

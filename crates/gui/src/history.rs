@@ -102,8 +102,7 @@ pub fn append(metafolder_dir: &Path, zone: &str, entry: &str) -> Result<bool, St
     }
     let file = zone_file(metafolder_dir, zone);
     let dir = file.parent().expect("zone file has the history dir as parent");
-    std::fs::create_dir_all(dir)
-        .map_err(|e| format!("cannot create history directory: {e}"))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("cannot create history directory: {e}"))?;
     let mut content = entries.join("\n");
     content.push('\n');
     let tmp = file.with_extension("tmp");
@@ -133,7 +132,8 @@ mod tests {
     use super::*;
 
     fn temp_metafolder(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("metafolder-tests")
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
             .join(format!("metafolder_gui_history_{prefix}_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir

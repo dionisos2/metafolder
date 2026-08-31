@@ -31,15 +31,13 @@ impl Fixture {
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
-                .unwrap();
+            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
         uuids
     }
 
     fn run_sorted(&mut self, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, sort, None, None)
-                .unwrap();
+            query_exec::execute(&self.conn, &mut self.cache, query, sort, None, None).unwrap();
         uuids
     }
 }
@@ -88,14 +86,8 @@ fn test_eq_and_multimap_semantics() {
     let jazz = f.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
     let blues = f.create(vec![Field::new("tag", s("blues"))]);
 
-    assert_same_set(
-        f.run(&Query::Eq { field: "tag".into(), value: s("jazz") }),
-        vec![jazz],
-    );
-    assert_same_set(
-        f.run(&Query::Eq { field: "tag".into(), value: s("live") }),
-        vec![jazz],
-    );
+    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("jazz") }), vec![jazz]);
+    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("live") }), vec![jazz]);
     assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("blues") }), vec![blues]);
     assert!(f.run(&Query::Eq { field: "tag".into(), value: s("rock") }).is_empty());
 }
@@ -109,7 +101,10 @@ fn test_eq_other_types() {
     let e_ref = f.create(vec![Field::new("author", Value::Ref(target))]);
     let e_dt = f.create(vec![Field::new("added", dt("2024-01-01T00:00:00Z"))]);
 
-    assert_same_set(f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(true) }), vec![e_bool]);
+    assert_same_set(
+        f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(true) }),
+        vec![e_bool],
+    );
     assert!(f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(false) }).is_empty());
     assert_same_set(
         f.run(&Query::Eq { field: "score".into(), value: Value::Float(2.5) }),
@@ -120,10 +115,7 @@ fn test_eq_other_types() {
         vec![e_ref],
     );
     assert_same_set(
-        f.run(&Query::Eq {
-            field: "added".into(),
-            value: dt("2024-01-01T00:00:00Z"),
-        }),
+        f.run(&Query::Eq { field: "added".into(), value: dt("2024-01-01T00:00:00Z") }),
         vec![e_dt],
     );
 }
@@ -138,16 +130,14 @@ fn test_neq_requires_a_differing_occurrence() {
 
     // `both` has an occurrence ≠ jazz; `jazz` does not.
     assert_same_set(f.run(&Query::Neq { field: "tag".into(), value: s("jazz") }), vec![both]);
-    assert_same_set(
-        f.run(&Query::Neq { field: "tag".into(), value: s("rock") }),
-        vec![jazz, both],
-    );
+    assert_same_set(f.run(&Query::Neq { field: "tag".into(), value: s("rock") }), vec![jazz, both]);
 }
 
 #[test]
 fn test_eq_string_on_tree_ref_compares_the_name() {
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let y2021 = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "2021".into() },
@@ -158,10 +148,7 @@ fn test_eq_string_on_tree_ref_compares_the_name() {
     )]);
 
     // A string operand compares against the TreeRef name component.
-    assert_same_set(
-        f.run(&Query::Eq { field: "mfr_path".into(), value: s("2021") }),
-        vec![y2021],
-    );
+    assert_same_set(f.run(&Query::Eq { field: "mfr_path".into(), value: s("2021") }), vec![y2021]);
     // Exact name equality, not a substring match.
     assert!(f.run(&Query::Eq { field: "mfr_path".into(), value: s("202") }).is_empty());
     // Strict (parent, name) equality via a TreeRef operand still works.
@@ -177,7 +164,8 @@ fn test_eq_string_on_tree_ref_compares_the_name() {
 #[test]
 fn test_neq_string_on_tree_ref_compares_the_name() {
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let _y2021 = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "2021".into() },
@@ -198,7 +186,8 @@ fn test_neq_string_on_tree_ref_compares_the_name() {
 #[test]
 fn test_ordered_string_comparison_on_tree_ref_name() {
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let y2021 = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "2021".into() },
@@ -235,7 +224,10 @@ fn test_ordered_comparisons_numeric() {
         f.run(&Query::Gte { field: "rating".into(), value: Value::Float(4.5) }),
         vec![four_half, five],
     );
-    assert_same_set(f.run(&Query::Lt { field: "rating".into(), value: Value::Int(4) }), vec![three]);
+    assert_same_set(
+        f.run(&Query::Lt { field: "rating".into(), value: Value::Int(4) }),
+        vec![three],
+    );
     assert_same_set(
         f.run(&Query::Lte { field: "rating".into(), value: Value::Int(3) }),
         vec![three],
@@ -251,17 +243,11 @@ fn test_ordered_comparisons_datetime_and_string() {
     let z = f.create(vec![Field::new("title", s("zulu"))]);
 
     assert_same_set(
-        f.run(&Query::Gt {
-            field: "added".into(),
-            value: dt("2023-12-31T00:00:00Z"),
-        }),
+        f.run(&Query::Gt { field: "added".into(), value: dt("2023-12-31T00:00:00Z") }),
         vec![new],
     );
     assert_same_set(
-        f.run(&Query::Lte {
-            field: "added".into(),
-            value: dt("2023-01-01T00:00:00Z"),
-        }),
+        f.run(&Query::Lte { field: "added".into(), value: dt("2023-01-01T00:00:00Z") }),
         vec![old],
     );
     assert_same_set(f.run(&Query::Lt { field: "title".into(), value: s("beta") }), vec![a]);
@@ -293,7 +279,9 @@ fn test_validate_query_rejects_meaningless_comparisons() {
     let f = "x".to_string();
     let nope = [Value::Nothing];
     for v in nope {
-        assert!(query_exec::validate_query(&Query::Eq { field: f.clone(), value: v.clone() }).is_err());
+        assert!(
+            query_exec::validate_query(&Query::Eq { field: f.clone(), value: v.clone() }).is_err()
+        );
         assert!(query_exec::validate_query(&Query::Lt { field: f.clone(), value: v }).is_err());
     }
     let unordered = [
@@ -304,18 +292,19 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         Value::ExternalRef { repo: Uuid::new_v4(), metarecord: Uuid::new_v4() },
     ];
     for v in unordered {
-        let err =
-            query_exec::validate_query(&Query::Gt { field: f.clone(), value: v.clone() }).unwrap_err();
+        let err = query_exec::validate_query(&Query::Gt { field: f.clone(), value: v.clone() })
+            .unwrap_err();
         assert!(err.message.contains("ordered comparison"), "got: {}", err.message);
         // Equality is still fine on the same value.
         assert!(query_exec::validate_query(&Query::Eq { field: f.clone(), value: v }).is_ok());
     }
     // Ordered comparison on naturally-ordered types is allowed.
-    assert!(query_exec::validate_query(&Query::Lt { field: f.clone(), value: Value::Int(1) }).is_ok());
-    assert!(query_exec::validate_query(&Query::Gte { field: f.clone(), value: s("a") }).is_ok());
     assert!(
-        query_exec::validate_query(&Query::Gt { field: f.clone(), value: Value::DateTime(0) }).is_ok()
+        query_exec::validate_query(&Query::Lt { field: f.clone(), value: Value::Int(1) }).is_ok()
     );
+    assert!(query_exec::validate_query(&Query::Gte { field: f.clone(), value: s("a") }).is_ok());
+    assert!(query_exec::validate_query(&Query::Gt { field: f.clone(), value: Value::DateTime(0) })
+        .is_ok());
     // The rejection surfaces through combinators and follows-conditions.
     let nested = Query::And {
         operands: vec![
@@ -343,8 +332,7 @@ fn test_oversized_query_is_rejected() {
             .map(|_| Query::IsPresent { field: "rating".into() })
             .collect(),
     };
-    let err = query_exec::execute(&f.conn, &mut f.cache, &huge, &[], None, None)
-        .unwrap_err();
+    let err = query_exec::execute(&f.conn, &mut f.cache, &huge, &[], None, None).unwrap_err();
     assert!(err.message.contains("too large"), "unexpected error: {}", err.message);
     // A normal small query is unaffected.
     let ok = Query::Or {
@@ -367,8 +355,7 @@ fn test_wide_combinator_is_rejected_with_clear_message() {
     // MAX_QUERY_NODES, so this is the combinator check firing, not the size one.)
     let over =
         Query::Or { operands: (0..=query_exec::MAX_COMBINATOR_OPERANDS).map(|_| leaf()).collect() };
-    let err = query_exec::execute(&f.conn, &mut f.cache, &over, &[], None, None)
-        .unwrap_err();
+    let err = query_exec::execute(&f.conn, &mut f.cache, &over, &[], None, None).unwrap_err();
     assert!(err.message.contains("operands"), "unexpected error: {}", err.message);
 
     // Exactly the limit compiles and runs in SQLite.
@@ -389,18 +376,9 @@ fn test_and_or_not() {
     let jazz = Query::Eq { field: "tag".into(), value: s("jazz") };
     let top = Query::Gte { field: "rating".into(), value: Value::Int(4) };
 
-    assert_same_set(
-        f.run(&Query::And { operands: vec![jazz.clone(), top.clone()] }),
-        vec![a],
-    );
-    assert_same_set(
-        f.run(&Query::Or { operands: vec![jazz.clone(), top.clone()] }),
-        vec![a, b, c],
-    );
-    assert_same_set(
-        f.run(&Query::Not { operand: Box::new(jazz) }),
-        vec![c],
-    );
+    assert_same_set(f.run(&Query::And { operands: vec![jazz.clone(), top.clone()] }), vec![a]);
+    assert_same_set(f.run(&Query::Or { operands: vec![jazz.clone(), top.clone()] }), vec![a, b, c]);
+    assert_same_set(f.run(&Query::Not { operand: Box::new(jazz) }), vec![c]);
 }
 
 // ── Repository isolation ──────────────────────────────────────────────────────
@@ -412,7 +390,8 @@ fn test_matches_on_string_and_tree_ref() {
     let mut f = Fixture::new();
     let live = f.create(vec![Field::new("title", s("Live in Paris"))]);
     let _studio = f.create(vec![Field::new("title", s("Studio takes"))]);
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let song = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "live_set.mp3".into() },
@@ -466,7 +445,8 @@ fn test_follows_ref_condition() {
 #[test]
 fn test_follows_tree_path_matches_direct_children() {
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let music = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "music".into() },
@@ -484,17 +464,12 @@ fn test_follows_tree_path_matches_direct_children() {
         Value::TreeRef { parent: Some(deep_dir), name: "b.mp3".into() },
     )]);
 
-    let q = Query::Follows {
-        field: "mfr_path".into(),
-        target: FollowTarget::Path("/music".into()),
-    };
+    let q =
+        Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("/music".into()) };
     assert_same_set(f.run(&q), vec![song, deep_dir]);
 
     // Nonexistent path → empty result, not an error.
-    let q = Query::Follows {
-        field: "mfr_path".into(),
-        target: FollowTarget::Path("/nope".into()),
-    };
+    let q = Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("/nope".into()) };
     assert!(f.run(&q).is_empty());
     let _ = deep_song;
 }
@@ -505,7 +480,8 @@ fn test_follows_tree_empty_path_matches_root_children() {
     // by querying Follows with an empty path: "" resolves to the root entry
     // itself (the TreeRef root has the empty string as its name).
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let music = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "music".into() },
@@ -529,7 +505,8 @@ fn test_follows_condition_on_tree_ref_matches_children_of_matching_parents() {
     // right-hand side works on TreeRef fields too, matching metarecords whose
     // direct parent satisfies the sub-query.
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let y2021_a = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "2021".into() },
@@ -572,7 +549,8 @@ fn test_directory_entry_lookup_by_path() {
     // only one with an empty name, and a subdirectory is pinned down by
     // Follows(parent) AND Matches(^name$).
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let music = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "music".into() },
@@ -601,7 +579,8 @@ fn test_directory_entry_lookup_by_path() {
 #[test]
 fn test_follows_transitive_collects_all_descendants() {
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let music = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "music".into() },
@@ -745,7 +724,8 @@ fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
     // nested inside another: descendants overlap and must be deduplicated;
     // the matching roots themselves are not descendants.
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let y2021_outer = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "2021".into() },
@@ -829,7 +809,8 @@ fn test_sort_over_follows_transitive_subset() {
     // joining the *filtered* universe to `field` (the fix for the pathological
     // `FollowsTransitive` + sort plan on large repos).
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let docs = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "documents".into() },
@@ -845,7 +826,7 @@ fn test_sort_over_follows_transitive_subset() {
     let a = mk(&mut f, "a.txt", Some(100));
     let b = mk(&mut f, "b.txt", Some(200));
     let c = mk(&mut f, "c.txt", None); // no mtime → must sort last
-    // A file outside /documents with a large mtime: must never appear.
+                                       // A file outside /documents with a large mtime: must never appear.
     let music = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "music".into() },
@@ -873,7 +854,8 @@ fn test_multi_key_sort_with_missing_secondary_over_subset() {
     // secondary key: within a primary tie, present rows order by the secondary
     // and the missing-secondary row still sorts last (independent of direction).
     let mut f = Fixture::new();
-    let root = f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
+    let root =
+        f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
     let docs = f.create(vec![Field::new(
         "mfr_path",
         Value::TreeRef { parent: Some(root), name: "documents".into() },
@@ -965,10 +947,7 @@ fn test_sort_secondary_key_and_uuid_tiebreak() {
 fn test_pagination_with_sort_covers_all_without_duplicates() {
     let mut f = Fixture::new();
     for i in 0..23 {
-        f.create(vec![
-            Field::new("n", Value::Int((i * 7) % 23)),
-            Field::new("k", s("x")),
-        ]);
+        f.create(vec![Field::new("n", Value::Int((i * 7) % 23)), Field::new("k", s("x"))]);
     }
     let all = Query::Eq { field: "k".into(), value: s("x") };
     let sort = vec![sort_desc("n")];
@@ -977,15 +956,9 @@ fn test_pagination_with_sort_covers_all_without_duplicates() {
     let mut paged = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let (page, next) = query_exec::execute(
-            &f.conn,
-            &mut f.cache,
-            &all,
-            &sort,
-            Some(5),
-            cursor.as_deref(),
-        )
-        .unwrap();
+        let (page, next) =
+            query_exec::execute(&f.conn, &mut f.cache, &all, &sort, Some(5), cursor.as_deref())
+                .unwrap();
         paged.extend(page);
         match next {
             Some(c) => cursor = Some(c),
@@ -1003,20 +976,13 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
     }
     let all = Query::Eq { field: "k".into(), value: s("x") };
     let (_, cursor) =
-        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_asc("n")], Some(2), None)
-            .unwrap();
+        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_asc("n")], Some(2), None).unwrap();
     let cursor = cursor.unwrap();
 
     // Same cursor with a different sort → 400.
-    let err = query_exec::execute(
-        &f.conn,
-        &mut f.cache,
-        &all,
-        &[sort_desc("n")],
-        Some(2),
-        Some(&cursor),
-    )
-    .unwrap_err();
+    let err =
+        query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_desc("n")], Some(2), Some(&cursor))
+            .unwrap_err();
     assert!(err.message.contains("cursor"), "unexpected error: {}", err.message);
 }
 
@@ -1067,8 +1033,7 @@ fn test_sort_tree_ref_multimap_uses_min_path_for_asc() {
     // A metarecord at two locations sorts on its smallest path ascending and on
     // its largest descending — the multi-map rule, applied to full paths.
     let mut f = Fixture::new();
-    let root =
-        f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "".into() })]);
+    let root = f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "".into() })]);
     let mk = |f: &mut Fixture, name: &str| {
         f.create(vec![
             Field::new("loc", Value::TreeRef { parent: Some(root), name: name.into() }),

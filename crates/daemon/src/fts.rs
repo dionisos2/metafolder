@@ -98,8 +98,10 @@ mod tests {
         assert!(lit == "foo" || lit == "bar", "got {lit}");
         // A clearly-longer mandatory tail is preferred.
         assert_eq!(required_fts_literal("[0-9]+/report").as_deref(), Some("/report"));
-        assert_eq!(required_fts_literal("wiki/[0-9]+/annual_report").as_deref(),
-                   Some("/annual_report"));
+        assert_eq!(
+            required_fts_literal("wiki/[0-9]+/annual_report").as_deref(),
+            Some("/annual_report")
+        );
     }
 
     #[test]

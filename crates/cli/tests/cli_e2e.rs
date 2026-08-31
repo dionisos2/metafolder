@@ -161,8 +161,13 @@ fn test_init_prints_uuid_and_creates_metafolder() {
 fn test_init_with_external_metafolder() {
     let root = temp_dir("init_ext_root");
     let external = temp_dir("init_ext_db");
-    let out =
-        mf_cfg(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+    let out = mf_cfg(&[
+        "repo",
+        "init",
+        root.to_str().unwrap(),
+        "--metafolder",
+        external.to_str().unwrap(),
+    ]);
     assert_ok(&out);
     assert!(is_hex_uuid(out.stdout.trim()));
     assert!(external.join("config.json").exists());
@@ -181,8 +186,13 @@ fn test_load_root_is_idempotent() {
 fn test_load_with_metafolder_flag() {
     let root = temp_dir("load_ext_root");
     let external = temp_dir("load_ext_db");
-    let out =
-        mf_cfg(&["repo", "init", root.to_str().unwrap(), "--metafolder", external.to_str().unwrap()]);
+    let out = mf_cfg(&[
+        "repo",
+        "init",
+        root.to_str().unwrap(),
+        "--metafolder",
+        external.to_str().unwrap(),
+    ]);
     assert_ok(&out);
     let repo = out.stdout.trim().to_string();
     let out = mf(&["repo", "load", "--metafolder", external.to_str().unwrap()]);
@@ -313,12 +323,8 @@ fn test_no_config_ignores_the_default_repo() {
     let (uuid, _root) = init_repo("cfgrepo_noconf");
     let (_cfg, xdg) = xdg_with_cli_config(&format!("[repo]\nuuid = \"{uuid}\"\n"));
     // --no-config skips the file, so there is no selector → usage error (exit 2).
-    let out = mf_full(
-        &["--no-config", "metarecord", "get"],
-        None,
-        &[("XDG_CONFIG_HOME", &xdg)],
-        true,
-    );
+    let out =
+        mf_full(&["--no-config", "metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
@@ -327,12 +333,8 @@ fn test_explicit_selector_overrides_the_config_default_repo() {
     let (uuid, _root) = init_repo("cfgrepo_override");
     // The config points at a bogus repo; an explicit -u must still win.
     let (_cfg, xdg) = xdg_with_cli_config("[repo]\nname = \"does-not-exist\"\n");
-    let out = mf_full(
-        &["-u", &uuid, "metarecord", "get"],
-        None,
-        &[("XDG_CONFIG_HOME", &xdg)],
-        true,
-    );
+    let out =
+        mf_full(&["-u", &uuid, "metarecord", "get"], None, &[("XDG_CONFIG_HOME", &xdg)], true);
     assert_ok(&out);
 }
 
@@ -487,19 +489,28 @@ fn test_get_predicate_with_limit_and_sort() {
     create_metarecord(&repo, &["rating:int=2"]);
     create_metarecord(&repo, &["rating:int=3"]);
 
-    let out = mf(&["-u", &repo, "metarecord", "-q", "rating >= 1", "get", "--select", "*", "--sort", "rating:desc", "--limit", "2"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "rating >= 1",
+        "get",
+        "--select",
+        "*",
+        "--sort",
+        "rating:desc",
+        "--limit",
+        "2",
+    ]);
     assert_ok(&out);
     let list: serde_json::Value = serde_json::from_str(&out.stdout).unwrap();
     let arr = list.as_array().unwrap();
     assert_eq!(arr.len(), 2, "--limit must cap the result at 2");
 
     let rating = |m: &serde_json::Value| -> i64 {
-        m["fields"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|f| f["name"] == "rating")
-            .unwrap()["value"]["value"]
+        m["fields"].as_array().unwrap().iter().find(|f| f["name"] == "rating").unwrap()["value"]
+            ["value"]
             .as_i64()
             .unwrap()
     };
@@ -534,8 +545,7 @@ fn test_set_uuid_replaces_all_rows() {
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
-    let tags: Vec<&serde_json::Value> =
-        fields.iter().filter(|f| f["name"] == "tag").collect();
+    let tags: Vec<&serde_json::Value> = fields.iter().filter(|f| f["name"] == "tag").collect();
     assert_eq!(tags.len(), 1, "set_field must replace all rows of the name");
     assert_eq!(tags[0]["value"]["value"], "c");
 }
@@ -546,7 +556,8 @@ fn test_set_with_predicate_prints_updated_count() {
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
-    let out = mf(&["-u", &repo, "metarecord", "-q", r#"genre = "jazz""#, "field", "set", "rating:int=4"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-q", r#"genre = "jazz""#, "field", "set", "rating:int=4"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
     let out = mf(&["-u", &repo, "metarecord", "-q", "rating = 4", "get"]);
@@ -558,11 +569,29 @@ fn test_set_with_predicate_prints_updated_count() {
 fn test_set_reserved_field_requires_force() {
     let (repo, _root) = init_repo("set_force");
     let uuid = create_metarecord(&repo, &["x:int=1"]);
-    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "mfr_path:tree_ref=/forced_name"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "set",
+        "mfr_path:tree_ref=/forced_name",
+    ]);
     assert_eq!(out.code, 1, "writing mfr_* without --force must fail");
     assert!(out.stderr.starts_with("error:"));
-    let out =
-        mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "mfr_path:tree_ref=/forced_name", "--force"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "set",
+        "mfr_path:tree_ref=/forced_name",
+        "--force",
+    ]);
     assert_ok(&out);
 }
 
@@ -583,7 +612,8 @@ fn test_add_with_predicate_appends_to_matches() {
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=jazz"]);
     create_metarecord(&repo, &["genre:string=rock"]);
-    let out = mf(&["-u", &repo, "metarecord", "-q", r#"genre = "jazz""#, "field", "add", "tag:string=x"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-q", r#"genre = "jazz""#, "field", "add", "tag:string=x"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2");
     let out = mf(&["-u", &repo, "metarecord", "-q", r#"tag = "x""#, "get"]);
@@ -610,11 +640,26 @@ fn test_remove_by_predicate_prints_changed_count() {
     create_metarecord(&repo, &["tag:string=test", "tag:string=keep"]);
     create_metarecord(&repo, &["tag:string=test"]);
     create_metarecord(&repo, &["tag:string=keep"]);
-    let out = mf(&["-u", &repo, "metarecord", "-q", "tag IS PRESENT", "field", "delete", "tag:string=test"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "tag IS PRESENT",
+        "field",
+        "delete",
+        "tag:string=test",
+    ]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "2", "two metarecords carried tag=test");
-    assert_eq!(mf(&["-u", &repo, "metarecord", "-q", r#"tag = "test""#, "get"]).stdout.lines().count(), 0);
-    assert_eq!(mf(&["-u", &repo, "metarecord", "-q", r#"tag = "keep""#, "get"]).stdout.lines().count(), 2);
+    assert_eq!(
+        mf(&["-u", &repo, "metarecord", "-q", r#"tag = "test""#, "get"]).stdout.lines().count(),
+        0
+    );
+    assert_eq!(
+        mf(&["-u", &repo, "metarecord", "-q", r#"tag = "keep""#, "get"]).stdout.lines().count(),
+        2
+    );
 }
 
 #[test]
@@ -632,8 +677,7 @@ fn test_unset_deletes_single_row_by_id() {
     assert_ok(&out);
     let entries = get_entries(&repo, &uuid);
     let fields = entries[0]["fields"].as_array().unwrap();
-    let genres: Vec<&serde_json::Value> =
-        fields.iter().filter(|f| f["name"] == "genre").collect();
+    let genres: Vec<&serde_json::Value> = fields.iter().filter(|f| f["name"] == "genre").collect();
     assert_eq!(genres.len(), 1);
     assert_eq!(genres[0]["value"]["value"], "blues");
 }
@@ -702,13 +746,15 @@ fn test_query_simplified_date_macro_filters() {
     let (repo, _root) = init_repo("query_date_macro");
     // mfr_btime is reserved, so set it with --force. The datetime field spec
     // parses the ISO string to Unix ms.
-    let recent = mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2024-06-01", "--force"]);
+    let recent =
+        mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2024-06-01", "--force"]);
     assert_ok(&recent);
     let recent = recent.stdout.trim().to_string();
     let old = mf(&["-u", &repo, "metarecord", "add", "mfr_btime:datetime=2020-01-01", "--force"]);
     assert_ok(&old);
     // `created since "2023-01-01"` → mfr_btime >= @"2023-01-01": only the recent one.
-    let out = mf_cfg(&["-u", &repo, "metarecord", "-q", "created since \"2023-01-01\"", "-s", "get"]);
+    let out =
+        mf_cfg(&["-u", &repo, "metarecord", "-q", "created since \"2023-01-01\"", "-s", "get"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), recent);
 }
@@ -743,12 +789,24 @@ fn test_query_sort_and_limit() {
     let r1 = create_metarecord(&repo, &["rating:int=1", "kind:string=s"]);
     let r3 = create_metarecord(&repo, &["rating:int=3", "kind:string=s"]);
     let r2 = create_metarecord(&repo, &["rating:int=2", "kind:string=s"]);
-    let out = mf(&["-u", &repo, "metarecord", "-q", r#"kind = "s""#, "get", "--sort", "rating:desc"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-q", r#"kind = "s""#, "get", "--sort", "rating:desc"]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
     assert_eq!(lines, vec![r3.as_str(), r2.as_str(), r1.as_str()]);
 
-    let out = mf(&["-u", &repo, "metarecord", "-q", r#"kind = "s""#, "get", "--sort", "rating:asc", "--limit", "2"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        r#"kind = "s""#,
+        "get",
+        "--sort",
+        "rating:asc",
+        "--limit",
+        "2",
+    ]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
     assert_eq!(lines, vec![r1.as_str(), r2.as_str()]);
@@ -808,18 +866,15 @@ fn test_reconcile_reports_created_entries() {
     let root_uuid = out.stdout.trim().to_string();
     assert!(is_hex_uuid(&root_uuid));
 
-    let out = mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]);
     assert_ok(&out);
 
     let out = mf(&["-u", &repo, "reconcile"]);
     assert_ok(&out);
     // a.txt + b.txt only: .metafolder is ignored by default (hidden-entry
     // and .metafolder patterns), so config.json under it is not tracked.
-    assert!(
-        out.stdout.starts_with("created: 2  moved: 0"),
-        "unexpected summary: {}",
-        out.stdout
-    );
+    assert!(out.stdout.starts_with("created: 2  moved: 0"), "unexpected summary: {}", out.stdout);
 
     // A second reconcile is a no-op; --json prints the raw body.
     let out = mf(&["-u", &repo, "reconcile", "--json"]);
@@ -967,7 +1022,8 @@ fn test_reconcile_single_entry() {
     assert_ok(&out);
     let dir_uuid = out.stdout.trim().to_string();
 
-    let out = mf(&["-u", &repo, "metarecord", "-i", &dir_uuid, "field", "set", "mf_watch:bool=true"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &dir_uuid, "field", "set", "mf_watch:bool=true"]);
     assert_ok(&out);
     let out = mf(&["-u", &repo, "reconcile", "--metarecord", &dir_uuid]);
     assert_ok(&out);
@@ -981,7 +1037,16 @@ fn test_reconcile_threshold_yields_similarity_candidate() {
     std::fs::write(root.join("music/old_song.mp3"), vec![b'a'; 1000]).unwrap();
 
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
     assert_ok(&mf(&["-u", &repo, "reconcile"]));
 
     // Move + modify: different name and size defeat the fingerprint phase.
@@ -1004,10 +1069,20 @@ fn test_reconcile_threshold_yields_similarity_candidate() {
 fn test_reconcile_computes_and_can_disable_mime() {
     let (repo, root) = init_repo("reconcile_mime");
     // PNG magic header → infer detects image/png.
-    std::fs::write(root.join("pic.png"), [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0]).unwrap();
+    std::fs::write(root.join("pic.png"), [0x89u8, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0])
+        .unwrap();
 
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
 
     // With --no-mime, no mfr_mime is written.
     assert_ok(&mf(&["-u", &repo, "reconcile", "--no-mime"]));
@@ -1017,7 +1092,16 @@ fn test_reconcile_computes_and_can_disable_mime() {
 
     // A default reconcile computes it.
     assert_ok(&mf(&["-u", &repo, "reconcile"]));
-    let pic = mf(&["-u", &repo, "metarecord", "-q", "mfr_mime = \"image/png\"", "get", "--select", "mfr_mime"]);
+    let pic = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mfr_mime = \"image/png\"",
+        "get",
+        "--select",
+        "mfr_mime",
+    ]);
     assert_ok(&pic);
     assert!(pic.stdout.contains("image/png"), "stdout: {}", pic.stdout);
 }
@@ -1030,13 +1114,33 @@ fn test_query_values_prints_raw_scalars() {
     create_metarecord(&repo, &["mf_schema:string=tag", "name:string=jazz"]);
     create_metarecord(&repo, &["mf_schema:string=tag", "name:string=rock", "weight:int=3"]);
 
-    let out = mf(&["-u", &repo, "metarecord", "-q", "mf_schema = \"tag\"", "get", "--select", "name", "--values"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mf_schema = \"tag\"",
+        "get",
+        "--select",
+        "name",
+        "--values",
+    ]);
     assert_ok(&out);
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort_unstable();
     assert_eq!(names, vec!["jazz", "rock"]);
 
-    let out = mf(&["-u", &repo, "metarecord", "-q", "name = \"rock\"", "get", "--select", "weight", "--values"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "name = \"rock\"",
+        "get",
+        "--select",
+        "weight",
+        "--values",
+    ]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "3");
 }
@@ -1046,7 +1150,17 @@ fn test_query_values_requires_a_single_selected_field() {
     let (repo, _root) = init_repo("values_usage");
     let out = mf(&["-u", &repo, "metarecord", "-q", "name = \"x\"", "get", "--values"]);
     assert_eq!(out.code, 2, "stdout: {}", out.stdout);
-    let out = mf(&["-u", &repo, "metarecord", "-q", "name = \"x\"", "get", "--select", "a,b", "--values"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "name = \"x\"",
+        "get",
+        "--select",
+        "a,b",
+        "--values",
+    ]);
     assert_eq!(out.code, 2, "stdout: {}", out.stdout);
 }
 
@@ -1260,7 +1374,8 @@ fn test_prune_linearize_with_no_branches_removes_nothing() {
 
     // A far-future timestamp resolves to HEAD; with no side branches,
     // linearize removes nothing.
-    let out = mf(&["-u", &repo, "log", "prune", "linearize", "--timestamp", "@9999999999999", "--force"]);
+    let out =
+        mf(&["-u", &repo, "log", "prune", "linearize", "--timestamp", "@9999999999999", "--force"]);
     assert_ok(&out);
     assert!(out.stdout.contains("Pruned 0 operations"), "stdout: {}", out.stdout);
     assert!(out.stdout.contains("linearized"), "stdout: {}", out.stdout);
@@ -1274,7 +1389,8 @@ fn test_prune_before_makes_target_the_root() {
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=7"]));
 
     // Prune before HEAD: every older operation is removed.
-    let out = mf(&["-u", &repo, "log", "prune", "before", "--timestamp", "@9999999999999", "--force"]);
+    let out =
+        mf(&["-u", &repo, "log", "prune", "before", "--timestamp", "@9999999999999", "--force"]);
     assert_ok(&out);
     assert!(out.stdout.starts_with("Pruned "), "stdout: {}", out.stdout);
     // History still readable afterwards.
@@ -1387,7 +1503,17 @@ fn test_field_multi_value_set_and_unset() {
     let uuid = create_metarecord(&repo, &["genre:string=jazz"]);
 
     // Set two values of `tag` at once (multi-map).
-    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "tag:string=a", "tag:string=b"]);
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "set",
+        "tag:string=a",
+        "tag:string=b",
+    ]);
     assert_ok(&out);
     let count_tags = |target: &str| -> usize {
         let entries = get_entries(&repo, target);
@@ -1587,7 +1713,12 @@ fn test_orphan_list_and_clear() {
     // mfr_path is now Nothing and the origin is frozen in mfr_path_old.
     let entry = get_entries(&repo, &uuid);
     let field = |name: &str| {
-        entry[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == name).map(|f| &f["value"])
+        entry[0]["fields"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["name"] == name)
+            .map(|f| &f["value"])
     };
     assert_eq!(field("mfr_path"), Some(&serde_json::json!({"type": "nothing"})));
     assert_eq!(
@@ -1667,11 +1798,25 @@ fn test_trash_restore_relinks_a_directory_subtree() {
     // the directory, so the transitive query still resolves).
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
     assert_ok(&mf(&[
-        "-u", &repo, "metarecord", "-q", "mfr_path ->* \"/folder\"", "field", "unset", "mfr_path",
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mfr_path ->* \"/folder\"",
+        "field",
+        "unset",
+        "mfr_path",
         "--force",
     ]));
     assert_ok(&mf(&[
-        "-u", &repo, "metarecord", "-q", "mfr_path = \"folder\"", "field", "unset", "mfr_path",
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mfr_path = \"folder\"",
+        "field",
+        "unset",
+        "mfr_path",
         "--force",
     ]));
     // The descendant is now orphaned (no resolvable path).
@@ -1704,13 +1849,32 @@ fn test_trash_restore_skips_a_taken_tree_position() {
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
 
     // Orphan the original, then let a *different* metarecord claim A.txt's slot.
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &m1, "field", "unset", "mfr_path", "--force"]));
-    let root_uuid =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &m1,
+        "field",
+        "unset",
+        "mfr_path",
+        "--force",
+    ]));
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
     let m2 = create_metarecord(&repo, &["label:string=other"]);
     assert_ok(&mf(&[
-        "-u", &repo, "metarecord", "-i", &m2, "field", "set",
-        &format!("mfr_path:tree_ref={root_uuid}/A.txt"), "--force",
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &m2,
+        "field",
+        "set",
+        &format!("mfr_path:tree_ref={root_uuid}/A.txt"),
+        "--force",
     ]));
 
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
@@ -1749,9 +1913,20 @@ fn uuids_at(repo: &str, name: &str) -> Vec<String> {
 #[test]
 fn test_trash_restore_relinks_after_live_watcher_delete() {
     let (repo, root) = init_repo("trashwatch");
-    let root_uuid =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
 
     // The watcher tracks a file created under the watched root (a watcher-born
     // metarecord: no stored fingerprint hashes, exactly like the user's file).
@@ -1764,7 +1939,10 @@ fn test_trash_restore_relinks_after_live_watcher_delete() {
     // observe the deletion and orphan the metarecord (as the GUI flow does).
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
     assert!(!file.exists());
-    assert!(poll(40, || mf(&["-u", &repo, "path", &m]).code != 0), "watcher should orphan the record");
+    assert!(
+        poll(40, || mf(&["-u", &repo, "path", &m]).code != 0),
+        "watcher should orphan the record"
+    );
 
     // Restore, then let the watcher process the file's re-arrival.
     let id = repo_trash(&root).entries().unwrap()[0].id.clone();
@@ -1779,7 +1957,11 @@ fn test_trash_restore_relinks_after_live_watcher_delete() {
     );
     std::thread::sleep(std::time::Duration::from_millis(1200)); // let any duplicate settle
     let hits = uuids_at(&repo, "f.txt");
-    assert_eq!(hits, vec![m], "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}");
+    assert_eq!(
+        hits,
+        vec![m],
+        "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}"
+    );
 }
 
 // Same as above, but the restore happens *immediately* after trashing — before
@@ -1788,9 +1970,20 @@ fn test_trash_restore_relinks_after_live_watcher_delete() {
 #[test]
 fn test_trash_restore_relinks_when_restore_races_the_watcher() {
     let (repo, root) = init_repo("trashwatchrace");
-    let root_uuid =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
 
     let file = root.join("f.txt");
     std::fs::write(&file, b"hello").unwrap();
@@ -1806,7 +1999,11 @@ fn test_trash_restore_relinks_when_restore_races_the_watcher() {
     // The original metarecord must still be the only one tracking f.txt.
     std::thread::sleep(std::time::Duration::from_millis(1500)); // let the watcher settle
     let hits = uuids_at(&repo, "f.txt");
-    assert_eq!(hits, vec![m], "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}");
+    assert_eq!(
+        hits,
+        vec![m],
+        "exactly the original metarecord tracks f.txt (no duplicate): {hits:?}"
+    );
 }
 
 // Restoring a nested file whose *ancestor* metarecord is no longer available
@@ -1819,8 +2016,10 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"b").unwrap();
-    let b = mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
-    let a = mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
+    let b =
+        mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
+    let a =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
     assert!(is_hex_uuid(&b) && is_hex_uuid(&a));
 
     // Trash the file (captures ancestor A while live), then delete A's
@@ -1866,22 +2065,38 @@ fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"b").unwrap();
     // Track B (ensures the A and B metarecords).
-    let b_uuid = mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()])
-        .stdout
-        .trim()
-        .to_string();
-    let a_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"])
-        .stdout
-        .trim()
-        .to_string();
+    let b_uuid =
+        mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
+    let a_uuid =
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
     assert!(is_hex_uuid(&b_uuid) && is_hex_uuid(&a_uuid));
 
     // Trash the file (captures its ancestor A while A is still live), then the
     // directory; orphan both metarecords as the watcher's cascade would.
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &b_uuid, "field", "unset", "mfr_path", "--force"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &b_uuid,
+        "field",
+        "unset",
+        "mfr_path",
+        "--force",
+    ]));
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a_uuid, "field", "unset", "mfr_path", "--force"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &a_uuid,
+        "field",
+        "unset",
+        "mfr_path",
+        "--force",
+    ]));
     assert!(!dir.exists());
 
     // Restore the file: the recreated parent directory A is re-linked to the
@@ -1940,7 +2155,15 @@ fn test_trash_restore_relinks_the_metarecord() {
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
     // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
     assert_ok(&mf(&[
-        "-u", &repo, "metarecord", "-i", &uuid, "field", "unset", "mfr_path", "--force",
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "unset",
+        "mfr_path",
+        "--force",
     ]));
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
 
@@ -1967,14 +2190,24 @@ fn test_trash_restore_relinks_a_top_level_file() {
     assert!(is_hex_uuid(&uuid));
 
     // The filesystem root metarecord (the only directory) is the expected parent.
-    let root_uuid =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"]).stdout.trim().to_string();
+    let root_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&root_uuid), "one dir (the fs root), got: {root_uuid}");
 
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
     // Orphan the metarecord (mfr_path unset), mimicking a watched-repo deletion.
     assert_ok(&mf(&[
-        "-u", &repo, "metarecord", "-i", &uuid, "field", "unset", "mfr_path", "--force",
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "unset",
+        "mfr_path",
+        "--force",
     ]));
     let entry_id = repo_trash(&root).entries().unwrap()[0].id.clone();
 
@@ -2020,7 +2253,8 @@ fn test_trash_add_records_the_metarecord_version() {
     let rec = mf(&["-u", &repo, "metarecord", "-i", &uuid, "get"]);
     assert_ok(&rec);
     // `-i … get` prints a one-element array.
-    let version: u64 = serde_json::from_str::<serde_json::Value>(&rec.stdout).unwrap()[0]["version"]
+    let version: u64 = serde_json::from_str::<serde_json::Value>(&rec.stdout).unwrap()[0]
+        ["version"]
         .as_u64()
         .unwrap();
 
@@ -2037,22 +2271,26 @@ fn test_rollback_auto_restores_from_trash() {
     let (repo, root) = init_repo("rbrestore");
     // Enable watching on the filesystem root.
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
 
     // Create a file and wait for the watcher to track it.
     let file = root.join("doc.txt");
     std::fs::write(&file, b"precious").unwrap();
-    let uuid = poll_mf(
-        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
-        is_hex_uuid,
-    );
+    let uuid =
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], is_hex_uuid);
 
     // Trash it; wait for the watcher to record the deletion (mfr_path → Nothing).
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
-    poll_mf(
-        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
-        |s| s.is_empty(),
-    );
+    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], |s| s.is_empty());
     assert!(!file.exists(), "the file is in the trash");
 
     // Roll back the deletion → the file is auto-restored from the trash.
@@ -2060,10 +2298,8 @@ fn test_rollback_auto_restores_from_trash() {
     assert_ok(&out);
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "the file is back");
     // The metadata is restored too: the metarecord is at doc.txt again.
-    let back = poll_mf(
-        &["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"],
-        |s| s == uuid,
-    );
+    let back =
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], |s| s == uuid);
     assert_eq!(back, uuid);
     // The trash entry was consumed.
     assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
@@ -2077,14 +2313,25 @@ fn test_rollback_auto_restores_from_trash() {
 fn test_rollback_restores_a_trashed_directory_subtree() {
     let (repo, root) = init_repo("rbdir");
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
 
     // A directory with a nested file; wait for both to be tracked.
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"bee").unwrap();
-    let b_uuid = poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], is_hex_uuid);
-    let a_uuid = poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"], is_hex_uuid);
+    let b_uuid =
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], is_hex_uuid);
+    let a_uuid =
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"], is_hex_uuid);
 
     // Trash the directory; wait for the watcher to cascade the deletion.
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
@@ -2102,7 +2349,11 @@ fn test_rollback_restores_a_trashed_directory_subtree() {
     assert!(a_back.stdout.trim().ends_with("/A"), "A restored: {}", a_back.stdout);
     let b_back = mf(&["-u", &repo, "path", &b_uuid]);
     assert_ok(&b_back);
-    assert!(b_back.stdout.contains("A/B.txt"), "the descendant metarecord is restored: {}", b_back.stdout);
+    assert!(
+        b_back.stdout.contains("A/B.txt"),
+        "the descendant metarecord is restored: {}",
+        b_back.stdout
+    );
 }
 
 // ── Cross-repo sync: utility subcommands (spec-sync "Utility subcommands") ─────
@@ -2242,7 +2493,16 @@ fn tracked_repo(prefix: &str, files: &[(&str, &[u8])]) -> (String, TempDir) {
     }
     // A fresh repo has one entry: the filesystem root.
     let root_uuid = mf(&["-u", &repo, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &root_uuid, "field", "set", "mf_watch:bool=true"]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
     assert_ok(&mf(&["-u", &repo, "reconcile"]));
     (repo, root)
 }
@@ -2272,14 +2532,26 @@ fn test_sync_plan_exact_match_writes_create_link() {
     let rec_a = query_one(&a, "mfr_path = \"song.mp3\"");
     let rec_b = query_one(&b, "mfr_path = \"song.mp3\"");
 
-    let intents = write_intents("plan_ex", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "plan_ex",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     assert!(out.stdout.contains("operations: 1"), "one create-link op: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
     // The plan repo holds one create-link op linking both file records by path.
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    let got = mf(&[
+        "-u",
+        &plan,
+        "metarecord",
+        "-q",
+        "plan_kind = \"create-link\"",
+        "get",
+        "--select",
+        "*",
+    ]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
@@ -2300,10 +2572,7 @@ fn op_endpoints(op: &serde_json::Value) -> Vec<String> {
     ["plan_a", "plan_b"]
         .iter()
         .filter_map(|name| {
-            fields
-                .iter()
-                .find(|f| f["name"] == *name)?
-                .get("value")?["value"]["metarecord"]
+            fields.iter().find(|f| f["name"] == *name)?.get("value")?["value"]["metarecord"]
                 .as_str()
                 .map(String::from)
         })
@@ -2316,12 +2585,19 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     let (a, _adir) = tracked_repo("plan_bare_a", &[("lonely.mp3", b"x")]);
     let (b, _bdir) = tracked_repo("plan_bare_b", &[]);
     let rec_a = query_one(&a, "mfr_path = \"lonely.mp3\"");
-    let intents = write_intents("plan_bare", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "plan_bare",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
 
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     // A bare *file* link → create-link + sync (placement) + copy (content) + chmod (mode).
-    assert!(out.stdout.contains("operations: 4"), "create-link + sync + copy + chmod: {}", out.stdout);
+    assert!(
+        out.stdout.contains("operations: 4"),
+        "create-link + sync + copy + chmod: {}",
+        out.stdout
+    );
     let plan = plan_repo_uuid(&out);
 
     // A copy op sources the content from the existing side (plan_from = a|b).
@@ -2334,14 +2610,28 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     let from = copy[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_from");
     assert!(from.is_some(), "copy op records plan_from: {}", cp.stdout);
     // And a chmod op, from the same source side, to set the new file's mode.
-    let chm = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"chmod\"", "get", "--select", "*"]);
+    let chm =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"chmod\"", "get", "--select", "*"]);
     assert_ok(&chm);
     let chmods: serde_json::Value = serde_json::from_str(&chm.stdout).unwrap();
     assert_eq!(chmods.as_array().unwrap().len(), 1, "one chmod op: {}", chm.stdout);
-    let cfrom = chmods.as_array().unwrap()[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_from");
+    let cfrom = chmods.as_array().unwrap()[0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "plan_from");
     assert!(cfrom.is_some(), "chmod op records plan_from: {}", chm.stdout);
 
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    let got = mf(&[
+        "-u",
+        &plan,
+        "metarecord",
+        "-q",
+        "plan_kind = \"create-link\"",
+        "get",
+        "--select",
+        "*",
+    ]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let op = ops.as_array().unwrap()[0].clone();
@@ -2352,8 +2642,9 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     assert!(is_hex_uuid(bare), "bare endpoint is a uuid: {bare}");
     // The bare side carries NO baseline (the record does not exist yet).
     let fields = op["fields"].as_array().unwrap();
-    let bare_is_a =
-        fields.iter().any(|f| f["name"] == "plan_a" && f["value"]["value"]["metarecord"].as_str() == Some(bare));
+    let bare_is_a = fields
+        .iter()
+        .any(|f| f["name"] == "plan_a" && f["value"]["value"]["metarecord"].as_str() == Some(bare));
     let bare_version_field = if bare_is_a { "plan_version_a" } else { "plan_version_b" };
     assert!(
         !fields.iter().any(|f| f["name"] == bare_version_field),
@@ -2374,16 +2665,37 @@ fn test_sync_plan_closes_over_no_identity_ref_target() {
     let (b, _bdir) = tracked_repo("clos_b", &[("doc.txt", b"y")]);
     let x = query_one(&a, "mfr_path = \"doc.txt\"");
     let person = create_metarecord(&a, &["name:string=alice"]); // no tree_ref → no identity
-    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", &format!("author:ref={person}")]));
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &x,
+        "field",
+        "add",
+        &format!("author:ref={person}"),
+    ]));
 
     // Scope selects files only → `person` is out of scope.
-    let intents = write_intents("clos", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "clos",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
 
     // Two links: X↔X_B (by path) and person↔bare (referential closure).
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    let got = mf(&[
+        "-u",
+        &plan,
+        "metarecord",
+        "-q",
+        "plan_kind = \"create-link\"",
+        "get",
+        "--select",
+        "*",
+    ]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
@@ -2409,13 +2721,23 @@ fn test_sync_plan_case0_field_equality_links() {
     // A distractor in B with different fields must not match.
     create_metarecord(&b, &["tag:string=bob"]);
 
-    let intents = write_intents("case0", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"alice\"'\n"));
+    let intents =
+        write_intents("case0", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"alice\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     assert!(out.stdout.contains("operations: 1"), "one field-equality link: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    let got = mf(&[
+        "-u",
+        &plan,
+        "metarecord",
+        "-q",
+        "plan_kind = \"create-link\"",
+        "get",
+        "--select",
+        "*",
+    ]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let endpoints = op_endpoints(&ops.as_array().unwrap()[0]);
@@ -2434,13 +2756,23 @@ fn test_sync_plan_case0_ambiguous_stays_bare() {
     create_metarecord(&b, &["tag:string=dup"]);
     create_metarecord(&b, &["tag:string=dup"]);
 
-    let intents = write_intents("case0amb", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"dup\"'\n"));
+    let intents =
+        write_intents("case0amb", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"dup\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     // Bare link (ambiguous → no match) → create-link + sync.
     assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"create-link\"", "get", "--select", "*"]);
+    let got = mf(&[
+        "-u",
+        &plan,
+        "metarecord",
+        "-q",
+        "plan_kind = \"create-link\"",
+        "get",
+        "--select",
+        "*",
+    ]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let endpoints = op_endpoints(&ops.as_array().unwrap()[0]);
@@ -2459,14 +2791,18 @@ fn test_sync_plan_writes_sync_op_on_field_diff() {
     let x = query_one(&a, "mfr_path = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", "tag:string=jazz"]));
 
-    let intents = write_intents("syncop", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "syncop",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     assert!(out.stdout.contains("operations: 2"), "create-link + sync: {}", out.stdout);
     let plan = plan_repo_uuid(&out);
 
     // Exactly one sync op, referencing the linked pair.
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
+    let got =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     assert_eq!(ops.as_array().unwrap().len(), 1, "one sync op: {}", got.stdout);
@@ -2478,7 +2814,10 @@ fn test_sync_plan_no_sync_op_when_fields_equal() {
     // Matched files with no user-field difference → no sync op (only create-link).
     let (a, _adir) = tracked_repo("nosync_a", &[("doc.txt", b"aaa")]);
     let (b, _bdir) = tracked_repo("nosync_b", &[("doc.txt", b"aaa")]);
-    let intents = write_intents("nosync", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "nosync",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     assert!(out.stdout.contains("operations: 1"), "only create-link: {}", out.stdout);
@@ -2499,18 +2838,33 @@ fn test_sync_plan_conflict_resolved_by_on_conflict() {
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
 
-    let intents = write_intents("conf", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
-    let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap(), "--on-conflict", &format!("prefer:{a}")]);
+    let intents = write_intents(
+        "conf",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    let out = mf(&[
+        "sync",
+        "plan",
+        &a,
+        &b,
+        "--intents",
+        intents.to_str().unwrap(),
+        "--on-conflict",
+        &format!("prefer:{a}"),
+    ]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
 
     // One conflict op on `tag`, resolved to a canonical side, with both values.
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
+    let got =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
     assert_eq!(ops.len(), 1, "one conflict op: {}", got.stdout);
-    let f = |name: &str| ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned();
+    let f = |name: &str| {
+        ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned()
+    };
     assert_eq!(f("plan_field").unwrap()["value"]["value"], "tag");
     // prefer:repo_a → resolved to repo_a's canonical side (plan_a/plan_b are canonical).
     let expect_side = if a < b { "a" } else { "b" };
@@ -2518,9 +2872,18 @@ fn test_sync_plan_conflict_resolved_by_on_conflict() {
     assert_eq!(resolve, expect_side);
     // The resolved (repo_a) side holds "jazz"; the other holds "rock".
     let fields = ops[0]["fields"].as_array().unwrap();
-    let val = |name: &str| fields.iter().filter(|x| x["name"] == name).map(|x| x["value"]["value"].clone()).collect::<Vec<_>>();
-    let (resolved_field, other_field) =
-        if resolve == "a" { ("plan_value_a", "plan_value_b") } else { ("plan_value_b", "plan_value_a") };
+    let val = |name: &str| {
+        fields
+            .iter()
+            .filter(|x| x["name"] == name)
+            .map(|x| x["value"]["value"].clone())
+            .collect::<Vec<_>>()
+    };
+    let (resolved_field, other_field) = if resolve == "a" {
+        ("plan_value_a", "plan_value_b")
+    } else {
+        ("plan_value_b", "plan_value_a")
+    };
     assert_eq!(val(resolved_field), vec!["jazz"], "repo_a's value wins");
     assert_eq!(val(other_field), vec!["rock"]);
 }
@@ -2536,7 +2899,10 @@ fn test_sync_plan_resyncs_existing_link() {
     // A user field appears on A only since the link was made.
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=x"]));
 
-    let intents = write_intents("resync", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "resync",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
@@ -2546,7 +2912,8 @@ fn test_sync_plan_resyncs_existing_link() {
     assert_ok(&creates);
     assert!(creates.stdout.trim().is_empty(), "no create-link: {}", creates.stdout);
     // One re-sync op for the existing link.
-    let syncs = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
+    let syncs =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"sync\"", "get", "--select", "*"]);
     assert_ok(&syncs);
     let ops: serde_json::Value = serde_json::from_str(&syncs.stdout).unwrap();
     assert_eq!(ops.as_array().unwrap().len(), 1, "one re-sync op: {}", syncs.stdout);
@@ -2566,7 +2933,8 @@ fn test_sync_plan_keeps_out_of_scope_link() {
     let link = out.stdout.trim().to_string();
 
     // A scope that matches nothing → the doc.txt link is out of scope.
-    let intents = write_intents("keep", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"none\"'\n"));
+    let intents =
+        write_intents("keep", &format!("[[intents]]\nrepo = '{a}'\nquery = 'tag = \"none\"'\n"));
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
@@ -2590,12 +2958,16 @@ fn test_sync_plan_move_op_on_diverged_path() {
     let xb = query_one(&b, "mfr_path = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
 
-    let intents = write_intents("move", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "move",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
 
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"move\"", "get", "--select", "*"]);
+    let got =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"move\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     assert_eq!(ops.as_array().unwrap().len(), 1, "one move op: {}", got.stdout);
@@ -2614,19 +2986,24 @@ fn test_sync_plan_delete_op_on_deleted_endpoint() {
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
 
     // Scope selects the surviving side (B).
-    let intents = write_intents("del", &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "del",
+        &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     let out = mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]);
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
 
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"delete\"", "get", "--select", "*"]);
+    let got =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"delete\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
     assert_eq!(ops.len(), 1, "one delete op: {}", got.stdout);
     // plan_side names the surviving side (repo b, where xb lives) in canonical terms.
     let expect_side = if a < b { "b" } else { "a" };
-    let side = ops[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_side").unwrap();
+    let side =
+        ops[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "plan_side").unwrap();
     assert_eq!(side["value"]["value"], expect_side);
     assert!(op_endpoints(&ops[0]).contains(&xb), "references the survivor");
 }
@@ -2651,14 +3028,17 @@ fn test_sync_plan_conflict_query_scoped_rule() {
     assert_ok(&out);
     let plan = plan_repo_uuid(&out);
 
-    let got = mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
+    let got =
+        mf(&["-u", &plan, "metarecord", "-q", "plan_kind = \"conflict\"", "get", "--select", "*"]);
     assert_ok(&got);
     let ops: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let ops = ops.as_array().unwrap();
     assert_eq!(ops.len(), 1, "one conflict op: {}", got.stdout);
     // Resolved to repo_a's canonical side (which holds "jazz").
     let expect_side = if a < b { "a" } else { "b" };
-    let f = |name: &str| ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned();
+    let f = |name: &str| {
+        ops[0]["fields"].as_array().unwrap().iter().find(|x| x["name"] == name).cloned()
+    };
     assert_eq!(f("plan_resolve").unwrap()["value"]["value"], expect_side);
 }
 
@@ -2667,7 +3047,10 @@ fn test_sync_run_creates_file_in_target() {
     // plan then run: a file present only in A is materialised in B (record + bytes).
     let (a, _adir) = tracked_repo("run_a", &[("hello.txt", b"world")]);
     let (b, _bdir) = tracked_repo("run_b", &[]);
-    let intents = write_intents("run", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "run",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
 
     let out = mf(&["sync", "run", &a, &b, "--yes"]);
@@ -2715,7 +3098,10 @@ fn test_sync_run_propagates_deletion() {
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
 
-    let intents = write_intents("rundel", &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "rundel",
+        &format!("[[intents]]\nrepo = '{b}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
@@ -2739,7 +3125,10 @@ fn test_sync_run_resync_propagates_field() {
     // propagates to B on the next plan+run (re-sync direction).
     let (a, _adir) = tracked_repo("rerun_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("rerun_b", &[("doc.txt", b"x")]);
-    let intents = write_intents("rerun", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "rerun",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
@@ -2755,7 +3144,12 @@ fn test_sync_run_resync_propagates_field() {
     assert_ok(&got);
     let m: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
     let tag = m[0]["fields"].as_array().unwrap().iter().find(|f| f["name"] == "tag");
-    assert_eq!(tag.and_then(|f| f["value"]["value"].as_str()), Some("jazz"), "tag propagated: {}", got.stdout);
+    assert_eq!(
+        tag.and_then(|f| f["value"]["value"].as_str()),
+        Some("jazz"),
+        "tag propagated: {}",
+        got.stdout
+    );
 }
 
 /// A record's first value for `field` (as a string), or None.
@@ -2777,7 +3171,10 @@ fn test_sync_run_applies_conflict_resolution() {
     // --on-conflict prefer:<repo_a>, so repo_a's value wins on both sides at run.
     let (a, _adir) = tracked_repo("cfr_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("cfr_b", &[("doc.txt", b"x")]);
-    let intents = write_intents("cfr", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "cfr",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
@@ -2786,7 +3183,16 @@ fn test_sync_run_applies_conflict_resolution() {
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
 
-    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap(), "--on-conflict", &format!("prefer:{a}")]));
+    assert_ok(&mf(&[
+        "sync",
+        "plan",
+        &a,
+        &b,
+        "--intents",
+        intents.to_str().unwrap(),
+        "--on-conflict",
+        &format!("prefer:{a}"),
+    ]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
     // repo_a's value (jazz) wins on both sides.
@@ -2801,9 +3207,22 @@ fn test_sync_run_external_divergence_reported() {
     let (a, _adir) = tracked_repo("ext_a", &[("doc.txt", b"aaa")]);
     let (b, _bdir) = tracked_repo("ext_b", &[]);
     let b_root = mf(&["-u", &b, "metarecord", "get"]).stdout.trim().to_string();
-    assert_ok(&mf(&["-u", &b, "metarecord", "-i", &b_root, "field", "set", "mf_sync:string=external", "--force"]));
+    assert_ok(&mf(&[
+        "-u",
+        &b,
+        "metarecord",
+        "-i",
+        &b_root,
+        "field",
+        "set",
+        "mf_sync:string=external",
+        "--force",
+    ]));
 
-    let intents = write_intents("ext", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "ext",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     let out = mf(&["sync", "run", &a, &b, "--yes"]);
     assert_ok(&out);
@@ -2824,9 +3243,21 @@ fn test_sync_run_translates_ref() {
     let (b, _bdir) = tracked_repo("tref_b", &[]);
     let xa = query_one(&a, "mfr_path = \"doc.txt\"");
     let person_a = create_metarecord(&a, &["name:string=alice"]);
-    assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", &format!("author:ref={person_a}")]));
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &xa,
+        "field",
+        "add",
+        &format!("author:ref={person_a}"),
+    ]));
 
-    let intents = write_intents("tref", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "tref",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
@@ -2849,7 +3280,10 @@ fn test_sync_run_moves_diverged_file() {
     let xb = query_one(&b, "mfr_path = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
 
-    let intents = write_intents("mvrun", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "mvrun",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
@@ -2867,14 +3301,22 @@ fn test_sync_show_renders_plan_status() {
     // planned record flips its ops to red (will be skipped).
     let (a, _adir) = tracked_repo("show_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("show_b", &[]);
-    let intents = write_intents("show", &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"));
+    let intents = write_intents(
+        "show",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
 
     // Summary lists the op kinds.
     let sum = mf(&["sync", "show", &a, &b, "--summary"]);
     assert_ok(&sum);
-    assert!(sum.stdout.contains("create-link") && sum.stdout.contains("sync") && sum.stdout.contains("copy"),
-        "summary lists kinds: {}", sum.stdout);
+    assert!(
+        sum.stdout.contains("create-link")
+            && sum.stdout.contains("sync")
+            && sum.stdout.contains("copy"),
+        "summary lists kinds: {}",
+        sum.stdout
+    );
 
     // Default view: nothing changed → all will run.
     let def = mf(&["sync", "show", &a, &b]);
@@ -2886,14 +3328,20 @@ fn test_sync_show_renders_plan_status() {
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=z"]));
     let red = mf(&["sync", "show", &a, &b]);
     assert_ok(&red);
-    assert!(red.stdout.contains("will be skipped") && red.stdout.contains("[skip]"),
-        "reds shown after change: {}", red.stdout);
+    assert!(
+        red.stdout.contains("will be skipped") && red.stdout.contains("[skip]"),
+        "reds shown after change: {}",
+        red.stdout
+    );
 
     // --files shows only disk ops.
     let files = mf(&["sync", "show", &a, &b, "--files"]);
     assert_ok(&files);
-    assert!(files.stdout.contains("copy") && !files.stdout.contains("create-link"),
-        "files view: {}", files.stdout);
+    assert!(
+        files.stdout.contains("copy") && !files.stdout.contains("create-link"),
+        "files view: {}",
+        files.stdout
+    );
 }
 
 // ── mf order (folder child numbering) ─────────────────────────────────────────
@@ -2949,10 +3397,8 @@ fn test_order_numbers_folder_children() {
 #[test]
 fn test_cli_primitives_eq_tsv_resolve() {
     let (repo, _root) = init_repo("prim");
-    let coltrane = create_metarecord(
-        &repo,
-        &["type:string=person", "name:string=Coltrane", "lead:bool=true"],
-    );
+    let coltrane =
+        create_metarecord(&repo, &["type:string=person", "name:string=Coltrane", "lead:bool=true"]);
     let davis = create_metarecord(&repo, &["type:string=person", "name:string=Davis"]);
     let rec = create_metarecord(
         &repo,
@@ -2960,14 +3406,22 @@ fn test_cli_primitives_eq_tsv_resolve() {
     );
 
     // --eq: safe exact match (no DSL interpolation) → the Coltrane uuid only.
-    let out = mf(&["-u", &repo, "metarecord", "--eq", "type=person", "--eq", "name=Coltrane", "get"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "--eq", "type=person", "--eq", "name=Coltrane", "get"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), coltrane);
 
     // --tsv: name<TAB>lead, one row per person (absent field = empty).
     let out = mf(&[
-        "-u", &repo, "metarecord", "--eq", "type=person", "get",
-        "--select", "name,lead", "--tsv",
+        "-u",
+        &repo,
+        "metarecord",
+        "--eq",
+        "type=person",
+        "get",
+        "--select",
+        "name,lead",
+        "--tsv",
     ]);
     assert_ok(&out);
     let mut lines: Vec<&str> = out.stdout.lines().collect();
@@ -2976,7 +3430,8 @@ fn test_cli_primitives_eq_tsv_resolve() {
 
     // --resolve on a string target field: the `author` refs → their `name`, in
     // one round-trip (the tree-aware path form is covered by the tag test).
-    let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "author", "--resolve", "name"]);
+    let out =
+        mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", "author", "--resolve", "name"]);
     assert_ok(&out);
     let mut names: Vec<&str> = out.stdout.lines().collect();
     names.sort();
@@ -3000,7 +3455,14 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
     // paste-able straight into an `mfr_path -> "…"` query) — the one round-trip
     // that lets a GUI script offer folder completions.
     let out = mf(&[
-        "-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get", "--resolve-tree", "mfr_path",
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mfr_type = \"dir\"",
+        "get",
+        "--resolve-tree",
+        "mfr_path",
     ]);
     assert_ok(&out);
     let lines: Vec<&str> = out.stdout.lines().collect();
@@ -3008,9 +3470,7 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
     assert!(lines.contains(&"/a/b"), "got: {}", out.stdout);
 
     // Direct selector (-i): the single record's resolved path.
-    let out = mf(&[
-        "-u", &repo, "metarecord", "-i", &f_uuid, "get", "--resolve-tree", "mfr_path",
-    ]);
+    let out = mf(&["-u", &repo, "metarecord", "-i", &f_uuid, "get", "--resolve-tree", "mfr_path"]);
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "/a/f.txt");
 
@@ -3037,7 +3497,8 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     let _rock = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={musique}/rock").as_str()]);
     let _bebop = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={jazz}/bebop").as_str()]);
     let admin = mk_tag(&["mf_schema:string=tag", "path:tree_ref=/administratif"]);
-    let _impots = mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={admin}/impots").as_str()]);
+    let _impots =
+        mk_tag(&["mf_schema:string=tag", format!("path:tree_ref={admin}/impots").as_str()]);
 
     let tag = |args: &[&str]| {
         let mut v: Vec<&str> = vec!["-u", repo.as_str(), "tag"];
@@ -3047,7 +3508,18 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     // Read the record's tag refs as their resolved hierarchy paths (ref → tag →
     // `path` TreeRef, resolved by the tree-aware `--resolve`).
     let names = |field: &str| -> Vec<String> {
-        let out = mf(&["-u", &repo, "metarecord", "-i", &rec, "field", "get", field, "--resolve", "path"]);
+        let out = mf(&[
+            "-u",
+            &repo,
+            "metarecord",
+            "-i",
+            &rec,
+            "field",
+            "get",
+            field,
+            "--resolve",
+            "path",
+        ]);
         assert_ok(&out);
         let mut v: Vec<String> = out.stdout.lines().map(String::from).collect();
         v.sort();

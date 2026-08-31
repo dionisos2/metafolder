@@ -1,7 +1,6 @@
 //! HTTP-level tests for `POST /reconcile`, `POST /track` and the
 //! single-entry `POST /metadata/:uuid/reconcile`.
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -15,7 +14,12 @@ use uuid::Uuid;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -135,8 +139,7 @@ async fn test_full_reconcile_endpoint() {
     std::fs::write(root.join("one.txt"), b"1").unwrap();
     std::fs::write(root.join("two.txt"), b"2").unwrap();
     // Reconcile is now asynchronous: 202 + task id, the result via the task.
-    let (status, body) =
-        request(&app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
     assert_eq!(status, StatusCode::ACCEPTED, "reconcile start failed: {body}");
     let task_id = body["task_id"].as_str().unwrap().to_string();
 
@@ -190,8 +193,13 @@ async fn test_single_metarecord_reconcile_endpoint() {
 
     // Scoped reconcile via the unified endpoint (metarecord in the body):
     // 202 + task id, the result via the task.
-    let (status, body) =
-        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": dir_uuid}))).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/reconcile"),
+        Some(json!({"metarecord": dir_uuid})),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED, "scoped reconcile start failed: {body}");
     let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
     assert_eq!(task["status"], "done", "task: {task}");
@@ -200,8 +208,13 @@ async fn test_single_metarecord_reconcile_endpoint() {
 
     // An unknown metarecord scope fails the task (was a synchronous 404).
     let bogus = Uuid::new_v4().as_simple().to_string();
-    let (status, body) =
-        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": bogus}))).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/reconcile"),
+        Some(json!({"metarecord": bogus})),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
     assert_eq!(task["status"], "failed");
@@ -216,8 +229,13 @@ async fn test_single_metarecord_reconcile_endpoint() {
     )
     .await;
     let no_path_uuid = no_path["uuid"].as_str().unwrap();
-    let (status, body) =
-        request(&app, "POST", &format!("/repos/{repo}/reconcile"), Some(json!({"metarecord": no_path_uuid}))).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/reconcile"),
+        Some(json!({"metarecord": no_path_uuid})),
+    )
+    .await;
     assert_eq!(status, StatusCode::ACCEPTED);
     let task = poll_task(&app, &repo, body["task_id"].as_str().unwrap()).await;
     assert_eq!(task["status"], "failed");

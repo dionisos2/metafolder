@@ -40,12 +40,14 @@ impl Fixture {
 
     fn run(&mut self, query: &Query) -> Vec<Uuid> {
         let (uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
-                .unwrap();
+            query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None).unwrap();
         uuids
     }
 
-    fn run_result(&mut self, query: &Query) -> Result<Vec<Uuid>, metafolder_daemon::error::ApiError> {
+    fn run_result(
+        &mut self,
+        query: &Query,
+    ) -> Result<Vec<Uuid>, metafolder_daemon::error::ApiError> {
         query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None)
             .map(|(uuids, _)| uuids)
     }
@@ -86,7 +88,11 @@ fn forest(f: &mut Fixture) -> Forest {
     let media = f.node(Some(root), "media", vec![]);
     let video = f.node(Some(media), "video", vec![]);
     let series = f.node(Some(video), "series", vec![]);
-    let scifi = f.node(Some(series), "science-fiction", vec![Field::new("label", Value::String("sf".into()))]);
+    let scifi = f.node(
+        Some(series),
+        "science-fiction",
+        vec![Field::new("label", Value::String("sf".into()))],
+    );
     let ep = f.node(Some(scifi), "ep1.mkv", vec![]);
     Forest { scifi, ep }
 }
@@ -136,7 +142,8 @@ fn test_osm_path_empty_terms_matches_every_tree_ref() {
 fn test_osm_path_on_non_tree_ref_field_is_rejected() {
     let mut f = Fixture::new();
     let _ = forest(&mut f);
-    let err = f.run_result(&osm("label", "sf")).expect_err("osm on a string field must be rejected");
+    let err =
+        f.run_result(&osm("label", "sf")).expect_err("osm on a string field must be rejected");
     assert_eq!(err.status.as_u16(), 400);
 }
 
@@ -198,9 +205,26 @@ fn test_osm_path_agrees_between_cache_states() {
     f.node(Some(deep), "science", vec![]);
 
     const BATTERY: [&str; 20] = [
-        "", "s", "sc", "sci", "science", "SCIENCE", "video scien", "scien video",
-        "ser vid", "a b", "video/series", "series/science", "ce-fi", "zz", "a a a",
-        "science fiction", "music jazz", "jazz music", "nope", "vid ser scien",
+        "",
+        "s",
+        "sc",
+        "sci",
+        "science",
+        "SCIENCE",
+        "video scien",
+        "scien video",
+        "ser vid",
+        "a b",
+        "video/series",
+        "series/science",
+        "ce-fi",
+        "zz",
+        "a a a",
+        "science fiction",
+        "music jazz",
+        "jazz music",
+        "nope",
+        "vid ser scien",
     ];
     // Cold first — the cache only ever populates lazily here, never completely.
     let cold: Vec<Vec<Uuid>> = BATTERY
@@ -235,11 +259,8 @@ fn test_osm_path_with_complete_cache() {
     let mut f = Fixture::new();
     let root = f.node(None, "", vec![]);
     // A deep random-looking path that contains neither "documents" nor "art".
-    let deep = chain(
-        &mut f,
-        root,
-        &["books", "2021", "raw", "trips", "drafts", "2022", "2023", "albums"],
-    );
+    let deep =
+        chain(&mut f, root, &["books", "2021", "raw", "trips", "drafts", "2022", "2023", "albums"]);
     let mp3 = f.node(Some(deep), "doc_18710.mp3", vec![]);
     // A real "art" directory with a file whose own name has no "art".
     let art = f.node(Some(root), "art", vec![]);

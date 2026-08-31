@@ -97,9 +97,7 @@ pub fn iso_to_ms(s: &str) -> Option<i64> {
         return None;
     }
     let days = days_from_civil(year, month as u32, day as u32);
-    days.checked_mul(SECS_PER_DAY)?
-        .checked_add(hour * 3600 + min * 60 + sec)?
-        .checked_mul(1000)
+    days.checked_mul(SECS_PER_DAY)?.checked_add(hour * 3600 + min * 60 + sec)?.checked_mul(1000)
 }
 
 /// Whether `year` is a leap year in the proleptic Gregorian calendar.

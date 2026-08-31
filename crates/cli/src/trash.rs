@@ -9,7 +9,9 @@ use crate::client::CliError;
 
 // The shared filesystem core: locating, moving, listing, restoring and pruning
 // the trash blobs. Re-exported so `crate::trash::TrashDir` etc. keep resolving.
-pub use metafolder_core::trash::{PruneMode, Reason, TrashDir, TrashEntry, TrashError, TrashedNode};
+pub use metafolder_core::trash::{
+    PruneMode, Reason, TrashDir, TrashEntry, TrashError, TrashedNode,
+};
 
 impl From<TrashError> for CliError {
     fn from(e: TrashError) -> Self {
@@ -38,22 +40,18 @@ pub fn parse_size(s: &str) -> Result<u64, CliError> {
         _ => 1,
     };
     let digits = if mult == 1 { t.as_str() } else { &t[..t.len() - 1] };
-    let n: u64 = digits
-        .parse()
-        .map_err(|_| CliError::Usage(format!("invalid size '{s}'")))?;
-    n.checked_mul(mult)
-        .ok_or_else(|| CliError::Usage(format!("size '{s}' overflows")))
+    let n: u64 = digits.parse().map_err(|_| CliError::Usage(format!("invalid size '{s}'")))?;
+    n.checked_mul(mult).ok_or_else(|| CliError::Usage(format!("size '{s}' overflows")))
 }
 
 /// Parses `<n><unit>` into milliseconds; unit is `y` (365 d), `w`, `d`, `h`,
 /// `m` (minute), `s` (`1y`, `30d`, `12h`, `45m`).
 pub fn parse_duration(s: &str) -> Result<i64, CliError> {
     let t = s.trim().to_ascii_lowercase();
-    let unit = t
-        .chars()
-        .last()
-        .filter(|c| c.is_ascii_alphabetic())
-        .ok_or_else(|| CliError::Usage(format!("invalid duration '{s}' (expected e.g. 30d)")))?;
+    let unit =
+        t.chars().last().filter(|c| c.is_ascii_alphabetic()).ok_or_else(|| {
+            CliError::Usage(format!("invalid duration '{s}' (expected e.g. 30d)"))
+        })?;
     let per: i64 = match unit {
         's' => 1_000,
         'm' => 60_000,
@@ -63,11 +61,9 @@ pub fn parse_duration(s: &str) -> Result<i64, CliError> {
         'y' => 365 * 86_400_000,
         _ => return Err(CliError::Usage(format!("unknown duration unit '{unit}'"))),
     };
-    let n: i64 = t[..t.len() - 1]
-        .parse()
-        .map_err(|_| CliError::Usage(format!("invalid duration '{s}'")))?;
-    n.checked_mul(per)
-        .ok_or_else(|| CliError::Usage(format!("duration '{s}' overflows")))
+    let n: i64 =
+        t[..t.len() - 1].parse().map_err(|_| CliError::Usage(format!("invalid duration '{s}'")))?;
+    n.checked_mul(per).ok_or_else(|| CliError::Usage(format!("duration '{s}' overflows")))
 }
 
 #[cfg(test)]

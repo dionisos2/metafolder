@@ -28,9 +28,8 @@ pub fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
 }
 
 pub fn bytes_to_uuid(bytes: Vec<u8>) -> Result<Uuid> {
-    let arr: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("Invalid UUID blob: expected 16 bytes"))?;
+    let arr: [u8; 16] =
+        bytes.try_into().map_err(|_| anyhow::anyhow!("Invalid UUID blob: expected 16 bytes"))?;
     Ok(Uuid::from_bytes(arr))
 }
 
@@ -39,19 +38,15 @@ pub fn bytes_to_uuid(bytes: Vec<u8>) -> Result<Uuid> {
 fn configure_connection(conn: &Connection) -> Result<()> {
     // An exclusive lock for the whole connection lifetime prevents a second
     // daemon instance from loading the same repository (spec-main invariant).
-    conn.pragma_update(None, "locking_mode", "EXCLUSIVE")
-        .context("Failed to set locking_mode")?;
+    conn.pragma_update(None, "locking_mode", "EXCLUSIVE").context("Failed to set locking_mode")?;
     // WAL requires shared-memory files, which network filesystems do not
     // support; fall back to DELETE journal mode there (spec-platform).
-    let wal = conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| {
-        row.get::<_, String>(0)
-    });
+    let wal =
+        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0));
     if wal.is_err() {
-        conn.pragma_update(None, "journal_mode", "DELETE")
-            .context("Failed to set journal_mode")?;
+        conn.pragma_update(None, "journal_mode", "DELETE").context("Failed to set journal_mode")?;
     }
-    conn.pragma_update(None, "foreign_keys", true)
-        .context("Failed to enable foreign keys")?;
+    conn.pragma_update(None, "foreign_keys", true).context("Failed to enable foreign keys")?;
     // The write and navigation hot paths go through `prepare_cached`; keep
     // enough room so the recurring statements never evict each other.
     conn.set_prepared_statement_cache_capacity(64);
@@ -226,11 +221,10 @@ pub fn ensure_field_text(conn: &Connection) -> Result<()> {
     if has_field == 0 {
         return Ok(());
     }
-    let has_fts: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'field_text'",
-        [],
-        |r| r.get(0),
-    )?;
+    let has_fts: i64 =
+        conn.query_row("SELECT COUNT(*) FROM sqlite_master WHERE name = 'field_text'", [], |r| {
+            r.get(0)
+        })?;
     if has_fts != 0 {
         return Ok(());
     }
@@ -527,8 +521,7 @@ pub fn for_each_field_row(
     conn: &Connection,
     mut f: impl FnMut(Uuid, FieldRow) -> Result<()>,
 ) -> Result<()> {
-    let mut stmt =
-        conn.prepare(&format!("SELECT {FIELD_COLUMNS}, metarecord_uuid FROM field"))?;
+    let mut stmt = conn.prepare(&format!("SELECT {FIELD_COLUMNS}, metarecord_uuid FROM field"))?;
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let (id, name, value) = row_to_field_row(row)?;
@@ -634,8 +627,8 @@ pub fn current_head(conn: &Connection) -> Result<Option<i64>> {
 /// Distinct metarecord UUIDs carrying at least one row of `name` (served by
 /// `idx_field_name`). Used by the retype operation to walk a field's holders.
 pub fn metarecords_with_field(conn: &Connection, name: &str) -> Result<Vec<Uuid>> {
-    let mut stmt = conn
-        .prepare_cached("SELECT DISTINCT metarecord_uuid FROM field WHERE field_name = ?1")?;
+    let mut stmt =
+        conn.prepare_cached("SELECT DISTINCT metarecord_uuid FROM field WHERE field_name = ?1")?;
     let uuids = stmt
         .query_map(params![name], |r| r.get::<_, Vec<u8>>(0))?
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
@@ -728,8 +721,7 @@ pub fn uuids_typed_missing_field(
     if types.is_empty() {
         return Ok(Vec::new());
     }
-    let placeholders =
-        (1..=types.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
+    let placeholders = (1..=types.len()).map(|i| format!("?{i}")).collect::<Vec<_>>().join(",");
     let field_idx = types.len() + 1;
     let limit_idx = types.len() + 2;
     let sql = format!(
@@ -1262,7 +1254,10 @@ pub(crate) fn delete_field_text_by_name(
 
 /// Removes the `field_text` entries for every field row of a metarecord. Run
 /// *before* deleting the metarecord (whose `field` rows cascade away).
-pub(crate) fn delete_field_text_by_metarecord(conn: &Connection, metarecord_uuid: Uuid) -> Result<()> {
+pub(crate) fn delete_field_text_by_metarecord(
+    conn: &Connection,
+    metarecord_uuid: Uuid,
+) -> Result<()> {
     conn.prepare_cached(
         "DELETE FROM field_text WHERE rowid IN \
          (SELECT id FROM field WHERE metarecord_uuid = ?1)",

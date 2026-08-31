@@ -127,7 +127,10 @@ fn bench_index_build_and_folder_query() {
     // vs the standalone DB scan (`populate`) it replaces at load.
     let t = Instant::now();
     metafolder_daemon::tree_cache::TreeCache::new(false).populate_from_forest(forest);
-    eprintln!("   NEW  tree cache from that scan : {:?}  (vs a full second field scan)\n", t.elapsed());
+    eprintln!(
+        "   NEW  tree cache from that scan : {:?}  (vs a full second field scan)\n",
+        t.elapsed()
+    );
 
     // ── #2: folder-open query, on the busiest directory ─────────────────────
     // The directory (tree node) with the most direct children — parent uuid
@@ -170,16 +173,17 @@ fn bench_index_build_and_folder_query() {
             .collect()
     };
 
-    let follows = || Query::Follows {
-        field: "mfr_path".into(),
-        target: FollowTarget::Path(rel.clone()),
-    };
+    let follows =
+        || Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path(rel.clone()) };
     let old_query = Query::And {
         operands: vec![
             follows(),
             Query::Matches {
                 field: "mfr_path".into(),
-                pattern: format!("^({})$", names.iter().map(|n| escape_regex(n)).collect::<Vec<_>>().join("|")),
+                pattern: format!(
+                    "^({})$",
+                    names.iter().map(|n| escape_regex(n)).collect::<Vec<_>>().join("|")
+                ),
             },
         ],
     };
@@ -204,9 +208,18 @@ fn bench_index_build_and_folder_query() {
         index.evaluate_page_with_roots(&new_query, &[], Some(200), None, &roots).unwrap();
     let new_q = t.elapsed();
 
-    eprintln!("   OLD  and(follows, matches(^(…)$)) via SQL : {old_q:?}  ({} hits)", old_hits.len());
-    eprintln!("   NEW  follows(dir) via bitmap index        : {new_q:?}  ({} hits)", new_hits.len());
-    eprintln!("   speedup                                   : {:.0}x\n", old_q.as_secs_f64() / new_q.as_secs_f64());
+    eprintln!(
+        "   OLD  and(follows, matches(^(…)$)) via SQL : {old_q:?}  ({} hits)",
+        old_hits.len()
+    );
+    eprintln!(
+        "   NEW  follows(dir) via bitmap index        : {new_q:?}  ({} hits)",
+        new_hits.len()
+    );
+    eprintln!(
+        "   speedup                                   : {:.0}x\n",
+        old_q.as_secs_f64() / new_q.as_secs_f64()
+    );
 
     drop(cache);
 
@@ -220,8 +233,9 @@ fn bench_index_build_and_folder_query() {
     let internal = repo.internal_dir();
 
     let mut empty = TreeCache::new(false);
-    let (dirs, total_cold, elig_cold) =
-        metafolder_daemon::watcher::compute_watched_dirs_timed(&conn, &mut empty, &root_dir, &internal);
+    let (dirs, total_cold, elig_cold) = metafolder_daemon::watcher::compute_watched_dirs_timed(
+        &conn, &mut empty, &root_dir, &internal,
+    );
     eprintln!("\n#3 watcher walk over {} eligible dirs:", dirs.len());
     eprintln!(
         "   empty cache (eligibility → DB) : total {total_cold:?}  (fs {:?} + eligibility {elig_cold:?})",
@@ -230,8 +244,9 @@ fn bench_index_build_and_folder_query() {
 
     let mut warm = TreeCache::new(false);
     warm.populate(&conn).unwrap();
-    let (_dirs, total_warm, elig_warm) =
-        metafolder_daemon::watcher::compute_watched_dirs_timed(&conn, &mut warm, &root_dir, &internal);
+    let (_dirs, total_warm, elig_warm) = metafolder_daemon::watcher::compute_watched_dirs_timed(
+        &conn, &mut warm, &root_dir, &internal,
+    );
     eprintln!(
         "   full cache  (eligibility → mem): total {total_warm:?}  (fs {:?} + eligibility {elig_warm:?})",
         total_warm.saturating_sub(elig_warm)
@@ -350,19 +365,22 @@ fn bench_index_build_and_folder_query() {
     // ── #7: the text predicates the SQL engine still serves ─────────────────
     let mut cache = repo.cache.lock().unwrap();
     for (label, q) in [
-        ("matches, strong literal", Query::Matches {
-            field: "mfr_path".into(),
-            pattern: "sample_1".into(),
-        }),
-        ("matches, no literal", Query::Matches {
-            field: "mfr_type".into(),
-            pattern: "^f.$".into(),
-        }),
-        ("osm direct", Query::Osm {
-            field: "mfr_path".into(),
-            terms: terms(&["sample"]),
-            mode: metafolder_core::query::OsmMode::Direct,
-        }),
+        (
+            "matches, strong literal",
+            Query::Matches { field: "mfr_path".into(), pattern: "sample_1".into() },
+        ),
+        (
+            "matches, no literal",
+            Query::Matches { field: "mfr_type".into(), pattern: "^f.$".into() },
+        ),
+        (
+            "osm direct",
+            Query::Osm {
+                field: "mfr_path".into(),
+                terms: terms(&["sample"]),
+                mode: metafolder_core::query::OsmMode::Direct,
+            },
+        ),
     ] {
         let t = Instant::now();
         let (hits, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();

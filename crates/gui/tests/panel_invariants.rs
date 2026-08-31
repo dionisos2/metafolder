@@ -107,9 +107,7 @@ fn sources(dir: &Path) -> Vec<PathBuf> {
         let path = entry.path();
         if path.is_dir() {
             files.extend(sources(&path));
-        } else if path
-            .extension()
-            .is_some_and(|extension| extension == "js" || extension == "html")
+        } else if path.extension().is_some_and(|extension| extension == "js" || extension == "html")
         {
             files.push(path);
         }

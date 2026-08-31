@@ -238,7 +238,8 @@ pub fn link(
     }
     let resp = ctx.client.post(&format!("{}/links", pair_prefix(a, b)), &body)?;
     let raw = resp["uuid"].as_str().unwrap_or_default();
-    Uuid::parse_str(raw).map_err(|_| SyncError::Op(format!("daemon returned an invalid link uuid: '{raw}'")))
+    Uuid::parse_str(raw)
+        .map_err(|_| SyncError::Op(format!("daemon returned an invalid link uuid: '{raw}'")))
 }
 
 /// `mf sync unlink <repo_a> <repo_b> <link> [--with-endpoint a|b]` — remove a
@@ -252,8 +253,8 @@ pub fn unlink(
     with_endpoint: Option<&str>,
 ) -> Result<Uuid, SyncError> {
     let (a, b) = resolve_pair(ctx, repo_a, repo_b)?;
-    let link_uuid =
-        Uuid::parse_str(link).map_err(|_| SyncError::Usage(format!("invalid link UUID: '{link}'")))?;
+    let link_uuid = Uuid::parse_str(link)
+        .map_err(|_| SyncError::Usage(format!("invalid link UUID: '{link}'")))?;
     let mut query: Vec<(&str, String)> = Vec::new();
     if let Some(side) = with_endpoint {
         query.push(("with_endpoint", canonical_side(side, a, b)));
@@ -394,7 +395,9 @@ mod tests {
     fn link_keeps_canonical_roles_when_repo_a_is_canonical_a() {
         let rec_x = Uuid::from_bytes([0xaa; 16]);
         let rec_y = Uuid::from_bytes([0xbb; 16]);
-        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let client = MockClient::new(|_, _| {
+            Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() }))
+        });
         let prompter = NoopPrompter;
         // repo_a = lo (canonical A): positional order is already canonical.
         link(
@@ -416,7 +419,9 @@ mod tests {
     fn link_swaps_roles_when_repo_a_is_canonical_b() {
         let rec_x = Uuid::from_bytes([0xaa; 16]);
         let rec_y = Uuid::from_bytes([0xbb; 16]);
-        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let client = MockClient::new(|_, _| {
+            Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() }))
+        });
         let prompter = NoopPrompter;
         // repo_a = hi (canonical B): uuid_a is the B record, uuid_b the A record.
         link(
@@ -436,7 +441,9 @@ mod tests {
     #[test]
     fn link_includes_a_resolved_host() {
         let host = Uuid::from_bytes([0xcc; 16]);
-        let client = MockClient::new(|_, _| Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() })));
+        let client = MockClient::new(|_, _| {
+            Ok(json!({ "uuid": Uuid::from_bytes([7; 16]).as_simple().to_string() }))
+        });
         let prompter = NoopPrompter;
         link(
             &ctx(&client, &prompter),
@@ -523,7 +530,12 @@ mod tests {
             Ok(body.clone())
         });
         let prompter = NoopPrompter;
-        let got = status(&ctx(&client, &prompter), &lo().as_simple().to_string(), &hi().as_simple().to_string()).unwrap();
+        let got = status(
+            &ctx(&client, &prompter),
+            &lo().as_simple().to_string(),
+            &hi().as_simple().to_string(),
+        )
+        .unwrap();
         assert_eq!(got, expected);
     }
 

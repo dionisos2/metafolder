@@ -12,31 +12,64 @@ use crate::metarecord::Value;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Query {
     // --- Combinators ---
-    And { operands: Vec<Query> },
-    Or { operands: Vec<Query> },
-    Not { operand: Box<Query> },
+    And {
+        operands: Vec<Query>,
+    },
+    Or {
+        operands: Vec<Query>,
+    },
+    Not {
+        operand: Box<Query>,
+    },
 
     // --- Three-valued logic ---
     /// The field exists with a non-Nothing value.
-    IsPresent { field: String },
+    IsPresent {
+        field: String,
+    },
     /// The field exists with the value Nothing.
-    IsAbsent { field: String },
+    IsAbsent {
+        field: String,
+    },
     /// The field does not exist on this metarecord.
-    IsUnknown { field: String },
+    IsUnknown {
+        field: String,
+    },
 
     // --- Comparisons (at least one occurrence of the field matches) ---
-    Eq { field: String, value: Value },
-    Neq { field: String, value: Value },
-    Lt { field: String, value: Value },
-    Lte { field: String, value: Value },
-    Gt { field: String, value: Value },
-    Gte { field: String, value: Value },
+    Eq {
+        field: String,
+        value: Value,
+    },
+    Neq {
+        field: String,
+        value: Value,
+    },
+    Lt {
+        field: String,
+        value: Value,
+    },
+    Lte {
+        field: String,
+        value: Value,
+    },
+    Gt {
+        field: String,
+        value: Value,
+    },
+    Gte {
+        field: String,
+        value: Value,
+    },
 
     // --- Graph traversal ---
     /// On a `Ref` field, `target` is a sub-query the referent must satisfy.
     /// On a `TreeRef` field, `target` is a path string and matches metarecords
     /// whose direct parent is the metarecord at that path.
-    Follows { field: String, target: FollowTarget },
+    Follows {
+        field: String,
+        target: FollowTarget,
+    },
     /// `TreeRef` fields only: the metarecord is a descendant of the metarecord at
     /// the given path (`target` is a path string), or of any metarecord satisfying
     /// the sub-query (`target` is a condition). When `inclusive` is true the
@@ -53,7 +86,10 @@ pub enum Query {
     // --- Pattern matching ---
     /// The field has a string value matching the regex. On a `TreeRef`
     /// field, the regex applies to the name component.
-    Matches { field: String, pattern: String },
+    Matches {
+        field: String,
+        pattern: String,
+    },
 
     // --- Ordered substring matching (OSM) ---
     /// Ordered Substring Matching: each whitespace-separated term must appear
@@ -70,7 +106,11 @@ pub enum Query {
     ///
     /// Empty `terms` (e.g. a blank query) matches every metarecord with a
     /// non-`Nothing` value in `field`.
-    Osm { field: String, terms: Vec<String>, mode: OsmMode },
+    Osm {
+        field: String,
+        terms: Vec<String>,
+        mode: OsmMode,
+    },
 
     // --- Explicit set ---
     /// The metarecord's UUID is one of `uuids` (32-hex in JSON). Bridges the
@@ -110,7 +150,11 @@ pub struct OsmProgress {
 /// as early as possible never blocks a later one — so resuming from a prefix's
 /// progress gives the same answer as scanning the whole string, which is what
 /// makes the incremental form sound.
-pub fn osm_advance(haystack_lower: &str, terms_lower: &[String], mut at: OsmProgress) -> OsmProgress {
+pub fn osm_advance(
+    haystack_lower: &str,
+    terms_lower: &[String],
+    mut at: OsmProgress,
+) -> OsmProgress {
     while at.matched < terms_lower.len() {
         let needle = &terms_lower[at.matched];
         match haystack_lower[at.from..].find(needle.as_str()) {
@@ -294,7 +338,8 @@ mod tests {
 
     #[test]
     fn test_osm_direct_json_format() {
-        let q = Query::Osm { field: "label".into(), terms: vec!["sf".into()], mode: OsmMode::Direct };
+        let q =
+            Query::Osm { field: "label".into(), terms: vec!["sf".into()], mode: OsmMode::Direct };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"osm","field":"label","terms":["sf"],"mode":"direct"}"#
@@ -330,9 +375,7 @@ mod tests {
                         Query::Eq { field: "tag".into(), value: Value::String("blues".into()) },
                     ],
                 },
-                Query::Not {
-                    operand: Box::new(Query::IsUnknown { field: "rating".into() }),
-                },
+                Query::Not { operand: Box::new(Query::IsUnknown { field: "rating".into() }) },
                 Query::Gte { field: "rating".into(), value: Value::Int(4) },
             ],
         };

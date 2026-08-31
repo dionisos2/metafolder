@@ -27,7 +27,8 @@ async fn request(app: &Router, method: &str, uri: &str) -> (StatusCode, Value) {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
+    let value =
+        if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
     (status, value)
 }
 
@@ -38,15 +39,17 @@ async fn post(app: &Router, uri: &str, body: Value) -> (StatusCode, Value) {
 async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
-        Some(v) => {
-            builder.header("content-type", "application/json").body(Body::from(v.to_string())).unwrap()
-        }
+        Some(v) => builder
+            .header("content-type", "application/json")
+            .body(Body::from(v.to_string()))
+            .unwrap(),
         None => builder.body(Body::empty()).unwrap(),
     };
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let value = if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
+    let value =
+        if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap() };
     (status, value)
 }
 
@@ -239,8 +242,7 @@ async fn cancel_prune_or_rollback_task_is_400() {
         let id = state.repo(repo_uuid).unwrap().tasks.start(kind);
         state.repo(repo_uuid).unwrap().tasks.mark_running(id);
         let hex = id.as_simple().to_string();
-        let (status, _) =
-            request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+        let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{kind:?} must be non-cancellable");
     }
 }
@@ -401,6 +403,7 @@ async fn global_tasks_lists_across_repos() {
 
     let (status, body) = request(&app, "GET", "/tasks").await;
     assert_eq!(status, StatusCode::OK);
-    let ids: Vec<&str> = body.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> =
+        body.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
     assert!(ids.contains(&id.as_simple().to_string().as_str()));
 }

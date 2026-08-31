@@ -15,7 +15,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, FieldType, Value, ZERO_UUID};
+use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
@@ -75,10 +75,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/query/fields/resolve-tree", post(query_resolve_tree))
         .route("/repos/:repo/log", get(get_log))
         .route("/repos/:repo/log/since", get(get_log_since))
-        .route(
-            "/repos/:repo/log/revisions/:rev_id",
-            get(get_revision).patch(patch_revision),
-        )
+        .route("/repos/:repo/log/revisions/:rev_id", get(get_revision).patch(patch_revision))
         .route("/repos/:repo/log/prune", post(prune_log))
         .route("/repos/:repo/rollback", post(rollback))
         .route("/repos/:repo/rollback/plan", get(rollback_plan))
@@ -368,8 +365,10 @@ async fn tree_roots(
         // Roots are stored with `value_uuid = ZERO_UUID` (the sentinel).
         let mut roots = db::tree_children(&conn, &params.field, ZERO_UUID)?;
         roots.sort_by(|a, b| a.1.cmp(&b.1));
-        let out: Vec<serde_json::Value> =
-            roots.into_iter().map(|(uuid, name)| json!({"uuid": hex(uuid), "name": name})).collect();
+        let out: Vec<serde_json::Value> = roots
+            .into_iter()
+            .map(|(uuid, name)| json!({"uuid": hex(uuid), "name": name}))
+            .collect();
         Ok(Json(serde_json::Value::Array(out)))
     })
     .await
@@ -393,8 +392,10 @@ async fn tree_children(
         let mut cache = repo_state.lock_cache();
         let mut children = cache.children_of(&conn, &params.field, parent)?;
         children.sort_by(|a, b| a.0.cmp(&b.0));
-        let out: Vec<serde_json::Value> =
-            children.into_iter().map(|(name, uuid)| json!({"uuid": hex(uuid), "name": name})).collect();
+        let out: Vec<serde_json::Value> = children
+            .into_iter()
+            .map(|(name, uuid)| json!({"uuid": hex(uuid), "name": name}))
+            .collect();
         Ok(Json(serde_json::Value::Array(out)))
     })
     .await
@@ -626,9 +627,7 @@ async fn cancel_task(
         CancelOutcome::NotCancellable => {
             Err(ApiError::bad_request("this kind of task cannot be cancelled"))
         }
-        CancelOutcome::NotFound => {
-            Err(ApiError::not_found(format!("Task not found: {task_uuid}")))
-        }
+        CancelOutcome::NotFound => Err(ApiError::not_found(format!("Task not found: {task_uuid}"))),
     }
 }
 
@@ -1017,8 +1016,8 @@ async fn get_revision(
         let conn = repo_state.conn.lock_recover();
         let head = crate::log::get_head(&conn)?;
         let rev_id: i64 = if rev_id == "head" {
-            let head = head
-                .ok_or_else(|| ApiError::not_found("the history is empty (no HEAD revision)"))?;
+            let head =
+                head.ok_or_else(|| ApiError::not_found("the history is empty (no HEAD revision)"))?;
             crate::log::get_op(&conn, head)?
                 .ok_or_else(|| ApiError::internal("HEAD operation vanished"))?
                 .rev_id
@@ -1033,9 +1032,7 @@ async fn get_revision(
         let mut is_head = false;
         {
             let mut stmt = conn
-                .prepare(
-                    "SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq",
-                )
+                .prepare("SELECT id FROM operation WHERE rev_id = ?1 ORDER BY seq")
                 .map_err(anyhow::Error::from)?;
             let ids = stmt
                 .query_map(rusqlite::params![rev_id], |r| r.get::<_, i64>(0))
@@ -1349,7 +1346,8 @@ async fn rollback_plan_summary(
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let path = crate::log::nav_path(&conn, head, resolved)?;
-        let mut by_type: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+        let mut by_type: std::collections::BTreeMap<String, usize> =
+            std::collections::BTreeMap::new();
         let mut revs = std::collections::HashSet::new();
         for (op, _) in &path {
             *by_type.entry(op.op_type.clone()).or_insert(0) += 1;
@@ -1428,8 +1426,7 @@ async fn rollback_step(
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
                 let mut cache = repo_state.lock_cache();
-                let op_json =
-                    action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
+                let op_json = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
                 let remaining = next.len() - 1;
                 return Ok(Json(json!({"op": op_json, "remaining": remaining})));
             }
@@ -1489,9 +1486,8 @@ async fn reload_schema(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let loaded =
-            crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
-                .map_err(ApiError::bad_request)?;
+        let loaded = crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
+            .map_err(ApiError::bad_request)?;
         let raw = loaded
             .as_ref()
             .map(|s| s.raw().clone())
@@ -1683,10 +1679,9 @@ async fn full_reconcile(
     let scope = body.metarecord.as_deref().map(parse_uuid).transpose()?;
     let repo_state = state.repo(repo_uuid)?;
     repo_state.ensure_writable()?;
-    let task_id = repo_state
-        .tasks
-        .start_unique(TaskKind::Reconcile)
-        .ok_or_else(|| ApiError::conflict("a reconcile is already in progress for this repository"))?;
+    let task_id = repo_state.tasks.start_unique(TaskKind::Reconcile).ok_or_else(|| {
+        ApiError::conflict("a reconcile is already in progress for this repository")
+    })?;
 
     // The work runs detached from this request: closing the client does not
     // interrupt it. It holds an Arc for its (bounded) duration; that is fine —
@@ -1830,7 +1825,6 @@ async fn effective_ignore(
     .await
 }
 
-
 /// Creates the metarecord for a single filesystem path without activating
 /// tracking (spec-file-tracking "Single-metarecord track"). Parents are created
 /// with `mf_watch = false`; no eligibility check applies.
@@ -1856,7 +1850,9 @@ async fn track(
         let mut rel = String::new();
         for comp in rel_path.components() {
             let std::path::Component::Normal(name) = comp else {
-                return Err(ApiError::bad_request(format!("unsupported path component in {abs:?}")));
+                return Err(ApiError::bad_request(format!(
+                    "unsupported path component in {abs:?}"
+                )));
             };
             rel.push('/');
             rel.push_str(name.to_str().ok_or_else(|| {
@@ -2192,7 +2188,10 @@ struct BatchSetBody {
 
 /// Resolves a `{value | values}` field-write body to its row set; exactly one of
 /// the two must be present (set accepts several, the single-value ops one).
-fn resolved_values(value: Option<Value>, values: Option<Vec<Value>>) -> Result<Vec<Value>, ApiError> {
+fn resolved_values(
+    value: Option<Value>,
+    values: Option<Vec<Value>>,
+) -> Result<Vec<Value>, ApiError> {
     match (value, values) {
         (Some(_), Some(_)) => {
             Err(ApiError::bad_request("provide either 'value' or 'values', not both"))
@@ -2234,7 +2233,12 @@ async fn batch_set(
         let mut writer = Writer::begin(&mut conn, None)?;
         for uuid in &uuids {
             writer.set_field_multi(*uuid, &body.name, rows.clone())?;
-            validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+            validate_schema(
+                repo_state,
+                writer.connection(),
+                *uuid,
+                std::slice::from_ref(&body.name),
+            )?;
         }
         let tree_touched = writer.touched_tree();
         let watch_touched = writer.touched_watch();
@@ -2272,7 +2276,12 @@ async fn batch_append(
         let mut writer = Writer::begin(&mut conn, None)?;
         for uuid in &uuids {
             writer.append_field(*uuid, &body.name, value.clone())?;
-            validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+            validate_schema(
+                repo_state,
+                writer.connection(),
+                *uuid,
+                std::slice::from_ref(&body.name),
+            )?;
         }
         let tree_touched = writer.touched_tree();
         let watch_touched = writer.touched_watch();
@@ -2313,7 +2322,12 @@ async fn batch_remove(
         for uuid in &uuids {
             if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
                 changed += 1;
-                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+                validate_schema(
+                    repo_state,
+                    writer.connection(),
+                    *uuid,
+                    std::slice::from_ref(&body.name),
+                )?;
             }
         }
         let tree_touched = writer.touched_tree();
@@ -2362,7 +2376,12 @@ async fn batch_unset(
         for uuid in &uuids {
             if writer.delete_fields_named(*uuid, &body.name)? > 0 {
                 changed += 1;
-                validate_schema(repo_state, writer.connection(), *uuid, std::slice::from_ref(&body.name))?;
+                validate_schema(
+                    repo_state,
+                    writer.connection(),
+                    *uuid,
+                    std::slice::from_ref(&body.name),
+                )?;
             }
         }
         let tree_touched = writer.touched_tree();
@@ -2861,13 +2880,14 @@ fn open_pair_db(
     let b_int = repo_b.internal_dir();
 
     match sync::locate(&a_int, &b_int, a, b) {
-        sync::Located::Ambiguous => Err(ApiError::conflict(
-            "sync database present in both repos; delete the stale copy",
-        )),
+        sync::Located::Ambiguous => {
+            Err(ApiError::conflict("sync database present in both repos; delete the stale copy"))
+        }
         sync::Located::Found(path) => {
             let host = if path.starts_with(&a_int) { a } else { b };
             let conn = sync::open(&path)?;
-            let ok = sync::read_meta(&conn, "repo_a")?.as_deref() == Some(&a.as_simple().to_string())
+            let ok = sync::read_meta(&conn, "repo_a")?.as_deref()
+                == Some(&a.as_simple().to_string())
                 && sync::read_meta(&conn, "repo_b")?.as_deref() == Some(&b.as_simple().to_string());
             if !ok {
                 return Err(ApiError::conflict("sync database identity mismatch"));
@@ -3088,12 +3108,7 @@ async fn sync_status(
 }
 
 /// The change-detection state of a link (spec-sync "status"), by precedence.
-fn link_state(
-    ea: Option<u64>,
-    eb: Option<u64>,
-    va: Option<u64>,
-    vb: Option<u64>,
-) -> &'static str {
+fn link_state(ea: Option<u64>, eb: Option<u64>, va: Option<u64>, vb: Option<u64>) -> &'static str {
     match (ea.is_none(), eb.is_none()) {
         (true, true) => return "missing_both",
         (true, false) => return "missing_a",
@@ -3169,4 +3184,3 @@ async fn sync_commit(
     })
     .await
 }
-

@@ -268,13 +268,16 @@ mod tests {
 
     #[test]
     fn absent_sources_produce_no_fields() {
-        let fields = apply_map(&HashMap::new(), &MetadataMap::parse(crate::metadata_map::DEFAULT).unwrap());
+        let fields =
+            apply_map(&HashMap::new(), &MetadataMap::parse(crate::metadata_map::DEFAULT).unwrap());
         assert!(fields.is_empty());
     }
 
     #[test]
     fn collecting_a_non_media_file_yields_nothing() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-meta-nonmedia-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-meta-nonmedia-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let f = dir.join("plain.txt");
         std::fs::write(&f, b"just some text, no tags").unwrap();

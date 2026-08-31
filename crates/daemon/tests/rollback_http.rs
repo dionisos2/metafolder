@@ -17,7 +17,12 @@ use uuid::Uuid;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -29,8 +34,11 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let value =
-        if bytes.is_empty() { Value::Null } else { serde_json::from_slice(&bytes).unwrap_or(Value::Null) };
+    let value = if bytes.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+    };
     (status, value)
 }
 
@@ -44,8 +52,13 @@ async fn setup(prefix: &str) -> (Router, String, TempDir) {
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> String {
-    let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields}))).await;
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": fields})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body["uuid"].as_str().unwrap().to_string()
 }
@@ -78,7 +91,9 @@ async fn head(app: &Router, repo: &str) -> Option<i64> {
 #[tokio::test]
 async fn test_plan_lists_the_operations_to_undo() {
     let (app, repo, _root) = setup("plan").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
 
     let (status, body) = request(
@@ -98,7 +113,9 @@ async fn test_plan_lists_the_operations_to_undo() {
 #[tokio::test]
 async fn test_plan_summary_counts_by_type() {
     let (app, repo, _root) = setup("summary").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 7})).await;
 
@@ -131,7 +148,9 @@ async fn create_op_id(app: &Router, repo: &str, uuid: &str) -> i64 {
 #[tokio::test]
 async fn test_start_step_undoes_last_revision() {
     let (app, repo, _root) = setup("startstep").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     assert_eq!(rating(&app, &repo, &uuid).await, Some(5));
 
@@ -183,8 +202,14 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
         let conn = repo_state.conn.lock().unwrap();
         metafolder_daemon::db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
     };
-    set(&app, &repo, &root_uuid.as_simple().to_string(), "mf_watch", json!({"type": "bool", "value": true}))
-        .await;
+    set(
+        &app,
+        &repo,
+        &root_uuid.as_simple().to_string(),
+        "mf_watch",
+        json!({"type": "bool", "value": true}),
+    )
+    .await;
 
     // Track the file, then orphan it — one revision, two operations.
     {
@@ -250,7 +275,9 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
 #[tokio::test]
 async fn test_lock_blocks_writes_but_allows_reads() {
     let (app, repo, _root) = setup("lock").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
 
     let (status, _) = request(
@@ -273,7 +300,8 @@ async fn test_lock_blocks_writes_but_allows_reads() {
     assert_eq!(status, StatusCode::LOCKED, "writes must be locked");
 
     // Reads still work.
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK);
 
     // Starting again is a conflict.
@@ -303,7 +331,9 @@ async fn test_lock_blocks_writes_but_allows_reads() {
 #[tokio::test]
 async fn test_abort_keeps_head_and_releases_lock() {
     let (app, repo, _root) = setup("abort").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
     let before = head(&app, &repo).await;
 
@@ -330,7 +360,9 @@ async fn test_abort_keeps_head_and_releases_lock() {
 #[tokio::test]
 async fn test_start_at_head_is_a_noop_without_lock() {
     let (app, repo, _root) = setup("noop").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     let head_op = head(&app, &repo).await.unwrap();
 
     let (status, body) = request(
@@ -351,7 +383,9 @@ async fn test_start_at_head_is_a_noop_without_lock() {
 #[tokio::test]
 async fn test_redo_navigates_forward_to_a_descendant() {
     let (app, repo, _root) = setup("redo").await;
-    let uuid = create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}])).await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
     set(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
 
     // The set_field operation id, used as a forward (redo) target.
@@ -374,7 +408,8 @@ async fn test_redo_navigates_forward_to_a_descendant() {
         }
         loop {
             let (status, step) =
-                request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({}))).await;
+                request(&app, "POST", &format!("/repos/{repo}/rollback/step"), Some(json!({})))
+                    .await;
             assert_eq!(status, StatusCode::OK, "{step}");
             if step["op"].is_null() {
                 break;

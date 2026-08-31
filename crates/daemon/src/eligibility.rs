@@ -107,8 +107,7 @@ pub fn explain_cached(
     let full_idx = rel_path.split('/').count() - 1;
     let chain = ancestor_chain(conn, cache, rel_path)?;
     // The path's own metarecord, when it already exists.
-    let own_entry: Option<Uuid> =
-        chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
+    let own_entry: Option<Uuid> = chain.last().and_then(|(i, u)| (*i == full_idx).then_some(*u));
 
     // Steps 1–2: nearest metarecord (including the path itself) defining
     // mf_watch. Its component index (`watch_idx`) marks the tracking-scope root:
@@ -313,4 +312,3 @@ fn cached_regex(ec: &mut EligibilityCache, pattern: &str) -> Result<Regex> {
     ec.regex.insert(pattern.to_string(), re.clone());
     Ok(re)
 }
-

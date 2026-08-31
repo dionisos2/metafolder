@@ -89,7 +89,12 @@ struct GuiPrompter {
 }
 
 impl Prompter for GuiPrompter {
-    fn resolve_conflict(&self, _field: &str, _rec_a: Uuid, _rec_b: Uuid) -> Result<String, SyncError> {
+    fn resolve_conflict(
+        &self,
+        _field: &str,
+        _rec_a: Uuid,
+        _rec_b: Uuid,
+    ) -> Result<String, SyncError> {
         Ok("skip".into())
     }
 
@@ -179,7 +184,11 @@ type AppHandle<'a> = tauri::State<'a, Arc<App>>;
 
 /// `metafolder.sync.status(a, b)` — the raw `/status` body (links + states).
 #[tauri::command]
-pub async fn sync_status(app: AppHandle<'_>, repo_a: String, repo_b: String) -> Result<Value, String> {
+pub async fn sync_status(
+    app: AppHandle<'_>,
+    repo_a: String,
+    repo_b: String,
+) -> Result<Value, String> {
     let base = app.daemon.base_url();
     let (body, _) = blocking(base, move |ctx| core_sync::status(ctx, &repo_a, &repo_b)).await?;
     Ok(body)
@@ -261,7 +270,8 @@ pub async fn sync_show(
 ) -> Result<Value, String> {
     let base = app.daemon.base_url();
     let (report, _) =
-        blocking(base, move |ctx| core_sync::run::show(ctx, &repo_a, &repo_b, conflicts, files)).await?;
+        blocking(base, move |ctx| core_sync::run::show(ctx, &repo_a, &repo_b, conflicts, files))
+            .await?;
     Ok(show_json(report))
 }
 
@@ -312,11 +322,11 @@ mod tests {
 
     #[test]
     fn run_json_status_variants() {
-        for (status, expected) in [
-            (RunStatus::NothingToRun, "nothing_to_run"),
-            (RunStatus::Aborted, "aborted"),
-        ] {
-            let v = run_json(RunReport { status, done: 0, skipped: 0, divergences: vec![] }, vec![]);
+        for (status, expected) in
+            [(RunStatus::NothingToRun, "nothing_to_run"), (RunStatus::Aborted, "aborted")]
+        {
+            let v =
+                run_json(RunReport { status, done: 0, skipped: 0, divergences: vec![] }, vec![]);
             assert_eq!(v["status"], expected);
         }
     }
@@ -339,7 +349,12 @@ mod tests {
         let summary = show_json(ShowReport::Summary {
             total: 5,
             counts: vec![("sync".into(), 4), ("copy".into(), 1)],
-            reds: vec![ShowOp { green: false, kind: "sync".into(), context: "/y".into(), why: Some("changed".into()) }],
+            reds: vec![ShowOp {
+                green: false,
+                kind: "sync".into(),
+                context: "/y".into(),
+                why: Some("changed".into()),
+            }],
         });
         assert_eq!(summary["state"], "summary");
         assert_eq!(summary["total"], 5);

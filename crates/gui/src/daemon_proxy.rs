@@ -4,9 +4,9 @@
 //! daemon must stay GUI-agnostic). Tracks reachability and emits
 //! `daemon-health-changed` on transitions.
 
-use metafolder_core::sync::MutexExt;
 use crate::events;
 use crate::state::GuiState;
+use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::sync::Mutex;
@@ -116,9 +116,8 @@ impl DaemonProxy {
         token: Option<String>,
     ) -> Result<ProxyResponse, String> {
         let url = format!("{}{}", self.base_url(), path);
-        let method: reqwest::Method = method
-            .parse()
-            .map_err(|_| format!("invalid HTTP method: {method}"))?;
+        let method: reqwest::Method =
+            method.parse().map_err(|_| format!("invalid HTTP method: {method}"))?;
 
         let mut request = self.client.request(method, &url);
         if let Some(token) = token {
@@ -155,18 +154,11 @@ impl DaemonProxy {
     /// auto-name a workspace after the repo it loads (spec-gui "Workspace
     /// name"); the caller falls back to the plain "Workspace N" numbering.
     pub async fn repo_name(&self, uuid: &str) -> Option<String> {
-        let response = self
-            .request("GET", &format!("/repos/{uuid}"), None)
-            .await
-            .ok()?;
+        let response = self.request("GET", &format!("/repos/{uuid}"), None).await.ok()?;
         if response.status != 200 {
             return None;
         }
-        response
-            .body
-            .get("name")
-            .and_then(Value::as_str)
-            .map(str::to_string)
+        response.body.get("name").and_then(Value::as_str).map(str::to_string)
     }
 
     /// One health probe; emits `daemon-health-changed` when the state differs
@@ -180,8 +172,7 @@ impl DaemonProxy {
     pub async fn check_health(&self, gui: &GuiState) -> bool {
         let outcome = match self.request("GET", "/health", None).await {
             Ok(ProxyResponse { status: 200, body }) => {
-                let daemon_api =
-                    body.get("api_version").and_then(Value::as_u64).map(|v| v as u32);
+                let daemon_api = body.get("api_version").and_then(Value::as_u64).map(|v| v as u32);
                 HealthOutcome {
                     reachable: true,
                     compatible: daemon_api == Some(metafolder_core::API_VERSION),

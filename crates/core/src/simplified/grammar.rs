@@ -46,11 +46,7 @@ pub enum Expr {
     /// `( seq | seq | ... )` — a parenthesised alternation of sequences.
     Group(Vec<Vec<Item>>),
     /// A repetition, optionally separated by `sep` (`** ` / `++`).
-    Repeat {
-        inner: Box<Expr>,
-        kind: RepeatKind,
-        sep: Option<Box<Expr>>,
-    },
+    Repeat { inner: Box<Expr>, kind: RepeatKind, sep: Option<Box<Expr>> },
 }
 
 /// The three repetition flavours: `*`, `+`, `?`.
@@ -79,7 +75,9 @@ pub fn parse_grammar(src: &str) -> Result<Grammar, String> {
                     body.push('\n');
                     body.push_str(line);
                 }
-                None => return Err(format!("alternative line before any production: {}", line.trim())),
+                None => {
+                    return Err(format!("alternative line before any production: {}", line.trim()))
+                }
             }
         }
     }
@@ -409,11 +407,7 @@ impl PatternParser {
                 _ => break,
             };
             self.advance();
-            let sep = if separated {
-                Some(Box::new(self.primary()?))
-            } else {
-                None
-            };
+            let sep = if separated { Some(Box::new(self.primary()?)) } else { None };
             e = Expr::Repeat { inner: Box::new(e), kind, sep };
         }
         Ok(e)

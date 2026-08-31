@@ -175,7 +175,8 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
     // ── Phase 3: creation date (leftovers) ───────────────────────────────
     let mut leftovers: Vec<usize> = (0..n).filter(|&i| placed[i].is_none()).collect();
     leftovers.sort_by(|&a, &b| {
-        let key = |i: usize| (items[i].btime.is_none(), items[i].btime.unwrap_or(0), &items[i].name);
+        let key =
+            |i: usize| (items[i].btime.is_none(), items[i].btime.unwrap_or(0), &items[i].name);
         key(a).cmp(&key(b))
     });
     for i in leftovers {

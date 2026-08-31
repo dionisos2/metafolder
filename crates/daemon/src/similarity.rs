@@ -27,8 +27,11 @@ impl FileSig {
             Some(i) if i > 0 => (&name[..i], &name[i + 1..]),
             _ => (name, ""),
         };
-        let dirs =
-            if dir.is_empty() { Vec::new() } else { dir.split('/').map(str::to_lowercase).collect() };
+        let dirs = if dir.is_empty() {
+            Vec::new()
+        } else {
+            dir.split('/').map(str::to_lowercase).collect()
+        };
         FileSig { base: base.to_lowercase(), ext: ext.to_lowercase(), size, dirs }
     }
 }

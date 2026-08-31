@@ -741,7 +741,11 @@ struct TargetOpts {
 
 impl TargetOpts {
     fn into_args(self) -> metafolder_cli::log::TargetArgs {
-        metafolder_cli::log::TargetArgs { label: self.target, id: self.id, timestamp: self.timestamp }
+        metafolder_cli::log::TargetArgs {
+            label: self.target,
+            id: self.id,
+            timestamp: self.timestamp,
+        }
     }
     fn is_empty(&self) -> bool {
         self.target.is_none() && self.id.is_none() && self.timestamp.is_none()
@@ -905,9 +909,7 @@ fn dispatch_sync(ctx: &Ctx, command: SyncCommand) -> CmdResult {
         SyncCommand::Show { repo_a, repo_b, conflicts, files, summary } => {
             sync::run::show(ctx, &repo_a, &repo_b, conflicts, files, summary)
         }
-        SyncCommand::Status { repo_a, repo_b, json } => {
-            sync::status(ctx, &repo_a, &repo_b, json)
-        }
+        SyncCommand::Status { repo_a, repo_b, json } => sync::status(ctx, &repo_a, &repo_b, json),
         SyncCommand::Link { repo_a, repo_b, uuid_a, uuid_b, host } => {
             sync::link(ctx, &repo_a, &repo_b, &uuid_a, &uuid_b, host.as_deref())
         }
@@ -963,13 +965,21 @@ fn dispatch_metarecord(
     match verb {
         MetarecordVerb::Get { select, sort, limit, values, tsv, resolve_tree } => {
             commands::metarecord_get(
-                ctx, selector.as_deref(), select.as_deref(), &sort, limit, values, tsv,
+                ctx,
+                selector.as_deref(),
+                select.as_deref(),
+                &sort,
+                limit,
+                values,
+                tsv,
                 resolve_tree.as_deref(),
             )
         }
         MetarecordVerb::Add { specs, force } => {
             if selector.is_some() {
-                return Err(Usage("mf metarecord add creates a new metarecord and takes no selector".into()));
+                return Err(Usage(
+                    "mf metarecord add creates a new metarecord and takes no selector".into(),
+                ));
             }
             commands::create(ctx, &specs, force)
         }
@@ -978,7 +988,8 @@ fn dispatch_metarecord(
             _ => Err(Usage("mf metarecord set requires -i <uuid> (whole-record overwrite)".into())),
         },
         MetarecordVerb::Delete { force } => {
-            let sel = selector.ok_or_else(|| Usage("mf metarecord delete requires -q or -i".into()))?;
+            let sel =
+                selector.ok_or_else(|| Usage("mf metarecord delete requires -q or -i".into()))?;
             commands::delete(ctx, &sel, force)
         }
         MetarecordVerb::Field { verb } => {
@@ -1001,9 +1012,13 @@ fn dispatch_field(ctx: &Ctx, command: Option<FieldCommand>) -> CmdResult {
     match command {
         // `list` is the group's default (mf field ≡ mf field list).
         None => commands::field_list(ctx, None),
-        Some(FieldCommand::List { type_filter }) => commands::field_list(ctx, type_filter.as_deref()),
+        Some(FieldCommand::List { type_filter }) => {
+            commands::field_list(ctx, type_filter.as_deref())
+        }
         Some(FieldCommand::Get { id }) => commands::field_by_id_get(ctx, id),
-        Some(FieldCommand::Set { id, spec, force }) => commands::field_by_id_set(ctx, id, &spec, force),
+        Some(FieldCommand::Set { id, spec, force }) => {
+            commands::field_by_id_set(ctx, id, &spec, force)
+        }
         Some(FieldCommand::Delete { id, force }) => commands::field_by_id_delete(ctx, id, force),
     }
 }
@@ -1012,11 +1027,15 @@ fn dispatch_ignore(ctx: &Ctx, command: Option<IgnoreCommand>) -> CmdResult {
     use metafolder_core::ignore::Mode;
     match command.unwrap_or(IgnoreCommand::List { dir: None }) {
         IgnoreCommand::List { dir } => commands::ignore_list(ctx, dir.as_deref()),
-        IgnoreCommand::Add(a) => commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Add),
+        IgnoreCommand::Add(a) => {
+            commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Add)
+        }
         IgnoreCommand::Remove(a) => {
             commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Remove)
         }
-        IgnoreCommand::Set(a) => commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Set),
+        IgnoreCommand::Set(a) => {
+            commands::ignore_apply(ctx, a.dir.as_deref(), &a.presets, Mode::Set)
+        }
     }
 }
 
@@ -1068,7 +1087,8 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             PruneCommand::Before { target, force, silent } => {
                 if target.is_empty() {
                     Err(metafolder_cli::client::CliError::Usage(
-                        "mf log prune before requires a target (<label>, --id, or --timestamp)".into(),
+                        "mf log prune before requires a target (<label>, --id, or --timestamp)"
+                            .into(),
                     ))
                 } else {
                     log::prune(ctx, "before", target.into_args(), force, silent)

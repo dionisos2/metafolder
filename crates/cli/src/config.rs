@@ -125,10 +125,7 @@ mod tests {
         let empty = CliConfig::default();
         assert_eq!(empty.settings.daemon_port, DEFAULT_DAEMON_PORT);
         assert_eq!(empty.settings.page_size, DEFAULT_PAGE_SIZE);
-        assert_eq!(
-            empty.settings.reconcile_poll_interval_ms,
-            DEFAULT_RECONCILE_POLL_INTERVAL_MS
-        );
+        assert_eq!(empty.settings.reconcile_poll_interval_ms, DEFAULT_RECONCILE_POLL_INTERVAL_MS);
         assert_eq!(empty.repo, RepoDefault::default());
         // Parsing empty text yields the same defaults.
         assert_eq!(parse_config("").unwrap(), empty);
@@ -158,10 +155,7 @@ mod tests {
         assert_eq!(config.settings.page_size, 10);
         // Unspecified keys keep their defaults.
         assert_eq!(config.settings.daemon_port, DEFAULT_DAEMON_PORT);
-        assert_eq!(
-            config.settings.reconcile_poll_interval_ms,
-            DEFAULT_RECONCILE_POLL_INTERVAL_MS
-        );
+        assert_eq!(config.settings.reconcile_poll_interval_ms, DEFAULT_RECONCILE_POLL_INTERVAL_MS);
     }
 
     #[test]
@@ -179,19 +173,17 @@ mod tests {
 
     #[test]
     fn test_missing_file_yields_defaults() {
-        let path = std::env::temp_dir().join("metafolder-tests").join(format!(
-            "mf_cli_missing_{}.toml",
-            uuid::Uuid::new_v4()
-        ));
+        let path = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_cli_missing_{}.toml", uuid::Uuid::new_v4()));
         assert_eq!(read_config(&path).unwrap(), CliConfig::default());
     }
 
     #[test]
     fn test_malformed_file_is_an_error_naming_the_path() {
-        let path = std::env::temp_dir().join("metafolder-tests").join(format!(
-            "mf_cli_bad_{}.toml",
-            uuid::Uuid::new_v4()
-        ));
+        let path = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_cli_bad_{}.toml", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, "this is = not = valid").unwrap();
         let err = read_config(&path).unwrap_err();

@@ -11,7 +11,7 @@ use rusqlite::{params, Transaction};
 use uuid::Uuid;
 
 pub use metafolder_core::date::now_ms;
-use metafolder_core::metarecord::{Field, MetaRecord, FieldType, Value};
+use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value};
 
 use crate::db::{self, FieldRow};
 use crate::error::DomainError;
@@ -66,7 +66,6 @@ impl OpType {
         })
     }
 }
-
 
 // ── History reading ───────────────────────────────────────────────────────────
 
@@ -460,7 +459,9 @@ pub fn resolve_target(conn: &rusqlite::Connection, target: &Target) -> Result<Op
                 ))?
                 .query_row(params![head, cycle_cap(conn)?, t], |r| r.get(0))
                 .optional()?;
-            found.map(Some).with_context(|| format!("no operation found at or before timestamp {t}"))
+            found
+                .map(Some)
+                .with_context(|| format!("no operation found at or before timestamp {t}"))
         }
         Target::Label(label) => {
             use rusqlite::OptionalExtension as _;
@@ -527,10 +528,7 @@ pub struct RetypeSummary {
 
 /// Moves HEAD to `target` in one atomic transaction: inverse operations on
 /// the path up to the LCA, forward operations down to the target.
-pub fn navigate(
-    conn: &mut rusqlite::Connection,
-    target: Option<i64>,
-) -> Result<NavResult> {
+pub fn navigate(conn: &mut rusqlite::Connection, target: Option<i64>) -> Result<NavResult> {
     let previous_head = get_head(conn)?;
     if previous_head == target {
         return Ok(NavResult {
@@ -570,10 +568,8 @@ pub fn navigate(
             let h_set: HashSet<i64> = h_anc.iter().copied().collect();
             let t_anc = ancestry(&tx, t)?;
             let lca = t_anc.iter().find(|id| h_set.contains(id)).copied();
-            let unapply: Vec<i64> =
-                h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
-            let mut apply: Vec<i64> =
-                t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
+            let unapply: Vec<i64> = h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
+            let mut apply: Vec<i64> = t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
             apply.reverse(); // oldest first
             (unapply, apply)
         }
@@ -628,8 +624,7 @@ fn step_paths(
             let t_anc = ancestry(conn, t)?;
             let lca = t_anc.iter().find(|id| h_set.contains(id)).copied();
             let unapply: Vec<i64> = h_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
-            let mut apply: Vec<i64> =
-                t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
+            let mut apply: Vec<i64> = t_anc.into_iter().take_while(|id| Some(*id) != lca).collect();
             apply.reverse();
             (unapply, apply)
         }
@@ -651,10 +646,16 @@ pub fn nav_path(
     let (unapply, apply) = step_paths(conn, head, target)?;
     let mut out = Vec::with_capacity(unapply.len() + apply.len());
     for id in unapply {
-        out.push((get_op(conn, id)?.context("operation vanished during navigation")?, NavDir::Inverse));
+        out.push((
+            get_op(conn, id)?.context("operation vanished during navigation")?,
+            NavDir::Inverse,
+        ));
     }
     for id in apply {
-        out.push((get_op(conn, id)?.context("operation vanished during navigation")?, NavDir::Forward));
+        out.push((
+            get_op(conn, id)?.context("operation vanished during navigation")?,
+            NavDir::Forward,
+        ));
     }
     Ok(out)
 }
@@ -975,13 +976,9 @@ pub fn prune(
             stmt.execute(params![id])?;
         }
     }
-    tx.execute(
-        "DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)",
-        [],
-    )?;
+    tx.execute("DELETE FROM revision WHERE id NOT IN (SELECT DISTINCT rev_id FROM operation)", [])?;
     tx.commit()?;
-    let revisions_after: i64 =
-        conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
+    let revisions_after: i64 = conn.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get(0))?;
 
     // Return the freed pages to the filesystem (best-effort): the deleted
     // snapshots would otherwise keep the file at its high-water size
@@ -1018,8 +1015,7 @@ fn bulk_insert(
     // Stay well under SQLITE_MAX_VARIABLE_NUMBER (32766 for bundled SQLite).
     const MAX_PARAMS: usize = 16_000;
     let rows_per_chunk = (MAX_PARAMS / row_width).max(1);
-    let row_placeholder =
-        format!("({})", vec!["?"; row_width].join(", "));
+    let row_placeholder = format!("({})", vec!["?"; row_width].join(", "));
     for chunk in rows.chunks(rows_per_chunk) {
         let placeholders = vec![row_placeholder.as_str(); chunk.len()].join(", ");
         let sql = format!("{insert_sql} VALUES {placeholders}");
@@ -1071,10 +1067,7 @@ pub struct Writer<'c> {
 
 impl<'c> Writer<'c> {
     /// Opens a transaction and creates the revision row.
-    pub fn begin(
-        conn: &'c mut rusqlite::Connection,
-        label: Option<String>,
-    ) -> Result<Self> {
+    pub fn begin(conn: &'c mut rusqlite::Connection, label: Option<String>) -> Result<Self> {
         let tx = conn.transaction()?;
         let head: Option<i64> =
             tx.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?;
@@ -1114,7 +1107,10 @@ impl<'c> Writer<'c> {
     /// rebuild it after such a write; this is the cheap signal that it needs to.
     pub fn touched_tree(&self) -> bool {
         self.pending.iter().any(|op| {
-            op.before.iter().chain(op.after.iter()).any(|f| matches!(f.value, Value::TreeRef { .. }))
+            op.before
+                .iter()
+                .chain(op.after.iter())
+                .any(|f| matches!(f.value, Value::TreeRef { .. }))
         })
     }
 
@@ -1505,13 +1501,12 @@ impl<'c> Writer<'c> {
 
     /// Fetches a field row, checking it belongs to the given metarecord.
     fn get_owned_row(&self, uuid: Uuid, field_id: i64) -> Result<FieldRow> {
-        db::get_field_rows(&self.tx, uuid)?
-            .into_iter()
-            .find(|r| r.id == field_id)
-            .ok_or_else(|| {
+        db::get_field_rows(&self.tx, uuid)?.into_iter().find(|r| r.id == field_id).ok_or_else(
+            || {
                 DomainError::NotFound(format!("Field {field_id} not found on metarecord {uuid}"))
                     .into()
-            })
+            },
+        )
     }
 
     /// Buffers one operation; the log rows are inserted in bulk, in batches
@@ -1560,11 +1555,7 @@ impl<'c> Writer<'c> {
         }
         let last_id: Option<i64> = self
             .tx
-            .query_row(
-                "SELECT seq FROM sqlite_sequence WHERE name = 'operation'",
-                [],
-                |r| r.get(0),
-            )
+            .query_row("SELECT seq FROM sqlite_sequence WHERE name = 'operation'", [], |r| r.get(0))
             .optional()?;
         let base = last_id.unwrap_or(0) + 1;
 
@@ -1718,13 +1709,18 @@ impl<'c> Writer<'c> {
             }
             chain_len += 1;
             if chain_len >= MAX_TREE_DEPTH {
-                return Err(DomainError::BadRequest(format!("TreeRef depth exceeds {MAX_TREE_DEPTH}")).into());
+                return Err(DomainError::BadRequest(format!(
+                    "TreeRef depth exceeds {MAX_TREE_DEPTH}"
+                ))
+                .into());
             }
             frontier = next;
         }
         // The new node sits one level below the deepest ancestor chain.
         if chain_len + 1 > MAX_TREE_DEPTH {
-            return Err(DomainError::BadRequest(format!("TreeRef depth exceeds {MAX_TREE_DEPTH}")).into());
+            return Err(
+                DomainError::BadRequest(format!("TreeRef depth exceeds {MAX_TREE_DEPTH}")).into()
+            );
         }
         Ok(())
     }

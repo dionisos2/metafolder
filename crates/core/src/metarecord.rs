@@ -39,8 +39,7 @@ pub mod hex_uuid_opt {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Uuid>, D::Error> {
         let s = Option::<String>::deserialize(d)?;
-        s.map(|s| Uuid::parse_str(&s).map_err(serde::de::Error::custom))
-            .transpose()
+        s.map(|s| Uuid::parse_str(&s).map_err(serde::de::Error::custom)).transpose()
     }
 }
 
@@ -60,10 +59,7 @@ pub mod hex_uuid_vec {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<Uuid>, D::Error> {
         let strings = Vec::<String>::deserialize(d)?;
-        strings
-            .into_iter()
-            .map(|s| Uuid::parse_str(&s).map_err(serde::de::Error::custom))
-            .collect()
+        strings.into_iter().map(|s| Uuid::parse_str(&s).map_err(serde::de::Error::custom)).collect()
     }
 }
 
@@ -230,14 +226,18 @@ impl Value {
             (Value::Float(f), T::Int) => ok(Value::Int(*f as i64)),
             (Value::Bool(b), T::Int) => ok(Value::Int(*b as i64)),
             (Value::DateTime(ms), T::Int) => ok(Value::Int(*ms)),
-            (Value::String(s), T::Int) => s.trim().parse::<i64>().map(Value::Int).map_or_else(|_| fallback(), ok),
+            (Value::String(s), T::Int) => {
+                s.trim().parse::<i64>().map(Value::Int).map_or_else(|_| fallback(), ok)
+            }
 
             // → Float.
             (Value::Float(f), T::Float) => ok(Value::Float(*f)),
             (Value::Int(n), T::Float) => ok(Value::Float(*n as f64)),
             (Value::Bool(b), T::Float) => ok(Value::Float(*b as i64 as f64)),
             (Value::DateTime(ms), T::Float) => ok(Value::Float(*ms as f64)),
-            (Value::String(s), T::Float) => s.trim().parse::<f64>().map(Value::Float).map_or_else(|_| fallback(), ok),
+            (Value::String(s), T::Float) => {
+                s.trim().parse::<f64>().map(Value::Float).map_or_else(|_| fallback(), ok)
+            }
 
             // → Bool.
             (Value::Bool(b), T::Bool) => ok(Value::Bool(*b)),
@@ -261,7 +261,9 @@ impl Value {
             // → reference types: same type is identity; a String parses from its
             // display form; everything else has no coercion.
             (Value::Ref(u), T::Ref) => ok(Value::Ref(*u)),
-            (Value::String(s), T::Ref) => parse_hex_uuid(s).map(Value::Ref).map_or_else(fallback, ok),
+            (Value::String(s), T::Ref) => {
+                parse_hex_uuid(s).map(Value::Ref).map_or_else(fallback, ok)
+            }
             (Value::RefBase(u), T::RefBase) => ok(Value::RefBase(*u)),
             (Value::String(s), T::RefBase) => {
                 parse_hex_uuid(s).map(Value::RefBase).map_or_else(fallback, ok)
@@ -323,7 +325,10 @@ fn parse_tree_ref(s: &str) -> Option<Value> {
 /// Parses the `String → ExternalRef` form `<repo_hex>:<metarecord_hex>`.
 fn parse_external_ref(s: &str) -> Option<Value> {
     let (repo, metarecord) = s.trim().split_once(':')?;
-    Some(Value::ExternalRef { repo: parse_hex_uuid(repo)?, metarecord: parse_hex_uuid(metarecord)? })
+    Some(Value::ExternalRef {
+        repo: parse_hex_uuid(repo)?,
+        metarecord: parse_hex_uuid(metarecord)?,
+    })
 }
 
 /// A field: name + value. Multiple fields can share the same name (multi-map).
@@ -365,20 +370,12 @@ impl Default for MetaRecord {
 impl MetaRecord {
     /// A fresh metarecord with a new random UUID, version 0, and no fields.
     pub fn new() -> Self {
-        Self {
-            uuid: Uuid::new_v4(),
-            version: 0,
-            fields: Vec::new(),
-        }
+        Self { uuid: Uuid::new_v4(), version: 0, fields: Vec::new() }
     }
 
     /// Returns all values for the field with this name (multi-map).
     pub fn get_all(&self, name: &str) -> Vec<&Value> {
-        self.fields
-            .iter()
-            .filter(|f| f.name == name)
-            .map(|f| &f.value)
-            .collect()
+        self.fields.iter().filter(|f| f.name == name).map(|f| &f.value).collect()
     }
 
     /// Returns the first value for the field with this name, or None.
@@ -607,9 +604,10 @@ mod tests {
 
     #[test]
     fn test_value_deserialize_accepts_hyphenated_uuid() {
-        let v: Value =
-            serde_json::from_str(r#"{"type":"ref","value":"8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8"}"#)
-                .unwrap();
+        let v: Value = serde_json::from_str(
+            r#"{"type":"ref","value":"8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8"}"#,
+        )
+        .unwrap();
         let expected = Uuid::parse_str("8f3a2b1c4d5e6f708192a3b4c5d6e7f8").unwrap();
         assert_eq!(v, Value::Ref(expected));
     }

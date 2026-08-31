@@ -108,10 +108,8 @@ fn test_apply_loads_listed_repos() {
     drop(opened); // release the exclusive lock
 
     let state = AppState::new();
-    let config = DaemonConfig {
-        load: vec![RepoLocator::Root(root.to_path_buf())],
-        ..Default::default()
-    };
+    let config =
+        DaemonConfig { load: vec![RepoLocator::Root(root.to_path_buf())], ..Default::default() };
     let warnings = daemon_config::apply(&state, config);
     assert!(warnings.is_empty(), "unexpected warnings: {warnings:?}");
     let repos = state.list_repos(false);

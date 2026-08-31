@@ -1,6 +1,5 @@
 //! `/gui/*` scripting endpoints (spec-gui "Scripting / GUI API").
 
-use metafolder_core::sync::MutexExt;
 use super::ServerState;
 use crate::events;
 use crate::keybindings::CompiledBinding;
@@ -11,6 +10,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -247,11 +247,7 @@ pub async fn get_panel_view(
     let (Some(ws_id), Some(panel_type)) = (&payload.workspace_id, &payload.panel_type) else {
         return error_response(StatusCode::NOT_FOUND, "no panel displayed in this slot");
     };
-    let status = if state.gui.panel_ready(ws_id, panel_type) {
-        "ready"
-    } else {
-        "loading"
-    };
+    let status = if state.gui.panel_ready(ws_id, panel_type) { "ready" } else { "loading" };
     Json(json!({ "type": panel_type, "status": status })).into_response()
 }
 
@@ -405,9 +401,7 @@ fn push_keytable(state: &ServerState, temp_keys: &[String], prompt: Option<&str>
             });
         }
     }
-    state
-        .gui
-        .notify(events::KEYBINDINGS_CHANGED, json!({ "bindings": bindings }));
+    state.gui.notify(events::KEYBINDINGS_CHANGED, json!({ "bindings": bindings }));
     state.gui.notify(
         events::INPUT_WAIT_CHANGED,
         json!({ "active": !temp_keys.is_empty() || state.input.is_active(),

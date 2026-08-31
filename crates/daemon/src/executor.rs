@@ -125,9 +125,9 @@ fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
         let Some((to_path, cookie)) = to else { continue };
         // The most recent earlier RenameFrom sharing this cookie is the source
         // (inotify cookies are unique per rename).
-        let from_index = (0..i).rev().find(|&j| {
-            matches!(&slots[j], Some((FsEvent::RenameFrom(_), Some(c))) if *c == cookie)
-        });
+        let from_index = (0..i).rev().find(
+            |&j| matches!(&slots[j], Some((FsEvent::RenameFrom(_), Some(c))) if *c == cookie),
+        );
         if let Some(j) = from_index {
             let from_path = match slots[j].take() {
                 Some((FsEvent::RenameFrom(a), _)) => a,
@@ -437,9 +437,7 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
     // (id, op_type, path, from_path, to_path)
     type RestoreRow = (i64, String, Option<String>, Option<String>, Option<String>);
     let rows: Vec<RestoreRow> = stmt
-        .query_map([], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
-        })?
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?
         .collect::<rusqlite::Result<_>>()?;
     drop(stmt);
     if rows.is_empty() {
@@ -483,7 +481,10 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
     // The restore rewrote tree positions arbitrarily: rebuild the cache from
     // the new state (keeps it complete; `populate` clears first).
     cache.populate(conn)?;
-    conn.execute("DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'", params![max_id])?;
+    conn.execute(
+        "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'restore_%'",
+        params![max_id],
+    )?;
     Ok(if wrote { 1 } else { 0 })
 }
 
@@ -643,7 +644,12 @@ impl Apply<'_, '_> {
                 self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
                 // Refresh the stat-derived fields at the new location.
                 for field in fs_meta::stat_fields(&abs)? {
-                    self.writer.set_field_as(OpType::FileModified, orphan, &field.name, field.value)?;
+                    self.writer.set_field_as(
+                        OpType::FileModified,
+                        orphan,
+                        &field.name,
+                        field.value,
+                    )?;
                 }
                 return Ok(true);
             }
@@ -713,8 +719,7 @@ impl Apply<'_, '_> {
     /// path is gone — a deletion, a departure, or a file destroyed by something
     /// else being moved on top of it.
     fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
-        let descendants =
-            self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
+        let descendants = self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
         // Snapshot every path *before* any write: with an incomplete tree cache
         // `path_of` walks the DB, and clearing a parent's `mfr_path` would break
         // its descendants' walk. `mfr_path_old` is a frozen String recording
@@ -725,11 +730,14 @@ impl Apply<'_, '_> {
         }
         for (u, old) in olds {
             if let Some(old) = old {
-                self.writer
-                    .set_field_as(OpType::FileDeleted, u, "mfr_path_old", Value::String(old))?;
+                self.writer.set_field_as(
+                    OpType::FileDeleted,
+                    u,
+                    "mfr_path_old",
+                    Value::String(old),
+                )?;
             }
-            self.writer
-                .set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
+            self.writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
         Ok(())
@@ -911,9 +919,9 @@ impl Apply<'_, '_> {
         let unchanged = {
             let conn = self.writer.connection();
             let stored = |name: &str| -> Option<Value> {
-                db::get_field_rows_named(conn, uuid, name)
-                    .ok()
-                    .and_then(|rows| rows.into_iter().map(|r| r.value).find(|v| !matches!(v, Value::Nothing)))
+                db::get_field_rows_named(conn, uuid, name).ok().and_then(|rows| {
+                    rows.into_iter().map(|r| r.value).find(|v| !matches!(v, Value::Nothing))
+                })
             };
             stored("mfr_size") == new_of("mfr_size")
                 && stored("mfr_mtime") == new_of("mfr_mtime")
@@ -999,7 +1007,6 @@ pub(crate) fn ensure_parent_metarecords(
     }
     Ok(parent)
 }
-
 
 // ── Background executor ───────────────────────────────────────────────────────
 
@@ -1150,10 +1157,7 @@ mod tests {
 
     #[test]
     fn compact_rename_chain_collapses() {
-        assert_eq!(
-            compact(vec![rename("/a", "/b"), rename("/b", "/c")]),
-            vec![rename("/a", "/c")]
-        );
+        assert_eq!(compact(vec![rename("/a", "/b"), rename("/b", "/c")]), vec![rename("/a", "/c")]);
     }
 
     // A swap through a temporary name. Collapsing `a→tmp` with `tmp→b` would
@@ -1176,7 +1180,10 @@ mod tests {
 
     #[test]
     fn compact_collapses_repeated_modify() {
-        assert_eq!(compact(vec![mdata("/a"), mdata("/a"), mmeta("/a"), mmeta("/a")]), vec![mdata("/a"), mmeta("/a")]);
+        assert_eq!(
+            compact(vec![mdata("/a"), mdata("/a"), mmeta("/a"), mmeta("/a")]),
+            vec![mdata("/a"), mmeta("/a")]
+        );
     }
 
     #[test]
@@ -1210,29 +1217,37 @@ mod tests {
             };
             match ev {
                 FsEvent::Remove(p) => {
-                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == p)) {
+                    if let Some(i) =
+                        find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == p))
+                    {
                         out[i] = None;
                     } else {
                         out.push(Some(FsEvent::Remove(p)));
                     }
                 }
                 FsEvent::Rename(a, b) => {
-                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::RenameFrom(q) if *q == a)) {
+                    if let Some(i) =
+                        find_last(&out, &|e| matches!(e, FsEvent::RenameFrom(q) if *q == a))
+                    {
                         out[i] = None;
                     }
-                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::RenameTo(q) if *q == b)) {
+                    if let Some(i) =
+                        find_last(&out, &|e| matches!(e, FsEvent::RenameTo(q) if *q == b))
+                    {
                         out[i] = None;
                     }
-                    if let Some(i) = find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == a)) {
+                    if let Some(i) =
+                        find_last(&out, &|e| matches!(e, FsEvent::Create(q) if *q == a))
+                    {
                         out[i] = Some(FsEvent::Create(b));
                     } else if let Some(i) =
                         find_last(&out, &|e| matches!(e, FsEvent::Rename(_, q) if *q == a))
                             // The cycle guard: not when a rename still to be
                             // applied (a later index) starts from `b`.
                             .filter(|&i| {
-                                !out.iter().skip(i + 1).any(|e| {
-                                    matches!(e, Some(FsEvent::Rename(src, _)) if *src == b)
-                                })
+                                !out.iter().skip(i + 1).any(
+                                    |e| matches!(e, Some(FsEvent::Rename(src, _)) if *src == b),
+                                )
                             })
                     {
                         let Some(FsEvent::Rename(x, _)) = out[i].clone() else { unreachable!() };

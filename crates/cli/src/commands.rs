@@ -11,7 +11,7 @@ use uuid::Uuid;
 use metafolder_core::metarecord::Value;
 use metafolder_core::query::Query;
 
-use crate::client::{Client, CliError};
+use crate::client::{CliError, Client};
 use crate::{dsl, fieldspec, order};
 
 pub struct Ctx {
@@ -162,15 +162,14 @@ pub fn resolve_selector(
     }
     match (query, id) {
         (None, Some(uuid)) => Ok(Some(uuid.to_string())),
-        (Some(q), None) => {
-            Ok(Some(if simplified { expand_simplified(q)? } else { q.to_string() }))
-        }
+        (Some(q), None) => Ok(Some(if simplified { expand_simplified(q)? } else { q.to_string() })),
         (Some(_), Some(_)) | (None, None) => Ok(None),
     }
 }
 
 fn parse_dsl(predicate: &str) -> Result<Json, CliError> {
-    let query = dsl::parse_query(predicate).map_err(|e| CliError::Usage(format!("invalid query: {e}")))?;
+    let query =
+        dsl::parse_query(predicate).map_err(|e| CliError::Usage(format!("invalid query: {e}")))?;
     Ok(serde_json::to_value(query).expect("Query serialization"))
 }
 
@@ -263,8 +262,7 @@ pub fn load(
 }
 
 pub fn repos(ctx: &Ctx, all: bool) -> Result<i32, CliError> {
-    let query: &[(&str, String)] =
-        if all { &[("all", "true".to_string())] } else { &[] };
+    let query: &[(&str, String)] = if all { &[("all", "true".to_string())] } else { &[] };
     let resp = ctx.client.get("/repos", query)?;
     print_pretty(&resp);
     Ok(0)
@@ -328,9 +326,7 @@ pub fn get(
             let mut metarecord =
                 ctx.client.get(&format!("{base}/metarecords/{}", uuid.as_simple()), &[])?;
             if let (Some(filter), Some(rows)) = (fields, metarecord["fields"].as_array_mut()) {
-                rows.retain(|f| {
-                    f["name"].as_str().is_some_and(|n| filter.iter().any(|w| w == n))
-                });
+                rows.retain(|f| f["name"].as_str().is_some_and(|n| filter.iter().any(|w| w == n)));
             }
             json!([metarecord])
         }
@@ -351,7 +347,8 @@ pub fn get(
                 if page == 0 {
                     break;
                 }
-                let mut body = json!({"query": query, "select": select, "sort": sort, "limit": page});
+                let mut body =
+                    json!({"query": query, "select": select, "sort": sort, "limit": page});
                 if let Some(c) = &cursor {
                     body["cursor"] = json!(c);
                 }
@@ -480,7 +477,8 @@ pub fn delete(ctx: &Ctx, target: &str, force: bool) -> Result<i32, CliError> {
             }
             // One atomic request: the daemon selects and deletes in a single
             // revision (no client-side TOCTOU, no partial deletion).
-            let resp = ctx.client.post(&format!("{base}/query/delete"), &json!({"query": query}))?;
+            let resp =
+                ctx.client.post(&format!("{base}/query/delete"), &json!({"query": query}))?;
             println!("{}", resp["deleted"].as_u64().unwrap_or(0));
         }
     }
@@ -559,9 +557,9 @@ fn value_to_dsl(value: &Value) -> Result<String, CliError> {
 pub(crate) fn eq_to_dsl(specs: &[String]) -> Result<String, CliError> {
     let mut clauses = Vec::with_capacity(specs.len());
     for spec in specs {
-        let (key, val) = spec
-            .split_once('=')
-            .ok_or_else(|| CliError::Usage(format!("invalid --eq '{spec}': expected name[:type]=value")))?;
+        let (key, val) = spec.split_once('=').ok_or_else(|| {
+            CliError::Usage(format!("invalid --eq '{spec}': expected name[:type]=value"))
+        })?;
         // A typed spec (`name:type=value`) is a full field spec; a bare
         // `name=value` is string by default.
         let field_spec =
@@ -592,19 +590,12 @@ fn tsv_row(entry: &Json, fields: &[String]) -> String {
 
 pub fn query(ctx: &Ctx, args: &QueryArgs) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let predicate = if args.simplified {
-        expand_simplified(&args.predicate)?
-    } else {
-        args.predicate.clone()
-    };
+    let predicate =
+        if args.simplified { expand_simplified(&args.predicate)? } else { args.predicate.clone() };
     let query = parse_dsl(&predicate)?;
     let sort = parse_sort(&args.sort)?;
     if args.values {
-        let single = args
-            .select
-            .as_deref()
-            .filter(|s| *s != "*" && !s.contains(','))
-            .is_some();
+        let single = args.select.as_deref().filter(|s| *s != "*" && !s.contains(',')).is_some();
         if !single {
             return Err(CliError::Usage(
                 "--values requires --select with exactly one field".into(),
@@ -723,9 +714,10 @@ fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str) -> Result<i32, Cli
         Target::Entry(uuid) => json!({"type": "uuid_in", "uuids": [uuid.as_simple().to_string()]}),
         Target::Predicate(query) => serde_json::to_value(query).expect("query serializes"),
     };
-    let resp = ctx
-        .client
-        .post(&format!("{base}/query/fields/resolve-tree"), &json!({"query": query, "field": field}))?;
+    let resp = ctx.client.post(
+        &format!("{base}/query/fields/resolve-tree"),
+        &json!({"query": query, "field": field}),
+    )?;
     let mut paths: Vec<String> = resp
         .as_object()
         .into_iter()
@@ -772,8 +764,10 @@ pub fn metarecord_get(
                     CliError::Usage("--tsv requires --select with a field list".into())
                 })?;
                 let base = ctx.repo_base()?;
-                let record =
-                    ctx.client.get(&format!("{base}/metarecords/{}", Uuid::parse_str(s).unwrap().as_simple()), &[])?;
+                let record = ctx.client.get(
+                    &format!("{base}/metarecords/{}", Uuid::parse_str(s).unwrap().as_simple()),
+                    &[],
+                )?;
                 println!("{}", tsv_row(&record, &names));
                 Ok(0)
             } else {
@@ -797,7 +791,12 @@ pub fn metarecord_get(
 
 /// `mf metarecord set <uuid> <spec>...` — whole-record overwrite (PUT). The
 /// mandatory `-f` is the guard against confusing it with `field set`.
-pub fn metarecord_set(ctx: &Ctx, uuid: &str, specs: &[String], force: bool) -> Result<i32, CliError> {
+pub fn metarecord_set(
+    ctx: &Ctx,
+    uuid: &str,
+    specs: &[String],
+    force: bool,
+) -> Result<i32, CliError> {
     if !force {
         return Err(CliError::Usage(
             "mf metarecord set requires -f/--force (it overwrites the entire field set)".into(),
@@ -824,7 +823,12 @@ pub fn metarecord_set(ctx: &Ctx, uuid: &str, specs: &[String], force: bool) -> R
 
 /// `mf metarecord <sel> field set <spec>...` — replace all rows of a field
 /// (one or several values, multi-map) on the selected metarecord(s).
-pub fn field_set(ctx: &Ctx, selector: &str, specs: &[String], force: bool) -> Result<i32, CliError> {
+pub fn field_set(
+    ctx: &Ctx,
+    selector: &str,
+    specs: &[String],
+    force: bool,
+) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let mut parsed = Vec::with_capacity(specs.len());
     for spec in specs {
@@ -916,10 +920,9 @@ pub fn field_get(
         return Ok(0);
     }
     let ref_query = json!({"type": "uuid_in", "uuids": refs});
-    let resp = ctx.client.post(
-        &format!("{base}/query"),
-        &json!({"query": ref_query, "select": [target]}),
-    )?;
+    let resp = ctx
+        .client
+        .post(&format!("{base}/query"), &json!({"query": ref_query, "select": [target]}))?;
     // `/query` with a select returns a bare array (no pagination requested here)
     // or a `{results}` page — accept either.
     let entries = resp.as_array().or_else(|| resp["results"].as_array());
@@ -939,7 +942,8 @@ pub fn field_get(
             &json!({"query": ref_query, "field": target}),
         )?;
         for r in &refs {
-            if let Some(path) = resolved[r].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
+            if let Some(path) =
+                resolved[r].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
             {
                 by_uuid.insert(r.clone(), path.to_string());
             }
@@ -1025,7 +1029,12 @@ pub fn field_by_id_set(ctx: &Ctx, id: i64, spec: &str, force: bool) -> Result<i3
 /// `mf field delete <id>` — remove a field row by its id.
 pub fn field_by_id_delete(ctx: &Ctx, id: i64, force: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    ctx.client.request("DELETE", &format!("{base}/fields/{id}"), &[], Some(&json!({"force": force})))?;
+    ctx.client.request(
+        "DELETE",
+        &format!("{base}/fields/{id}"),
+        &[],
+        Some(&json!({"force": force})),
+    )?;
     Ok(0)
 }
 
@@ -1224,7 +1233,8 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
         let resp = ctx.client.post(&format!("{base}/query"), &body)?;
         for entry in resp["results"].as_array().into_iter().flatten() {
             let Some(uuid) = entry["uuid"].as_str() else { continue };
-            let Some(path) = resolved[uuid].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
+            let Some(path) =
+                resolved[uuid].as_array().and_then(|p| p.first()).and_then(|p| p.as_str())
             else {
                 continue; // no resolvable path → not part of the vocabulary
             };
@@ -1249,7 +1259,12 @@ fn load_vocab(ctx: &Ctx, base: &str) -> Result<Vocab, CliError> {
 /// if the vocabulary lacks it. The tag's position is a `path_field` TreeRef, so a
 /// nested path `a/b/c` is created as a chain of nodes: the parent `a/b` is
 /// ensured first, then `c` is created under it (`TreeRef { parent, name }`).
-fn ensure_tag_entry(ctx: &Ctx, base: &str, vocab: &mut Vocab, path: &str) -> Result<String, CliError> {
+fn ensure_tag_entry(
+    ctx: &Ctx,
+    base: &str,
+    vocab: &mut Vocab,
+    path: &str,
+) -> Result<String, CliError> {
     if let Some(uuid) = vocab.name2uuid.get(path) {
         return Ok(uuid.clone());
     }
@@ -1291,14 +1306,26 @@ fn target_query(selector: &str) -> Result<Json, CliError> {
 }
 
 /// Appends `field:ref=<tag_uuid>` over the target set; returns the update count.
-fn tag_batch_append(ctx: &Ctx, base: &str, query: &Json, field: &str, tag_uuid: &str) -> Result<u64, CliError> {
+fn tag_batch_append(
+    ctx: &Ctx,
+    base: &str,
+    query: &Json,
+    field: &str,
+    tag_uuid: &str,
+) -> Result<u64, CliError> {
     let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
     let resp = ctx.client.post(&format!("{base}/query/fields/append"), &body)?;
     Ok(resp["updated"].as_u64().unwrap_or(0))
 }
 
 /// Removes the rows equal to `field:ref=<tag_uuid>` over the target set.
-fn tag_batch_remove(ctx: &Ctx, base: &str, query: &Json, field: &str, tag_uuid: &str) -> Result<(), CliError> {
+fn tag_batch_remove(
+    ctx: &Ctx,
+    base: &str,
+    query: &Json,
+    field: &str,
+    tag_uuid: &str,
+) -> Result<(), CliError> {
     let body = json!({"query": query, "name": field, "value": {"type": "ref", "value": tag_uuid}});
     ctx.client.post(&format!("{base}/query/fields/remove"), &body)?;
     Ok(())
@@ -1500,10 +1527,8 @@ fn poll_task(
     label: &str,
     poll_interval_ms: u64,
 ) -> Result<Json, CliError> {
-    let mut progress = crate::progress::ProgressLine::new(
-        std::io::stderr(),
-        std::io::stderr().is_terminal(),
-    );
+    let mut progress =
+        crate::progress::ProgressLine::new(std::io::stderr(), std::io::stderr().is_terminal());
     loop {
         let task = ctx.client.request("GET", &format!("{base}/tasks/{task_id}"), &[], None)?;
         match task["status"].as_str() {
@@ -1513,10 +1538,9 @@ fn poll_task(
             }
             Some("failed") => {
                 progress.clear();
-                let message = task["error"].as_str().map_or_else(
-                    || format!("{label} failed"),
-                    str::to_string,
-                );
+                let message = task["error"]
+                    .as_str()
+                    .map_or_else(|| format!("{label} failed"), str::to_string);
                 return Err(CliError::Op(message));
             }
             Some("cancelled") => {
@@ -1549,8 +1573,8 @@ pub fn tasks(ctx: &Ctx, all: bool, raw_json: bool) -> Result<i32, CliError> {
 /// requests cancellation (`POST …/tasks/:id/cancel`) instead (spec-tasks).
 pub fn task(ctx: &Ctx, id: &str, stop: bool, raw_json: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
-    let uuid = Uuid::parse_str(id)
-        .map_err(|_| CliError::Usage(format!("invalid task UUID: '{id}'")))?;
+    let uuid =
+        Uuid::parse_str(id).map_err(|_| CliError::Usage(format!("invalid task UUID: '{id}'")))?;
     let (method, path) = if stop {
         ("POST", format!("{base}/tasks/{}/cancel", uuid.as_simple()))
     } else {
@@ -1805,9 +1829,8 @@ fn repo_rel(root: &Path, abs: &Path) -> Result<String, CliError> {
 /// Loads the ignore presets from the user configuration (a missing/malformed
 /// file is a usage error pointing at metafolder-sync-config; spec-config).
 fn load_presets() -> Result<metafolder_core::ignore_presets::Presets, CliError> {
-    metafolder_core::ignore_presets::load().map_err(|e| {
-        CliError::Usage(format!("{e}; run metafolder-sync-config to install it"))
-    })
+    metafolder_core::ignore_presets::load()
+        .map_err(|e| CliError::Usage(format!("{e}; run metafolder-sync-config to install it")))
 }
 
 /// Maps a core ignore error to a CLI error (usage → exit 2, daemon → exit 1).
@@ -1876,9 +1899,8 @@ pub fn ignore_apply(
     let client = TrashDaemon(&ctx.client);
     let target = resolve_ignore_target(ctx, &client, &repo, dir)?;
     let name_refs: Vec<&str> = names.iter().map(String::as_str).collect();
-    let result =
-        metafolder_core::ignore::apply(&client, &repo, target, &presets, &name_refs, mode)
-            .map_err(ignore_err)?;
+    let result = metafolder_core::ignore::apply(&client, &repo, target, &presets, &name_refs, mode)
+        .map_err(ignore_err)?;
     if result.is_empty() {
         println!("mf_ignore is now empty");
     } else {
@@ -1928,16 +1950,16 @@ pub fn trash_add(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
         .as_str()
         .ok_or_else(|| CliError::Op("daemon did not report the repo root".into()))?;
     let trash = trash_dir_of(&info)?;
-    let abs = path
-        .canonicalize()
-        .map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
+    let abs = path.canonicalize().map_err(|e| CliError::Op(format!("{}: {e}", path.display())))?;
     let rel = repo_rel(Path::new(root), &abs)?;
 
     let repo = repo_id(ctx)?;
     let client = TrashDaemon(&ctx.client);
     let uuid = metafolder_core::trash::metarecord_at_path(&client, &repo, &rel)
         .map_err(trash_daemon_err)?
-        .ok_or_else(|| CliError::Op(format!("no metarecord is associated with {}", abs.display())))?;
+        .ok_or_else(|| {
+            CliError::Op(format!("no metarecord is associated with {}", abs.display()))
+        })?;
 
     // The top record: its version (for rollback correlation) and the whole
     // subtree, captured *before* the move while every metarecord is still linked
@@ -2020,11 +2042,7 @@ pub fn trash_prune(ctx: &Ctx, mode: PruneMode, dry_run: bool) -> Result<i32, Cli
             format_size(reclaimed)
         );
     } else {
-        println!(
-            "removed {} entrie(s), {} reclaimed.",
-            removed.len(),
-            format_size(reclaimed)
-        );
+        println!("removed {} entrie(s), {} reclaimed.", removed.len(), format_size(reclaimed));
     }
     Ok(0)
 }
@@ -2078,9 +2096,7 @@ pub fn trash_prune_mode(
         (None, None, false) => Err(CliError::Usage(
             "mf trash prune needs one of -s <size>, -d <duration>, or --all".into(),
         )),
-        _ => Err(CliError::Usage(
-            "mf trash prune: -s, -d and --all are mutually exclusive".into(),
-        )),
+        _ => Err(CliError::Usage("mf trash prune: -s, -d and --all are mutually exclusive".into())),
     }
 }
 
@@ -2195,10 +2211,7 @@ mod tests {
     #[test]
     fn test_parse_sort_explicit_orders() {
         let keys = parse_sort(&["a:desc".into(), "b:asc".into()]).unwrap();
-        assert_eq!(
-            keys,
-            json!([{"field": "a", "order": "desc"}, {"field": "b", "order": "asc"}])
-        );
+        assert_eq!(keys, json!([{"field": "a", "order": "desc"}, {"field": "b", "order": "asc"}]));
     }
 
     #[test]

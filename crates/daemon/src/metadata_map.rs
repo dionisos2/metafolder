@@ -187,7 +187,9 @@ mod tests {
 
     #[test]
     fn load_or_seed_writes_default_when_absent_then_reads_it() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-metamap-seed-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-metamap-seed-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(FILE_NAME);
         assert!(!path.exists());
@@ -205,12 +207,17 @@ mod tests {
 
     #[test]
     fn load_or_seed_errors_on_malformed_file() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-metamap-bad-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-metamap-bad-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(FILE_NAME), "this is : not [ valid toml").unwrap();
 
         let err = MetadataMap::load_or_seed(&dir).unwrap_err();
-        assert!(err.to_string().contains("metadata-map.toml") || format!("{err:#}").contains(FILE_NAME), "{err:#}");
+        assert!(
+            err.to_string().contains("metadata-map.toml") || format!("{err:#}").contains(FILE_NAME),
+            "{err:#}"
+        );
 
         std::fs::remove_dir_all(&dir).ok();
     }

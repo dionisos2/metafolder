@@ -154,11 +154,8 @@ mod tests {
         assert_eq!(completion.word, format!("{base}/alph"));
         // Trailing-slash decoration differs between the two paths; compare
         // the bare names.
-        let names: Vec<&str> = completion
-            .candidates
-            .iter()
-            .map(|c| c.trim_end_matches('/'))
-            .collect();
+        let names: Vec<&str> =
+            completion.candidates.iter().map(|c| c.trim_end_matches('/')).collect();
         assert!(names.contains(&format!("{base}/alpha.txt").as_str()), "{names:?}");
         assert!(names.contains(&format!("{base}/alpha2.txt").as_str()), "{names:?}");
     }
@@ -196,11 +193,8 @@ mod tests {
         // The returned word excludes the quote, so the frontend replaces
         // only the text after it.
         assert_eq!(completion.word, format!("{base}/alph"));
-        let names: Vec<&str> = completion
-            .candidates
-            .iter()
-            .map(|c| c.trim_end_matches('/'))
-            .collect();
+        let names: Vec<&str> =
+            completion.candidates.iter().map(|c| c.trim_end_matches('/')).collect();
         assert!(names.contains(&format!("{base}/alpha.txt").as_str()), "{names:?}");
     }
 

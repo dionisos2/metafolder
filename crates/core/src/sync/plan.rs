@@ -13,7 +13,9 @@ use uuid::Uuid;
 use crate::dsl;
 
 use super::intents::{self, Intents};
-use super::{canonical_pair, expand_simplified, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
+use super::{
+    canonical_pair, expand_simplified, resolve_pair, SyncCtx as Ctx, SyncError as CliError,
+};
 
 /// A freshly created plan repo, ready to receive op-metarecords.
 pub struct PlanRepo {
@@ -39,9 +41,8 @@ pub fn run(
     on_conflict: Option<&str>,
 ) -> Result<PlanReport, CliError> {
     // Parse and validate the intents file (and the --on-conflict override).
-    let text = std::fs::read_to_string(intents_path).map_err(|e| {
-        CliError::Usage(format!("cannot read intents file {intents_path:?}: {e}"))
-    })?;
+    let text = std::fs::read_to_string(intents_path)
+        .map_err(|e| CliError::Usage(format!("cannot read intents file {intents_path:?}: {e}")))?;
     let intents = intents::parse_intents(&text)?;
     if let Some(policy) = on_conflict {
         intents::parse_policy(policy)?;
@@ -184,7 +185,10 @@ fn linking_phase(
             continue; // skipped record → not synced
         }
         for y in ref_targets(ctx, a, rec)? {
-            if linked_a.contains(&y) || planned_a.contains(&y) || !identity_paths(ctx, a, y)?.is_empty() {
+            if linked_a.contains(&y)
+                || planned_a.contains(&y)
+                || !identity_paths(ctx, a, y)?.is_empty()
+            {
                 continue;
             }
             creates.push((existing_side(ctx, a, y)?, bare_side(b)));
@@ -196,7 +200,10 @@ fn linking_phase(
             continue;
         }
         for y in ref_targets(ctx, b, rec)? {
-            if linked_b.contains(&y) || planned_b.contains(&y) || !identity_paths(ctx, b, y)?.is_empty() {
+            if linked_b.contains(&y)
+                || planned_b.contains(&y)
+                || !identity_paths(ctx, b, y)?.is_empty()
+            {
                 continue;
             }
             creates.push((bare_side(a), existing_side(ctx, b, y)?));
@@ -259,7 +266,17 @@ fn sync_phase(
     }
     for el in &linked.existing {
         let snapshot = fetch_snapshot(ctx, a, b, el.link)?;
-        ops += sync_link(ctx, a, b, plan, &el.side_a, &el.side_b, Some(&snapshot), intents, on_conflict)?;
+        ops += sync_link(
+            ctx,
+            a,
+            b,
+            plan,
+            &el.side_a,
+            &el.side_b,
+            Some(&snapshot),
+            intents,
+            on_conflict,
+        )?;
     }
     Ok(ops)
 }
@@ -325,7 +342,11 @@ fn needs_move(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<bool, CliError>
 /// A record's reconstructed `mfr_path` (its first position), or `None`.
 pub(crate) fn mfr_path_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
     let resp = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree", repo.as_simple(), record.as_simple()),
+        &format!(
+            "/repos/{}/metarecords/{}/fields/mfr_path/resolve-tree",
+            repo.as_simple(),
+            record.as_simple()
+        ),
         &[],
     )?;
     Ok(resp["paths"].as_array().and_then(|a| a.first()).and_then(|p| p.as_str()).map(String::from))
@@ -344,7 +365,8 @@ fn fetch_snapshot(ctx: &Ctx, a: Uuid, b: Uuid, link: Uuid) -> Result<Snapshot, C
         &format!("/sync/{}/{}/links/{}", a.as_simple(), b.as_simple(), link.as_simple()),
         &[],
     )?;
-    let (mut sa, mut sb): (HashMap<String, Vec<Json>>, HashMap<String, Vec<Json>>) = Default::default();
+    let (mut sa, mut sb): (HashMap<String, Vec<Json>>, HashMap<String, Vec<Json>>) =
+        Default::default();
     for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
         let Some(name) = e["name"].as_str() else { continue };
         if name.starts_with("mfr_") || e["value"]["type"] == "tree_ref" {
@@ -438,7 +460,11 @@ fn existing_syncable(ctx: &Ctx, side: &Side) -> Result<HashMap<String, Vec<Json>
 }
 
 /// A record's syncable fields grouped by name into a sorted value multiset.
-pub(crate) fn syncable_by_name(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<HashMap<String, Vec<Json>>, CliError> {
+pub(crate) fn syncable_by_name(
+    ctx: &Ctx,
+    repo: Uuid,
+    record: Uuid,
+) -> Result<HashMap<String, Vec<Json>>, CliError> {
     let mut map: HashMap<String, Vec<Json>> = HashMap::new();
     for (name, value) in syncable_fields(ctx, repo, record)? {
         map.entry(name).or_default().push(value);
@@ -513,7 +539,12 @@ fn matching_policy(
 
 /// Whether `record` in `repo` matches the DSL `query` (a conflict rule's
 /// `query`), via `query AND uuid_in([record])`.
-fn record_matches_query(ctx: &Ctx, repo: Uuid, record: Uuid, query: &str) -> Result<bool, CliError> {
+fn record_matches_query(
+    ctx: &Ctx,
+    repo: Uuid,
+    record: Uuid,
+    query: &str,
+) -> Result<bool, CliError> {
     let ir = dsl::parse_query(query)
         .map_err(|e| CliError::Usage(format!("invalid [[conflict]] rule query: {e}")))?;
     let combined = json!({"type": "and", "operands": [
@@ -574,10 +605,9 @@ fn needs_copy(ctx: &Ctx, side_a: &Side, side_b: &Side) -> Result<Option<&'static
 
 /// Whether a record is a file (=mfr_type = "file"=) — i.e. has content to transfer.
 fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+    let m = ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     Ok(m["fields"].as_array().is_some_and(|fs| {
         fs.iter().any(|f| f["name"] == "mfr_type" && f["value"]["value"] == "file")
     }))
@@ -587,11 +617,14 @@ fn is_file(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
 /// `mf_*`, and references, but not `mfr_*` and not `tree_ref` positions (those
 /// are handled by placement/move). Refs are compared by local UUID here (a
 /// coarse check: a spurious `sync` op the run finds is empty is harmless).
-pub(crate) fn syncable_fields(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, Json)>, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+pub(crate) fn syncable_fields(
+    ctx: &Ctx,
+    repo: Uuid,
+    record: Uuid,
+) -> Result<Vec<(String, Json)>, CliError> {
+    let m = ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     let mut out: Vec<(String, Json)> = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         let Some(name) = f["name"].as_str() else { continue };
@@ -631,10 +664,19 @@ fn resolve_link(
     if ids.is_empty() {
         // No TreeRef identity → the case-0 heuristic: link to an unambiguous
         // field-equal target, else create a bare record (spec-sync).
-        return Ok(match match_by_fields(ctx, source_repo, target_repo, record, linked_target, planned_target)? {
-            Some(t) => LinkDecision::To(t),
-            None => LinkDecision::Create,
-        });
+        return Ok(
+            match match_by_fields(
+                ctx,
+                source_repo,
+                target_repo,
+                record,
+                linked_target,
+                planned_target,
+            )? {
+                Some(t) => LinkDecision::To(t),
+                None => LinkDecision::Create,
+            },
+        );
     }
 
     // Occupant of each identity position on the target side.
@@ -647,13 +689,19 @@ fn resolve_link(
     existing.dedup();
 
     if existing.len() >= 2 {
-        return Err(incoherence(record, &occ, "its TreeRef identities map to different target records"));
+        return Err(incoherence(
+            record,
+            &occ,
+            "its TreeRef identities map to different target records",
+        ));
     }
     if let Some(&t) = existing.first() {
         if linked_target.contains(&t) || planned_target.contains(&t) {
             // Path positions are 1:1, so this is not expected; stay safe.
-            ctx.prompter
-                .warn(&format!("warning: {} resolves to an already-linked record; skipped", record.as_simple()));
+            ctx.prompter.warn(&format!(
+                "warning: {} resolves to an already-linked record; skipped",
+                record.as_simple()
+            ));
             return Ok(LinkDecision::Skip);
         }
         // Type-1: a free position must not force T out of one it already holds.
@@ -675,11 +723,14 @@ fn resolve_link(
 
 /// A record's identity: `(field_name, reconstructed_path)` for each of its
 /// `tree_ref` fields (a field with several positions contributes several).
-pub(crate) fn identity_paths(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<(String, String)>, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+pub(crate) fn identity_paths(
+    ctx: &Ctx,
+    repo: Uuid,
+    record: Uuid,
+) -> Result<Vec<(String, String)>, CliError> {
+    let m = ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     let mut fields: Vec<String> = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         if f["value"]["type"] == "tree_ref" {
@@ -749,8 +800,9 @@ fn match_by_fields(
         if linked_target.contains(&uuid) || planned_target.contains(&uuid) {
             continue;
         }
-        let has_tree_ref =
-            r["fields"].as_array().is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
+        let has_tree_ref = r["fields"]
+            .as_array()
+            .is_some_and(|fs| fs.iter().any(|f| f["value"]["type"] == "tree_ref"));
         if has_tree_ref || field_signature(&r) != sig {
             continue;
         }
@@ -780,10 +832,9 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
 
 /// The target UUIDs of a record's `ref`-valued fields (for referential closure).
 fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
-    let m = ctx.client.get(
-        &format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()),
-        &[],
-    )?;
+    let m = ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     let mut out = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
         if f["value"]["type"] == "ref" {
@@ -808,8 +859,10 @@ pub(crate) fn record_at_path(
 ) -> Result<Option<Uuid>, CliError> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        let roots =
-            ctx.client.get(&format!("/repos/{}/tree/roots", repo.as_simple()), &[("field", field.to_string())])?;
+        let roots = ctx.client.get(
+            &format!("/repos/{}/tree/roots", repo.as_simple()),
+            &[("field", field.to_string())],
+        )?;
         return Ok(roots
             .as_array()
             .and_then(|a| a.iter().find(|r| r["name"] == ""))
@@ -824,8 +877,10 @@ pub(crate) fn record_at_path(
         {"type": "follows", "field": field, "target": parent},
         {"type": "eq", "field": field, "value": {"type": "string", "value": name}},
     ]});
-    let resp =
-        ctx.client.post(&format!("/repos/{}/query", repo.as_simple()), &json!({"query": query, "limit": 1}))?;
+    let resp = ctx.client.post(
+        &format!("/repos/{}/query", repo.as_simple()),
+        &json!({"query": query, "limit": 1}),
+    )?;
     Ok(resp["results"]
         .as_array()
         .and_then(|a| a.first())
@@ -874,7 +929,13 @@ fn bare_side(repo: Uuid) -> Side {
 
 /// Writes one op-metarecord into the plan repo. `plan_version_*` is emitted only
 /// for a side with a baseline; a bare side carries none.
-fn write_op(ctx: &Ctx, plan: &PlanRepo, kind: &str, side_a: Side, side_b: Side) -> Result<(), CliError> {
+fn write_op(
+    ctx: &Ctx,
+    plan: &PlanRepo,
+    kind: &str,
+    side_a: Side,
+    side_b: Side,
+) -> Result<(), CliError> {
     write_op_from(ctx, plan, kind, side_a, side_b, None)
 }
 
@@ -968,8 +1029,7 @@ fn query_uuids(
     query_text: &str,
     simplified: bool,
 ) -> Result<Vec<Uuid>, CliError> {
-    let dsl_text =
-        if simplified { expand_simplified(query_text)? } else { query_text.to_string() };
+    let dsl_text = if simplified { expand_simplified(query_text)? } else { query_text.to_string() };
     let query = dsl::parse_query(&dsl_text)
         .map_err(|e| CliError::Usage(format!("invalid intent query: {e}")))?;
     let query_json = serde_json::to_value(&query).expect("query serialization");
@@ -998,7 +1058,10 @@ fn query_uuids(
 /// The current `version` of a record, or `None` when it does not exist (an
 /// absent baseline: nothing to freshness-check, the record is to be created).
 fn baseline(ctx: &Ctx, repo: Uuid, uuid: Uuid) -> Result<Option<u64>, CliError> {
-    match ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[]) {
+    match ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), uuid.as_simple()), &[])
+    {
         Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
         Err(CliError::Op(_)) => Ok(None),
         Err(e) => Err(e),
@@ -1020,12 +1083,7 @@ pub(crate) fn check_schemas_identical(ctx: &Ctx, a: Uuid, b: Uuid) -> Result<(),
 /// (Re)creates the system plan repo `plan-<a>-<b>` under the host's `internal/`,
 /// unloading and deleting any previous incarnation first (only the latest plan
 /// exists). `a`/`b` are canonical.
-pub fn recreate_plan_repo(
-    ctx: &Ctx,
-    a: Uuid,
-    b: Uuid,
-    host: Uuid,
-) -> Result<PlanRepo, CliError> {
+pub fn recreate_plan_repo(ctx: &Ctx, a: Uuid, b: Uuid, host: Uuid) -> Result<PlanRepo, CliError> {
     let name = plan_repo_name(a, b);
     let plan_dir = plan_repo_dir(ctx, host, &name)?;
 

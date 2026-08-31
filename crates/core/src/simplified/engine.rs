@@ -28,10 +28,9 @@ pub fn expand_at(grammar: &Grammar, input: &str, now_ms: i64) -> Result<String, 
     let eng = Engine { grammar, tokens: &tokens, now_ms };
     match eng.match_prod("query", 0, 0)? {
         Some((out, next)) if next == tokens.len() => Ok(out),
-        Some((_, next)) => Err(format!(
-            "unexpected trailing input starting at '{}'",
-            tokens[next].text
-        )),
+        Some((_, next)) => {
+            Err(format!("unexpected trailing input starting at '{}'", tokens[next].text))
+        }
         None => Err("input does not match the simplified grammar".into()),
     }
 }
@@ -70,7 +69,12 @@ impl Engine<'_> {
         Ok(None)
     }
 
-    fn match_seq(&self, seq: &[Item], pos: usize, depth: usize) -> Result<Option<(Captures, usize)>, String> {
+    fn match_seq(
+        &self,
+        seq: &[Item],
+        pos: usize,
+        depth: usize,
+    ) -> Result<Option<(Captures, usize)>, String> {
         let mut caps = Captures::new();
         let mut p = pos;
         for item in seq {
@@ -172,11 +176,7 @@ impl Engine<'_> {
     /// The raw source text of `tokens[pos..next]` (the default output of a
     /// production without a template), token texts joined by a space.
     fn raw_text(&self, pos: usize, next: usize) -> String {
-        self.tokens[pos..next]
-            .iter()
-            .map(|t| t.text.as_str())
-            .collect::<Vec<_>>()
-            .join(" ")
+        self.tokens[pos..next].iter().map(|t| t.text.as_str()).collect::<Vec<_>>().join(" ")
     }
 }
 

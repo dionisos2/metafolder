@@ -118,9 +118,7 @@ pub fn parse_toml(source: &str) -> Result<Vec<(Vec<String>, BindingSpec)>, Strin
         }
     }
     // HashMap order is arbitrary: sort for determinism (by combo, then scope).
-    entries.sort_by(|a, b| {
-        (&a.0, &a.1.when, &a.1.focus).cmp(&(&b.0, &b.1.when, &b.1.focus))
-    });
+    entries.sort_by(|a, b| (&a.0, &a.1.when, &a.1.focus).cmp(&(&b.0, &b.1.when, &b.1.focus)));
     Ok(entries)
 }
 
@@ -171,12 +169,14 @@ impl KeybindingSet {
         focus: Option<&str>,
     ) -> Result<(), String> {
         let keys = parse_combo(combo)?;
-        if self
-            .config
-            .contains_key(&(keys.clone(), when.map(str::to_string), focus.map(str::to_string)))
-            || self.suggestions.iter().any(|s| {
-                s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus
-            })
+        if self.config.contains_key(&(
+            keys.clone(),
+            when.map(str::to_string),
+            focus.map(str::to_string),
+        )) || self
+            .suggestions
+            .iter()
+            .any(|s| s.keys == keys && s.when.as_deref() == when && s.focus.as_deref() == focus)
         {
             return Ok(()); // user/config binding wins; suggestion dropped
         }
@@ -308,16 +308,18 @@ mod tests {
         // 2 (j) + 2 (enter) + 1 (t)
         assert_eq!(entries.len(), 5);
 
-        let js: Vec<&BindingSpec> = entries
-            .iter()
-            .filter(|(k, _)| k == &vec!["j".to_string()])
-            .map(|(_, s)| s)
-            .collect();
+        let js: Vec<&BindingSpec> =
+            entries.iter().filter(|(k, _)| k == &vec!["j".to_string()]).map(|(_, s)| s).collect();
         assert_eq!(js.len(), 2);
-        assert!(js.iter().any(|s| s.command == "metarecord-list:next"
-            && s.when.as_deref() == Some("metarecord-list")));
-        assert!(js.iter().any(|s| s.command == "file-manager:next"
-            && s.when.as_deref() == Some("file-manager")));
+        assert!(js
+            .iter()
+            .any(|s| s.command == "metarecord-list:next"
+                && s.when.as_deref() == Some("metarecord-list")));
+        assert!(
+            js.iter()
+                .any(|s| s.command == "file-manager:next"
+                    && s.when.as_deref() == Some("file-manager"))
+        );
 
         // The single-table form still works alongside arrays.
         assert!(entries
@@ -494,12 +496,12 @@ mod tests {
         // the same combo carries several scoped bindings.
         let down: Vec<_> = table.iter().filter(|b| b.keys == ["down"]).collect();
         assert!(down.len() >= 6, "expected per-panel `down` bindings, got {}", down.len());
+        assert!(down.iter().any(|b| b.when.as_deref() == Some("metarecord-list")
+            && b.invocation == "metarecord-list:next"));
         assert!(down
             .iter()
-            .any(|b| b.when.as_deref() == Some("metarecord-list") && b.invocation == "metarecord-list:next"));
-        assert!(down
-            .iter()
-            .any(|b| b.when.as_deref() == Some("file-manager") && b.invocation == "file-manager:next"));
+            .any(|b| b.when.as_deref() == Some("file-manager")
+                && b.invocation == "file-manager:next"));
         // `enter` mixes a global text-input binding with per-panel actions.
         let enter: Vec<_> = table.iter().filter(|b| b.keys == ["enter"]).collect();
         assert!(enter.iter().any(|b| b.when.is_none() && b.text_input));
@@ -509,10 +511,9 @@ mod tests {
 
         // The finder's in-input shortcuts are focus-scoped (spec-gui "focus").
         assert!(down.iter().any(|b| b.focus.as_deref() == Some("finder")));
-        assert!(table
-            .iter()
-            .any(|b| b.keys == ["ctrl+enter"] && b.focus.as_deref() == Some("finder")
-                && b.invocation == "pick:confirm"));
+        assert!(table.iter().any(|b| b.keys == ["ctrl+enter"]
+            && b.focus.as_deref() == Some("finder")
+            && b.invocation == "pick:confirm"));
     }
 
     // ── Compilation ──────────────────────────────────────────────────────

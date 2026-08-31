@@ -118,12 +118,10 @@ impl Default for Settings {
 /// Parses and validates the intents TOML. Rejects an empty scope (nothing to
 /// sync), an unknown key, and an invalid conflict policy.
 pub fn parse_intents(text: &str) -> Result<Intents, CliError> {
-    let intents: Intents = toml::from_str(text)
-        .map_err(|e| CliError::Usage(format!("invalid intents file: {e}")))?;
+    let intents: Intents =
+        toml::from_str(text).map_err(|e| CliError::Usage(format!("invalid intents file: {e}")))?;
     if intents.scope.is_empty() {
-        return Err(CliError::Usage(
-            "the intents file declares no [[intents]] scope entry".into(),
-        ));
+        return Err(CliError::Usage("the intents file declares no [[intents]] scope entry".into()));
     }
     if intents.settings.similarity_threshold.is_some_and(|t| !(0.0..=1.0).contains(&t)) {
         return Err(CliError::Usage("similarity-threshold must be in [0, 1]".into()));
@@ -201,9 +199,8 @@ mod tests {
 
     #[test]
     fn invalid_policy_is_rejected() {
-        let err =
-            parse_intents("[[intents]]\nrepo='a'\nquery='x'\n[[conflict]]\npolicy='keep'\n")
-                .unwrap_err();
+        let err = parse_intents("[[intents]]\nrepo='a'\nquery='x'\n[[conflict]]\npolicy='keep'\n")
+            .unwrap_err();
         assert!(err.message().contains("invalid conflict policy"), "{}", err.message());
     }
 

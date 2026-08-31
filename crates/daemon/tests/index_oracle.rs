@@ -10,7 +10,9 @@
 use metafolder_core::metarecord::{Field, Value};
 use metafolder_core::query::{FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
-use metafolder_daemon::index::{collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy};
+use metafolder_daemon::index::{
+    collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
+};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
 use metafolder_daemon::tree_cache::{SortKeys, TreeCache};
@@ -40,8 +42,7 @@ impl Oracle {
     fn check(&mut self, q: &Query) {
         let index = RepoIndex::build(&self.conn).unwrap();
         let (mut sql, _) =
-            query_exec::execute(&self.conn, &mut self.cache, q, &[], None, None)
-                .unwrap();
+            query_exec::execute(&self.conn, &mut self.cache, q, &[], None, None).unwrap();
         let mut got = index.to_uuids(&index.evaluate(q).unwrap());
         sql.sort();
         got.sort();
@@ -59,15 +60,8 @@ impl Oracle {
                 order: if *asc { SortOrder::Asc } else { SortOrder::Desc },
             })
             .collect();
-        let (sql, _) = query_exec::execute(
-            &self.conn,
-            &mut self.cache,
-            q,
-            &sql_keys,
-            limit,
-            None,
-        )
-        .unwrap();
+        let (sql, _) =
+            query_exec::execute(&self.conn, &mut self.cache, q, &sql_keys, limit, None).unwrap();
         let idx_keys: Vec<SortBy> =
             by.iter().map(|(f, asc)| SortBy { field: f.to_string(), ascending: *asc }).collect();
         let got = index.evaluate_sorted(q, &idx_keys, limit).unwrap();
@@ -417,10 +411,8 @@ fn uuid_in_explicit_set() {
 
     o.check(&Query::UuidIn { uuids: vec![a, c, bogus] });
     o.check(&Query::UuidIn { uuids: vec![] }); // empty
-    // Combined with another predicate (intersection).
-    o.check(&Query::And {
-        operands: vec![Query::UuidIn { uuids: vec![a, c] }, eq("tag", s("a"))],
-    });
+                                               // Combined with another predicate (intersection).
+    o.check(&Query::And { operands: vec![Query::UuidIn { uuids: vec![a, c] }, eq("tag", s("a"))] });
 }
 
 #[test]
@@ -651,7 +643,7 @@ fn reverse_tree_follows_direct() {
 fn reverse_tree_follows_transitive() {
     let (mut o, [_root, _b, _c, _d]) = forest();
     o.check(&follows_t("loc", eq("tag", s("root")))); // b, c, d
-    // FollowsTransitive on a ref field has no descendants → empty.
+                                                      // FollowsTransitive on a ref field has no descendants → empty.
     o.check(&follows_t("author", eq("tag", s("root"))));
     // Inclusive (`=>*`): the matching roots plus their descendants — parity with
     // the SQL engine, which adds the roots to the result.
@@ -702,8 +694,7 @@ fn exact_node_path_equality_matches_sql_with_node_roots() {
 
             let (mut sql, _) =
                 query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-            let (mut got, _) =
-                index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "exact-node divergence on {q:?}");
@@ -752,8 +743,7 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
 
             let (mut sql, _) =
                 query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-            let (mut got, _) =
-                index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
+            let (mut got, _) = index.evaluate_page_with_roots(&q, &[], None, None, &roots).unwrap();
             sql.sort();
             got.sort();
             assert_eq!(got, sql, "exact-node Neq divergence on {q:?}");
@@ -911,7 +901,10 @@ fn matches_and_osm_direct_are_served_by_the_index() {
             ],
         },
         Query::And {
-            operands: vec![eq("rate", i(9)), Query::Not { operand: Box::new(osmd("loc", &["ep"])) }],
+            operands: vec![
+                eq("rate", i(9)),
+                Query::Not { operand: Box::new(osmd("loc", &["ep"])) },
+            ],
         },
         Query::Or { operands: vec![matches("label", "plain"), osmd("loc", &["scien"])] },
         Query::Not { operand: Box::new(matches("label", "sci")) },
@@ -959,7 +952,8 @@ fn osm_path_empty_terms_matches_sql() {
     );
     // It is exactly `is_present` on the field.
     assert_eq!(got, {
-        let mut p = index.to_uuids(&index.evaluate(&Query::IsPresent { field: "loc".into() }).unwrap());
+        let mut p =
+            index.to_uuids(&index.evaluate(&Query::IsPresent { field: "loc".into() }).unwrap());
         p.sort();
         p
     });
@@ -987,8 +981,7 @@ fn osm_path_single_term_matches_sql() {
         let q = osm_path_q("loc", &[term]);
         let index = RepoIndex::build(&o.conn).unwrap();
 
-        let (mut sql, _) =
-            query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         let mut got = index.to_uuids(&index.evaluate(&q).unwrap());
         sql.sort();
         got.sort();
@@ -1032,8 +1025,9 @@ fn osm_path_separator_term_defers_and_matches_sql() {
 
         let rewritten = query_exec::resolve_index_leaves(&o.conn, &mut o.cache, &q).unwrap();
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-        let (mut got, _) =
-            index.evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new()).unwrap();
+        let (mut got, _) = index
+            .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
+            .unwrap();
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "separator-term divergence on {term:?}");
@@ -1061,8 +1055,9 @@ fn osm_path_multi_term_via_leaf_rewrite_matches_sql() {
         let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
         // A rewritten multi-term OSM path is a bare UuidIn — the index serves it
         // with no roots needed.
-        let (mut got, _) =
-            index.evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new()).unwrap();
+        let (mut got, _) = index
+            .evaluate_page_with_roots(&rewritten, &[], None, None, &QueryRoots::new())
+            .unwrap();
         sql.sort();
         got.sort();
         assert_eq!(got, sql, "multi-term osm path divergence on {terms:?}");
@@ -1097,8 +1092,7 @@ fn finder_shaped_query_via_leaf_rewrite_matches_sql() {
 
     let index = RepoIndex::build(&o.conn).unwrap();
     let (mut sql, _) = query_exec::execute(&o.conn, &mut o.cache, &q, &[], None, None).unwrap();
-    let (mut got, _) =
-        index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
+    let (mut got, _) = index.evaluate_page_with_roots(&rewritten, &[], None, None, &roots).unwrap();
     sql.sort();
     got.sort();
     assert_eq!(got, sql, "finder-shaped query divergence");
@@ -1132,7 +1126,12 @@ fn sortable() -> Oracle {
     o.create(vec![all(), Field::new("kind", s("film")), Field::new("rate", i(2))]);
     o.create(vec![all(), Field::new("kind", s("book")), Field::new("rate", i(8))]);
     // multi-map rate {2, 9}: asc rep = 2 (ties with the i(2) record), desc rep = 9
-    o.create(vec![all(), Field::new("kind", s("book")), Field::new("rate", i(2)), Field::new("rate", i(9))]);
+    o.create(vec![
+        all(),
+        Field::new("kind", s("book")),
+        Field::new("rate", i(2)),
+        Field::new("rate", i(9)),
+    ]);
     o.create(vec![all(), Field::new("kind", s("film")), Field::new("rate", Value::Nothing)]);
     o.create(vec![all(), Field::new("kind", s("book"))]); // no rate → sorts last
     o
@@ -1170,9 +1169,18 @@ fn sort_multi_key() {
 fn sort_datetime_latest_first() {
     // The motivating "latest modified files" query: descending datetime.
     let mut o = Oracle::new();
-    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2024-01-01T00:00:00Z"))]);
-    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2025-06-15T12:00:00Z"))]);
-    o.create(vec![Field::new("all", Value::Bool(true)), Field::new("added", dt("2023-03-03T03:03:03Z"))]);
+    o.create(vec![
+        Field::new("all", Value::Bool(true)),
+        Field::new("added", dt("2024-01-01T00:00:00Z")),
+    ]);
+    o.create(vec![
+        Field::new("all", Value::Bool(true)),
+        Field::new("added", dt("2025-06-15T12:00:00Z")),
+    ]);
+    o.create(vec![
+        Field::new("all", Value::Bool(true)),
+        Field::new("added", dt("2023-03-03T03:03:03Z")),
+    ]);
     o.check_sorted(&present("all"), &[("added", false)], Some(2));
     o.check_sorted(&present("all"), &[("added", true)], None);
 }
@@ -1218,20 +1226,17 @@ fn keyset_pagination_is_stable_under_insertion() {
 
     let index = RepoIndex::build(&o.conn).unwrap();
     let (_p1, icur) = index.evaluate_page(&q, &idx_keys, Some(2), None).unwrap();
-    let (_s1, scur) = query_exec::execute(
-        &o.conn, &mut o.cache, &q, &sql_keys, Some(2), None,
-    )
-    .unwrap();
+    let (_s1, scur) =
+        query_exec::execute(&o.conn, &mut o.cache, &q, &sql_keys, Some(2), None).unwrap();
 
     // Insert a row (rate 15) that sorts within the already-returned region.
     o.create(vec![Field::new("all", Value::Bool(true)), Field::new("rate", i(15))]);
 
     let index2 = RepoIndex::build(&o.conn).unwrap();
     let (ip2, _) = index2.evaluate_page(&q, &idx_keys, Some(2), icur.as_deref()).unwrap();
-    let (sp2, _) = query_exec::execute(
-        &o.conn, &mut o.cache, &q, &sql_keys, Some(2), scur.as_deref(),
-    )
-    .unwrap();
+    let (sp2, _) =
+        query_exec::execute(&o.conn, &mut o.cache, &q, &sql_keys, Some(2), scur.as_deref())
+            .unwrap();
 
     // Both resume strictly after rate=20 → rates 30, 40 (never re-showing 15).
     assert_eq!(ip2, sp2, "index keyset page must match the SQL keyset page");

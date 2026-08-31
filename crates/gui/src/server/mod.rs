@@ -87,16 +87,10 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/panel/:name/*path", get(panel_assets::serve))
         .route("/fsraw", get(fsraw::serve))
         .route("/thumbnail", get(thumbnail::serve))
-        .route(
-            "/gui/workspaces",
-            get(gui_api::list_workspaces).post(gui_api::create_workspace),
-        )
+        .route("/gui/workspaces", get(gui_api::list_workspaces).post(gui_api::create_workspace))
         .route("/gui/workspaces/:id", delete(gui_api::delete_workspace))
         .route("/gui/layout", get(gui_api::get_layout).put(gui_api::put_layout))
-        .route(
-            "/gui/panels/:slot/view",
-            put(gui_api::put_panel_view).get(gui_api::get_panel_view),
-        )
+        .route("/gui/panels/:slot/view", put(gui_api::put_panel_view).get(gui_api::get_panel_view))
         .route("/gui/command", post(gui_api::post_command))
         .route("/gui/bench", get(gui_api::get_bench))
         .route("/gui/bench/clear", post(gui_api::clear_bench))
@@ -192,14 +186,7 @@ fn javascript(source: &'static str) -> axum::response::Response {
     // `import '/__ui.js'` (and the other shim modules) is not, so the WebView
     // must always revalidate these or a rebuilt helper would be masked by a
     // stale cached copy.
-    (
-        [
-            ("content-type", "text/javascript"),
-            ("cache-control", "no-cache"),
-        ],
-        source,
-    )
-        .into_response()
+    ([("content-type", "text/javascript"), ("cache-control", "no-cache")], source).into_response()
 }
 
 #[derive(serde::Deserialize)]

@@ -173,16 +173,15 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
                     // A bare integer of Unix ms, possibly negative (pre-epoch).
                     Some(c)
                         if c.is_ascii_digit()
-                            || (*c == '-' && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())) =>
+                            || (*c == '-'
+                                && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())) =>
                     {
                         match lex_number(&chars, &mut i)? {
                             Tok::Int(ms) => tokens.push(Tok::DateTime(ms)),
                             _ => return Err("datetime literal '@<ms>' must be an integer".into()),
                         }
                     }
-                    _ => {
-                        return Err("expected a quoted datetime or milliseconds after '@'".into())
-                    }
+                    _ => return Err("expected a quoted datetime or milliseconds after '@'".into()),
                 }
             }
             c if c.is_ascii_digit() => tokens.push(lex_number(&chars, &mut i)?),
@@ -203,9 +202,8 @@ fn lex_string(chars: &[char], i: &mut usize) -> Result<Tok, String> {
                 return Ok(Tok::Str(out));
             }
             '\\' => {
-                let escaped = chars
-                    .get(*i + 1)
-                    .ok_or_else(|| "unterminated string literal".to_string())?;
+                let escaped =
+                    chars.get(*i + 1).ok_or_else(|| "unterminated string literal".to_string())?;
                 match escaped {
                     // The two escapes the DSL itself needs decode to the bare
                     // character.
@@ -439,10 +437,9 @@ impl Parser {
             // right-hand side; they differ only in the `inclusive` flag.
             Some(Tok::ArrowStar) => self.transitive(field, false, "->*"),
             Some(Tok::FatArrowStar) => self.transitive(field, true, "=>*"),
-            Some(tok) => Err(format!(
-                "expected an operator after field '{field}', got {}",
-                describe(&tok)
-            )),
+            Some(tok) => {
+                Err(format!("expected an operator after field '{field}', got {}", describe(&tok)))
+            }
             None => Err(format!("expected an operator after field '{field}'")),
         }
     }
@@ -450,18 +447,11 @@ impl Parser {
     /// Parses the right-hand side of a transitive arrow (`->*` / `=>*`): a path
     /// string or a parenthesized sub-query, into a `FollowsTransitive` with the
     /// given `inclusive` flag. `arrow` names the operator in error messages.
-    fn transitive(
-        &mut self,
-        field: String,
-        inclusive: bool,
-        arrow: &str,
-    ) -> Result<Query, String> {
+    fn transitive(&mut self, field: String, inclusive: bool, arrow: &str) -> Result<Query, String> {
         match self.next() {
-            Some(Tok::Str(path)) => Ok(Query::FollowsTransitive {
-                field,
-                target: FollowTarget::Path(path),
-                inclusive,
-            }),
+            Some(Tok::Str(path)) => {
+                Ok(Query::FollowsTransitive { field, target: FollowTarget::Path(path), inclusive })
+            }
             Some(Tok::LParen) => {
                 let sub = self.or_expr()?;
                 self.expect(Tok::RParen)?;
@@ -538,7 +528,10 @@ mod tests {
 
     #[test]
     fn test_float_literal() {
-        assert_eq!(ok("score >= 3.5"), Query::Gte { field: "score".into(), value: Value::Float(3.5) });
+        assert_eq!(
+            ok("score >= 3.5"),
+            Query::Gte { field: "score".into(), value: Value::Float(3.5) }
+        );
     }
 
     #[test]
@@ -756,7 +749,8 @@ mod tests {
     #[test]
     fn test_osm_composes_under_or_and() {
         // The finder shape: mf_schema="tag" AND (osm(path) OR osmd(label)).
-        let q = ok(r#"mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "scien fic"))"#);
+        let q =
+            ok(r#"mf_schema = "tag" AND (osm(mfr_path, "scien fic") OR osmd(label, "scien fic"))"#);
         let Query::And { operands } = q else { panic!("expected And, got {q:?}") };
         assert_eq!(operands.len(), 2);
         assert!(matches!(&operands[1], Query::Or { operands } if operands.len() == 2));
@@ -766,7 +760,11 @@ mod tests {
     fn test_osm_empty_terms() {
         assert_eq!(
             ok(r#"osm(mfr_path, "")"#),
-            Query::Osm { field: "mfr_path".into(), terms: vec![], mode: crate::query::OsmMode::Path }
+            Query::Osm {
+                field: "mfr_path".into(),
+                terms: vec![],
+                mode: crate::query::OsmMode::Path
+            }
         );
     }
 
@@ -817,10 +815,7 @@ mod tests {
         assert_eq!(
             ok("NOT a = 1 AND b = 2"),
             Query::And {
-                operands: vec![
-                    Query::Not { operand: Box::new(eq_int("a", 1)) },
-                    eq_int("b", 2),
-                ],
+                operands: vec![Query::Not { operand: Box::new(eq_int("a", 1)) }, eq_int("b", 2),],
             }
         );
     }
@@ -874,9 +869,7 @@ mod tests {
     fn test_double_not() {
         assert_eq!(
             ok("NOT NOT a = 1"),
-            Query::Not {
-                operand: Box::new(Query::Not { operand: Box::new(eq_int("a", 1)) }),
-            }
+            Query::Not { operand: Box::new(Query::Not { operand: Box::new(eq_int("a", 1)) }) }
         );
     }
 

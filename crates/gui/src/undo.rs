@@ -38,9 +38,7 @@ pub async fn navigate(
 
     let target = if redo {
         // Tree mode keeps the revisions ahead of HEAD listed.
-        let log = daemon
-            .request("GET", &format!("/repos/{repo}/log?mode=tree"), None)
-            .await?;
+        let log = daemon.request("GET", &format!("/repos/{repo}/log?mode=tree"), None).await?;
         let operations = log.body["operations"].as_array().cloned().unwrap_or_default();
         match redo_target(&operations, log.body["head"].as_i64()) {
             Some(id) => json!({ "id": id }),
@@ -54,11 +52,7 @@ pub async fn navigate(
     };
 
     let response = daemon
-        .request(
-            "POST",
-            &format!("/repos/{repo}/rollback"),
-            Some(json!({ "target": target })),
-        )
+        .request("POST", &format!("/repos/{repo}/rollback"), Some(json!({ "target": target })))
         .await?;
     if response.status != 200 {
         let message = response.body["error"]
@@ -124,12 +118,7 @@ mod tests {
 
     #[test]
     fn test_redo_target_prefers_the_most_recent_branch() {
-        let ops = [
-            op(1, None, 1),
-            op(2, Some(1), 2),
-            op(3, Some(1), 3),
-            op(4, Some(3), 3),
-        ];
+        let ops = [op(1, None, 1), op(2, Some(1), 2), op(3, Some(1), 3), op(4, Some(3), 3)];
         assert_eq!(redo_target(&ops, Some(1)), Some(4));
     }
 }

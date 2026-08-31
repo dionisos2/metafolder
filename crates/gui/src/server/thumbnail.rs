@@ -33,14 +33,12 @@ pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params
     // Resolve the file's repository (its cache directory). A file outside any
     // repo gets no thumbnail — no ffmpeg, nothing written; the panel shows a
     // glyph.
-    let Some(cache_dir) =
-        resolve_cache_dir(&state.daemon, &path, state.repo_list_cache_ttl).await
+    let Some(cache_dir) = resolve_cache_dir(&state.daemon, &path, state.repo_list_cache_ttl).await
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
-    let result =
-        tokio::task::spawn_blocking(move || thumbnails::generate(&path, &cache_dir)).await;
+    let result = tokio::task::spawn_blocking(move || thumbnails::generate(&path, &cache_dir)).await;
     match result {
         Ok(Ok(png)) => match tokio::fs::read(&png).await {
             Ok(bytes) => (

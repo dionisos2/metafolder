@@ -1,7 +1,6 @@
 //! HTTP-level tests for the orphan scan/clear endpoints
 //! (`POST /repos/:repo/orphans/{scan,clear}`, spec-file-tracking "Orphan scan").
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -14,7 +13,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder

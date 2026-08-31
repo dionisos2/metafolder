@@ -2,10 +2,10 @@
 //! (spec-file-tracking "Watch and Ignore").
 
 use metafolder_core::metarecord::{Field, Value};
+use metafolder_daemon::db;
 use metafolder_daemon::eligibility::is_eligible;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::TreeCache;
-use metafolder_daemon::db;
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -259,7 +259,10 @@ fn test_direct_watch_reanchors_ignore_to_its_scope() {
     let mut elig = |path: &str| is_eligible(&conn, &mut cache, path).unwrap();
 
     assert!(elig("/.config"), "directly watched → tracked unconditionally");
-    assert!(elig("/.config/nvim"), "child tracked: the `.config` prefix no longer matches the hidden pattern");
+    assert!(
+        elig("/.config/nvim"),
+        "child tracked: the `.config` prefix no longer matches the hidden pattern"
+    );
     assert!(elig("/.config/nvim/init.lua"), "grandchild tracked");
     assert!(
         !elig("/.config/nvim/.git/config"),
@@ -295,8 +298,11 @@ fn test_watch_default_is_false_when_no_ancestor_defines_it() {
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
-        .unwrap();
+    w.create_metarecord(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: None, name: "".into() },
+    )])
+    .unwrap();
     w.commit().unwrap();
     let mut cache = TreeCache::new(false);
     assert!(!is_eligible(&conn, &mut cache, "/file.txt").unwrap());
@@ -310,8 +316,10 @@ fn test_mf_sync_inherits_with_nearest_ancestor_override() {
     let mut f = Fixture::new(true);
     // /projects is external (a git repo); /projects/build is metafolder-managed
     // again (e.g. .gitignore'd); /other has no marker.
-    let projects = f.entry(f.root, "projects", vec![Field::new("mf_sync", Value::String("external".into()))]);
-    let build = f.entry(projects, "build", vec![Field::new("mf_sync", Value::String("internal".into()))]);
+    let projects =
+        f.entry(f.root, "projects", vec![Field::new("mf_sync", Value::String("external".into()))]);
+    let build =
+        f.entry(projects, "build", vec![Field::new("mf_sync", Value::String("internal".into()))]);
     let _src = f.entry(projects, "src", vec![]);
     let _other = f.entry(f.root, "other", vec![]);
     let _ = build;
@@ -394,8 +402,11 @@ fn test_explain_no_watch_anywhere() {
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
-        .unwrap();
+    w.create_metarecord(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: None, name: "".into() },
+    )])
+    .unwrap();
     w.commit().unwrap();
     let mut cache = TreeCache::new(false);
     let e = explain(&conn, &mut cache, "/file.txt").unwrap();
@@ -443,8 +454,11 @@ fn test_effective_ignore_set_when_nothing_is_defined() {
     let mut conn = db::open_in_memory().unwrap();
     db::init_schema(&conn).unwrap();
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    w.create_metarecord(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })])
-        .unwrap();
+    w.create_metarecord(vec![Field::new(
+        "mfr_path",
+        Value::TreeRef { parent: None, name: "".into() },
+    )])
+    .unwrap();
     w.commit().unwrap();
     let mut cache = TreeCache::new(false);
     let e = effective_ignore(&conn, &mut cache, "/anywhere").unwrap();

@@ -130,10 +130,8 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     let root = repo.config.root.clone();
     let internal_dir = repo.internal_dir();
 
-    let inner = Arc::new(WatcherInner {
-        watcher: Mutex::new(None),
-        watched: Mutex::new(HashSet::new()),
-    });
+    let inner =
+        Arc::new(WatcherInner { watcher: Mutex::new(None), watched: Mutex::new(HashSet::new()) });
 
     // Weaks: neither the ingest thread nor the callback may keep the repository
     // (and its exclusive lock) or the watcher alive.
@@ -307,7 +305,11 @@ fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<String> {
 
 /// Translates one notify event into the internal [`FsEvent`] forms. Pure: no
 /// locks, no database, no watch calls — it runs on notify's event-loop thread.
-fn translate(root: &Path, internal_dir: &Path, event: notify::Event) -> Vec<(FsEvent, Option<i64>)> {
+fn translate(
+    root: &Path,
+    internal_dir: &Path,
+    event: notify::Event,
+) -> Vec<(FsEvent, Option<i64>)> {
     use notify::event::{ModifyKind, RenameMode};
 
     let rel = |p: &Path| relative(root, internal_dir, p);
@@ -317,10 +319,14 @@ fn translate(root: &Path, internal_dir: &Path, event: notify::Event) -> Vec<(FsE
     let mut events: Vec<(FsEvent, Option<i64>)> = Vec::new();
     match event.kind {
         notify::EventKind::Create(_) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Create(p), None)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Create(p), None)),
+            );
         }
         notify::EventKind::Remove(_) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Remove(p), None)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::Remove(p), None)),
+            );
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::Both)) => {
             if let [from, to] = event.paths.as_slice() {
@@ -335,19 +341,27 @@ fn translate(root: &Path, internal_dir: &Path, event: notify::Event) -> Vec<(FsE
             }
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::From)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameFrom(p), cookie)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameFrom(p), cookie)),
+            );
         }
         notify::EventKind::Modify(ModifyKind::Name(RenameMode::To)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameTo(p), cookie)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::RenameTo(p), cookie)),
+            );
         }
         notify::EventKind::Modify(ModifyKind::Metadata(_)) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyMeta(p), None)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyMeta(p), None)),
+            );
         }
         // Data modifications; unknown Modify kinds fall back to Data
         // semantics (full refresh + hash invalidation, spec-platform).
         notify::EventKind::Modify(ModifyKind::Data(_))
         | notify::EventKind::Modify(ModifyKind::Any) => {
-            events.extend(event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyData(p), None)));
+            events.extend(
+                event.paths.iter().filter_map(|p| rel(p)).map(|p| (FsEvent::ModifyData(p), None)),
+            );
         }
         _ => {}
     }
@@ -440,7 +454,14 @@ fn maintain_watches(
             subtree.insert(abs);
             let mut elig = std::time::Duration::ZERO;
             collect_eligible_dirs(
-                &conn, &mut cache, root, internal_dir, rel, &mut ec, &mut subtree, &mut elig,
+                &conn,
+                &mut cache,
+                root,
+                internal_dir,
+                rel,
+                &mut ec,
+                &mut subtree,
+                &mut elig,
             );
         }
     }
@@ -472,7 +493,8 @@ mod tests {
 
     impl Fixture {
         fn new(watch: bool) -> Self {
-            let root = std::env::temp_dir().join("metafolder-tests")
+            let root = std::env::temp_dir()
+                .join("metafolder-tests")
                 .join(format!("metafolder_watch_{}", uuid::Uuid::new_v4()));
             std::fs::create_dir_all(&root).unwrap();
             let mut conn = db::open_in_memory().unwrap();
@@ -557,8 +579,9 @@ mod tests {
         // A symlink pointing at an unreadable directory outside the repo — the
         // Wine `z: -> /` case. It must be neither watched nor followed, and must
         // not raise an error.
-        let outside =
-            std::env::temp_dir().join("metafolder-tests").join(format!("metafolder_out_{}", uuid::Uuid::new_v4()));
+        let outside = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("metafolder_out_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&outside).unwrap();
         std::os::unix::fs::symlink(&outside, fx.root.join("link")).unwrap();
 

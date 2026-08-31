@@ -4,8 +4,8 @@
 //! Starts empty and populates lazily; a min-heap of leaves drives LRU
 //! eviction when the node limit is exceeded.
 
-use std::cmp::Reverse;
 use std::cell::RefCell;
+use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -182,8 +182,11 @@ impl TreeCache {
                     );
                 }
                 Some(p) => {
-                    let Some(&pidx) =
-                        self.fields.get(&field).and_then(|ft| ft.by_uuid.get(&p)).and_then(|v| v.first())
+                    let Some(&pidx) = self
+                        .fields
+                        .get(&field)
+                        .and_then(|ft| ft.by_uuid.get(&p))
+                        .and_then(|v| v.first())
                     else {
                         continue;
                     };
@@ -227,8 +230,7 @@ impl TreeCache {
         let comps: Vec<&str> = path.split('/').collect();
 
         let root_norm = self.normalize(comps[0]);
-        let cached_root =
-            self.fields.get(field).and_then(|ft| ft.roots.get(&root_norm)).copied();
+        let cached_root = self.fields.get(field).and_then(|ft| ft.roots.get(&root_norm)).copied();
         let mut cur = match cached_root {
             Some(idx) => idx,
             None => {
@@ -281,7 +283,12 @@ impl TreeCache {
 
     /// Reconstructs the path string of a metarecord by walking up its parents
     /// in the database (first position for multi-map fields).
-    pub fn path_of(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<Option<String>> {
+    pub fn path_of(
+        &mut self,
+        conn: &Connection,
+        field: &str,
+        uuid: Uuid,
+    ) -> Result<Option<String>> {
         if self.complete {
             return Ok(self.path_of_in_cache(field, uuid));
         }
@@ -512,7 +519,13 @@ impl TreeCache {
 
     /// Notifies the cache that a metarecord was renamed and/or moved. The cached
     /// subtree follows its directory when the new parent is cached too.
-    pub fn apply_rename(&mut self, field: &str, uuid: Uuid, new_parent: Option<Uuid>, new_name: &str) {
+    pub fn apply_rename(
+        &mut self,
+        field: &str,
+        uuid: Uuid,
+        new_parent: Option<Uuid>,
+        new_name: &str,
+    ) {
         self.clock += 1;
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
         let Some(nodes) = nodes else {
@@ -809,7 +822,6 @@ impl TreeCache {
         false
     }
 }
-
 
 /// Resolver handing out the full-path *sort keys* of a forest's nodes
 /// ([`PATH_KEY_SEP`]), for the duration of one query.

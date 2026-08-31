@@ -136,7 +136,8 @@ pub async fn ignore_write(
     let base = app.daemon.base_url();
     let target = parse_target(&target)?;
     tokio::task::spawn_blocking(move || {
-        ignore::write_patterns(&BlockingClient::new(base), &repo, target, &patterns).map_err(flatten)
+        ignore::write_patterns(&BlockingClient::new(base), &repo, target, &patterns)
+            .map_err(flatten)
     })
     .await
     .map_err(|e| format!("ignore write task panicked: {e}"))?
@@ -172,13 +173,15 @@ pattern-set = ["node", "git"]
     }
 
     impl DaemonClient for Stub {
-        fn request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, DaemonError> {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            body: Option<&Value>,
+        ) -> Result<Value, DaemonError> {
             self.calls.borrow_mut().push((method.into(), path.into(), body.cloned()));
-            let values: Vec<Value> = self
-                .current
-                .iter()
-                .map(|p| json!({"type": "string", "value": p}))
-                .collect();
+            let values: Vec<Value> =
+                self.current.iter().map(|p| json!({"type": "string", "value": p})).collect();
             Ok(json!({"name": "mf_ignore", "values": values}))
         }
     }
@@ -200,10 +203,7 @@ pattern-set = ["node", "git"]
 
     #[test]
     fn test_apply_add_appends_to_the_existing_set() {
-        let stub = Stub {
-            current: vec!["keep-me".into()],
-            calls: RefCell::new(Vec::new()),
-        };
+        let stub = Stub { current: vec!["keep-me".into()], calls: RefCell::new(Vec::new()) };
         let target = Uuid::new_v4();
         let presets = Presets::parse(SRC).unwrap();
         let result =

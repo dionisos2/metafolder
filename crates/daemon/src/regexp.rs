@@ -17,10 +17,7 @@ const SIZE_LIMIT: usize = 1 << 20; // 1 MiB
 /// Compiles `pattern` with a bounded compile-size budget. Returns the same
 /// `regex::Error` as `Regex::new` on an invalid or too-large pattern.
 pub fn compile(pattern: &str) -> Result<regex::Regex, regex::Error> {
-    regex::RegexBuilder::new(pattern)
-        .size_limit(SIZE_LIMIT)
-        .dfa_size_limit(SIZE_LIMIT)
-        .build()
+    regex::RegexBuilder::new(pattern).size_limit(SIZE_LIMIT).dfa_size_limit(SIZE_LIMIT).build()
 }
 
 #[cfg(test)]

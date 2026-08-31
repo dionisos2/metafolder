@@ -283,10 +283,7 @@ fn test_populate_serves_reads_without_db() {
     assert!(cache.is_complete(), "a forest within budget populates completely");
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), Some(jazz));
-    assert_eq!(
-        cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(),
-        Some(file)
-    );
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), Some(file));
     // A genuinely absent path resolves to None without touching the DB.
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/none").unwrap(), None);
 
@@ -405,7 +402,10 @@ fn test_apply_move_to_other_parent() {
     w.commit().unwrap();
     cache.apply_rename("mfr_path", jazz, Some(archive), "jazz");
 
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/archive/jazz/file.mp3").unwrap(), Some(file));
+    assert_eq!(
+        cache.resolve_path(&conn, "mfr_path", "/archive/jazz/file.mp3").unwrap(),
+        Some(file)
+    );
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
     let _ = music;
 }

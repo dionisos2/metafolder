@@ -146,7 +146,8 @@ async fn test_panel_helper_modules_are_not_cached() {
     // rebuilt helper (e.g. a panel importing a newly added export). The shim
     // routes must therefore forbid caching.
     let (_guard, _config, router) = setup();
-    for uri in ["/__ui.js", "/__menu.js", "/__orphan.js", "/__paged-list.js", "/__value-widget.js"] {
+    for uri in ["/__ui.js", "/__menu.js", "/__orphan.js", "/__paged-list.js", "/__value-widget.js"]
+    {
         let response = router
             .clone()
             .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())

@@ -67,9 +67,7 @@ pub fn lex(input: &str) -> Result<Vec<Tok>, String> {
             }
             // Fractional part only when '.' is followed by a digit, so `3..5`
             // lexes as 3, `..`, 5 rather than a broken float.
-            if chars.get(i) == Some(&'.')
-                && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit())
-            {
+            if chars.get(i) == Some(&'.') && chars.get(i + 1).is_some_and(|d| d.is_ascii_digit()) {
                 i += 1;
                 while i < chars.len() && chars[i].is_ascii_digit() {
                     i += 1;
@@ -96,12 +94,7 @@ pub fn lex(input: &str) -> Result<Vec<Tok>, String> {
 /// A symbol is any character that is not whitespace, word/number material, a
 /// string quote, or a parenthesis (parentheses are their own single tokens).
 fn is_symbol_char(c: char) -> bool {
-    !c.is_whitespace()
-        && !c.is_ascii_alphanumeric()
-        && c != '_'
-        && c != '"'
-        && c != '('
-        && c != ')'
+    !c.is_whitespace() && !c.is_ascii_alphanumeric() && c != '_' && c != '"' && c != '(' && c != ')'
 }
 
 #[cfg(test)]
@@ -109,11 +102,7 @@ mod tests {
     use super::*;
 
     fn lx(s: &str) -> Vec<(TokKind, String)> {
-        lex(s)
-            .unwrap()
-            .into_iter()
-            .map(|t| (t.kind, t.text))
-            .collect()
+        lex(s).unwrap().into_iter().map(|t| (t.kind, t.text)).collect()
     }
     fn w(s: &str) -> (TokKind, String) {
         (TokKind::Word, s.into())

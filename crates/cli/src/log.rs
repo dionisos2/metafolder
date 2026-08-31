@@ -418,7 +418,8 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     let resp = ctx.client.get(&format!("{base}/log"), &query)?;
 
     let head = resp["head"].as_i64();
-    let ops: Vec<&Json> = resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+    let ops: Vec<&Json> =
+        resp["operations"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
     let mut rev_meta: std::collections::HashMap<i64, (i64, Option<String>)> =
         std::collections::HashMap::new();
     for rev in resp["revisions"].as_array().into_iter().flatten() {
@@ -445,7 +446,8 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
     });
 
     // The HEAD revision is the one containing the HEAD operation.
-    let head_rev = head.and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
+    let head_rev = head
+        .and_then(|h| ops.iter().find(|o| o["id"].as_i64() == Some(h)))
         .and_then(|o| o["rev_id"].as_i64());
 
     // The set of operation ids on the HEAD ancestry path (for branch marking
@@ -473,8 +475,11 @@ pub fn log(ctx: &Ctx, args: &LogArgs) -> Result<i32, CliError> {
         let is_head = Some(*rev_id) == head_rev;
         let (ts, label) = rev_meta.get(rev_id).cloned().unwrap_or((0, None));
         let marker = if is_head { ">" } else { " " };
-        let branch = if args.tree && !on_head_path.is_empty()
-            && !ops_sorted.iter().any(|o| o["id"].as_i64().is_some_and(|id| on_head_path.contains(&id)))
+        let branch = if args.tree
+            && !on_head_path.is_empty()
+            && !ops_sorted
+                .iter()
+                .any(|o| o["id"].as_i64().is_some_and(|id| on_head_path.contains(&id)))
         {
             "  (branch)"
         } else {
@@ -536,8 +541,7 @@ fn op_breakdown(ops: &[&Json]) -> String {
         }
     }
     counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-    let parts: Vec<String> =
-        counts.iter().map(|(name, c)| format!("{name} \u{00d7}{c}")).collect();
+    let parts: Vec<String> = counts.iter().map(|(name, c)| format!("{name} \u{00d7}{c}")).collect();
     format!("{} ops: {}", ops.len(), parts.join(", "))
 }
 
@@ -740,10 +744,11 @@ pub fn log_show(ctx: &Ctx, target: &str, raw: bool) -> Result<i32, CliError> {
     let rev = if target.eq_ignore_ascii_case("head") {
         "head".to_string()
     } else {
-        target
-            .parse::<i64>()
-            .map(|n| n.to_string())
-            .map_err(|_| CliError::Usage(format!("invalid revision target '{target}' (expected a number or HEAD)")))?
+        target.parse::<i64>().map(|n| n.to_string()).map_err(|_| {
+            CliError::Usage(format!(
+                "invalid revision target '{target}' (expected a number or HEAD)"
+            ))
+        })?
     };
     let resp = ctx.client.get(&format!("{base}/log/revisions/{rev}"), &[])?;
     if raw {
@@ -923,7 +928,9 @@ mod tests {
 
     fn test_trash() -> TrashDir {
         TrashDir::new(
-            std::env::temp_dir().join("metafolder-tests").join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
+            std::env::temp_dir()
+                .join("metafolder-tests")
+                .join(format!("mf_trash_{}", uuid::Uuid::new_v4())),
         )
     }
 
@@ -932,7 +939,9 @@ mod tests {
     // erroring or rewinding to a location the file is not at (review #6).
     #[test]
     fn apply_on_a_gone_file_keeps_the_rolled_back_path_without_moving() {
-        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_decide_{}", uuid::Uuid::new_v4()));
         let from = tmp.join("gone.txt");
         let to = tmp.join("target.txt");
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
@@ -947,7 +956,9 @@ mod tests {
     // a `step {skip:true}` (rewind), never touching the filesystem.
     #[test]
     fn skip_is_available_for_a_gone_file() {
-        let from = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
+        let from = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gone_{}", uuid::Uuid::new_v4()));
         let op = move_op(from.to_str().unwrap(), "/whatever");
         let skip =
             decide_move(&op, &policies(Policy::Skip, Policy::Skip), &test_trash(), true).unwrap();
@@ -957,7 +968,9 @@ mod tests {
     // `apply` on a present file performs the `mv` and produces `step {}`.
     #[test]
     fn apply_on_a_present_file_moves_it() {
-        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_present_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_present_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("moved.txt");
@@ -975,7 +988,9 @@ mod tests {
     // its content survives the overwrite (spec-trash.org).
     #[test]
     fn apply_trashes_an_occupied_destination() {
-        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_occupied_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("victim.txt");
@@ -984,8 +999,7 @@ mod tests {
         let trash = test_trash();
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
 
-        let skip =
-            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
+        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
         assert!(!skip);
         assert_eq!(std::fs::read(&to).unwrap(), b"source", "the mv happened");
         // The victim's bytes are preserved in the trash, not destroyed.
@@ -1047,12 +1061,15 @@ mod tests {
     // is auto-restored (no skip); the daemon then applies the real inverse.
     #[test]
     fn deleted_step_auto_restores_the_matching_version() {
-        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_del_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
         std::fs::write(&file, b"content").unwrap();
-        let e = trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
+        let e =
+            trash.trash_path(&file, Reason::Manual, None, Some("rec-1".into()), Some(4)).unwrap();
         assert!(!file.exists());
         let mut entries = trash.entries().unwrap();
 
@@ -1074,7 +1091,9 @@ mod tests {
     // belongs to stays orphaned.
     #[test]
     fn deleted_steps_of_one_revision_share_the_pre_revision_version() {
-        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_del3_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -1104,7 +1123,9 @@ mod tests {
     // not restore: the step is skipped and the file stays trashed.
     #[test]
     fn deleted_step_skips_on_version_mismatch() {
-        let base = std::env::temp_dir().join("metafolder-tests").join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
+        let base = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_del2_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&base).unwrap();
         let trash = TrashDir::new(base.join("trash"));
         let file = base.join("doc.txt");
@@ -1113,12 +1134,26 @@ mod tests {
         let mut entries = trash.entries().unwrap();
 
         // Wrong version → skip, entry untouched.
-        let skip = decide_deleted(&deleted_op("rec-1", Some(9)), &trash, &mut entries, &mut HashSet::new(), true).unwrap();
+        let skip = decide_deleted(
+            &deleted_op("rec-1", Some(9)),
+            &trash,
+            &mut entries,
+            &mut HashSet::new(),
+            true,
+        )
+        .unwrap();
         assert!(skip);
         assert!(!file.exists(), "the file stays in the trash");
         assert_eq!(entries.len(), 1);
         // No entity_version_before (forward step) → skip too.
-        let skip = decide_deleted(&deleted_op("rec-1", None), &trash, &mut entries, &mut HashSet::new(), true).unwrap();
+        let skip = decide_deleted(
+            &deleted_op("rec-1", None),
+            &trash,
+            &mut entries,
+            &mut HashSet::new(),
+            true,
+        )
+        .unwrap();
         assert!(skip);
         assert_eq!(entries.len(), 1);
         std::fs::remove_dir_all(&base).ok();
@@ -1129,7 +1164,9 @@ mod tests {
     // rollback.
     #[test]
     fn apply_skips_when_a_directory_occupies_the_destination() {
-        let tmp = std::env::temp_dir().join("metafolder-tests").join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
+        let tmp = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_dirdest_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&tmp).unwrap();
         let from = tmp.join("here.txt");
         let to = tmp.join("blocking_dir");
@@ -1138,8 +1175,7 @@ mod tests {
         let trash = test_trash();
         let op = move_op(from.to_str().unwrap(), to.to_str().unwrap());
 
-        let skip =
-            decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
+        let skip = decide_move(&op, &policies(Policy::Apply, Policy::Apply), &trash, true).unwrap();
         assert!(skip, "a directory destination must skip, not abort");
         assert!(from.exists() && to.is_dir(), "nothing was moved or trashed");
         assert!(trash.entries().unwrap().is_empty());

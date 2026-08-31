@@ -35,11 +35,7 @@ pub fn detect_with(present: impl Fn(&str) -> bool) -> MediaSupport {
         .map(str::to_string)
         .collect();
     let has = |element: &str| !missing.iter().any(|m| m == element);
-    MediaSupport {
-        audio: has(AUDIO_SINK),
-        video: has(AUDIO_SINK) && has(VIDEO_SINK),
-        missing,
-    }
+    MediaSupport { audio: has(AUDIO_SINK), video: has(AUDIO_SINK) && has(VIDEO_SINK), missing }
 }
 
 /// Detection against the real system, probed once per process (plugin
@@ -259,7 +255,8 @@ pub fn probe_file(path: &std::path::Path) -> MediaProbe {
     probe
 }
 
-type ProbeCache = std::collections::HashMap<std::path::PathBuf, (std::time::SystemTime, MediaProbe)>;
+type ProbeCache =
+    std::collections::HashMap<std::path::PathBuf, (std::time::SystemTime, MediaProbe)>;
 
 fn probe_cache() -> &'static std::sync::Mutex<ProbeCache> {
     static CACHE: std::sync::OnceLock<std::sync::Mutex<ProbeCache>> = std::sync::OnceLock::new();
@@ -275,20 +272,17 @@ const DISCOVERER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1
 /// sandbox's empty `HOME` and rebuilds one from scratch on every probe, which
 /// costs ~1 s (measured) against ~80 ms when it is reused.
 fn host_gst_registry() -> Option<std::path::PathBuf> {
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache")))?;
+    let cache = std::env::var_os("XDG_CACHE_HOME").map(std::path::PathBuf::from).or_else(|| {
+        std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".cache"))
+    })?;
     let entries = std::fs::read_dir(cache.join("gstreamer-1.0")).ok()?;
-    entries
-        .flatten()
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.is_file()
-                && path.file_name().is_some_and(|name| {
-                    let name = name.to_string_lossy();
-                    name.starts_with("registry.") && name.ends_with(".bin")
-                })
-        })
+    entries.flatten().map(|entry| entry.path()).find(|path| {
+        path.is_file()
+            && path.file_name().is_some_and(|name| {
+                let name = name.to_string_lossy();
+                name.starts_with("registry.") && name.ends_with(".bin")
+            })
+    })
 }
 
 /// The sandbox spec for one probe: `gst-discoverer-1.0` demuxes an untrusted
@@ -478,10 +472,7 @@ mod tests {
         let support = detect_with(|_| false);
         assert!(!support.audio);
         assert!(!support.video);
-        assert_eq!(
-            support.missing,
-            vec!["autoaudiosink".to_string(), "autovideosink".to_string()]
-        );
+        assert_eq!(support.missing, vec!["autoaudiosink".to_string(), "autovideosink".to_string()]);
     }
 
     #[test]
@@ -498,10 +489,7 @@ Missing plugins
         let probe = parse_discoverer(output);
         assert_eq!(
             probe.missing,
-            vec![
-                "Opus decoder".to_string(),
-                "H.264 (High Profile) decoder".to_string(),
-            ]
+            vec!["Opus decoder".to_string(), "H.264 (High Profile) decoder".to_string(),]
         );
     }
 

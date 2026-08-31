@@ -53,81 +53,89 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
         "input_wait_active": false
     });
 
-    let app = axum::Router::new()
-        .route("/gui/status", get(move || {
-            let status = status.clone();
-            async move { Json(status) }
-        }))
-        .route(
-            "/gui/workspaces",
-            post(|State(s): State<Recorded>, Json(body): Json<Json_>| async move {
-                s.push("POST", "/gui/workspaces", body);
-                Json(json!({"id": "ws-9"}))
-            }),
-        )
-        .route(
-            "/gui/workspaces/:id",
-            delete(|State(s): State<Recorded>, Path(id): Path<String>| async move {
-                s.push("DELETE", &format!("/gui/workspaces/{id}"), Json_::Null);
-                axum::http::StatusCode::NO_CONTENT
-            }),
-        )
-        .route(
-            "/gui/layout",
-            get(|| async { Json(json!({"left": "ws-1", "right": null})) }).put(
-                |State(s): State<Recorded>, Json(body): Json<Json_>| async move {
-                    s.push("PUT", "/gui/layout", body);
-                    Json(json!({}))
-                },
-            ),
-        )
-        .route(
-            "/gui/panels/:slot/view",
-            put(|State(s): State<Recorded>, Path(slot): Path<String>, Json(body): Json<Json_>| async move {
-                s.push("PUT", &format!("/gui/panels/{slot}/view"), body);
-                Json(json!({}))
-            })
-            .get(|Path(slot): Path<String>| async move {
-                Json(json!({"type": "entry-list", "status": "ready", "slot": slot}))
-            }),
-        )
-        .route(
-            "/gui/message",
-            post(
-                |State(s): State<Recorded>,
-                 Query(q): Query<std::collections::HashMap<String, String>>,
-                 RawQuery(_): RawQuery,
-                 Json(body): Json<Json_>| async move {
-                    let suffix = q
-                        .get("workspace_id")
-                        .map(|w| format!("?workspace_id={w}"))
-                        .unwrap_or_default();
-                    s.push("POST", &format!("/gui/message{suffix}"), body);
-                    Json(json!({}))
-                },
-            ),
-        )
-        .route(
-            "/gui/input",
-            post(move |State(s): State<Recorded>, Json(body): Json<Json_>| {
-                let resp = input_response.clone();
-                async move {
-                    s.push("POST", "/gui/input", body);
-                    Json((*resp).clone())
-                }
-            }),
-        )
-        .route(
-            "/gui/prompt",
-            post(move |State(s): State<Recorded>, Json(body): Json<Json_>| {
-                let resp = prompt_response.clone();
-                async move {
-                    s.push("POST", "/gui/prompt", body);
-                    Json((*resp).clone())
-                }
-            }),
-        )
-        .with_state(state);
+    let app =
+        axum::Router::new()
+            .route(
+                "/gui/status",
+                get(move || {
+                    let status = status.clone();
+                    async move { Json(status) }
+                }),
+            )
+            .route(
+                "/gui/workspaces",
+                post(|State(s): State<Recorded>, Json(body): Json<Json_>| async move {
+                    s.push("POST", "/gui/workspaces", body);
+                    Json(json!({"id": "ws-9"}))
+                }),
+            )
+            .route(
+                "/gui/workspaces/:id",
+                delete(|State(s): State<Recorded>, Path(id): Path<String>| async move {
+                    s.push("DELETE", &format!("/gui/workspaces/{id}"), Json_::Null);
+                    axum::http::StatusCode::NO_CONTENT
+                }),
+            )
+            .route(
+                "/gui/layout",
+                get(|| async { Json(json!({"left": "ws-1", "right": null})) }).put(
+                    |State(s): State<Recorded>, Json(body): Json<Json_>| async move {
+                        s.push("PUT", "/gui/layout", body);
+                        Json(json!({}))
+                    },
+                ),
+            )
+            .route(
+                "/gui/panels/:slot/view",
+                put(
+                    |State(s): State<Recorded>,
+                     Path(slot): Path<String>,
+                     Json(body): Json<Json_>| async move {
+                        s.push("PUT", &format!("/gui/panels/{slot}/view"), body);
+                        Json(json!({}))
+                    },
+                )
+                .get(|Path(slot): Path<String>| async move {
+                    Json(json!({"type": "entry-list", "status": "ready", "slot": slot}))
+                }),
+            )
+            .route(
+                "/gui/message",
+                post(
+                    |State(s): State<Recorded>,
+                     Query(q): Query<std::collections::HashMap<String, String>>,
+                     RawQuery(_): RawQuery,
+                     Json(body): Json<Json_>| async move {
+                        let suffix = q
+                            .get("workspace_id")
+                            .map(|w| format!("?workspace_id={w}"))
+                            .unwrap_or_default();
+                        s.push("POST", &format!("/gui/message{suffix}"), body);
+                        Json(json!({}))
+                    },
+                ),
+            )
+            .route(
+                "/gui/input",
+                post(move |State(s): State<Recorded>, Json(body): Json<Json_>| {
+                    let resp = input_response.clone();
+                    async move {
+                        s.push("POST", "/gui/input", body);
+                        Json((*resp).clone())
+                    }
+                }),
+            )
+            .route(
+                "/gui/prompt",
+                post(move |State(s): State<Recorded>, Json(body): Json<Json_>| {
+                    let resp = prompt_response.clone();
+                    async move {
+                        s.push("POST", "/gui/prompt", body);
+                        Json((*resp).clone())
+                    }
+                }),
+            )
+            .with_state(state);
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
@@ -143,7 +151,10 @@ fn start_stub(input_response: Json_, prompt_response: Json_) -> StubGui {
 }
 
 fn stub() -> StubGui {
-    start_stub(json!({"event": "answer", "value": "1"}), json!({"event": "confirm", "text": "jazz"}))
+    start_stub(
+        json!({"event": "answer", "value": "1"}),
+        json!({"event": "confirm", "text": "jazz"}),
+    )
 }
 
 struct Out {
@@ -196,10 +207,7 @@ fn test_gui_url_from_environment() {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let output = cmd.output().unwrap();
     assert_eq!(output.status.code(), Some(0));
-    assert_eq!(
-        String::from_utf8_lossy(&output.stdout).trim(),
-        "11111111111111111111111111111111"
-    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "11111111111111111111111111111111");
 }
 
 #[test]
@@ -354,10 +362,7 @@ fn test_gui_prompt_prints_the_text() {
 #[test]
 fn test_gui_prompt_with_completions() {
     let gui = stub();
-    let out = mf_gui(
-        &gui,
-        &["prompt", "Tag: ", "--completion", "jazz", "--completion", "rock"],
-    );
+    let out = mf_gui(&gui, &["prompt", "Tag: ", "--completion", "jazz", "--completion", "rock"]);
     assert_ok(&out);
     let requests = gui.recorded.all();
     assert_eq!(
@@ -381,7 +386,12 @@ fn test_gui_prompt_with_completions_from_stdin() {
     use std::io::Write as _;
     child.stdin.take().unwrap().write_all(b"jazz\nrock\n\n").unwrap();
     let output = child.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(0), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let requests = gui.recorded.all();
     assert_eq!(

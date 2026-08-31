@@ -260,10 +260,7 @@ fn test_remove_records_mfr_path_old_for_the_whole_subtree() {
 fn test_rename_updates_tree_ref_and_children_follow() {
     let (repo, root, root_uuid) = setup("rename");
     write_file(&root, "old/file.txt", b"f");
-    enqueue(
-        &repo,
-        &[FsEvent::Create("/old".into()), FsEvent::Create("/old/file.txt".into())],
-    );
+    enqueue(&repo, &[FsEvent::Create("/old".into()), FsEvent::Create("/old/file.txt".into())]);
     executor::flush_pending(&repo).unwrap();
     let dir = resolve(&repo, "/old").unwrap();
     let file = resolve(&repo, "/old/file.txt").unwrap();
@@ -296,10 +293,7 @@ fn test_split_rename_with_cookie_is_one_move_not_delete_plus_arrival() {
     // executor must fuse them back into one move (not delete + arrival).
     let (repo, root, root_uuid) = setup("split_rename");
     write_file(&root, "old/file.txt", b"f");
-    enqueue(
-        &repo,
-        &[FsEvent::Create("/old".into()), FsEvent::Create("/old/file.txt".into())],
-    );
+    enqueue(&repo, &[FsEvent::Create("/old".into()), FsEvent::Create("/old/file.txt".into())]);
     executor::flush_pending(&repo).unwrap();
     let dir = resolve(&repo, "/old").unwrap();
     let file = resolve(&repo, "/old/file.txt").unwrap();
@@ -374,10 +368,7 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
 
     write_file(&root, "back/song2.mp3", b"some audio content");
     std::fs::remove_file(std::env::temp_dir().join("mf_outside.mp3")).unwrap();
-    enqueue(
-        &repo,
-        &[FsEvent::Create("/back".into()), FsEvent::RenameTo("/back/song2.mp3".into())],
-    );
+    enqueue(&repo, &[FsEvent::Create("/back".into()), FsEvent::RenameTo("/back/song2.mp3".into())]);
     executor::flush_pending(&repo).unwrap();
 
     assert_eq!(
@@ -432,10 +423,7 @@ fn test_modify_data_refreshes_and_invalidates_hashes() {
 #[test]
 fn test_compaction_create_then_remove_writes_nothing() {
     let (repo, root, _) = setup("compact1");
-    enqueue(
-        &repo,
-        &[FsEvent::Create("/ghost.txt".into()), FsEvent::Remove("/ghost.txt".into())],
-    );
+    enqueue(&repo, &[FsEvent::Create("/ghost.txt".into()), FsEvent::Remove("/ghost.txt".into())]);
     let revisions_before = count(&repo, "SELECT COUNT(*) FROM revision");
     executor::flush_pending(&repo).unwrap();
 

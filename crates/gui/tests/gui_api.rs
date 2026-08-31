@@ -10,10 +10,10 @@ use metafolder_gui::config::ConfigDir;
 use metafolder_gui::daemon_proxy::DaemonProxy;
 use metafolder_gui::events;
 use metafolder_gui::notifier::RecordingNotifier;
-use metafolder_gui::server::{self, ServerState};
 use metafolder_gui::server::bench::BenchBuffer;
 use metafolder_gui::server::command_wait::{CommandOutcome, CommandWait};
 use metafolder_gui::server::input_wait::InputWait;
+use metafolder_gui::server::{self, ServerState};
 use metafolder_gui::state::GuiState;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -177,13 +177,8 @@ async fn test_layout_get_and_partial_put() {
     assert_eq!(body, json!({"left": "ws-1", "right": null}));
 
     // Partial update: only the right slot.
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/layout",
-        Some(json!({"right": "ws-1"})),
-    )
-    .await;
+    let (status, _) =
+        request(&ctx.router, "PUT", "/gui/layout", Some(json!({"right": "ws-1"}))).await;
     assert_eq!(status, StatusCode::OK);
     let (_, body) = request(&ctx.router, "GET", "/gui/layout", None).await;
     assert_eq!(body, json!({"left": "ws-1", "right": "ws-1"}));
@@ -206,13 +201,9 @@ async fn test_layout_get_and_partial_put() {
 async fn test_panel_view_set_and_get() {
     let ctx = setup().await;
 
-    let (status, _) = request(
-        &ctx.router,
-        "PUT",
-        "/gui/panels/left/view",
-        Some(json!({"type": "message"})),
-    )
-    .await;
+    let (status, _) =
+        request(&ctx.router, "PUT", "/gui/panels/left/view", Some(json!({"type": "message"})))
+            .await;
     assert_eq!(status, StatusCode::OK);
 
     let (status, body) = request(&ctx.router, "GET", "/gui/panels/left/view", None).await;
@@ -252,10 +243,7 @@ async fn test_panel_view_file_with_path_sets_selection() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        ctx.gui.get_var("ws-1", "selected_paths").unwrap(),
-        json!(["/tmp/picture.jpg"])
-    );
+    assert_eq!(ctx.gui.get_var("ws-1", "selected_paths").unwrap(), json!(["/tmp/picture.jpg"]));
     // No active repo in ws-1: no entry lookup is possible.
     assert_eq!(ctx.gui.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
 }
@@ -360,13 +348,9 @@ async fn test_message_targets_focused_or_explicit_workspace() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ctx.gui.messages("ws-2").unwrap().len(), 1);
 
-    let (status, _) = request(
-        &ctx.router,
-        "POST",
-        "/gui/message?workspace_id=ws-99",
-        Some(json!({"text": "x"})),
-    )
-    .await;
+    let (status, _) =
+        request(&ctx.router, "POST", "/gui/message?workspace_id=ws-99", Some(json!({"text": "x"})))
+            .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 
@@ -395,13 +379,9 @@ async fn test_progress_updates_running_script() {
 
     // An unknown run id is a lenient no-op: still 200, and no new broadcast.
     let before = ctx.notifier.payloads("script-task-changed").len();
-    let (status, _) = request(
-        &ctx.router,
-        "POST",
-        "/gui/progress",
-        Some(json!({"task": "nope", "done": 1})),
-    )
-    .await;
+    let (status, _) =
+        request(&ctx.router, "POST", "/gui/progress", Some(json!({"task": "nope", "done": 1})))
+            .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(ctx.notifier.payloads("script-task-changed").len(), before);
 }
@@ -457,10 +437,8 @@ async fn test_input_wait_broadcasts_its_prompt() {
     // The active input wait carries its question so the frontend can show it
     // in a dedicated bar, separate from the transient status/error line.
     let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
-    let active = waits
-        .iter()
-        .find(|p| p["active"] == json!(true))
-        .expect("an active input-wait event");
+    let active =
+        waits.iter().find(|p| p["active"] == json!(true)).expect("an active input-wait event");
     assert_eq!(active["prompt"], json!("Which action?"));
 
     assert!(ctx.input.resolve_answer("a"));
@@ -477,14 +455,14 @@ async fn test_input_wait_broadcasts_its_prompt() {
 async fn test_concurrent_input_waits_conflict() {
     let ctx = setup().await;
     let router = ctx.router.clone();
-    let waiting = tokio::spawn(async move {
-        request(&router, "POST", "/gui/input", Some(json!({}))).await
-    });
+    let waiting =
+        tokio::spawn(async move { request(&router, "POST", "/gui/input", Some(json!({}))).await });
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let (status, _) = request(&ctx.router, "POST", "/gui/input", Some(json!({}))).await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (status, _) = request(&ctx.router, "POST", "/gui/prompt", Some(json!({"prompt": "?"}))).await;
+    let (status, _) =
+        request(&ctx.router, "POST", "/gui/prompt", Some(json!({"prompt": "?"}))).await;
     assert_eq!(status, StatusCode::CONFLICT);
 
     ctx.input.close_all();
@@ -495,13 +473,8 @@ async fn test_concurrent_input_waits_conflict() {
 #[tokio::test]
 async fn test_input_wait_timeout() {
     let ctx = setup().await;
-    let (status, body) = request(
-        &ctx.router,
-        "POST",
-        "/gui/input",
-        Some(json!({"timeout_ms": 50})),
-    )
-    .await;
+    let (status, body) =
+        request(&ctx.router, "POST", "/gui/input", Some(json!({"timeout_ms": 50}))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, json!({"event": "timeout"}));
     // The lock is released after a timeout.
@@ -517,13 +490,8 @@ async fn test_prompt_confirm_and_cancel() {
 
     let router = ctx.router.clone();
     let waiting = tokio::spawn(async move {
-        request(
-            &router,
-            "POST",
-            "/gui/prompt",
-            Some(json!({"prompt": "Enter a rating (1-5): "})),
-        )
-        .await
+        request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "Enter a rating (1-5): "})))
+            .await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
 

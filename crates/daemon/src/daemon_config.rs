@@ -88,13 +88,11 @@ pub fn default_config_path() -> Option<PathBuf> {
 pub fn read_config(path: &Path) -> Result<DaemonConfig> {
     let contents = match std::fs::read_to_string(path) {
         Ok(contents) => contents,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(DaemonConfig::default())
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(DaemonConfig::default()),
         Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
     };
-    let raw: RawConfig = toml::from_str(&contents)
-        .with_context(|| format!("parsing {}", path.display()))?;
+    let raw: RawConfig =
+        toml::from_str(&contents).with_context(|| format!("parsing {}", path.display()))?;
     let mut load = Vec::with_capacity(raw.load.len());
     for entry in raw.load {
         load.push(match (entry.root, entry.metafolder) {
@@ -180,9 +178,8 @@ mod tests {
 
     #[test]
     fn test_read_config_parses_the_settings_table() {
-        let path = write_config(
-            "[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n",
-        );
+        let path =
+            write_config("[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n");
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
         assert_eq!(config.settings.tree_cache_max_nodes, 42);
@@ -191,8 +188,7 @@ mod tests {
 
     #[test]
     fn test_settings_override_one_key_keeps_other_default() {
-        let parsed: DaemonSettings =
-            toml::from_str("watch-quiet-period-ms = 250\n").unwrap();
+        let parsed: DaemonSettings = toml::from_str("watch-quiet-period-ms = 250\n").unwrap();
         assert_eq!(parsed.watch_quiet_period_ms, 250);
         // The unspecified key keeps its default.
         assert_eq!(parsed.tree_cache_max_nodes, crate::tree_cache::DEFAULT_MAX_NODES);
@@ -200,7 +196,8 @@ mod tests {
 
     #[test]
     fn test_missing_file_yields_defaults() {
-        let path = std::env::temp_dir().join("metafolder-tests")
+        let path = std::env::temp_dir()
+            .join("metafolder-tests")
             .join(format!("mf_daemon_missing_{}.toml", uuid::Uuid::new_v4()));
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings, DaemonSettings::default());
@@ -210,7 +207,8 @@ mod tests {
     /// An on-disk repository ready to be auto-loaded (init then unload), plus
     /// its name (the root directory's file name).
     fn on_disk_repo(prefix: &str) -> (crate::state::AppState, PathBuf, String) {
-        let root = std::env::temp_dir().join("metafolder-tests")
+        let root = std::env::temp_dir()
+            .join("metafolder-tests")
             .join(format!("mf_daemon_apply_{prefix}_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let state = crate::state::AppState::new();
@@ -223,10 +221,7 @@ mod tests {
     #[test]
     fn test_apply_interactive_renders_a_progress_bar_and_a_loaded_line() {
         let (state, root, name) = on_disk_repo("tty");
-        let config = DaemonConfig {
-            load: vec![RepoLocator::Root(root)],
-            ..Default::default()
-        };
+        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, true);
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -244,10 +239,7 @@ mod tests {
     #[test]
     fn test_apply_non_interactive_prints_only_the_loaded_line() {
         let (state, root, name) = on_disk_repo("pipe");
-        let config = DaemonConfig {
-            load: vec![RepoLocator::Root(root)],
-            ..Default::default()
-        };
+        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, false);
         assert!(warnings.is_empty(), "{warnings:?}");

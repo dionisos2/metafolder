@@ -13,7 +13,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -46,14 +51,7 @@ async fn setup() -> (Router, String) {
 
     // Root: watched, with a `.git` ignore pattern.
     let root_uuid = tree_root(&app, &repo).await;
-    put_field(
-        &app,
-        &repo,
-        &root_uuid,
-        "mf_watch",
-        json!([{"type": "bool", "value": true}]),
-    )
-    .await;
+    put_field(&app, &repo, &root_uuid, "mf_watch", json!([{"type": "bool", "value": true}])).await;
     put_field(
         &app,
         &repo,
@@ -75,13 +73,9 @@ async fn setup() -> (Router, String) {
     let work = body["uuid"].as_str().unwrap().to_string();
     // `track` writes `mf_watch = false`; drop it so /work inherits the root's
     // watch and only contributes its own ignore set (the common shape).
-    let (status, body) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/metarecords/{work}/fields/mf_watch"),
-        None,
-    )
-    .await;
+    let (status, body) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{work}/fields/mf_watch"), None)
+            .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "unset mf_watch failed: {body}");
     put_field(
         &app,
@@ -98,11 +92,7 @@ async fn tree_root(app: &Router, repo: &str) -> String {
     let (status, body) =
         request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
     assert_eq!(status, StatusCode::OK, "tree/roots failed: {body}");
-    body.as_array()
-        .unwrap()
-        .iter()
-        .find(|r| r["name"] == "")
-        .unwrap()["uuid"]
+    body.as_array().unwrap().iter().find(|r| r["name"] == "").unwrap()["uuid"]
         .as_str()
         .unwrap()
         .to_string()
@@ -126,7 +116,9 @@ async fn test_eligibility_explains_each_path() {
         &app,
         "POST",
         &format!("/repos/{repo}/eligibility"),
-        Some(json!({"paths": ["/notes.txt", "/.git/config", "/work/target/debug", "/work/.git/x"]})),
+        Some(
+            json!({"paths": ["/notes.txt", "/.git/config", "/work/target/debug", "/work/.git/x"]}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "eligibility failed: {body}");
@@ -194,7 +186,8 @@ async fn test_effective_ignore_reports_source_and_directness() {
 
     // A directory inheriting one: the write trap the GUI warns about.
     let (status, body) =
-        request(&app, "GET", &format!("/repos/{repo}/ignore/effective?path=/work/live"), None).await;
+        request(&app, "GET", &format!("/repos/{repo}/ignore/effective?path=/work/live"), None)
+            .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["source"], "/work");
     assert_eq!(body["direct"], false);

@@ -33,7 +33,8 @@ static LOCK: Mutex<()> = Mutex::new(());
 /// is not a valid uuid. The charset (hex only, no `/`/`.`/whitespace) also makes
 /// the stored line safe to split on the tab separator.
 pub fn normalize_uuid(uuid: &str) -> Result<String, String> {
-    let normalized: String = uuid.chars().filter(|&c| c != '-').flat_map(char::to_lowercase).collect();
+    let normalized: String =
+        uuid.chars().filter(|&c| c != '-').flat_map(char::to_lowercase).collect();
     let ok = normalized.len() == 32 && normalized.bytes().all(|b| b.is_ascii_hexdigit());
     if ok {
         Ok(normalized)
@@ -109,7 +110,8 @@ mod tests {
     use super::*;
 
     fn temp_metafolder(prefix: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join("metafolder-tests")
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
             .join(format!("metafolder_gui_recent_{prefix}_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -154,10 +156,7 @@ mod tests {
             vec![Entry { uuid: a.clone(), viewed_at: "2026-08-15T10:00:00Z".into() }]
         );
         let file = dir.join("gui/recent");
-        assert_eq!(
-            std::fs::read_to_string(&file).unwrap(),
-            format!("{a}\t2026-08-15T10:00:00Z\n")
-        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), format!("{a}\t2026-08-15T10:00:00Z\n"));
     }
 
     #[test]
@@ -205,8 +204,7 @@ mod tests {
         touch(&dir, &a, "2026-08-15T10:00:00Z").unwrap();
         touch(&dir, &b, "2026-08-15T10:00:01Z").unwrap();
         touch(&dir, &c, "2026-08-15T10:00:02Z").unwrap();
-        let got: Vec<String> =
-            read(&dir, Some(2)).unwrap().into_iter().map(|e| e.uuid).collect();
+        let got: Vec<String> = read(&dir, Some(2)).unwrap().into_iter().map(|e| e.uuid).collect();
         assert_eq!(got, vec![c, b]);
     }
 

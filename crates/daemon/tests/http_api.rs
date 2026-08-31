@@ -1,7 +1,6 @@
 //! Integration tests for the HTTP API: repository management, metadata CRUD,
 //! field operations, reserved-field enforcement, pagination.
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -61,9 +60,13 @@ async fn app_with_repo(prefix: &str) -> (Router, String, TempDir) {
 
 /// Creates an entry and returns its full metadata object.
 async fn create_metarecord(app: &Router, repo: &str, fields: Value) -> Value {
-    let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})))
-            .await;
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": fields})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body
 }
@@ -283,14 +286,16 @@ async fn test_create_get_delete_metarecord() {
     assert_eq!(created["fields"].as_array().unwrap().len(), 3);
     assert!(created["fields"][0]["id"].is_i64(), "fields must carry their row id");
 
-    let (status, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let (status, got) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(got, created);
 
     let (status, _) =
         request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -317,9 +322,12 @@ async fn list_fields_refreshes_warm_index_after_write() {
 
     // Create a metarecord and warm the index with a query (the GUI's first list
     // display builds it).
-    let created =
-        create_metarecord(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]))
-            .await;
+    let created = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
+    )
+    .await;
     let uuid = created["uuid"].as_str().unwrap().to_string();
     let (status, _) = request(
         &app,
@@ -364,7 +372,8 @@ async fn list_fields_refreshes_warm_index_after_write() {
 async fn test_get_unknown_record_is_not_found() {
     let (app, repo, root) = app_with_repo("get404").await;
     let bogus = Uuid::new_v4().as_simple().to_string();
-    let (status, _) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{bogus}"), None).await;
+    let (status, _) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{bogus}"), None).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -392,12 +401,8 @@ async fn test_patch_sets_field_and_bumps_version() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(updated["version"], 1);
-    let tags: Vec<&Value> = updated["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|f| f["name"] == "tag")
-        .collect();
+    let tags: Vec<&Value> =
+        updated["fields"].as_array().unwrap().iter().filter(|f| f["name"] == "tag").collect();
     assert_eq!(tags.len(), 1, "set_field must collapse the multi-map");
     assert_eq!(tags[0]["value"]["value"], "blues");
 
@@ -437,9 +442,8 @@ async fn test_field_append_replace_delete() {
     assert_eq!(status, StatusCode::OK);
     let fields = updated["fields"].as_array().unwrap();
     assert_eq!(fields.len(), 2);
-    let live_id = fields.iter().find(|f| f["value"]["value"] == "live").unwrap()["id"]
-        .as_i64()
-        .unwrap();
+    let live_id =
+        fields.iter().find(|f| f["value"]["value"] == "live").unwrap()["id"].as_i64().unwrap();
 
     // PATCH replaces that single row by id, keeping its id.
     let (status, updated) = request(
@@ -465,13 +469,8 @@ async fn test_field_append_replace_delete() {
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     // DELETE the row.
-    let (status, _) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/fields/{live_id}"),
-        None,
-    )
-    .await;
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/fields/{live_id}"), None).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(got["fields"].as_array().unwrap().len(), 1);
@@ -540,13 +539,8 @@ async fn test_reserved_fields_require_force() {
     // Deleting a reserved field row requires force in the body.
     let (_, got) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     let field_id = got["fields"][0]["id"].as_i64().unwrap();
-    let (status, _) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/fields/{field_id}"),
-        None,
-    )
-    .await;
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/fields/{field_id}"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = request(
         &app,
@@ -622,12 +616,20 @@ async fn test_read_a_named_set_via_uuid_in() {
     let (app, repo, root_dir) = app_with_repo("uuidinread").await;
     let uuid = |m: Value| m["uuid"].as_str().unwrap().to_string();
     let a = uuid(
-        create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}]))
-            .await,
+        create_metarecord(
+            &app,
+            &repo,
+            json!([{"name": "rating", "value": {"type": "int", "value": 5}}]),
+        )
+        .await,
     );
     let b = uuid(
-        create_metarecord(&app, &repo, json!([{"name": "genre", "value": {"type": "string", "value": "jazz"}}]))
-            .await,
+        create_metarecord(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": "jazz"}}]),
+        )
+        .await,
     );
     let missing = Uuid::new_v4().as_simple().to_string();
 
@@ -655,8 +657,12 @@ async fn test_read_a_named_set_via_uuid_in() {
 async fn test_list_metadata_plain_and_paginated() {
     let (app, repo, root) = app_with_repo("page").await;
     for i in 0..5 {
-        create_metarecord(&app, &repo, json!([{"name": "i", "value": {"type": "int", "value": i}}]))
-            .await;
+        create_metarecord(
+            &app,
+            &repo,
+            json!([{"name": "i", "value": {"type": "int", "value": i}}]),
+        )
+        .await;
     }
 
     // "List all" is a match-all query (is_unknown on a never-used field matches
@@ -706,8 +712,12 @@ async fn test_list_metadata_plain_and_paginated() {
 #[tokio::test]
 async fn test_conflicting_value_type_rejected() {
     let (app, repo, root) = app_with_repo("typeconflict").await;
-    create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}]))
-        .await;
+    create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "rating", "value": {"type": "int", "value": 5}}]),
+    )
+    .await;
     // A String write to the now-Int field is rejected.
     let (status, body) = request(
         &app,
@@ -875,13 +885,9 @@ async fn test_repo_info_and_rename() {
     let original = info["name"].as_str().unwrap().to_string();
 
     // PATCH renames it; GET reflects the new name.
-    let (status, renamed) = request(
-        &app,
-        "PATCH",
-        &format!("/repos/{repo}"),
-        Some(json!({"name": "fresh-name"})),
-    )
-    .await;
+    let (status, renamed) =
+        request(&app, "PATCH", &format!("/repos/{repo}"), Some(json!({"name": "fresh-name"})))
+            .await;
     assert_eq!(status, StatusCode::OK, "rename failed: {renamed}");
     assert_eq!(renamed["name"], "fresh-name");
     assert_ne!(renamed["name"].as_str().unwrap(), original);
@@ -932,7 +938,9 @@ async fn test_record_field_by_name_get_set_unset() {
         &app,
         "PUT",
         &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
-        Some(json!({"values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}]})),
+        Some(
+            json!({"values": [{"type": "string", "value": "a"}, {"type": "string", "value": "b"}]}),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -941,13 +949,9 @@ async fn test_record_field_by_name_get_set_unset() {
     assert_eq!(got["values"].as_array().unwrap().len(), 2);
 
     // DELETE (unset) removes the field entirely.
-    let (status, _) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"),
-        None,
-    )
-    .await;
+    let (status, _) =
+        request(&app, "DELETE", &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"), None)
+            .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (_, got) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}/fields/tag"), None).await;
@@ -985,7 +989,8 @@ async fn test_tree_roots_lists_forest_roots() {
     let (status, body) =
         request(&app, "GET", &format!("/repos/{repo}/tree/roots?field=cat"), None).await;
     assert_eq!(status, StatusCode::OK, "got: {body}");
-    let names: Vec<&str> = body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> =
+        body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert_eq!(names, ["books", "music"], "roots, sorted by name; no children");
     // The reported root carries its uuid.
     let music_entry = body.as_array().unwrap().iter().find(|e| e["name"] == "music").unwrap();
@@ -1015,13 +1020,9 @@ async fn test_tree_children_lists_direct_children() {
     let rock = id(create_metarecord(&app, &repo, treeref(Some(&music), "rock")).await);
 
     // The direct children of `music`, ordered by name, each with its uuid.
-    let (status, body) = request(
-        &app,
-        "GET",
-        &format!("/repos/{repo}/tree/children?field=cat&uuid={music}"),
-        None,
-    )
-    .await;
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/children?field=cat&uuid={music}"), None)
+            .await;
     assert_eq!(status, StatusCode::OK, "got: {body}");
     let entries = body.as_array().unwrap();
     let names: Vec<&str> = entries.iter().map(|e| e["name"].as_str().unwrap()).collect();
@@ -1033,13 +1034,9 @@ async fn test_tree_children_lists_direct_children() {
     assert_eq!(by_name("rock"), rock);
 
     // A leaf has no children.
-    let (_, leaf) = request(
-        &app,
-        "GET",
-        &format!("/repos/{repo}/tree/children?field=cat&uuid={jazz}"),
-        None,
-    )
-    .await;
+    let (_, leaf) =
+        request(&app, "GET", &format!("/repos/{repo}/tree/children?field=cat&uuid={jazz}"), None)
+            .await;
     assert_eq!(leaf.as_array().unwrap().len(), 0, "a leaf has no children: {leaf}");
 
     std::fs::remove_dir_all(root).unwrap();
@@ -1052,10 +1049,8 @@ async fn test_list_fields_distinct_names_and_types() {
     // A few metarecords with assorted field types. `tag` (ref) appears on two
     // metarecords — it must be reported once. `note` is set to Nothing — an
     // explicit absence, which must be excluded from the enumeration.
-    let target = create_metarecord(&app, &repo, json!([])).await["uuid"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let target =
+        create_metarecord(&app, &repo, json!([])).await["uuid"].as_str().unwrap().to_string();
     create_metarecord(
         &app,
         &repo,
@@ -1229,7 +1224,12 @@ async fn test_resolve_tree_path_to_uuid() {
 #[tokio::test]
 async fn test_expected_version_precondition() {
     let (app, repo, _root) = app_with_repo("expected_version").await;
-    let m = create_metarecord(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
+    let m = create_metarecord(
+        &app,
+        &repo,
+        json!([{"name": "rating", "value": {"type": "int", "value": 1}}]),
+    )
+    .await;
     let uuid = m["uuid"].as_str().unwrap().to_string();
     let base = format!("/repos/{repo}/metarecords/{uuid}");
 

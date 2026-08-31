@@ -2,7 +2,6 @@
 //! engine modules. No logic here — everything testable lives in
 //! `state`, `keybindings`, `command_registry` and `config`.
 
-use metafolder_core::sync::MutexExt;
 use crate::command_registry::{CommandDef, CommandRegistry};
 use crate::config::ConfigDir;
 use crate::daemon_proxy::{DaemonProxy, ProxyResponse};
@@ -10,6 +9,7 @@ use crate::keybindings::{CompiledBinding, KeybindingSet};
 use crate::state::layout::{LayoutView, SlotId};
 use crate::state::workspace::{MessageEntry, WorkspaceInfo};
 use crate::state::GuiState;
+use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -387,8 +387,7 @@ pub fn post_status(
     kind: Option<String>,
     timeout_ms: Option<u64>,
 ) -> Result<(), String> {
-    app.gui
-        .post_status(&ws_id, &text, kind.as_deref().unwrap_or("info"), timeout_ms)
+    app.gui.post_status(&ws_id, &text, kind.as_deref().unwrap_or("info"), timeout_ms)
 }
 
 #[tauri::command]
@@ -615,10 +614,9 @@ pub async fn recent_read(
     limit: Option<usize>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let dir = crate::history::metafolder_dir_of(&app.daemon, &repo).await?;
-    let entries =
-        tauri::async_runtime::spawn_blocking(move || crate::recent::read(&dir, limit))
-            .await
-            .map_err(|e| format!("blocking task failed: {e}"))??;
+    let entries = tauri::async_runtime::spawn_blocking(move || crate::recent::read(&dir, limit))
+        .await
+        .map_err(|e| format!("blocking task failed: {e}"))??;
     Ok(entries
         .into_iter()
         .map(|e| serde_json::json!({ "uuid": e.uuid, "viewed_at": e.viewed_at }))

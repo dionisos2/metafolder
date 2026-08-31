@@ -21,10 +21,7 @@ struct Stub {
 }
 
 async fn spawn_stub(log: Value) -> (String, Stub) {
-    let stub = Stub {
-        log,
-        rollbacks: Arc::new(Mutex::new(Vec::new())),
-    };
+    let stub = Stub { log, rollbacks: Arc::new(Mutex::new(Vec::new())) };
     let router = axum::Router::new()
         .route(
             "/repos/:repo/log",

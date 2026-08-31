@@ -17,18 +17,13 @@ pub struct StyleWatcher {
 /// files by rename) and emits `style-changed` on stylesheet changes.
 pub fn watch(config: Arc<ConfigDir>, gui: Arc<GuiState>) -> Result<StyleWatcher, String> {
     let style_path = config.style_css_path();
-    let watched_dir = style_path
-        .parent()
-        .ok_or("style.css has no parent directory")?
-        .to_path_buf();
+    let watched_dir = style_path.parent().ok_or("style.css has no parent directory")?.to_path_buf();
 
     let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
         let Ok(event) = event else { return };
         let touches_style = event.paths.iter().any(|p| p.ends_with("style.css"));
-        let relevant = matches!(
-            event.kind,
-            notify::EventKind::Create(_) | notify::EventKind::Modify(_)
-        );
+        let relevant =
+            matches!(event.kind, notify::EventKind::Create(_) | notify::EventKind::Modify(_));
         if touches_style && relevant {
             gui.notify(
                 events::STYLE_CHANGED,
@@ -65,10 +60,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let payloads = notifier.payloads(events::STYLE_CHANGED);
-            if payloads
-                .iter()
-                .any(|p| p["css"].as_str().unwrap_or("").contains("color: red"))
-            {
+            if payloads.iter().any(|p| p["css"].as_str().unwrap_or("").contains("color: red")) {
                 break;
             }
             assert!(Instant::now() < deadline, "no style-changed event within 5s");

@@ -267,15 +267,17 @@ impl TrashDir {
             .map_err(|e| TrashError(format!("cannot stat {}: {e}", path.display())))?;
         let is_dir = meta.file_type().is_dir();
         let size = if is_dir {
-            dir_size(path).map_err(|e| TrashError(format!("cannot size {}: {e}", path.display())))?
+            dir_size(path)
+                .map_err(|e| TrashError(format!("cannot size {}: {e}", path.display())))?
         } else {
             meta.len()
         };
         let conn = self.open()?; // creates the trash dir + index
 
         let id = uuid::Uuid::new_v4().as_simple().to_string();
-        move_path(path, &self.blob_path(&id))
-            .map_err(|e| TrashError(format!("cannot move {} into the trash: {e}", path.display())))?;
+        move_path(path, &self.blob_path(&id)).map_err(|e| {
+            TrashError(format!("cannot move {} into the trash: {e}", path.display()))
+        })?;
 
         let entry = TrashEntry {
             id: id.clone(),
@@ -410,8 +412,9 @@ impl TrashDir {
                 })?;
             }
             RestoreAction::Merge => {
-                merge_move(&blob, &target)
-                    .map_err(|e| TrashError(format!("cannot merge into {}: {e}", target.display())))?;
+                merge_move(&blob, &target).map_err(|e| {
+                    TrashError(format!("cannot merge into {}: {e}", target.display()))
+                })?;
                 let _ = std::fs::remove_dir(&blob); // emptied by the merge
             }
         }
@@ -941,12 +944,9 @@ pub fn metarecord_at_path(
             {"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": name}},
         ],
     });
-    let resp = client.post(&format!("/repos/{repo}/query"), &json!({"query": query, "limit": 1}))?;
-    Ok(resp["results"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(Json::as_str)
-        .map(str::to_owned))
+    let resp =
+        client.post(&format!("/repos/{repo}/query"), &json!({"query": query, "limit": 1}))?;
+    Ok(resp["results"].as_array().and_then(|a| a.first()).and_then(Json::as_str).map(str::to_owned))
 }
 
 /// The filesystem root metarecord's uuid: the `mfr_path` forest root named `""`.
@@ -998,7 +998,8 @@ fn relink_subtree(
         }
         let parent = match &node.parent {
             Some(p) => Some(
-                Uuid::parse_str(p).map_err(|_| DaemonError::local("invalid subtree parent uuid"))?,
+                Uuid::parse_str(p)
+                    .map_err(|_| DaemonError::local("invalid subtree parent uuid"))?,
             ),
             None => None,
         };
@@ -1115,12 +1116,27 @@ mod tests {
         let node = TrashedNode { uuid: "0a".into(), parent: None, name: "f".into() };
         let entry = entry_with_subtree(vec![node]);
         let orphan = json!({"uuid": "0a", "fields": []}); // no present mfr_path
-        let put = |msg: &'static str, status| {
-            Mock { rules: vec![("GET ", Ok(orphan.clone())), ("PUT ", Err(DaemonError { status: Some(status), message: msg.into() }))] }
+        let put = |msg: &'static str, status| Mock {
+            rules: vec![
+                ("GET ", Ok(orphan.clone())),
+                ("PUT ", Err(DaemonError { status: Some(status), message: msg.into() })),
+            ],
         };
         // Both benign forest rejections are skipped (Ok).
-        assert!(restore_relink(&put("tree position already occupied for field 'mfr_path'", 400), "r", &entry, "f").is_ok());
-        assert!(restore_relink(&put("invalid TreeRef parent x: no such metarecord", 400), "r", &entry, "f").is_ok());
+        assert!(restore_relink(
+            &put("tree position already occupied for field 'mfr_path'", 400),
+            "r",
+            &entry,
+            "f"
+        )
+        .is_ok());
+        assert!(restore_relink(
+            &put("invalid TreeRef parent x: no such metarecord", 400),
+            "r",
+            &entry,
+            "f"
+        )
+        .is_ok());
         // A genuine error is surfaced.
         assert!(restore_relink(&put("database is locked", 500), "r", &entry, "f").is_err());
     }
@@ -1132,7 +1148,10 @@ mod tests {
         let child = json!({"uuid": "c", "fields": [
             {"name": "mfr_path", "value": {"type": "tree_ref", "value": {"parent": "top", "name": "b"}}}]});
         let mock = Mock {
-            rules: vec![("POST /repos/r/query", Ok(json!({"results": [child], "next_cursor": null})))],
+            rules: vec![(
+                "POST /repos/r/query",
+                Ok(json!({"results": [child], "next_cursor": null})),
+            )],
         };
         let uuids: Vec<String> =
             capture_nodes(&mock, "r", &top, "A").unwrap().into_iter().map(|n| n.uuid).collect();
@@ -1140,7 +1159,8 @@ mod tests {
     }
 
     fn tmp() -> PathBuf {
-        let p = std::env::temp_dir().join("metafolder-tests")
+        let p = std::env::temp_dir()
+            .join("metafolder-tests")
             .join(format!("mf-trash-test-{}", uuid::Uuid::new_v4().as_simple()));
         fs::create_dir_all(&p).unwrap();
         p
@@ -1237,11 +1257,8 @@ mod tests {
             name: u.into(),
         };
         // Given in child-first order; the top's parent (`root`) is outside the set.
-        let subtree = vec![
-            node("b", Some("nested")),
-            node("nested", Some("dir")),
-            node("dir", Some("root")),
-        ];
+        let subtree =
+            vec![node("b", Some("nested")), node("nested", Some("dir")), node("dir", Some("root"))];
         let ordered: Vec<String> = relink_order(&subtree).into_iter().map(|n| n.uuid).collect();
         // Every node appears after its parent.
         assert_eq!(ordered, vec!["dir", "nested", "b"]);
@@ -1455,8 +1472,7 @@ mod tests {
         }
         trash.remove(&ids[0]).unwrap();
         assert!(!trash.blob_path(&ids[0]).exists(), "the blob is gone");
-        let left: Vec<_> =
-            trash.entries().unwrap().into_iter().map(|e| e.id).collect();
+        let left: Vec<_> = trash.entries().unwrap().into_iter().map(|e| e.id).collect();
         assert_eq!(left, vec![ids[1].clone()], "only the other entry remains");
         fs::remove_dir_all(&base).ok();
     }
@@ -1569,8 +1585,7 @@ mod tests {
         let removed = trash.prune(PruneMode::MaxSize(250), false).unwrap();
         assert_eq!(removed.len(), 1);
         assert_eq!(removed[0].original_name, "a.txt");
-        let left: Vec<_> =
-            trash.entries().unwrap().into_iter().map(|e| e.original_name).collect();
+        let left: Vec<_> = trash.entries().unwrap().into_iter().map(|e| e.original_name).collect();
         assert_eq!(left, vec!["b.txt".to_string(), "c.txt".to_string()]);
         fs::remove_dir_all(&base).ok();
     }
@@ -1587,8 +1602,7 @@ mod tests {
         }
         set_age(&trash, &ids[0], 9_000);
         set_age(&trash, &ids[1], 1_000);
-        let names: Vec<_> =
-            trash.entries().unwrap().into_iter().map(|e| e.original_name).collect();
+        let names: Vec<_> = trash.entries().unwrap().into_iter().map(|e| e.original_name).collect();
         assert_eq!(names, vec!["b.txt".to_string(), "a.txt".to_string()]);
         fs::remove_dir_all(&base).ok();
     }

@@ -5,7 +5,6 @@
 //! `mfr_path`) with ordinary `plan_*` user fields, including cross-repo
 //! `ExternalRef` values. Orchestration (what to write) is the CLI's job (v2).
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -27,7 +26,12 @@ fn app() -> Router {
     routes::build(std::sync::Arc::new(AppState::new()))
 }
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder

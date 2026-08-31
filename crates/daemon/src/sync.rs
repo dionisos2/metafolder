@@ -144,9 +144,8 @@ fn bytes_to_uuid(b: Vec<u8>) -> Uuid {
 
 /// All links, ordered by UUID.
 pub fn list_links(conn: &Connection) -> Result<Vec<Link>> {
-    let mut stmt = conn.prepare(
-        "SELECT uuid, record_a, record_b, version_a, version_b FROM link ORDER BY uuid",
-    )?;
+    let mut stmt = conn
+        .prepare("SELECT uuid, record_a, record_b, version_a, version_b FROM link ORDER BY uuid")?;
     let links = stmt.query_map([], row_to_link)?.collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(links)
 }
@@ -170,7 +169,9 @@ pub fn link_for_record(conn: &Connection, side: Side, record: Uuid) -> Result<Op
     };
     Ok(conn
         .query_row(
-            &format!("SELECT uuid, record_a, record_b, version_a, version_b FROM link WHERE {col} = ?1"),
+            &format!(
+                "SELECT uuid, record_a, record_b, version_a, version_b FROM link WHERE {col} = ?1"
+            ),
             params![uuid_to_bytes(record)],
             row_to_link,
         )
@@ -260,7 +261,10 @@ pub fn commit_batch(conn: &mut Connection, commits: &[Commit]) -> Result<()> {
             "UPDATE link SET version_a = ?2, version_b = ?3 WHERE uuid = ?1",
             params![uuid_to_bytes(c.link), c.version_a as i64, c.version_b as i64],
         )?;
-        tx.execute("DELETE FROM snapshot_field WHERE link_uuid = ?1", params![uuid_to_bytes(c.link)])?;
+        tx.execute(
+            "DELETE FROM snapshot_field WHERE link_uuid = ?1",
+            params![uuid_to_bytes(c.link)],
+        )?;
         for f in &c.snapshot {
             let e = db::encode_value(&f.value);
             tx.execute(

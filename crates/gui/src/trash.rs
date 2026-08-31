@@ -16,20 +16,16 @@ use std::sync::Arc;
 async fn repo_info(daemon: &DaemonProxy, repo: &str) -> Result<Value, String> {
     let response = daemon.request("GET", &format!("/repos/{repo}"), None).await?;
     if response.status != 200 {
-        return Err(response.body["error"]
-            .as_str()
-            .map(str::to_string)
-            .unwrap_or_else(|| format!("cannot read repository {repo} (HTTP {})", response.status)));
+        return Err(response.body["error"].as_str().map(str::to_string).unwrap_or_else(|| {
+            format!("cannot read repository {repo} (HTTP {})", response.status)
+        }));
     }
     Ok(response.body)
 }
 
 /// Extracts the repo `root` and `internal_dir` from a `GET /repos/:repo` body.
 fn root_and_internal(info: &Value) -> Result<(String, String), String> {
-    let root = info["root"]
-        .as_str()
-        .ok_or("the daemon did not report the repo root")?
-        .to_string();
+    let root = info["root"].as_str().ok_or("the daemon did not report the repo root")?.to_string();
     let internal = info["internal_dir"]
         .as_str()
         .ok_or("the daemon did not report the repo internal_dir")?
@@ -79,7 +75,12 @@ impl BlockingClient {
 }
 
 impl DaemonClient for BlockingClient {
-    fn request(&self, method: &str, path: &str, body: Option<&Value>) -> Result<Value, DaemonError> {
+    fn request(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, DaemonError> {
         let url = format!("{}{}", self.base, path);
         let mut req = self.agent.request(method, &url);
         if let Some(token) = &self.token {
@@ -99,16 +100,21 @@ impl DaemonClient for BlockingClient {
                     .unwrap_or_else(|| format!("daemon returned HTTP {code}"));
                 Err(DaemonError { status: Some(code), message })
             }
-            Err(ureq::Error::Transport(t)) => {
-                Err(DaemonError { status: None, message: format!("cannot reach the daemon at {}: {t}", self.base) })
-            }
+            Err(ureq::Error::Transport(t)) => Err(DaemonError {
+                status: None,
+                message: format!("cannot reach the daemon at {}: {t}", self.base),
+            }),
         }
     }
 }
 
 /// The selected metarecord's first `mfr_path` (root-relative), via `resolve-tree`.
 /// `None` when the file is gone (`mfr_path` absent or `Nothing`).
-fn first_mfr_path(client: &BlockingClient, repo: &str, uuid: &str) -> Result<Option<String>, String> {
+fn first_mfr_path(
+    client: &BlockingClient,
+    repo: &str,
+    uuid: &str,
+) -> Result<Option<String>, String> {
     let resp = client
         .get(&format!("/repos/{repo}/metarecords/{uuid}/fields/mfr_path/resolve-tree"))
         .map_err(|e| e.message)?;
@@ -137,8 +143,8 @@ fn trash_selected_blocking(base: String, uuid: String, repo: String) -> Result<S
     // captured *before* the move while every metarecord is still linked.
     let record = client.get(&format!("/repos/{repo}/metarecords/{uuid}")).map_err(|e| e.message)?;
     let version = record["version"].as_u64();
-    let subtree =
-        metafolder_core::trash::capture_nodes(&client, &repo, &record, &rel).map_err(|e| e.message)?;
+    let subtree = metafolder_core::trash::capture_nodes(&client, &repo, &record, &rel)
+        .map_err(|e| e.message)?;
 
     let dir = trash_dir(&internal);
     let entry = dir.trash_path(&abs, Reason::Manual, None, Some(uuid), version).map_err(|e| e.0)?;
@@ -197,17 +203,14 @@ pub async fn trash_selected_metarecord(
     let base = app.daemon.base_url();
     // Resolve the selection synchronously (in-memory state), then do the daemon +
     // filesystem work off the async runtime (core's glue is blocking).
-    let selected = app
-        .gui
-        .get_var(&ws_id, "selected_metarecord")
-        .ok()
-        .and_then(|v| parse_selected(&v));
+    let selected =
+        app.gui.get_var(&ws_id, "selected_metarecord").ok().and_then(|v| parse_selected(&v));
     let result = match selected {
-        Some((uuid, repo)) => tokio::task::spawn_blocking(move || {
-            trash_selected_blocking(base, uuid, repo)
-        })
-        .await
-        .map_err(|e| format!("trash task panicked: {e}"))?,
+        Some((uuid, repo)) => {
+            tokio::task::spawn_blocking(move || trash_selected_blocking(base, uuid, repo))
+                .await
+                .map_err(|e| format!("trash task panicked: {e}"))?
+        }
         None => Err("no metarecord is selected in this workspace".to_string()),
     };
     match &result {
@@ -301,7 +304,8 @@ mod tests {
 
     #[test]
     fn root_and_internal_reads_both() {
-        let info = json!({"root": "/data/music", "internal_dir": "/data/music/.metafolder/internal"});
+        let info =
+            json!({"root": "/data/music", "internal_dir": "/data/music/.metafolder/internal"});
         let (root, internal) = root_and_internal(&info).unwrap();
         assert_eq!(root, "/data/music");
         assert_eq!(internal, "/data/music/.metafolder/internal");

@@ -61,9 +61,7 @@ fn test_set_user_keybinding_upserts_and_persists() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
 
-    let set = config
-        .set_user_keybinding("alt+t", "panel:split", None, None, false)
-        .unwrap();
+    let set = config.set_user_keybinding("alt+t", "panel:split", None, None, false).unwrap();
     let alt_t: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["alt+t"]).collect();
     assert_eq!(alt_t.len(), 1);
     assert_eq!(alt_t[0].invocation, "panel:split");
@@ -86,11 +84,8 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
     let set = config
         .set_user_keybinding("ctrl+shift+A", "second", Some("metarecord-list"), None, true)
         .unwrap();
-    let bindings: Vec<_> = set
-        .compiled()
-        .into_iter()
-        .filter(|b| b.keys == ["ctrl+shift+a"])
-        .collect();
+    let bindings: Vec<_> =
+        set.compiled().into_iter().filter(|b| b.keys == ["ctrl+shift+a"]).collect();
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].invocation, "second");
     assert_eq!(bindings[0].when.as_deref(), Some("metarecord-list"));
@@ -101,9 +96,7 @@ fn test_set_user_keybinding_replaces_differently_spelled_combo() {
 fn test_remove_user_keybinding_unbinds_the_combo() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
-    config
-        .set_user_keybinding("t", "panel:split", None, None, false)
-        .unwrap();
+    config.set_user_keybinding("t", "panel:split", None, None, false).unwrap();
 
     // In the single-file model, removing unbinds the combo entirely (there is
     // no separate default layer to fall back to).
@@ -134,10 +127,7 @@ fn test_list_panel_types_includes_custom_directories() {
 fn test_panel_dir_resolution() {
     let (_guard, config) = temp_config();
     common::install_defaults(&config);
-    assert_eq!(
-        config.panel_dir("hello").unwrap(),
-        config.root().join("panel-types/hello")
-    );
+    assert_eq!(config.panel_dir("hello").unwrap(), config.root().join("panel-types/hello"));
     assert!(config.panel_dir("nope").is_none());
     // Path traversal in a panel name must not resolve.
     assert!(config.panel_dir("../escape").is_none());

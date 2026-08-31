@@ -58,11 +58,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings {
-            daemon_health_poll_secs: 5,
-            reconcile_poll_ms: 200,
-            repo_list_cache_ttl_secs: 3,
-        }
+        Settings { daemon_health_poll_secs: 5, reconcile_poll_ms: 200, repo_list_cache_ttl_secs: 3 }
     }
 }
 
@@ -313,7 +309,8 @@ impl ConfigDir {
         let path = self.keybindings_path();
         let serialized =
             toml::to_string_pretty(table).map_err(|e| format!("cannot serialize: {e}"))?;
-        std::fs::write(&path, serialized).map_err(|e| format!("cannot write {}: {e}", path.display()))
+        std::fs::write(&path, serialized)
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))
     }
 
     // ── Style ────────────────────────────────────────────────────────────
@@ -336,8 +333,8 @@ impl ConfigDir {
     /// Directories under `panel-types/` containing an `index.html`.
     pub fn list_panel_types(&self) -> Result<Vec<String>, String> {
         let dir = self.panel_types_dir();
-        let entries = std::fs::read_dir(&dir)
-            .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let entries =
+            std::fs::read_dir(&dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
         let mut types = Vec::new();
         for entry in entries.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
@@ -381,9 +378,7 @@ fn take_combo_elements(table: &mut toml::Table, normalized: &str) -> Vec<toml::T
     let keys: Vec<String> = table
         .keys()
         .filter(|k| {
-            crate::keybindings::parse_combo(k)
-                .map(|ks| ks.join(" ") == normalized)
-                .unwrap_or(false)
+            crate::keybindings::parse_combo(k).map(|ks| ks.join(" ") == normalized).unwrap_or(false)
         })
         .cloned()
         .collect();
@@ -430,8 +425,7 @@ mod tests {
 
     #[test]
     fn test_config_overrides_each_field() {
-        let parsed: GuiConfig =
-            toml::from_str("daemon-port = 9000\ngui-port = 8800\n").unwrap();
+        let parsed: GuiConfig = toml::from_str("daemon-port = 9000\ngui-port = 8800\n").unwrap();
         assert_eq!(parsed.daemon_port, 9000);
         assert_eq!(parsed.gui_port, 8800);
     }
@@ -489,8 +483,7 @@ mod tests {
         assert_eq!(empty.cache.max_entities, 20000);
         assert_eq!(empty.cache.max_queries, 256);
 
-        let parsed: GuiConfig =
-            toml::from_str("[cache]\nmax-queries = 1000\n").unwrap();
+        let parsed: GuiConfig = toml::from_str("[cache]\nmax-queries = 1000\n").unwrap();
         assert_eq!(parsed.cache.max_queries, 1000);
         assert_eq!(parsed.cache.max_entities, 20000);
     }
@@ -502,8 +495,7 @@ mod tests {
         assert_eq!(empty.panels.finder_debounce_ms, 500);
         assert_eq!(empty.panels.status_error_ms, 8000);
 
-        let parsed: GuiConfig =
-            toml::from_str("[panels]\nfinder-debounce-ms = 1000\n").unwrap();
+        let parsed: GuiConfig = toml::from_str("[panels]\nfinder-debounce-ms = 1000\n").unwrap();
         assert_eq!(parsed.panels.finder_debounce_ms, 1000);
         // Unspecified keys keep their defaults.
         assert_eq!(parsed.panels.live_preview_debounce_ms, 130);
@@ -529,7 +521,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(parsed.picker_seeds.get("tag").map(String::as_str), Some("mf_schema = \"tag\""));
-        assert_eq!(parsed.picker_seeds.get("author").map(String::as_str), Some("mf_schema = \"person\""));
+        assert_eq!(
+            parsed.picker_seeds.get("author").map(String::as_str),
+            Some("mf_schema = \"person\"")
+        );
         assert_eq!(parsed.picker_seeds.get("missing"), None);
     }
 
@@ -561,7 +556,9 @@ mod tests {
     }
 
     fn kb_dir() -> ConfigDir {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_kb_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gui_kb_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         ConfigDir::at(dir)
     }
@@ -610,7 +607,13 @@ mod tests {
         .unwrap();
 
         let set = config
-            .set_user_keybinding("j", "metarecord-list:custom", Some("metarecord-list"), None, false)
+            .set_user_keybinding(
+                "j",
+                "metarecord-list:custom",
+                Some("metarecord-list"),
+                None,
+                false,
+            )
             .unwrap();
         let js: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["j"]).collect();
         assert_eq!(js.len(), 2);
@@ -669,7 +672,9 @@ mod tests {
             .unwrap();
         let downs: Vec<_> = set.compiled().into_iter().filter(|b| b.keys == ["down"]).collect();
         assert_eq!(downs.len(), 2);
-        assert!(downs.iter().any(|b| b.when.as_deref() == Some("metarecord-list") && b.focus.is_none()));
+        assert!(downs
+            .iter()
+            .any(|b| b.when.as_deref() == Some("metarecord-list") && b.focus.is_none()));
         assert!(downs.iter().any(|b| b.focus.as_deref() == Some("finder") && b.when.is_none()));
 
         // Removing by focus targets only the focus-scoped binding.
@@ -682,14 +687,18 @@ mod tests {
 
     #[test]
     fn test_load_config_errors_when_the_file_is_missing() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         let config = ConfigDir::at(dir);
         assert!(config.load_config().is_err());
     }
 
     #[test]
     fn test_load_config_reads_the_file() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("config.toml"), "gui-port = 7600\n").unwrap();
         let config = ConfigDir::at(dir.clone());

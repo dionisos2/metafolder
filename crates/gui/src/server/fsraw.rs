@@ -34,14 +34,9 @@ use tower::util::ServiceExt;
 use tower_http::services::ServeFile;
 
 pub async fn serve(request: Request<Body>) -> Response {
-    let path = request
-        .uri()
-        .query()
-        .and_then(|query| {
-            url_decode(query)
-                .split('&')
-                .find_map(|pair| pair.strip_prefix("path=").map(str::to_string))
-        });
+    let path = request.uri().query().and_then(|query| {
+        url_decode(query).split('&').find_map(|pair| pair.strip_prefix("path=").map(str::to_string))
+    });
     let Some(path) = path else {
         return (StatusCode::BAD_REQUEST, "missing 'path' query parameter").into_response();
     };

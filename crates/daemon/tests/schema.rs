@@ -15,7 +15,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -60,13 +65,9 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
     let root = TempDir::new(&format!("sch_{prefix}"));
     {
         let first = app();
-        let (status, body) = request(
-            &first,
-            "POST",
-            "/repos/init",
-            Some(json!({"root": root.to_str().unwrap()})),
-        )
-        .await;
+        let (status, body) =
+            request(&first, "POST", "/repos/init", Some(json!({"root": root.to_str().unwrap()})))
+                .await;
         assert_eq!(status, StatusCode::OK, "init failed: {body}");
     } // First daemon dropped: exclusive lock released.
 
@@ -77,20 +78,17 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
     .unwrap();
 
     let second = app();
-    let (status, body) = request(
-        &second,
-        "POST",
-        "/repos/load",
-        Some(json!({"root": root.to_str().unwrap()})),
-    )
-    .await;
+    let (status, body) =
+        request(&second, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
+            .await;
     assert_eq!(status, StatusCode::OK, "load failed: {body}");
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     (second, repo, root)
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> (StatusCode, Value) {
-    request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields}))).await
+    request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})))
+        .await
 }
 
 // ── Loading ───────────────────────────────────────────────────────────────────
@@ -128,7 +126,10 @@ async fn test_field_catalog_includes_schema_declared_fields() {
         .map(|e| (e["name"].as_str().unwrap().to_string(), e["type"].as_str().unwrap().to_string()))
         .collect();
     assert!(pairs.contains(&("rating".into(), "int".into())), "schema-only int field: {pairs:?}");
-    assert!(pairs.contains(&("name".into(), "string".into())), "schema-only string field: {pairs:?}");
+    assert!(
+        pairs.contains(&("name".into(), "string".into())),
+        "schema-only string field: {pairs:?}"
+    );
     assert!(pairs.contains(&("tag".into(), "string".into())), "data field: {pairs:?}");
 
     // The `?type=` filter is applied after the merge, so a schema-only field of
@@ -136,7 +137,8 @@ async fn test_field_catalog_includes_schema_declared_fields() {
     let (status, body) =
         request(&app, "GET", &format!("/repos/{repo}/fields?type=int"), None).await;
     assert_eq!(status, StatusCode::OK);
-    let names: Vec<&str> = body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> =
+        body.as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
     assert!(names.contains(&"rating"), "schema-only int after filter: {names:?}");
     assert!(body.as_array().unwrap().iter().all(|e| e["type"] == "int"), "{body}");
 
@@ -287,13 +289,9 @@ async fn test_invalid_schema_makes_load_fail() {
         }
         std::fs::write(root.join(".metafolder/schema.json"), schema.to_string()).unwrap();
         let second = app();
-        let (status, body) = request(
-            &second,
-            "POST",
-            "/repos/load",
-            Some(json!({"root": root.to_str().unwrap()})),
-        )
-        .await;
+        let (status, body) =
+            request(&second, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
+                .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "case '{name}' must fail: {body}");
         assert!(
             body["error"].as_str().unwrap().to_lowercase().contains(fragment),
@@ -322,7 +320,8 @@ async fn test_global_type_constraint_rejects_wrong_type() {
 
     // Int is fine; Nothing is always permitted.
     let (status, _) =
-        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}])).await;
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 5}}]))
+            .await;
     assert_eq!(status, StatusCode::OK);
     let (status, _) =
         create(&app, &repo, json!([{"name": "rating", "value": {"type": "nothing"}}])).await;
@@ -362,7 +361,8 @@ async fn test_per_type_cardinality() {
 
     // Untyped metarecord: no film constraints, two ratings allowed.
     let (_, untyped) =
-        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}])).await;
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 1}}]))
+            .await;
     let untyped_uuid = untyped["uuid"].as_str().unwrap();
     let (status, _) = request(
         &app,
@@ -376,21 +376,12 @@ async fn test_per_type_cardinality() {
     // min = 1 on name: deleting the last name row is rejected.
     let (_, film_now) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{film_uuid}"), None).await;
-    let name_id = film_now["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|f| f["name"] == "name")
-        .unwrap()["id"]
-        .as_i64()
-        .unwrap();
-    let (status, body) = request(
-        &app,
-        "DELETE",
-        &format!("/repos/{repo}/fields/{name_id}"),
-        None,
-    )
-    .await;
+    let name_id =
+        film_now["fields"].as_array().unwrap().iter().find(|f| f["name"] == "name").unwrap()["id"]
+            .as_i64()
+            .unwrap();
+    let (status, body) =
+        request(&app, "DELETE", &format!("/repos/{repo}/fields/{name_id}"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "removing the last name must fail: {body}");
     assert_eq!(body["violations"][0]["kind"], "min_cardinality");
 
@@ -446,8 +437,12 @@ async fn test_delta_validation_ignores_untouched_fields() {
 async fn test_batch_set_rolls_back_on_violation() {
     let (app, repo, root) = setup_with_schema("batch", film_schema()).await;
     for genre in ["a", "b"] {
-        create(&app, &repo, json!([{"name": "genre", "value": {"type": "string", "value": genre}}]))
-            .await;
+        create(
+            &app,
+            &repo,
+            json!([{"name": "genre", "value": {"type": "string", "value": genre}}]),
+        )
+        .await;
     }
     let (status, body) = request(
         &app,
@@ -548,13 +543,9 @@ async fn test_schema_check_limit_caps_violations() {
     assert_eq!(full["truncated"], json!(false));
 
     // Capped: at most `limit` violations returned, flagged truncated.
-    let (status, body) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/schema/check"),
-        Some(json!({"limit": 2})),
-    )
-    .await;
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/schema/check"), Some(json!({"limit": 2})))
+            .await;
     assert_eq!(status, StatusCode::OK, "got: {body}");
     assert_eq!(body["violations"].as_array().unwrap().len(), 2, "capped: {body}");
     assert_eq!(body["truncated"], json!(true));
@@ -577,8 +568,7 @@ async fn test_schema_reload() {
 
     // Tighten the schema file and reload.
     std::fs::write(root.join(".metafolder/schema.json"), film_schema().to_string()).unwrap();
-    let (status, body) =
-        request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
     assert_eq!(status, StatusCode::OK, "reload failed: {body}");
     assert_eq!(body, film_schema());
 
@@ -592,8 +582,7 @@ async fn test_schema_reload() {
 
     // Invalid edit: reload fails, the previous schema stays in effect.
     std::fs::write(root.join(".metafolder/schema.json"), "{broken").unwrap();
-    let (status, _) =
-        request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/schema/reload"), None).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = create(
         &app,

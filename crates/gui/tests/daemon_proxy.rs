@@ -31,23 +31,15 @@ async fn spawn_stub() -> (String, Recorded) {
         .route(
             "/fail",
             any(|| async {
-                (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    Json(json!({"error": "bad request"})),
-                )
+                (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "bad request"})))
             }),
         )
         .fallback(any(
             |State(recorded): State<Recorded>, request: axum::extract::Request| async move {
                 let method = request.method().to_string();
-                let path = request
-                    .uri()
-                    .path_and_query()
-                    .map(|p| p.to_string())
-                    .unwrap_or_default();
-                let bytes = axum::body::to_bytes(request.into_body(), usize::MAX)
-                    .await
-                    .unwrap();
+                let path =
+                    request.uri().path_and_query().map(|p| p.to_string()).unwrap_or_default();
+                let bytes = axum::body::to_bytes(request.into_body(), usize::MAX).await.unwrap();
                 let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
                 recorded.calls.lock().unwrap().push((method, path, body));
                 Json(json!({"echo": true}))
@@ -154,11 +146,13 @@ async fn test_health_transitions_emit_events() {
 /// A health-only stub reporting the given `/health` body (used to exercise the
 /// version-compatibility verdict).
 async fn spawn_health_stub(body: Value) -> String {
-    let router = axum::Router::new()
-        .route("/health", get(move || {
+    let router = axum::Router::new().route(
+        "/health",
+        get(move || {
             let body = body.clone();
             async move { Json(body) }
-        }));
+        }),
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let port = listener.local_addr().unwrap().port();
     tokio::spawn(async move {
@@ -241,11 +235,14 @@ async fn test_reconcile_run_posts_status_and_logs() {
     let proxy = Arc::new(DaemonProxy::new(url));
 
     // No active repo: refused.
-    assert!(
-        metafolder_gui::reconcile::run(gui.clone(), proxy.clone(), "ws-1".into(), Default::default())
-            .await
-            .is_err()
-    );
+    assert!(metafolder_gui::reconcile::run(
+        gui.clone(),
+        proxy.clone(),
+        "ws-1".into(),
+        Default::default()
+    )
+    .await
+    .is_err());
 
     let ws = gui.workspace_new(Some("abc123".into()));
     notifier.clear();
@@ -257,10 +254,7 @@ async fn test_reconcile_run_posts_status_and_logs() {
     let statuses = notifier.payloads(events::STATUS_MESSAGE);
     assert_eq!(statuses.len(), 2);
     assert_eq!(statuses[0]["kind"], "busy");
-    assert!(statuses[1]["text"]
-        .as_str()
-        .unwrap()
-        .starts_with("Reconcile:"));
+    assert!(statuses[1]["text"].as_str().unwrap().starts_with("Reconcile:"));
     // Message log: initial "Reconciling…" + summary + detail (progress polls
     // do not append to the log).
     assert_eq!(gui.messages(&ws).unwrap().len(), 3);

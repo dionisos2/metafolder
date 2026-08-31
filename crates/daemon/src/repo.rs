@@ -184,9 +184,8 @@ fn migrate_legacy_db_layout(metafolder_dir: &Path, internal_dir: &Path) -> Resul
         let entry = entry?;
         let name = entry.file_name();
         if name.to_string_lossy().starts_with(DB_FILE) && entry.path().is_file() {
-            std::fs::rename(entry.path(), internal_dir.join(&name)).with_context(|| {
-                format!("Failed to move legacy {name:?} into {internal_dir:?}")
-            })?;
+            std::fs::rename(entry.path(), internal_dir.join(&name))
+                .with_context(|| format!("Failed to move legacy {name:?} into {internal_dir:?}"))?;
         }
     }
     Ok(())

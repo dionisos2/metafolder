@@ -45,11 +45,10 @@ async fn main() {
     );
 
     let startup_state = state.clone();
-    let warnings = tokio::task::spawn_blocking(move || {
-        daemon_config::apply(&startup_state, config)
-    })
-    .await
-    .expect("startup repo loading panicked");
+    let warnings =
+        tokio::task::spawn_blocking(move || daemon_config::apply(&startup_state, config))
+            .await
+            .expect("startup repo loading panicked");
     for warning in warnings {
         eprintln!("[daemon] Warning: {warning}");
     }

@@ -129,8 +129,8 @@ pub fn constant_time_eq(a: &str, b: &str) -> bool {
 #[cfg(unix)]
 fn read_random(buf: &mut [u8]) -> Result<(), String> {
     use std::io::Read;
-    let mut file =
-        std::fs::File::open("/dev/urandom").map_err(|e| format!("cannot open /dev/urandom: {e}"))?;
+    let mut file = std::fs::File::open("/dev/urandom")
+        .map_err(|e| format!("cannot open /dev/urandom: {e}"))?;
     file.read_exact(buf).map_err(|e| format!("cannot read /dev/urandom: {e}"))
 }
 
@@ -311,8 +311,8 @@ mod tests {
 
         ensure_token_in(&dir, "daemon").unwrap();
         let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
-        let file_mode = std::fs::metadata(token_file(&dir, "daemon")).unwrap().permissions().mode()
-            & 0o777;
+        let file_mode =
+            std::fs::metadata(token_file(&dir, "daemon")).unwrap().permissions().mode() & 0o777;
         assert_eq!(dir_mode, 0o700, "runtime dir must be 0700");
         assert_eq!(file_mode, 0o600, "token file must be 0600");
 

@@ -71,8 +71,7 @@ async fn test_unknown_repo_is_an_error() {
     let (_root, metafolder) = temp_metafolder();
     let url = spawn_stub_repos(metafolder.join("internal")).await;
     let proxy = DaemonProxy::new(url);
-    let err = history::metafolder_dir_of(&proxy, "00000000000000000000000000000000")
-        .await
-        .unwrap_err();
+    let err =
+        history::metafolder_dir_of(&proxy, "00000000000000000000000000000000").await.unwrap_err();
     assert!(err.contains("not loaded"), "{err}");
 }

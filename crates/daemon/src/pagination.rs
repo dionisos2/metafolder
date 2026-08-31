@@ -32,9 +32,8 @@ pub fn encode(cursor: &Cursor) -> String {
 
 /// Decodes a cursor and verifies it matches the current request context.
 pub fn decode(token: &str, expected_hash: u64) -> Result<Cursor, ApiError> {
-    let bytes = URL_SAFE_NO_PAD
-        .decode(token)
-        .map_err(|_| ApiError::bad_request("invalid cursor"))?;
+    let bytes =
+        URL_SAFE_NO_PAD.decode(token).map_err(|_| ApiError::bad_request("invalid cursor"))?;
     let cursor: Cursor =
         serde_json::from_slice(&bytes).map_err(|_| ApiError::bad_request("invalid cursor"))?;
     if cursor.h != expected_hash {

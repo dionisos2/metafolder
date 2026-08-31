@@ -88,11 +88,7 @@ pub(crate) fn daemon_client() -> Client {
 }
 
 pub(crate) fn find_binary(name: &str) -> Result<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap().parent().unwrap();
     let release = root.join("target/release").join(name);
     let debug = root.join("target/debug").join(name);
     if release.exists() {
@@ -385,13 +381,12 @@ fn collect_files(dir: &Path, cap: usize) -> Vec<PathBuf> {
             let path = entry.path();
             match entry.file_type() {
                 Ok(ft) if ft.is_dir() => stack.push(path),
-                Ok(ft) if ft.is_file()
-                    && !path.to_string_lossy().ends_with(BENCH_SUFFIX) => {
-                        out.push(path);
-                        if out.len() >= cap {
-                            return out;
-                        }
+                Ok(ft) if ft.is_file() && !path.to_string_lossy().ends_with(BENCH_SUFFIX) => {
+                    out.push(path);
+                    if out.len() >= cap {
+                        return out;
                     }
+                }
                 _ => {}
             }
         }

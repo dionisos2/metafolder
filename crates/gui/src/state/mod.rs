@@ -6,10 +6,10 @@
 pub mod layout;
 pub mod workspace;
 
-use metafolder_core::sync::MutexExt;
 use crate::events;
 use crate::notifier::FrontendNotifier;
 use layout::{LayoutView, Slot, SlotId, SlotPayload};
+use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
@@ -203,8 +203,7 @@ impl Inner {
             return;
         }
         let other = self.slot(focused.other());
-        let other_same =
-            other.visible && other.workspace.as_deref() == Some(ws_id.as_str());
+        let other_same = other.visible && other.workspace.as_deref() == Some(ws_id.as_str());
         // The workspace owns the window when it is alone (other hidden) or
         // paired with itself; a different workspace next to it records nothing.
         if other_same || !other.visible {
@@ -220,11 +219,7 @@ impl Inner {
             workspace_id: slot.workspace.clone(),
             panel_type: slot.panel_type.clone(),
         };
-        LayoutView {
-            left: payload(&self.left),
-            right: payload(&self.right),
-            focused: self.focused,
-        }
+        LayoutView { left: payload(&self.left), right: payload(&self.right), focused: self.focused }
     }
 
     fn workspace_infos(&self) -> Vec<WorkspaceInfo> {
@@ -302,9 +297,7 @@ impl GuiState {
             focused: SlotId::Left,
         };
         let id = inner.new_workspace(None, None);
-        inner
-            .assign(&id, SlotId::Left)
-            .expect("assigning the initial workspace cannot fail");
+        inner.assign(&id, SlotId::Left).expect("assigning the initial workspace cannot fail");
         GuiState { inner: Mutex::new(inner), scripts: Mutex::new(HashMap::new()), notifier }
     }
 
@@ -387,18 +380,14 @@ impl GuiState {
     }
 
     fn emit_workspaces(&self, inner: &Inner) {
-        self.notifier.emit(
-            events::WORKSPACES_CHANGED,
-            json!({ "workspaces": inner.workspace_infos() }),
-        );
+        self.notifier
+            .emit(events::WORKSPACES_CHANGED, json!({ "workspaces": inner.workspace_infos() }));
     }
 
     fn emit_layout(&self, inner: &Inner) {
         let view = inner.layout_view();
-        self.notifier.emit(
-            events::LAYOUT_CHANGED,
-            serde_json::to_value(view).expect("layout serializes"),
-        );
+        self.notifier
+            .emit(events::LAYOUT_CHANGED, serde_json::to_value(view).expect("layout serializes"));
     }
 
     fn dispatch(&self, inner: &Inner, emit: Emit) {
@@ -459,11 +448,7 @@ impl GuiState {
         // `active_repo` is a standard variable (spec-gui) but lives as a
         // workspace field: set at creation, never changed.
         if key == "active_repo" {
-            return Ok(ws
-                .active_repo
-                .as_deref()
-                .map(Value::from)
-                .unwrap_or(Value::Null));
+            return Ok(ws.active_repo.as_deref().map(Value::from).unwrap_or(Value::Null));
         }
         Ok(ws.vars.get(key).cloned().unwrap_or(Value::Null))
     }
@@ -576,9 +561,7 @@ impl GuiState {
 
     /// `workspace:close` — closes the focused slot's workspace.
     pub fn workspace_close(&self) -> Result<(), String> {
-        let ws_id = self
-            .focused_workspace_id()
-            .ok_or("no workspace in the focused slot")?;
+        let ws_id = self.focused_workspace_id().ok_or("no workspace in the focused slot")?;
         self.close_workspace(&ws_id)
     }
 
@@ -644,12 +627,11 @@ impl GuiState {
             }
             let len = inner.workspaces.len() as isize;
             let current = inner.slot(inner.focused).workspace.clone();
-            let target = match current
-                .and_then(|id| inner.workspaces.iter().position(|w| w.id == id))
-            {
-                Some(pos) => (pos as isize + direction).rem_euclid(len) as usize,
-                None => 0,
-            };
+            let target =
+                match current.and_then(|id| inner.workspaces.iter().position(|w| w.id == id)) {
+                    Some(pos) => (pos as isize + direction).rem_euclid(len) as usize,
+                    None => 0,
+                };
             let ws_id = inner.workspaces[target].id.clone();
             if both {
                 inner.assign_both(&ws_id)?;
@@ -749,18 +731,12 @@ impl GuiState {
     /// and initialized); reported by the frontend.
     pub fn set_panel_ready(&self, ws_id: &str, panel_type: &str) -> Result<(), String> {
         let mut inner = self.lock();
-        inner
-            .workspace_mut(ws_id)?
-            .ready_panels
-            .insert(panel_type.to_string());
+        inner.workspace_mut(ws_id)?.ready_panels.insert(panel_type.to_string());
         Ok(())
     }
 
     pub fn panel_ready(&self, ws_id: &str, panel_type: &str) -> bool {
-        self.lock()
-            .workspace(ws_id)
-            .map(|ws| ws.ready_panels.contains(panel_type))
-            .unwrap_or(false)
+        self.lock().workspace(ws_id).map(|ws| ws.ready_panels.contains(panel_type)).unwrap_or(false)
     }
 
     /// `panel:swap` — exchanges the panel types of the two visible slots
@@ -842,10 +818,7 @@ impl GuiState {
             }
 
             inner.slot_mut(slot_id).panel_type = Some(panel_type.to_string());
-            inner
-                .workspace_mut(&ws_id)?
-                .last_panel
-                .insert(slot_id, panel_type.to_string());
+            inner.workspace_mut(&ws_id)?.last_panel.insert(slot_id, panel_type.to_string());
             Ok(((), Emit::LAYOUT))
         })
     }
@@ -874,14 +847,10 @@ impl GuiState {
         // Re-number under the new base before mutating, while the workspace
         // still carries its old base (so it is not counted against itself).
         let base = repo_name.as_deref().unwrap_or("Workspace");
-        let rename = inner
-            .workspace(ws_id)?
-            .auto_index
-            .is_some()
-            .then(|| {
-                let index = inner.next_index_for_base(base);
-                (index, format!("{base} {index}"))
-            });
+        let rename = inner.workspace(ws_id)?.auto_index.is_some().then(|| {
+            let index = inner.next_index_for_base(base);
+            (index, format!("{base} {index}"))
+        });
         let ws = inner.workspace_mut(ws_id)?;
         ws.active_repo = Some(repo.to_string());
         ws.repo_name = repo_name;
@@ -904,10 +873,7 @@ impl GuiState {
             return Err("active_repo is set at workspace creation and cannot change".into());
         }
         let mut inner = self.lock();
-        inner
-            .workspace_mut(ws_id)?
-            .vars
-            .insert(key.to_string(), value.clone());
+        inner.workspace_mut(ws_id)?.vars.insert(key.to_string(), value.clone());
         self.notifier.emit(
             events::WORKSPACE_VAR_CHANGED,
             json!({ "workspace_id": ws_id, "key": key, "value": value }),
@@ -997,29 +963,23 @@ impl GuiState {
         // Read the picker's link + slot-restore info + current selection.
         let (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths) = {
             let inner = self.lock();
-            let picker_ws = inner
-                .slot(inner.focused)
-                .workspace
-                .clone()
-                .ok_or("no focused workspace")?;
+            let picker_ws =
+                inner.slot(inner.focused).workspace.clone().ok_or("no focused workspace")?;
             let ws = inner.workspace(&picker_ws)?;
             let request = ws
                 .vars
                 .get("pick_request")
                 .filter(|v| !v.is_null())
                 .ok_or("the focused workspace is not a value picker")?;
-            let caller_ws = request["caller_ws"]
-                .as_str()
-                .ok_or("malformed pick_request")?
-                .to_string();
+            let caller_ws =
+                request["caller_ws"].as_str().ok_or("malformed pick_request")?.to_string();
             let token = request["token"].clone();
             let picker_slot = request["picker_slot"]
                 .as_str()
                 .and_then(slot_from_name)
                 .ok_or("malformed pick_request")?;
             let restore = request["restore"].clone();
-            let result_kind =
-                request["result"].as_str().unwrap_or("uuid").to_string();
+            let result_kind = request["result"].as_str().unwrap_or("uuid").to_string();
             let selected = ws.vars.get("selected_metarecord").cloned().unwrap_or(Value::Null);
             let paths = ws.vars.get("selected_paths").cloned().unwrap_or(Value::Null);
             (picker_ws, caller_ws, token, picker_slot, restore, result_kind, selected, paths)
@@ -1052,10 +1012,8 @@ impl GuiState {
             }
             // Restore the picker slot to exactly what it showed before the pick.
             let slot = inner.slot_mut(picker_slot);
-            slot.workspace =
-                restore["workspace"].as_str().map(str::to_string);
-            slot.panel_type =
-                restore["panel_type"].as_str().map(str::to_string);
+            slot.workspace = restore["workspace"].as_str().map(str::to_string);
+            slot.panel_type = restore["panel_type"].as_str().map(str::to_string);
             slot.visible = restore["visible"].as_bool().unwrap_or(false);
             // Focus returns to the caller's slot.
             inner.focused = picker_slot.other();
@@ -1098,10 +1056,8 @@ impl GuiState {
         let entry = MessageEntry { ts_ms: now_ms(), text: text.to_string() };
         let mut inner = self.lock();
         inner.workspace_mut(ws_id)?.messages.push(entry.clone());
-        self.notifier.emit(
-            events::MESSAGE_APPENDED,
-            json!({ "workspace_id": ws_id, "entry": entry }),
-        );
+        self.notifier
+            .emit(events::MESSAGE_APPENDED, json!({ "workspace_id": ws_id, "entry": entry }));
         Ok(())
     }
 
@@ -1109,10 +1065,8 @@ impl GuiState {
         let mut inner = self.lock();
         inner.workspace_mut(ws_id)?.messages.clear();
         // A null metarecord tells message panels the log was cleared.
-        self.notifier.emit(
-            events::MESSAGE_APPENDED,
-            json!({ "workspace_id": ws_id, "entry": Value::Null }),
-        );
+        self.notifier
+            .emit(events::MESSAGE_APPENDED, json!({ "workspace_id": ws_id, "entry": Value::Null }));
         Ok(())
     }
 }
@@ -1133,10 +1087,7 @@ fn slot_from_name(name: &str) -> Option<SlotId> {
 }
 
 fn now_ms() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -1219,9 +1170,7 @@ mod tests {
         let a1 = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
         let a2 = state.workspace_new_named(Some("uuid-a".into()), Some("my_repo".into()));
         let b1 = state.workspace_new_named(Some("uuid-b".into()), Some("other_repo".into()));
-        let name = |id: &str| {
-            state.workspaces().into_iter().find(|w| w.id == id).unwrap().name
-        };
+        let name = |id: &str| state.workspaces().into_iter().find(|w| w.id == id).unwrap().name;
         assert_eq!(name(&a1), "my_repo 1");
         assert_eq!(name(&a2), "my_repo 2");
         assert_eq!(name(&b1), "other_repo 1");
@@ -1238,9 +1187,7 @@ mod tests {
         let my2 = state.create_workspace_named(Some("a".into()), Some("my_repo".into()));
         let w2 = state.create_workspace(None);
         let o1 = state.create_workspace_named(Some("b".into()), Some("other_repo".into()));
-        let name = |id: &str| {
-            state.workspaces().into_iter().find(|w| w.id == id).unwrap().name
-        };
+        let name = |id: &str| state.workspaces().into_iter().find(|w| w.id == id).unwrap().name;
         assert_eq!(name("ws-1"), "Workspace 1");
         assert_eq!(name(&my1), "my_repo 1");
         assert_eq!(name(&my2), "my_repo 2");
@@ -1251,9 +1198,7 @@ mod tests {
     #[test]
     fn test_adopt_repo_renames_auto_named_workspace() {
         let (_, state) = state(); // ws-1 "Workspace 1", no repo
-        state
-            .adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into()))
-            .unwrap();
+        state.adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into())).unwrap();
         assert_eq!(state.workspaces()[0].name, "my_repo 1");
         assert_eq!(state.workspaces()[0].active_repo.as_deref(), Some("uuid-a"));
     }
@@ -1270,9 +1215,7 @@ mod tests {
             "Workspace 1"
         );
         // Adopting a repo into a user-named workspace keeps the custom name.
-        state
-            .adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into()))
-            .unwrap();
+        state.adopt_repo_named("ws-1", "uuid-a", Some("my_repo".into())).unwrap();
         assert_eq!(state.workspaces()[0].name, "Music");
     }
 
@@ -1479,7 +1422,7 @@ mod tests {
         let (_, state) = state();
         let ws1 = state.workspace_new(Some("repo-1".into()));
         state.panel_split().unwrap(); // right: ws1 metarecord-detail
-        // Remember metarecord-detail as ws1's right-slot panel type.
+                                      // Remember metarecord-detail as ws1's right-slot panel type.
         state.set_panel_type(SlotId::Right, "metarecord-detail").unwrap();
         // Park another workspace in the right slot, then move the left
         // slot to metarecord-detail (no collision: different workspaces).
@@ -1629,8 +1572,8 @@ mod tests {
         state.workspace_new(Some("repo-1".into())); // ws-2, left: metarecord-list
         state.panel_split().unwrap(); // right: metarecord-detail
         state.panel_unsplit().unwrap(); // right hidden, remembers metarecord-detail
-        // Switching the visible slot to the type the hidden slot remembers must
-        // not let a later split show two identical panels.
+                                        // Switching the visible slot to the type the hidden slot remembers must
+                                        // not let a later split show two identical panels.
         state.set_panel_type(SlotId::Left, "metarecord-detail").unwrap();
         state.panel_split().unwrap(); // reveal the other slot
         let layout = state.layout();
@@ -1671,7 +1614,7 @@ mod tests {
         let (_, state) = state();
         let ws2 = state.workspace_new(Some("repo-1".into())); // ws-2, single
         let ws3 = state.workspace_new(Some("repo-1".into())); // ws-3, single, focused
-        // Split ws-3 into two panels.
+                                                              // Split ws-3 into two panels.
         state.panel_split().unwrap();
         assert!(state.layout().right.visible);
 
@@ -1694,7 +1637,7 @@ mod tests {
         state.workspace_new(Some("repo-1".into())); // ws-2, focused
         state.panel_split().unwrap(); // two panels
         state.panel_unsplit().unwrap(); // back to a single panel
-        // Move away and back: the workspace stays single.
+                                        // Move away and back: the workspace stays single.
         state.workspace_goto(1).unwrap();
         state.workspace_goto(2).unwrap();
         assert!(!state.layout().right.visible);
@@ -1705,7 +1648,7 @@ mod tests {
         let (_, state) = state();
         state.workspace_new(Some("repo-1".into())); // ws-2, focused
         state.panel_split().unwrap(); // two panels
-        // Close the right panel via its × button (hide_slot).
+                                      // Close the right panel via its × button (hide_slot).
         state.hide_slot(SlotId::Right);
         assert!(!state.layout().right.visible);
         // The workspace now reopens single.
@@ -1718,8 +1661,8 @@ mod tests {
     fn test_mixed_layout_does_not_record_a_split() {
         let (_, state) = state();
         let ws2 = state.workspace_new(Some("repo-1".into())); // ws-2, focused left, single
-        // Right-click a tab: assign ws-1 to the non-focused right slot → the
-        // two slots show different workspaces (a mixed, two-panel layout).
+                                                              // Right-click a tab: assign ws-1 to the non-focused right slot → the
+                                                              // two slots show different workspaces (a mixed, two-panel layout).
         state.tab_assign("ws-1", SlotId::Right).unwrap();
         let layout = state.layout();
         assert!(layout.left.visible && layout.right.visible);
@@ -1738,9 +1681,7 @@ mod tests {
     fn test_vars_set_get_and_notify() {
         let (notifier, state) = state();
         notifier.clear();
-        state
-            .set_var("ws-1", "selected_paths", json!(["/tmp/a"]))
-            .unwrap();
+        state.set_var("ws-1", "selected_paths", json!(["/tmp/a"])).unwrap();
         assert_eq!(state.get_var("ws-1", "selected_paths").unwrap(), json!(["/tmp/a"]));
         // Unset variable reads as Null ("unknown").
         assert_eq!(state.get_var("ws-1", "selected_metarecord").unwrap(), Value::Null);
@@ -1784,9 +1725,7 @@ mod tests {
         // Indicator + panels must hear about it.
         assert!(!notifier.payloads(events::WORKSPACES_CHANGED).is_empty());
         let vars = notifier.payloads(events::WORKSPACE_VAR_CHANGED);
-        assert!(vars
-            .iter()
-            .any(|p| p["key"] == "active_repo" && p["value"] == json!("repo-1")));
+        assert!(vars.iter().any(|p| p["key"] == "active_repo" && p["value"] == json!("repo-1")));
         // Second adoption: refused (immutable once set).
         assert!(state.adopt_repo("ws-1", "repo-2").is_err());
     }
@@ -1881,7 +1820,7 @@ mod tests {
         let (_, state) = state();
         let other = state.workspace_new(Some("repo-1".into())); // ws-2, focused left
         state.panel_split().unwrap(); // right shows ws-2 too (metarecord-detail)
-        // Picker opens in the right slot, displacing ws-2's detail view.
+                                      // Picker opens in the right slot, displacing ws-2's detail view.
         let picker = state.pick_start(pick_spec(&other)).unwrap();
         state
             .set_var(&picker, "selected_metarecord", json!({ "uuid": "abc", "repo": "repo-1" }))
@@ -1904,9 +1843,7 @@ mod tests {
         spec.panel = PickPanel { panel_type: "file-manager".into(), vars: Map::new() };
         let picker = state.pick_start(spec).unwrap();
         // file-manager publishes selected_paths, not a metarecord.
-        state
-            .set_var(&picker, "selected_paths", json!(["/home/user/music"]))
-            .unwrap();
+        state.set_var(&picker, "selected_paths", json!(["/home/user/music"])).unwrap();
 
         state.pick_confirm().unwrap();
 
@@ -1966,9 +1903,7 @@ mod tests {
     fn test_post_status_emits_and_appends_to_log() {
         let (notifier, state) = state();
         notifier.clear();
-        state
-            .post_status("ws-1", "Entry deleted.", "info", Some(5000))
-            .unwrap();
+        state.post_status("ws-1", "Entry deleted.", "info", Some(5000)).unwrap();
 
         let statuses = notifier.payloads(events::STATUS_MESSAGE);
         assert_eq!(statuses.len(), 1);

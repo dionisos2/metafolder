@@ -118,7 +118,8 @@ pub fn write_patterns(
     if patterns.is_empty() {
         client.request("DELETE", &path, None)?;
     } else {
-        let values: Vec<Json> = patterns.iter().map(|p| json!({"type": "string", "value": p})).collect();
+        let values: Vec<Json> =
+            patterns.iter().map(|p| json!({"type": "string", "value": p})).collect();
         client.put(&path, &json!({ "values": values }))?;
     }
     Ok(())

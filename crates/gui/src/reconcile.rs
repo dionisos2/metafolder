@@ -83,8 +83,8 @@ pub async fn run(
             Some("done") => {
                 let result = &task["result"];
                 gui.post_status(&ws_id, &format_summary(result), "info", Some(timings.done_ms))?;
-                let detail = serde_json::to_string_pretty(result)
-                    .unwrap_or_else(|_| result.to_string());
+                let detail =
+                    serde_json::to_string_pretty(result).unwrap_or_else(|_| result.to_string());
                 gui.append_message(&ws_id, &detail)?;
                 return Ok(());
             }
@@ -128,10 +128,6 @@ mod tests {
     fn test_format_summary() {
         let result = json!({"created": 3, "moved": 1, "candidates": [{"a": 1}, {"b": 2}]});
         assert_eq!(format_summary(&result), "Reconcile: 3 created, 1 moved, 2 candidates.");
-        assert_eq!(
-            format_summary(&json!({})),
-            "Reconcile: 0 created, 0 moved, 0 candidates."
-        );
+        assert_eq!(format_summary(&json!({})), "Reconcile: 0 created, 0 moved, 0 candidates.");
     }
-
 }

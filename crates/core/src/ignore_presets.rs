@@ -44,11 +44,8 @@ impl Presets {
 
     /// The preset names with their descriptions, sorted by name.
     pub fn descriptions(&self) -> Vec<(String, String)> {
-        let mut out: Vec<(String, String)> = self
-            .0
-            .iter()
-            .map(|(name, p)| (name.clone(), p.description.clone()))
-            .collect();
+        let mut out: Vec<(String, String)> =
+            self.0.iter().map(|(name, p)| (name.clone(), p.description.clone())).collect();
         out.sort_by(|a, b| a.0.cmp(&b.0));
         out
     }
@@ -86,10 +83,7 @@ impl Presets {
             stack.push(name.to_string());
             return Err(format!("ignore preset reference cycle: {}", stack.join(" -> ")));
         }
-        let preset = self
-            .0
-            .get(name)
-            .ok_or_else(|| format!("unknown ignore preset '{name}'"))?;
+        let preset = self.0.get(name).ok_or_else(|| format!("unknown ignore preset '{name}'"))?;
         stack.push(name.to_string());
         for pattern in &preset.patterns {
             if seen.insert(pattern.clone()) {

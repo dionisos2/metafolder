@@ -103,7 +103,9 @@ fn battery() -> Vec<Query> {
         eq("note", s("hi")),
         present("loc"),
         follows("loc", eq("tag", s("root"))),
-        Query::And { operands: vec![eq("kind", s("file")), Query::Gte { field: "rate".into(), value: i(3) }] },
+        Query::And {
+            operands: vec![eq("kind", s("file")), Query::Gte { field: "rate".into(), value: i(3) }],
+        },
         Query::Not { operand: Box::new(eq("kind", s("file"))) },
     ]
 }
@@ -200,7 +202,9 @@ fn incremental_treeref_move() {
         .unwrap()
         .uuid
     });
-    r.write(|w| w.set_field(file, "loc", Value::TreeRef { parent: Some(dir2), name: "a".into() }).unwrap());
+    r.write(|w| {
+        w.set_field(file, "loc", Value::TreeRef { parent: Some(dir2), name: "a".into() }).unwrap()
+    });
 }
 
 #[test]
@@ -212,7 +216,9 @@ fn incremental_mixed_sequence() {
     r.write(|w| w.replace_field(file, rate_id, i(3)).unwrap());
     r.write(|w| w.set_field(file, "rate", i(7)).unwrap());
     let other = r.write(|w| {
-        w.create_metarecord(vec![Field::new("kind", s("dir")), Field::new("rate", i(1))]).unwrap().uuid
+        w.create_metarecord(vec![Field::new("kind", s("dir")), Field::new("rate", i(1))])
+            .unwrap()
+            .uuid
     });
     r.write(|w| w.append_field(file, "note", s("hi")).unwrap());
     r.write(|w| w.set_field(other, "kind", s("file")).unwrap());

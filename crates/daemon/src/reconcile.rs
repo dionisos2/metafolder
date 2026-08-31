@@ -16,12 +16,12 @@ use metafolder_core::sync::MutexExt;
 
 use crate::db;
 use crate::eligibility;
-use crate::similarity::{similarity_score, FileSig};
 use crate::error::ApiError;
 use crate::executor::ensure_parent_metarecords;
 use crate::fingerprint;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
+use crate::similarity::{similarity_score, FileSig};
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
 
@@ -243,8 +243,14 @@ pub fn reconcile_full_reported(
         }
         let is_dir = string_field(&writer, orphan, "mfr_type")?.as_deref() == Some("dir");
         let size = int_field(&writer, orphan, "mfr_size")?;
-        let mut state =
-            OrphanState { uuid: orphan, stale_path, is_dir, size, matches: Vec::new(), moved: false };
+        let mut state = OrphanState {
+            uuid: orphan,
+            stale_path,
+            is_dir,
+            size,
+            matches: Vec::new(),
+            moved: false,
+        };
 
         // Directories have no fingerprint (matched only by path); orphans with
         // no stored size have no fingerprint either. Both can still be matched
@@ -266,9 +272,11 @@ pub fn reconcile_full_reported(
             }
             let abs = root.join(rel.trim_start_matches('/'));
             match &stored_partial {
-                None => state
-                    .matches
-                    .push(CandidateMatch { path: rel.clone(), fingerprint: "size", score: None }),
+                None => state.matches.push(CandidateMatch {
+                    path: rel.clone(),
+                    fingerprint: "size",
+                    score: None,
+                }),
                 Some(stored_partial) => {
                     let partial = match partial_cache.get(rel) {
                         Some(p) => p.clone(),
@@ -336,9 +344,11 @@ pub fn reconcile_full_reported(
                 let new_size = meta.is_file().then_some(meta.len() as i64);
                 let score = similarity_score(&orphan_sig, &FileSig::from_path(rel, new_size));
                 if score >= threshold {
-                    state
-                        .matches
-                        .push(CandidateMatch { path: rel.clone(), fingerprint: "similarity", score: Some(score) });
+                    state.matches.push(CandidateMatch {
+                        path: rel.clone(),
+                        fingerprint: "similarity",
+                        score: Some(score),
+                    });
                     claimed.insert(rel.clone()); // Candidate: not auto-created.
                 }
             }
@@ -494,7 +504,15 @@ pub fn reconcile_metarecord_reported(
     let abs_base = root.join(base.trim_start_matches('/'));
     if abs_base.exists() {
         paths.push(base.clone()); // The subtree root itself.
-        paths.extend(walk(&mut writer, &mut cache, &root, &repo.internal_dir(), &base, &mut elig, reporter)?);
+        paths.extend(walk(
+            &mut writer,
+            &mut cache,
+            &root,
+            &repo.internal_dir(),
+            &base,
+            &mut elig,
+            reporter,
+        )?);
     }
     let mut fs_paths = stat_paths(&root, &paths, reporter);
     if reporter.is_cancelled() {
@@ -603,7 +621,8 @@ fn walk(
     let mut files: u64 = 0;
     while !frontier.is_empty() {
         let dirs_at_depth = frontier.len() as u64;
-        let label = |files: u64| format!("walk (depth {depth}, {dirs_at_depth} dirs, {files} files)");
+        let label =
+            |files: u64| format!("walk (depth {depth}, {dirs_at_depth} dirs, {files} files)");
         let mut next: Vec<String> = Vec::new();
         for (i, dir) in frontier.iter().enumerate() {
             if (i as u64).is_multiple_of(PROGRESS_STEP as u64) {
@@ -662,11 +681,7 @@ fn walk(
 /// the rest of reconcile consumes. The total is known, so this — the heavy
 /// syscall pass — reports a determinate "stat" phase. Paths that vanished
 /// between the walk and the stat are skipped.
-fn stat_paths(
-    root: &Path,
-    paths: &[String],
-    reporter: &Reporter,
-) -> Vec<(String, Metadata)> {
+fn stat_paths(root: &Path, paths: &[String], reporter: &Reporter) -> Vec<(String, Metadata)> {
     let total = paths.len() as u64;
     reporter.progress("stat", Some(0), Some(total));
     let mut out: Vec<(String, Metadata)> = Vec::with_capacity(paths.len());
@@ -810,4 +825,3 @@ fn maybe_extract_metadata(
     writer.set_field_as(OpType::FileModified, uuid, "mfr_meta_extracted", Value::Bool(true))?;
     Ok(())
 }
-

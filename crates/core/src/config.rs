@@ -57,10 +57,7 @@ pub fn read_required(path: &Path) -> Result<String, String> {
             "configuration file {} is missing (run metafolder-sync-config)",
             path.display()
         )),
-        Err(e) => Err(format!(
-            "cannot read configuration file {}: {e}",
-            path.display()
-        )),
+        Err(e) => Err(format!("cannot read configuration file {}: {e}", path.display())),
     }
 }
 

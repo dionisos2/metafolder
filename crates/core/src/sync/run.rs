@@ -12,7 +12,9 @@ use uuid::Uuid;
 
 use crate::trash::{Reason, TrashDir};
 
-use super::plan::{check_schemas_identical, find_repo_by_name, mfr_path_of, record_at_path, syncable_fields};
+use super::plan::{
+    check_schemas_identical, find_repo_by_name, mfr_path_of, record_at_path, syncable_fields,
+};
 use super::{canonical_pair, resolve_pair, SyncCtx as Ctx, SyncError as CliError};
 
 /// A record's (or snapshot's) fields as value multisets keyed by name.
@@ -53,10 +55,20 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
 
     let ops = read_ops(ctx, &plan_base)?;
     if ops.is_empty() {
-        return Ok(RunReport { status: RunStatus::NothingToRun, done: 0, skipped: 0, divergences: vec![] });
+        return Ok(RunReport {
+            status: RunStatus::NothingToRun,
+            done: 0,
+            skipped: 0,
+            divergences: vec![],
+        });
     }
     if !yes && !ctx.prompter.confirm(&format!("run {} operation(s)? [y/N] ", ops.len()))? {
-        return Ok(RunReport { status: RunStatus::Aborted, done: 0, skipped: 0, divergences: vec![] });
+        return Ok(RunReport {
+            status: RunStatus::Aborted,
+            done: 0,
+            skipped: 0,
+            divergences: vec![],
+        });
     }
 
     // Ordered so metadata gates the disk: create-link, then sync, then the disk
@@ -104,7 +116,9 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
         if let Some(entry) = commit_entry(ctx, a, b, *rec_a, *rec_b)? {
             commits.push(entry);
         }
-        for op in ops.iter().filter(|o| o.kind == "conflict" && o.rec_a == *rec_a && o.rec_b == *rec_b) {
+        for op in
+            ops.iter().filter(|o| o.kind == "conflict" && o.rec_a == *rec_a && o.rec_b == *rec_b)
+        {
             prune_op(ctx, &plan_base, op.plan_uuid)?;
         }
     }
@@ -120,7 +134,8 @@ pub fn run(ctx: &Ctx, repo_a: &str, repo_b: &str, yes: bool) -> Result<RunReport
 /// top-level path component) — never one line per file (spec-sync). Returns
 /// `(subtree, count)` pairs, sorted; empty when there is nothing to report.
 pub fn aggregate_divergences(paths: &[String]) -> Vec<(String, usize)> {
-    let mut by_subtree: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    let mut by_subtree: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
     for p in paths {
         let subtree = p.trim_start_matches('/').split('/').next().unwrap_or("").to_string();
         *by_subtree.entry(format!("/{subtree}")).or_default() += 1;
@@ -180,7 +195,12 @@ pub fn show(
         let mut listed = Vec::new();
         for op in ops.iter().filter(|o| keep(&o.kind)) {
             let green = stale(ctx, op)?.is_none();
-            listed.push(ShowOp { green, kind: op.kind.clone(), context: op_context(ctx, op)?, why: None });
+            listed.push(ShowOp {
+                green,
+                kind: op.kind.clone(),
+                context: op_context(ctx, op)?,
+                why: None,
+            });
         }
         return Ok(ShowReport::Filtered(listed));
     }
@@ -351,7 +371,8 @@ fn sync_bare(
             match translate_ref_value(ctx, a, b, src_repo, tgt_repo, &value)? {
                 Some(v) => v,
                 None => {
-                    ctx.prompter.warn(&format!("skipped ref field '{name}': target out of sync scope"));
+                    ctx.prompter
+                        .warn(&format!("skipped ref field '{name}': target out of sync scope"));
                     continue;
                 }
             }
@@ -384,7 +405,8 @@ fn translate_ref_value(
     // Link-first.
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
     let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
-    let (src_key, tgt_key) = if src_repo == a { ("record_a", "record_b") } else { ("record_b", "record_a") };
+    let (src_key, tgt_key) =
+        if src_repo == a { ("record_a", "record_b") } else { ("record_b", "record_a") };
     let linked = links["links"].as_array().and_then(|ls| {
         ls.iter()
             .find(|l| l[src_key].as_str() == Some(&src_target.as_simple().to_string()))
@@ -395,7 +417,9 @@ fn translate_ref_value(
         return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
     }
     // Path-fallback: the referenced record's TreeRef identity, resolved in target.
-    if let Some((field, path)) = super::plan::identity_paths(ctx, src_repo, src_target)?.into_iter().next() {
+    if let Some((field, path)) =
+        super::plan::identity_paths(ctx, src_repo, src_target)?.into_iter().next()
+    {
         let t = find_or_create_path(ctx, tgt_repo, &field, &path)?;
         return Ok(Some(json!({"type": "ref", "value": t.as_simple().to_string()})));
     }
@@ -459,8 +483,7 @@ fn link_snapshot(
                 && l["record_b"].as_str() == Some(&rec_b.as_simple().to_string())
         })
     });
-    let (mut sa, mut sb): (ByName, ByName) =
-        Default::default();
+    let (mut sa, mut sb): (ByName, ByName) = Default::default();
     if let Some(uuid) = link.and_then(|l| l["uuid"].as_str()) {
         let body = ctx.client.get(&format!("{prefix}/links/{uuid}"), &[])?;
         for e in body["snapshot"].as_array().cloned().unwrap_or_default() {
@@ -506,7 +529,12 @@ fn set_field_multi(
         None => {
             ctx.client.request(
                 "DELETE",
-                &format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name),
+                &format!(
+                    "/repos/{}/metarecords/{}/fields/{}",
+                    repo.as_simple(),
+                    record.as_simple(),
+                    name
+                ),
                 &[],
                 None,
             )?;
@@ -515,7 +543,11 @@ fn set_field_multi(
             put_field(ctx, repo, record, name, &vals[0], None)?;
             for v in &vals[1..] {
                 ctx.client.post(
-                    &format!("/repos/{}/metarecords/{}/fields", repo.as_simple(), record.as_simple()),
+                    &format!(
+                        "/repos/{}/metarecords/{}/fields",
+                        repo.as_simple(),
+                        record.as_simple()
+                    ),
                     &json!({"name": name, "value": v, "force": true}),
                 )?;
             }
@@ -564,7 +596,9 @@ fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     if let Some(why) = stale(ctx, op)? {
         return Ok(Outcome::Skipped(why));
     }
-    let (Some(pa), Some(pb)) = (mfr_path_of(ctx, op.a, op.rec_a)?, mfr_path_of(ctx, op.b, op.rec_b)?) else {
+    let (Some(pa), Some(pb)) =
+        (mfr_path_of(ctx, op.a, op.rec_a)?, mfr_path_of(ctx, op.b, op.rec_b)?)
+    else {
         return Ok(Outcome::Skipped("an endpoint has no path".into()));
     };
     if pa == pb {
@@ -573,11 +607,8 @@ fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
     // Winner = the side whose path changed since the snapshot; the loser moves.
     let base = snapshot_mfr_path(ctx, op.a, op.b, op.rec_a, op.rec_b)?;
     let a_won = Some(&pa) != base.as_ref();
-    let (winner_path, loser_repo, loser_rec, loser_path) = if a_won {
-        (pa, op.b, op.rec_b, pb)
-    } else {
-        (pb, op.a, op.rec_a, pa)
-    };
+    let (winner_path, loser_repo, loser_rec, loser_path) =
+        if a_won { (pa, op.b, op.rec_b, pb) } else { (pb, op.a, op.rec_a, pa) };
     if is_external(ctx, loser_repo, loser_rec)? {
         return Ok(Outcome::External(loser_path));
     }
@@ -596,22 +627,35 @@ fn exec_move(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
 
 /// Moves a file (rename, cross-device copy fallback); any destination occupant
 /// and the cross-device source go to the trash — nothing is destroyed.
-fn relocate(ctx: &Ctx, repo: Uuid, old: &std::path::Path, new: &std::path::Path) -> Result<(), CliError> {
+fn relocate(
+    ctx: &Ctx,
+    repo: Uuid,
+    old: &std::path::Path,
+    new: &std::path::Path,
+) -> Result<(), CliError> {
     if let Some(p) = new.parent() {
-        std::fs::create_dir_all(p).map_err(|e| CliError::Op(format!("cannot create {}: {e}", p.display())))?;
+        std::fs::create_dir_all(p)
+            .map_err(|e| CliError::Op(format!("cannot create {}: {e}", p.display())))?;
     }
     if new.exists() {
         target_trash(ctx, repo)?.trash_path(new, Reason::Sync, None, None, None)?;
     }
     if std::fs::rename(old, new).is_err() {
-        std::fs::copy(old, new).map_err(|e| CliError::Op(format!("cannot copy to {}: {e}", new.display())))?;
+        std::fs::copy(old, new)
+            .map_err(|e| CliError::Op(format!("cannot copy to {}: {e}", new.display())))?;
         target_trash(ctx, repo)?.trash_path(old, Reason::Sync, None, None, None)?;
     }
     Ok(())
 }
 
 /// The link snapshot's stored `mfr_path` (the common path at the last sync).
-fn snapshot_mfr_path(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<Option<String>, CliError> {
+fn snapshot_mfr_path(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    rec_a: Uuid,
+    rec_b: Uuid,
+) -> Result<Option<String>, CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
     let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
     let uuid = links["links"].as_array().and_then(|ls| {
@@ -661,7 +705,9 @@ fn exec_chmod(ctx: &Ctx, op: &Op) -> Result<Outcome, CliError> {
 
 /// A file record's stored `mfr_permissions` (octal string), if any.
 fn mfr_permissions_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<String>, CliError> {
-    let m = ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
+    let m = ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     Ok(m["fields"].as_array().and_then(|fs| {
         fs.iter()
             .find(|f| f["name"] == "mfr_permissions")
@@ -717,7 +763,13 @@ fn exec_delete(ctx: &Ctx, a: Uuid, b: Uuid, op: &Op) -> Result<Outcome, CliError
 /// One commit-batch entry for a synced link: its UUID, its endpoints' current
 /// versions, and a snapshot of the synced (scalar) fields plus the common path
 /// (the move op's direction baseline). `None` when the link is missing.
-fn commit_entry(ctx: &Ctx, a: Uuid, b: Uuid, rec_a: Uuid, rec_b: Uuid) -> Result<Option<Json>, CliError> {
+fn commit_entry(
+    ctx: &Ctx,
+    a: Uuid,
+    b: Uuid,
+    rec_a: Uuid,
+    rec_b: Uuid,
+) -> Result<Option<Json>, CliError> {
     let prefix = format!("/sync/{}/{}", a.as_simple(), b.as_simple());
     let links = ctx.client.get(&format!("{prefix}/links"), &[])?;
     let link = links["links"].as_array().and_then(|ls| {
@@ -781,7 +833,10 @@ fn mfr_path_tree_for(ctx: &Ctx, target_repo: Uuid, path: &str) -> Result<Option<
 fn find_or_create_path(ctx: &Ctx, repo: Uuid, field: &str, path: &str) -> Result<Uuid, CliError> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
-        let roots = ctx.client.get(&format!("/repos/{}/tree/roots", repo.as_simple()), &[("field", field.to_string())])?;
+        let roots = ctx.client.get(
+            &format!("/repos/{}/tree/roots", repo.as_simple()),
+            &[("field", field.to_string())],
+        )?;
         return roots
             .as_array()
             .and_then(|a| a.iter().find(|r| r["name"] == ""))
@@ -847,7 +902,8 @@ fn put_field(
     if let Some(v) = expected {
         query.push(("expected_version", v.to_string()));
     }
-    let path = format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name);
+    let path =
+        format!("/repos/{}/metarecords/{}/fields/{}", repo.as_simple(), record.as_simple(), name);
     let body = json!({"value": value, "force": true});
     ctx.client.request("PUT", &path, &query, Some(&body))?;
     Ok(())
@@ -856,12 +912,18 @@ fn put_field(
 /// Whether a record's effective `mf_sync` mode is `external` (its content is
 /// owned by an outside tool — metafolder does no file operation for it).
 fn is_external(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<bool, CliError> {
-    let m = ctx.client.get(&format!("/repos/{}/metarecords/{}/mf-sync", repo.as_simple(), record.as_simple()), &[])?;
+    let m = ctx.client.get(
+        &format!("/repos/{}/metarecords/{}/mf-sync", repo.as_simple(), record.as_simple()),
+        &[],
+    )?;
     Ok(m["mf_sync"] == "external")
 }
 
 fn version_of(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Option<u64>, CliError> {
-    match ctx.client.get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[]) {
+    match ctx
+        .client
+        .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])
+    {
         Ok(m) => Ok(Some(m["version"].as_u64().unwrap_or(0))),
         Err(CliError::Op(_)) => Ok(None),
         Err(e) => Err(e),

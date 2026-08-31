@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Value as Json};
 
-use crate::client::{Client, CliError};
+use crate::client::{CliError, Client};
 
 const DEFAULT_GUI_URL: &str = "http://127.0.0.1:7524";
 
@@ -185,9 +185,8 @@ pub fn message(
     workspace: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<i32, CliError> {
-    let query: Vec<(&str, String)> = workspace
-        .map(|ws| vec![("workspace_id", ws.to_string())])
-        .unwrap_or_default();
+    let query: Vec<(&str, String)> =
+        workspace.map(|ws| vec![("workspace_id", ws.to_string())]).unwrap_or_default();
     let body = json!({"text": text, "timeout_ms": timeout_ms});
     ctx.client.request("POST", "/gui/message", &query, Some(&body))?;
     Ok(0)
@@ -213,9 +212,9 @@ pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Resul
     let resp = ctx.client.post("/gui/command", &body)?;
     match resp["event"].as_str() {
         Some("ok") => Ok(0),
-        Some("error") => Err(CliError::Op(
-            resp["message"].as_str().unwrap_or("command failed").to_string(),
-        )),
+        Some("error") => {
+            Err(CliError::Op(resp["message"].as_str().unwrap_or("command failed").to_string()))
+        }
         Some(other) => Err(CliError::Op(format!("command did not run: {other}"))),
         None => Err(CliError::Op("malformed GUI response".into())),
     }
@@ -287,7 +286,9 @@ mod tests {
 
     #[test]
     fn test_base_url_reads_gui_port_from_the_first_existing_config() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gui_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let missing = dir.join("missing/config.toml");
         let present = dir.join("config.toml");
@@ -304,7 +305,9 @@ mod tests {
 
     #[test]
     fn test_base_url_ignores_a_config_without_a_gui_port() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf_gui_bad_cfg_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let no_port = dir.join("config.toml");
         std::fs::write(&no_port, "daemon-url = \"http://127.0.0.1:7523\"\n").unwrap();

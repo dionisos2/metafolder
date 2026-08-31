@@ -20,9 +20,7 @@ fn main() -> ExitCode {
             "--source" => source = args.next().map(PathBuf::from),
             "--config-dir" => config_dir = args.next().map(PathBuf::from),
             "-h" | "--help" => {
-                println!(
-                    "usage: metafolder-sync-config [--source <dir>] [--config-dir <dir>]"
-                );
+                println!("usage: metafolder-sync-config [--source <dir>] [--config-dir <dir>]");
                 return ExitCode::SUCCESS;
             }
             other => {
@@ -32,9 +30,8 @@ fn main() -> ExitCode {
         }
     }
 
-    let source = source.unwrap_or_else(|| {
-        std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
-    });
+    let source =
+        source.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
     let config_dir = match config_dir.or_else(metafolder_core::config::config_root) {
         Some(dir) => dir,
         None => {

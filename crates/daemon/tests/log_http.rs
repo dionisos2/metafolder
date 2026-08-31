@@ -15,7 +15,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -46,9 +51,13 @@ async fn setup(prefix: &str) -> (Router, String, TempDir) {
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> Value {
-    let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})))
-            .await;
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": fields})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body
 }
@@ -90,8 +99,8 @@ async fn field_of(app: &Router, repo: &str, uuid: &str, name: &str) -> Option<Va
 #[tokio::test]
 async fn test_log_linear_and_filters() {
     let (app, repo, root) = setup("read").await;
-    let entry = create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap();
     patch(&app, &repo, uuid, "a", json!({"type": "int", "value": 2})).await;
 
@@ -133,8 +142,8 @@ async fn test_log_linear_and_filters() {
 #[tokio::test]
 async fn test_log_reports_repository_wide_totals() {
     let (app, repo, root) = setup("totals").await;
-    let entry = create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap();
     for n in 2..6 {
         patch(&app, &repo, uuid, "a", json!({"type": "int", "value": n})).await;
@@ -158,8 +167,8 @@ async fn test_log_reports_repository_wide_totals() {
 #[tokio::test]
 async fn test_log_active_line_through_head() {
     let (app, repo, root) = setup("active").await;
-    let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 2})).await;
     patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": 3})).await;
@@ -212,8 +221,8 @@ async fn test_log_active_line_through_head() {
 #[tokio::test]
 async fn test_log_active_limit_is_bounded_and_keeps_redo() {
     let (app, repo, root) = setup("active_limit").await;
-    let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 0}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 0}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     for i in 1..=5 {
         patch(&app, &repo, &uuid, "s", json!({"type": "int", "value": i})).await;
@@ -261,8 +270,8 @@ async fn test_log_active_limit_is_bounded_and_keeps_redo() {
 #[tokio::test]
 async fn test_revision_detail_and_label() {
     let (app, repo, root) = setup("rev").await;
-    let entry = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
     let _ = entry;
 
     // "head" targets the revision containing the current HEAD.
@@ -301,8 +310,8 @@ async fn test_revision_detail_and_label() {
 #[tokio::test]
 async fn test_rollback_by_id_and_redo() {
     let (app, repo, root) = setup("roll").await;
-    let entry = create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     let v1 = patch(&app, &repo, &uuid, "n", json!({"type": "int", "value": 2})).await;
     assert_eq!(v1["version"], 1);
@@ -346,7 +355,8 @@ async fn test_rollback_by_id_and_redo() {
     .await;
     assert_eq!(status, StatusCode::OK, "redo failed: {body}");
     assert_eq!(body["operations_applied"], 1);
-    let (_, redone) = request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
+    let (_, redone) =
+        request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(redone["fields"][0]["value"]["value"], 2);
     assert_eq!(redone["version"], 1);
 
@@ -408,12 +418,8 @@ async fn test_rollback_restores_deleted_record_with_field_ids() {
     )
     .await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
-    let original_ids: Vec<i64> = entry["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["id"].as_i64().unwrap())
-        .collect();
+    let original_ids: Vec<i64> =
+        entry["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
     let version_before = entry["version"].as_u64().unwrap();
 
     let (status, _) =
@@ -432,12 +438,8 @@ async fn test_rollback_restores_deleted_record_with_field_ids() {
     let (status, restored) =
         request(&app, "GET", &format!("/repos/{repo}/metarecords/{uuid}"), None).await;
     assert_eq!(status, StatusCode::OK, "entry must be restored");
-    let restored_ids: Vec<i64> = restored["fields"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|f| f["id"].as_i64().unwrap())
-        .collect();
+    let restored_ids: Vec<i64> =
+        restored["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
     assert_eq!(restored_ids, original_ids, "field ids restored exactly");
     assert_eq!(restored["version"].as_u64().unwrap(), version_before);
 
@@ -500,8 +502,12 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
         restored["fields"].as_array().unwrap().iter().map(|f| f["id"].as_i64().unwrap()).collect();
     assert_eq!(restored_ids, original_ids, "field ids restored exactly");
     assert_eq!(restored["version"].as_u64().unwrap(), version_before);
-    let names: Vec<&str> =
-        restored["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = restored["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, vec!["a", "b"]);
 
     std::fs::remove_dir_all(root).unwrap();
@@ -510,8 +516,8 @@ async fn test_set_record_is_one_op_and_rolls_back_exactly() {
 #[tokio::test]
 async fn test_rollback_by_label_and_branching() {
     let (app, repo, root) = setup("label").await;
-    let entry = create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "s", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
 
     // Label the current revision, then keep writing.
@@ -607,8 +613,8 @@ async fn test_rollback_unknown_target_is_404() {
 #[tokio::test]
 async fn test_prune_before_makes_weak_root() {
     let (app, repo, root) = setup("prune").await;
-    let entry = create(&app, &repo, json!([{"name": "p", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "p", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     patch(&app, &repo, &uuid, "p", json!({"type": "int", "value": 2})).await;
 
@@ -639,8 +645,8 @@ async fn test_prune_before_makes_weak_root() {
 #[tokio::test]
 async fn test_prune_linearize_removes_branches() {
     let (app, repo, root) = setup("linearize").await;
-    let entry = create(&app, &repo, json!([{"name": "q", "value": {"type": "int", "value": 1}}]))
-        .await;
+    let entry =
+        create(&app, &repo, json!([{"name": "q", "value": {"type": "int", "value": 1}}])).await;
     let uuid = entry["uuid"].as_str().unwrap().to_string();
     patch(&app, &repo, &uuid, "q", json!({"type": "int", "value": 2})).await;
     // Create a branch: roll back then write something else.
@@ -702,7 +708,8 @@ async fn test_log_since_reports_head_and_delta() {
     assert!(same["operations"].as_array().unwrap().is_empty());
 
     // A second write touches a new metarecord.
-    let m2 = create(&app, &repo, json!([{"name": "b", "value": {"type": "string", "value": "2"}}])).await;
+    let m2 = create(&app, &repo, json!([{"name": "b", "value": {"type": "string", "value": "2"}}]))
+        .await;
     let uuid2 = m2["uuid"].as_str().unwrap();
 
     let (_, delta) = request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}"), None).await;
@@ -730,36 +737,21 @@ async fn test_log_since_truncates_oversized_delta() {
 
     // Five writes, each a separate operation.
     for i in 0..5 {
-        create(
-            &app,
-            &repo,
-            json!([{"name": "n", "value": {"type": "int", "value": i}}]),
-        )
-        .await;
+        create(&app, &repo, json!([{"name": "n", "value": {"type": "int", "value": i}}])).await;
     }
 
     // With a limit below the delta size, the response is truncated: head still
     // advances, but no operations are carried.
-    let (status, capped) = request(
-        &app,
-        "GET",
-        &format!("/repos/{repo}/log/since?op={h0}&limit=2"),
-        None,
-    )
-    .await;
+    let (status, capped) =
+        request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}&limit=2"), None).await;
     assert_eq!(status, StatusCode::OK);
     assert!(capped["head"].as_i64().unwrap() > h0);
     assert_eq!(capped["truncated"], json!(true));
     assert!(capped["operations"].as_array().unwrap().is_empty());
 
     // With a generous limit, the full delta comes through untruncated.
-    let (_, full) = request(
-        &app,
-        "GET",
-        &format!("/repos/{repo}/log/since?op={h0}&limit=100"),
-        None,
-    )
-    .await;
+    let (_, full) =
+        request(&app, "GET", &format!("/repos/{repo}/log/since?op={h0}&limit=100"), None).await;
     assert_eq!(full["truncated"], json!(false));
     assert!(full["operations"].as_array().unwrap().len() >= 5);
 }

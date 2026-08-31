@@ -39,8 +39,7 @@ impl Fixture {
     fn matches(&mut self, field: &str, pattern: &str) -> Vec<Uuid> {
         let q = Query::Matches { field: field.into(), pattern: pattern.into() };
         let (mut uuids, _) =
-            query_exec::execute(&self.conn, &mut self.cache, &q, &[], None, None)
-                .unwrap();
+            query_exec::execute(&self.conn, &mut self.cache, &q, &[], None, None).unwrap();
         uuids.sort();
         uuids
     }
@@ -76,39 +75,39 @@ impl Fixture {
 /// of the search literals, overlapping trigrams, and ordering traps.
 const TXT: &[&str] = &[
     "annual report 2024",
-    "Report card",     // case differs from "report"
-    "reporter",        // contains "report"
-    "rep",             // exactly the 3-char literal
-    "re",              // 2 chars: no trigram
+    "Report card", // case differs from "report"
+    "reporter",    // contains "report"
+    "rep",         // exactly the 3-char literal
+    "re",          // 2 chars: no trigram
     "data report v2",
     "invoice_2024.pdf",
-    "café menu",       // unicode
-    "CAFÉ",            // unicode, upper
+    "café menu", // unicode
+    "CAFÉ",      // unicode, upper
     "foobar",
-    "foo then bar",    // matches foo.*bar
-    "barfoo",          // bar before foo: must NOT match foo.*bar
+    "foo then bar", // matches foo.*bar
+    "barfoo",       // bar before foo: must NOT match foo.*bar
     "12345",
     "abc",
     "xyzabc",
     "the cat sat",
     "a dog ran",
-    "",                // empty
+    "", // empty
 ];
 
 const PATTERNS: &[&str] = &[
     "report",
     "rep",
     "foo.*bar",
-    "(?i)report",      // case-insensitive: literal folds away → full scan path
-    "[0-9]{4}",        // no literal → full scan path
+    "(?i)report", // case-insensitive: literal folds away → full scan path
+    "[0-9]{4}",   // no literal → full scan path
     "caf",
     "café",
-    "^report",         // anchored
+    "^report", // anchored
     "report$",
     "xyz",
     "nonexistent",
-    "a.c",             // no usable literal
-    "cat|dog",         // alternation, no common literal
+    "a.c",     // no usable literal
+    "cat|dog", // alternation, no common literal
     "(report|invoice)_2024",
     "bar",
     "2024",
@@ -117,8 +116,10 @@ const PATTERNS: &[&str] = &[
 #[test]
 fn fts_prefilter_matches_full_scan_on_strings() {
     let mut f = Fixture::new();
-    let ids: Vec<(Uuid, &str)> =
-        TXT.iter().map(|&v| (f.create(vec![Field::new("txt", Value::String(v.into()))]), v)).collect();
+    let ids: Vec<(Uuid, &str)> = TXT
+        .iter()
+        .map(|&v| (f.create(vec![Field::new("txt", Value::String(v.into()))]), v))
+        .collect();
 
     for &pat in PATTERNS {
         let re = metafolder_daemon::regexp::compile(pat).unwrap();
@@ -135,7 +136,8 @@ fn fts_prefilter_matches_full_scan_on_tree_names() {
     // MATCHES also scans tree_ref `value_name`; the same equivalence must hold.
     let mut f = Fixture::new();
     let names = ["report.txt", "annual_report", "notes.md", "rep", "image.png", "café.jpg"];
-    let root = f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "root".into() })]);
+    let root =
+        f.create(vec![Field::new("loc", Value::TreeRef { parent: None, name: "root".into() })]);
     let ids: Vec<(Uuid, &str)> = names
         .iter()
         .map(|&n| {

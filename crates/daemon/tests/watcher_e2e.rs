@@ -16,7 +16,12 @@ use tower::util::ServiceExt;
 mod common;
 use common::TempDir;
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -39,20 +44,12 @@ async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> 
 /// Polls the query endpoint until the predicate yields a hit or times out.
 async fn wait_for_match(app: &Router, repo: &str, query: Value, expect: usize) -> Vec<String> {
     for _ in 0..50 {
-        let (status, body) = request(
-            app,
-            "POST",
-            &format!("/repos/{repo}/query"),
-            Some(json!({"query": query})),
-        )
-        .await;
+        let (status, body) =
+            request(app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": query})))
+                .await;
         assert_eq!(status, StatusCode::OK, "query failed: {body}");
-        let hits: Vec<String> = body
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
+        let hits: Vec<String> =
+            body.as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
         if hits.len() == expect {
             return hits;
         }
@@ -94,13 +91,9 @@ async fn wait_for_uuid_at(app: &Router, repo: &str, pattern: &str, uuid: &str) {
     let query = json!({"type": "matches", "field": "mfr_path", "pattern": format!("^{pattern}$")});
     let mut last = Vec::new();
     for _ in 0..100 {
-        let (_, body) = request(
-            app,
-            "POST",
-            &format!("/repos/{repo}/query"),
-            Some(json!({"query": query})),
-        )
-        .await;
+        let (_, body) =
+            request(app, "POST", &format!("/repos/{repo}/query"), Some(json!({"query": query})))
+                .await;
         last = body
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_owned)).collect())
@@ -187,8 +180,7 @@ async fn test_watcher_tracks_create_rename_delete() {
 
     // Create.
     std::fs::write(root.join("track_me.txt"), b"hello watcher").unwrap();
-    let by_name =
-        json!({"type": "matches", "field": "mfr_path", "pattern": "^track_me\\.txt$"});
+    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^track_me\\.txt$"});
     let hits = wait_for_match(&app, &repo, by_name, 1).await;
     let metarecord_uuid = hits[0].clone();
 
@@ -391,9 +383,10 @@ async fn test_file_moved_between_directories_keeps_its_metarecord() {
     .await
     .expect("the file is recorded under dst");
 
-    let hits = tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, by_name, 1))
-        .await
-        .expect("exactly one metarecord for the moved file");
+    let hits =
+        tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, by_name, 1))
+            .await
+            .expect("exactly one metarecord for the moved file");
     assert_eq!(hits[0], uuid, "the move must preserve the metarecord, not duplicate it");
 
     std::fs::remove_dir_all(root).unwrap();
@@ -412,11 +405,7 @@ async fn test_nested_subtree_created_at_once_is_ingested() {
 
     tokio::time::timeout(
         Duration::from_secs(20),
-        wait_for_paths(
-            &app,
-            &repo,
-            &["", "a", "a/b", "a/b/c", "a/b/c/deep.txt", "a/top.txt"],
-        ),
+        wait_for_paths(&app, &repo, &["", "a", "a/b", "a/b/c", "a/b/c/deep.txt", "a/top.txt"]),
     )
     .await
     .expect("every node of the new subtree is tracked");
@@ -494,9 +483,10 @@ async fn test_move_into_a_brand_new_directory_keeps_the_metarecord() {
     .await
     .expect("the file is tracked at its new path");
 
-    let hits = tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, by_name, 1))
-        .await
-        .expect("exactly one metarecord for the moved file");
+    let hits =
+        tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, by_name, 1))
+            .await
+            .expect("exactly one metarecord for the moved file");
     assert_eq!(hits[0], uuid, "the move must keep the metarecord, not create a second one");
 
     // And nothing was left orphaned behind it.
@@ -656,12 +646,9 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords() {
 
     // Both names still exist, so "which paths are tracked" cannot tell the swap
     // apart from the state before it: wait for the records to have crossed over.
-    tokio::time::timeout(
-        Duration::from_secs(20),
-        wait_for_uuid_at(&app, &repo, "a\\.txt", &b),
-    )
-    .await
-    .expect("b's metarecord must follow its bytes to a.txt");
+    tokio::time::timeout(Duration::from_secs(20), wait_for_uuid_at(&app, &repo, "a\\.txt", &b))
+        .await
+        .expect("b's metarecord must follow its bytes to a.txt");
     assert_eq!(wait_for_match(&app, &repo, at("b\\.txt"), 1).await[0], a, "a's record is at b.txt");
 
     let (_, orphans) = request(

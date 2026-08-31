@@ -5,7 +5,6 @@
 //! deletion. (Matching is now CLI-side by TreeRef identity — see the CLI
 //! `sync plan` tests — so there is no daemon matcher to exercise here.)
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -27,7 +26,12 @@ fn app() -> Router {
     routes::build(std::sync::Arc::new(AppState::new()))
 }
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -78,7 +82,6 @@ async fn create(app: &Router, repo: &str, fields: Value) -> Value {
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body
 }
-
 
 // ── Pair ordering and link CRUD ──────────────────────────────────────────────
 
@@ -232,8 +235,7 @@ async fn test_status_never_synced_then_in_sync_then_ahead() {
     assert_eq!(status_of(&app, &a, &b, &link).await["state"], "ahead_a");
 
     // The stored snapshot survives and is readable on the link detail.
-    let (status, detail) =
-        request(&app, "GET", &format!("/sync/{a}/{b}/links/{link}"), None).await;
+    let (status, detail) = request(&app, "GET", &format!("/sync/{a}/{b}/links/{link}"), None).await;
     assert_eq!(status, StatusCode::OK);
     let snap = detail["snapshot"].as_array().unwrap();
     assert_eq!(snap.len(), 1);
@@ -313,18 +315,25 @@ async fn test_mf_sync_endpoint() {
         .to_string();
 
     // The file inherits external; a bare record (no mfr_path) is internal.
-    let (status, body) = request(&app, "GET", &format!("/repos/{a}/metarecords/{file}/mf-sync"), None).await;
+    let (status, body) =
+        request(&app, "GET", &format!("/repos/{a}/metarecords/{file}/mf-sync"), None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["mf_sync"], "external");
 
-    let bare = create(&app, &a, json!([{"name": "tag", "value": {"type": "string", "value": "x"}}])).await
-        ["uuid"].as_str().unwrap().to_string();
-    let (_, body) = request(&app, "GET", &format!("/repos/{a}/metarecords/{bare}/mf-sync"), None).await;
+    let bare =
+        create(&app, &a, json!([{"name": "tag", "value": {"type": "string", "value": "x"}}])).await
+            ["uuid"]
+            .as_str()
+            .unwrap()
+            .to_string();
+    let (_, body) =
+        request(&app, "GET", &format!("/repos/{a}/metarecords/{bare}/mf-sync"), None).await;
     assert_eq!(body["mf_sync"], "internal");
 }
 
 /// The mfr_path forest root uuid of a repo.
 async fn root_uuid_of(app: &Router, repo: &str) -> String {
-    let (_, body) = request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
+    let (_, body) =
+        request(app, "GET", &format!("/repos/{repo}/tree/roots?field=mfr_path"), None).await;
     body[0]["uuid"].as_str().unwrap().to_string()
 }

@@ -421,7 +421,11 @@ impl EParser {
             Some(ETok::Ident(name)) => {
                 match self.advance() {
                     Some(ETok::LParen) => {}
-                    _ => return Err(format!("'{name}' must be a function call (did you mean ${name}?)")),
+                    _ => {
+                        return Err(format!(
+                            "'{name}' must be a function call (did you mean ${name}?)"
+                        ))
+                    }
                 }
                 let mut args = Vec::new();
                 if !matches!(self.peek(), Some(ETok::RParen)) {
@@ -477,7 +481,10 @@ mod tests {
 
     #[test]
     fn now_arithmetic_for_relative_dates() {
-        assert_eq!(rs_at("@{now() - num($d)}", cap(vec![("d", t("1000"))]), 5000).unwrap(), "@4000");
+        assert_eq!(
+            rs_at("@{now() - num($d)}", cap(vec![("d", t("1000"))]), 5000).unwrap(),
+            "@4000"
+        );
     }
 
     #[test]

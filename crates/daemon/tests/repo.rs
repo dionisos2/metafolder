@@ -1,6 +1,5 @@
 //! Integration tests for repository initialisation and loading.
 
-
 use metafolder_core::metarecord::Value;
 use metafolder_daemon::config::RepoConfig;
 use metafolder_daemon::db;
@@ -55,10 +54,7 @@ fn test_init_creates_structure_and_root_metarecord() {
     assert!(root.join(".metafolder/internal/db.sqlite").exists());
     assert!(!root.join(".metafolder/db.sqlite").exists());
     assert_eq!(opened.config.root, root.canonicalize().unwrap());
-    assert_eq!(
-        opened.config.name,
-        root.file_name().unwrap().to_string_lossy().to_string()
-    );
+    assert_eq!(opened.config.name, root.file_name().unwrap().to_string_lossy().to_string());
 
     // The filesystem root entry exists with the spec'd defaults.
     let root_uuid = db::find_tree_child(&opened.conn, "mfr_path", None, "")
@@ -247,11 +243,9 @@ fn test_load_migrates_record_era_table_names() {
     assert!(db::get_metarecord(&loaded.conn, root_uuid).unwrap().is_some());
     let n: i64 = loaded
         .conn
-        .query_row(
-            "SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'",
-            [],
-            |r| r.get(0),
-        )
+        .query_row("SELECT COUNT(*) FROM operation WHERE op_type = 'create_metarecord'", [], |r| {
+            r.get(0)
+        })
         .unwrap();
     assert_eq!(n, 1);
     drop(loaded);
@@ -273,10 +267,8 @@ fn test_exclusive_lock_blocks_second_connection() {
 
     // The first connection holds an EXCLUSIVE lock (it has already written);
     // a second connection must not be able to read or write.
-    let second =
-        rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
-    let res: Result<i64, _> =
-        second.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get(0));
+    let second = rusqlite::Connection::open(root.join(".metafolder/internal/db.sqlite")).unwrap();
+    let res: Result<i64, _> = second.query_row("SELECT COUNT(*) FROM metarecord", [], |r| r.get(0));
     assert!(res.is_err(), "second connection must be locked out");
 
     drop(opened);

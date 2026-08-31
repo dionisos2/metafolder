@@ -155,9 +155,8 @@ const FFMPEG_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// user's filesystem, and no network. It decodes an untrusted file, so a
 /// decoder exploit is confined to that view (`sandbox`).
 fn ffmpeg_spec(input: &Path, output: &Path, seek: &str) -> crate::sandbox::Spec {
-    let mut spec = crate::sandbox::Spec::new("ffmpeg")
-        .args(ffmpeg_args(input, output, seek))
-        .read_only(input);
+    let mut spec =
+        crate::sandbox::Spec::new("ffmpeg").args(ffmpeg_args(input, output, seek)).read_only(input);
     if let Some(cache_dir) = output.parent() {
         spec = spec.read_write(cache_dir);
     }
@@ -171,8 +170,8 @@ fn run_ffmpeg(input: &Path, output: &Path, seek: &str) -> bool {
     let Some(cmd) = crate::sandbox::command(&ffmpeg_spec(input, output, seek)) else {
         return false;
     };
-    let succeeded = crate::proc::run_with_timeout(cmd, FFMPEG_TIMEOUT)
-        .is_some_and(|out| out.status.success());
+    let succeeded =
+        crate::proc::run_with_timeout(cmd, FFMPEG_TIMEOUT).is_some_and(|out| out.status.success());
     succeeded && std::fs::metadata(output).map(|meta| meta.len() > 0).unwrap_or(false)
 }
 
@@ -243,22 +242,22 @@ mod tests {
 
     #[test]
     fn test_generate_rejects_unsupported_types() {
-        assert_eq!(generate(Path::new("/tmp/note.txt"), Path::new("/tmp")), Err(ThumbError::Unsupported));
-        assert_eq!(generate(Path::new("/tmp/photo.png"), Path::new("/tmp")), Err(ThumbError::Unsupported));
+        assert_eq!(
+            generate(Path::new("/tmp/note.txt"), Path::new("/tmp")),
+            Err(ThumbError::Unsupported)
+        );
+        assert_eq!(
+            generate(Path::new("/tmp/photo.png"), Path::new("/tmp")),
+            Err(ThumbError::Unsupported)
+        );
     }
 
     #[test]
     fn test_match_internal_dir_picks_innermost_repo() {
         // Nested repos; the inner one uses an external-database internal dir.
         let repos = vec![
-            (
-                PathBuf::from("/data/outer"),
-                PathBuf::from("/data/outer/.metafolder/internal"),
-            ),
-            (
-                PathBuf::from("/data/outer/inner"),
-                PathBuf::from("/elsewhere/inner-db/internal"),
-            ),
+            (PathBuf::from("/data/outer"), PathBuf::from("/data/outer/.metafolder/internal")),
+            (PathBuf::from("/data/outer/inner"), PathBuf::from("/elsewhere/inner-db/internal")),
         ];
         // A file in the inner repo resolves to the innermost root's internal dir.
         assert_eq!(
@@ -302,7 +301,9 @@ mod tests {
             return;
         }
 
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-thumb-test-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-thumb-test-{}", std::process::id()));
         let cache_dir = dir.join(".metafolder").join("internal").join("thumbnails");
         std::fs::create_dir_all(&dir).unwrap();
         let video = dir.join("clip.mp4");

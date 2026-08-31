@@ -22,9 +22,7 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
             return Err(format!("invalid field spec '{spec}': 'nothing' takes no value"))
         }
         ("string", Some(v)) => Value::String(unquote(v).to_string()),
-        ("int", Some(v)) => {
-            Value::Int(v.parse().map_err(|_| format!("invalid int value: '{v}'"))?)
-        }
+        ("int", Some(v)) => Value::Int(v.parse().map_err(|_| format!("invalid int value: '{v}'"))?),
         ("float", Some(v)) => {
             Value::Float(v.parse().map_err(|_| format!("invalid float value: '{v}'"))?)
         }
@@ -58,9 +56,7 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
             Value::TreeRef { parent, name: leaf.to_string() }
         }
         (other, None) => {
-            return Err(format!(
-                "invalid field spec '{spec}': missing '=value' for type '{other}'"
-            ))
+            return Err(format!("invalid field spec '{spec}': missing '=value' for type '{other}'"))
         }
         (other, Some(_)) => return Err(format!("unknown value type '{other}'")),
     };
@@ -172,7 +168,10 @@ mod tests {
     #[test]
     fn test_datetime() {
         let ms = metafolder_core::date::iso_to_ms("2024-01-01T12:00:00Z").unwrap();
-        assert_eq!(ok("added:datetime=2024-01-01T12:00:00Z"), ("added".into(), Value::DateTime(ms)));
+        assert_eq!(
+            ok("added:datetime=2024-01-01T12:00:00Z"),
+            ("added".into(), Value::DateTime(ms))
+        );
     }
 
     #[test]

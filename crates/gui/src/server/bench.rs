@@ -28,10 +28,7 @@ impl BenchBuffer {
 
     /// Appends one measure (a panel phase or a daemon round-trip).
     pub fn record(&self, name: &str, duration_ms: f64) {
-        self.records.lock_recover().push(BenchRecord {
-            name: name.to_string(),
-            duration_ms,
-        });
+        self.records.lock_recover().push(BenchRecord { name: name.to_string(), duration_ms });
     }
 
     /// All records in arrival order.

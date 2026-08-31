@@ -73,10 +73,7 @@ fn init(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncOut
     repo.branch("main", &commit, true).map_err(gerr)?;
     repo.set_head("refs/heads/main").map_err(gerr)?;
     repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
-    Ok(SyncOutcome {
-        initialized: true,
-        ..Default::default()
-    })
+    Ok(SyncOutcome { initialized: true, ..Default::default() })
 }
 
 // ── Update ───────────────────────────────────────────────────────────────
@@ -85,11 +82,8 @@ fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncO
     let repo = git2::Repository::open(config_dir).map_err(gerr)?;
 
     let new_default_tree = build_tree(&repo, files)?;
-    let old_default = repo
-        .find_reference("refs/heads/default")
-        .map_err(gerr)?
-        .peel_to_commit()
-        .map_err(gerr)?;
+    let old_default =
+        repo.find_reference("refs/heads/default").map_err(gerr)?.peel_to_commit().map_err(gerr)?;
 
     repo.set_head("refs/heads/main").map_err(gerr)?;
     let sig = signature()?;
@@ -145,11 +139,7 @@ fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncO
             .map_err(gerr)?;
         repo.set_head("refs/heads/main").map_err(gerr)?;
         repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
-        return Ok(SyncOutcome {
-            updated: true,
-            user_edits_committed,
-            ..Default::default()
-        });
+        return Ok(SyncOutcome { updated: true, user_edits_committed, ..Default::default() });
     }
 
     repo.merge(&[&annotated], None, None).map_err(gerr)?;
@@ -195,11 +185,7 @@ fn update(config_dir: &Path, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<SyncO
     repo.set_head("refs/heads/main").map_err(gerr)?;
     repo.checkout_head(Some(&mut forced_checkout())).map_err(gerr)?;
 
-    Ok(SyncOutcome {
-        updated: true,
-        user_edits_committed,
-        ..Default::default()
-    })
+    Ok(SyncOutcome { updated: true, user_edits_committed, ..Default::default() })
 }
 
 fn working_tree_dirty(repo: &git2::Repository) -> Result<bool, String> {
@@ -211,15 +197,12 @@ fn working_tree_dirty(repo: &git2::Repository) -> Result<bool, String> {
 
 fn commit_all(repo: &git2::Repository, sig: &git2::Signature, message: &str) -> Result<(), String> {
     let mut index = repo.index().map_err(gerr)?;
-    index
-        .add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None)
-        .map_err(gerr)?;
+    index.add_all(["*"].iter(), git2::IndexAddOption::DEFAULT, None).map_err(gerr)?;
     index.write().map_err(gerr)?;
     let tree_oid = index.write_tree().map_err(gerr)?;
     let tree = repo.find_tree(tree_oid).map_err(gerr)?;
     let parent = repo.head().map_err(gerr)?.peel_to_commit().map_err(gerr)?;
-    repo.commit(Some("HEAD"), sig, sig, message, &tree, &[&parent])
-        .map_err(gerr)?;
+    repo.commit(Some("HEAD"), sig, sig, message, &tree, &[&parent]).map_err(gerr)?;
     Ok(())
 }
 
@@ -237,9 +220,7 @@ fn insert_node(dir: &mut BTreeMap<String, Node>, components: &[String], oid: git
             dir.insert(name.clone(), Node::File(oid));
         }
         [head, rest @ ..] => {
-            let child = dir
-                .entry(head.clone())
-                .or_insert_with(|| Node::Dir(BTreeMap::new()));
+            let child = dir.entry(head.clone()).or_insert_with(|| Node::Dir(BTreeMap::new()));
             if let Node::Dir(children) = child {
                 insert_node(children, rest, oid);
             }
@@ -247,7 +228,10 @@ fn insert_node(dir: &mut BTreeMap<String, Node>, components: &[String], oid: git
     }
 }
 
-fn write_nodes(repo: &git2::Repository, nodes: &BTreeMap<String, Node>) -> Result<git2::Oid, String> {
+fn write_nodes(
+    repo: &git2::Repository,
+    nodes: &BTreeMap<String, Node>,
+) -> Result<git2::Oid, String> {
     let mut builder = repo.treebuilder(None).map_err(gerr)?;
     for (name, node) in nodes {
         match node {
@@ -261,14 +245,15 @@ fn write_nodes(repo: &git2::Repository, nodes: &BTreeMap<String, Node>) -> Resul
     builder.write().map_err(gerr)
 }
 
-fn build_tree(repo: &git2::Repository, files: &BTreeMap<PathBuf, Vec<u8>>) -> Result<git2::Oid, String> {
+fn build_tree(
+    repo: &git2::Repository,
+    files: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<git2::Oid, String> {
     let mut root = BTreeMap::new();
     for (path, bytes) in files {
         let oid = repo.blob(bytes).map_err(gerr)?;
-        let components: Vec<String> = path
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let components: Vec<String> =
+            path.components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect();
         insert_node(&mut root, &components, oid);
     }
     write_nodes(repo, &root)
@@ -283,8 +268,8 @@ fn gather_defaults(source_root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, Str
     out.insert(PathBuf::from(".gitignore"), GITIGNORE.as_bytes().to_vec());
 
     let crates = source_root.join("crates");
-    let entries = std::fs::read_dir(&crates)
-        .map_err(|e| format!("cannot read {}: {e}", crates.display()))?;
+    let entries =
+        std::fs::read_dir(&crates).map_err(|e| format!("cannot read {}: {e}", crates.display()))?;
     for entry in entries {
         let entry = entry.map_err(|e| format!("reading {}: {e}", crates.display()))?;
         if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
@@ -357,11 +342,7 @@ mod tests {
     fn make_source(root: &Path, files: &[(&str, &str)]) {
         for (rel, content) in files {
             let (crate_name, sub) = rel.split_once('/').unwrap();
-            let path = root
-                .join("crates")
-                .join(crate_name)
-                .join("default-config")
-                .join(sub);
+            let path = root.join("crates").join(crate_name).join("default-config").join(sub);
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(path, content).unwrap();
         }
@@ -375,10 +356,7 @@ mod tests {
     fn init_creates_repo_and_checks_out_main() {
         let area = scratch();
         let (source, config) = (area.join("src"), area.join("cfg"));
-        make_source(
-            &source,
-            &[("gui/style.css", "body{}"), ("core/query-grammar", "g1")],
-        );
+        make_source(&source, &[("gui/style.css", "body{}"), ("core/query-grammar", "g1")]);
 
         let out = sync(&source, &config).unwrap();
         assert!(out.initialized);
@@ -402,43 +380,28 @@ mod tests {
         fs::write(shipped.join("lib/mf-gui.sh"), "helpers\n").unwrap();
 
         sync(&source, &config).unwrap();
-        assert_eq!(
-            read(&config, "scripts/gui-tag-classify.sh").as_deref(),
-            Some("#!/bin/sh\n")
-        );
-        assert_eq!(
-            read(&config, "scripts/lib/mf-gui.sh").as_deref(),
-            Some("helpers\n")
-        );
+        assert_eq!(read(&config, "scripts/gui-tag-classify.sh").as_deref(), Some("#!/bin/sh\n"));
+        assert_eq!(read(&config, "scripts/lib/mf-gui.sh").as_deref(), Some("helpers\n"));
     }
 
     #[test]
     fn update_preserves_user_edit_to_another_file() {
         let area = scratch();
         let (source, config) = (area.join("src"), area.join("cfg"));
-        make_source(
-            &source,
-            &[("gui/style.css", "v1"), ("gui/keybindings.toml", "k1")],
-        );
+        make_source(&source, &[("gui/style.css", "v1"), ("gui/keybindings.toml", "k1")]);
         sync(&source, &config).unwrap();
 
         // User edits one file directly in the main working tree.
         fs::write(config.join("gui/keybindings.toml"), "k1-user").unwrap();
 
         // A new shipped default changes the *other* file.
-        make_source(
-            &source,
-            &[("gui/style.css", "v2"), ("gui/keybindings.toml", "k1")],
-        );
+        make_source(&source, &[("gui/style.css", "v2"), ("gui/keybindings.toml", "k1")]);
         let out = sync(&source, &config).unwrap();
 
         assert!(out.updated);
         assert!(out.conflict.is_none());
         assert_eq!(read(&config, "gui/style.css").as_deref(), Some("v2"));
-        assert_eq!(
-            read(&config, "gui/keybindings.toml").as_deref(),
-            Some("k1-user")
-        );
+        assert_eq!(read(&config, "gui/keybindings.toml").as_deref(), Some("k1-user"));
     }
 
     #[test]

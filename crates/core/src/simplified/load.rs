@@ -65,10 +65,7 @@ mod tests {
         assert_eq!(expand(&g, "rating=4").unwrap(), "rating = 4");
         assert_eq!(expand(&g, "seen=true").unwrap(), "seen = true");
         assert_eq!(expand(&g, "size>=100MB").unwrap(), "mfr_size >= 104857600");
-        assert_eq!(
-            expand(&g, "fav genre=jazz").unwrap(),
-            "rating >= 4 AND genre = \"jazz\""
-        );
+        assert_eq!(expand(&g, "fav genre=jazz").unwrap(), "rating >= 4 AND genre = \"jazz\"");
         assert_eq!(expand(&g, "a=x OR b=y").unwrap(), "a = \"x\" OR b = \"y\"");
     }
 
@@ -104,15 +101,9 @@ mod tests {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         // Path-mode OSM over a tree_ref field (`p` = mfr_path); multi-term
         // needs a quoted string.
-        assert_eq!(
-            expand(&g, r#"p osm "scien fic""#).unwrap(),
-            r#"osm(mfr_path, "scien fic")"#
-        );
+        assert_eq!(expand(&g, r#"p osm "scien fic""#).unwrap(), r#"osm(mfr_path, "scien fic")"#);
         // Direct-mode OSM over a field's own text.
-        assert_eq!(
-            expand(&g, r#"label osmd "sf""#).unwrap(),
-            r#"osmd(label, "sf")"#
-        );
+        assert_eq!(expand(&g, r#"label osmd "sf""#).unwrap(), r#"osmd(label, "sf")"#);
         // A single term may be a bare word (no quotes).
         assert_eq!(expand(&g, "name osmd config").unwrap(), r#"osmd(name, "config")"#);
         // Composes with the boolean skeleton like any other predicate.
@@ -167,7 +158,9 @@ mod tests {
             r#"tag -> (mf_schema = "tag" AND osm(path, "musique")) AND rating > 3"#
         );
         // Every expansion is valid normal DSL.
-        for input in ["#musique", "#musique/jazz", r#"#"musique/jazz""#, "#=musique/jazz", "##=musique/jazz"] {
+        for input in
+            ["#musique", "#musique/jazz", r#"#"musique/jazz""#, "#=musique/jazz", "##=musique/jazz"]
+        {
             crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
         }
     }
@@ -228,7 +221,9 @@ mod tests {
 
     #[test]
     fn load_grammar_with_source_returns_raw_text_and_a_valid_grammar() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-core-grammar-src-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-core-grammar-src-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("query-grammar");
@@ -246,7 +241,9 @@ mod tests {
 
     #[test]
     fn load_grammar_errors_when_missing() {
-        let dir = std::env::temp_dir().join("metafolder-tests").join(format!("mf-core-grammar-{}", std::process::id()));
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-core-grammar-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("query-grammar");
         let err = load_grammar(&path).unwrap_err();

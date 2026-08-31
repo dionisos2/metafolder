@@ -27,11 +27,8 @@ fn create(conn: &mut Connection, fields: Vec<Field>) -> metafolder_core::metarec
 /// EXPLAIN QUERY PLAN `detail` lines for `sql`, joined into one string.
 fn query_plan(conn: &Connection, sql: &str) -> String {
     let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
-    let rows: Vec<String> = stmt
-        .query_map([], |r| r.get::<_, String>(3))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
+    let rows: Vec<String> =
+        stmt.query_map([], |r| r.get::<_, String>(3)).unwrap().collect::<Result<_, _>>().unwrap();
     rows.join(" | ")
 }
 
@@ -53,13 +50,8 @@ fn test_field_rejects_conflicting_value_type() {
     create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let err = w
-        .set_field(Uuid::new_v4(), "rating", Value::String("five".into()))
-        .unwrap_err();
-    assert!(
-        err.to_string().contains("type"),
-        "expected a type-conflict error, got: {err}"
-    );
+    let err = w.set_field(Uuid::new_v4(), "rating", Value::String("five".into())).unwrap_err();
+    assert!(err.to_string().contains("type"), "expected a type-conflict error, got: {err}");
 }
 
 #[test]
@@ -110,7 +102,10 @@ fn test_field_rows_for_matches_per_record_reads() {
     let versions = db::versions_for(&conn, &want).unwrap();
 
     for uuid in [a.uuid, b.uuid, empty.uuid] {
-        assert_eq!(rows.get(&uuid).cloned().unwrap_or_default(), db::get_field_rows(&conn, uuid).unwrap());
+        assert_eq!(
+            rows.get(&uuid).cloned().unwrap_or_default(),
+            db::get_field_rows(&conn, uuid).unwrap()
+        );
         assert_eq!(versions.get(&uuid).copied(), db::get_version(&conn, uuid).unwrap());
     }
     // An unknown uuid contributes no rows and no version.
@@ -264,8 +259,14 @@ fn test_retype_string_to_reference_types() {
     w.commit().unwrap();
     assert_eq!(summary.converted, 2);
     assert_eq!(summary.fallback_uuids, vec![bad.uuid]);
-    assert_eq!(db::get_metarecord(&conn, good.uuid).unwrap().unwrap().get("link"), Some(&Value::Ref(target)));
-    assert_eq!(db::get_metarecord(&conn, bad.uuid).unwrap().unwrap().get("link"), Some(&Value::Nothing));
+    assert_eq!(
+        db::get_metarecord(&conn, good.uuid).unwrap().unwrap().get("link"),
+        Some(&Value::Ref(target))
+    );
+    assert_eq!(
+        db::get_metarecord(&conn, bad.uuid).unwrap().unwrap().get("link"),
+        Some(&Value::Nothing)
+    );
 }
 
 #[test]
@@ -285,12 +286,19 @@ fn test_retype_string_to_tree_ref_validates_forest() {
     w.commit().unwrap();
 
     assert_eq!(summary.converted, 2);
-    assert_eq!(summary.fallback_uuids, vec![orphan.uuid], "the orphan parent falls back to Nothing");
+    assert_eq!(
+        summary.fallback_uuids,
+        vec![orphan.uuid],
+        "the orphan parent falls back to Nothing"
+    );
     assert_eq!(
         db::get_metarecord(&conn, root.uuid).unwrap().unwrap().get("cat"),
         Some(&Value::TreeRef { parent: None, name: "tags".into() })
     );
-    assert_eq!(db::get_metarecord(&conn, orphan.uuid).unwrap().unwrap().get("cat"), Some(&Value::Nothing));
+    assert_eq!(
+        db::get_metarecord(&conn, orphan.uuid).unwrap().unwrap().get("cat"),
+        Some(&Value::Nothing)
+    );
 }
 
 #[test]
@@ -360,10 +368,8 @@ fn test_metarecord_listing_keyset_avoids_temp_sort() {
     // already ordered; the keyset cursor must not force a temp b-tree sort.
     let conn = test_conn();
     // The shape `list_entries_page` emits for a subsequent page (cursor present).
-    let plan = query_plan(
-        &conn,
-        "SELECT uuid FROM metarecord WHERE uuid > x'01' ORDER BY uuid LIMIT 500",
-    );
+    let plan =
+        query_plan(&conn, "SELECT uuid FROM metarecord WHERE uuid > x'01' ORDER BY uuid LIMIT 500");
     assert!(
         !plan.contains("TEMP B-TREE"),
         "listing should not sort via a temp b-tree, plan was: {plan}"
@@ -377,14 +383,10 @@ fn test_metarecord_listing_keyset_avoids_temp_sort() {
 #[test]
 fn test_init_schema_creates_all_tables() {
     let conn = test_conn();
-    let mut stmt = conn
-        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
-        .unwrap();
-    let tables: Vec<String> = stmt
-        .query_map([], |r| r.get(0))
-        .unwrap()
-        .collect::<Result<_, _>>()
-        .unwrap();
+    let mut stmt =
+        conn.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").unwrap();
+    let tables: Vec<String> =
+        stmt.query_map([], |r| r.get(0)).unwrap().collect::<Result<_, _>>().unwrap();
     for expected in [
         "metarecord",
         "field",
@@ -401,9 +403,8 @@ fn test_init_schema_creates_all_tables() {
 #[test]
 fn test_log_head_starts_null() {
     let conn = test_conn();
-    let head: Option<i64> = conn
-        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))
-        .unwrap();
+    let head: Option<i64> =
+        conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
     assert_eq!(head, None);
 }
 
@@ -416,7 +417,10 @@ fn test_tree_unique_index_rejects_duplicate_position() {
     );
     create(
         &mut conn,
-        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() })],
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: "a.mp3".into() },
+        )],
     );
     // Same (field_name, parent, name) again must fail.
     let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -548,11 +552,9 @@ fn test_create_record_writes_log() {
     let m = create(&mut conn, vec![Field::new("rating", Value::Int(5))]);
 
     let (op_type, entity, parent_id, seq): (String, Vec<u8>, Option<i64>, i64) = conn
-        .query_row(
-            "SELECT op_type, entity_uuid, parent_id, seq FROM operation",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )
+        .query_row("SELECT op_type, entity_uuid, parent_id, seq FROM operation", [], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+        })
         .unwrap();
     assert_eq!(op_type, "create_metarecord");
     assert_eq!(entity, m.uuid.as_bytes().to_vec());
@@ -570,9 +572,8 @@ fn test_create_record_writes_log() {
     assert_eq!(n_after, 1);
 
     // HEAD points at the operation.
-    let head: Option<i64> = conn
-        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))
-        .unwrap();
+    let head: Option<i64> =
+        conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
     let op_id: i64 = conn.query_row("SELECT id FROM operation", [], |r| r.get(0)).unwrap();
     assert_eq!(head, Some(op_id));
 }
@@ -709,10 +710,7 @@ fn test_delete_field_removes_single_row() {
 #[test]
 fn test_delete_record_removes_everything_and_snapshots_before() {
     let mut conn = test_conn();
-    let m = create(
-        &mut conn,
-        vec![Field::new("a", Value::Int(1)), Field::new("b", Value::Int(2))],
-    );
+    let m = create(&mut conn, vec![Field::new("a", Value::Int(1)), Field::new("b", Value::Int(2))]);
 
     let mut w = Writer::begin(&mut conn, None).unwrap();
     w.delete_metarecord(m.uuid).unwrap();
@@ -780,14 +778,12 @@ fn test_multiple_ops_in_one_revision_chain() {
     assert_eq!(rows[1].1, Some(rows[0].0));
     assert_eq!(rows[2].1, Some(rows[1].0));
 
-    let label: Option<String> = conn
-        .query_row("SELECT label FROM revision WHERE id = ?1", [rev], |r| r.get(0))
-        .unwrap();
+    let label: Option<String> =
+        conn.query_row("SELECT label FROM revision WHERE id = ?1", [rev], |r| r.get(0)).unwrap();
     assert_eq!(label.as_deref(), Some("batch"));
 
-    let head: Option<i64> = conn
-        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))
-        .unwrap();
+    let head: Option<i64> =
+        conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
     assert_eq!(head, Some(rows[2].0));
 
     // Version was bumped once per op.
@@ -831,9 +827,8 @@ fn test_large_revision_chain_across_bulk_chunks() {
         }
     }
 
-    let head: Option<i64> = conn
-        .query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))
-        .unwrap();
+    let head: Option<i64> =
+        conn.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0)).unwrap();
     assert_eq!(head, Some(rows.last().unwrap().0));
 
     // One after-snapshot per set_field operation.
@@ -998,7 +993,10 @@ fn test_tree_ref_depth_limit() {
     // Build a chain of exactly 1000 nodes (depth 1000): root is depth 1.
     let mut w = Writer::begin(&mut conn, None).unwrap();
     let root = w
-        .create_metarecord(vec![Field::new("parent", Value::TreeRef { parent: None, name: "n1".into() })])
+        .create_metarecord(vec![Field::new(
+            "parent",
+            Value::TreeRef { parent: None, name: "n1".into() },
+        )])
         .unwrap();
     let mut prev = root.uuid;
     for i in 2..=1000 {
@@ -1198,8 +1196,10 @@ fn test_ancestry_ops_limited_returns_the_most_recent() {
     );
     // A cap larger than the chain returns the whole ancestry.
     let big = log::ancestry_ops_limited(&conn, head, 999).unwrap();
-    assert_eq!(big.iter().map(|o| o.id).collect::<Vec<_>>(),
-               full.iter().map(|o| o.id).collect::<Vec<_>>());
+    assert_eq!(
+        big.iter().map(|o| o.id).collect::<Vec<_>>(),
+        full.iter().map(|o| o.id).collect::<Vec<_>>()
+    );
 }
 
 #[test]
@@ -1260,8 +1260,10 @@ fn test_index_build_progress_tracks_field_ids() {
     assert!(max_id >= 150, "50 records * 3 fields → at least 150 rows: {max_id}");
 
     let seen: RefCell<Vec<(u64, u64)>> = RefCell::new(Vec::new());
-    RepoIndex::build_reported(&conn, &|done, total| seen.borrow_mut().push((done, total)), &|| false)
-        .unwrap();
+    RepoIndex::build_reported(&conn, &|done, total| seen.borrow_mut().push((done, total)), &|| {
+        false
+    })
+    .unwrap();
     let seen = seen.into_inner();
     // Every sample uses MAX(id) as the total, and the final one is exactly full.
     assert!(seen.iter().all(|&(_, total)| total == max_id), "total is MAX(field.id): {seen:?}");

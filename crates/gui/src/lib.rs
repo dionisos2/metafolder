@@ -13,13 +13,13 @@ pub mod daemon_proxy;
 pub mod events;
 pub mod fs_commands;
 pub mod history;
+pub mod ignore;
 pub mod keybindings;
 pub mod media_support;
 pub mod notifier;
 pub mod proc;
 pub mod recent;
 pub mod reconcile;
-pub mod ignore;
 pub mod repo_init;
 pub mod sandbox;
 pub mod server;
@@ -61,10 +61,7 @@ impl FrontendNotifier for TauriNotifier {
 
 /// Emits the compiled keybinding table to the frontend.
 pub(crate) fn push_keybindings(gui: &GuiState, compiled: &[CompiledBinding]) {
-    gui.notify(
-        events::KEYBINDINGS_CHANGED,
-        serde_json::json!({ "bindings": compiled }),
-    );
+    gui.notify(events::KEYBINDINGS_CHANGED, serde_json::json!({ "bindings": compiled }));
 }
 
 /// Shell builtins shown in the command input autocomplete (spec-gui
@@ -87,16 +84,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("workspace:goto", "Move both panels to workspace number N", true),
         ("workspace:next", "Move both panels to the next workspace", true),
         ("workspace:prev", "Move both panels to the previous workspace", true),
-        (
-            "workspace:next-in-slot",
-            "Show the next workspace in the focused slot only",
-            true,
-        ),
-        (
-            "workspace:prev-in-slot",
-            "Show the previous workspace in the focused slot only",
-            true,
-        ),
+        ("workspace:next-in-slot", "Show the next workspace in the focused slot only", true),
+        ("workspace:prev-in-slot", "Show the previous workspace in the focused slot only", true),
         ("panel:split", "Show the second panel slot", true),
         ("panel:unsplit", "Hide the non-focused panel slot", true),
         ("panel:hide", "Hide the focused panel slot", true),
@@ -112,22 +101,14 @@ fn register_builtins(registry: &CommandRegistry) {
         ("quit", "Exit the GUI", true),
         ("daemon:set-url", "Change the daemon URL", true),
         ("repos:open", "Open the repository panel in the focused slot", true),
-        (
-            "repos:switch",
-            "Open a loaded repository in the current or a new workspace",
-            true,
-        ),
+        ("repos:switch", "Open a loaded repository in the current or a new workspace", true),
         (
             "file-manager:reveal-folder",
             "Open the selected metarecord's folder in the file manager (focused panel)",
             true,
         ),
         ("recent", "Open a recently-viewed metarecord", true),
-        (
-            "file:open-with",
-            "Open the selected file or folder with an external program",
-            true,
-        ),
+        ("file:open-with", "Open the selected file or folder with an external program", true),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
@@ -171,9 +152,8 @@ pub fn run(options: Options) {
         );
     }
 
-    let config = Arc::new(
-        ConfigDir::default_location().expect("cannot resolve the user config directory"),
-    );
+    let config =
+        Arc::new(ConfigDir::default_location().expect("cannot resolve the user config directory"));
 
     let registry = Arc::new(CommandRegistry::new());
     register_builtins(&registry);
@@ -329,27 +309,25 @@ pub fn run(options: Options) {
                     // subprocesses were spawned"). The env var is read earlier,
                     // when the process is spawned.
                     let last_crash = std::cell::Cell::new(None::<std::time::Instant>);
-                    webview.inner().connect_web_process_terminated(
-                        move |webview, reason| {
-                            let now = std::time::Instant::now();
-                            let rapid = last_crash.get().is_some_and(|previous| {
-                                now - previous < std::time::Duration::from_secs(10)
-                            });
-                            last_crash.set(Some(now));
-                            if rapid {
-                                eprintln!(
-                                    "metafolder-gui: web process terminated again \
-                                     ({reason:?}); not reloading (crash loop)"
-                                );
-                                return;
-                            }
+                    webview.inner().connect_web_process_terminated(move |webview, reason| {
+                        let now = std::time::Instant::now();
+                        let rapid = last_crash.get().is_some_and(|previous| {
+                            now - previous < std::time::Duration::from_secs(10)
+                        });
+                        last_crash.set(Some(now));
+                        if rapid {
                             eprintln!(
-                                "metafolder-gui: web process terminated ({reason:?}); \
-                                 reloading the shell"
+                                "metafolder-gui: web process terminated again \
+                                     ({reason:?}); not reloading (crash loop)"
                             );
-                            webview.reload();
-                        },
-                    );
+                            return;
+                        }
+                        eprintln!(
+                            "metafolder-gui: web process terminated ({reason:?}); \
+                                 reloading the shell"
+                        );
+                        webview.reload();
+                    });
                 });
             }
 
@@ -422,8 +400,7 @@ pub fn run(options: Options) {
             move |window, event| {
                 if let tauri::WindowEvent::Destroyed = event {
                     let handle = tauri::Manager::app_handle(window);
-                    let app: tauri::State<'_, Arc<commands::App>> =
-                        tauri::Manager::state(handle);
+                    let app: tauri::State<'_, Arc<commands::App>> = tauri::Manager::state(handle);
                     // Pending script waits resolve with "closed".
                     app.input.close_all();
                     app.commands.close_all();

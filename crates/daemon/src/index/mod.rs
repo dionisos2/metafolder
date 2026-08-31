@@ -160,9 +160,7 @@ pub fn osm_path_indexable(terms: &[String]) -> Option<&str> {
 pub fn contains_osm_path(q: &Query) -> bool {
     match q {
         Query::Osm { mode: metafolder_core::query::OsmMode::Path, .. } => true,
-        Query::And { operands } | Query::Or { operands } => {
-            operands.iter().any(contains_osm_path)
-        }
+        Query::And { operands } | Query::Or { operands } => operands.iter().any(contains_osm_path),
         Query::Not { operand } => contains_osm_path(operand),
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
             matches!(target, FollowTarget::Condition(c) if contains_osm_path(c))
@@ -204,8 +202,7 @@ impl KeyLookup<'_> {
 fn is_text_predicate(q: &Query) -> bool {
     matches!(
         q,
-        Query::Matches { .. }
-            | Query::Osm { mode: metafolder_core::query::OsmMode::Direct, .. }
+        Query::Matches { .. } | Query::Osm { mode: metafolder_core::query::OsmMode::Direct, .. }
     )
 }
 
@@ -340,7 +337,8 @@ impl RepoIndex {
             // Collect TreeRef positions so the caller can populate the tree cache
             // from this pass — the rows arrive in `field.id` order (rowid scan),
             // which is exactly what the cache's position grouping needs.
-            if let (Some(sink), Value::TreeRef { parent, name }) = (forest.as_deref_mut(), &row.value)
+            if let (Some(sink), Value::TreeRef { parent, name }) =
+                (forest.as_deref_mut(), &row.value)
             {
                 sink.push(db::TreeRow {
                     field_name: row.name.clone(),
@@ -462,12 +460,16 @@ impl RepoIndex {
             None => return Ok(None),
         };
 
-        let mut delta =
-            match crate::log::ancestry_ops_until(conn, current_head, built_at_head, REBUILD_OVER)? {
-                Some(ops) => ops,
-                // Not on the chain (history was rewritten) or beyond the budget.
-                None => return Ok(None),
-            };
+        let mut delta = match crate::log::ancestry_ops_until(
+            conn,
+            current_head,
+            built_at_head,
+            REBUILD_OVER,
+        )? {
+            Some(ops) => ops,
+            // Not on the chain (history was rewritten) or beyond the budget.
+            None => return Ok(None),
+        };
         if delta.iter().any(|op| !KNOWN.contains(&op.op_type.as_str())) {
             return Ok(None);
         }
@@ -880,7 +882,6 @@ impl RepoIndex {
             Query::Osm { field, terms, mode: metafolder_core::query::OsmMode::Direct } => {
                 self.text_scan(field, &crate::query_exec::osm_regex(terms), restrict)
             }
-
         }
         .map(|mut bm| {
             // Every branch above either consumed `restrict` itself (the text
@@ -1002,8 +1003,7 @@ impl RepoIndex {
         mut frontier: RoaringBitmap,
         inclusive: bool,
     ) -> RoaringBitmap {
-        let mut result =
-            if inclusive { &frontier & &self.universe } else { RoaringBitmap::new() };
+        let mut result = if inclusive { &frontier & &self.universe } else { RoaringBitmap::new() };
         while !frontier.is_empty() {
             let mut next = RoaringBitmap::new();
             for nid in &frontier {
@@ -1115,8 +1115,7 @@ impl RepoIndex {
             if let Value::String(s) = value {
                 if s.contains('/') && self.types.get(field) == Some(&"tree_ref") {
                     // A missing entry means nobody resolved this path: defer.
-                    let resolved =
-                        roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
+                    let resolved = roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
                     let Some(node) = resolved else {
                         return Err(unsupported("exact-node tree_ref path equality"));
                     };

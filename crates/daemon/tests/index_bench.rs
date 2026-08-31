@@ -81,10 +81,16 @@ fn battery() -> Vec<(&'static str, Query)> {
         ("present(rate)", Query::IsPresent { field: "rate".into() }),
         ("rate>=90 (selective)", gte("rate", 90)),
         ("rate>=10 (broad)", gte("rate", 10)),
-        ("kind=file AND rate>=50", Query::And { operands: vec![eq("kind", s("file")), gte("rate", 50)] }),
+        (
+            "kind=file AND rate>=50",
+            Query::And { operands: vec![eq("kind", s("file")), gte("rate", 50)] },
+        ),
         (
             "added<midpoint",
-            Query::Lt { field: "added".into(), value: Value::DateTime(1_700_000_000_000 + 25_000_000) },
+            Query::Lt {
+                field: "added".into(),
+                value: Value::DateTime(1_700_000_000_000 + 25_000_000),
+            },
         ),
         ("descendants(root)", follows_t("loc", eq("tag", s("root")))),
         (
@@ -128,8 +134,7 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     let mut cache = TreeCache::new(false);
     for (name, q) in battery() {
         let t = Instant::now();
-        let (mut sql, _) =
-            query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
+        let (mut sql, _) = query_exec::execute(&conn, &mut cache, &q, &[], None, None).unwrap();
         let sql_ms = t.elapsed().as_secs_f64() * 1e3;
 
         let t = Instant::now();
@@ -171,8 +176,8 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
                 order: if asc { SortOrder::Asc } else { SortOrder::Desc },
             }];
             let t = Instant::now();
-            let (sql, _) = query_exec::execute(&conn, &mut cache, &q, &sql_keys, Some(100), None)
-                .unwrap();
+            let (sql, _) =
+                query_exec::execute(&conn, &mut cache, &q, &sql_keys, Some(100), None).unwrap();
             let sql_ms = t.elapsed().as_secs_f64() * 1e3;
             assert_eq!(got, sql, "sorted divergence at scale on {name}");
             println!(

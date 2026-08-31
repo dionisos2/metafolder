@@ -90,9 +90,19 @@ fn reconcile_reports_phase_progress() {
     write_file(&root, "dir/b.txt", b"beta");
 
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, true, false, true, &reconcile::Reporter::new(&|phase, done, total| {
-        phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false))
+    reconcile::reconcile_full_reported(
+        &repo,
+        None,
+        true,
+        false,
+        true,
+        &reconcile::Reporter::new(
+            &|phase, done, total| {
+                phases.lock().unwrap().push((phase.to_string(), done, total));
+            },
+            &|| false,
+        ),
+    )
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -124,9 +134,19 @@ fn stat_phase_total_matches_walked_paths() {
     // The pure walk yields the full path list, so the stat phase (the heavy
     // pass) has an exact total — a.txt, dir, dir/b.txt = 3 eligible paths.
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|phase, done, total| {
-        phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false))
+    reconcile::reconcile_full_reported(
+        &repo,
+        None,
+        false,
+        false,
+        false,
+        &reconcile::Reporter::new(
+            &|phase, done, total| {
+                phases.lock().unwrap().push((phase.to_string(), done, total));
+            },
+            &|| false,
+        ),
+    )
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
@@ -144,17 +164,24 @@ fn walk_phase_reports_cumulative_file_count() {
     // the displayed number actually advances instead of being stuck at 0 (the
     // per-depth `done/total` is too coarse for trees smaller than the step).
     let phases = std::sync::Mutex::new(Vec::<(String, Option<u64>, Option<u64>)>::new());
-    reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|phase, done, total| {
-        phases.lock().unwrap().push((phase.to_string(), done, total));
-    }, &|| false))
+    reconcile::reconcile_full_reported(
+        &repo,
+        None,
+        false,
+        false,
+        false,
+        &reconcile::Reporter::new(
+            &|phase, done, total| {
+                phases.lock().unwrap().push((phase.to_string(), done, total));
+            },
+            &|| false,
+        ),
+    )
     .unwrap();
 
     let phases = phases.into_inner().unwrap();
-    let walk_labels: Vec<&str> = phases
-        .iter()
-        .map(|(p, _, _)| p.as_str())
-        .filter(|p| p.starts_with("walk"))
-        .collect();
+    let walk_labels: Vec<&str> =
+        phases.iter().map(|(p, _, _)| p.as_str()).filter(|p| p.starts_with("walk")).collect();
     assert!(walk_labels.iter().any(|p| p.contains("depth")), "labels: {walk_labels:?}");
     // Two files created (a.txt, dir/b.txt): the cumulative count reaches 2.
     assert!(
@@ -201,10 +228,7 @@ fn test_reconcile_tracks_a_symlink_without_following_it() {
 
     let uuid = resolve(&repo, "/link").expect("the symlink must be tracked");
     assert_eq!(field_value(&repo, uuid, "mfr_type"), Some(Value::String("symlink".into())));
-    assert_eq!(
-        field_value(&repo, uuid, "mfr_symlink_target"),
-        Some(Value::String(target.into()))
-    );
+    assert_eq!(field_value(&repo, uuid, "mfr_symlink_target"), Some(Value::String(target.into())));
     // The target is never opened, so no content fingerprint is ever recorded.
     assert_eq!(field_value(&repo, uuid, "mfr_partial_hash"), None);
 
@@ -261,10 +285,7 @@ fn test_reconcile_never_clears_paths() {
 
     assert_eq!(result.moved, 0);
     // The stale TreeRef is left in place — reconcile never writes Nothing.
-    assert!(matches!(
-        field_value(&repo, uuid, "mfr_path"),
-        Some(Value::TreeRef { .. })
-    ));
+    assert!(matches!(field_value(&repo, uuid, "mfr_path"), Some(Value::TreeRef { .. })));
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -527,7 +548,14 @@ fn cancelled_reconcile_bails_and_rolls_back() {
     write_file(&root, "a.txt", b"hello");
     write_file(&root, "sub/b.txt", b"world");
 
-    let outcome = reconcile::reconcile_full_reported(&repo, None, false, false, false, &reconcile::Reporter::new(&|_, _, _| {}, &|| true));
+    let outcome = reconcile::reconcile_full_reported(
+        &repo,
+        None,
+        false,
+        false,
+        false,
+        &reconcile::Reporter::new(&|_, _, _| {}, &|| true),
+    );
     assert!(outcome.is_err(), "a pre-cancelled reconcile must bail");
 
     // Rolled back: no file metarecords exist.
@@ -573,10 +601,7 @@ fn metadata_phase_extracts_embedded_fields() {
         field_value(&repo, uuid, "mfr_meta_album_artist"),
         Some(Value::String("Various Engineers".into()))
     );
-    assert_eq!(
-        field_value(&repo, uuid, "mfr_meta_title"),
-        Some(Value::String("Note G".into()))
-    );
+    assert_eq!(field_value(&repo, uuid, "mfr_meta_title"), Some(Value::String("Note G".into())));
     assert_eq!(field_value(&repo, uuid, "mfr_meta_track"), Some(Value::Int(7)));
     // Bare year 1998 → 1998-01-01T00:00:00Z.
     assert_eq!(field_value(&repo, uuid, "mfr_meta_date"), Some(Value::DateTime(883_612_800_000)));

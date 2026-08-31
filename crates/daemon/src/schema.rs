@@ -17,7 +17,15 @@ use crate::db;
 use crate::error::ApiError;
 
 const VALUE_TYPES: &[&str] = &[
-    "nothing", "string", "int", "float", "bool", "datetime", "ref", "tree_ref", "refbase",
+    "nothing",
+    "string",
+    "int",
+    "float",
+    "bool",
+    "datetime",
+    "ref",
+    "tree_ref",
+    "refbase",
     "externalref",
 ];
 
@@ -171,9 +179,7 @@ pub fn parse(content: &str) -> Result<CompiledSchema, String> {
             // the type is therefore required and the value's kind must match it.
             if let Some(default) = &constraint.default {
                 match &constraint.value_type {
-                    None => {
-                        return Err(format!("{at}: a default value requires an explicit type"))
-                    }
+                    None => return Err(format!("{at}: a default value requires an explicit type")),
                     Some(t) => {
                         if let Err(msg) = check_default_kind(t, default) {
                             return Err(format!("{at}: {msg}"));
@@ -308,9 +314,10 @@ pub fn validate_entry_fields(
                 },
             };
             if let Some(expected) = &constraint.value_type {
-                if let Some(bad) = rows.iter().find(|r| {
-                    r.value != Value::Nothing && value_type_name(&r.value) != expected
-                }) {
+                if let Some(bad) = rows
+                    .iter()
+                    .find(|r| r.value != Value::Nothing && value_type_name(&r.value) != expected)
+                {
                     violations.push(Violation {
                         metarecord_uuid: uuid,
                         origin: origin.clone(),
@@ -501,7 +508,11 @@ mod tests {
             pairs(&[("b", "int"), ("shared", "int")])
         );
         assert_eq!(
-            merge_field_catalog(pairs(&[("a", "string")]), pairs(&[("shared", "int")]), Some("string")),
+            merge_field_catalog(
+                pairs(&[("a", "string")]),
+                pairs(&[("shared", "int")]),
+                Some("string")
+            ),
             pairs(&[("a", "string")])
         );
     }

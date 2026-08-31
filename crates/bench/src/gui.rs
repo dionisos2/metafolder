@@ -236,7 +236,9 @@ fn discover_urls() -> (String, String) {
                 if let Some(rest) = line.strip_prefix("gui-port") {
                     gui_port = rest.trim_start_matches([' ', '=']).trim().parse().ok();
                 } else if let Some(rest) = line.strip_prefix("daemon-url") {
-                    daemon_url = Some(rest.trim_start_matches([' ', '=']).trim().trim_matches('"').to_string());
+                    daemon_url = Some(
+                        rest.trim_start_matches([' ', '=']).trim().trim_matches('"').to_string(),
+                    );
                 }
             }
         }
@@ -345,11 +347,7 @@ impl Gui {
     }
 
     async fn workspace_rm(&self, id: &str) {
-        let _ = self
-            .http
-            .delete(format!("{}/gui/workspaces/{id}", self.gui_url))
-            .send()
-            .await;
+        let _ = self.http.delete(format!("{}/gui/workspaces/{id}", self.gui_url)).send().await;
     }
 
     async fn layout_get(&self) -> Result<Value> {
@@ -574,7 +572,10 @@ impl Gui {
             tokio::time::sleep(STEP).await;
         }
         settle().await;
-        report(&format!("file-manager: {STEPS}× selection down"), &self.bench_read_settled().await?);
+        report(
+            &format!("file-manager: {STEPS}× selection down"),
+            &self.bench_read_settled().await?,
+        );
         println!();
         self.workspace_rm(&ws).await;
         Ok(())

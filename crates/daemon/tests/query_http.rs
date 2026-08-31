@@ -1,7 +1,6 @@
 //! HTTP-level tests for `POST /query` (select, sort, pagination envelope)
 //! and `POST /set` (batch set).
 
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use axum::Router;
@@ -18,7 +17,12 @@ fn temp_dir(prefix: &str) -> TempDir {
     TempDir::new(&format!("qhttp_{prefix}"))
 }
 
-async fn request(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+async fn request(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+) -> (StatusCode, Value) {
     let builder = Request::builder().method(method).uri(uri);
     let request = match body {
         Some(v) => builder
@@ -49,9 +53,13 @@ async fn setup(prefix: &str) -> (Router, String, TempDir) {
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> String {
-    let (status, body) =
-        request(app, "POST", &format!("/repos/{repo}/metarecords"), Some(json!({"fields": fields})))
-            .await;
+    let (status, body) = request(
+        app,
+        "POST",
+        &format!("/repos/{repo}/metarecords"),
+        Some(json!({"fields": fields})),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK, "create failed: {body}");
     body["uuid"].as_str().unwrap().to_string()
 }
@@ -59,18 +67,12 @@ async fn create(app: &Router, repo: &str, fields: Value) -> String {
 #[tokio::test]
 async fn test_query_returns_uuids_by_default() {
     let (app, repo, root) = setup("uuids").await;
-    let a = create(
-        &app,
-        &repo,
-        json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]),
-    )
-    .await;
-    let _b = create(
-        &app,
-        &repo,
-        json!([{"name": "tag", "value": {"type": "string", "value": "rock"}}]),
-    )
-    .await;
+    let a =
+        create(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "jazz"}}]))
+            .await;
+    let _b =
+        create(&app, &repo, json!([{"name": "tag", "value": {"type": "string", "value": "rock"}}]))
+            .await;
 
     let (status, body) = request(
         &app,
@@ -92,7 +94,8 @@ async fn test_invalid_regex_is_rejected() {
     // first. An unusable one must still reach the user as a 400 and not as an
     // empty result: the index defers, and the SQL engine reports it.
     let (app, repo, root) = setup("badregex").await;
-    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "x"}}])).await;
+    create(&app, &repo, json!([{"name": "label", "value": {"type": "string", "value": "x"}}]))
+        .await;
 
     for pattern in ["(unclosed", "a{5000000}"] {
         let (status, body) = request(
@@ -300,8 +303,12 @@ async fn test_query_select_fields_and_star() {
     assert_eq!(items.len(), 1);
     assert!(items[0]["uuid"].is_string());
     assert!(items[0]["version"].is_u64());
-    let names: Vec<&str> =
-        items[0]["fields"].as_array().unwrap().iter().map(|f| f["name"].as_str().unwrap()).collect();
+    let names: Vec<&str> = items[0]["fields"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["name"].as_str().unwrap())
+        .collect();
     assert_eq!(names, vec!["rating"], "only selected fields are included");
 
     // Full objects with "*".
@@ -346,8 +353,7 @@ async fn test_query_sort_and_pagination_envelope() {
 
     let mut body2 = body.clone();
     body2["cursor"] = json!(cursor);
-    let (status, page2) =
-        request(&app, "POST", &format!("/repos/{repo}/query"), Some(body2)).await;
+    let (status, page2) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(body2)).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(page2["results"].as_array().unwrap().len(), 2);
     assert!(page2["next_cursor"].is_null());
@@ -489,8 +495,12 @@ async fn test_query_correct_after_async_load() {
             {"name": "rate", "value": {"type": "int", "value": rate}}
         ])
     };
-    let docs = create(&app, &repo, json!([{"name": "cat",
-        "value": {"type": "tree_ref", "value": {"parent": null, "name": "docs"}}}]))
+    let docs = create(
+        &app,
+        &repo,
+        json!([{"name": "cat",
+        "value": {"type": "tree_ref", "value": {"parent": null, "name": "docs"}}}]),
+    )
     .await;
     let hi = create(&app, &repo, node(Some(&docs), "hi", 9)).await;
     let lo = create(&app, &repo, node(Some(&docs), "lo", 1)).await;
@@ -621,9 +631,12 @@ async fn test_batch_set() {
 #[tokio::test]
 async fn test_query_uuid_in_selects_the_named_set() {
     let (app, repo, root) = setup("uuid_in").await;
-    let a = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "x"}}])).await;
-    let b = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "y"}}])).await;
-    let _c = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "z"}}])).await;
+    let a = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "x"}}]))
+        .await;
+    let b = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "y"}}]))
+        .await;
+    let _c = create(&app, &repo, json!([{"name": "g", "value": {"type": "string", "value": "z"}}]))
+        .await;
 
     // uuid_in returns exactly the owned uuids in the list; a bogus one drops out.
     let bogus = "00000000000000000000000000000099";
@@ -864,12 +877,8 @@ async fn test_remove_by_query() {
 #[tokio::test]
 async fn test_set_record_reflected_in_index_query() {
     let (app, repo, root) = setup("setrecord_idx").await;
-    let uuid = create(
-        &app,
-        &repo,
-        json!([{"name": "a", "value": {"type": "int", "value": 1}}]),
-    )
-    .await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "a", "value": {"type": "int", "value": 1}}])).await;
 
     // Whole-record set: drop `a`, add `b`.
     let (status, _) = request(
@@ -995,8 +1004,7 @@ async fn test_unsupported_query_falls_back_to_sql() {
         "query": {"type": "matches", "field": "name", "pattern": "^h"},
         "limit": 100
     });
-    let (status, page) =
-        request(&app, "POST", &format!("/repos/{repo}/query"), Some(body)).await;
+    let (status, page) = request(&app, "POST", &format!("/repos/{repo}/query"), Some(body)).await;
     assert_eq!(status, StatusCode::OK, "matches query failed: {page}");
     assert_eq!(page["results"].as_array().unwrap().len(), 1);
 

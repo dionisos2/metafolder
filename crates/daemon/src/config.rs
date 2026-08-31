@@ -35,10 +35,7 @@ pub struct RepoConfig {
 
 impl RepoConfig {
     pub fn new(root: PathBuf, name: String) -> Self {
-        let created_at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        let created_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs();
         Self {
             repo_uuid: Uuid::new_v4(),
             name,
@@ -52,8 +49,8 @@ impl RepoConfig {
 
     pub fn read(metafolder_dir: &Path) -> anyhow::Result<Self> {
         let path = metafolder_dir.join(CONFIG_FILE);
-        let content = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read {path:?}"))?;
+        let content =
+            std::fs::read_to_string(&path).with_context(|| format!("Failed to read {path:?}"))?;
         serde_json::from_str(&content).context("Failed to parse config.json")
     }
 
@@ -74,7 +71,9 @@ mod tests {
     use super::*;
 
     fn temp_dir() -> PathBuf {
-        let path = std::env::temp_dir().join("metafolder-tests").join(format!("metafolder_test_{}", Uuid::new_v4()));
+        let path = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("metafolder_test_{}", Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         path
     }
