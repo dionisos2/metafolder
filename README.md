@@ -89,7 +89,8 @@ looks broken without it:
 
 ```bash
 pacman -S --needed noto-fonts-emoji ffmpeg \
-  gst-plugins-base gst-plugins-good gst-libav gst-plugins-bad gst-plugins-ugly
+  gst-plugins-base gst-plugins-good gst-libav gst-plugins-bad gst-plugins-ugly \
+  gst-plugin-dav1d
 ```
 
 - **An emoji-color font** (`noto-fonts-emoji`) — the file-manager row icons and
@@ -101,6 +102,11 @@ pacman -S --needed noto-fonts-emoji ffmpeg \
   `gst-plugins-good` the audio/video sinks WebKit needs, and
   `gst-libav`/`gst-plugins-bad`/`gst-plugins-ugly` the actual decoders
   (e.g. H.264). Absent ⇒ the preview is disabled with a message.
+- **`gst-plugin-dav1d`** — a *fast* AV1 decoder. AV1 plays without it, but
+  only through `gst-plugins-bad`'s single-threaded libaom `av1dec`: a 4K AV1
+  file then decodes at roughly a third of real time and stutters badly, while
+  playing perfectly in mpv or VLC (which decode through ffmpeg, not
+  GStreamer). Absent ⇒ the `file` panel warns and plays it anyway.
 
 The daemon and CLI have no runtime dependencies beyond their binaries.
 

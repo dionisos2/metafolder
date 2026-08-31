@@ -446,8 +446,12 @@ export async function mount(root, metafolder) {
 
   // Ask the GUI server which decoders/demuxers this specific file needs and
   // lacks (runs gst-discoverer, which parses the file safely without building
-  // the full decode pipeline). Returns null when the probe is unreachable.
-  /** @param {string} path @returns {Promise<{missing: string[]}|null>} */
+  // the full decode pipeline), and whether the decoder it would pick is too
+  // slow for the stream. Returns null when the probe is unreachable.
+  /**
+   * @param {string} path
+   * @returns {Promise<{missing: string[], slow: string|null}|null>}
+   */
   async function probeFile(path) {
     try {
       const auth = metafolder.sessionToken
@@ -456,7 +460,8 @@ export async function mount(root, metafolder) {
       const response = await fetch(
         `${metafolder.guiServer}/__media-probe?path=${encodeURIComponent(path)}${auth}`,
       );
-      if (response.ok) return /** @type {{missing: string[]}} */ (await response.json());
+      if (response.ok)
+        return /** @type {{missing: string[], slow: string|null}} */ (await response.json());
     } catch {
       // Unreachable: caller decides how to proceed.
     }

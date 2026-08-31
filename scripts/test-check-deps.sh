@@ -54,7 +54,12 @@ run_case "missing bubblewrap ⇒ exit 1"         1 "bubblewrap"  "$tmp/no-bwrap"
 printf 'ffmpeg=0\n' >"$tmp/no-ffmpeg"
 run_case "missing optional dep ⇒ exit 0"       0 "ffmpeg"      "$tmp/no-ffmpeg"
 
-# 5. --help works and exits 0 (its own invocation — an explicit flag, no stub).
+# 5. The fast-AV1 decoder is optional too, and names its own package: absent,
+#    AV1 still plays (libaom), just far too slowly to watch.
+printf 'gst-av1=0\n' >"$tmp/no-dav1d"
+run_case "missing AV1 fast decoder ⇒ exit 0" 0 "gst-plugin-dav1d" "$tmp/no-dav1d"
+
+# 6. --help works and exits 0 (its own invocation — an explicit flag, no stub).
 out=$("$script" --help 2>&1); rc=$?
 if [ "$rc" -eq 0 ] && grep -qiE "usage|check-deps" <<<"$out"; then
     echo "ok   — --help exits 0"; pass=$((pass+1))
