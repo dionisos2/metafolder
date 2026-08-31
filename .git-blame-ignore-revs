@@ -1,0 +1,8 @@
+# Commits that only reformat: `git blame` should look past them.
+#
+# Enable locally (once per clone):
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub and GitLab pick this file up on their own.
+
+# style: apply rustfmt to the workspace (rustfmt.toml adoption)
+5f1e9c5b008569096964bf4d81a32f9907569896

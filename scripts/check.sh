@@ -8,6 +8,10 @@
 #
 # Checks, and what each is for:
 #
+#   fmt         rustfmt over the workspace (rustfmt.toml). The tree is
+#               formatted, and enforcing it here is what stops a stray
+#               `cargo fmt` from burying a real change under a reformatting
+#               diff — which is exactly how this check came to exist.
 #   clippy      lints rustc cannot see. Run with -D warnings: the tree is clean,
 #               and the only way it stays clean is if the first new warning
 #               fails the build. --lax downgrades them while you work.
@@ -15,6 +19,8 @@
 #               the global total cargo never prints).
 #   scripts     the shipped GUI helper scripts (the ones reachable from the
 #               GUI's `script:run`), driven against a mocked `mf` CLI + GUI.
+#   tooling     the project's own build/check/prune scripts (check-deps,
+#               prune-target, run-tests), against stubbed probes.
 #   types       tsc --noEmit + svelte-check over the GUI frontend (the latter
 #               is the only thing that reads .svelte at all). Nothing else runs
 #               a compiler: vite strips the types without checking them.
@@ -48,7 +54,7 @@ for arg in "$@"; do
     case "$arg" in
         --lax) strict=false ;;
         --coverage) coverage=true ;;
-        -h|--help) sed -n '2,34p' "$0" | sed 's/^# \?//'; exit 0 ;;
+        -h|--help) sed -n '2,40p' "$0" | sed 's/^# \?//'; exit 0 ;;
         *) echo "unknown option: $arg (try --help)" >&2; exit 2 ;;
     esac
 done
@@ -88,6 +94,14 @@ skip() {
 echo "${bold}metafolder — static checks${off}"
 echo
 
+# ── formatting ───────────────────────────────────────────────────────────────
+# rustfmt ships with the toolchain, but a minimal install can lack it.
+if cargo fmt --version >/dev/null 2>&1; then
+    run fmt cargo fmt --all --check
+else
+    skip fmt "run: rustup component add rustfmt"
+fi
+
 # ── clippy ───────────────────────────────────────────────────────────────────
 if $strict; then
     run clippy cargo clippy --workspace --all-targets -- -D warnings
@@ -111,6 +125,9 @@ sed -n 's/^  \(ok\|FAILED\) — /             /p' "$log/test"
 
 # ── shipped-script tests (fast, hermetic: they mock the `mf` CLI + GUI) ───────
 run scripts bash "$repo/scripts/test-shipped-scripts.sh"
+
+# ── tooling tests (the scripts that build/check/prune the tree itself) ────────
+run tooling bash "$repo/scripts/test-tooling.sh"
 
 # node_modules lives at the repo root: the frontend is an npm workspace member.
 if [ -d node_modules ]; then
