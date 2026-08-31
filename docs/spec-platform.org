@@ -57,6 +57,7 @@ Availability of the =mfr_*= stat-derived fields per platform:
 | =mfr_permissions=  | yes             | yes               | *never written* (absent)      |
 | =mfr_uid=          | yes             | yes               | *never written* (absent)      |
 | =mfr_gid=          | yes             | yes               | *never written* (absent)      |
+| =mfr_mount=        | yes             | yes (no identity) | *never written* (absent)      |
 
 - =mfr_permissions=, =mfr_uid=, =mfr_gid= are Unix-specific. On Windows they
   are never written; on a metarecord they remain in the "unknown" state
@@ -67,6 +68,8 @@ Availability of the =mfr_*= stat-derived fields per platform:
   the per-OS source. It is absent when the filesystem does not provide it.
 - Hashing (=mfr_partial_hash=, =mfr_full_hash=) is pure content-based
   (=xxhash-rust=) and fully portable.
+- =mfr_mount= marks a mount point; its detection and the identity string it
+  stores are platform-dependent — see [[*Mount point detection]] below.
 
 ** MIME detection
 
@@ -297,6 +300,49 @@ keys were found) after analysing one. Extraction is thus idempotent: re-running
 reconcile never re-parses nor grows the log. A content change is not reflected
 until =mfr_meta_extracted= (and, to re-read, the stale =mfr_meta_*= values) are
 cleared — the same "clear to recompute" contract as =mfr_mime=.
+
+** Mount point detection
+
+The =mfr_mount= field marks a directory that is the mount point of another
+volume, and its absence-while-declared freezes the subtree
+([[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Both
+halves are platform-dependent.
+
+*** Is this directory a mount point?
+
+Unix (Linux, macOS): compare the device id of the directory with that of its
+parent (=st_dev=, via =std::os::unix::fs::MetadataExt::dev=). They differ iff a
+different filesystem is mounted on the directory. The repository root is a
+special case — its parent lies outside the repository — and is never treated as
+a mount point.
+
+Windows: =std::fs::Metadata= exposes no device id, and a removable volume is
+normally a drive letter (its own repository root) rather than a directory inside
+a tree. Mount points are therefore *not detected on Windows*: =mfr_mount= is
+never written, exactly like =mfr_permissions=. A repository whose =mfr_mount=
+fields were written on Unix keeps them, and a Windows daemon still honours them
+— the freeze only needs the field's presence and a "is a volume mounted here"
+answer, which degrades safely to "the directory exists and is non-empty".
+
+*** Volume identity (the field's value)
+
+Best effort, in this order; the first form that can be determined wins:
+
+| Form            | Source                                                                 |
+|-----------------+------------------------------------------------------------------------|
+| =uuid:<UUID>=   | Linux: the entry of =/dev/disk/by-uuid/= whose =rdev= equals the mount's =major:minor= (from =/proc/self/mountinfo=) |
+| =label:<LABEL>= | Linux: same, through =/dev/disk/by-label/=                              |
+| =device:<SRC>=  | Linux: the mount source field of =/proc/self/mountinfo= (=/dev/sdb1=, =user@host:/export=, =tmpfs=…) |
+| =mounted=       | anything else (no mount table available, or nothing identifiable found) |
+
+Matching by =rdev= rather than by symlink target makes the lookup immune to
+=/dev/mapper= indirections and multi-hop symlinks. =/proc/self/mountinfo= is
+Linux-only; macOS falls back to =mounted= (=getmntinfo= would require a =libc=
+dependency the daemon does not have — a possible refinement, not a requirement:
+the value is informational, and the semantics ride on the field's presence).
+
+The value is *opaque to every consumer*. Only =GET /mounts= interprets it, and
+only to compare the stored string with the one read from disk (=mismatch=).
 
 ** File watcher backends
 

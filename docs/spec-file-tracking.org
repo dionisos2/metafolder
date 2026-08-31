@@ -314,6 +314,96 @@ operations:
 These operations are available through the existing query + delete API
 primitives. No data is ever lost implicitly; the user remains in control.
 
+** Mount points
+
+A directory inside a watched tree can be the mount point of a removable or
+network volume (a USB key, an external drive, an SSHFS export). When the volume
+is not mounted, the directory is still there — it is simply empty. Nothing in
+its content distinguishes that state from "the user deleted everything inside
+it", which is why it needs an explicit concept: metafolder must never conclude,
+from an empty mount point, that a thousand tracked files are gone.
+
+A tracked path therefore has three states, not two:
+
+- *present* — the file is there.
+- *absent* — the file is gone: =mfr_path = Nothing= (only the watcher,
+  =mf orphan clear= and =force= writes ever record this).
+- *unavailable* — the volume holding it is not mounted. Nothing is recorded:
+  the metarecord keeps its =mfr_path=, its metadata is frozen, and the subtree
+  is skipped by every component until the volume comes back.
+
+The third state is never stored on the affected metarecords: it is derived, at
+the moment the question is asked, from the mount point above them.
+
+*** =mfr_mount=
+
+=mfr_mount= (String) is written by the daemon on a *directory* metarecord that
+is a mount point at the time it is seen — by reconcile (walk and refresh phases)
+and by the watcher when such a directory appears. It is an =mfr_*= field:
+daemon-owned, user-writable only with =force=.
+
+- *Detection* is the device-id comparison: a directory is a mount point iff its
+  device id differs from its parent directory's. Cheap (=lstat=, no privileges,
+  no mount-table parsing) and — unlike "the directory is empty" — it tells
+  "unmounted" apart from "emptied".
+- The *value* is a best-effort identity of the volume that was mounted, used to
+  tell the user what to plug back in and to notice that a *different* volume is
+  mounted now. The per-platform sources and the string forms (=uuid:…=,
+  =label:…=, =device:…=, and the bare =mounted= fallback) are specified in
+  [[file:spec-platform.org][spec-platform.org]] "Mount point detection".
+  Consumers treat it as opaque: the *presence* of the field carries the
+  semantics, the value is informational.
+- It is *never cleared by the daemon*. A directory that has =mfr_mount= and is
+  not currently a mount point is precisely the "unavailable" state — the one
+  thing that must not be forgotten. A directory that has stopped being a mount
+  point for good is un-declared explicitly by the user (=mf mount forget=, a
+  =force= unset).
+- On a mount point that *is* mounted, =mfr_mount= is refreshed like any other
+  daemon-written field, so a volume swapped for another one updates the recorded
+  identity at the next reconcile.
+
+*** Offline subtrees
+
+A declared mount point is *offline* when its metarecord has an =mfr_mount= field
+and the path is not, right now, a mount point on disk — including when the
+directory itself no longer exists. Everything at or below an offline mount point
+is *frozen*:
+
+| Component     | Behaviour on an offline subtree                                         |
+|---------------+-------------------------------------------------------------------------|
+| watcher       | places no watch there, and drops any event landing in it                 |
+| reconcile     | prunes it from the walk: no create, no refresh, no candidate, no MIME    |
+| orphan scan   | reports "unknown", never an orphan (see [[*Orphan scan]])                   |
+| =mf_watch= / =mf_ignore= | unchanged: eligibility is evaluated as usual, the freeze is an additional filter |
+| queries       | unaffected — the metadata of a disconnected drive stays fully queryable, which is the whole point of recording it |
+
+The freeze is decided by the *presence of a mount*, not by identity: if a
+*different* volume is mounted at the point, the subtree is live and is tracked
+normally (those files really are there); the identity mismatch is reported by
+[[*Mount status]] but changes no behaviour.
+
+Remounting resumes tracking — the watches are re-placed by the next watch-set
+refresh — but does *not* trigger a reconcile: its cost is unbounded on a large
+disk, and the volume may have been mounted for hours elsewhere. Changes made
+while a volume was away are therefore picked up only by an explicit
+=mf reconcile --metarecord <mount>=, which the client is expected to offer
+rather than run behind the user's back.
+
+*** Mass-orphan circuit breaker
+
+Independently of mount points: a single filesystem event batch that would orphan
+a very large number of metarecords is a symptom, not a legitimate deletion — a
+filesystem going away, an unmount metafolder did not recognise, a mount point
+moved under the daemon's feet. The executor refuses a cascade of more than
+=orphan-cascade-limit= metarecords (daemon setting, default 10 000; =0= disables
+the check): the cascade is skipped, a warning is logged, and the metadata is
+left untouched.
+
+The refusal is deliberately recoverable rather than fatal: nothing is lost, the
+paths simply stay stale, and a genuinely huge deletion is confirmed with the
+tool that exists for it — =mf orphan clear=, which is user-driven and
+re-verifies every path against the disk before writing =Nothing=.
+
 * Daemon
 
 ** Tree Cache
@@ -439,7 +529,10 @@ be read rather than aborting the whole watch. A repository with =mf_watch =
 false= everywhere (the opt-in default of a fresh repo) is therefore watched
 nowhere at all. The set is maintained incrementally as directories appear or
 disappear, and recomputed after a manual write changes =mf_watch=/=mf_ignore=
-(see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]).
+(see [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). An *offline* mount
+point is pruned like an ineligible directory — no watch on it, none below it
+(see [[*Offline subtrees]]); the watch set is recomputed on the next refresh, so a
+remounted volume starts being watched again without restarting the daemon.
 
 Before processing any event, the daemon evaluates eligibility for the affected
 path (see [[*Watch and Ignore]]). Ineligible paths are silently ignored. Events
@@ -733,6 +826,12 @@ way for unmoved files.
    (see [[file:spec-platform.org][spec-platform.org]] "MIME detection"). Idempotent: existing values are
    not recomputed.
 
+*Offline mount points*: the walk prunes any directory that is a declared but
+currently unmounted mount point, exactly as it prunes an ineligible one, so no
+metarecord below it is orphaned, refreshed or offered as a fingerprint candidate
+while the volume is away (see [[*Offline subtrees]]). Step 1's active/orphaned split
+skips those paths as well: their existence on disk is unknown, not false.
+
 *Directory identification*: directories have no fingerprint and are matched only
 by their path string. A directory metarecord whose path no longer exists on disk
 is left with its stale path (like any other orphan); it may appear in candidates
@@ -791,10 +890,17 @@ is checked against the disk, so a subtree deleted while unwatched is still found
 A record is reported *only when a readable ancestor directory proves the file is
 truly absent*: the scan climbs from the path to its nearest existing ancestor and
 reports an orphan only if that ancestor could be read (=read_dir= succeeded) and
-the path is absent below it. An unreadable (=EACCES=) or missing-mount ancestor —
-or a broken symlink still present at the path — yields "unknown", never an
-orphan. This guard is what makes it safe to null the paths afterwards: a
-transiently unmounted drive or a permission drop cannot mass-orphan a subtree.
+the path is absent below it. An unreadable (=EACCES=) or stale-handle
+(=ENOTCONN=) ancestor — or a broken symlink still present at the path — yields
+"unknown", never an orphan.
+
+That guard is *not* sufficient on its own for a removable volume: an unmounted
+mount point is an ordinary directory that reads back empty, so its whole subtree
+would look "definitely gone". Paths at or below an *offline* mount point
+([[*Offline subtrees]]) therefore yield "unknown" too, before the ancestor walk is
+even attempted. The two guards together are what make it safe to null the paths
+afterwards: neither a permission drop nor an unplugged drive can mass-orphan a
+subtree.
 Response: ={"count": N, "orphans": [{"uuid": "<32hex>", "stale_path": "/…"}]}=.
 
 *Clear* (=POST /repos/:repo/orphans/clear=, body ={"uuids": ["<32hex>", …]}=).
@@ -804,6 +910,41 @@ makes on a live delete: snapshot =mfr_path_old=, set =mfr_path= to =Nothing=, an
 cascade both to every descendant — all in one revision. Response:
 ={"cleared": N}=. This is a new, explicit component that writes =Nothing=,
 alongside the watcher and =force= writes; *reconcile still never does*.
+
+** Mount status
+
+#+BEGIN_SRC
+GET /repos/:repo_uuid/mounts
+#+END_SRC
+
+Lists the repository's declared mount points — every metarecord carrying an
+=mfr_mount= field (see [[*Mount points]]) — with the state computed at request
+time. Read-only, and cheap: one =lstat= pair per declared mount point, no walk.
+
+#+BEGIN_SRC json
+{"mounts": [
+  {"uuid": "<32hex>", "path": "/media/backup",
+   "expected": "uuid:1234-ABCD", "current": "uuid:1234-ABCD", "state": "online"},
+  {"uuid": "<32hex>", "path": "/media/photos",
+   "expected": "label:PHOTOS", "current": null, "state": "offline"}
+]}
+#+END_SRC
+
+- =path= — the mount point's repo-root-relative path, or =null= when its
+  =mfr_path= no longer resolves (the metarecord is itself orphaned).
+- =expected= — the stored =mfr_mount= value.
+- =current= — the identity read from disk right now; =null= when nothing is
+  mounted there.
+- =state= — one of:
+  - =online= — a volume is mounted and its identity matches =expected=;
+  - =mismatch= — a volume is mounted but reports a different identity (or none
+    could be determined). The subtree is *not* frozen: those files exist;
+  - =offline= — nothing is mounted there: the subtree is frozen
+    ([[*Offline subtrees]]).
+
+This is the endpoint a client uses to explain a subtree that looks empty or
+stale, instead of presenting it as deleted — see
+[[file:spec-gui.org][spec-gui.org]] "Unmounted volumes".
 
 ** Eligibility explain
 
@@ -934,6 +1075,29 @@ records to stderr, prompts for confirmation (skipped with =-y=), then calls
 separate from =mf reconcile= on purpose: detection needs a disk scan, but the
 intent (diagnose / clean up missing files) is not reconcile's sync semantics.
 
+** =mf mount {list, forget}=
+
+Inspects the repository's declared mount points (see [[*Mount points]]).
+
+=list= (the default) calls =GET /mounts= and prints one line per mount point,
+=state <TAB> path <TAB> expected <TAB> current=, or a "no mount points" line.
+=--json= prints the raw response body. Typical output:
+
+#+BEGIN_SRC
+online     /media/backup   uuid:1234-ABCD  uuid:1234-ABCD
+offline    /media/photos   label:PHOTOS    -
+#+END_SRC
+
+=forget <uuid> [-y]= un-declares a mount point: a =force= unset of =mfr_mount=
+on that metarecord. The directory becomes an ordinary tracked directory again —
+so if the volume is *not* mounted, its former contents stop being frozen and the
+next =mf orphan= run will legitimately report them as gone. It is the escape
+hatch for "this is not a mount point any more", and prompts for confirmation
+unless =-y= is given.
+
+There is no =mf mount add=: mount points are detected, not declared. Mounting a
+volume and running =mf reconcile= is what records one.
+
 ** =mf order <folder> [--meta <field>] [--max-gap <n>] [--dry-run]=
 
 Numbers a folder's *direct children* so a "sort by position" orders them
@@ -983,7 +1147,13 @@ mf add <dir_uuid> 'mf_ignore:string=target(/.*)?$'
 
 * Open questions
 
-** Watcher reliability on edge cases
-Behaviour when the watched root is unmounted, moved, or deleted while the
-daemon is running is undefined. The daemon should detect this and mark the
-repository as unavailable.
+** Watcher reliability on the repository root
+A removable volume *inside* a repository is specified — see [[*Mount points]].
+The remaining hole is the repository *root* itself going away while the daemon
+runs (the whole repo on the unplugged drive, or the root renamed): the root has
+no ancestor to compare device ids with, its =.metafolder/internal/db.sqlite= may
+vanish under an open, exclusively-locked connection, and the absolute =root= in
+=config.json= is not a stable identity across remounts. The daemon should detect
+this, mark the repository unavailable and drop its connection — and, on the way
+back, be able to find the repository by volume identity rather than by absolute
+path. Undefined for now.

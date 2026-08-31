@@ -185,6 +185,7 @@ The stored fields for a file/directory metarecord are:
 | =mfr_mime=         | mfr    | String     | MIME type from content analysis (see [[file:spec-platform.org][spec-platform.org]]); computed by reconcile (opt-out) for files that lack it; absent when undetectable or not yet computed |
 | =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
+| =mfr_mount=        | mfr    | String     | Present on a *directory* metarecord that is a mount point: best-effort identity of the mounted volume (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Its presence, not its value, marks the mount point; never cleared by the daemon |
 | =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[*Watch and Ignore]])  |
 | =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
 | =mf_sync=          | mf     | String     | =internal= (default) / =external=: whether metafolder or an external tool owns this metarecord's content during cross-repo sync; inherited down the =mfr_path= tree (see [[file:spec-sync.org][spec-sync.org]]) |

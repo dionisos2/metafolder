@@ -2046,6 +2046,54 @@ completion:
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.
 
+** Unmounted volumes
+
+A repository can contain the mount point of a removable or network volume
+(spec-file-tracking "Mount points"). While the volume is not mounted, its
+metarecords are still in the database, still queryable, and still shown by every
+list — but the files behind them are *unavailable*, not deleted. The GUI's job
+is to make that distinction visible, because the two look identical otherwise:
+an orphan (=mfr_path = Nothing=) is a file that is gone for good, an unavailable
+record is one that comes back when the drive is plugged in.
+
+*Source of truth*: =GET /repos/:repo/mounts= (spec-file-tracking "Mount
+status"), fetched by the panels through =metafolder.daemon= and cached like any
+other daemon read; it is re-read on =metarecords:dirty= and on an explicit
+refresh. A path is *unavailable* when it is at or below a mount point whose
+state is =offline=.
+
+*Presentation* — one shared vocabulary across panels, distinct from the orphan
+one:
+- a *paused* icon/badge (=⏏=) and the muted =--mf-warning= colour, never the
+  =--mf-error= red used for orphans and =.metafolder/internal/=;
+- the tooltip and the detail line name what is missing, using the mount point's
+  path and the =expected= identity: ="volume not mounted: label:PHOTOS
+  (/media/photos)"=.
+
+*Per panel*:
+- =metarecord-detail= — a banner above the field list when the displayed record
+  is unavailable, naming the mount point and the expected volume; the =mfr_path=
+  row carries the =⏏= badge. On the mount point's own metarecord, the
+  =mfr_mount= field row shows its state (=online=/=offline=/=mismatch=) next to
+  the value.
+- =file= — no preview is attempted: the panel shows the banner instead of "no
+  preview available", so the user is not left guessing why a file that exists in
+  the database will not open.
+- =file-manager= — when the displayed directory is an offline mount point, a
+  banner at the top of the listing and the =⏏= badge on the directory row.
+  Records whose file the listing cannot find are shown as unavailable rather
+  than untracked.
+- =metarecord-list= — unavailable rows carry the badge; no filtering is applied
+  (the metadata is exactly what the user wants to browse with the drive
+  unplugged).
+
+*Actions*: the banner offers /Reconcile this subtree/
+(=POST .../metarecords/:uuid/reconcile= on the mount point) once the volume is
+back — the daemon deliberately does not do it automatically
+(spec-file-tracking "Offline subtrees"). Nothing in the GUI ever offers to
+"clean up" unavailable records: =mf orphan= is the only path to writing
+=Nothing=, and it refuses these by design.
+
 ** Ignore patterns
 
 The GUI counterpart of =mf ignore= (spec-file-tracking "Ignore presets"). Two
