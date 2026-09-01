@@ -913,6 +913,7 @@ Behaviours:
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 | =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager=       |
+| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; the entry name is collected in the command input, completing over the listing) |
 | =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
@@ -1879,6 +1880,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
 | =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed |
+| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected as an interactive argument (see [[*Interactive command arguments (command mode)]]) completing over the listing — directories shown with a trailing =/=. The candidates are filtered by ordered substring, and a typed value that matches none of them exactly selects the first entry it ordered-substring-matches; no match is a status-bar error. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
 
 *** =treeref= panel type
 

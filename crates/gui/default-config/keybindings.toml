@@ -278,6 +278,9 @@
   # treeref: pick which TreeRef field's forest the panel explores (the
   # drop-down's keyboard equivalent; the field name completes).
   { command = "treeref:set-field", when = "treeref" },
+  # file-manager: jump to an entry of the current directory by name, completing
+  # over the listing and filtered by ordered substring like every other picker.
+  { command = "file-manager:find", when = "file-manager" },
 ]
 "s" = { command = "metarecord-list:clear-edit-simplified", when = "metarecord-list" }
 "q" = { command = "metarecord-list:clear-edit-normal", when = "metarecord-list" }
