@@ -74,7 +74,10 @@ kept in the =value_uuid= and =value_name= columns of the =field= table
 (see [[*SQLite Schema]]):
 
 - =value_uuid=: UUID of the parent metarecord (zero UUID =x'00...00'= for root nodes).
-- =value_name=: the name component contributed by this metarecord (e.g. filename, tag name).
+- =value_name=: the name component as *displayed* (e.g. filename, tag name) — what
+  the string predicates of [[file:spec-query.org][spec-query.org]] compare against.
+- =value_name_bytes=: that name's *exact bytes*, which identify the node and
+  carry the forest's uniqueness (see [[*Tree names]]).
 
 Multiple independent trees can coexist within the same repository by using different
 field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
@@ -121,6 +124,15 @@ show and what identifies it:
 =bytes= (lowercase hex) is authoritative; =text= is carried for readers that
 only display. A client that assumed a string meets a different shape rather than
 a silently wrong name — which is why this bumps =API_VERSION=.
+
+*Migration.* An existing repository gains =value_name_bytes= (on =field= and on
+every table that snapshots a value: =op_snapshot=, so a rollback restores the
+exact name, plus =pending_operation= and =snapshot_field=) the next time it is
+opened, and the forest's unique index is re-keyed onto it. *No name is
+rewritten*: every name such a database holds is valid UTF-8 — an undecodable one
+could not have been stored at all — so =CAST(value_name AS BLOB)= derives the
+bytes losslessly. The back-fill runs only when the column is being added, so
+re-opening never re-derives bytes from the (now possibly lossy) text.
 
 Rename (same parent, new name): update =value_name= of one row — O(1).
 Move (different parent): update =value_uuid= of one row — O(1).
@@ -272,7 +284,7 @@ no effect.
 
 Direct lookup by path uses the tree cache (see [[*Tree Cache]]); on cache
 miss, the daemon resolves each component iteratively via the
-=(field_name, value_uuid, value_name)= index.
+=(field_name, value_uuid, value_name_bytes)= index.
 
 Inherited property lookup (e.g. nearest ancestor with =mf_sync=) is performed
 in two steps: first, walk the parent chain via the tree cache (fetching missing
@@ -339,13 +351,14 @@ CREATE TABLE field (
     value_real      REAL,              -- float
     value_uuid      BLOB,              -- ref/externalref: metarecord UUID; tree_ref: parent UUID (zero UUID for root)
     value_ref_repo  BLOB,              -- externalref only: repo UUID
-    value_name      TEXT               -- tree_ref: name component contributed by this metarecord
+    value_name      TEXT,              -- tree_ref: name component, as displayed
+    value_name_bytes BLOB              -- tree_ref: that name's exact bytes (identity)
 );
 
 CREATE INDEX idx_field_metarecord        ON field(metarecord_uuid, field_name);
 CREATE INDEX idx_field_reverse      ON field(field_name, value_uuid, value_ref_repo)
     WHERE value_type IN ('ref', 'externalref');
-CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name)
+CREATE UNIQUE INDEX idx_field_tree  ON field(field_name, value_uuid, value_name_bytes)
     WHERE value_type = 'tree_ref';
 #+END_SRC
 

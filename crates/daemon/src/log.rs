@@ -395,26 +395,16 @@ pub fn active_line_ops(conn: &rusqlite::Connection, head: i64) -> Result<Vec<OpR
 pub fn snapshots(conn: &rusqlite::Connection, op_id: i64, is_new: i64) -> Result<Vec<FieldRow>> {
     let mut stmt = conn.prepare_cached(
         "SELECT field_id, field_name, value_type, value_text, value_int, value_real,
-                value_uuid, value_ref_repo, value_name
+                value_uuid, value_ref_repo, value_name, value_name_bytes
          FROM op_snapshot WHERE op_id = ?1 AND is_new = ?2 ORDER BY field_id",
     )?;
     let rows = stmt
         .query_map(params![op_id, is_new], |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, Option<String>>(3)?,
-                row.get::<_, Option<i64>>(4)?,
-                row.get::<_, Option<f64>>(5)?,
-                row.get::<_, Option<Vec<u8>>>(6)?,
-                row.get::<_, Option<Vec<u8>>>(7)?,
-                row.get::<_, Option<String>>(8)?,
-            ))
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, db::RawValue::from_row(row)?))
         })?
         .map(|r| {
-            let (id, name, vtype, text, int, real, uuid, ref_repo, vname) = r?;
-            let value = db::decode_value(&vtype, text, int, real, uuid, ref_repo, vname)?;
+            let (id, name, raw) = r?;
+            let value = db::decode_value(raw)?;
             Ok(FieldRow { id, name, value })
         })
         .collect::<Result<Vec<FieldRow>>>()?;
@@ -1591,6 +1581,7 @@ impl<'c> Writer<'c> {
                         e.uuid.map_or(Sql::Null, Sql::Blob),
                         e.ref_repo.map_or(Sql::Null, Sql::Blob),
                         e.name.map_or(Sql::Null, Sql::Text),
+                        e.name_bytes.map_or(Sql::Null, Sql::Blob),
                     ]);
                 }
             }
@@ -1608,8 +1599,9 @@ impl<'c> Writer<'c> {
             &self.tx,
             "INSERT INTO op_snapshot
                  (op_id, is_new, field_id, field_name, value_type, value_text,
-                  value_int, value_real, value_uuid, value_ref_repo, value_name)",
-            11,
+                  value_int, value_real, value_uuid, value_ref_repo, value_name,
+                  value_name_bytes)",
+            12,
             &snapshot_rows,
         )?;
         self.flushed += pending.len() as i64;

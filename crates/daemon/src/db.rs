@@ -89,6 +89,7 @@ pub fn open_database(path: &Path) -> Result<Connection> {
     ensure_pending_tracker_column(&conn)?;
     ensure_next_version_column(&conn)?;
     ensure_entity_version_after_column(&conn)?;
+    ensure_value_name_bytes_column(&conn)?;
     ensure_perf_indexes(&conn)?;
     ensure_field_text(&conn)?;
     Ok(conn)
@@ -170,6 +171,66 @@ fn ensure_pending_tracker_column(conn: &Connection) -> Result<()> {
         conn.execute("ALTER TABLE pending_operation ADD COLUMN tracker INTEGER", [])
             .context("Failed to add pending_operation.tracker column")?;
     }
+    Ok(())
+}
+
+/// Adds `field.value_name_bytes` and re-keys the forest index onto it, for
+/// repositories created before tree names carried their exact bytes
+/// (spec-data-model "Tree names").
+///
+/// No name is rewritten: every name such a database holds is valid UTF-8 (an
+/// undecodable one could not be stored at all), so the bytes are exactly the
+/// text's own, and `CAST(value_name AS BLOB)` derives them losslessly.
+fn ensure_value_name_bytes_column(conn: &Connection) -> Result<()> {
+    // Every table that stores a value: the live rows, the event log's
+    // before/after snapshots (or a rollback would restore a degraded name),
+    // the watcher's buffer and sync's snapshots.
+    for table in ["field", "op_snapshot", "pending_operation", "snapshot_field"] {
+        let has_table: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [table],
+            |r| r.get(0),
+        )?;
+        if has_table == 0 {
+            continue; // fresh database, or a table this schema does not have
+        }
+        let has_column: i64 = conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = 'value_name_bytes'"
+            ),
+            [],
+            |r| r.get(0),
+        )?;
+        if has_column != 0 {
+            continue;
+        }
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN value_name_bytes BLOB"), [])
+            .with_context(|| format!("Failed to add {table}.value_name_bytes column"))?;
+        conn.execute(
+            &format!(
+                "UPDATE {table} SET value_name_bytes = CAST(value_name AS BLOB)
+                 WHERE value_type = 'tree_ref' AND value_name IS NOT NULL"
+            ),
+            [],
+        )
+        .with_context(|| format!("Failed to back-fill {table}.value_name_bytes"))?;
+    }
+    let field_done: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_table_info('field') WHERE name = 'value_name_bytes'",
+        [],
+        |r| r.get(0),
+    )?;
+    if field_done == 0 {
+        return Ok(()); // no `field` table yet: init_schema builds the index itself
+    }
+    // The forest's uniqueness moves onto the bytes with it, or two siblings
+    // that differ only in undecodable bytes would still be refused.
+    conn.execute_batch(
+        "DROP INDEX IF EXISTS idx_field_tree;
+         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name_bytes)
+             WHERE value_type = 'tree_ref';",
+    )
+    .context("Failed to re-key the forest index onto the name bytes")?;
     Ok(())
 }
 
@@ -309,7 +370,8 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             value_uuid      BLOB,    -- ref/refbase/externalref: metarecord or repo UUID;
                                      -- tree_ref: parent UUID (zero UUID for roots)
             value_ref_repo  BLOB,    -- externalref only: repo UUID
-            value_name      TEXT     -- tree_ref: name component
+            value_name      TEXT,    -- tree_ref: name component, as displayed
+            value_name_bytes BLOB    -- tree_ref: the name's EXACT bytes (identity)
         );
         CREATE INDEX idx_field_metarecord ON field(metarecord_uuid, field_name);
         -- Predicates filter by field_name (IsPresent/Eq/…); seek the field_name
@@ -321,7 +383,11 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX idx_field_name_type ON field(field_name, value_type);
         CREATE INDEX idx_field_reverse ON field(field_name, value_uuid, value_ref_repo)
             WHERE value_type IN ('ref', 'externalref');
-        CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
+        -- Keyed on the exact bytes, not on the displayed text: a POSIX name is
+        -- a byte string, and two names differing only in undecodable bytes are
+        -- two distinct siblings even though they display identically
+        -- (spec-data-model, Tree names).
+        CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name_bytes)
             WHERE value_type = 'tree_ref';
         -- A metarecord tracks at most one filesystem path: `mfr_path` is
         -- single-valued (distinct files get distinct metarecords). Enforced at
@@ -374,6 +440,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             value_uuid     BLOB,
             value_ref_repo BLOB,
             value_name     TEXT,
+            value_name_bytes BLOB,
             PRIMARY KEY (op_id, is_new, field_id)
         );
 
@@ -398,6 +465,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             value_uuid     BLOB,
             value_ref_repo BLOB,
             value_name     TEXT,
+            value_name_bytes BLOB,
             tracker        INTEGER
         );
         ",
@@ -430,20 +498,13 @@ pub fn get_version(conn: &Connection, uuid: Uuid) -> Result<Option<u64>> {
 }
 
 const FIELD_COLUMNS: &str =
-    "id, field_name, value_type, value_text, value_int, value_real, value_uuid, value_ref_repo, value_name";
+    "id, field_name, value_type, value_text, value_int, value_real, value_uuid, value_ref_repo, \
+     value_name, value_name_bytes";
 
 fn row_to_field_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, String, Result<Value>)> {
     let id: i64 = row.get(0)?;
     let name: String = row.get(1)?;
-    let value = decode_value(
-        &row.get::<_, String>(2)?,
-        row.get(3)?,
-        row.get(4)?,
-        row.get(5)?,
-        row.get(6)?,
-        row.get(7)?,
-        row.get(8)?,
-    );
+    let value = decode_value(RawValue::from_row(row)?);
     Ok((id, name, value))
 }
 
@@ -480,7 +541,7 @@ pub fn field_rows_for(
         let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
         while let Some(row) = rows.next()? {
             let (id, name, value) = row_to_field_row(row)?;
-            let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(9)?)?;
+            let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>("metarecord_uuid")?)?;
             out.entry(uuid).or_default().push(FieldRow { id, name, value: value? });
         }
     }
@@ -515,7 +576,8 @@ pub fn versions_for(
 /// (`RepoIndex::build`): one scan instead of one query per metarecord, which on
 /// a large repository turns ~N seeks into a single pass. Row order is
 /// unspecified (the caller routes each row by its owner uuid), and the owner
-/// uuid is selected *after* the shared `FIELD_COLUMNS` so `row_to_field_row`
+/// uuid is selected after the shared `FIELD_COLUMNS` and read *by name*, so
+/// that adding a column to them cannot silently shift it, and `row_to_field_row`
 /// keeps its column indices.
 pub fn for_each_field_row(
     conn: &Connection,
@@ -525,7 +587,7 @@ pub fn for_each_field_row(
     let mut rows = stmt.query([])?;
     while let Some(row) = rows.next()? {
         let (id, name, value) = row_to_field_row(row)?;
-        let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(9)?)?;
+        let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>("metarecord_uuid")?)?;
         f(uuid, FieldRow { id, name, value: value? })?;
     }
     Ok(())
@@ -1060,6 +1122,8 @@ pub(crate) struct EncodedValue {
     pub uuid: Option<Vec<u8>>,
     pub ref_repo: Option<Vec<u8>>,
     pub name: Option<String>,
+    /// tree_ref only: the name's exact bytes — what identifies the node.
+    pub name_bytes: Option<Vec<u8>>,
 }
 
 impl EncodedValue {
@@ -1072,6 +1136,7 @@ impl EncodedValue {
             uuid: None,
             ref_repo: None,
             name: None,
+            name_bytes: None,
         }
     }
 }
@@ -1107,7 +1172,10 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
         Value::TreeRef { parent, name } => {
             e = EncodedValue::new("tree_ref");
             e.uuid = Some(uuid_to_bytes(parent.unwrap_or(ZERO_UUID)));
+            // Both: the text is what queries and displays read, the bytes are
+            // what identifies the node (spec-data-model "Tree names").
             e.name = Some(name.display().into_owned());
+            e.name_bytes = Some(name.as_bytes().to_vec());
         }
         Value::RefBase(id) => {
             e = EncodedValue::new("refbase");
@@ -1122,16 +1190,43 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
     e
 }
 
-pub(crate) fn decode_value(
-    value_type: &str,
-    text: Option<String>,
-    int: Option<i64>,
-    real: Option<f64>,
-    uuid: Option<Vec<u8>>,
-    ref_repo: Option<Vec<u8>>,
-    name: Option<String>,
-) -> Result<Value> {
-    match value_type {
+/// The value columns of one row, from any table that stores a value (`field`,
+/// `op_snapshot`, `snapshot_field`, …).
+///
+/// Read *by column name* rather than by position: the set grows over time —
+/// `value_name_bytes` was the latest — and every positional reader silently
+/// shifted when it did, which no compiler catches.
+pub struct RawValue {
+    pub value_type: String,
+    pub text: Option<String>,
+    pub int: Option<i64>,
+    pub real: Option<f64>,
+    pub uuid: Option<Vec<u8>>,
+    pub ref_repo: Option<Vec<u8>>,
+    pub name: Option<String>,
+    pub name_bytes: Option<Vec<u8>>,
+}
+
+impl RawValue {
+    /// Reads the value columns of `row`, which must select them under their
+    /// own names.
+    pub fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            value_type: row.get("value_type")?,
+            text: row.get("value_text")?,
+            int: row.get("value_int")?,
+            real: row.get("value_real")?,
+            uuid: row.get("value_uuid")?,
+            ref_repo: row.get("value_ref_repo")?,
+            name: row.get("value_name")?,
+            name_bytes: row.get("value_name_bytes")?,
+        })
+    }
+}
+
+pub(crate) fn decode_value(raw: RawValue) -> Result<Value> {
+    let RawValue { value_type, text, int, real, uuid, ref_repo, name, name_bytes } = raw;
+    match value_type.as_str() {
         "nothing" => Ok(Value::Nothing),
         "string" => Ok(Value::String(text.context("value_text missing")?)),
         "int" => Ok(Value::Int(int.context("value_int missing")?)),
@@ -1141,9 +1236,16 @@ pub(crate) fn decode_value(
         "ref" => Ok(Value::Ref(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
         "tree_ref" => {
             let parent = bytes_to_uuid(uuid.context("value_uuid missing")?)?;
+            // The bytes are authoritative; the text is only a fallback for a
+            // row written before the column existed (the migration back-fills
+            // them, so this is belt and braces).
+            let name = match name_bytes {
+                Some(bytes) => TreeName::from_bytes(bytes),
+                None => TreeName::from(name.context("value_name missing")?),
+            };
             Ok(Value::TreeRef {
                 parent: if parent == ZERO_UUID { None } else { Some(parent) },
-                name: TreeName::from(name.context("value_name missing")?),
+                name,
             })
         }
         "refbase" => Ok(Value::RefBase(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),
@@ -1189,8 +1291,9 @@ pub(crate) fn insert_field_row(
         None => {
             conn.prepare_cached(
                 "INSERT INTO field (metarecord_uuid, field_name, value_type, value_text,
-                                    value_int, value_real, value_uuid, value_ref_repo, value_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                                    value_int, value_real, value_uuid, value_ref_repo, value_name,
+                                    value_name_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             )?
             .execute(params![
                 uuid_to_bytes(metarecord_uuid),
@@ -1201,15 +1304,17 @@ pub(crate) fn insert_field_row(
                 e.real,
                 e.uuid,
                 e.ref_repo,
-                e.name
+                e.name,
+                e.name_bytes
             ])
             .map_err(map_unique)?;
         }
         Some(id) => {
             conn.prepare_cached(
                 "INSERT INTO field (id, metarecord_uuid, field_name, value_type, value_text,
-                                    value_int, value_real, value_uuid, value_ref_repo, value_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                    value_int, value_real, value_uuid, value_ref_repo, value_name,
+                                    value_name_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             )?
             .execute(params![
                 id,
@@ -1221,7 +1326,8 @@ pub(crate) fn insert_field_row(
                 e.real,
                 e.uuid,
                 e.ref_repo,
-                e.name
+                e.name,
+                e.name_bytes
             ])
             .map_err(map_unique)?;
         }

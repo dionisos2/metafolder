@@ -1,7 +1,7 @@
 //! Integration tests for the storage layer: SQLite schema, value encoding,
 //! the logged write flow (Writer), TreeRef validation, reserved fields.
 
-use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::{OpType, Writer};
 use metafolder_daemon::reserved;
@@ -952,6 +952,194 @@ fn test_tree_ref_parent_must_have_same_tree_field() {
         )])
         .unwrap_err();
     assert!(err.to_string().contains("parent"), "unexpected error: {err}");
+}
+
+// ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
+
+/// Reads back the tree name stored for `uuid`'s `mfr_path`.
+fn tree_name(conn: &Connection, uuid: Uuid) -> TreeName {
+    let m = db::get_metarecord(conn, uuid).unwrap().expect("metarecord");
+    let field = m.fields.iter().find(|f| f.name == "mfr_path").expect("mfr_path");
+    match &field.value {
+        Value::TreeRef { name, .. } => name.clone(),
+        other => panic!("not a tree_ref: {other:?}"),
+    }
+}
+
+#[test]
+fn test_an_undecodable_name_round_trips_through_the_database() {
+    // "café.mp4" in latin-1: a POSIX name is a byte string, and the database
+    // must give back the exact bytes — they are what opens the file.
+    let mut conn = test_conn();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let name = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    let file = create(
+        &mut conn,
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: name.clone() },
+        )],
+    );
+    assert_eq!(tree_name(&conn, file.uuid), name);
+    assert_eq!(tree_name(&conn, file.uuid).as_bytes(), b"caf\xe9.mp4");
+}
+
+#[test]
+fn test_two_names_differing_only_in_undecodable_bytes_are_distinct_siblings() {
+    // They display identically, so a text-keyed forest index would reject the
+    // second as a duplicate. The forest is keyed on the bytes, so both exist.
+    let mut conn = test_conn();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let one = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    let two = TreeName::from_bytes(b"caf\xff.mp4".to_vec());
+    assert_eq!(one.display(), two.display(), "the test is pointless unless they collide as text");
+
+    let a = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: one.clone() })],
+    );
+    let b = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: two.clone() })],
+    );
+    assert_eq!(tree_name(&conn, a.uuid), one);
+    assert_eq!(tree_name(&conn, b.uuid), two);
+}
+
+#[test]
+fn test_the_same_name_twice_in_one_directory_is_still_rejected() {
+    // The uniqueness the forest relies on must survive the move to bytes.
+    let mut conn = test_conn();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let name = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    create(
+        &mut conn,
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: name.clone() },
+        )],
+    );
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let err = w
+        .create_metarecord(vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name },
+        )])
+        .unwrap_err();
+    assert!(err.to_string().contains("already occupied"), "unexpected error: {err}");
+}
+
+/// Reverts `field` to the pre-TreeName schema: no `value_name_bytes`, and the
+/// forest index keyed on the displayed text. What an existing repository holds.
+///
+/// Rebuilt rather than `DROP COLUMN`-ed: SQLite rewrites the stored CREATE
+/// TABLE text to drop a column, which trips over the trailing comment on the
+/// last one. A rebuild also matches what an old database really looks like.
+fn downgrade_to_text_keyed_forest(conn: &Connection) {
+    conn.execute_batch(
+        "CREATE TABLE field_old (
+             id              INTEGER PRIMARY KEY AUTOINCREMENT,
+             metarecord_uuid BLOB    NOT NULL,
+             field_name      TEXT    NOT NULL,
+             value_type      TEXT    NOT NULL,
+             value_text      TEXT,
+             value_int       INTEGER,
+             value_real      REAL,
+             value_uuid      BLOB,
+             value_ref_repo  BLOB,
+             value_name      TEXT
+         );
+         INSERT INTO field_old SELECT id, metarecord_uuid, field_name, value_type, value_text,
+                value_int, value_real, value_uuid, value_ref_repo, value_name FROM field;
+         DROP TABLE field;
+         ALTER TABLE field_old RENAME TO field;
+         CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name)
+             WHERE value_type = 'tree_ref';
+         CREATE UNIQUE INDEX idx_mfr_path_single ON field(metarecord_uuid)
+             WHERE field_name = 'mfr_path';",
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_an_existing_repository_migrates_to_byte_keyed_names_on_open() {
+    let dir = common::TempDir::new("migrate-tree-names");
+    let path = dir.path().join("db.sqlite");
+
+    // A repository written before names carried their bytes.
+    let mut conn = db::open_database(&path).unwrap();
+    db::init_schema(&conn).unwrap();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let kept = create(
+        &mut conn,
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: "vidéo.mp4".into() },
+        )],
+    );
+    downgrade_to_text_keyed_forest(&conn);
+    drop(conn);
+
+    // Opening it runs the migration.
+    let mut conn = db::open_database(&path).unwrap();
+
+    // Existing names are untouched — the bytes are derived from the text, which
+    // is lossless because an undecodable name could not have been stored here.
+    assert_eq!(tree_name(&conn, kept.uuid), TreeName::from("vidéo.mp4".to_string()));
+    assert!(tree_name(&conn, kept.uuid).is_exact());
+
+    // ...and the forest now keys on the bytes, so a name that no text can
+    // represent becomes storable alongside one that displays identically.
+    let one = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    let two = TreeName::from_bytes(b"caf\xff.mp4".to_vec());
+    let a = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: one.clone() })],
+    );
+    let b = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: two.clone() })],
+    );
+    assert_eq!(tree_name(&conn, a.uuid), one);
+    assert_eq!(tree_name(&conn, b.uuid), two);
+}
+
+#[test]
+fn test_migrating_an_already_migrated_repository_is_a_no_op() {
+    let dir = common::TempDir::new("migrate-tree-names-idempotent");
+    let path = dir.path().join("db.sqlite");
+    let mut conn = db::open_database(&path).unwrap();
+    db::init_schema(&conn).unwrap();
+    let root = create(
+        &mut conn,
+        vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
+    );
+    let name = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    let file = create(
+        &mut conn,
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: name.clone() },
+        )],
+    );
+    drop(conn);
+
+    // Re-opening must neither re-derive the bytes from the (lossy) text nor
+    // fail: the back-fill runs only when the column is being added.
+    let conn = db::open_database(&path).unwrap();
+    assert_eq!(tree_name(&conn, file.uuid), name);
 }
 
 #[test]

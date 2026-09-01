@@ -61,7 +61,8 @@ pub fn open(path: &Path) -> Result<Connection> {
              value_uuid  BLOB,
              value_uuid_b BLOB,
              value_ref_repo BLOB,
-             value_name  TEXT
+             value_name  TEXT,
+             value_name_bytes BLOB
          );
          CREATE INDEX IF NOT EXISTS idx_snapshot_link ON snapshot_field(link_uuid);",
     )
@@ -216,22 +217,14 @@ pub struct SnapshotField {
 pub fn read_snapshot(conn: &Connection, link: Uuid) -> Result<Vec<SnapshotField>> {
     let mut stmt = conn.prepare(
         "SELECT field_name, value_type, value_text, value_int, value_real,
-                value_uuid, value_ref_repo, value_name, value_uuid_b
+                value_uuid, value_ref_repo, value_name, value_uuid_b, value_name_bytes
          FROM snapshot_field WHERE link_uuid = ?1",
     )?;
     let rows = stmt
         .query_map(params![uuid_to_bytes(link)], |r| {
-            let value = db::decode_value(
-                &r.get::<_, String>(1)?,
-                r.get(2)?,
-                r.get(3)?,
-                r.get(4)?,
-                r.get(5)?,
-                r.get(6)?,
-                r.get(7)?,
-            )
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
-            let value_uuid_b: Option<Vec<u8>> = r.get(8)?;
+            let value = db::decode_value(db::RawValue::from_row(r)?)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
+            let value_uuid_b: Option<Vec<u8>> = r.get("value_uuid_b")?;
             Ok(SnapshotField {
                 name: r.get(0)?,
                 value,
@@ -270,8 +263,9 @@ pub fn commit_batch(conn: &mut Connection, commits: &[Commit]) -> Result<()> {
             tx.execute(
                 "INSERT INTO snapshot_field
                      (link_uuid, field_name, value_type, value_text, value_int,
-                      value_real, value_uuid, value_uuid_b, value_ref_repo, value_name)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                      value_real, value_uuid, value_uuid_b, value_ref_repo, value_name,
+                      value_name_bytes)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     uuid_to_bytes(c.link),
                     f.name,
@@ -283,6 +277,7 @@ pub fn commit_batch(conn: &mut Connection, commits: &[Commit]) -> Result<()> {
                     f.value_uuid_b.map(uuid_to_bytes),
                     e.ref_repo,
                     e.name,
+                    e.name_bytes,
                 ],
             )?;
         }
