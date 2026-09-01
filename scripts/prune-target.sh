@@ -127,17 +127,26 @@ else
 fi
 
 # ---- execute and report ------------------------------------------------------
+# The doomed list routinely runs to tens of thousands of paths, well past
+# ARG_MAX: passing it as command-line arguments made both du and rm fail with
+# "Argument list too long", so nothing was deleted and the size read 0 — a
+# silent no-op on exactly the overgrown target/ this script exists for. `xargs`
+# splits it into as many commands as it takes; `printf` is a shell builtin, so
+# feeding it is not subject to the limit in the first place.
 if [ ${#doomed[@]} -eq 0 ]; then
     echo "nothing to prune"
 else
-    freed=$(du -scb "${doomed[@]}" 2>/dev/null | tail -1 | cut -f1 || true)
+    # One "total" line per xargs chunk, so the totals are summed rather than
+    # tailed.
+    freed=$(printf '%s\0' "${doomed[@]}" | xargs -0 du -scb 2>/dev/null |
+            awk '$2 == "total" { sum += $1 } END { print sum + 0 }' || true)
     freed=${freed:-0}
     human=$(numfmt --to=iec "$freed" 2>/dev/null || echo "${freed}B")
     if [ "$dry_run" -eq 1 ]; then
         printf '%s\n' "${doomed[@]}"
         echo "dry run: would prune ${#doomed[@]} paths, freeing $human"
     else
-        rm -rf -- "${doomed[@]}"
+        printf '%s\0' "${doomed[@]}" | xargs -0 rm -rf --
         echo "pruned ${#doomed[@]} paths, freed $human"
     fi
 fi

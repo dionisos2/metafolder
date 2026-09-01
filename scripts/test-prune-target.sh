@@ -117,4 +117,40 @@ echo "== scenario 4: state survives and next real run prunes what dry-run showed
 [ ! -e "target/debug/deps/libbitflags-$h_old.rlib" ] || fail "real run after dry-run should prune"
 ok "real run after dry-run"
 
+echo "== scenario 5: a prune set too large for one command line still runs"
+# `doomed` is handed to du/rm as command-line arguments. Past ARG_MAX the exec
+# fails with "Argument list too long": nothing was deleted, the size report read
+# 0, and the script still exited 0 — a silent no-op on exactly the overgrown
+# target/ the script exists for. Reproduced with a deliberately deep target
+# path, so a few hundred artifacts are enough instead of tens of thousands.
+arg_max=$(getconf ARG_MAX 2>/dev/null || echo 2097152)
+segment=$(printf 'd%.0s' $(seq 200))
+deep=$tmp/deep
+for _ in $(seq 17); do deep=$deep/$segment; done
+mkdir -p "$deep/target/debug/deps"
+cd "$deep"
+cat > Cargo.lock <<'EOF'
+[[package]]
+name = "serde"
+version = "1.0.200"
+EOF
+# Every artifact below claims a registry version absent from Cargo.lock, so the
+# (stateless) lock pass dooms all of them on the very first run.
+count=$(( arg_max / (${#deep} + 40) ))
+[ "$count" -ge 2 ] || fail "the deep path is too short to exceed ARG_MAX"
+for i in $(seq "$count"); do
+    hash=$(printf '%016x' "$i")
+    touch "target/debug/deps/libp$i-$hash.rlib"
+    echo "target/debug/deps/libp$i-$hash.rlib: $registry/gone-0.1.0/src/lib.rs" \
+        > "target/debug/deps/p$i-$hash.d"
+done
+report=$("$prune")
+[ ! -e "target/debug/deps/libp1-$(printf '%016x' 1).rlib" ] ||
+    fail "an oversized prune set must still be deleted (got: $report)"
+[ ! -e "target/debug/deps/libp$count-$(printf '%016x' "$count").rlib" ] ||
+    fail "the tail of an oversized prune set must be deleted too (got: $report)"
+grep -q 'freed 0B' <<<"$report" && fail "the freed size must be measured too (got: $report)"
+cd "$tmp"
+ok "oversized prune set"
+
 echo "all prune-target tests passed"
