@@ -767,10 +767,15 @@ export async function mount(root, metafolder) {
   }
 
   /** Orphan the scanned records (mfr_path_old frozen, mfr_path → Nothing,
-   *  cascading), after confirmation, then re-scan. */
+   *  cascading), after confirmation, then re-scan. Invoked from outside the
+   *  orphan view (the command, with no button to click), it scans first — the
+   *  set to clear is whatever a fresh scan finds, and the confirmation names
+   *  its size before anything is written. */
   async function clearOrphans() {
     const r = repo;
-    if (!r || !orphanMode || orphanUuids.length === 0) return;
+    if (!r) return;
+    if (!orphanMode) await showOrphans();
+    if (!orphanMode || orphanUuids.length === 0) return;
     const n = orphanUuids.length;
     if (!confirm(`Orphan ${n} metarecord${n === 1 ? '' : 's'}? mfr_path becomes Nothing (its origin is kept in mfr_path_old). This can be rolled back.`)) {
       return;
@@ -1209,6 +1214,14 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:orphans', {
     label: 'Metarecord list: show orphaned metarecords (tracked file missing)',
     handler: () => showOrphans(),
+  });
+  void commands.register('metarecord-list:orphans-clear', {
+    label: 'Metarecord list: orphan the scanned records (mfr_path → Nothing, confirmed)',
+    handler: () => clearOrphans(),
+  });
+  void commands.register('metarecord-list:orphans-exit', {
+    label: 'Metarecord list: leave the orphan view and restore the query',
+    handler: () => exitOrphans(),
   });
   // Clear-then-edit, one field at a time. The finder is a live filter, so
   // clearing it re-runs immediately (widening the result); the DSL fields wait

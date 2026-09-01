@@ -877,6 +877,9 @@ Behaviours:
 | =metarecord-list:clear-edit-simplified= | Clear the simplified query field, unfreeze zone B and focus it |
 | =metarecord-list:clear-edit-normal= | Open the normal DSL editor, clear it, freeze and focus it |
 | =metarecord-list:submit-finder= | Re-run the finder filter and leave the field (blur); the Enter binding, vs =apply-finder= which keeps focus |
+| =metarecord-list:orphans= | Scan the active repo (=POST /orphans/scan=) and show the metarecords whose tracked file is missing, as a =uuid_in= override of the query, with a banner giving the count — see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Orphan scan" |
+| =metarecord-list:orphans-clear= | Orphan the scanned records (=POST /orphans/clear=: =mfr_path_old= snapshotted, =mfr_path= → =Nothing=, cascading), after a confirmation naming the count; scans first when the view is not open, and re-scans afterwards (leaving the view when nothing remains). The banner's "Clear all" button |
+| =metarecord-list:orphans-exit= | Leave the orphan view and restore the editor-driven query. The banner's "Exit" button |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
