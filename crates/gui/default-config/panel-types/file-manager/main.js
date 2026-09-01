@@ -18,6 +18,7 @@ import {
 } from './tracked.js';
 import { loadEligibility, scopedPath } from './ignored.js';
 import { ignoreTarget, patternForExtension, patternForPath } from '/__ignore.js';
+import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
   joinPath,
   dedupeName,
@@ -98,6 +99,11 @@ export async function mount(root, metafolder) {
 
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
+  const mountBanner = byId(root, 'mount-banner');
+  /** @type {Array<import('/__mounts.js').Mount>} the repo's declared mount
+   *  points, refreshed with each listing: an unplugged volume must read as
+   *  "unavailable", not as an empty folder (spec-gui "Unmounted volumes"). */
+  let mounts = [];
   const pathElement = byId(root, 'current-path');
   const addButton = byId(root, 'add', HTMLButtonElement);
   const constrainBox = byId(root, 'constrain', HTMLInputElement);
@@ -219,7 +225,25 @@ export async function mount(root, metafolder) {
     const dirUuid = await enrichSelfParent();
     await enrichChildren(dirUuid);
     await refreshEligibility();
+    await refreshMounts();
     render();
+  }
+
+  // The repository's mount points, re-read per listing (one cheap daemon call:
+  // a stat per declared mount point, none at all when there are none).
+  async function refreshMounts() {
+    const dir = currentDir;
+    const found = repo ? await fetchMounts(daemon, repo) : [];
+    if (currentDir === dir) mounts = found; // a newer listing owns them otherwise
+  }
+
+  /**
+   * The offline mount point an absolute path sits on, or null.
+   * @param {string} path
+   */
+  function offlineFor(path) {
+    if (mounts.length === 0 || repoRoot === null) return null;
+    return offlineMountFor(mounts, relativeTo(repoRoot, path));
   }
 
   function render() {
@@ -234,6 +258,14 @@ export async function mount(root, metafolder) {
     placeholderElement.hidden = !showError;
     placeholderElement.classList.toggle('error', showError);
     if (showError) placeholderElement.textContent = `⚠ Could not list this folder\n${loadError}`;
+    const dirMount = currentDir === null ? null : offlineFor(currentDir);
+    mountBanner.hidden = dirMount === null;
+    if (dirMount) {
+      // An empty-looking folder whose volume is elsewhere. Name the volume, so
+      // the fix ("plug in PHOTOS") is in the message itself.
+      mountBanner.textContent =
+        `⏏ ${unavailableLabel(dirMount)} — its tracked content is unavailable, not deleted`;
+    }
     const selected = listing[cursorIndex];
     addButton.disabled =
       !repo || !selected || trackedPaths.has(selected.path) || !trackable(selected.path);
@@ -242,7 +274,10 @@ export async function mount(root, metafolder) {
       ...listing.slice(0, rendered).map((item, index) => {
         const internal = isWithin(item.path, internalDir);
         const ignored = ignoredPaths.get(item.path);
-        const title = internal
+        const unmounted = offlineFor(item.path);
+        const title = unmounted
+          ? unavailableLabel(unmounted)
+          : internal
           ? 'always excluded from tracking (live database)'
           : ignored
             ? `ignored by ${ignored.pattern}` +
@@ -256,6 +291,7 @@ export async function mount(root, metafolder) {
               trackedPaths.has(item.path) && 'tracked',
               internal && 'internal',
               ignored && 'ignored',
+              unmounted && 'unmounted',
             ],
             onclick: () => select(index),
             ondblclick: () => activate(index),
@@ -267,13 +303,15 @@ export async function mount(root, metafolder) {
           el(
             'span',
             { class: 'badge' },
-            internal
-              ? 'internal'
-              : ignored
-                ? 'ignored'
-                : trackedPaths.has(item.path)
-                  ? 'tracked'
-                  : '',
+            unmounted
+              ? '⏏ not mounted'
+              : internal
+                ? 'internal'
+                : ignored
+                  ? 'ignored'
+                  : trackedPaths.has(item.path)
+                    ? 'tracked'
+                    : '',
           ),
         );
       }),

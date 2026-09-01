@@ -17,6 +17,7 @@ import {
   savePosition,
   clearPosition,
 } from './playback.js';
+import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 
 // Directory grid: render this many thumbnails per window (more on scroll), so
 // opening a folder with thousands of files does not build/load them all at
@@ -645,6 +646,15 @@ export async function mount(root, metafolder) {
       placeholder('No file selected');
       return;
     }
+    // The file may be on a volume that is not plugged in. Saying "no preview
+    // available" there would leave the user guessing why a file the database
+    // knows about will not open (spec-gui "Unmounted volumes").
+    const mount = await unavailableMount(path);
+    if (generation !== renderGeneration) return;
+    if (mount) {
+      placeholder(unavailableLabel(mount));
+      return;
+    }
     // A directory has no meaningful file preview: list its contents instead.
     /** @type {{is_dir?: boolean}|null} */
     let info = null;
@@ -690,6 +700,25 @@ export async function mount(root, metafolder) {
       // Unknown/absent extension: sniff the bytes and preview it only if it
       // looks like text (so plain-text files with an unlisted extension work).
       await renderText(url, generation, false);
+    }
+  }
+
+  /**
+   * The offline mount point `path` sits on, or null — null as well when no
+   * repository is active, or when the daemon cannot answer: an unavailable
+   * volume is a nicer message, never a precondition for previewing a file.
+   *
+   * @param {string} path absolute path
+   */
+  async function unavailableMount(path) {
+    try {
+      const repo = selected?.repo ?? (await workspace.get('active_repo'));
+      if (typeof repo !== 'string' || repo === '') return null;
+      const mounts = await fetchMounts(daemon, repo);
+      if (mounts.length === 0) return null;
+      return offlineMountFor(mounts, relativeTo(await daemon.repoRoot(repo), path));
+    } catch {
+      return null;
     }
   }
 

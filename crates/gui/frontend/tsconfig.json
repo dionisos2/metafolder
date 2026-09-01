@@ -13,6 +13,7 @@
     "paths": {
       "/__ui.js": ["../panel-shim/ui.js"],
       "/__menu.js": ["../panel-shim/menu.js"],
+      "/__mounts.js": ["../panel-shim/mounts.js"],
       "/__orphan.js": ["../panel-shim/orphan.js"],
       "/__paged-list.js": ["../panel-shim/paged-list.js"],
       "/__value-widget.js": ["../panel-shim/value-widget.js"],

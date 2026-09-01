@@ -3,6 +3,7 @@
 
 import { byId, el, fields, qs, thumbnail } from '/__ui.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
+import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import { createPagedList } from '/__paged-list.js';
 import { createTypePicker, widgetFor, bulkSetBody, MATCH_ALL, createPickRunner } from '/__value-widget.js';
 import { createSelect } from '/__select.js';
@@ -341,6 +342,7 @@ export async function mount(root, metafolder) {
         metarecords = [];
         nextCursor = null;
         orphanCache = new Map();
+        void refreshMounts(); // a volume may have been plugged in or pulled out
       }
       // The query actually run (base + finder clause). Published on every reset
       // so other panels (e.g. metarecord-detail's bulk field edits) can target
@@ -468,9 +470,44 @@ export async function mount(root, metafolder) {
       ),
   };
 
+  /** @type {Array<import('/__mounts.js').Mount>} the repo's mount points,
+   *  refreshed with the listing: a record on an unplugged volume is
+   *  *unavailable*, never an orphan (spec-gui "Unmounted volumes"). */
+  let mounts = [];
+
+  /** Re-reads the repository's mount points (one cheap daemon call). */
+  async function refreshMounts() {
+    const asked = repo;
+    const found = repo ? await fetchMounts(daemon, repo) : [];
+    if (repo === asked) {
+      mounts = found;
+      if (found.length > 0) render();
+    }
+  }
+
+  /**
+   * The offline mount point every path of the metarecord sits on, or null.
+   * @param {Metafolder.Metarecord} metarecord
+   */
+  function unmountedFor(metarecord) {
+    if (mounts.length === 0 || repoRoot === null) return null;
+    const paths = pathsOf(metarecord);
+    if (paths.length === 0) return null;
+    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(repoRoot, abs)));
+    return found.every(Boolean) ? found[0] : null;
+  }
+
   /** Marks the row/card when the metarecord's tracked file is gone (async).
    *  @param {HTMLElement} node @param {Metafolder.Metarecord} metarecord */
   function fillOrphan(node, metarecord) {
+    // An unplugged volume comes first: its records' paths are stale on disk, so
+    // the orphan check below would paint them as gone for good.
+    const unmounted = unmountedFor(metarecord);
+    if (unmounted) {
+      node.classList.add('unmounted');
+      node.title = unavailableLabel(unmounted);
+      return;
+    }
     // An mfr_path the cache has not resolved yet says nothing about the file.
     // Reading that gap as "no paths" would make the orphan check conclude the
     // file is missing and paint a healthy row as an orphan — leave it unmarked
@@ -1336,6 +1373,8 @@ export async function mount(root, metafolder) {
       total = null;
       cursorIndex = -1;
       orphanCache = new Map();
+      mounts = [];
+      void refreshMounts();
       if (checked.size > 0) {
         checked = new Set();
         await workspace.set('selected_metarecords', []);

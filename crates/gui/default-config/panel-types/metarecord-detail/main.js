@@ -4,6 +4,7 @@
 import { byId, el, formatValue, valueEl } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { orphanState, orphanLabel } from '/__orphan.js';
+import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__mounts.js';
 import {
   createTypePicker,
   parseRawValue,
@@ -63,6 +64,7 @@ export async function mount(root, metafolder) {
   const fieldRows = byId(root, 'field-rows');
   const metarecordHead = byId(root, 'metarecord-head');
   const orphanNote = byId(root, 'orphan-note');
+  const mountNote = byId(root, 'mount-note');
   const errorBox = byId(root, 'error');
   const addForm = byId(root, 'add-form');
   const addValueSlot = byId(root, 'add-value');
@@ -208,7 +210,10 @@ export async function mount(root, metafolder) {
 
   function renderNow() {
     const hasContent = metarecord !== null;
-    if (metarecord === null) orphanNote.hidden = true;
+    if (metarecord === null) {
+      orphanNote.hidden = true;
+      mountNote.hidden = true;
+    }
     placeholder.classList.toggle('hidden', hasContent);
     content.classList.toggle('hidden', !hasContent);
     // One button, two roles: it enables tracking + does the initial reconcile
@@ -410,15 +415,28 @@ export async function mount(root, metafolder) {
       void metafolder.recent.touch(selection.repo, metarecord.uuid);
     }
     orphanNote.hidden = true;
+    mountNote.hidden = true;
     render();
     void fillOrphanNote();
   }
 
-  /** Shows the purple orphan line when the tracked file is gone (async). */
+  /**
+   * Shows the purple orphan line when the tracked file is gone — or, first, the
+   * amber "volume not mounted" line when it is merely unavailable: a stale path
+   * on an unplugged drive is not an orphan, and saying so would invite the user
+   * to clean up records they want kept (spec-gui "Unmounted volumes").
+   */
   async function fillOrphanNote() {
     const selection = current;
     if (!metarecord || !selection) return;
     const shown = metarecord;
+    const mount = await unavailableMount(selection.repo, metarecord).catch(() => null);
+    if (metarecord !== shown) return;
+    if (mount) {
+      mountNote.textContent = unavailableLabel(mount);
+      mountNote.hidden = false;
+      return;
+    }
     const state = await orphanState(metarecord, {
       metarecordPaths: (m) => daemon.metarecordPaths(selection.repo, m),
       exists: (path) =>
@@ -430,6 +448,25 @@ export async function mount(root, metafolder) {
     if (state === null || metarecord !== shown) return;
     orphanNote.textContent = orphanLabel(state);
     orphanNote.hidden = false;
+  }
+
+  /**
+   * The offline mount point the record's file sits on, or null. Every path of
+   * the record must be behind one: a record reachable at another, live location
+   * is not unavailable.
+   *
+   * @param {string} repo @param {Metafolder.Metarecord} shown
+   */
+  async function unavailableMount(repo, shown) {
+    const mounts = await fetchMounts(daemon, repo);
+    if (mounts.length === 0) return null;
+    const [rootDir, paths] = await Promise.all([
+      daemon.repoRoot(repo),
+      daemon.metarecordPaths(repo, shown),
+    ]);
+    if (paths.length === 0) return null;
+    const found = paths.map((abs) => offlineMountFor(mounts, relativeTo(rootDir, abs)));
+    return found.every(Boolean) ? found[0] : null;
   }
 
   /** @param {Field} field @param {Metafolder.Value} newValue */

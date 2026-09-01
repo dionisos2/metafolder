@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 // keymatch/menu/resolve/visibility from panel-shim/).
 const UI_JS: &str = include_str!("../../panel-shim/ui.js");
 const MENU_JS: &str = include_str!("../../panel-shim/menu.js");
+const MOUNTS_JS: &str = include_str!("../../panel-shim/mounts.js");
 const ORPHAN_JS: &str = include_str!("../../panel-shim/orphan.js");
 const PAGED_LIST_JS: &str = include_str!("../../panel-shim/paged-list.js");
 const VALUE_WIDGET_JS: &str = include_str!("../../panel-shim/value-widget.js");
@@ -58,6 +59,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/__ui.js", get(|| async { javascript(UI_JS) }))
         .route("/__ignore.js", get(|| async { javascript(IGNORE_JS) }))
         .route("/__menu.js", get(|| async { javascript(MENU_JS) }))
+        .route("/__mounts.js", get(|| async { javascript(MOUNTS_JS) }))
         .route("/__orphan.js", get(|| async { javascript(ORPHAN_JS) }))
         .route("/__paged-list.js", get(|| async { javascript(PAGED_LIST_JS) }))
         .route("/__value-widget.js", get(|| async { javascript(VALUE_WIDGET_JS) }))

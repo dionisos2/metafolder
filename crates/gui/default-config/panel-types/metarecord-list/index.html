@@ -190,6 +190,13 @@
         font-weight: bold;
         color: var(--mf-ok, #56c44c);
       }
+      /* unavailable metarecords: their volume is not mounted. Amber, and
+         distinct from the orphan purple — the files come back with the drive
+         (spec-gui "Unmounted volumes"). */
+      tr.unmounted td,
+      .card.unmounted .name {
+        color: var(--mf-warning, #d6a75e);
+      }
       /* orphaned metarecords: the tracked file no longer exists on disk */
       tr.orphan td,
       .card.orphan .name {

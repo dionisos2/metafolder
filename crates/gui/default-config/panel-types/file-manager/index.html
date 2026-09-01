@@ -99,6 +99,17 @@
         text-decoration: line-through;
         text-decoration-thickness: 1px;
       }
+      /* A directory whose volume is not mounted: its content is unavailable,
+         not deleted (spec-gui "Unmounted volumes"). Amber, never the error red
+         nor the strike-through of an ignore. */
+      li.unmounted .name,
+      li.unmounted .badge {
+        color: var(--mf-warning, #d6a75e);
+      }
+      #mount-banner {
+        color: var(--mf-warning, #d6a75e);
+        padding: 4px 6px;
+      }
       .badge {
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);
@@ -130,6 +141,7 @@
       <label><input type="checkbox" id="show-hidden" /> hidden files</label>
       <span id="current-path"></span>
     </div>
+    <div id="mount-banner" hidden></div>
     <div id="listing" data-help-topic="file-manager">
       <p class="placeholder" id="placeholder">Loading…</p>
       <ul id="entries"></ul>

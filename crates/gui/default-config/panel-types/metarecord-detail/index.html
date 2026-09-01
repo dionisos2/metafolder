@@ -37,6 +37,13 @@
         font-size: 0.85em;
         margin-bottom: 8px;
       }
+      /* unavailable metarecord: its volume is not mounted — not a deletion,
+         so never the error red nor the orphan purple (spec-gui "Unmounted
+         volumes") */
+      #mount-note {
+        color: var(--mf-warning, #d6a75e);
+        margin-bottom: 8px;
+      }
       /* orphaned metarecord: the tracked file no longer exists on disk */
       #orphan-note {
         color: var(--mf-orphan, #b07ad6);
@@ -143,6 +150,7 @@
 
     <div id="content" class="hidden">
       <div class="metarecord-head" id="metarecord-head"></div>
+      <div id="mount-note" hidden></div>
       <div id="orphan-note" hidden></div>
       <table>
         <tbody id="field-rows"></tbody>
