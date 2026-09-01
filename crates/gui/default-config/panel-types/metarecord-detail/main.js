@@ -18,6 +18,7 @@ import { schemaTypes, templateFields } from '/__schema-template.js';
 import { fileMenuItems } from '/__file-actions.js';
 import { createAnnotator } from './annotations.js';
 import { completionSourceField, resolveRefValue } from './ref-completion.js';
+import { createNavHistory } from './nav-history.js';
 
 /**
  * The selected metarecord's identity, as the other panels publish it.
@@ -58,6 +59,9 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1; // keyboard cursor over the field rows (-1 = none)
   /** @type {{repo: string|null, schema: Schema}} memoized GET /schema */
   let schemaCache = { repo: null, schema: null };
+  // The records shown before this one, so `metarecord:back` can walk back out
+  // of a chain of followed references.
+  const navHistory = createNavHistory();
 
   const placeholder = byId(root, 'placeholder');
   const content = byId(root, 'content');
@@ -402,6 +406,7 @@ export async function mount(root, metafolder) {
           /** @type {Promise<Record<string, Metafolder.Metarecord>>} */ (
             daemon.call('POST', `/repos/${selection.repo}/metarecords/batch`, { uuids })
           ),
+        refSeed: (field) => config.refCompletionSeed(field),
       });
     } catch (error) {
       metarecord = null;
@@ -1302,6 +1307,21 @@ export async function mount(root, metafolder) {
   byId(root, 'add-cancel').addEventListener('click', () => addForm.classList.remove('open'));
   forceBox.addEventListener('change', render);
 
+  // Back out of a chain of followed references (spec-gui "metarecord-detail
+  // panel type"): the selection returns to the previously shown record, which
+  // every panel following `selected_metarecord` picks up.
+  void commands.register('metarecord:back', {
+    label: 'Metarecord: back to the previously shown metarecord',
+    handler: async () => {
+      const target = navHistory.back();
+      if (target === null) {
+        void statusBar.message('No previous metarecord.', statusMessageMs);
+        return;
+      }
+      await workspace.set('selected_metarecord', target);
+    },
+  });
+
   void commands.register('metarecord:create', {
     label: 'Create a new metarecord',
     reveal: true,
@@ -1438,12 +1458,21 @@ export async function mount(root, metafolder) {
   setCurrentPaths(await workspace.get('selected_paths'));
 
   workspace.onChange('selected_metarecord', (value) => {
-    if (!confirmDiscardIfEditing()) return;
+    if (!confirmDiscardIfEditing()) {
+      // The user kept their edit: this move is not happening, so a `back()`
+      // waiting for it must not swallow the next real one.
+      navHistory.cancel();
+      return;
+    }
     // The discard was confirmed (or nothing was in progress): drop any add in
     // progress along with the rest of the edit state.
     addForm.classList.remove('open');
     editingField = null;
-    current = /** @type {Selection|null} */ (value ?? null);
+    const next = /** @type {Selection|null} */ (value ?? null);
+    // Every move of the selection passes here, wherever it came from (a ref
+    // click, a list row, a script) — the one place the back trail can see them.
+    navHistory.record(current, next);
+    current = next;
     void load();
   });
 

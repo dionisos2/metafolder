@@ -211,11 +211,22 @@
   { command = "treeref:descend", when = "treeref" },
   { command = "ref-list:open", when = "ref-list" },
   { command = "recent:open", when = "recent" },
+  # In the file panel left/right seek the previewed media (see the transport
+  # section below); with no media shown they do nothing.
+  { command = "file:seek-forward", when = "file" },
 ]
-"left" = { command = "treeref:parent", when = "treeref" }
+"left" = [
+  { command = "treeref:parent", when = "treeref" },
+  # In metarecord-detail there is nothing to descend into, so left/backspace
+  # step back out of a chain of followed references. (Enter stays field-edit.)
+  { command = "metarecord:back", when = "metarecord-detail" },
+  { command = "file:seek-backward", when = "file" },
+]
 "backspace" = [
   { command = "treeref:parent", when = "treeref" },
   { command = "file-manager:parent", when = "file-manager" },
+  { command = "metarecord:back", when = "metarecord-detail" },
+  { command = "file:speed-reset", when = "file" },
 ]
 
 # Refresh the current view.
@@ -254,7 +265,12 @@
 "ctrl+shift+n" = { command = "file-manager:new-folder", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing.
-"space" = { command = "metarecord-list:select-toggle", when = "metarecord-list" }
+"space" = [
+  { command = "metarecord-list:select-toggle", when = "metarecord-list" },
+  # In the file panel, space is the media player's play/pause (see the
+  # transport section below).
+  { command = "file:play-pause", when = "file" },
+]
 "ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
 "/" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "ctrl+/" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
@@ -338,6 +354,19 @@
 "-" = { command = "file:zoom-out", when = "file" }
 "=" = { command = "file:zoom-fit", when = "file" }
 "0" = { command = "file:zoom-reset", when = "file" }
+
+# file: media transport, on the keys a media player uses (mpv's, so the muscle
+# memory carries over). Space, left/right and backspace are in the sections
+# above, alongside the other panels' meaning for those keys. All of them are
+# no-ops unless the preview is actually showing an audio/video file.
+"shift+right" = { command = "file:seek-forward-long", when = "file" }
+"shift+left" = { command = "file:seek-backward-long", when = "file" }
+"]" = { command = "file:speed-up", when = "file" }
+"[" = { command = "file:speed-down", when = "file" }
+"shift+up" = { command = "file:volume-up", when = "file" }
+"shift+down" = { command = "file:volume-down", when = "file" }
+# Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
+"ctrl+m" = { command = "file:mute", when = "file" }
 
 # Panel types can still suggest their own keybindings at runtime
 # (metafolder.addKeybinding) — useful for third-party panels. Those are the

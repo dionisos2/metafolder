@@ -126,3 +126,70 @@ export async function clearPosition(daemon, repo, uuid) {
   }
   return null;
 }
+
+// ── Playback controls ───────────────────────────────────────────────────
+//
+// The arithmetic behind the panel's transport commands (play/pause, seek,
+// speed, volume). Kept here, pure and clamped, so the commands themselves are
+// one line each and the edge cases are tested without a media element. A media
+// element reports NaN for `currentTime`/`duration` before its metadata is in,
+// so every helper must survive one.
+
+// Seek steps: the short one for nudging past a scene, the long one for
+// skipping an opening or finding your way back into a film.
+export const SEEK_STEP = 10;
+export const SEEK_STEP_LONG = 60;
+// The playback rates the speed commands walk through (mpv's ladder around 1×).
+export const SPEED_STEPS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 3, 4];
+export const VOLUME_STEP = 0.1;
+
+// Slack for comparing a rate against the ladder: a rate read back from a media
+// element is not always bit-identical to the value that was written.
+const SPEED_EPSILON = 1e-6;
+
+/**
+ * Where a seek of `delta` seconds from `currentTime` lands: inside the media,
+ * never before its start nor past its end. `duration` may be NaN (metadata not
+ * in yet), which only drops the upper bound. Null when the position itself
+ * cannot be read — there is nothing to seek from.
+ *
+ * @param {number} currentTime @param {number} delta
+ * @param {number} duration NaN when still unknown
+ * @returns {number|null}
+ */
+export function seekTarget(currentTime, delta, duration) {
+  if (!Number.isFinite(currentTime)) return null;
+  const target = Math.max(0, currentTime + delta);
+  if (!Number.isFinite(duration) || duration <= 0) return target;
+  return Math.min(target, duration);
+}
+
+/**
+ * The next rate up (`direction` 1) or down (-1) the ladder, stopping at its
+ * ends. A rate that is not on the ladder (set elsewhere) moves to the nearest
+ * step in that direction; an unreadable one falls back to normal speed.
+ *
+ * @param {number} rate @param {1|-1} direction
+ * @returns {number}
+ */
+export function nextSpeed(rate, direction) {
+  if (!Number.isFinite(rate) || rate <= 0) return 1;
+  if (direction > 0) {
+    return SPEED_STEPS.find((step) => step > rate + SPEED_EPSILON) ?? SPEED_STEPS.at(-1) ?? 1;
+  }
+  const slower = SPEED_STEPS.filter((step) => step < rate - SPEED_EPSILON);
+  return slower.at(-1) ?? SPEED_STEPS[0];
+}
+
+/**
+ * The volume `delta` away from `volume`, clamped to 0..1 and rounded to the
+ * step's precision — repeated steps must land exactly on 1, not on
+ * 0.9999999999999999.
+ *
+ * @param {number} volume @param {number} delta
+ * @returns {number}
+ */
+export function nextVolume(volume, delta) {
+  const from = Number.isFinite(volume) ? volume : 1;
+  return Math.min(1, Math.max(0, Math.round((from + delta) * 100) / 100));
+}

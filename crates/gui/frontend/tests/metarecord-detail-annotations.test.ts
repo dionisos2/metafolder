@@ -12,7 +12,7 @@ const treeRef = (parent: string | null, name: string): Metafolder.Value => ({
   value: { parent, name },
 });
 
-function annotatorFor(entries: Entry[]) {
+function annotatorFor(entries: Entry[], seeds: Record<string, string> = {}) {
   const byUuid = new Map(entries.map((e) => [e.uuid, e]));
 
   // Simulate the daemon tree-resolve endpoint: walk `field`'s parent chain to a
@@ -51,7 +51,13 @@ function annotatorFor(entries: Entry[]) {
     }
     return out;
   });
-  return { annotator: createAnnotator({ resolvePaths, getMetarecords }), resolvePaths, getMetarecords };
+  const refSeed = vi.fn(async (field: string) => seeds[field] ?? null);
+  return {
+    annotator: createAnnotator({ resolvePaths, getMetarecords, refSeed }),
+    resolvePaths,
+    getMetarecords,
+    refSeed,
+  };
 }
 
 describe('tree_ref annotations', () => {
@@ -102,6 +108,45 @@ describe('ref annotations', () => {
     };
     const { annotator } = annotatorFor([target]);
     expect(await annotator.annotate('artist', { type: 'ref', value: 't000' })).toBe('Miles Davis');
+  });
+
+  test('a seeded ref shows the target\'s path in the seed forest', async () => {
+    // The tag model: a tag metarecord carries its position as a TreeRef `path`
+    // and needs no `name` at all, so a `tag` ref would otherwise show nothing
+    // but its uuid. `[ref-completion-seeds]` already maps tag -> path.
+    const music: Entry = { uuid: 'm000', fields: [{ name: 'path', value: treeRef(null, 'music') }] };
+    const jazz: Entry = { uuid: 'j000', fields: [{ name: 'path', value: treeRef('m000', 'jazz') }] };
+    const { annotator, resolvePaths } = annotatorFor([music, jazz], { tag: 'path' });
+    expect(await annotator.annotate('tag', { type: 'ref', value: 'j000' })).toBe('music/jazz');
+    expect(resolvePaths).toHaveBeenCalledWith('path', ['j000']);
+  });
+
+  test('a seeded ref prefers the path over the target\'s name', async () => {
+    const tagged: Entry = {
+      uuid: 't000',
+      fields: [
+        { name: 'path', value: treeRef(null, 'music') },
+        { name: 'name', value: { type: 'string', value: 'Musique' } },
+      ],
+    };
+    const { annotator } = annotatorFor([tagged], { tag: 'path' });
+    expect(await annotator.annotate('tag', { type: 'ref', value: 't000' })).toBe('music');
+  });
+
+  test('a seeded ref whose target has no path falls back to its name', async () => {
+    const named: Entry = {
+      uuid: 'n000',
+      fields: [{ name: 'name', value: { type: 'string', value: 'Miles Davis' } }],
+    };
+    const { annotator } = annotatorFor([named], { tag: 'path' });
+    expect(await annotator.annotate('tag', { type: 'ref', value: 'n000' })).toBe('Miles Davis');
+  });
+
+  test('an unseeded ref is not resolved as a path', async () => {
+    const target: Entry = { uuid: 'a000', fields: [{ name: 'path', value: treeRef(null, 'x') }] };
+    const { annotator, resolvePaths } = annotatorFor([target]);
+    expect(await annotator.annotate('artist', { type: 'ref', value: 'a000' })).toBeNull();
+    expect(resolvePaths).not.toHaveBeenCalled();
   });
 
   test('no "name" field, missing target, or other value types yield null', async () => {

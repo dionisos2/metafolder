@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import { commonPrefix, insertCandidate } from '../lib/bash';
   import { invoke } from '../lib/ipc';
   import {
@@ -13,6 +13,7 @@
     shortcutsFor,
   } from '../lib/commands';
   import { focusedWs, store } from '../lib/store.svelte';
+  import { createTickGate } from '../lib/tick';
   import { attachHistory } from '../../../panel-shim/history.js';
 
   let element = $state<HTMLInputElement | null>(null);
@@ -116,13 +117,27 @@
   // Only the ticks are tracked: reading element/draft without untrack would
   // re-run these (and steal the focus) on every draft swap, e.g. when
   // panel:focus-next changes the focused workspace.
+  //
+  // The gates make the effects react to a *change* of the counter only. The
+  // counters live in the module-level store and survive this component, which
+  // is destroyed and re-created every time the window leaves fullscreen: acting
+  // on the value found at creation re-focused the input and popped the
+  // autocomplete list open on its own, with nothing asking for it.
+  const commandFocusGate = createTickGate(store.ui.commandInputFocusTick);
+  const bashFocusGate = createTickGate(store.ui.bashInputFocusTick);
   $effect(() => {
-    if (store.ui.commandInputFocusTick === 0) return;
+    if (!commandFocusGate(store.ui.commandInputFocusTick)) return;
     untrack(() => activate('command'));
   });
   $effect(() => {
-    if (store.ui.bashInputFocusTick === 0) return;
+    if (!bashFocusGate(store.ui.bashInputFocusTick)) return;
     untrack(() => activate('bash'));
+  });
+  // …with one exception: a prompt that is already waiting when this component
+  // is created still owns the input (it was raised while the chrome was hidden
+  // in fullscreen), so it does get the focus — its question is the whole point.
+  onMount(() => {
+    if (store.ui.promptText !== null) untrack(() => activate('command'));
   });
 
   // While a script prompt is active, the list offers the prompt's

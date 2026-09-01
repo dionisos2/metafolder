@@ -17,6 +17,23 @@
   <a data-help-page="value-picker">value picker</a> rather than by typing a UUID.
 </p>
 
+<h2>Following references</h2>
+<p>
+  Clicking a reference value opens the metarecord it points at, so a chain of
+  them is browsed like pages. <kbd>Backspace</kbd> (or <kbd>←</kbd>) goes
+  <strong>back</strong> to the record shown before —
+  <code>metarecord:back</code>, and it walks back through the whole trail,
+  including records you reached from the list.
+</p>
+<p>
+  Under a reference, a dim line names the target: the resolved path of a tree
+  reference, the path of a <strong>tag</strong> (and of any other
+  <code>ref</code> field with a
+  <a data-help-page="value-picker">completion seed</a>), otherwise the target's
+  <code>name</code> field. A tag's hierarchy lives in its <code>path</code>, so
+  without it a <code>tag</code> value would show nothing but a UUID.
+</p>
+
 <h2>Editing</h2>
 <p>Move between fields with the arrows / <code>j</code>/<code>k</code>. Then:</p>
 <table>

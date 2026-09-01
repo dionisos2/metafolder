@@ -15,7 +15,7 @@
   tiles show a still poster when <code>ffmpeg</code> is available.
 </p>
 
-<h2>Controls</h2>
+<h2>Zoom</h2>
 <table>
   <tbody>
     <tr><td><code>+</code> / <code>-</code></td><td>zoom in / out</td></tr>
@@ -27,6 +27,31 @@
   A GIF preview has an <strong>animate</strong> toggle
   (<code>file:toggle-gif-animation</code>). The media toolbar exposes the same
   zoom/fit controls as buttons.
+</p>
+
+<h2>Playing audio and video</h2>
+<p>
+  The transport keys are a media player's (mpv's), and do nothing when the
+  preview is not showing audio or video. Each has a command, so they are
+  rebindable like everything else.
+</p>
+<table>
+  <tbody>
+    <tr><td><code>space</code></td><td>play / pause</td></tr>
+    <tr><td><code>←</code> / <code>→</code></td><td>seek 10 s back / forward</td></tr>
+    <tr><td><code>shift+←</code> / <code>shift+→</code></td><td>seek 60 s back / forward</td></tr>
+    <tr><td><code>[</code> / <code>]</code></td><td>slower / faster</td></tr>
+    <tr><td><code>backspace</code></td><td>back to normal speed</td></tr>
+    <tr><td><code>shift+↑</code> / <code>shift+↓</code></td><td>louder / quieter</td></tr>
+    <tr><td><code>ctrl+m</code></td><td>mute / unmute (plain <code>m</code> opens the
+      metarecord-edit sequence)</td></tr>
+  </tbody>
+</table>
+<p>
+  A video <strong>resumes where you stopped watching</strong>: the position is
+  kept on the file's metarecord as a <code>playback_position</code> field, and
+  the toolbar shows it (<code>↩ 12:34</code>). Barely-started and
+  watched-through videos store nothing, so they start from the beginning.
 </p>
 
 <p>See also: <a data-help-page="metarecord-detail">the metarecord detail panel</a>

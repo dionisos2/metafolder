@@ -922,6 +922,15 @@ Behaviours:
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
 | =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
 | =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
+| =file:play-pause=         | Play/pause the previewed media (default =space=)             |
+| =file:seek-forward= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
+| =file:seek-forward-long= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
+| =file:restart=            | Play the previewed media from the start                       |
+| =file:speed-up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
+| =file:speed-reset=        | Back to normal speed (default =backspace=)                    |
+| =file:volume-up= / =-down= | Step the volume ±10 % (default =shift+up= / =shift+down=)    |
+| =file:mute=               | Mute/unmute the previewed media (default =ctrl+m=)            |
+| =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
 
 A field whose only value is =Nothing= (an *explicit absence*, distinct from
 the field not existing) is still a first-class target of the =edit-field-*=
@@ -1658,6 +1667,26 @@ applies). For an =externalref= the target repository is the reference's;
 loading fails with the usual error message when that repository is not
 loaded.
 
+Following a reference is a *navigation*: =metarecord:back= (default
+=backspace= or =left=) returns to the metarecord shown before, and walks back
+out of a whole chain of them. The trail records every move of
+=selected_metarecord= the panel sees, wherever it came from — a reference
+click here, a row picked in =metarecord-list=, a script — since the selection
+is a workspace variable no panel owns. (=Enter= keeps its meaning in this
+panel, editing the field under the cursor.)
+
+Under a reference value, a dim *annotation line* names the target in human
+terms, since a uuid does not:
+- a =tree_ref= shows its resolved path;
+- a =ref= whose field has a *completion seed* (see [[*Ref value completion]])
+  shows the target's path in the seed forest — the field that says a value is
+  entered as a path in that forest is exactly the one that says how to read it
+  back. This is what makes tag values legible: a tag's hierarchy lives in its
+  =tree_ref= =path= and its name is optional, so =tag= / =negative_tag= /
+  =mixed_tag= would otherwise show nothing but a uuid;
+- otherwise (or when the target is not in the seed forest) the target's =name=
+  field, a soft convention — a metarecord with none simply gets no annotation.
+
 Keyboard: =Tab= moves between rows, =Enter= edits, =d= deletes (with
 confirmation).
 
@@ -1760,7 +1789,12 @@ metarecord: the position follows =selected_metarecord=, which every panel
 publishing =selected_paths= sets alongside them.
 
 On open, a stored position is seeked to and shown in the media toolbar
-(=↩ 12:34=). It is written back on pause, seek and end, when the preview is
+(=↩ 12:34=). It is read *before the media element is created*, and the seek is
+armed before the element is given its source: the seek then happens the moment
+the duration is known, so the opening frame of the file is never shown. (Doing
+it afterwards left a daemon round trip during which the browser had already
+painted frame 0, only for the answer to jump it elsewhere — a visible flicker
+on every resumed video.) It is written back on pause, seek and end, when the preview is
 torn down (another file selected, panel or workspace closed), and periodically
 while the video plays — which bounds what an abruptly killed window can lose.
 Never on =timeupdate=: it fires several times a second, and *every write is an
@@ -1774,6 +1808,24 @@ film is nine minutes, which is not "the end". A stored position past the end of
 the file (it changed underneath) is ignored, and when the duration is unknown
 nothing is written at all — a position that could never be recognized as stale
 is worse than none.
+
+**** Media transport
+
+The previewed audio/video is driven from the keyboard as a media player is,
+on mpv's keys so the muscle memory carries over — play/pause (=space=), seek
+±10 s (=left= / =right=) and ±60 s (=shift+left= / =shift+right=), playback
+rate up/down a fixed ladder (=]= / =[=, =backspace= to return to 1×), volume
+±10 % (=shift+up= / =shift+down=) and mute (=ctrl+m=, since a bare =m= opens
+the metarecord-edit key sequence). Each has a command
+(=file:play-pause=, =file:seek-*=, =file:restart=, =file:speed-*=,
+=file:volume-*=, =file:mute=), so all of them are rebindable and reachable from
+the command input.
+
+Every one of them is a *no-op when the preview holds no media* — an image, a
+text file, a directory listing — so binding them inside the =file= panel is
+harmless. Seeks are clamped to the media (never before its start nor past its
+end), the rate walks a fixed ladder rather than scaling freely, and raising the
+volume also unmutes (the natural way to undo a mute).
 
 *** =file-manager= panel type
 

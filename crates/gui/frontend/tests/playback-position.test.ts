@@ -4,6 +4,13 @@
 
 import { describe, expect, test, vi } from 'vitest';
 import {
+  SEEK_STEP,
+  SEEK_STEP_LONG,
+  SPEED_STEPS,
+  VOLUME_STEP,
+  seekTarget,
+  nextSpeed,
+  nextVolume,
   PLAYBACK_FIELD,
   MIN_RESUME,
   END_MARGIN,
@@ -166,5 +173,83 @@ describe('write throttling', () => {
   // revision each time.
   test('MIN_DELTA is the smallest position change worth a revision', () => {
     expect(MIN_DELTA).toBeGreaterThan(0);
+  });
+});
+
+
+// ── Playback controls (spec-gui "file panel type") ──────────────────────
+//
+// The arithmetic behind the file panel's transport commands, kept pure so the
+// clamping is tested without a media element.
+
+describe('seekTarget', () => {
+  test('steps forward and back by the given delta', () => {
+    expect(seekTarget(100, SEEK_STEP, 3600)).toBe(110);
+    expect(seekTarget(100, -SEEK_STEP, 3600)).toBe(90);
+    expect(seekTarget(100, SEEK_STEP_LONG, 3600)).toBe(160);
+  });
+
+  test('never goes before the start', () => {
+    expect(seekTarget(4, -SEEK_STEP, 3600)).toBe(0);
+    expect(seekTarget(0, -SEEK_STEP_LONG, 3600)).toBe(0);
+  });
+
+  test('never goes past the end', () => {
+    expect(seekTarget(3595, SEEK_STEP, 3600)).toBe(3600);
+  });
+
+  test('an unknown duration only bounds the start', () => {
+    expect(seekTarget(100, SEEK_STEP, NaN)).toBe(110);
+    expect(seekTarget(5, -SEEK_STEP, NaN)).toBe(0);
+  });
+
+  test('an unreadable position cannot be seeked from', () => {
+    expect(seekTarget(NaN, SEEK_STEP, 3600)).toBeNull();
+  });
+});
+
+describe('nextSpeed', () => {
+  test('walks the speed ladder', () => {
+    expect(nextSpeed(1, 1)).toBe(1.25);
+    expect(nextSpeed(1, -1)).toBe(0.75);
+  });
+
+  test('stops at both ends of the ladder', () => {
+    const slowest = SPEED_STEPS[0];
+    const fastest = SPEED_STEPS[SPEED_STEPS.length - 1];
+    expect(nextSpeed(slowest, -1)).toBe(slowest);
+    expect(nextSpeed(fastest, 1)).toBe(fastest);
+  });
+
+  test('a rate between two steps moves to the next one either way', () => {
+    expect(nextSpeed(1.1, 1)).toBe(1.25);
+    expect(nextSpeed(1.1, -1)).toBe(1);
+  });
+
+  test('an unreadable rate falls back to normal speed', () => {
+    expect(nextSpeed(NaN, 1)).toBe(1);
+  });
+});
+
+describe('nextVolume', () => {
+  test('steps up and down', () => {
+    expect(nextVolume(0.5, VOLUME_STEP)).toBe(0.6);
+    expect(nextVolume(0.5, -VOLUME_STEP)).toBe(0.4);
+  });
+
+  test('stays within 0..1', () => {
+    expect(nextVolume(0.95, VOLUME_STEP)).toBe(1);
+    expect(nextVolume(0.05, -VOLUME_STEP)).toBe(0);
+  });
+
+  test('does not drift on repeated steps (floating point)', () => {
+    let volume = 0;
+    for (let i = 0; i < 10; i += 1) volume = nextVolume(volume, VOLUME_STEP);
+    expect(volume).toBe(1);
+    expect(nextVolume(0.7, VOLUME_STEP)).toBe(0.8);
+  });
+
+  test('an unreadable volume falls back to full', () => {
+    expect(nextVolume(NaN, -VOLUME_STEP)).toBe(0.9);
   });
 });

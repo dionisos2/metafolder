@@ -10,9 +10,15 @@ import { fileMenuItems } from '/__file-actions.js';
 import {
   SAVE_INTERVAL_MS,
   MIN_DELTA,
+  SEEK_STEP,
+  SEEK_STEP_LONG,
+  VOLUME_STEP,
   playbackAction,
   resumeTarget,
   formatPosition,
+  seekTarget,
+  nextSpeed,
+  nextVolume,
   loadPosition,
   savePosition,
   clearPosition,
@@ -58,8 +64,9 @@ const ZOOM_MAX = 40;
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export async function mount(root, metafolder) {
-  const { workspace, fs, commands, daemon } = metafolder;
+  const { workspace, fs, commands, daemon, statusBar } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
+  const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
 
   /** @type {string[]} */
   let paths = [];
@@ -310,29 +317,44 @@ export async function mount(root, metafolder) {
     }
   }
 
-  // Arm position tracking on a freshly mounted <video>: seek to the stored
-  // position, then keep it up to date. Writes happen on pause/seek/end, on
-  // teardown, and periodically while playing — never on `timeupdate` (which
-  // fires several times a second, and every write is an event-log revision).
-  /** @param {HTMLMediaElement} media @param {number} generation */
-  async function attachPlayback(media, generation) {
+  // Where the video about to be shown was left off, or null when there is
+  // nothing to resume (or no metarecord to have stored one). Read *before* the
+  // element is built: doing it afterwards left a daemon round trip during which
+  // the browser had already loaded and painted the opening frame, only for the
+  // answer to jump it elsewhere — the flicker on every resumed video.
+  /** @returns {Promise<number|null>} */
+  async function loadResume() {
+    if (localPath !== null || selected === null) return null; // no metarecord to store it on
+    return loadPosition(daemon, selected.repo, selected.uuid);
+  }
+
+  // Arm position tracking on a <video> that has not been given its source yet:
+  // seek to the stored position, then keep it up to date. Writes happen on
+  // pause/seek/end, on teardown, and periodically while playing — never on
+  // `timeupdate` (which fires several times a second, and every write is an
+  // event-log revision).
+  /** @param {HTMLMediaElement} media @param {number|null} stored */
+  function attachPlayback(media, stored) {
     if (localPath !== null || selected === null) return; // no metarecord to store it on
     const { uuid, repo } = selected;
-    const stored = await loadPosition(daemon, repo, uuid);
-    if (generation !== renderGeneration) return; // the view moved on while we read
     /** @type {Playback} */
     const state = { media, repo, uuid, stored, timer: null };
     playback = state;
 
     if (stored !== null) {
-      const seek = () => {
-        const target = resumeTarget(stored, media.duration);
-        if (target === null) return;
-        media.currentTime = target;
-        showResumeHint(target);
-      };
-      if (media.readyState >= 1) seek(); // metadata already in: seek now
-      else media.addEventListener('loadedmetadata', seek, { once: true });
+      // The element has no source yet, so `loadedmetadata` is still ahead of
+      // us: the seek lands the moment the duration is known, before a single
+      // frame has been decoded — no opening frame is ever shown.
+      media.addEventListener(
+        'loadedmetadata',
+        () => {
+          const target = resumeTarget(stored, media.duration);
+          if (target === null) return;
+          media.currentTime = target;
+          showResumeHint(target);
+        },
+        { once: true },
+      );
     }
 
     const persist = () => void persistPlayback(state);
@@ -506,9 +528,13 @@ export async function mount(root, metafolder) {
     // through it) and say why it stutters, so a slow decoder is not mistaken
     // for a broken file — the symptom that motivated this check.
     if (probe && probe.slow) setMediaWarning(probe.slow);
+    // Read the resume position before building the element, so that everything
+    // the first frame depends on is already known when loading starts.
+    const stored = kind === 'video' ? await loadResume() : null;
+    if (!current()) return; // the view moved on while we read
     // `preload="metadata"`: a preview does not autoplay, so fetch only enough
     // for the first frame and duration — never buffer/decode the whole stream.
-    const media = el(kind, { controls: true, preload: 'metadata', src: url });
+    const media = el(kind, { controls: true, preload: 'metadata' });
     activeMedia = media;
     // The probe found nothing missing, but keep a light fallback for other
     // runtime failures (a corrupt stream, an unreadable file).
@@ -520,8 +546,11 @@ export async function mount(root, metafolder) {
     // not narrow `media`, hence the instanceof.)
     if (media instanceof HTMLVideoElement) {
       setZoomTarget(media);
-      await attachPlayback(media, generation);
+      attachPlayback(media, stored);
     }
+    // The source goes on last, once every listener — the resume seek included —
+    // is armed: nothing can load, and therefore be shown, before them.
+    media.src = url;
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
@@ -769,6 +798,104 @@ export async function mount(root, metafolder) {
   void commands.register('file:zoom-reset', {
     label: 'File: original size',
     handler: zoomReset,
+  });
+
+  // --- Playback controls -------------------------------------------------
+  //
+  // Transport commands for the mounted <audio>/<video> (spec-gui "file panel
+  // type"): what a media player's keyboard does, reachable from the command
+  // input and the keybindings. They are no-ops when the preview holds no media
+  // (an image, a text file, a directory listing), so a key bound in this panel
+  // is always harmless.
+
+  /** @param {(media: HTMLMediaElement) => void} fn */
+  function withMedia(fn) {
+    if (activeMedia) fn(activeMedia);
+  }
+
+  void commands.register('file:play-pause', {
+    label: 'File: play / pause the media',
+    handler: () =>
+      withMedia((media) => {
+        // play() rejects when the browser refuses to start (autoplay policy, a
+        // decode failure): the media element reports that on its own.
+        if (media.paused) void media.play().catch(() => {});
+        else media.pause();
+      }),
+  });
+
+  /** @param {number} delta seconds, negative to go back */
+  function seekBy(delta) {
+    withMedia((media) => {
+      const target = seekTarget(media.currentTime, delta, media.duration);
+      if (target !== null) media.currentTime = target;
+    });
+  }
+  void commands.register('file:seek-forward', {
+    label: `File: seek forward ${SEEK_STEP}s`,
+    handler: () => seekBy(SEEK_STEP),
+  });
+  void commands.register('file:seek-backward', {
+    label: `File: seek back ${SEEK_STEP}s`,
+    handler: () => seekBy(-SEEK_STEP),
+  });
+  void commands.register('file:seek-forward-long', {
+    label: `File: seek forward ${SEEK_STEP_LONG}s`,
+    handler: () => seekBy(SEEK_STEP_LONG),
+  });
+  void commands.register('file:seek-backward-long', {
+    label: `File: seek back ${SEEK_STEP_LONG}s`,
+    handler: () => seekBy(-SEEK_STEP_LONG),
+  });
+  void commands.register('file:restart', {
+    label: 'File: play the media from the start',
+    handler: () => withMedia((media) => (media.currentTime = 0)),
+  });
+
+  /** @param {number} rate */
+  function applySpeed(rate) {
+    withMedia((media) => {
+      media.playbackRate = rate;
+      void statusBar.message(`Playback speed ${rate}×`, statusMessageMs);
+    });
+  }
+  void commands.register('file:speed-up', {
+    label: 'File: play faster',
+    handler: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, 1))),
+  });
+  void commands.register('file:speed-down', {
+    label: 'File: play slower',
+    handler: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, -1))),
+  });
+  void commands.register('file:speed-reset', {
+    label: 'File: play at normal speed',
+    handler: () => applySpeed(1),
+  });
+
+  /** @param {number} delta */
+  function changeVolume(delta) {
+    withMedia((media) => {
+      media.volume = nextVolume(media.volume, delta);
+      // Nudging the volume up is the natural way to undo a mute.
+      if (delta > 0) media.muted = false;
+      void statusBar.message(`Volume ${Math.round(media.volume * 100)}%`, statusMessageMs);
+    });
+  }
+  void commands.register('file:volume-up', {
+    label: 'File: louder',
+    handler: () => changeVolume(VOLUME_STEP),
+  });
+  void commands.register('file:volume-down', {
+    label: 'File: quieter',
+    handler: () => changeVolume(-VOLUME_STEP),
+  });
+  void commands.register('file:mute', {
+    label: 'File: mute / unmute',
+    handler: () =>
+      withMedia((media) => {
+        media.muted = !media.muted;
+        void statusBar.message(media.muted ? 'Muted.' : 'Unmuted.', statusMessageMs);
+      }),
   });
 
   /** @param {boolean} on */

@@ -34,9 +34,7 @@ use tower::util::ServiceExt;
 use tower_http::services::ServeFile;
 
 pub async fn serve(request: Request<Body>) -> Response {
-    let path = request.uri().query().and_then(|query| {
-        url_decode(query).split('&').find_map(|pair| pair.strip_prefix("path=").map(str::to_string))
-    });
+    let path = request.uri().query().and_then(path_param);
     let Some(path) = path else {
         return (StatusCode::BAD_REQUEST, "missing 'path' query parameter").into_response();
     };
@@ -48,6 +46,15 @@ pub async fn serve(request: Request<Body>) -> Response {
         Ok(response) => response.map(Body::new).into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// The `path` query parameter, percent-decoded.
+///
+/// The query is split into pairs **before** decoding: a file name may itself
+/// contain a `&` (percent-encoded as `%26`), and decoding the whole string
+/// first would then cut the path short at that character.
+fn path_param(query: &str) -> Option<String> {
+    query.split('&').find_map(|pair| pair.strip_prefix("path=")).map(url_decode)
 }
 
 /// Minimal percent-decoding for the `path` query parameter.
@@ -86,6 +93,27 @@ mod tests {
         assert_eq!(url_decode("path=/tmp/a%20b.txt"), "path=/tmp/a b.txt");
         assert_eq!(url_decode("path=/tmp/plain.txt"), "path=/tmp/plain.txt");
         assert_eq!(url_decode("a%2Fb"), "a/b");
+    }
+
+    #[test]
+    fn test_path_param_keeps_an_ampersand_in_the_file_name() {
+        // A file name containing "&" arrives percent-encoded (%26). Decoding
+        // the whole query string before splitting on "&" would cut the path in
+        // half — the file would 404 and the panel would report the media as
+        // unplayable.
+        assert_eq!(
+            path_param("path=%2Ftmp%2Fa%20%26%20b.mp4&token=deadbeef").as_deref(),
+            Some("/tmp/a & b.mp4"),
+        );
+    }
+
+    #[test]
+    fn test_path_param_reads_the_parameter_wherever_it_sits() {
+        assert_eq!(path_param("path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
+        assert_eq!(path_param("token=abc&path=%2Ftmp%2Fa.txt").as_deref(), Some("/tmp/a.txt"));
+        assert_eq!(path_param("token=abc").as_deref(), None);
+        // "pathological=x" must not be mistaken for the "path" parameter.
+        assert_eq!(path_param("pathological=x").as_deref(), None);
     }
 
     #[test]

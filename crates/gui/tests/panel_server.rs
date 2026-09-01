@@ -179,6 +179,23 @@ async fn test_fsraw_serves_local_files() {
 }
 
 #[tokio::test]
+async fn test_fsraw_serves_a_file_whose_name_contains_an_ampersand() {
+    // The `&` is percent-encoded in the URL and the token follows it as a
+    // second parameter: decoding the whole query before splitting on `&` cut
+    // the path in half, the file 404'd, and the `file` panel reported the
+    // video as "unsupported or corrupt media".
+    let (_guard, _config, router) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("Bill & Ted.mp4");
+    std::fs::write(&file, "0123456789").unwrap();
+
+    let encoded = file.display().to_string().replace(' ', "%20").replace('&', "%26");
+    let (status, _, body) = get(&router, &format!("/fsraw?path={encoded}&token=deadbeef")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"0123456789");
+}
+
+#[tokio::test]
 async fn test_fsraw_supports_range_requests() {
     let (_guard, _config, router) = setup();
     let dir = tempfile::tempdir().unwrap();

@@ -74,7 +74,7 @@ describe('unavailableLabel', () => {
 describe('fetchMounts', () => {
   test('reads GET /repos/:repo/mounts', async () => {
     const call = vi.fn(async () => ({ mounts: [offline] }));
-    expect(await fetchMounts({ call } as never, 'r1')).toEqual([offline]);
+    expect(await fetchMounts({ call }, 'r1')).toEqual([offline]);
     expect(call).toHaveBeenCalledWith('GET', '/repos/r1/mounts');
   });
 
@@ -82,6 +82,6 @@ describe('fetchMounts', () => {
     const call = vi.fn(async () => {
       throw new Error('daemon down');
     });
-    expect(await fetchMounts({ call } as never, 'r1')).toEqual([]);
+    expect(await fetchMounts({ call }, 'r1')).toEqual([]);
   });
 });
