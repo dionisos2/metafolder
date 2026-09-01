@@ -195,6 +195,60 @@ async fn test_fsraw_serves_a_file_whose_name_contains_an_ampersand() {
     assert_eq!(body, b"0123456789");
 }
 
+/// JavaScript's `encodeURIComponent`: everything but the unreserved set is
+/// percent-encoded. The shipped panels build every `?path=` this way, so a test
+/// URL must be built the same way to exercise the real contract.
+fn encode_uri_component(input: &str) -> String {
+    let mut out = String::new();
+    for byte in input.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-_.!~*'()".contains(&byte) {
+            out.push(byte as char);
+        } else {
+            out.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn test_fsraw_serves_files_with_hostile_names() {
+    // Every character a POSIX file name may hold but a URL, a query string or a
+    // shell would read as syntax. `&` was the one that broke in the field (the
+    // whole query was decoded before being split on it); the rest are here so
+    // the next one is caught by this test rather than by an unplayable video.
+    let (_guard, _config, router) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let names = [
+        "amp & sand.mp4",
+        "plus+sign.mp4",
+        "percent%20literal.mp4",
+        "hash#tag.mp4",
+        "question?mark.mp4",
+        "equals=sign.mp4",
+        "semi;colon.mp4",
+        "single'quote.mp4",
+        "double\"quote.mp4",
+        "back\\slash.mp4",
+        "new\nline.mp4",
+        "accents été.mp4",
+        "-leading-dash.mp4",
+        " leading space.mp4",
+        "emoji 🎬.mp4",
+    ];
+    for (index, name) in names.iter().enumerate() {
+        let file = dir.path().join(name);
+        let body = format!("content-{index}");
+        std::fs::write(&file, &body).unwrap();
+        let uri = format!(
+            "/fsraw?path={}&token=deadbeef",
+            encode_uri_component(&file.display().to_string())
+        );
+        let (status, _, got) = get(&router, &uri).await;
+        assert_eq!(status, StatusCode::OK, "{name:?} should be served");
+        assert_eq!(got, body.as_bytes(), "{name:?} served the wrong file");
+    }
+}
+
 #[tokio::test]
 async fn test_fsraw_supports_range_requests() {
     let (_guard, _config, router) = setup();
