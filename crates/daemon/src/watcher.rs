@@ -216,7 +216,21 @@ pub fn compute_watched_dirs_timed(
             return (out, start.elapsed(), elig);
         }
     }
-    collect_eligible_dirs(conn, cache, root, internal_dir, "", &mut ec, &mut out, &mut elig);
+    // Declared mount points with nothing mounted: no watch on them, none below
+    // (spec-file-tracking "Offline subtrees"). Recomputed on every refresh, so
+    // a remounted volume is watched again without restarting the daemon.
+    let offline = crate::mount::offline(conn, cache, root).unwrap_or_default();
+    collect_eligible_dirs(
+        conn,
+        cache,
+        root,
+        internal_dir,
+        "",
+        &mut ec,
+        &offline,
+        &mut out,
+        &mut elig,
+    );
     let total = start.elapsed();
     (out, total, elig)
 }
@@ -232,6 +246,7 @@ fn collect_eligible_dirs(
     internal_dir: &Path,
     base: &str,
     ec: &mut EligibilityCache,
+    offline: &crate::mount::OfflineMounts,
     out: &mut HashSet<PathBuf>,
     elig: &mut std::time::Duration,
 ) {
@@ -265,6 +280,7 @@ fn collect_eligible_dirs(
             let eligible = eligibility::is_eligible_cached(conn, cache, &rel, ec);
             *elig += t.elapsed();
             match eligible {
+                Ok(true) if offline.contains(&rel) => {} // Unplugged volume: frozen.
                 Ok(true) => {
                     out.insert(path);
                     stack.push(rel);
@@ -440,6 +456,7 @@ fn maintain_watches(
         let conn = repo.conn.lock_recover();
         let mut cache = repo.lock_cache();
         let mut ec = EligibilityCache::default();
+        let offline = crate::mount::offline(&conn, &mut cache, root).unwrap_or_default();
         for rel in arrivals {
             let abs = root.join(rel.trim_start_matches('/'));
             // Only a real directory (not a symlink) that is eligible is watched.
@@ -448,7 +465,7 @@ fn maintain_watches(
                 _ => continue,
             }
             match eligibility::is_eligible_cached(&conn, &mut cache, rel, &mut ec) {
-                Ok(true) => {}
+                Ok(true) if !offline.contains(rel) => {}
                 _ => continue,
             }
             subtree.insert(abs);
@@ -460,6 +477,7 @@ fn maintain_watches(
                 internal_dir,
                 rel,
                 &mut ec,
+                &offline,
                 &mut subtree,
                 &mut elig,
             );

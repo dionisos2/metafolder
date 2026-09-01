@@ -379,6 +379,11 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
         }
     }
 
+    // The declared-but-unmounted mount points, resolved once for the whole
+    // flush: one stat pair per mount point, and none at all in the usual case
+    // where the repository declares none.
+    let offline = crate::mount::offline(&conn, &mut cache, &repo.config.root)?;
+
     // Observable while the events are applied (spec-tasks). Registered only
     // now that there is real work (non-empty events), to avoid churning the
     // registry with no-op flushes.
@@ -395,6 +400,8 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
                 cache: &mut cache,
                 root: &repo.config.root,
                 departed: &departed,
+                offline: &offline,
+                orphan_limit: repo.orphan_cascade_limit,
                 departed_index: None,
             };
             for ev in group {
@@ -496,6 +503,12 @@ struct Apply<'a, 'c> {
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
     departed: &'a [String],
+    /// Mount points that are declared but not mounted right now: every event
+    /// landing in one is dropped, because the content behind those paths is
+    /// *unavailable*, not gone (spec-file-tracking "Offline subtrees").
+    offline: &'a crate::mount::OfflineMounts,
+    /// Mass-orphan circuit breaker (0 = disabled).
+    orphan_limit: usize,
     /// `departed` indexed by the stat a rename preserves, built on first use.
     /// Without it the pairing costs one stat and one database read per
     /// (arrival, departure) *pair*: a batch that both loses and gains a few
@@ -521,6 +534,13 @@ fn stat_key(kind: Option<&Value>, size: Option<&Value>, mtime: Option<&Value>) -
 
 impl Apply<'_, '_> {
     fn apply(&mut self, ev: FsEvent) -> Result<()> {
+        // An offline mount point holds no content to observe: whatever the
+        // watcher reported there is about a volume that is not plugged in
+        // (a stale watch, a replayed buffer, the unmount itself), and acting on
+        // it would orphan records whose files are merely unavailable.
+        if self.frozen(&ev) {
+            return Ok(());
+        }
         match ev {
             FsEvent::Create(p) => self.apply_create(&p),
             FsEvent::Remove(p) | FsEvent::RenameFrom(p) => self.apply_remove(&p),
@@ -533,6 +553,24 @@ impl Apply<'_, '_> {
 
     fn abs(&self, rel: &str) -> std::path::PathBuf {
         self.root.join(rel.trim_start_matches('/'))
+    }
+
+    /// Whether any path of `ev` lies at or below an offline mount point. A
+    /// rename is frozen if *either* side is: neither half of it can be trusted
+    /// when one end is on a volume that is not there.
+    fn frozen(&self, ev: &FsEvent) -> bool {
+        if self.offline.is_empty() {
+            return false;
+        }
+        match ev {
+            FsEvent::Create(p)
+            | FsEvent::Remove(p)
+            | FsEvent::RenameFrom(p)
+            | FsEvent::RenameTo(p)
+            | FsEvent::ModifyData(p)
+            | FsEvent::ModifyMeta(p) => self.offline.contains(p),
+            FsEvent::Rename(a, b) => self.offline.contains(a) || self.offline.contains(b),
+        }
     }
 
     fn eligible(&mut self, rel: &str) -> Result<bool> {
@@ -643,7 +681,7 @@ impl Apply<'_, '_> {
                 )?;
                 self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
                 // Refresh the stat-derived fields at the new location.
-                for field in fs_meta::stat_fields(&abs)? {
+                for field in fs_meta::stat_fields_in(self.root, &abs)? {
                     self.writer.set_field_as(
                         OpType::FileModified,
                         orphan,
@@ -670,7 +708,7 @@ impl Apply<'_, '_> {
     /// Creates a fresh metarecord for `rel`: its `mfr_path` TreeRef plus the
     /// stat-derived fields. A no-op if the path vanished before the flush.
     fn create_record(&mut self, rel: &str) -> Result<()> {
-        let Ok(stat) = fs_meta::stat_fields(&self.abs(rel)) else {
+        let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(()); // The file disappeared before the flush.
         };
         let parent = self.ensure_parents(rel)?;
@@ -720,6 +758,21 @@ impl Apply<'_, '_> {
     /// else being moved on top of it.
     fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
         let descendants = self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
+        // Mass-orphan circuit breaker (spec-file-tracking): a single event that
+        // would null thousands of paths is a filesystem going away, not a
+        // deletion. Skipping is recoverable — the paths stay stale and
+        // `mf orphan clear` confirms them after re-checking the disk — whereas
+        // the cascade is not.
+        let total = descendants.len() + 1;
+        if self.orphan_limit > 0 && total > self.orphan_limit {
+            eprintln!(
+                "[executor] refusing to orphan {total} metarecords at once (limit {}): \
+                 leaving the paths untouched — confirm with `mf orphan clear` if the \
+                 deletion is real",
+                self.orphan_limit
+            );
+            return Ok(());
+        }
         // Snapshot every path *before* any write: with an incomplete tree cache
         // `path_of` walks the DB, and clearing a parent's `mfr_path` would break
         // its descendants' walk. `mfr_path_old` is a frozen String recording
@@ -907,7 +960,7 @@ impl Apply<'_, '_> {
     }
 
     fn refresh_data(&mut self, uuid: Uuid, rel: &str) -> Result<()> {
-        let Ok(stat) = fs_meta::stat_fields(&self.abs(rel)) else {
+        let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(());
         };
         let new_of = |name: &str| stat.iter().find(|f| f.name == name).map(|f| f.value.clone());
@@ -995,7 +1048,7 @@ pub(crate) fn ensure_parent_metarecords(
             "mfr_path",
             Value::TreeRef { parent: Some(parent), name: comp.to_string() },
         )];
-        match fs_meta::stat_fields(&root.join(prefix.trim_start_matches('/'))) {
+        match fs_meta::stat_fields_in(root, &root.join(prefix.trim_start_matches('/'))) {
             Ok(stat) => fields.extend(stat),
             // Directory already gone: minimal metarecord, reconcile fixes it.
             Err(_) => fields.push(Field::new("mfr_type", Value::String("dir".into()))),

@@ -75,6 +75,17 @@ enum Command {
         #[command(subcommand)]
         command: Option<OrphanCommand>,
     },
+    /// Mount points: list the repository's removable volumes, or forget one
+    ///
+    /// A directory that is a mount point is marked with `mfr_mount` by the
+    /// daemon. While nothing is mounted there its subtree is *frozen* — not
+    /// walked, not orphaned, not watched — so the metadata of an unplugged
+    /// drive survives untouched. `forget` un-declares a directory that is not
+    /// a mount point any more.
+    Mount {
+        #[command(subcommand)]
+        command: Option<MountCommand>,
+    },
     /// Metarecord operations: `mf metarecord [selector] <verb>`
     ///
     /// The selector picks the target metarecord(s) and precedes the verb:
@@ -548,6 +559,24 @@ enum OrphanCommand {
 }
 
 #[derive(Subcommand)]
+enum MountCommand {
+    /// List the declared mount points and their state — the default
+    List {
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+    /// Un-declare a mount point (force-unsets `mfr_mount` on that metarecord)
+    Forget {
+        /// The mount point's metarecord uuid
+        uuid: String,
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum SyncCommand {
     /// Compute a sync plan (into a freshly recreated plan repo)
     Plan {
@@ -845,6 +874,10 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Trash { file, command } => dispatch_trash(ctx, file, command),
+        Command::Mount { command } => match command.unwrap_or(MountCommand::List { json: false }) {
+            MountCommand::List { json } => commands::mount_list(ctx, json),
+            MountCommand::Forget { uuid, yes } => commands::mount_forget(ctx, &uuid, yes),
+        },
         Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
             OrphanCommand::List => commands::orphan_list(ctx),
             OrphanCommand::Clear { yes } => commands::orphan_clear(ctx, yes),

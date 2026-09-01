@@ -158,7 +158,12 @@ pub fn reconcile_full_reported(
     // Step 2 — pure walk: collect eligible paths (no stat), BFS by depth.
     let internal_dir = repo.internal_dir();
     let mut elig = eligibility::EligibilityCache::default();
-    let paths = walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, reporter)?;
+    // Declared mount points with nothing mounted on them: their subtrees are
+    // frozen — not walked, not orphaned, not offered as candidates
+    // (spec-file-tracking "Offline subtrees").
+    let offline = crate::mount::offline(writer.connection(), &mut cache, &root)?;
+    let paths =
+        walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, &offline, reporter)?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
     // determinate phase (spec-tasks "Decompose walk").
@@ -209,6 +214,9 @@ pub fn reconcile_full_reported(
         };
         if path.is_empty() {
             continue; // The root entry.
+        }
+        if offline.contains(&path) {
+            continue; // Unavailable, not absent: its existence is unknown.
         }
         if !root.join(path.trim_start_matches('/')).exists() {
             orphans.push((uuid, path));
@@ -494,6 +502,17 @@ pub fn reconcile_metarecord_reported(
         )));
     };
 
+    let offline = crate::mount::offline(&conn, &mut cache, &root)?;
+    if offline.contains(&base) {
+        // Aimed at (or into) a volume that is not plugged in. Doing nothing
+        // silently would look like "reconcile found no change"; say so instead
+        // — this is exactly the operation the user runs once the drive is back
+        // (spec-file-tracking "Offline subtrees").
+        return Err(ApiError::bad_request(format!(
+            "{base} is on a volume that is not mounted: nothing to reconcile until it is back"
+        )));
+    }
+
     let mut writer = Writer::begin(&mut conn, None)?;
     let mut result = ReconcileResult::default();
 
@@ -511,6 +530,7 @@ pub fn reconcile_metarecord_reported(
             &repo.internal_dir(),
             &base,
             &mut elig,
+            &offline,
             reporter,
         )?);
     }
@@ -600,6 +620,7 @@ pub fn reconcile_metarecord_reported(
 /// [`stat_paths`], once the total is known — so the heavy syscall pass gets an
 /// exact progress bar. Returns the collected paths (files and directories);
 /// `base` itself is not included.
+#[allow(clippy::too_many_arguments)]
 fn walk(
     writer: &mut Writer,
     cache: &mut TreeCache,
@@ -607,6 +628,7 @@ fn walk(
     internal_dir: &Path,
     base: &str,
     elig: &mut eligibility::EligibilityCache,
+    offline: &crate::mount::OfflineMounts,
     reporter: &Reporter,
 ) -> Result<Vec<String>> {
     let mut paths: Vec<String> = Vec::new();
@@ -653,6 +675,12 @@ fn walk(
                 let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
                 paths.push(rel.clone());
                 if is_dir {
+                    // An offline mount point is itself an ordinary directory
+                    // (it exists, its own metadata is real); what is behind it
+                    // is not there to be walked.
+                    if offline.contains(&rel) {
+                        continue;
+                    }
                     next.push(rel);
                 } else {
                     files += 1;
@@ -717,7 +745,7 @@ pub(crate) fn create_record_for(
         "mfr_path",
         Value::TreeRef { parent: Some(parent), name: name.to_string() },
     )];
-    fields.extend(fs_meta::stat_fields(&abs)?);
+    fields.extend(fs_meta::stat_fields_in(root, &abs)?);
     if compute_mime {
         if let Some(mime) = detect_mime(&abs) {
             fields.push(Field::new("mfr_mime", Value::String(mime)));
@@ -755,7 +783,7 @@ fn apply_move(
 /// fields whose value actually changed (idempotent reconciles do not grow
 /// the log).
 fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -> Result<()> {
-    let Ok(stat) = fs_meta::stat_fields(&root.join(rel.trim_start_matches('/'))) else {
+    let Ok(stat) = fs_meta::stat_fields_in(root, &root.join(rel.trim_start_matches('/'))) else {
         return Ok(());
     };
     for field in stat {

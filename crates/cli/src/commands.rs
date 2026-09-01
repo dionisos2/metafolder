@@ -1706,6 +1706,51 @@ pub fn orphan_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     Ok(0)
 }
 
+// ── Mount points (spec-file-tracking "Mount points") ──────────────────────────
+
+/// `mf mount list` — the declared mount points and their current state.
+pub fn mount_list(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.get(&format!("{base}/mounts"), &[])?;
+    if raw_json {
+        print_pretty(&resp);
+        return Ok(0);
+    }
+    let mounts = resp["mounts"].as_array().cloned().unwrap_or_default();
+    if mounts.is_empty() {
+        println!("No mount points (no directory of this repository is one).");
+        return Ok(0);
+    }
+    for m in &mounts {
+        let field = |name: &str| m[name].as_str().unwrap_or("-").to_string();
+        println!(
+            "{:<10}\t{}\t{}\t{}",
+            field("state"),
+            field("path"),
+            field("expected"),
+            field("current")
+        );
+    }
+    Ok(0)
+}
+
+/// `mf mount forget <uuid>` — un-declare a mount point (force-unset
+/// `mfr_mount`). Its subtree stops being frozen, so a volume that is *not*
+/// coming back leaves ordinary orphans behind, which `mf orphan` then reports.
+pub fn mount_forget(ctx: &Ctx, uuid: &str, yes: bool) -> Result<i32, CliError> {
+    if !yes {
+        let prompt = format!(
+            "Forget the mount point {uuid}? Its subtree stops being protected \
+             while the volume is away. [y/N] "
+        );
+        if !confirm(&prompt)? {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+    field_unset(ctx, uuid, "mfr_mount", true)
+}
+
 // ── Schema (spec-schema) ──────────────────────────────────────────────────────
 
 pub fn schema_check(ctx: &Ctx, predicate: Option<&str>, raw_json: bool) -> Result<i32, CliError> {

@@ -3557,3 +3557,45 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
     assert!(out.stdout.lines().any(|l| l == "administratif\t0\t0"), "list:\n{}", out.stdout);
     assert!(out.stdout.lines().any(|l| l == "cinema/thriller\t0\t0"), "list:\n{}", out.stdout);
 }
+
+#[test]
+fn test_mount_list_and_forget() {
+    let (repo, root) = init_repo("mount");
+    let dir = root.join("photos");
+    std::fs::create_dir(&dir).unwrap();
+    let uuid = mf(&["-u", &repo, "track", dir.to_str().unwrap()]).stdout.trim().to_string();
+    assert!(is_hex_uuid(&uuid));
+
+    // A repository with no removable volume declares no mount point.
+    let out = mf(&["-u", &repo, "mount"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No mount points"), "stdout: {}", out.stdout);
+
+    // Declare one by hand (an mfr_* write, hence --force): the directory is an
+    // ordinary one, so it is exactly what an unplugged volume looks like.
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &uuid,
+        "field",
+        "add",
+        "mfr_mount:string=label:PHOTOS",
+        "--force",
+    ]);
+    assert_ok(&out);
+
+    let out = mf(&["-u", &repo, "mount", "list"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("offline"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("/photos"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("label:PHOTOS"), "stdout: {}", out.stdout);
+
+    // `forget` un-declares it: the directory becomes an ordinary one again.
+    let out = mf(&["-u", &repo, "mount", "forget", &uuid, "-y"]);
+    assert_ok(&out);
+    let out = mf(&["-u", &repo, "mount"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("No mount points"), "stdout: {}", out.stdout);
+}

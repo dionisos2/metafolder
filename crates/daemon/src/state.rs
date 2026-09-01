@@ -58,6 +58,9 @@ pub struct RepoState {
     /// included. After [`crate::executor::FLUSH_FAILURE_BUDGET`] attempts the
     /// batch is dropped so tracking resumes; see `crate::executor::flush_pending`.
     pub flush_failures: std::sync::atomic::AtomicU32,
+    /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
+    /// the executor before applying a cascade.
+    pub orphan_cascade_limit: usize,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -104,6 +107,7 @@ impl RepoState {
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
             flush_failures: std::sync::atomic::AtomicU32::new(0),
+            orphan_cascade_limit: settings.orphan_cascade_limit,
         }
     }
 

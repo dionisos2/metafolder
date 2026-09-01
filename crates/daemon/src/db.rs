@@ -774,6 +774,29 @@ pub fn list_entries(conn: &Connection) -> Result<Vec<Uuid>> {
 
 /// All metarecords of this repository holding an `mfr_path` TreeRef (i.e. with
 /// a known tree position, stale or not).
+/// Every metarecord carrying a `String` value for `field_name`, with that
+/// value — the multi-map's first row per metarecord wins. Used for the handful
+/// of daemon-read marker fields (`mfr_mount`), never for user queries.
+pub fn string_field_owners(conn: &Connection, field_name: &str) -> Result<Vec<(Uuid, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT metarecord_uuid, value_text FROM field
+         WHERE field_name = ?1 AND value_type = 'string' AND value_text IS NOT NULL
+         ORDER BY id",
+    )?;
+    let rows = stmt
+        .query_map([field_name], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?)))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for (bytes, value) in rows {
+        let uuid = bytes_to_uuid(bytes)?;
+        if seen.insert(uuid) {
+            out.push((uuid, value));
+        }
+    }
+    Ok(out)
+}
+
 pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
     let mut stmt = conn.prepare(
         "SELECT DISTINCT metarecord_uuid FROM field

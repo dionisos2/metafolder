@@ -90,6 +90,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
+        .route("/repos/:repo/mounts", get(mounts))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/track", post(track))
@@ -1620,6 +1621,25 @@ impl Default for ReconcileBody {
 /// concurrent reconcile is rejected with `409`. With `metarecord` in the body
 /// the reconcile is scoped to that metarecord's subtree; absent, it covers the
 /// whole repository.
+/// `GET /repos/:repo/mounts`: the repository's declared mount points — every
+/// metarecord carrying `mfr_mount` — with the state read from disk right now
+/// (spec-file-tracking "Mount status"). Read-only and cheap: one stat pair per
+/// mount point, no walk. It is how a client explains a subtree that looks empty
+/// or stale ("volume not mounted") instead of showing it as deleted.
+async fn mounts(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let mounts = crate::mount::declared(&conn, &mut cache, &repo_state.config.root)?;
+        Ok(Json(json!({ "mounts": mounts })))
+    })
+    .await
+}
+
 /// `POST /repos/:repo/orphans/scan`: read-only disk scan for tracked
 /// metarecords whose `mfr_path` is definitely gone (spec-file-tracking "Orphan
 /// scan"). Returns `{count, orphans: [{uuid, stale_path}]}`. Unlike reconcile it

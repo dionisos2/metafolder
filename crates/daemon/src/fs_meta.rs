@@ -17,6 +17,25 @@ use metafolder_core::metarecord::{Field, Value};
 /// first-class entity described by its own metadata and its target *path*, so
 /// the daemon never reads the target's content or stats a location outside the
 /// repository through a link (spec-platform "Symbolic links").
+/// [`stat_fields`] plus `mfr_mount` when `abs` is a directory that is a mount
+/// point right now (spec-file-tracking "Mount points"). Every call site that
+/// knows the repository root uses this form; the root itself is never marked,
+/// its parent being outside the repository.
+pub fn stat_fields_in(root: &Path, abs: &Path) -> Result<Vec<Field>> {
+    let mut fields = stat_fields(abs)?;
+    // Only a directory can be one, and `stat_fields` already knows the kind —
+    // so the mount probe costs nothing on the common path (every file of a
+    // reconcile), rather than one extra stat each.
+    let is_dir =
+        fields.iter().any(|f| f.name == "mfr_type" && f.value == Value::String("dir".to_string()));
+    if is_dir && abs != root {
+        if let Some(identity) = crate::mount::probe(abs) {
+            fields.push(Field::new(crate::mount::FIELD, Value::String(identity)));
+        }
+    }
+    Ok(fields)
+}
+
 pub fn stat_fields(path: &Path) -> Result<Vec<Field>> {
     let meta =
         std::fs::symlink_metadata(path).with_context(|| format!("Failed to stat {path:?}"))?;
@@ -65,10 +84,43 @@ pub fn stat_fields(path: &Path) -> Result<Vec<Field>> {
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     fn field<'a>(fields: &'a [Field], name: &str) -> Option<&'a Value> {
         fields.iter().find(|f| f.name == name).map(|f| &f.value)
+    }
+
+    #[test]
+    fn stat_fields_in_never_marks_a_plain_directory_or_the_root() {
+        let dir = std::env::temp_dir()
+            .join("metafolder-tests")
+            .join(format!("mf-statmount-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+
+        // An ordinary subdirectory is not a mount point.
+        let sub = stat_fields_in(&dir, &dir.join("sub")).unwrap();
+        assert_eq!(field(&sub, "mfr_mount"), None);
+        // The repository root is never marked: its parent lies outside the
+        // repository (spec-platform "Mount point detection").
+        let root = stat_fields_in(&dir, &dir).unwrap();
+        assert_eq!(field(&root, "mfr_mount"), None);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stat_fields_in_marks_a_real_mount_point() {
+        let proc = Path::new("/proc");
+        if !proc.exists() {
+            return;
+        }
+        let fields = stat_fields_in(Path::new("/"), proc).unwrap();
+        match field(&fields, "mfr_mount") {
+            Some(Value::String(id)) => assert!(!id.is_empty()),
+            other => panic!("expected a mount identity, got {other:?}"),
+        }
     }
 
     #[cfg(unix)]

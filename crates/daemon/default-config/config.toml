@@ -31,3 +31,12 @@ watch-quiet-period-ms = 500
 # database walks. Trades memory (~200 bytes per node, so ~100 MB at the default)
 # for read speed on very large folder trees. Default: 500000.
 tree-cache-max-nodes = 500000
+
+# Mass-orphan circuit breaker: the largest number of metarecords a single
+# watcher batch may orphan (set mfr_path = Nothing) in one cascade. A batch that
+# would null more than this is a filesystem going away — an unmount metafolder
+# did not recognise, a disk unplugged — rather than a deletion the user asked
+# for: the cascade is skipped, a warning is logged, and the metadata is left
+# untouched (confirm a genuinely huge deletion with `mf orphan clear`, which
+# re-checks every path against the disk). 0 disables the check. Default: 10000.
+orphan-cascade-limit = 10000

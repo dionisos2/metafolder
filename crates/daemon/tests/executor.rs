@@ -777,3 +777,50 @@ fn test_departures_do_not_make_a_flush_superlinear() {
          alongside {N} departures — the re-pairing is not linear",
     );
 }
+
+// ── Mass-orphan circuit breaker ───────────────────────────────────────────────
+
+#[test]
+fn test_a_cascade_larger_than_the_limit_is_refused() {
+    // A filesystem going away can deliver the removal of a directory holding
+    // the whole repository. Nulling thousands of paths on one event is never
+    // what the user asked for: the cascade is skipped, the metadata survives,
+    // and `mf orphan clear` remains the deliberate way to confirm it
+    // (spec-file-tracking "Mass-orphan circuit breaker").
+    let root = TempDir::new("exec_breaker");
+    let opened = repo::init_repository(&root, None, None, false).unwrap();
+    let settings = metafolder_daemon::daemon_config::DaemonSettings {
+        orphan_cascade_limit: 3,
+        ..Default::default()
+    };
+    let repo_state = Arc::new(RepoState::from_opened_with(opened, &settings));
+    let root_uuid = {
+        let conn = repo_state.conn.lock().unwrap();
+        db::find_tree_child(&conn, "mfr_path", None, "").unwrap().unwrap()
+    };
+    {
+        let mut conn = repo_state.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(root_uuid, "mf_watch", Value::Bool(true)).unwrap();
+        w.commit().unwrap();
+    }
+    for i in 0..5 {
+        write_file(&root, &format!("/big/f{i}.txt"), b"x");
+    }
+    write_file(&root, "/small/only.txt", b"x");
+    metafolder_daemon::reconcile::reconcile(&repo_state).unwrap();
+    let big = resolve(&repo_state, "/big").unwrap();
+    let kept = resolve(&repo_state, "/big/f0.txt").unwrap();
+    let small = resolve(&repo_state, "/small").unwrap();
+
+    std::fs::remove_dir_all(root.join("big")).unwrap();
+    std::fs::remove_dir_all(root.join("small")).unwrap();
+    enqueue(&repo_state, &[FsEvent::Remove("/big".into()), FsEvent::Remove("/small".into())]);
+    executor::flush_pending(&repo_state).unwrap();
+
+    // 6 records (the directory + its 5 files) exceeds the limit: nothing moved.
+    assert!(matches!(field_value(&repo_state, big, "mfr_path"), Some(Value::TreeRef { .. })));
+    assert!(matches!(field_value(&repo_state, kept, "mfr_path"), Some(Value::TreeRef { .. })));
+    // The small deletion in the same batch is unaffected.
+    assert_eq!(field_value(&repo_state, small, "mfr_path"), Some(Value::Nothing));
+}

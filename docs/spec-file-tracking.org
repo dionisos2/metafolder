@@ -372,7 +372,7 @@ is *frozen*:
 | Component     | Behaviour on an offline subtree                                         |
 |---------------+-------------------------------------------------------------------------|
 | watcher       | places no watch there, and drops any event landing in it                 |
-| reconcile     | prunes it from the walk: no create, no refresh, no candidate, no MIME    |
+| reconcile     | prunes it from the walk: no create, no refresh, no candidate, no MIME. A *scoped* reconcile aimed at (or into) an offline mount point is rejected with =400= rather than silently reporting "no change" |
 | orphan scan   | reports "unknown", never an orphan (see [[*Orphan scan]])                   |
 | =mf_watch= / =mf_ignore= | unchanged: eligibility is evaluated as usual, the freeze is an additional filter |
 | queries       | unaffected — the metadata of a disconnected drive stays fully queryable, which is the whole point of recording it |

@@ -42,6 +42,7 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
     // Memoise per-directory readability so a subtree costs one `read_dir` per
     // directory, not one per record.
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
+    let offline = crate::mount::offline(&conn, &mut cache, root)?;
     let mut orphans = Vec::new();
     for uuid in db::all_tracked_metarecords(&conn)? {
         let Some(path) = cache.path_of(&conn, "mfr_path", uuid)? else {
@@ -50,7 +51,7 @@ pub fn scan_orphans(repo: &RepoState) -> Result<Vec<OrphanEntry>, ApiError> {
         if path.is_empty() {
             continue; // The filesystem root entry.
         }
-        if is_definitely_gone(root, &path, &mut dirs) {
+        if !offline.contains(&path) && is_definitely_gone(root, &path, &mut dirs) {
             orphans.push(OrphanEntry { uuid, stale_path: path });
         }
     }
@@ -68,6 +69,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
     let mut cache = repo.lock_cache();
     let root = repo.config.root.clone();
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
+    let offline = crate::mount::offline(&conn, &mut cache, &root)?;
     let mut writer = Writer::begin(&mut conn, None)?;
     let mut cleared = 0;
 
@@ -79,8 +81,9 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
             continue; // Never orphan the filesystem root entry.
         }
         // Re-verify against the disk: a scan is a snapshot, and the file may have
-        // returned since. Only orphan what is still definitely gone.
-        if !is_definitely_gone(&root, &path, &mut dirs) {
+        // returned since. Only orphan what is still definitely gone — and never
+        // a path whose volume was unplugged in the meantime.
+        if offline.contains(&path) || !is_definitely_gone(&root, &path, &mut dirs) {
             continue;
         }
         // Snapshot every path *before* any write: clearing a parent's `mfr_path`

@@ -16,6 +16,11 @@ use crate::state::AppState;
 /// filesystem event before flushing the pending buffer. See [`DaemonSettings`].
 pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
 
+/// Default mass-orphan circuit breaker: the largest cascade of
+/// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
+/// "Mass-orphan circuit breaker"). `0` disables the check.
+pub const DEFAULT_ORPHAN_CASCADE_LIMIT: usize = 10_000;
+
 /// Tunable daemon settings (the `[settings]` table of `config.toml`). These are
 /// UX/performance knobs, all optional: a missing table or key keeps the default
 /// below, so an empty config behaves exactly as before.
@@ -31,6 +36,11 @@ pub struct DaemonSettings {
     /// evicted (LRU) and navigation falls back to DB walks. Trades memory
     /// (~200 bytes/node) for read speed on large forests.
     pub tree_cache_max_nodes: usize,
+    /// Largest number of metarecords one watcher-driven cascade may orphan.
+    /// Beyond it the cascade is skipped and a warning logged: a batch that
+    /// would null thousands of paths is a filesystem going away, not a
+    /// deletion the user asked for. `0` disables the check.
+    pub orphan_cascade_limit: usize,
 }
 
 impl Default for DaemonSettings {
@@ -38,6 +48,7 @@ impl Default for DaemonSettings {
         DaemonSettings {
             watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
             tree_cache_max_nodes: crate::tree_cache::DEFAULT_MAX_NODES,
+            orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
         }
     }
 }
@@ -173,16 +184,20 @@ mod tests {
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
         assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
         assert_eq!(empty.tree_cache_max_nodes, crate::tree_cache::DEFAULT_MAX_NODES);
+        assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
     }
 
     #[test]
     fn test_read_config_parses_the_settings_table() {
-        let path =
-            write_config("[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n");
+        let path = write_config(
+            "[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n\
+             orphan-cascade-limit = 7\n",
+        );
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
         assert_eq!(config.settings.tree_cache_max_nodes, 42);
+        assert_eq!(config.settings.orphan_cascade_limit, 7);
         std::fs::remove_file(&path).unwrap();
     }
 
@@ -192,6 +207,18 @@ mod tests {
         assert_eq!(parsed.watch_quiet_period_ms, 250);
         // The unspecified key keeps its default.
         assert_eq!(parsed.tree_cache_max_nodes, crate::tree_cache::DEFAULT_MAX_NODES);
+    }
+
+    #[test]
+    fn test_the_shipped_default_config_parses_with_the_documented_values() {
+        // The file metafolder-sync-config installs must stay readable by the
+        // daemon that reads it: a key renamed here and not there (or the other
+        // way round) is silently ignored at runtime, never reported.
+        let path = write_config(include_str!("../default-config/config.toml"));
+        let config = read_config(&path).unwrap();
+        assert_eq!(config.settings, DaemonSettings::default());
+        assert!(config.load.is_empty());
+        std::fs::remove_file(&path).unwrap();
     }
 
     #[test]
