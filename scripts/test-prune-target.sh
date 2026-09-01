@@ -153,4 +153,35 @@ grep -q 'freed 0B' <<<"$report" && fail "the freed size must be measured too (go
 cd "$tmp"
 ok "oversized prune set"
 
+echo "== scenario 6: hard-linked artifacts are counted once in the freed size"
+# cargo hard-links most of what it writes into deps/, so a size report counting
+# each link separately over-reports wildly. du only de-duplicates links it sees
+# in ONE invocation, so this only shows up once the list is big enough to be
+# split — hence the deep path again.
+deep2=$tmp/deep2
+for _ in $(seq 17); do deep2=$deep2/$segment; done
+mkdir -p "$deep2/target/debug/deps"
+cd "$deep2"
+cat > Cargo.lock <<'EOF'
+[[package]]
+name = "serde"
+version = "1.0.200"
+EOF
+count=$(( arg_max / (${#deep2} + 40) ))
+head -c $((1024 * 1024)) /dev/zero > shared.rlib
+for i in $(seq "$count"); do
+    hash=$(printf '%016x' "$i")
+    ln shared.rlib "target/debug/deps/libp$i-$hash.rlib"
+    echo "libp$i-$hash.rlib: $registry/gone-0.1.0/src/lib.rs" \
+        > "target/debug/deps/p$i-$hash.d"
+done
+report=$("$prune")
+freed=$(sed -n 's/.*freed //p' <<<"$report")
+# $count links to one 1 MiB file plus small .d files: a few MiB, never $count.
+case "$freed" in
+    [0-9]*K | [1-9].[0-9]M | [1-9]M) ok "hard links counted once ($freed)" ;;
+    *) fail "$count hard links to 1 MiB should free ~1 MiB, reported $freed" ;;
+esac
+cd "$tmp"
+
 echo "all prune-target tests passed"

@@ -130,16 +130,19 @@ fi
 # The doomed list routinely runs to tens of thousands of paths, well past
 # ARG_MAX: passing it as command-line arguments made both du and rm fail with
 # "Argument list too long", so nothing was deleted and the size read 0 — a
-# silent no-op on exactly the overgrown target/ this script exists for. `xargs`
-# splits it into as many commands as it takes; `printf` is a shell builtin, so
-# feeding it is not subject to the limit in the first place.
+# silent no-op on exactly the overgrown target/ this script exists for. The
+# list is therefore piped rather than passed (`printf` is a shell builtin, so
+# feeding it is not subject to the limit in the first place).
 if [ ${#doomed[@]} -eq 0 ]; then
     echo "nothing to prune"
 else
-    # One "total" line per xargs chunk, so the totals are summed rather than
-    # tailed.
-    freed=$(printf '%s\0' "${doomed[@]}" | xargs -0 du -scb 2>/dev/null |
-            awk '$2 == "total" { sum += $1 } END { print sum + 0 }' || true)
+    # du reads the whole list in ONE pass (`--files0-from=-`) rather than in
+    # xargs chunks: it only de-duplicates hard links it sees within a single
+    # invocation, and cargo hard-links most of what it writes into deps/ — split
+    # across chunks, the same bytes get counted once per chunk (an over-report
+    # of 30x on a real target/).
+    freed=$(printf '%s\0' "${doomed[@]}" | du -scb --files0-from=- 2>/dev/null |
+            tail -1 | cut -f1 || true)
     freed=${freed:-0}
     human=$(numfmt --to=iec "$freed" 2>/dev/null || echo "${freed}B")
     if [ "$dry_run" -eq 1 ]; then
