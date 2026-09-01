@@ -342,10 +342,13 @@ is a mount point at the time it is seen — by reconcile (walk and refresh phase
 and by the watcher when such a directory appears. It is an =mfr_*= field:
 daemon-owned, user-writable only with =force=.
 
-- *Detection* is the device-id comparison: a directory is a mount point iff its
-  device id differs from its parent directory's. Cheap (=lstat=, no privileges,
-  no mount-table parsing) and — unlike "the directory is empty" — it tells
-  "unmounted" apart from "emptied".
+- *Detection* asks the kernel's mount table (=/proc/self/mountinfo= on Linux,
+  cached), falling back to the device-id comparison where that is unavailable —
+  a directory being a mount point iff its device id differs from its parent's.
+  Either way it needs no privileges and, unlike "the directory is empty", it
+  tells "unmounted" apart from "emptied". The two sources disagree on a
+  same-filesystem bind mount and on btrfs subvolumes; see
+  [[file:spec-platform.org][spec-platform.org]] "Mount point detection".
 - The *value* is a best-effort identity of the volume that was mounted, used to
   tell the user what to plug back in and to notice that a *different* volume is
   mounted now. The per-platform sources and the string forms (=uuid:…=,

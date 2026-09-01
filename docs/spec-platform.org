@@ -310,19 +310,46 @@ halves are platform-dependent.
 
 *** Is this directory a mount point?
 
-Unix (Linux, macOS): compare the device id of the directory with that of its
-parent (=st_dev=, via =std::os::unix::fs::MetadataExt::dev=). They differ iff a
-different filesystem is mounted on the directory. The repository root is a
-special case — its parent lies outside the repository — and is never treated as
-a mount point.
+*Linux — ask the kernel.* A path is a mount point iff it appears as one in
+=/proc/self/mountinfo=. That list is authoritative for the daemon's mount
+namespace, and it is the only source that gets both of these right:
 
-Windows: =std::fs::Metadata= exposes no device id, and a removable volume is
+- a =mount --bind= of a directory from the *same* filesystem shares its
+  superblock, so its device id equals its parent's — invisible to a =st_dev=
+  comparison, yet =umount= still empties it. (Every real filesystem has its own
+  superblock — ext4, btrfs, tmpfs, NFS, and every FUSE mount such as gocryptfs,
+  encfs or sshfs — so this superblock *sharing* is the only blind spot a device
+  comparison has;)
+- btrfs gives each *subvolume* an anonymous device id, so a device comparison
+  calls a plain subvolume boundary a mount point although nothing is mounted
+  there and nothing can be unplugged.
+
+The table is re-read at most once per second and kept as a process-wide
+snapshot: every directory a reconcile touches asks the question, and the kernel
+regenerates that file on each read. A second of staleness is harmless — mounting
+a volume triggers no reconcile of its own, so the answer is consumed by a later
+operation anyway.
+
+Paths are matched verbatim against the table's canonical form. Every path the
+daemon builds starts at the canonicalized repository =root= and never traverses
+a symlinked directory (neither the reconcile walk nor the watcher follows one),
+so no per-probe =canonicalize= is needed.
+
+*Other Unix (macOS), and Linux with an unreadable =/proc=* — fall back to
+comparing the device id of the directory with that of its parent (=st_dev=, via
+=std::os::unix::fs::MetadataExt::dev=), with the two divergences above. An
+empty mount-table snapshot is precisely the signal to fall back.
+
+The repository root is a special case in both cases — its parent lies outside
+the repository — and is never marked.
+
+*Windows*: =std::fs::Metadata= exposes no device id, and a removable volume is
 normally a drive letter (its own repository root) rather than a directory inside
 a tree. Mount points are therefore *not detected on Windows*: =mfr_mount= is
 never written, exactly like =mfr_permissions=. A repository whose =mfr_mount=
-fields were written on Unix keeps them, and a Windows daemon still honours them
-— the freeze only needs the field's presence and a "is a volume mounted here"
-answer, which degrades safely to "the directory exists and is non-empty".
+fields were written on Unix keeps them, and a Windows daemon still honours the
+freeze — which needs only the field's presence and a "is something mounted
+here" answer.
 
 *** Volume identity (the field's value)
 
