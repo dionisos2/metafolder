@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
+use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value, ZERO_UUID};
 use metafolder_core::sync::MutexExt;
 
 use crate::error::DomainError;
@@ -1107,7 +1107,7 @@ pub(crate) fn encode_value(value: &Value) -> EncodedValue {
         Value::TreeRef { parent, name } => {
             e = EncodedValue::new("tree_ref");
             e.uuid = Some(uuid_to_bytes(parent.unwrap_or(ZERO_UUID)));
-            e.name = Some(name.clone());
+            e.name = Some(name.display().into_owned());
         }
         Value::RefBase(id) => {
             e = EncodedValue::new("refbase");
@@ -1143,7 +1143,7 @@ pub(crate) fn decode_value(
             let parent = bytes_to_uuid(uuid.context("value_uuid missing")?)?;
             Ok(Value::TreeRef {
                 parent: if parent == ZERO_UUID { None } else { Some(parent) },
-                name: name.context("value_name missing")?,
+                name: TreeName::from(name.context("value_name missing")?),
             })
         }
         "refbase" => Ok(Value::RefBase(bytes_to_uuid(uuid.context("value_uuid missing")?)?)),

@@ -81,6 +81,122 @@ pub mod iso_ms {
     }
 }
 
+/// The name component of a `TreeRef`: the **exact bytes**, plus the text
+/// everything displays and queries.
+///
+/// A POSIX file name is a byte string — any sequence but `/` and NUL — and is
+/// not required to be UTF-8. Legacy media collections are full of latin-1
+/// names, and the software must track them like any other file, so the name
+/// cannot simply be a `String`.
+///
+/// The split is deliberate (spec-data-model "Tree names"):
+/// - the **bytes are the identity**: equality, ordering, hashing and the
+///   database's forest uniqueness all go through them, so two files whose names
+///   differ only in undecodable bytes are two different nodes;
+/// - the **text is presentation only**: `display()` is the name as every file
+///   manager shows it, undecodable bytes replaced by U+FFFD. No escape syntax
+///   is ever shown or typed — the user sees the file's name, not an encoding
+///   of it. The cost of that choice is that a lookup by displayed path is no
+///   longer guaranteed unique; callers resolving one must handle ambiguity
+///   rather than pick a winner.
+///
+/// It is impossible to have both "every valid UTF-8 name is stored unchanged"
+/// and "the text form is injective": if all valid text maps to itself, the text
+/// form is already used up and no undecodable name can map anywhere free. That
+/// is precisely why identity lives in the bytes rather than in an escaped text.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct TreeName(Vec<u8>);
+
+impl TreeName {
+    /// The name from its exact bytes (a `std::os::unix::ffi::OsStrExt` slice).
+    pub fn from_bytes(bytes: impl Into<Vec<u8>>) -> Self {
+        Self(bytes.into())
+    }
+
+    /// The exact bytes — what the filesystem holds and what identifies the node.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    /// The name as it is shown and typed. Borrowed when the name is text
+    /// already (the overwhelmingly common case, so no allocation).
+    pub fn display(&self) -> std::borrow::Cow<'_, str> {
+        String::from_utf8_lossy(&self.0)
+    }
+
+    /// Whether the bytes are valid UTF-8, i.e. `display()` loses nothing and
+    /// round-trips. False only for a name no text form can represent.
+    pub fn is_exact(&self) -> bool {
+        std::str::from_utf8(&self.0).is_ok()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl From<String> for TreeName {
+    fn from(text: String) -> Self {
+        Self(text.into_bytes())
+    }
+}
+
+impl From<&str> for TreeName {
+    fn from(text: &str) -> Self {
+        Self(text.as_bytes().to_vec())
+    }
+}
+
+impl std::fmt::Display for TreeName {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.display(), f)
+    }
+}
+
+/// Wire form: a plain string while the name is text — so the common case is
+/// byte-for-byte the shape every existing client already reads — and an
+/// explicit `{text, bytes}` object when it is not. A client that assumed a
+/// string then meets a different shape rather than a silently wrong name.
+impl Serialize for TreeName {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match std::str::from_utf8(&self.0) {
+            Ok(text) => s.serialize_str(text),
+            Err(_) => {
+                use serde::ser::SerializeStruct;
+                let mut object = s.serialize_struct("TreeName", 2)?;
+                object.serialize_field("text", &self.display())?;
+                object.serialize_field("bytes", &crate::hex::encode(&self.0))?;
+                object.end()
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for TreeName {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// The object form. `text` is carried for readers that only display,
+        /// but `bytes` is authoritative: it is what identifies the node.
+        #[derive(Deserialize)]
+        struct Encoded {
+            #[allow(dead_code)]
+            text: String,
+            bytes: String,
+        }
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Wire {
+            Text(String),
+            Encoded(Encoded),
+        }
+        match Wire::deserialize(d)? {
+            Wire::Text(text) => Ok(Self::from(text)),
+            Wire::Encoded(encoded) => crate::hex::decode(&encoded.bytes)
+                .map(Self)
+                .ok_or_else(|| serde::de::Error::custom("invalid hex in tree name bytes")),
+        }
+    }
+}
+
 /// A field value. `Nothing` represents an explicit absence ("this field does
 /// not apply"), distinct from the absence of the field itself ("unknown").
 ///
@@ -105,7 +221,7 @@ pub enum Value {
     TreeRef {
         #[serde(with = "hex_uuid_opt")]
         parent: Option<Uuid>,
-        name: String,
+        name: TreeName,
     },
     /// Reference to a repository UUID.
     RefBase(#[serde(with = "hex_uuid")] DatabaseId),
@@ -319,7 +435,7 @@ fn parse_tree_ref(s: &str) -> Option<Value> {
         return None;
     }
     let parent = if parent.is_empty() { None } else { Some(parse_hex_uuid(parent)?) };
-    Some(Value::TreeRef { parent, name: name.to_string() })
+    Some(Value::TreeRef { parent, name: name.into() })
 }
 
 /// Parses the `String → ExternalRef` form `<repo_hex>:<metarecord_hex>`.
@@ -393,6 +509,87 @@ mod tests {
         serde_json::from_str(&json).expect("deserialization failed")
     }
 
+    // ── TreeName: exact bytes, displayed text ───────────────────────────
+    //
+    // A POSIX file name is a byte string, not text: it need not be UTF-8, and
+    // the daemon must track such a file like any other. The bytes are the
+    // identity; the text is what everything displays and queries (spec-data-
+    // model "Tree names").
+
+    /// "café.mp4" in latin-1 — the shape a legacy media collection actually has.
+    const LATIN1_CAFE: &[u8] = b"caf\xe9.mp4";
+
+    #[test]
+    fn test_tree_name_from_utf8_bytes_is_exact() {
+        let name = TreeName::from_bytes("vidéo.mp4".as_bytes().to_vec());
+        assert!(name.is_exact());
+        assert_eq!(name.display(), "vidéo.mp4");
+        assert_eq!(name.as_bytes(), "vidéo.mp4".as_bytes());
+    }
+
+    #[test]
+    fn test_tree_name_from_undecodable_bytes_keeps_them() {
+        let name = TreeName::from_bytes(LATIN1_CAFE.to_vec());
+        assert!(!name.is_exact());
+        // Displayed the way every file manager shows it: the undecodable byte
+        // becomes the replacement character. Never an escape syntax — the user
+        // sees the file's name, not an encoding of it.
+        assert_eq!(name.display(), "caf\u{FFFD}.mp4");
+        // ...but the bytes are untouched, so the file can still be opened.
+        assert_eq!(name.as_bytes(), LATIN1_CAFE);
+    }
+
+    #[test]
+    fn test_tree_names_are_equal_by_bytes_not_by_display() {
+        // Two different files whose names differ only in undecodable bytes
+        // display identically. They are NOT the same node: identity is the
+        // bytes. (This is why the database keys the forest on them.)
+        let a = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+        let b = TreeName::from_bytes(b"caf\xff.mp4".to_vec());
+        assert_eq!(a.display(), b.display());
+        assert_ne!(a, b);
+        assert_eq!(a, TreeName::from_bytes(LATIN1_CAFE.to_vec()));
+    }
+
+    #[test]
+    fn test_tree_name_from_a_string_is_that_string() {
+        let name = TreeName::from("vidéo.mp4".to_string());
+        assert!(name.is_exact());
+        assert_eq!(name.display(), "vidéo.mp4");
+    }
+
+    #[test]
+    fn test_exact_tree_ref_is_on_the_wire_as_a_plain_string() {
+        // The overwhelmingly common case must not change shape: an existing
+        // client reading `name` as a string keeps working.
+        let value = Value::TreeRef { parent: None, name: TreeName::from("vidéo.mp4".to_string()) };
+        let json = serde_json::to_value(&value).unwrap();
+        assert_eq!(json["value"]["name"], serde_json::json!("vidéo.mp4"));
+        assert_eq!(roundtrip(&value), value);
+    }
+
+    #[test]
+    fn test_undecodable_tree_ref_carries_its_bytes_on_the_wire() {
+        // Only a name that cannot be represented as text takes the object
+        // form — a client that assumed a string sees a different shape rather
+        // than a silently wrong name.
+        let value =
+            Value::TreeRef { parent: None, name: TreeName::from_bytes(LATIN1_CAFE.to_vec()) };
+        let json = serde_json::to_value(&value).unwrap();
+        assert_eq!(json["value"]["name"]["text"], serde_json::json!("caf\u{FFFD}.mp4"));
+        assert_eq!(json["value"]["name"]["bytes"], serde_json::json!("636166e92e6d7034"));
+        assert_eq!(roundtrip(&value), value);
+    }
+
+    #[test]
+    fn test_a_wire_name_object_is_read_back_to_the_exact_bytes() {
+        let json = r#"{"type":"tree_ref","value":{"parent":null,
+                       "name":{"text":"caf�.mp4","bytes":"636166e92e6d7034"}}}"#;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let Value::TreeRef { name, .. } = value else { panic!("not a tree_ref") };
+        assert_eq!(name.as_bytes(), LATIN1_CAFE);
+    }
+
     #[test]
     fn test_value_type_str() {
         // Every variant maps to its DB/JSON `value_type` tag, matching
@@ -404,7 +601,10 @@ mod tests {
         assert_eq!(Value::Bool(false).type_str(), "bool");
         assert_eq!(Value::DateTime(0).type_str(), "datetime");
         assert_eq!(Value::Ref(Uuid::nil()).type_str(), "ref");
-        assert_eq!(Value::TreeRef { parent: None, name: String::new() }.type_str(), "tree_ref");
+        assert_eq!(
+            Value::TreeRef { parent: None, name: TreeName::default() }.type_str(),
+            "tree_ref"
+        );
         assert_eq!(Value::RefBase(Uuid::nil()).type_str(), "refbase");
         assert_eq!(
             Value::ExternalRef { repo: Uuid::nil(), metarecord: Uuid::nil() }.type_str(),

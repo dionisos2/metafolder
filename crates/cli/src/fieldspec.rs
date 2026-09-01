@@ -53,7 +53,7 @@ pub fn parse_field_spec(spec: &str) -> Result<(String, Value), String> {
                 ));
             }
             let parent = if parent.is_empty() { None } else { Some(parse_uuid(parent)?) };
-            Value::TreeRef { parent, name: leaf.to_string() }
+            Value::TreeRef { parent, name: leaf.into() }
         }
         (other, None) => {
             return Err(format!("invalid field spec '{spec}': missing '=value' for type '{other}'"))

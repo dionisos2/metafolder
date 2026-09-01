@@ -975,7 +975,7 @@ fn is_benign_relink_error(err: &DaemonError) -> bool {
 
 /// The JSON `mfr_path` field value for a TreeRef `{parent, name}`.
 fn tree_ref_value(parent: Option<Uuid>, name: &str) -> Json {
-    serde_json::to_value(crate::metarecord::Value::TreeRef { parent, name: name.to_string() })
+    serde_json::to_value(crate::metarecord::Value::TreeRef { parent, name: name.into() })
         .expect("tree_ref serialization")
 }
 

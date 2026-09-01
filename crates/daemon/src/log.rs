@@ -725,7 +725,7 @@ fn enqueue_restoration(tx: &Transaction<'_>, op: &OpRow, dir: NavDir) -> Result<
                 tx.execute(
                     "INSERT INTO pending_operation (op_type, path, from_path, to_path)
                      VALUES ('restore_set_path', ?1, ?2, ?3)",
-                    params![entity, parent_hex, name],
+                    params![entity, parent_hex, name.display().as_ref()],
                 )?;
             }
         }

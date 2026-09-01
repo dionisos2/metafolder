@@ -470,7 +470,7 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
                     OpType::FileMoved,
                     entity,
                     "mfr_path",
-                    Value::TreeRef { parent, name },
+                    Value::TreeRef { parent, name: name.into() },
                 )?;
             }
             "restore_clear_path" => {
@@ -677,7 +677,7 @@ impl Apply<'_, '_> {
                     OpType::FileMoved,
                     orphan,
                     "mfr_path",
-                    Value::TreeRef { parent: Some(parent), name: name.to_string() },
+                    Value::TreeRef { parent: Some(parent), name: name.into() },
                 )?;
                 self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
                 // Refresh the stat-derived fields at the new location.
@@ -715,7 +715,7 @@ impl Apply<'_, '_> {
         let (_, name) = Self::split_parent(rel);
         let mut fields = vec![Field::new(
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: name.to_string() },
+            Value::TreeRef { parent: Some(parent), name: name.into() },
         )];
         fields.extend(stat);
         let created = self.writer.create_metarecord(fields)?;
@@ -822,7 +822,7 @@ impl Apply<'_, '_> {
             OpType::FileMoved,
             src,
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: name.to_string() },
+            Value::TreeRef { parent: Some(parent), name: name.into() },
         )?;
         self.cache.apply_rename("mfr_path", src, Some(parent), name);
         Ok(())
@@ -1046,7 +1046,7 @@ pub(crate) fn ensure_parent_metarecords(
         }
         let mut fields = vec![Field::new(
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: comp.to_string() },
+            Value::TreeRef { parent: Some(parent), name: (*comp).into() },
         )];
         match fs_meta::stat_fields_in(root, &root.join(prefix.trim_start_matches('/'))) {
             Ok(stat) => fields.extend(stat),

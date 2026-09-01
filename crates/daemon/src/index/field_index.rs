@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use metafolder_core::metarecord::{Value, ZERO_UUID};
+use metafolder_core::metarecord::{TreeName, Value, ZERO_UUID};
 use roaring::RoaringBitmap;
 use uuid::Uuid;
 
@@ -279,7 +279,7 @@ fn sort_rep(value: &Value) -> Option<SortRep> {
         Value::DateTime(ms) => Some(SortRep::DateTime(*ms)),
         Value::Ref(u) | Value::RefBase(u) => Some(SortRep::Ref(*u.as_bytes())),
         Value::ExternalRef { metarecord, .. } => Some(SortRep::Ref(*metarecord.as_bytes())),
-        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.as_str().into())),
+        Value::TreeRef { name, .. } => Some(SortRep::Tree(name.display().as_ref().into())),
         Value::Nothing => None,
     }
 }
@@ -705,7 +705,7 @@ pub enum RefKind {
 enum TargetKey {
     Ref(Uuid),
     RefBase(Uuid),
-    TreeRef(Uuid, String),
+    TreeRef(Uuid, TreeName),
     External(Uuid, Uuid),
 }
 
@@ -817,7 +817,7 @@ impl ReverseIndex {
         self.has_value.insert(id);
         self.exact.entry(key).or_default().insert(id);
         if let Value::TreeRef { name, .. } = value {
-            self.by_name.entry(name.clone()).or_default().insert(id);
+            self.by_name.entry(name.display().into_owned()).or_default().insert(id);
         }
         if self.supports_follows() {
             if let Some(u) = value_uuid_of(value) {
@@ -842,7 +842,7 @@ impl ReverseIndex {
                 }
             }
             if let Value::TreeRef { name, .. } = v {
-                if let Some(b) = self.by_name.get_mut(name) {
+                if let Some(b) = self.by_name.get_mut(name.display().as_ref()) {
                     b.remove(id);
                 }
             }
@@ -865,7 +865,7 @@ impl ReverseIndex {
                 self.has_value.insert(id);
             }
             if let Value::TreeRef { name, .. } = v {
-                self.by_name.entry(name.clone()).or_default().insert(id);
+                self.by_name.entry(name.display().into_owned()).or_default().insert(id);
             }
             if follows {
                 if let Some(u) = value_uuid_of(v) {

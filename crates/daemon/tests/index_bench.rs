@@ -40,7 +40,7 @@ fn build_repo(dirs: usize, files: usize) -> Connection {
     for k in 0..dirs {
         let parent = if k == 0 { None } else { Some(dir_uuids[(k - 1) / FANOUT]) };
         let mut fields = vec![
-            Field::new("loc", Value::TreeRef { parent, name: format!("dir{k}") }),
+            Field::new("loc", Value::TreeRef { parent, name: format!("dir{k}").into() }),
             Field::new("kind", s("dir")),
             Field::new("rate", Value::Int((prng(k as u64) % 100) as i64)),
         ];
@@ -54,7 +54,10 @@ fn build_repo(dirs: usize, files: usize) -> Connection {
         let parent = dir_uuids[i % dirs.max(1)];
         let r = prng(i as u64);
         w.create_metarecord(vec![
-            Field::new("loc", Value::TreeRef { parent: Some(parent), name: format!("f{i}") }),
+            Field::new(
+                "loc",
+                Value::TreeRef { parent: Some(parent), name: format!("f{i}").into() },
+            ),
             Field::new("kind", s("file")),
             Field::new("rate", Value::Int((r % 100) as i64)),
             Field::new("size", Value::Int((r % 1_000_000) as i64)),

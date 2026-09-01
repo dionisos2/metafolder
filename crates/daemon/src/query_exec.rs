@@ -1242,7 +1242,7 @@ impl<'a> Compiler<'a> {
                     return Err(ordered_only_eq("tree_ref"));
                 }
                 self.params.push(SqlValue::Blob(db::uuid_to_bytes(parent.unwrap_or(ZERO_UUID))));
-                self.push_text(name);
+                self.push_text(name.display().as_ref());
                 Ok("value_type = 'tree_ref' AND value_uuid = ? AND value_name = ?".to_string())
             }
             Value::ExternalRef { repo, metarecord } => {

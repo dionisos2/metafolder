@@ -65,7 +65,7 @@ A field is a =(name, value)= pair. Value is one of:
 | =Bool=     | =bool=          |                                              |
 | =DateTime= | =i64=           | Unix milliseconds (UTC); JSON wire form is an ISO-8601 string (=YYYY-MM-DDTHH:MM:SSZ=) |
 | =Ref=          | =UUID=         | Reference to another metarecord's UUID (same repo)              |
-| =TreeRef=      | =(UUID?, String)= | Position in a named tree: =(parent_uuid, name)=             |
+| =TreeRef=      | =(UUID?, TreeName)= | Position in a named tree: =(parent_uuid, name)= (see [[*Tree names]]) |
 | =RefBase=      | =UUID=         | Reference to a repository UUID                             |
 | =ExternalRef=  | =(UUID, UUID)= | Cross-repo reference: (repo UUID, metarecord UUID)              |
 
@@ -78,6 +78,49 @@ kept in the =value_uuid= and =value_name= columns of the =field= table
 
 Multiple independent trees can coexist within the same repository by using different
 field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
+
+*** Tree names
+
+A POSIX file name is a *byte string* — any sequence but =/= and NUL — and is not
+required to be UTF-8. Legacy collections are full of latin-1 names, and such a
+file must be trackable like any other, so a name cannot simply be a string.
+
+A =TreeName= therefore carries the **exact bytes**, and the text is derived from
+them:
+
+- the **bytes are the identity**: equality, ordering, hashing and the forest's
+  uniqueness constraint all go through them, so two files whose names differ
+  only in undecodable bytes are two distinct nodes;
+- the **text is presentation only**: the name as every file manager shows it,
+  undecodable bytes replaced by U+FFFD. *No escape syntax is ever displayed or
+  typed* — the user sees the file's name, not an encoding of it.
+
+This split is forced, not a preference. An encoding that both leaves every valid
+UTF-8 name unchanged *and* is injective cannot exist: if all valid text maps to
+itself, the text form is entirely used up and no undecodable name can map
+anywhere free. Identity must therefore live in the bytes; escaping the text
+would only move the problem onto ordinary names (=50%.txt= → =50%25.txt=).
+
+The consequence to accept: **a lookup by displayed path is not guaranteed
+unique**. Two files in one directory whose names differ only in undecodable
+bytes display identically. Resolution by path must then report the ambiguity
+rather than pick a winner — it never guesses.
+
+*Wire form.* A name that is valid UTF-8 (the overwhelmingly common case) is a
+plain JSON string, byte-for-byte the shape every earlier client read. Only a
+name that no text can represent takes the object form, carrying both what to
+show and what identifies it:
+
+#+BEGIN_SRC json
+{"type": "tree_ref", "value": {"parent": null, "name": "vidéo.mp4"}}
+{"type": "tree_ref", "value": {"parent": null,
+                               "name": {"text": "caf\ufffd.mp4",
+                                        "bytes": "636166e92e6d7034"}}}
+#+END_SRC
+
+=bytes= (lowercase hex) is authoritative; =text= is carried for readers that
+only display. A client that assumed a string meets a different shape rather than
+a silently wrong name — which is why this bumps =API_VERSION=.
 
 Rename (same parent, new name): update =value_name= of one row — O(1).
 Move (different parent): update =value_uuid= of one row — O(1).

@@ -1003,7 +1003,7 @@ fn test_tree_ref_depth_limit() {
         let e = w
             .create_metarecord(vec![Field::new(
                 "parent",
-                Value::TreeRef { parent: Some(prev), name: format!("n{i}") },
+                Value::TreeRef { parent: Some(prev), name: format!("n{i}").into() },
             )])
             .unwrap();
         prev = e.uuid;

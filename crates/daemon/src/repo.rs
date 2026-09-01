@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use rusqlite::Connection;
 
-use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::metarecord::{Field, TreeName, Value};
 
 use crate::config::RepoConfig;
 use crate::db;
@@ -135,7 +135,7 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
 /// `mf repo init` / the GUI (spec-file-tracking "Ignore presets").
 fn create_root_entry(conn: &mut Connection) -> Result<()> {
     let fields = vec![
-        Field::new("mfr_path", Value::TreeRef { parent: None, name: String::new() }),
+        Field::new("mfr_path", Value::TreeRef { parent: None, name: TreeName::default() }),
         Field::new("mfr_type", Value::String("dir".to_string())),
         Field::new("mf_watch", Value::Bool(false)),
     ];

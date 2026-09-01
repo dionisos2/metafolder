@@ -741,10 +741,8 @@ pub(crate) fn create_record_for(
     let parent = ensure_parent_metarecords(writer, cache, root, rel, extra_fields)?;
     let name = rel.rsplit('/').next().unwrap_or(rel);
     let abs = root.join(rel.trim_start_matches('/'));
-    let mut fields = vec![Field::new(
-        "mfr_path",
-        Value::TreeRef { parent: Some(parent), name: name.to_string() },
-    )];
+    let mut fields =
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(parent), name: name.into() })];
     fields.extend(fs_meta::stat_fields_in(root, &abs)?);
     if compute_mime {
         if let Some(mime) = detect_mime(&abs) {
@@ -772,7 +770,7 @@ fn apply_move(
         OpType::FileMoved,
         uuid,
         "mfr_path",
-        Value::TreeRef { parent: Some(parent), name: name.to_string() },
+        Value::TreeRef { parent: Some(parent), name: name.into() },
     )?;
     cache.apply_remove("mfr_path", uuid);
     cache.apply_insert("mfr_path", Some(parent), name, uuid);

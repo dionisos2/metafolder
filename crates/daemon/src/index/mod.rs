@@ -344,7 +344,7 @@ impl RepoIndex {
                     field_name: row.name.clone(),
                     uuid,
                     parent: *parent,
-                    name: name.clone(),
+                    name: name.display().into_owned(),
                 });
             }
             match row.value {
