@@ -18,6 +18,7 @@ pub mod pagination;
 pub mod query_exec;
 pub mod reconcile;
 pub mod regexp;
+pub mod relpath;
 pub mod repo;
 pub mod reserved;
 pub mod routes;

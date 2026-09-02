@@ -22,6 +22,7 @@ use crate::eligibility;
 use crate::fingerprint;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
+use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
 
@@ -595,7 +596,13 @@ impl Apply<'_, '_> {
     /// Resolves the parent directory entry of `rel`, creating any missing
     /// intermediate directory metarecords (with their stat fields).
     fn ensure_parents(&mut self, rel: &str) -> Result<Uuid> {
-        ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel, &[])
+        ensure_parent_metarecords(
+            &mut self.writer,
+            self.cache,
+            self.root,
+            &RelPath::from_display(rel),
+            &[],
+        )
     }
 
     fn apply_create(&mut self, rel: &str) -> Result<()> {
@@ -1031,37 +1038,36 @@ pub(crate) fn ensure_parent_metarecords(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
-    rel: &str,
+    rel: &RelPath,
     extra_fields: &[Field],
 ) -> Result<Uuid> {
-    let parent_path = match rel.rfind('/') {
-        Some(i) => &rel[..i],
-        None => "",
-    };
-    let comps: Vec<&str> = parent_path.split('/').collect();
     let mut parent = cache
         .resolve_path(writer.connection(), "mfr_path", "")?
         .context("filesystem root entry missing — was the repository initialised?")?;
-    let mut prefix = String::new();
-    for comp in comps.iter().skip(1) {
-        prefix.push('/');
-        prefix.push_str(comp);
-        if let Some(existing) = cache.resolve_path(writer.connection(), "mfr_path", &prefix)? {
+    // Walk down the ancestors, creating what is missing. The prefix carries the
+    // exact bytes, so a directory whose own name does not decode is created
+    // like any other and its children still resolve underneath it.
+    let mut prefix = RelPath::root();
+    for comp in rel.parent().components() {
+        prefix = prefix.child(comp.clone());
+        if let Some(existing) =
+            cache.resolve_path(writer.connection(), "mfr_path", &prefix.display())?
+        {
             parent = existing;
             continue;
         }
         let mut fields = vec![Field::new(
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: (*comp).into() },
+            Value::TreeRef { parent: Some(parent), name: comp.clone() },
         )];
-        match fs_meta::stat_fields_in(root, &root.join(prefix.trim_start_matches('/'))) {
+        match fs_meta::stat_fields_in(root, &prefix.to_abs(root)) {
             Ok(stat) => fields.extend(stat),
             // Directory already gone: minimal metarecord, reconcile fixes it.
             Err(_) => fields.push(Field::new("mfr_type", Value::String("dir".into()))),
         }
         fields.extend(extra_fields.iter().cloned());
         let created = writer.create_metarecord(fields)?;
-        cache.apply_insert("mfr_path", Some(parent), &TreeName::from(*comp), created.uuid);
+        cache.apply_insert("mfr_path", Some(parent), comp, created.uuid);
         parent = created.uuid;
     }
     Ok(parent)

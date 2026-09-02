@@ -217,6 +217,36 @@ fn test_reconcile_creates_records_for_new_files() {
 
 #[cfg(unix)]
 #[test]
+fn test_reconcile_tracks_a_file_whose_name_is_not_utf8() {
+    // A POSIX file name is a byte string. Legacy collections are full of
+    // latin-1 names, and such a file must be tracked like any other
+    // (spec-data-model "Tree names"): the metarecord carries the exact bytes,
+    // so the file can still be opened, and shows the name a file manager shows.
+    use std::os::unix::ffi::OsStrExt;
+    let (repo, root) = setup("non-utf8");
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.mp4");
+    std::fs::write(root.path().join(name), b"movie").unwrap();
+    write_file(&root, "plain.txt", b"ok");
+
+    let result = run(&repo);
+    assert_eq!(result.created, 2, "both files get a metarecord: {result:?}");
+
+    // Found by its displayed path, and holding the exact bytes.
+    let uuid = resolve(&repo, "/caf\u{FFFD}.mp4").expect("a metarecord for the latin-1 file");
+    let Some(Value::TreeRef { name, .. }) = field_value(&repo, uuid, "mfr_path") else {
+        panic!("mfr_path is not a tree_ref");
+    };
+    assert_eq!(name.as_bytes(), b"caf\xe9.mp4");
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(5)));
+
+    // Idempotent: the second run must recognise it rather than create a twin.
+    assert_eq!(run(&repo).created, 0);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn test_reconcile_tracks_a_symlink_without_following_it() {
     let (repo, root) = setup("symlink");
     // Target is outside the repo and does not exist: following it would fail to

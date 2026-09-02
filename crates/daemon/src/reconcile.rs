@@ -21,6 +21,7 @@ use crate::executor::ensure_parent_metarecords;
 use crate::fingerprint;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
+use crate::relpath::{file_name_bytes, RelPath};
 use crate::similarity::{similarity_score, FileSig};
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
@@ -162,8 +163,16 @@ pub fn reconcile_full_reported(
     // frozen — not walked, not orphaned, not offered as candidates
     // (spec-file-tracking "Offline subtrees").
     let offline = crate::mount::offline(writer.connection(), &mut cache, &root)?;
-    let paths =
-        walk(&mut writer, &mut cache, &root, &internal_dir, "", &mut elig, &offline, reporter)?;
+    let paths = walk(
+        &mut writer,
+        &mut cache,
+        &root,
+        &internal_dir,
+        &RelPath::root(),
+        &mut elig,
+        &offline,
+        reporter,
+    )?;
 
     // Stat phase: the total is now known, so this (the heavy syscall pass) is a
     // determinate phase (spec-tasks "Decompose walk").
@@ -178,8 +187,8 @@ pub fn reconcile_full_reported(
     // known, so this indexing pass reports a determinate "index" phase.
     let index_total = fs_paths.len() as u64;
     reporter.progress("index", Some(0), Some(index_total));
-    let mut new_files: Vec<(String, Metadata)> = Vec::new();
-    let mut disk_files: Vec<String> = Vec::new();
+    let mut new_files: Vec<(RelPath, Metadata)> = Vec::new();
+    let mut disk_files: Vec<RelPath> = Vec::new();
     for (i, (rel, meta)) in fs_paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("index", Some(i as u64), Some(index_total));
@@ -190,7 +199,7 @@ pub fn reconcile_full_reported(
         if meta.is_file() {
             disk_files.push(rel.clone());
         }
-        if cache.resolve_path(writer.connection(), "mfr_path", rel)?.is_none() {
+        if cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?.is_none() {
             new_files.push((rel.clone(), meta.clone()));
         }
     }
@@ -226,9 +235,9 @@ pub fn reconcile_full_reported(
     // Step 3 — fingerprint phase. Hashes of disk files are computed lazily
     // and memoised across orphans. Per-orphan match lists are kept so the
     // similarity phase can extend them.
-    let mut partial_cache: HashMap<String, String> = HashMap::new();
-    let mut full_cache: HashMap<String, String> = HashMap::new();
-    let mut claimed: HashSet<String> = HashSet::new();
+    let mut partial_cache: HashMap<RelPath, String> = HashMap::new();
+    let mut full_cache: HashMap<RelPath, String> = HashMap::new();
+    let mut claimed: HashSet<RelPath> = HashSet::new();
 
     struct OrphanState {
         uuid: Uuid,
@@ -273,15 +282,15 @@ pub fn reconcile_full_reported(
         let stored_partial = string_field(&writer, orphan, "mfr_partial_hash")?;
         let stored_full = string_field(&writer, orphan, "mfr_full_hash")?;
 
-        let mut definitive: Option<String> = None;
+        let mut definitive: Option<RelPath> = None;
         for (rel, meta) in &new_files {
             if claimed.contains(rel) || !meta.is_file() || meta.len() as i64 != size {
                 continue;
             }
-            let abs = root.join(rel.trim_start_matches('/'));
+            let abs = rel.to_abs(&root);
             match &stored_partial {
                 None => state.matches.push(CandidateMatch {
-                    path: rel.clone(),
+                    path: rel.display(),
                     fingerprint: "size",
                     score: None,
                 }),
@@ -299,7 +308,7 @@ pub fn reconcile_full_reported(
                     }
                     match &stored_full {
                         None => state.matches.push(CandidateMatch {
-                            path: rel.clone(),
+                            path: rel.display(),
                             fingerprint: "partial_hash",
                             score: None,
                         }),
@@ -330,7 +339,7 @@ pub fn reconcile_full_reported(
         } else {
             // Fingerprint candidate files wait for confirmation: not auto-created.
             for m in &state.matches {
-                claimed.insert(m.path.clone());
+                claimed.insert(RelPath::from_display(&m.path));
             }
         }
         states.push(state);
@@ -350,10 +359,11 @@ pub fn reconcile_full_reported(
                     continue;
                 }
                 let new_size = meta.is_file().then_some(meta.len() as i64);
-                let score = similarity_score(&orphan_sig, &FileSig::from_path(rel, new_size));
+                let score =
+                    similarity_score(&orphan_sig, &FileSig::from_path(&rel.display(), new_size));
                 if score >= threshold {
                     state.matches.push(CandidateMatch {
-                        path: rel.clone(),
+                        path: rel.display(),
                         fingerprint: "similarity",
                         score: Some(score),
                     });
@@ -374,7 +384,7 @@ pub fn reconcile_full_reported(
     }
 
     // Step 5 — create metarecords for the remaining new files, parents first.
-    new_files.sort_by_key(|(rel, _)| rel.matches('/').count());
+    new_files.sort_by_key(|(rel, _)| rel.depth());
     let create_total = new_files.len() as u64;
     reporter.progress("create", Some(0), Some(create_total));
     for (i, (rel, _)) in new_files.iter().enumerate() {
@@ -387,7 +397,7 @@ pub fn reconcile_full_reported(
         if claimed.contains(rel) {
             continue;
         }
-        if cache.resolve_path(writer.connection(), "mfr_path", rel)?.is_some() {
+        if cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
         create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
@@ -410,7 +420,9 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) =
+                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
+            {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -428,7 +440,9 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) =
+                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
+            {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -447,7 +461,9 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) =
+                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
+            {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -519,16 +535,17 @@ pub fn reconcile_metarecord_reported(
     // Pure walk of the subtree (BFS, no stat) then the determinate stat phase,
     // same shape as the whole-repository reconcile (spec-tasks).
     let mut elig = eligibility::EligibilityCache::default();
-    let mut paths: Vec<String> = Vec::new();
-    let abs_base = root.join(base.trim_start_matches('/'));
+    let mut paths: Vec<RelPath> = Vec::new();
+    let base_rel = RelPath::from_display(&base);
+    let abs_base = base_rel.to_abs(&root);
     if abs_base.exists() {
-        paths.push(base.clone()); // The subtree root itself.
+        paths.push(base_rel.clone()); // The subtree root itself.
         paths.extend(walk(
             &mut writer,
             &mut cache,
             &root,
             &repo.internal_dir(),
-            &base,
+            &base_rel,
             &mut elig,
             &offline,
             reporter,
@@ -539,7 +556,7 @@ pub fn reconcile_metarecord_reported(
         return Err(cancelled());
     }
 
-    fs_paths.sort_by_key(|(rel, _)| rel.matches('/').count());
+    fs_paths.sort_by_key(|(rel, _)| rel.depth());
     let create_total = fs_paths.len() as u64;
     reporter.progress("create", Some(0), Some(create_total));
     for (i, (rel, _)) in fs_paths.iter().enumerate() {
@@ -551,7 +568,7 @@ pub fn reconcile_metarecord_reported(
         }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
-        match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+        match cache.resolve_path(writer.connection(), "mfr_path", &rel.display())? {
             Some(existing) => {
                 if refresh {
                     refresh_stat_fields(&mut writer, &root, existing, rel)?;
@@ -577,7 +594,9 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) =
+                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
+            {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -597,7 +616,9 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) = cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            if let Some(uuid) =
+                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
+            {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -626,15 +647,15 @@ fn walk(
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
-    base: &str,
+    base: &RelPath,
     elig: &mut eligibility::EligibilityCache,
     offline: &crate::mount::OfflineMounts,
     reporter: &Reporter,
-) -> Result<Vec<String>> {
-    let mut paths: Vec<String> = Vec::new();
+) -> Result<Vec<RelPath>> {
+    let mut paths: Vec<RelPath> = Vec::new();
     // The two lists the traversal alternates between: the directories at the
     // current depth, and those discovered for the next.
-    let mut frontier: Vec<String> = vec![base.to_string()];
+    let mut frontier: Vec<RelPath> = vec![base.clone()];
     let mut depth: u64 = 0;
     // Files seen across the *whole* walk so far. Reported in the phase label so
     // the displayed count actually advances: the per-depth `done/total`
@@ -645,7 +666,7 @@ fn walk(
         let dirs_at_depth = frontier.len() as u64;
         let label =
             |files: u64| format!("walk (depth {depth}, {dirs_at_depth} dirs, {files} files)");
-        let mut next: Vec<String> = Vec::new();
+        let mut next: Vec<RelPath> = Vec::new();
         for (i, dir) in frontier.iter().enumerate() {
             if (i as u64).is_multiple_of(PROGRESS_STEP as u64) {
                 reporter.progress(&label(files), Some(i as u64), Some(dirs_at_depth));
@@ -653,25 +674,24 @@ fn walk(
                     anyhow::bail!("reconcile cancelled");
                 }
             }
-            let abs = root.join(dir.trim_start_matches('/'));
+            let abs = dir.to_abs(root);
             let entries = match std::fs::read_dir(&abs) {
                 Ok(entries) => entries,
                 Err(_) => continue, // Not a directory or unreadable.
             };
             for entry in entries {
                 let entry = entry?;
-                let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-                    crate::diagnostics::warn(
-                        "reconcile",
-                        format!("skipping non-UTF-8 name under {abs:?}"),
-                    );
-                    continue;
-                };
+                // A POSIX name is a byte string, and the daemon tracks such a
+                // file like any other (spec-data-model "Tree names").
+                let name = TreeName::from_bytes(file_name_bytes(&entry.file_name()));
                 if entry.path() == internal_dir {
                     continue;
                 }
-                let rel = format!("{dir}/{name}");
-                if !eligibility::is_eligible_cached(writer.connection(), cache, &rel, elig)? {
+                let rel = dir.child(name);
+                // Ignore patterns are regexes over text, so they see the
+                // displayed path — the same one the user wrote them against.
+                let display = rel.display();
+                if !eligibility::is_eligible_cached(writer.connection(), cache, &display, elig)? {
                     continue;
                 }
                 // `file_type` is free here (from the dir entry, no stat).
@@ -681,7 +701,7 @@ fn walk(
                     // An offline mount point is itself an ordinary directory
                     // (it exists, its own metadata is real); what is behind it
                     // is not there to be walked.
-                    if offline.contains(&rel) {
+                    if offline.contains(&display) {
                         continue;
                     }
                     next.push(rel);
@@ -712,15 +732,15 @@ fn walk(
 /// the rest of reconcile consumes. The total is known, so this — the heavy
 /// syscall pass — reports a determinate "stat" phase. Paths that vanished
 /// between the walk and the stat are skipped.
-fn stat_paths(root: &Path, paths: &[String], reporter: &Reporter) -> Vec<(String, Metadata)> {
+fn stat_paths(root: &Path, paths: &[RelPath], reporter: &Reporter) -> Vec<(RelPath, Metadata)> {
     let total = paths.len() as u64;
     reporter.progress("stat", Some(0), Some(total));
-    let mut out: Vec<(String, Metadata)> = Vec::with_capacity(paths.len());
+    let mut out: Vec<(RelPath, Metadata)> = Vec::with_capacity(paths.len());
     for (i, rel) in paths.iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("stat", Some(i as u64), Some(total));
         }
-        let abs = root.join(rel.trim_start_matches('/'));
+        let abs = rel.to_abs(root);
         // symlink_metadata matches the former DirEntry::metadata (no symlink follow).
         if let Ok(meta) = std::fs::symlink_metadata(&abs) {
             out.push((rel.clone(), meta));
@@ -737,15 +757,15 @@ pub(crate) fn create_record_for(
     writer: &mut Writer,
     cache: &mut TreeCache,
     root: &Path,
-    rel: &str,
+    rel: &RelPath,
     extra_fields: &[Field],
     compute_mime: bool,
 ) -> Result<Uuid> {
     let parent = ensure_parent_metarecords(writer, cache, root, rel, extra_fields)?;
-    let name = rel.rsplit('/').next().unwrap_or(rel);
-    let abs = root.join(rel.trim_start_matches('/'));
+    let name = rel.name().cloned().unwrap_or_default();
+    let abs = rel.to_abs(root);
     let mut fields =
-        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(parent), name: name.into() })];
+        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(parent), name: name.clone() })];
     fields.extend(fs_meta::stat_fields_in(root, &abs)?);
     if compute_mime {
         if let Some(mime) = detect_mime(&abs) {
@@ -754,7 +774,7 @@ pub(crate) fn create_record_for(
     }
     fields.extend(extra_fields.iter().cloned());
     let created = writer.create_metarecord(fields)?;
-    cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), created.uuid);
+    cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
     Ok(created.uuid)
 }
 
@@ -765,26 +785,26 @@ fn apply_move(
     cache: &mut TreeCache,
     root: &Path,
     uuid: Uuid,
-    rel: &str,
+    rel: &RelPath,
 ) -> Result<()> {
     let parent = ensure_parent_metarecords(writer, cache, root, rel, &[])?;
-    let name = rel.rsplit('/').next().unwrap_or(rel);
+    let name = rel.name().cloned().unwrap_or_default();
     writer.set_field_as(
         OpType::FileMoved,
         uuid,
         "mfr_path",
-        Value::TreeRef { parent: Some(parent), name: name.into() },
+        Value::TreeRef { parent: Some(parent), name: name.clone() },
     )?;
     cache.apply_remove("mfr_path", uuid);
-    cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), uuid);
+    cache.apply_insert("mfr_path", Some(parent), &name, uuid);
     refresh_stat_fields(writer, root, uuid, rel)
 }
 
 /// Refreshes the stat-derived fields of an existing metarecord, writing only the
 /// fields whose value actually changed (idempotent reconciles do not grow
 /// the log).
-fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -> Result<()> {
-    let Ok(stat) = fs_meta::stat_fields_in(root, &root.join(rel.trim_start_matches('/'))) else {
+fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPath) -> Result<()> {
+    let Ok(stat) = fs_meta::stat_fields_in(root, &rel.to_abs(root)) else {
         return Ok(());
     };
     for field in stat {
@@ -817,11 +837,11 @@ fn detect_mime(abs: &Path) -> Option<String> {
 /// Sets `mfr_mime` on a file record that does not have one yet. Idempotent: an
 /// existing `mfr_mime` is never recomputed (so re-running reconcile does not
 /// grow the log; content changes are out of scope, like the hashes).
-fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &str) -> Result<()> {
+fn maybe_compute_mime(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPath) -> Result<()> {
     if !db::get_field_rows_named(writer.connection(), uuid, "mfr_mime")?.is_empty() {
         return Ok(());
     }
-    let abs = root.join(rel.trim_start_matches('/'));
+    let abs = rel.to_abs(root);
     if let Some(mime) = detect_mime(&abs) {
         writer.set_field_as(OpType::FileModified, uuid, "mfr_mime", Value::String(mime))?;
     }
@@ -841,13 +861,13 @@ fn maybe_extract_metadata(
     writer: &mut Writer,
     root: &Path,
     uuid: Uuid,
-    rel: &str,
+    rel: &RelPath,
     map: &crate::metadata_map::MetadataMap,
 ) -> Result<()> {
     if !db::get_field_rows_named(writer.connection(), uuid, "mfr_meta_extracted")?.is_empty() {
         return Ok(());
     }
-    let abs = root.join(rel.trim_start_matches('/'));
+    let abs = rel.to_abs(root);
     for field in crate::metadata::extract(&abs, map) {
         writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
     }

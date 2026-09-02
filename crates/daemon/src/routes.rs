@@ -1921,7 +1921,7 @@ async fn track(
             &mut writer,
             &mut cache,
             &repo_state.config.root,
-            &rel,
+            &crate::relpath::RelPath::from_display(&rel),
             &untracked,
             false,
         )?;
