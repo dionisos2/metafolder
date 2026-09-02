@@ -661,7 +661,10 @@ fn walk(
             for entry in entries {
                 let entry = entry?;
                 let Some(name) = entry.file_name().to_str().map(str::to_string) else {
-                    eprintln!("[reconcile] skipping non-UTF-8 name under {abs:?}");
+                    crate::diagnostics::warn(
+                        "reconcile",
+                        format!("skipping non-UTF-8 name under {abs:?}"),
+                    );
                     continue;
                 };
                 if entry.path() == internal_dir {

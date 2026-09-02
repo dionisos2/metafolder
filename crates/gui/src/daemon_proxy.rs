@@ -45,6 +45,11 @@ pub struct DaemonProxy {
     /// file. Stable across daemon restarts, so caching is safe; cleared and
     /// re-read once on a 401 (covers the daemon having regenerated it).
     token: Mutex<Option<String>>,
+    /// Cursor into the daemon's diagnostics feed: the last entry id drained
+    /// into the message panels. Starts at 0 so the first poll picks up whatever
+    /// the daemon already warned about — including why a repository failed to
+    /// load, which happens before the GUI is up.
+    diagnostics_since: Mutex<u64>,
 }
 
 impl DaemonProxy {
@@ -61,6 +66,7 @@ impl DaemonProxy {
             base_url: Mutex::new(base_url),
             health: Mutex::new(None),
             token: Mutex::new(None),
+            diagnostics_since: Mutex::new(0),
         }
     }
 
@@ -159,6 +165,34 @@ impl DaemonProxy {
             return None;
         }
         response.body.get("name").and_then(Value::as_str).map(str::to_string)
+    }
+
+    /// Drains the daemon's diagnostics feed into every workspace's message log
+    /// (spec-gui "Daemon diagnostics"). The daemon runs as its own process, so
+    /// its stderr is invisible here; this is the only way its warnings reach
+    /// the person using the GUI.
+    ///
+    /// Best effort: an unreachable or unexpected answer leaves the cursor where
+    /// it was, so nothing is skipped and the next poll retries the same spot.
+    pub async fn drain_diagnostics(&self, gui: &GuiState) {
+        let since = *self.diagnostics_since.lock_recover();
+        let Ok(ProxyResponse { status: 200, body }) =
+            self.request("GET", &format!("/diagnostics?since={since}"), None).await
+        else {
+            return;
+        };
+        let (lines, next) = crate::diagnostics::lines_from_page(&body, since);
+        *self.diagnostics_since.lock_recover() = next;
+        if lines.is_empty() {
+            return;
+        }
+        // A daemon-wide warning concerns every workspace, so it goes to each
+        // message log rather than to whichever one happens to be focused.
+        for workspace in gui.workspaces() {
+            for line in &lines {
+                let _ = gui.append_message(&workspace.id, line);
+            }
+        }
     }
 
     /// One health probe; emits `daemon-health-changed` when the state differs

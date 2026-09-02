@@ -85,6 +85,36 @@ async fn test_health() {
 }
 
 #[tokio::test]
+async fn test_diagnostics_feed_serves_what_the_daemon_warned_about() {
+    // The GUI is a separate process and cannot read the daemon's stderr, so the
+    // warnings it prints are also served here (spec-main "Diagnostics feed").
+    let app = app();
+    // Start from the current head: the feed is process-wide, and other tests in
+    // this binary may have recorded into it.
+    let (_, head) = request(&app, "GET", "/diagnostics?since=0&limit=1000", None).await;
+    let since = head["next_since"].as_u64().unwrap();
+
+    metafolder_daemon::diagnostics::warn("watcher", "failed to watch /some/dir");
+    metafolder_daemon::diagnostics::error("executor", "flush failed");
+
+    let (status, body) = request(&app, "GET", &format!("/diagnostics?since={since}"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2, "both warnings should be served: {body}");
+    assert_eq!(entries[0]["scope"], json!("watcher"));
+    assert_eq!(entries[0]["level"], json!("warning"));
+    assert_eq!(entries[0]["message"], json!("failed to watch /some/dir"));
+    assert_eq!(entries[1]["level"], json!("error"));
+    assert!(entries[0]["at_ms"].as_i64().unwrap() > 0);
+
+    // Resuming from where it said leaves nothing to read.
+    let resume = body["next_since"].as_u64().unwrap();
+    let (_, again) = request(&app, "GET", &format!("/diagnostics?since={resume}"), None).await;
+    assert!(again["entries"].as_array().unwrap().is_empty());
+    assert_eq!(again["dropped"], json!(0));
+}
+
+#[tokio::test]
 async fn test_init_load_and_list_repos() {
     let (app, repo, root) = app_with_repo("repos").await;
 

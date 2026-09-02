@@ -34,6 +34,7 @@ use crate::tasks::TaskKind;
 pub fn build(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/health", get(health))
+        .route("/diagnostics", get(diagnostics_since))
         .route("/tasks", get(list_all_tasks))
         .route("/repos", get(list_repos))
         .route("/repos/init", post(init_repo))
@@ -528,6 +529,29 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "api_version": metafolder_core::API_VERSION,
         "repos": state.list_repos(false).len(),
     }))
+}
+
+/// `GET /diagnostics?since=&limit=` — the warnings the daemon printed to
+/// stderr, so a client that did not start the daemon (the GUI runs as its own
+/// process) can show them. `since` is the last id seen, 0 for "everything the
+/// ring still holds"; the reply says where to resume and how many entries fell
+/// out before it could read them.
+#[derive(Debug, serde::Deserialize)]
+pub struct DiagnosticsQuery {
+    #[serde(default)]
+    since: u64,
+    limit: Option<usize>,
+}
+
+/// Bounds one page, whatever the client asks for: the feed is a debugging aid,
+/// not a bulk endpoint.
+const DIAGNOSTICS_MAX_PAGE: usize = 500;
+
+async fn diagnostics_since(
+    Query(query): Query<DiagnosticsQuery>,
+) -> Json<crate::diagnostics::Page> {
+    let limit = query.limit.unwrap_or(DIAGNOSTICS_MAX_PAGE).min(DIAGNOSTICS_MAX_PAGE);
+    Json(crate::diagnostics::read(query.since, limit))
 }
 
 /// The optional `?all=true` query parameter on `GET /repos` (include system repos).

@@ -124,7 +124,10 @@ pub fn seed_schema_file(metafolder_dir: &Path, source: &Path) {
     }
     let dest = metafolder_dir.join("schema.json");
     if let Err(e) = std::fs::copy(source, &dest) {
-        eprintln!("warning: failed to seed default schema from {source:?} into {dest:?}: {e}");
+        crate::diagnostics::warn(
+            "repo",
+            format!("failed to seed default schema from {source:?} into {dest:?}: {e}"),
+        );
     }
 }
 

@@ -57,7 +57,7 @@ impl WatcherInner {
         }
         if let Some(w) = self.watcher.lock_recover().as_mut() {
             if let Err(err) = w.watch(dir, notify::RecursiveMode::NonRecursive) {
-                eprintln!("[watcher] failed to watch {dir:?}: {err}");
+                crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
                 watched.remove(dir);
             }
         }
@@ -166,7 +166,7 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
                     let _ = tx.send(events); // The ingest thread is gone: unloaded.
                 }
             }
-            Err(err) => eprintln!("[watcher] backend error: {err}"),
+            Err(err) => crate::diagnostics::error("watcher", format!("backend error: {err}")),
         }
     })
     .context("Failed to create the filesystem watcher")?;
@@ -212,7 +212,7 @@ pub fn compute_watched_dirs_timed(
         }
         Ok(false) => return (out, start.elapsed(), elig),
         Err(err) => {
-            eprintln!("[watcher] root eligibility check failed: {err:#}");
+            crate::diagnostics::warn("watcher", format!("root eligibility check failed: {err:#}"));
             return (out, start.elapsed(), elig);
         }
     }
@@ -286,7 +286,10 @@ fn collect_eligible_dirs(
                     stack.push(rel);
                 }
                 Ok(false) => {} // Ineligible directory: pruned (cascading skip).
-                Err(err) => eprintln!("[watcher] eligibility check for {rel:?} failed: {err:#}"),
+                Err(err) => crate::diagnostics::warn(
+                    "watcher",
+                    format!("eligibility check for {rel:?} failed: {err:#}"),
+                ),
             }
         }
     }
@@ -306,7 +309,7 @@ fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<String> {
             return None;
         };
         let Some(name) = name.to_str() else {
-            eprintln!("[watcher] skipping non-UTF-8 name under {abs:?}");
+            crate::diagnostics::warn("watcher", format!("skipping non-UTF-8 name under {abs:?}"));
             return None;
         };
         out.push('/');
@@ -398,7 +401,7 @@ fn ingest(
     let conn = repo.conn.lock_recover();
     for (ev, tracker) in &events {
         if let Err(err) = executor::enqueue(&conn, ev, *tracker) {
-            eprintln!("[watcher] failed to enqueue {ev:?}: {err:#}");
+            crate::diagnostics::error("watcher", format!("failed to enqueue {ev:?}: {err:#}"));
         }
     }
     drop(conn);

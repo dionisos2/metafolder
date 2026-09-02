@@ -220,9 +220,9 @@ impl RepoState {
                 true
             }
             Err(e) => {
-                eprintln!(
-                    "warning: failed to build query index for {}: {e}",
-                    self.config.repo_uuid
+                crate::diagnostics::warn(
+                    "warmup",
+                    format!("failed to build query index for {}: {e}", self.config.repo_uuid),
                 );
                 false // a bailed scan leaves `forest` partial — do not trust it
             }
@@ -239,7 +239,10 @@ impl RepoState {
                 t.elapsed()
             );
         } else if let Err(e) = self.lock_cache().populate(&conn) {
-            eprintln!("warning: failed to populate tree cache for {}: {e}", self.config.repo_uuid);
+            crate::diagnostics::warn(
+                "warmup",
+                format!("failed to populate tree cache for {}: {e}", self.config.repo_uuid),
+            );
         }
 
         // Place the watcher's directory watches now that the tree cache is

@@ -29,6 +29,28 @@ async fn spawn_stub() -> (String, Recorded) {
             }),
         )
         .route(
+            "/diagnostics",
+            get(|request: axum::extract::Request| async move {
+                // Answers the backlog on the first poll (since=0) and nothing
+                // afterwards, like the real feed.
+                let query = request.uri().query().unwrap_or("").to_string();
+                if query.contains("since=0") {
+                    Json(json!({
+                        "entries": [
+                            { "id": 1, "at_ms": 1, "level": "warning", "scope": "watcher",
+                              "message": "failed to watch /a/b", "repo": null },
+                            { "id": 2, "at_ms": 2, "level": "error", "scope": "executor",
+                              "message": "flush failed", "repo": null },
+                        ],
+                        "next_since": 2,
+                        "dropped": 0,
+                    }))
+                } else {
+                    Json(json!({ "entries": [], "next_since": 2, "dropped": 0 }))
+                }
+            }),
+        )
+        .route(
             "/fail",
             any(|| async {
                 (axum::http::StatusCode::BAD_REQUEST, Json(json!({"error": "bad request"})))
@@ -266,4 +288,39 @@ async fn test_set_url_is_visible() {
     assert_eq!(proxy.base_url(), "http://127.0.0.1:7523");
     proxy.set_url("http://127.0.0.1:9999".into());
     assert_eq!(proxy.base_url(), "http://127.0.0.1:9999");
+}
+
+#[tokio::test]
+async fn test_daemon_diagnostics_reach_the_message_log() {
+    // The daemon is a separate process, so its stderr is invisible to the GUI:
+    // its warnings are drained from the feed into the message panels instead
+    // (spec-gui "Daemon diagnostics").
+    let (url, _) = spawn_stub().await;
+    let proxy = DaemonProxy::new(url);
+    let (_notifier, gui) = gui_with_notifier();
+    let ws = gui.workspaces().first().expect("a workspace exists").id.clone();
+
+    proxy.drain_diagnostics(&gui).await;
+
+    let messages = gui.messages(&ws).unwrap();
+    let texts: Vec<&str> = messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        vec!["daemon watcher: failed to watch /a/b", "daemon executor: error: flush failed"]
+    );
+
+    // The cursor advanced: a second poll adds nothing (no duplicate lines).
+    proxy.drain_diagnostics(&gui).await;
+    assert_eq!(gui.messages(&ws).unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_an_unreachable_daemon_leaves_the_diagnostics_cursor_alone() {
+    // Nothing is skipped when the feed cannot be read: the next poll retries
+    // the same position.
+    let proxy = DaemonProxy::new("http://127.0.0.1:1".into());
+    let (_notifier, gui) = gui_with_notifier();
+    let ws = gui.workspaces().first().expect("a workspace exists").id.clone();
+    proxy.drain_diagnostics(&gui).await;
+    assert!(gui.messages(&ws).unwrap().is_empty());
 }

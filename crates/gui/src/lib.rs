@@ -10,6 +10,7 @@ pub mod command_registry;
 pub mod commands;
 pub mod config;
 pub mod daemon_proxy;
+pub mod diagnostics;
 pub mod events;
 pub mod fs_commands;
 pub mod history;
@@ -361,7 +362,11 @@ pub fn run(options: Options) {
             let poll_gui = gui.clone();
             tauri::async_runtime::spawn(async move {
                 loop {
-                    poll_daemon.check_health(&poll_gui).await;
+                    // Only drain diagnostics from a daemon we can reach; a
+                    // failed probe would only produce a failed feed request.
+                    if poll_daemon.check_health(&poll_gui).await {
+                        poll_daemon.drain_diagnostics(&poll_gui).await;
+                    }
                     tokio::time::sleep(health_poll_interval).await;
                 }
             });

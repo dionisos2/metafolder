@@ -130,6 +130,42 @@ Response: =200 OK=, body ={"status": "ok", "version": "<crate version>",
 "repos": <number of loaded repos>}= — enough for a client to confirm the daemon,
 its build, and that it has repositories loaded in one call.
 
+** Diagnostics feed
+
+#+BEGIN_SRC
+GET /diagnostics?since=<id>&limit=<n>
+#+END_SRC
+
+The warnings the daemon prints to stderr, also kept in a bounded in-memory ring
+so a client can read them. The daemon runs as *its own process*: a GUI has no
+handle on its stderr, so a warning from the watcher — a directory it could not
+watch, filesystem events it had to drop, a file it had to skip — reached only
+whichever terminal started the daemon and was invisible to the person actually
+using the software.
+
+Response: ={"entries": [...], "next_since": <id>, "dropped": <n>}=. Each entry
+is ={id, at_ms, level, scope, message, repo}=, where =level= is =warning= or
+=error= and =scope= names the part that spoke (=watcher=, =reconcile=,
+=executor=, =prune=, =warmup=…). Entries come oldest first.
+
+- =since= is the last id the client saw; *0 means "everything the ring still
+  holds"*. Ids start at 1 and are monotonic **per daemon run** — they are not
+  stable across restarts, so a client that reconnects starts from 0 again and
+  sees whatever the current run has recorded.
+- =next_since= is where to resume. A client passes it back unchanged; it never
+  has to compute a cursor.
+- =dropped= counts entries that fell out of the ring before this poll could read
+  them, so a client that fell behind can *say so* instead of quietly showing an
+  incomplete history.
+
+The ring holds 500 entries and a page is capped at 500. This is an operator aid,
+not a control channel: recording never fails and never blocks a write, and the
+oldest entries are dropped rather than any write being delayed.
+
+Not everything on stderr is here. Timing traces (tree-cache scans, warmup
+phases) stay stderr-only — they are for whoever is profiling the daemon, not for
+the person using it.
+
 ** Repository management
 
 #+BEGIN_SRC

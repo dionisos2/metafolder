@@ -562,6 +562,23 @@ in place instead.
 
 * GUI
 
+** Daemon diagnostics
+
+The GUI polls =GET /diagnostics= (see [[file:spec-main.org][spec-main.org]] "Diagnostics feed") on the
+same loop as the health probe, and appends what it finds to *every* workspace's
+message log — a daemon-wide warning concerns them all, not whichever one happens
+to be focused. This is the only way the daemon's warnings reach the user: the
+daemon is a separate process and the GUI cannot read its stderr.
+
+A line reads =daemon <scope>: <message>=, with =error:= spelled out for the
+error level (a warning is the common case, and the prefix would be noise on
+every line). When the feed reports dropped entries, a line says so before them.
+
+The cursor starts at 0, so the first poll picks up whatever the daemon already
+warned about — including why a repository failed to load, which happens before
+the GUI is up. It only advances on a well-formed answer: an unreachable daemon
+or an unexpected shape re-polls the same position rather than skipping entries.
+
 ** Connection to the daemon
 
 The GUI connects to the daemon on 127.0.0.1 at the port configured by the user:

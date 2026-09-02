@@ -317,9 +317,12 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
             if failures >= FLUSH_FAILURE_BUDGET {
                 repo.flush_failures.store(0, Ordering::Relaxed);
                 let dropped = discard_pending(repo).unwrap_or(0);
-                eprintln!(
-                    "[executor] dropping {dropped} filesystem event(s) after {failures} failed \
-                     flushes ({err:#}); run a reconcile to pick up what they carried",
+                crate::diagnostics::error(
+                    "executor",
+                    format!(
+                        "dropping {dropped} filesystem event(s) after {failures} failed \
+                         flushes ({err:#}); run a reconcile to pick up what they carried"
+                    ),
                 );
             }
             Err(err)
@@ -765,11 +768,14 @@ impl Apply<'_, '_> {
         // the cascade is not.
         let total = descendants.len() + 1;
         if self.orphan_limit > 0 && total > self.orphan_limit {
-            eprintln!(
-                "[executor] refusing to orphan {total} metarecords at once (limit {}): \
-                 leaving the paths untouched — confirm with `mf orphan clear` if the \
-                 deletion is real",
-                self.orphan_limit
+            crate::diagnostics::warn(
+                "executor",
+                format!(
+                    "refusing to orphan {total} metarecords at once (limit {}): \
+                     leaving the paths untouched — confirm with `mf orphan clear` if the \
+                     deletion is real",
+                    self.orphan_limit
+                ),
             );
             return Ok(());
         }
@@ -1121,7 +1127,7 @@ pub fn spawn(repo: &Arc<RepoState>, quiet: Duration) -> ExecutorHandle {
                             return; // Repository unloaded.
                         };
                         if let Err(err) = flush_pending(&repo) {
-                            eprintln!("[executor] flush failed: {err:#}");
+                            crate::diagnostics::error("executor", format!("flush failed: {err:#}"));
                         }
                         break;
                     }

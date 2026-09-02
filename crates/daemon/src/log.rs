@@ -988,7 +988,10 @@ fn compact_best_effort(conn: &rusqlite::Connection) -> bool {
     match conn.execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);") {
         Ok(()) => true,
         Err(e) => {
-            eprintln!("[prune] warning: could not compact the database after prune: {e}");
+            crate::diagnostics::warn(
+                "prune",
+                format!("could not compact the database after prune: {e}"),
+            );
             false
         }
     }

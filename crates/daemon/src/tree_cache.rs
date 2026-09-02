@@ -662,7 +662,10 @@ impl TreeCache {
                 }
             }
         }
-        eprintln!("BUG: tree cache parent chain exceeds {MAX_TREE_DEPTH}; returning partial path");
+        crate::diagnostics::error(
+            "tree cache",
+            format!("BUG: parent chain exceeds {MAX_TREE_DEPTH}; returning partial path"),
+        );
         components.reverse();
         components.join("/")
     }
