@@ -14,7 +14,7 @@ use anyhow::{Context as _, Result};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
 use crate::db;
@@ -682,7 +682,7 @@ impl Apply<'_, '_> {
                     "mfr_path",
                     Value::TreeRef { parent: Some(parent), name: name.into() },
                 )?;
-                self.cache.apply_insert("mfr_path", Some(parent), name, orphan);
+                self.cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), orphan);
                 // Refresh the stat-derived fields at the new location.
                 for field in fs_meta::stat_fields_in(self.root, &abs)? {
                     self.writer.set_field_as(
@@ -722,7 +722,7 @@ impl Apply<'_, '_> {
         )];
         fields.extend(stat);
         let created = self.writer.create_metarecord(fields)?;
-        self.cache.apply_insert("mfr_path", Some(parent), name, created.uuid);
+        self.cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), created.uuid);
         Ok(())
     }
 
@@ -830,7 +830,7 @@ impl Apply<'_, '_> {
             "mfr_path",
             Value::TreeRef { parent: Some(parent), name: name.into() },
         )?;
-        self.cache.apply_rename("mfr_path", src, Some(parent), name);
+        self.cache.apply_rename("mfr_path", src, Some(parent), &TreeName::from(name));
         Ok(())
     }
 
@@ -1061,7 +1061,7 @@ pub(crate) fn ensure_parent_metarecords(
         }
         fields.extend(extra_fields.iter().cloned());
         let created = writer.create_metarecord(fields)?;
-        cache.apply_insert("mfr_path", Some(parent), comp, created.uuid);
+        cache.apply_insert("mfr_path", Some(parent), &TreeName::from(*comp), created.uuid);
         parent = created.uuid;
     }
     Ok(parent)

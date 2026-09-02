@@ -2,7 +2,7 @@
 //! "Tree Cache"): path resolution with DB fallback, mutations, descendant
 //! collection, LRU eviction, case sensitivity.
 
-use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::tree_cache::TreeCache;
@@ -335,7 +335,7 @@ fn test_populate_then_mutations_stay_complete_and_correct() {
 
     // Insert a new file under jazz: cache stays complete and reflects it.
     let new = tree_entry(&mut conn, "mfr_path", Some(jazz), "b.mp3");
-    cache.apply_insert("mfr_path", Some(jazz), "b.mp3", new);
+    cache.apply_insert("mfr_path", Some(jazz), &TreeName::from("b.mp3"), new);
     assert!(cache.is_complete());
     assert!(cache.descendants(&conn, "mfr_path", root).unwrap().contains(&new));
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/b.mp3").unwrap(), Some(new));
@@ -374,7 +374,7 @@ fn test_apply_rename_in_place() {
     w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(music), name: "blues".into() })
         .unwrap();
     w.commit().unwrap();
-    cache.apply_rename("mfr_path", jazz, Some(music), "blues");
+    cache.apply_rename("mfr_path", jazz, Some(music), &TreeName::from("blues"));
 
     let misses = cache.misses();
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/blues").unwrap(), Some(jazz));
@@ -400,7 +400,7 @@ fn test_apply_move_to_other_parent() {
     w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(archive), name: "jazz".into() })
         .unwrap();
     w.commit().unwrap();
-    cache.apply_rename("mfr_path", jazz, Some(archive), "jazz");
+    cache.apply_rename("mfr_path", jazz, Some(archive), &TreeName::from("jazz"));
 
     assert_eq!(
         cache.resolve_path(&conn, "mfr_path", "/archive/jazz/file.mp3").unwrap(),
@@ -436,7 +436,7 @@ fn test_apply_insert_makes_child_resolvable_without_db_miss() {
     cache.resolve_path(&conn, "mfr_path", "/music").unwrap();
 
     let blues = tree_entry(&mut conn, "mfr_path", Some(music), "blues");
-    cache.apply_insert("mfr_path", Some(music), "blues", blues);
+    cache.apply_insert("mfr_path", Some(music), &TreeName::from("blues"), blues);
 
     let misses = cache.misses();
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/blues").unwrap(), Some(blues));
@@ -473,9 +473,9 @@ fn test_eviction_drains_internal_directories_not_just_leaves() {
     let root = Uuid::new_v4();
     let a = Uuid::new_v4();
     let b = Uuid::new_v4();
-    cache.apply_insert(f, None, "", root);
-    cache.apply_insert(f, Some(root), "a", a); // root -> a
-    cache.apply_insert(f, Some(a), "b", b); // root -> a -> b   (live = 3, at limit)
+    cache.apply_insert(f, None, &TreeName::from(""), root);
+    cache.apply_insert(f, Some(root), &TreeName::from("a"), a); // root -> a
+    cache.apply_insert(f, Some(a), &TreeName::from("b"), b); // root -> a -> b   (live = 3, at limit)
     assert_eq!(cache.len(), 3);
 
     // Add fresh leaves under root. Eight distinct nodes have now been inserted
@@ -484,7 +484,7 @@ fn test_eviction_drains_internal_directories_not_just_leaves() {
     // and `b` — which requires the bottom-up parent re-push to work.
     for i in 0..5 {
         let leaf = Uuid::new_v4();
-        cache.apply_insert(f, Some(root), &format!("leaf{i}"), leaf);
+        cache.apply_insert(f, Some(root), &TreeName::from(format!("leaf{i}")), leaf);
         assert!(cache.len() <= 3, "node limit breached at i={i}: {}", cache.len());
     }
 }
@@ -530,4 +530,85 @@ fn test_case_insensitive_resolution() {
     let misses = insensitive.misses();
     assert_eq!(insensitive.resolve_path(&conn, "mfr_path", "/MUSIC").unwrap(), Some(music));
     assert_eq!(insensitive.misses(), misses);
+}
+
+// ── Undecodable names (spec-data-model "Tree names") ─────────────────────────
+
+/// Creates a tree entry whose name is given as exact bytes.
+fn tree_entry_bytes(conn: &mut Connection, field: &str, parent: Option<Uuid>, name: &[u8]) -> Uuid {
+    let mut w = Writer::begin(conn, None).unwrap();
+    let m = w
+        .create_metarecord(vec![Field::new(
+            field,
+            Value::TreeRef { parent, name: TreeName::from_bytes(name.to_vec()) },
+        )])
+        .unwrap();
+    w.commit().unwrap();
+    m.uuid
+}
+
+#[test]
+fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
+    // They display identically, so a text-keyed cache would collapse them into
+    // one — and reconcile would then reuse one file's metarecord for the other.
+    // Identity is the bytes.
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+    let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
+
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()), a);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xff.mp4".to_vec()), b);
+
+    let children = cache.children_of(&conn, "mfr_path", root).unwrap();
+    assert_eq!(children.len(), 2, "both siblings are cached: {children:?}");
+    let uuids: Vec<Uuid> = children.iter().map(|(_, u)| *u).collect();
+    assert!(uuids.contains(&a) && uuids.contains(&b));
+}
+
+#[test]
+fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
+    // The displayed name is the only handle a user has on such a file — there
+    // is no typeable exact name — so resolution accepts it.
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let file = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert(
+        "mfr_path",
+        Some(root),
+        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
+        file,
+    );
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), Some(file));
+    // The path it reports back is the displayed one.
+    assert_eq!(
+        cache.path_of(&conn, "mfr_path", file).unwrap().as_deref(),
+        Some("/caf\u{FFFD}.mp4")
+    );
+}
+
+#[test]
+fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let upper = tree_entry(&mut conn, "mfr_path", Some(root), "Photos");
+    let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xe9");
+    let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"x\xff");
+
+    let mut cache = TreeCache::new(true); // case-insensitive
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from("Photos"), upper);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"x\xe9".to_vec()), a);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"x\xff".to_vec()), b);
+
+    // ASCII case still folds...
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/photos").unwrap(), Some(upper));
+    // ...and the two undecodable siblings stay two nodes.
+    assert_eq!(cache.children_of(&conn, "mfr_path", root).unwrap().len(), 3);
 }

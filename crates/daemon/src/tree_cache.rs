@@ -13,6 +13,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use uuid::Uuid;
 
+use metafolder_core::metarecord::TreeName;
 use metafolder_core::query::OsmProgress;
 
 use crate::db;
@@ -36,18 +37,21 @@ pub const PATH_KEY_SEP: char = '\u{1}';
 
 struct Node {
     field: String,
-    /// Original (on-disk) casing; children/roots maps are keyed normalized.
-    name: String,
+    /// The name's exact bytes — what identifies the node (spec-data-model
+    /// "Tree names"). The children/roots maps are keyed by its *normalized*
+    /// bytes, which fold case when the filesystem does but never merge two
+    /// names that differ in an undecodable byte.
+    name: TreeName,
     uuid: Uuid,
     parent: Option<usize>,
-    children: HashMap<String, usize>,
+    children: HashMap<Vec<u8>, usize>,
     last_used: u64,
 }
 
 #[derive(Default)]
 struct FieldTree {
-    /// Root nodes by normalized name.
-    roots: HashMap<String, usize>,
+    /// Root nodes by normalized name bytes.
+    roots: HashMap<Vec<u8>, usize>,
     /// Cached nodes by metarecord UUID. A metarecord with several positions
     /// (multi-map TreeRef) can have several nodes.
     by_uuid: HashMap<Uuid, Vec<usize>>,
@@ -141,7 +145,7 @@ impl TreeCache {
         for row in &rows {
             let node = Node {
                 field: row.field_name.clone(),
-                name: row.name.clone(),
+                name: TreeName::from(row.name.clone()),
                 uuid: row.uuid,
                 parent: None,
                 children: HashMap::new(),
@@ -229,7 +233,7 @@ impl TreeCache {
         self.clock += 1;
         let comps: Vec<&str> = path.split('/').collect();
 
-        let root_norm = self.normalize(comps[0]);
+        let root_norm = self.normalize(&TreeName::from(comps[0]));
         let cached_root = self.fields.get(field).and_then(|ft| ft.roots.get(&root_norm)).copied();
         let mut cur = match cached_root {
             Some(idx) => idx,
@@ -243,14 +247,19 @@ impl TreeCache {
                 let Some(uuid) = found else {
                     return Ok(None);
                 };
-                self.insert_node(field, None, comps[0], uuid)
+                self.insert_node(field, None, &TreeName::from(comps[0]), uuid)
             }
         };
         self.touch(cur);
 
         for comp in &comps[1..] {
-            let norm = self.normalize(comp);
-            let cached_child = self.node(cur).children.get(&norm).copied();
+            let norm = self.normalize(&TreeName::from(*comp));
+            let cached_child = self
+                .node(cur)
+                .children
+                .get(&norm)
+                .copied()
+                .or_else(|| self.child_by_display(cur, comp));
             cur = match cached_child {
                 Some(idx) => idx,
                 None => {
@@ -270,7 +279,7 @@ impl TreeCache {
                         self.evict_to_limit();
                         return Ok(None);
                     };
-                    self.insert_node(field, Some(cur), comp, uuid)
+                    self.insert_node(field, Some(cur), &TreeName::from(*comp), uuid)
                 }
             };
             self.touch(cur);
@@ -399,11 +408,12 @@ impl TreeCache {
             // names are overwhelmingly ASCII: fold those in place, byte-wise,
             // and keep the Unicode iterator for the rest.
             let name_start = path.len();
-            path.push_str(&node.name);
-            if node.name.is_ascii() {
+            let display = node.name.display();
+            path.push_str(&display);
+            if display.is_ascii() {
                 path[name_start..].make_ascii_lowercase();
             } else {
-                let lowered: String = node.name.chars().flat_map(char::to_lowercase).collect();
+                let lowered: String = display.chars().flat_map(char::to_lowercase).collect();
                 path.truncate(name_start);
                 path.push_str(&lowered);
             }
@@ -487,7 +497,7 @@ impl TreeCache {
             for &child in self.node(start).children.values() {
                 let node = self.node(child);
                 if seen.insert(node.uuid) {
-                    out.push((node.name.clone(), node.uuid));
+                    out.push((node.name.display().into_owned(), node.uuid));
                 }
             }
         }
@@ -495,7 +505,7 @@ impl TreeCache {
     }
 
     /// Notifies the cache that a metarecord was inserted under `parent`.
-    pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &str, uuid: Uuid) {
+    pub fn apply_insert(&mut self, field: &str, parent: Option<Uuid>, name: &TreeName, uuid: Uuid) {
         self.clock += 1;
         match parent {
             None => {
@@ -524,7 +534,7 @@ impl TreeCache {
         field: &str,
         uuid: Uuid,
         new_parent: Option<Uuid>,
-        new_name: &str,
+        new_name: &TreeName,
     ) {
         self.clock += 1;
         let nodes = self.fields.get(field).and_then(|ft| ft.by_uuid.get(&uuid)).cloned();
@@ -562,7 +572,7 @@ impl TreeCache {
         let norm = self.normalize(new_name);
         {
             let node = self.node_mut(idx);
-            node.name = new_name.to_string();
+            node.name = new_name.clone();
             node.parent = new_parent_idx;
         }
         match new_parent_idx {
@@ -595,11 +605,65 @@ impl TreeCache {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    fn normalize(&self, name: &str) -> String {
-        if self.case_insensitive {
-            name.to_lowercase()
-        } else {
-            name.to_string()
+    /// A child matched by its *displayed* name rather than by its bytes.
+    ///
+    /// The only handle anyone has on a file whose name does not decode is what
+    /// it is shown as — U+FFFD where the undecodable bytes are — since there is
+    /// no exact name to type. Resolution therefore accepts the displayed form,
+    /// at the documented price that it is not guaranteed unique: two siblings
+    /// differing only in undecodable bytes display alike (spec-data-model
+    /// "Tree names"). This is the *fallback*, tried only when the exact byte
+    /// key missed, so an ordinary path never pays for the scan.
+    fn child_by_display(&self, parent: usize, comp: &str) -> Option<usize> {
+        // Only a component that is itself lossy can match a lossy name; every
+        // other component would already have matched on its exact bytes.
+        if !comp.contains(char::REPLACEMENT_CHARACTER) {
+            return None;
+        }
+        let wanted = self.normalize(&TreeName::from(comp));
+        self.node(parent)
+            .children
+            .values()
+            .find(|&&idx| {
+                let name = &self.node(idx).name;
+                !name.is_exact()
+                    && self.normalize(&TreeName::from(name.display().as_ref())) == wanted
+            })
+            .copied()
+    }
+
+    /// The map key for a name: its exact bytes, with the *decodable* runs
+    /// lowercased when the filesystem is case-insensitive.
+    ///
+    /// Folding only what decodes is what keeps two names differing in an
+    /// undecodable byte apart: lowercasing the lossy text would map both onto
+    /// the same replacement character and merge two distinct files.
+    fn normalize(&self, name: &TreeName) -> Vec<u8> {
+        let bytes = name.as_bytes();
+        if !self.case_insensitive {
+            return bytes.to_vec();
+        }
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut rest = bytes;
+        loop {
+            match std::str::from_utf8(rest) {
+                Ok(text) => {
+                    out.extend_from_slice(text.to_lowercase().as_bytes());
+                    return out;
+                }
+                Err(err) => {
+                    let (good, bad) = rest.split_at(err.valid_up_to());
+                    // `good` is valid UTF-8 by construction.
+                    out.extend_from_slice(
+                        std::str::from_utf8(good).unwrap_or_default().to_lowercase().as_bytes(),
+                    );
+                    // The undecodable bytes pass through untouched: they are
+                    // what distinguishes this name from its look-alike.
+                    let skip = err.error_len().unwrap_or(bad.len());
+                    out.extend_from_slice(&bad[..skip]);
+                    rest = &bad[skip..];
+                }
+            }
         }
     }
 
@@ -653,7 +717,7 @@ impl TreeCache {
         let mut components = Vec::new();
         for _ in 0..MAX_TREE_DEPTH {
             let node = self.node(idx);
-            components.push(node.name.clone());
+            components.push(node.name.display().into_owned());
             match node.parent {
                 Some(p) => idx = p,
                 None => {
@@ -688,13 +752,13 @@ impl TreeCache {
         for &idx in idxs {
             let node = self.node(idx);
             match node.parent {
-                None => paths.push(node.name.clone()),
+                None => paths.push(node.name.display().into_owned()),
                 Some(p) => {
                     // Mirror `path_of_at`: the empty repo-root contributes a
                     // leading "/", so a filesystem path round-trips with the DSL
                     // / `resolve_path` (a named-root forest has no leading "/").
                     let parent_path = self.path_of_at(p);
-                    paths.push(format!("{parent_path}/{}", node.name));
+                    paths.push(format!("{parent_path}/{}", node.name.display()));
                 }
             }
         }
@@ -706,10 +770,16 @@ impl TreeCache {
         self.node_mut(idx).last_used = clock;
     }
 
-    fn insert_node(&mut self, field: &str, parent: Option<usize>, name: &str, uuid: Uuid) -> usize {
+    fn insert_node(
+        &mut self,
+        field: &str,
+        parent: Option<usize>,
+        name: &TreeName,
+        uuid: Uuid,
+    ) -> usize {
         let node = Node {
             field: field.to_string(),
-            name: name.to_string(),
+            name: name.clone(),
             uuid,
             parent,
             children: HashMap::new(),
@@ -888,8 +958,8 @@ impl<'a> SortKeys<'a> {
     fn key_at(&self, idx: usize) -> Arc<str> {
         let node = self.cache.node(idx);
         match node.parent {
-            None => node.name.as_str().into(),
-            Some(parent) => join_key(&self.dir_key(parent), &node.name),
+            None => Arc::from(node.name.display().as_ref()),
+            Some(parent) => join_key(&self.dir_key(parent), &node.name.display()),
         }
     }
 
@@ -920,10 +990,10 @@ impl<'a> SortKeys<'a> {
         }
         let mut key = base;
         for &i in chain.iter().rev() {
-            let name = &self.cache.node(i).name;
+            let name = self.cache.node(i).name.display();
             let k = match &key {
-                None => Arc::from(name.as_str()),
-                Some(parent) => join_key(parent, name),
+                None => Arc::from(name.as_ref()),
+                Some(parent) => join_key(parent, &name),
             };
             self.dirs.borrow_mut().insert(i, k.clone());
             key = Some(k);

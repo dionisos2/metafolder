@@ -11,7 +11,7 @@ use anyhow::Result;
 use serde::Serialize;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::{Field, Value};
+use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_core::sync::MutexExt;
 
 use crate::db;
@@ -754,7 +754,7 @@ pub(crate) fn create_record_for(
     }
     fields.extend(extra_fields.iter().cloned());
     let created = writer.create_metarecord(fields)?;
-    cache.apply_insert("mfr_path", Some(parent), name, created.uuid);
+    cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), created.uuid);
     Ok(created.uuid)
 }
 
@@ -776,7 +776,7 @@ fn apply_move(
         Value::TreeRef { parent: Some(parent), name: name.into() },
     )?;
     cache.apply_remove("mfr_path", uuid);
-    cache.apply_insert("mfr_path", Some(parent), name, uuid);
+    cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), uuid);
     refresh_stat_fields(writer, root, uuid, rel)
 }
 
