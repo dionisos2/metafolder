@@ -74,6 +74,29 @@ impl RelPath {
         out
     }
 
+    /// The exact bytes of the whole path, `/`-separated — the form the
+    /// watcher buffer persists, so an undecodable name survives a daemon
+    /// restart. Round-trips through [`Self::from_bytes`].
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        for component in &self.components {
+            out.push(b'/');
+            out.extend_from_slice(component.as_bytes());
+        }
+        out
+    }
+
+    /// The inverse of [`Self::to_bytes`].
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self {
+            components: bytes
+                .split(|b| *b == b'/')
+                .filter(|c| !c.is_empty())
+                .map(|c| TreeName::from_bytes(c.to_vec()))
+                .collect(),
+        }
+    }
+
     /// The absolute path on disk, byte-exact — this is what opens the file.
     pub fn to_abs(&self, root: &Path) -> PathBuf {
         #[cfg(unix)]
@@ -93,6 +116,14 @@ impl RelPath {
             }
             abs
         }
+    }
+}
+
+/// Sugar for [`RelPath::from_display`] — exact for any path that is text,
+/// which every path written as a literal is.
+impl From<&str> for RelPath {
+    fn from(path: &str) -> Self {
+        Self::from_display(path)
     }
 }
 
@@ -172,6 +203,19 @@ mod tests {
         let abs = path.to_abs(Path::new("/repo"));
         // The displayed form would have lost the byte; the path on disk must not.
         assert_eq!(abs.as_os_str().as_bytes(), b"/repo/dir/caf\xe9.mp4");
+    }
+
+    #[test]
+    fn test_the_byte_form_round_trips_including_undecodable_names() {
+        for path in [
+            RelPath::root(),
+            RelPath::from_display("/a/b"),
+            RelPath::root()
+                .child(TreeName::from("dir"))
+                .child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec())),
+        ] {
+            assert_eq!(RelPath::from_bytes(&path.to_bytes()), path, "{path:?}");
+        }
     }
 
     #[test]

@@ -30,16 +30,16 @@ use crate::tree_cache::TreeCache;
 /// repo-root-relative with a leading `/`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FsEvent {
-    Create(String),
-    Remove(String),
+    Create(RelPath),
+    Remove(RelPath),
     /// Correlated rename: both paths are inside the repository.
-    Rename(String, String),
+    Rename(RelPath, RelPath),
     /// The file definitively left the repository.
-    RenameFrom(String),
+    RenameFrom(RelPath),
     /// The file arrived from outside the repository.
-    RenameTo(String),
-    ModifyData(String),
-    ModifyMeta(String),
+    RenameTo(RelPath),
+    ModifyData(RelPath),
+    ModifyMeta(RelPath),
 }
 
 /// Appends one event to the persistent buffer. `tracker` is the rename
@@ -47,19 +47,33 @@ pub enum FsEvent {
 /// events, used by [`correlate_renames`] to fuse a split rename; `None` for
 /// everything else.
 pub fn enqueue(conn: &Connection, ev: &FsEvent, tracker: Option<i64>) -> Result<()> {
-    let (op_type, path, from, to): (&str, Option<&str>, Option<&str>, Option<&str>) = match ev {
-        FsEvent::Create(p) => ("fs_create", Some(p), None, None),
-        FsEvent::Remove(p) => ("fs_remove", Some(p), None, None),
-        FsEvent::Rename(a, b) => ("fs_rename", None, Some(a), Some(b)),
-        FsEvent::RenameFrom(p) => ("fs_rename_from", Some(p), None, None),
-        FsEvent::RenameTo(p) => ("fs_rename_to", Some(p), None, None),
-        FsEvent::ModifyData(p) => ("fs_modify_data", Some(p), None, None),
-        FsEvent::ModifyMeta(p) => ("fs_modify_meta", Some(p), None, None),
-    };
+    let (op_type, path, from, to): (&str, Option<&RelPath>, Option<&RelPath>, Option<&RelPath>) =
+        match ev {
+            FsEvent::Create(p) => ("fs_create", Some(p), None, None),
+            FsEvent::Remove(p) => ("fs_remove", Some(p), None, None),
+            FsEvent::Rename(a, b) => ("fs_rename", None, Some(a), Some(b)),
+            FsEvent::RenameFrom(p) => ("fs_rename_from", Some(p), None, None),
+            FsEvent::RenameTo(p) => ("fs_rename_to", Some(p), None, None),
+            FsEvent::ModifyData(p) => ("fs_modify_data", Some(p), None, None),
+            FsEvent::ModifyMeta(p) => ("fs_modify_meta", Some(p), None, None),
+        };
+    // Both forms: the text keeps the buffer readable, the bytes are what
+    // re-opens the file when its name does not decode.
     conn.execute(
-        "INSERT INTO pending_operation (op_type, path, from_path, to_path, tracker)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![op_type, path, from, to, tracker],
+        "INSERT INTO pending_operation
+             (op_type, path, from_path, to_path, tracker,
+              path_bytes, from_path_bytes, to_path_bytes)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            op_type,
+            path.map(RelPath::display),
+            from.map(RelPath::display),
+            to.map(RelPath::display),
+            tracker,
+            path.map(RelPath::to_bytes),
+            from.map(RelPath::to_bytes),
+            to.map(RelPath::to_bytes),
+        ],
     )?;
     Ok(())
 }
@@ -71,18 +85,25 @@ type PendingBatch = (Vec<(FsEvent, Option<i64>)>, i64);
 
 fn load_pending(conn: &Connection) -> Result<PendingBatch> {
     let mut stmt = conn.prepare(
-        "SELECT id, op_type, path, from_path, to_path, tracker FROM pending_operation
-         WHERE op_type LIKE 'fs_%' ORDER BY id",
+        "SELECT id, op_type, path, from_path, to_path, tracker,
+                path_bytes, from_path_bytes, to_path_bytes
+         FROM pending_operation WHERE op_type LIKE 'fs_%' ORDER BY id",
     )?;
     let mut events = Vec::new();
     let mut max_id = 0;
+    // The bytes are authoritative; the text is the fallback for a row buffered
+    // by a daemon that predates them (its path was necessarily valid UTF-8).
+    let path_of = |text: Option<String>, bytes: Option<Vec<u8>>| match bytes {
+        Some(bytes) => Some(RelPath::from_bytes(&bytes)),
+        None => text.map(|t| RelPath::from_display(&t)),
+    };
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, i64>(0)?,
             r.get::<_, String>(1)?,
-            r.get::<_, Option<String>>(2)?,
-            r.get::<_, Option<String>>(3)?,
-            r.get::<_, Option<String>>(4)?,
+            path_of(r.get(2)?, r.get(6)?),
+            path_of(r.get(3)?, r.get(7)?),
+            path_of(r.get(4)?, r.get(8)?),
             r.get::<_, Option<i64>>(5)?,
         ))
     })?;
@@ -155,32 +176,32 @@ fn compact(events: Vec<FsEvent>) -> Vec<FsEvent> {
     use std::collections::{BTreeSet, HashMap};
 
     /// Highest live index registered for `key`, or `None` (the `find_last`).
-    fn last(map: &HashMap<String, BTreeSet<usize>>, key: &str) -> Option<usize> {
+    fn last(map: &HashMap<RelPath, BTreeSet<usize>>, key: &RelPath) -> Option<usize> {
         map.get(key).and_then(|s| s.last().copied())
     }
-    fn insert(map: &mut HashMap<String, BTreeSet<usize>>, key: &str, i: usize) {
-        map.entry(key.to_string()).or_default().insert(i);
+    fn insert(map: &mut HashMap<RelPath, BTreeSet<usize>>, key: &RelPath, i: usize) {
+        map.entry(key.clone()).or_default().insert(i);
     }
-    fn unregister(map: &mut HashMap<String, BTreeSet<usize>>, key: &str, i: usize) {
+    fn unregister(map: &mut HashMap<RelPath, BTreeSet<usize>>, key: &RelPath, i: usize) {
         if let Some(s) = map.get_mut(key) {
             s.remove(&i);
         }
     }
-    fn any(map: &HashMap<String, BTreeSet<usize>>, key: &str) -> bool {
+    fn any(map: &HashMap<RelPath, BTreeSet<usize>>, key: &RelPath) -> bool {
         map.get(key).is_some_and(|s| !s.is_empty())
     }
 
     let mut out: Vec<Option<FsEvent>> = Vec::with_capacity(events.len());
     // One live-index set per lookup role (keyed by the path that role uses).
-    let mut create: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    let mut rename_from: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    let mut rename_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    let mut rename_by_to: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut create: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
+    let mut rename_from: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
+    let mut rename_to: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
+    let mut rename_by_to: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
     // Renames indexed by their *source*, to spot the collapse that would create
     // a cycle (see the chain branch below).
-    let mut rename_by_from: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    let mut modify_data: HashMap<String, BTreeSet<usize>> = HashMap::new();
-    let mut modify_meta: HashMap<String, BTreeSet<usize>> = HashMap::new();
+    let mut rename_by_from: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
+    let mut modify_data: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
+    let mut modify_meta: HashMap<RelPath, BTreeSet<usize>> = HashMap::new();
 
     for ev in events {
         match ev {
@@ -365,7 +386,7 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
     // file really left the repository, or it moved into a directory the watcher
     // was not yet watching — `Apply::find_departed_match` tells the two apart
     // when the destination turns up in a new directory's scan.
-    let departed: Vec<String> = events
+    let departed: Vec<RelPath> = events
         .iter()
         .filter_map(|ev| match ev {
             FsEvent::RenameFrom(p) => Some(p.clone()),
@@ -506,7 +527,7 @@ struct Apply<'a, 'c> {
     root: &'a Path,
     /// Paths renamed *out of* a watched directory in this same batch, whose
     /// destination the watcher never saw. See [`Apply::find_departed_match`].
-    departed: &'a [String],
+    departed: &'a [RelPath],
     /// Mount points that are declared but not mounted right now: every event
     /// landing in one is dropped, because the content behind those paths is
     /// *unavailable*, not gone (spec-file-tracking "Offline subtrees").
@@ -518,7 +539,7 @@ struct Apply<'a, 'c> {
     /// (arrival, departure) *pair*: a batch that both loses and gains a few
     /// hundred files then holds the connection for minutes, and every query
     /// queues behind it.
-    departed_index: Option<HashMap<StatKey, Vec<String>>>,
+    departed_index: Option<HashMap<StatKey, Vec<RelPath>>>,
 }
 
 /// The stat a rename preserves exactly — kind, size, mtime — as a lookup key.
@@ -555,8 +576,8 @@ impl Apply<'_, '_> {
         }
     }
 
-    fn abs(&self, rel: &str) -> std::path::PathBuf {
-        self.root.join(rel.trim_start_matches('/'))
+    fn abs(&self, rel: &RelPath) -> std::path::PathBuf {
+        rel.to_abs(self.root)
     }
 
     /// Whether any path of `ev` lies at or below an offline mount point. A
@@ -572,40 +593,28 @@ impl Apply<'_, '_> {
             | FsEvent::RenameFrom(p)
             | FsEvent::RenameTo(p)
             | FsEvent::ModifyData(p)
-            | FsEvent::ModifyMeta(p) => self.offline.contains(p),
-            FsEvent::Rename(a, b) => self.offline.contains(a) || self.offline.contains(b),
+            | FsEvent::ModifyMeta(p) => self.offline.contains(&p.display()),
+            FsEvent::Rename(a, b) => {
+                self.offline.contains(&a.display()) || self.offline.contains(&b.display())
+            }
         }
     }
 
-    fn eligible(&mut self, rel: &str) -> Result<bool> {
-        eligibility::is_eligible(self.writer.connection(), self.cache, rel)
+    fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
+        eligibility::is_eligible(self.writer.connection(), self.cache, &rel.display())
     }
 
-    fn resolve(&mut self, rel: &str) -> Result<Option<Uuid>> {
-        self.cache.resolve_path(self.writer.connection(), "mfr_path", rel)
-    }
-
-    /// Splits "/a/b/name" into ("/a/b", "name").
-    fn split_parent(rel: &str) -> (&str, &str) {
-        match rel.rfind('/') {
-            Some(i) => (&rel[..i], &rel[i + 1..]),
-            None => ("", rel),
-        }
+    fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
+        self.cache.resolve_path(self.writer.connection(), "mfr_path", &rel.display())
     }
 
     /// Resolves the parent directory entry of `rel`, creating any missing
     /// intermediate directory metarecords (with their stat fields).
-    fn ensure_parents(&mut self, rel: &str) -> Result<Uuid> {
-        ensure_parent_metarecords(
-            &mut self.writer,
-            self.cache,
-            self.root,
-            &RelPath::from_display(rel),
-            &[],
-        )
+    fn ensure_parents(&mut self, rel: &RelPath) -> Result<Uuid> {
+        ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel, &[])
     }
 
-    fn apply_create(&mut self, rel: &str) -> Result<()> {
+    fn apply_create(&mut self, rel: &RelPath) -> Result<()> {
         if !self.create_or_refresh(rel)? {
             return Ok(()); // Ineligible: nothing created, nothing to descend into.
         }
@@ -623,18 +632,19 @@ impl Apply<'_, '_> {
     /// are ingested with arrival semantics (`ingest_arrival`), so a moved-in
     /// subtree reuses orphaned metarecords by fingerprint rather than
     /// duplicating them. Idempotent with any child events that did fire.
-    fn scan_dir(&mut self, rel: &str) -> Result<()> {
-        let mut stack = vec![rel.to_string()];
+    fn scan_dir(&mut self, rel: &RelPath) -> Result<()> {
+        let mut stack = vec![rel.clone()];
         while let Some(dir) = stack.pop() {
             let entries = match std::fs::read_dir(self.abs(&dir)) {
                 Ok(entries) => entries,
                 Err(_) => continue, // Vanished mid-scan; a reconcile can catch up.
             };
             for entry in entries.flatten() {
-                let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                    continue; // Non-UTF-8 name: skip (a reconcile can handle it).
-                };
-                let child = format!("{dir}/{name}");
+                // A POSIX name is a byte string; such a file is ingested like
+                // any other (spec-data-model "Tree names").
+                let child = dir.child(TreeName::from_bytes(crate::relpath::file_name_bytes(
+                    &entry.file_name(),
+                )));
                 // Descend into an eligible subdirectory to reach its own
                 // contents; an ignored one (and its whole subtree) is skipped.
                 if self.ingest_arrival(&child)? && self.is_dir(&child) {
@@ -648,7 +658,7 @@ impl Apply<'_, '_> {
     /// Creates or refreshes the metarecord for a single path (no orphan
     /// matching). Returns whether the path was eligible — the caller uses this
     /// to decide whether to descend into a directory.
-    fn create_or_refresh(&mut self, rel: &str) -> Result<bool> {
+    fn create_or_refresh(&mut self, rel: &RelPath) -> Result<bool> {
         if !self.eligible(rel)? {
             return Ok(false);
         }
@@ -665,7 +675,7 @@ impl Apply<'_, '_> {
     /// reuse an orphaned metarecord when a full-hash fingerprint confirms
     /// identity (files only), otherwise create. Returns whether the path was
     /// eligible.
-    fn ingest_arrival(&mut self, rel: &str) -> Result<bool> {
+    fn ingest_arrival(&mut self, rel: &RelPath) -> Result<bool> {
         if !self.eligible(rel)? {
             return Ok(false);
         }
@@ -682,14 +692,14 @@ impl Apply<'_, '_> {
         if meta.is_file() {
             if let Some(orphan) = self.find_orphan_match(&abs, meta.len() as i64)? {
                 let parent = self.ensure_parents(rel)?;
-                let (_, name) = Self::split_parent(rel);
+                let name = rel.name().cloned().unwrap_or_default();
                 self.writer.set_field_as(
                     OpType::FileMoved,
                     orphan,
                     "mfr_path",
-                    Value::TreeRef { parent: Some(parent), name: name.into() },
+                    Value::TreeRef { parent: Some(parent), name: name.clone() },
                 )?;
-                self.cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), orphan);
+                self.cache.apply_insert("mfr_path", Some(parent), &name, orphan);
                 // Refresh the stat-derived fields at the new location.
                 for field in fs_meta::stat_fields_in(self.root, &abs)? {
                     self.writer.set_field_as(
@@ -717,31 +727,31 @@ impl Apply<'_, '_> {
 
     /// Creates a fresh metarecord for `rel`: its `mfr_path` TreeRef plus the
     /// stat-derived fields. A no-op if the path vanished before the flush.
-    fn create_record(&mut self, rel: &str) -> Result<()> {
+    fn create_record(&mut self, rel: &RelPath) -> Result<()> {
         let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(()); // The file disappeared before the flush.
         };
         let parent = self.ensure_parents(rel)?;
-        let (_, name) = Self::split_parent(rel);
+        let name = rel.name().cloned().unwrap_or_default();
         let mut fields = vec![Field::new(
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: name.into() },
+            Value::TreeRef { parent: Some(parent), name: name.clone() },
         )];
         fields.extend(stat);
         let created = self.writer.create_metarecord(fields)?;
-        self.cache.apply_insert("mfr_path", Some(parent), &TreeName::from(name), created.uuid);
+        self.cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
         Ok(())
     }
 
     /// Whether `rel` is a directory on disk (not following symlinks: a symlink
     /// to a directory is not descended into).
-    fn is_dir(&self, rel: &str) -> bool {
+    fn is_dir(&self, rel: &RelPath) -> bool {
         std::fs::symlink_metadata(self.abs(rel)).map(|m| m.is_dir()).unwrap_or(false)
     }
 
     /// `Remove` / `Rename(From)`: the metarecord is preserved, `mfr_path` becomes
     /// Nothing, and the whole subtree is cleared in the same transaction.
-    fn apply_remove(&mut self, rel: &str) -> Result<()> {
+    fn apply_remove(&mut self, rel: &RelPath) -> Result<()> {
         let Some(uuid) = self.resolve(rel)? else {
             return Ok(());
         };
@@ -809,7 +819,7 @@ impl Apply<'_, '_> {
         Ok(())
     }
 
-    fn apply_rename(&mut self, from: &str, to: &str) -> Result<()> {
+    fn apply_rename(&mut self, from: &RelPath, to: &RelPath) -> Result<()> {
         let Some(src) = self.resolve(from)? else {
             // Unknown source: treat as an arrival at the destination.
             return self.apply_arrival(to);
@@ -830,14 +840,14 @@ impl Apply<'_, '_> {
             }
         }
         let parent = self.ensure_parents(to)?;
-        let (_, name) = Self::split_parent(to);
+        let name = to.name().cloned().unwrap_or_default();
         self.writer.set_field_as(
             OpType::FileMoved,
             src,
             "mfr_path",
-            Value::TreeRef { parent: Some(parent), name: name.into() },
+            Value::TreeRef { parent: Some(parent), name: name.clone() },
         )?;
-        self.cache.apply_rename("mfr_path", src, Some(parent), &TreeName::from(name));
+        self.cache.apply_rename("mfr_path", src, Some(parent), &name);
         Ok(())
     }
 
@@ -845,7 +855,7 @@ impl Apply<'_, '_> {
     /// when a full-hash fingerprint confirms identity, otherwise create; a
     /// directory also has its existing contents scanned (the recursive-watch
     /// race — see [`Self::scan_dir`]).
-    fn apply_arrival(&mut self, rel: &str) -> Result<()> {
+    fn apply_arrival(&mut self, rel: &RelPath) -> Result<()> {
         if !self.ingest_arrival(rel)? {
             return Ok(());
         }
@@ -874,7 +884,7 @@ impl Apply<'_, '_> {
     /// preserves exactly — kind, size and mtime. The fingerprint search cannot
     /// serve here: a metarecord the watcher created has no stored hashes, and
     /// its file has already left the old path, so there is nothing left to hash.
-    fn find_departed_match(&mut self, rel: &str) -> Result<Option<String>> {
+    fn find_departed_match(&mut self, rel: &RelPath) -> Result<Option<RelPath>> {
         if self.departed.is_empty() {
             return Ok(None);
         }
@@ -908,7 +918,7 @@ impl Apply<'_, '_> {
             return Ok(());
         }
         let departed = self.departed; // a plain `&[String]`: not borrowed from `self`
-        let mut index: HashMap<StatKey, Vec<String>> = HashMap::new();
+        let mut index: HashMap<StatKey, Vec<RelPath>> = HashMap::new();
         for from in departed {
             // Still there: it did not leave, so it is nobody's other half.
             if std::fs::symlink_metadata(self.abs(from)).is_ok() {
@@ -961,7 +971,7 @@ impl Apply<'_, '_> {
     }
 
     /// `Modify(Data)`: refresh size and mtime, invalidate the hashes.
-    fn apply_modify_data(&mut self, rel: &str) -> Result<()> {
+    fn apply_modify_data(&mut self, rel: &RelPath) -> Result<()> {
         if !self.eligible(rel)? {
             return Ok(());
         }
@@ -972,7 +982,7 @@ impl Apply<'_, '_> {
         }
     }
 
-    fn refresh_data(&mut self, uuid: Uuid, rel: &str) -> Result<()> {
+    fn refresh_data(&mut self, uuid: Uuid, rel: &RelPath) -> Result<()> {
         let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(());
         };
@@ -1008,7 +1018,7 @@ impl Apply<'_, '_> {
     }
 
     /// `Modify(Metadata)`: refresh attributes; hashes stay valid.
-    fn apply_modify_meta(&mut self, rel: &str) -> Result<()> {
+    fn apply_modify_meta(&mut self, rel: &RelPath) -> Result<()> {
         if !self.eligible(rel)? {
             return Ok(());
         }
@@ -1363,8 +1373,8 @@ mod tests {
             let len = next(13) as usize; // 0..=12 events
             let mut events = Vec::with_capacity(len);
             for _ in 0..len {
-                let p = paths[next(paths.len() as u64) as usize].to_string();
-                let q = paths[next(paths.len() as u64) as usize].to_string();
+                let p = RelPath::from(paths[next(paths.len() as u64) as usize]);
+                let q = RelPath::from(paths[next(paths.len() as u64) as usize]);
                 events.push(match next(7) {
                     0 => FsEvent::Create(p),
                     1 => FsEvent::Remove(p),

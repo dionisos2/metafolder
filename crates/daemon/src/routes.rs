@@ -1891,19 +1891,21 @@ async fn track(
                 repo_state.config.root
             ))
         })?;
-        let mut rel = String::new();
+        // Each component keeps its exact bytes: a POSIX name need not be UTF-8,
+        // and such a file is tracked like any other (spec-data-model
+        // "Tree names").
+        let mut rel = crate::relpath::RelPath::root();
         for comp in rel_path.components() {
             let std::path::Component::Normal(name) = comp else {
                 return Err(ApiError::bad_request(format!(
                     "unsupported path component in {abs:?}"
                 )));
             };
-            rel.push('/');
-            rel.push_str(name.to_str().ok_or_else(|| {
-                ApiError::bad_request(format!("non-UTF-8 name in {abs:?} is not supported"))
-            })?);
+            rel = rel.child(metafolder_core::metarecord::TreeName::from_bytes(
+                crate::relpath::file_name_bytes(name),
+            ));
         }
-        if rel.is_empty() {
+        if rel.is_root() {
             return Err(ApiError::bad_request("cannot track the repository root itself"));
         }
 
@@ -1912,7 +1914,7 @@ async fn track(
         // Idempotent: a path already tracked returns its existing metarecord
         // uuid rather than an error, so callers can `track` without first
         // checking (spec-file-tracking "Single-metarecord track").
-        if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel)? {
+        if let Some(existing) = cache.resolve_path(&conn, "mfr_path", &rel.display())? {
             return Ok(Json(json!({"uuid": hex(existing)})));
         }
         let untracked = [Field::new("mf_watch", Value::Bool(false))];
@@ -1921,7 +1923,7 @@ async fn track(
             &mut writer,
             &mut cache,
             &repo_state.config.root,
-            &crate::relpath::RelPath::from_display(&rel),
+            &rel,
             &untracked,
             false,
         )?;

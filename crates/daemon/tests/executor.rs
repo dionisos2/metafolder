@@ -117,6 +117,34 @@ fn test_create_event_creates_record_with_stat_fields() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn test_a_created_file_whose_name_is_not_utf8_is_tracked_live() {
+    // The watcher used to skip such an event, leaving the file untracked until
+    // the next reconcile. It is ingested like any other (spec-data-model
+    // "Tree names"), and the metarecord carries the exact bytes.
+    use metafolder_core::metarecord::TreeName;
+    use metafolder_daemon::relpath::RelPath;
+    use std::os::unix::ffi::OsStrExt;
+
+    let (repo, root, _) = setup("non-utf8");
+    let name = std::ffi::OsStr::from_bytes(b"caf\xe9.mp4");
+    std::fs::write(root.path().join(name), b"movie").unwrap();
+
+    let rel = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
+    enqueue(&repo, &[FsEvent::Create(rel)]);
+    executor::flush_pending(&repo).unwrap();
+
+    let uuid = resolve(&repo, "/caf\u{FFFD}.mp4").expect("the file must be tracked");
+    assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(5)));
+    let Some(Value::TreeRef { name, .. }) = field_value(&repo, uuid, "mfr_path") else {
+        panic!("mfr_path is not a tree_ref");
+    };
+    assert_eq!(name.as_bytes(), b"caf\xe9.mp4");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn test_create_creates_missing_parent_metarecords() {
     let (repo, root, _) = setup("parents");
@@ -738,7 +766,7 @@ fn test_departures_do_not_make_a_flush_superlinear() {
         let mut creates = vec![FsEvent::Create("/old".into())];
         for i in 0..N {
             write_file(&root, &format!("old/f{i}.txt"), format!("old-{i}").as_bytes());
-            creates.push(FsEvent::Create(format!("/old/f{i}.txt")));
+            creates.push(FsEvent::Create(format!("/old/f{i}.txt").as_str().into()));
         }
         enqueue(&repo, &creates);
         executor::flush_pending(&repo).unwrap();
@@ -754,8 +782,9 @@ fn test_departures_do_not_make_a_flush_superlinear() {
             // The Create comes first, so the departures are still tracked when
             // the arrivals are ingested — the worst case for the pairing.
             std::fs::remove_dir_all(root.join("old")).unwrap();
-            let departures: Vec<FsEvent> =
-                (0..N).map(|i| FsEvent::RenameFrom(format!("/old/f{i}.txt"))).collect();
+            let departures: Vec<FsEvent> = (0..N)
+                .map(|i| FsEvent::RenameFrom(format!("/old/f{i}.txt").as_str().into()))
+                .collect();
             enqueue(&repo, &departures);
         }
 

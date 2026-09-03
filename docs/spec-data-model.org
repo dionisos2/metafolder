@@ -104,6 +104,13 @@ itself, the text form is entirely used up and no undecodable name can map
 anywhere free. Identity must therefore live in the bytes; escaping the text
 would only move the problem onto ordinary names (=50%.txt= → =50%25.txt=).
 
+Every path the daemon handles carries these bytes end to end: the reconcile
+walk, the watcher (whose buffered events persist the exact path alongside its
+displayed form, so a restart loses nothing), the executor, and
+=POST /repos/:repo/track=. Where *text* is meant, text is used: =mf_ignore=
+patterns are regexes the user wrote against displayed paths, and API fields
+report the displayed form.
+
 The consequence to accept: **a lookup by displayed path is not guaranteed
 unique**. Two files in one directory whose names differ only in undecodable
 bytes display identically. Resolution by path must then report the ambiguity

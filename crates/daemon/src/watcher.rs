@@ -29,10 +29,12 @@ use anyhow::{Context, Result};
 use notify::Watcher as _;
 use rusqlite::Connection;
 
+use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 
 use crate::eligibility::{self, EligibilityCache};
 use crate::executor::{self, ExecutorPinger, FsEvent};
+use crate::relpath::RelPath;
 use crate::state::RepoState;
 use crate::tree_cache::TreeCache;
 
@@ -225,7 +227,7 @@ pub fn compute_watched_dirs_timed(
         cache,
         root,
         internal_dir,
-        "",
+        &RelPath::root(),
         &mut ec,
         &offline,
         &mut out,
@@ -244,19 +246,15 @@ fn collect_eligible_dirs(
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
-    base: &str,
+    base: &RelPath,
     ec: &mut EligibilityCache,
     offline: &crate::mount::OfflineMounts,
     out: &mut HashSet<PathBuf>,
     elig: &mut std::time::Duration,
 ) {
-    let mut stack = vec![base.to_string()];
+    let mut stack = vec![base.clone()];
     while let Some(dir) = stack.pop() {
-        let abs = if dir.is_empty() {
-            root.to_path_buf()
-        } else {
-            root.join(dir.trim_start_matches('/'))
-        };
+        let abs = dir.to_abs(root);
         let entries = match std::fs::read_dir(&abs) {
             Ok(entries) => entries,
             Err(_) => continue, // Not a directory, or unreadable (EACCES): skip.
@@ -272,15 +270,16 @@ fn collect_eligible_dirs(
             if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
                 continue;
             }
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue; // Non-UTF-8 name: skip (a reconcile can handle it).
-            };
-            let rel = format!("{dir}/{name}");
+            let rel = dir
+                .child(TreeName::from_bytes(crate::relpath::file_name_bytes(&entry.file_name())));
+            // Ignore patterns are regexes over text, so they see the displayed
+            // path — the same one the user wrote them against.
+            let display = rel.display();
             let t = std::time::Instant::now();
-            let eligible = eligibility::is_eligible_cached(conn, cache, &rel, ec);
+            let eligible = eligibility::is_eligible_cached(conn, cache, &display, ec);
             *elig += t.elapsed();
             match eligible {
-                Ok(true) if offline.contains(&rel) => {} // Unplugged volume: frozen.
+                Ok(true) if offline.contains(&display) => {} // Unplugged volume: frozen.
                 Ok(true) => {
                     out.insert(path);
                     stack.push(rel);
@@ -295,27 +294,23 @@ fn collect_eligible_dirs(
     }
 }
 
-/// Converts an absolute path to the internal repo-root-relative form
-/// (leading `/`, `/` separators). None for paths outside the root, under
-/// `.metafolder/internal/`, or with non-UTF-8 names (skipped with a warning).
-fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<String> {
+/// Converts an absolute path to the internal repo-root-relative form, keeping
+/// each component's exact bytes — a POSIX name need not be UTF-8, and such a
+/// file is watched like any other (spec-data-model "Tree names"). None for
+/// paths outside the root, under `.metafolder/internal/`, or for the root.
+fn relative(root: &Path, internal_dir: &Path, abs: &Path) -> Option<RelPath> {
     if abs.starts_with(internal_dir) {
         return None;
     }
     let rel = abs.strip_prefix(root).ok()?;
-    let mut out = String::new();
+    let mut out = RelPath::root();
     for comp in rel.components() {
         let std::path::Component::Normal(name) = comp else {
             return None;
         };
-        let Some(name) = name.to_str() else {
-            crate::diagnostics::warn("watcher", format!("skipping non-UTF-8 name under {abs:?}"));
-            return None;
-        };
-        out.push('/');
-        out.push_str(name);
+        out = out.child(TreeName::from_bytes(crate::relpath::file_name_bytes(name)));
     }
-    if out.is_empty() {
+    if out.is_root() {
         None // The root itself.
     } else {
         Some(out)
@@ -428,8 +423,8 @@ fn maintain_watches(
     inner: &WatcherInner,
     events: &[(FsEvent, Option<i64>)],
 ) {
-    let mut arrivals: Vec<&str> = Vec::new();
-    let mut departures: Vec<&str> = Vec::new();
+    let mut arrivals: Vec<&RelPath> = Vec::new();
+    let mut departures: Vec<&RelPath> = Vec::new();
     for (ev, _) in events {
         match ev {
             FsEvent::Create(p) | FsEvent::RenameTo(p) => arrivals.push(p),
@@ -445,7 +440,7 @@ fn maintain_watches(
         return;
     }
     for rel in departures {
-        inner.forget_subtree(&root.join(rel.trim_start_matches('/')));
+        inner.forget_subtree(&rel.to_abs(root));
     }
     if arrivals.is_empty() {
         return;
@@ -461,14 +456,15 @@ fn maintain_watches(
         let mut ec = EligibilityCache::default();
         let offline = crate::mount::offline(&conn, &mut cache, root).unwrap_or_default();
         for rel in arrivals {
-            let abs = root.join(rel.trim_start_matches('/'));
+            let abs = rel.to_abs(root);
             // Only a real directory (not a symlink) that is eligible is watched.
             match std::fs::symlink_metadata(&abs) {
                 Ok(md) if md.file_type().is_dir() => {}
                 _ => continue,
             }
-            match eligibility::is_eligible_cached(&conn, &mut cache, rel, &mut ec) {
-                Ok(true) if !offline.contains(rel) => {}
+            let display = rel.display();
+            match eligibility::is_eligible_cached(&conn, &mut cache, &display, &mut ec) {
+                Ok(true) if !offline.contains(&display) => {}
                 _ => continue,
             }
             subtree.insert(abs);
@@ -654,7 +650,7 @@ mod tests {
     fn test_relative_skips_internal_dir_only() {
         let root = Path::new("/repo");
         let internal = Path::new("/repo/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p));
+        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
 
         assert_eq!(rel("/repo/a.txt").as_deref(), Some("/a.txt"));
         assert_eq!(
@@ -673,7 +669,7 @@ mod tests {
         // internal/ directory is excluded, by absolute path.
         let root = Path::new("/");
         let internal = Path::new("/home/.metafolder/internal");
-        let rel = |p: &str| relative(root, internal, Path::new(p));
+        let rel = |p: &str| relative(root, internal, Path::new(p)).map(|r| r.display());
 
         assert_eq!(rel("/etc/hosts").as_deref(), Some("/etc/hosts"));
         assert_eq!(

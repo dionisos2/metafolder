@@ -90,6 +90,7 @@ pub fn open_database(path: &Path) -> Result<Connection> {
     ensure_next_version_column(&conn)?;
     ensure_entity_version_after_column(&conn)?;
     ensure_value_name_bytes_column(&conn)?;
+    ensure_pending_path_bytes_columns(&conn)?;
     ensure_perf_indexes(&conn)?;
     ensure_field_text(&conn)?;
     Ok(conn)
@@ -231,6 +232,36 @@ fn ensure_value_name_bytes_column(conn: &Connection) -> Result<()> {
              WHERE value_type = 'tree_ref';",
     )
     .context("Failed to re-key the forest index onto the name bytes")?;
+    Ok(())
+}
+
+/// Adds the exact-bytes companions of `pending_operation`'s path columns, for
+/// repositories whose watcher buffer predates them (spec-data-model "Tree
+/// names").
+///
+/// Nothing is back-filled: any row already buffered holds a path that *was*
+/// valid UTF-8 — the watcher could not enqueue anything else — so its text is
+/// exact, and the reader falls back to it when the bytes are absent.
+fn ensure_pending_path_bytes_columns(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pending_operation'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(());
+    }
+    for column in ["path_bytes", "from_path_bytes", "to_path_bytes"] {
+        let has_column: i64 = conn.query_row(
+            &format!("SELECT COUNT(*) FROM pragma_table_info('pending_operation') WHERE name = '{column}'"),
+            [],
+            |r| r.get(0),
+        )?;
+        if has_column == 0 {
+            conn.execute(&format!("ALTER TABLE pending_operation ADD COLUMN {column} BLOB"), [])
+                .with_context(|| format!("Failed to add pending_operation.{column}"))?;
+        }
+    }
     Ok(())
 }
 
@@ -454,9 +485,14 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
             id             INTEGER PRIMARY KEY AUTOINCREMENT,
             op_type        TEXT NOT NULL,
             entity_uuid    BLOB,
-            path           TEXT,
+            path           TEXT,    -- displayed form, for reading the buffer
             from_path      TEXT,
             to_path        TEXT,
+            -- ...and the exact bytes, which are what re-opens the file: a POSIX
+            -- name need not be UTF-8 (spec-data-model, Tree names).
+            path_bytes     BLOB,
+            from_path_bytes BLOB,
+            to_path_bytes  BLOB,
             field_name     TEXT,
             value_type     TEXT,
             value_text     TEXT,
