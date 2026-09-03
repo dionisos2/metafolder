@@ -956,6 +956,80 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     assert_eq!(field_value(&repo_state, small, "mfr_path"), Some(Value::Nothing));
 }
 
+// ── Buffering the events (spec-file-tracking "Event batching") ───────────────
+
+#[test]
+fn test_enqueue_all_buffers_a_batch_as_one_transaction() {
+    // Same rows as one-by-one enqueueing, in one transaction — which is the
+    // point: in WAL mode every transaction is an fsync, so a batch buffered
+    // event by event pays one per event. On this machine that was 3 ms against
+    // 0.01 ms, i.e. a directory drop spending *minutes* before the flush that
+    // applies it even starts.
+    let (repo, root, _) = setup("enqueue_all");
+    write_file(&root, "a.txt", b"a");
+    write_file(&root, "b.txt", b"b");
+
+    let batch = vec![
+        (FsEvent::Create("/a.txt".into()), None),
+        (FsEvent::Create("/b.txt".into()), Some(7)),
+        (FsEvent::ModifyData("/a.txt".into()), None),
+    ];
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        executor::enqueue_all(&mut conn, &batch).unwrap();
+    }
+    assert_eq!(count(&repo, "SELECT COUNT(*) FROM pending_operation"), 3);
+    assert_eq!(
+        count(&repo, "SELECT COUNT(*) FROM pending_operation WHERE tracker = 7"),
+        1,
+        "the rename cookie is preserved"
+    );
+
+    // And they apply exactly as if they had been enqueued one at a time.
+    let stats = executor::flush_pending(&repo).unwrap();
+    assert_eq!(stats.events, 2, "the two events on /a.txt compact into one");
+    assert!(resolve(&repo, "/a.txt").is_some());
+    assert!(resolve(&repo, "/b.txt").is_some());
+}
+
+#[test]
+fn test_buffering_a_batch_does_not_pay_a_sync_per_event() {
+    // A ratio, and only where it means something: on a filesystem whose fsync
+    // is free (a tmpfs) both paths cost the same and there is nothing to
+    // assert. Where a commit does reach the disk, batching must not be within
+    // a factor of five of one-transaction-per-event.
+    const N: usize = 500;
+    let (repo, _root, _) = setup("enqueue_cost");
+    let single: Vec<(FsEvent, Option<i64>)> =
+        (0..N).map(|i| (FsEvent::ModifyData(format!("/x/f{i}").as_str().into()), None)).collect();
+    let batched: Vec<(FsEvent, Option<i64>)> =
+        (0..N).map(|i| (FsEvent::ModifyData(format!("/y/f{i}").as_str().into()), None)).collect();
+
+    let one_by_one = {
+        let conn = repo.conn.lock().unwrap();
+        let start = std::time::Instant::now();
+        for (ev, tracker) in &single {
+            executor::enqueue(&conn, ev, *tracker).unwrap();
+        }
+        start.elapsed()
+    };
+    let together = {
+        let mut conn = repo.conn.lock().unwrap();
+        let start = std::time::Instant::now();
+        executor::enqueue_all(&mut conn, &batched).unwrap();
+        start.elapsed()
+    };
+
+    if one_by_one < std::time::Duration::from_millis(200) {
+        return; // Syncs are free here (tmpfs): the comparison says nothing.
+    }
+    assert!(
+        together * 5 < one_by_one,
+        "{N} events cost {one_by_one:?} one by one but {together:?} batched — \
+         the batch is not being committed as one transaction",
+    );
+}
+
 // ── Stopping a flush (spec-file-tracking "Pausing ingestion") ─────────────────
 
 /// The number of buffered filesystem events left waiting.

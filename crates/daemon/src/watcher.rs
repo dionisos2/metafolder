@@ -96,6 +96,12 @@ impl WatcherInner {
     }
 }
 
+/// The most events the ingest thread folds into a single buffering
+/// transaction. Large enough that a mass arrival costs a handful of syncs
+/// rather than one per event, small enough that the executor still sees the
+/// first events of a long stream without waiting for it to end.
+const MAX_INGEST_BATCH: usize = 4096;
+
 pub struct WatcherHandle {
     // Dropping the last strong `Arc` drops the notify watcher (stopping event
     // delivery). The event callback holds only a `Weak`, so it is not a cycle.
@@ -148,6 +154,19 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
     let ingest_internal = internal_dir.clone();
     std::thread::spawn(move || {
         while let Ok(events) = rx.recv() {
+            // Take everything already queued behind this delivery: notify hands
+            // events over a few at a time, and each round trip to the database
+            // costs a transaction (an fsync). Coalescing them turns a mass
+            // arrival's buffering from one sync per event into one per batch.
+            // Capped so a continuous stream still reaches the executor promptly
+            // instead of growing one unbounded batch.
+            let mut events = events;
+            while events.len() < MAX_INGEST_BATCH {
+                match rx.try_recv() {
+                    Ok(more) => events.extend(more),
+                    Err(_) => break,
+                }
+            }
             let Some(repo) = repo_weak.upgrade() else {
                 return; // Repository unloaded.
             };
@@ -393,11 +412,12 @@ fn ingest(
     inner: Option<&WatcherInner>,
     events: Vec<(FsEvent, Option<i64>)>,
 ) {
-    let conn = repo.conn.lock_recover();
-    for (ev, tracker) in &events {
-        if let Err(err) = executor::enqueue(&conn, ev, *tracker) {
-            crate::diagnostics::error("watcher", format!("failed to enqueue {ev:?}: {err:#}"));
-        }
+    let mut conn = repo.conn.lock_recover();
+    if let Err(err) = executor::enqueue_all(&mut conn, &events) {
+        crate::diagnostics::error(
+            "watcher",
+            format!("failed to buffer {} event(s): {err:#}", events.len()),
+        );
     }
     drop(conn);
     pinger.ping();

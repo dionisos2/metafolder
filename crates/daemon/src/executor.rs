@@ -78,6 +78,28 @@ pub fn enqueue(conn: &Connection, ev: &FsEvent, tracker: Option<i64>) -> Result<
     Ok(())
 }
 
+/// Appends a whole batch of events in **one transaction**.
+///
+/// The watcher's own path: `notify` delivers events in a stream, and buffering
+/// them one at a time means one transaction — hence, in WAL mode, one fsync —
+/// per event. Measured on the machine this was written on: 3 ms per event that
+/// way against 0.011 ms batched, so a mass arrival spends minutes buffering
+/// (holding the repository's connection) before the flush that applies it even
+/// begins. The batch is atomic: a failure leaves none of it buffered, and the
+/// events are then simply lost like any event the watcher misses — a reconcile
+/// recovers them.
+pub fn enqueue_all(conn: &mut Connection, events: &[(FsEvent, Option<i64>)]) -> Result<()> {
+    if events.is_empty() {
+        return Ok(());
+    }
+    let tx = conn.transaction()?;
+    for (ev, tracker) in events {
+        enqueue(&tx, ev, *tracker)?;
+    }
+    tx.commit()?;
+    Ok(())
+}
+
 /// The buffered events (each with its optional tracker id) and the highest
 /// `pending_operation` row id read — the flush deletes up to that id, so events
 /// enqueued while it runs survive for the next round.
@@ -139,24 +161,34 @@ fn load_pending(conn: &Connection) -> Result<PendingBatch> {
 /// repository, with no matching cookie), are left untouched.
 fn correlate_renames(events: Vec<(FsEvent, Option<i64>)>) -> Vec<FsEvent> {
     let mut slots: Vec<Option<(FsEvent, Option<i64>)>> = events.into_iter().map(Some).collect();
+    // Departures still looking for their other half, per cookie, most recent
+    // last. Scanning backwards for one instead is quadratic in the batch, and
+    // the worst case is the ordinary one: files moved in from *outside* the
+    // repository carry a cookie whose `RenameFrom` will never be in the batch,
+    // so every one of them walks the whole batch to find nothing.
+    let mut waiting: HashMap<i64, Vec<usize>> = HashMap::new();
     for i in 0..slots.len() {
-        let to = match &slots[i] {
-            Some((FsEvent::RenameTo(b), Some(cookie))) => Some((b.clone(), *cookie)),
-            _ => None,
-        };
-        let Some((to_path, cookie)) = to else { continue };
-        // The most recent earlier RenameFrom sharing this cookie is the source
-        // (inotify cookies are unique per rename).
-        let from_index = (0..i).rev().find(
-            |&j| matches!(&slots[j], Some((FsEvent::RenameFrom(_), Some(c))) if *c == cookie),
-        );
-        if let Some(j) = from_index {
-            let from_path = match slots[j].take() {
-                Some((FsEvent::RenameFrom(a), _)) => a,
-                _ => unreachable!("filtered to RenameFrom above"),
-            };
-            slots[i] = Some((FsEvent::Rename(from_path, to_path), None));
+        match &slots[i] {
+            Some((FsEvent::RenameFrom(_), Some(cookie))) => {
+                waiting.entry(*cookie).or_default().push(i);
+                continue;
+            }
+            Some((FsEvent::RenameTo(_), Some(_))) => {}
+            _ => continue,
         }
+        let (to_path, cookie) = match &slots[i] {
+            Some((FsEvent::RenameTo(b), Some(cookie))) => (b.clone(), *cookie),
+            _ => unreachable!("filtered to a cookied RenameTo above"),
+        };
+        // The most recent earlier RenameFrom sharing this cookie is the source
+        // (inotify cookies are unique per rename); taking it removes it from
+        // the waiting set, so it pairs at most once.
+        let Some(j) = waiting.get_mut(&cookie).and_then(Vec::pop) else { continue };
+        let from_path = match slots[j].take() {
+            Some((FsEvent::RenameFrom(a), _)) => a,
+            _ => unreachable!("only unpaired RenameFrom events are registered"),
+        };
+        slots[i] = Some((FsEvent::Rename(from_path, to_path), None));
     }
     slots.into_iter().flatten().map(|(ev, _)| ev).collect()
 }
@@ -1315,6 +1347,36 @@ mod tests {
     }
     fn rename(a: &str, b: &str) -> FsEvent {
         FsEvent::Rename(a.into(), b.into())
+    }
+
+    // Files moved *into* the repository from outside arrive as `RenameTo`
+    // events carrying an inotify cookie whose `RenameFrom` half is not in the
+    // batch — the source is outside the watch set, so nothing will ever pair
+    // with them. Searching backwards for that half, per event, is quadratic in
+    // the batch: the ordinary "drop a folder in" gesture then spends minutes
+    // before a single database write, inside the flush's own task.
+    //
+    // A ratio again, not a duration: four times the events must cost about four
+    // times as much, not sixteen.
+    #[test]
+    fn correlate_is_linear_when_nothing_pairs() {
+        fn timed(n: usize) -> std::time::Duration {
+            let events: Vec<(FsEvent, Option<i64>)> =
+                (0..n).map(|i| (to(&format!("/in/f{i}")), Some(i as i64 + 1))).collect();
+            let start = std::time::Instant::now();
+            let out = correlate_renames(events);
+            let elapsed = start.elapsed();
+            assert_eq!(out.len(), n, "unpaired arrivals are left untouched");
+            elapsed
+        }
+
+        let base = timed(4_000);
+        let four_times = timed(16_000);
+        assert!(
+            four_times < base * 8,
+            "4000 unpaired arrivals correlated in {base:?} but 16000 in {four_times:?} — \
+             the pairing is quadratic in the batch",
+        );
     }
 
     #[test]

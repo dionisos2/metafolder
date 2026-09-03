@@ -567,6 +567,16 @@ no new events. This default is configurable per repository.
 The =pending_operation= table persists across daemon restarts: any buffered
 events present at startup are replayed before the daemon accepts new requests.
 
+Buffering is itself done *in batches*: the watcher's ingest thread takes
+everything the backend has already delivered (up to a few thousand events) and
+writes it in **one transaction**. This is not a micro-optimisation. The database
+is in WAL mode with the default durability, so every transaction is an =fsync=;
+buffering one event per transaction costs one =fsync= per event — measured at
+3 ms against 0.011 ms batched, on the same machine and filesystem. A mass
+arrival then spends *minutes* merely recording that it happened, holding the
+repository's connection throughout, before the flush that applies it even
+starts. Whatever an ingest batch cannot include is simply the next batch.
+
 That persistence has a sharp edge: a batch the executor *cannot* apply would be
 retried for ever, and while it is stuck no filesystem event is recorded for the
 repository any more — a restart does not help, since the buffer is replayed at
@@ -580,6 +590,14 @@ in rapid succession. Batching them into one revision makes the operation
 rollbackable as a unit.
 
 Processing the buffer happens in two steps:
+
+*Step 0 — Rename correlation.* A rename the backend reported as a separate
+=RenameFrom= / =RenameTo= pair is fused back into one =Rename= by matching the
+inotify cookie both halves carry. The lookup is by cookie, not by scanning the
+batch backwards: files moved in from *outside* the repository arrive as
+=RenameTo= events whose =RenameFrom= half is not in the batch (and never will
+be), so a backwards scan reads the whole batch per event — quadratic on the most
+ordinary gesture there is, dropping a folder in.
 
 *Step 1 — Compaction.* Redundant sequences are simplified before any database
 write:
