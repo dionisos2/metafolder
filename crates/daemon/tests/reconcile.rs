@@ -232,7 +232,7 @@ fn test_reconcile_tracks_a_file_whose_name_is_not_utf8() {
     assert_eq!(result.created, 2, "both files get a metarecord: {result:?}");
 
     // Found by its displayed path, and holding the exact bytes.
-    let uuid = resolve(&repo, "/caf\u{FFFD}.mp4").expect("a metarecord for the latin-1 file");
+    let uuid = resolve(&repo, "/caf%E9.mp4").expect("a metarecord for the latin-1 file");
     let Some(Value::TreeRef { name, .. }) = field_value(&repo, uuid, "mfr_path") else {
         panic!("mfr_path is not a tree_ref");
     };

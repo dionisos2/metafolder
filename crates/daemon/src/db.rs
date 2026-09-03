@@ -984,6 +984,28 @@ pub fn find_tree_children_displaying(
     rows.map(|bytes| bytes_to_uuid(bytes?)).collect()
 }
 
+/// The child of `parent` whose name is exactly these bytes — the identity
+/// lookup, which cannot be ambiguous. Used for the *escaped* reading of a typed
+/// component, whose decoded bytes are by definition not text.
+pub fn find_tree_child_by_bytes(
+    conn: &Connection,
+    field_name: &str,
+    parent: Option<Uuid>,
+    name: &[u8],
+) -> Result<Option<Uuid>> {
+    let parent_blob = uuid_to_bytes(parent.unwrap_or(ZERO_UUID));
+    let uuid: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT metarecord_uuid FROM field
+             WHERE field_name = ?1 AND value_type = 'tree_ref'
+               AND value_uuid = ?2 AND value_name_bytes = ?3",
+            params![field_name, parent_blob, name],
+            |r| r.get(0),
+        )
+        .optional()?;
+    uuid.map(bytes_to_uuid).transpose()
+}
+
 pub fn find_tree_child_opts(
     conn: &Connection,
     field_name: &str,

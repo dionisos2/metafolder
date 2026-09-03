@@ -118,10 +118,26 @@ impl TreeName {
         &self.0
     }
 
-    /// The name as it is shown and typed. Borrowed when the name is text
-    /// already (the overwhelmingly common case, so no allocation).
+    /// The name as metafolder shows it and as a query spells it.
+    ///
+    /// A name that is text shows **exactly as it is** — `100%.txt` stays
+    /// `100%.txt` — so the common case pays nothing for the rare one, and no
+    /// stored name ever had to be rewritten. Only a byte that no text can
+    /// represent becomes `%XX`, its value in hex: `caf\xE9.mp4` shows as
+    /// `caf%E9.mp4`. One escape per faulty *byte* — an invalid byte is the code
+    /// of no character at all, so there is nothing else to write.
+    ///
+    /// [`escaped_to_bytes`] is the inverse. The pair is not a bijection (a file
+    /// really named `caf%E9.mp4` shows the same thing), which is why a lookup
+    /// searches both readings; see spec-data-model "Tree names".
+    ///
+    /// Borrowed when the name is text already, so the common case allocates
+    /// nothing.
     pub fn display(&self) -> std::borrow::Cow<'_, str> {
-        String::from_utf8_lossy(&self.0)
+        match std::str::from_utf8(&self.0) {
+            Ok(text) => std::borrow::Cow::Borrowed(text),
+            Err(_) => std::borrow::Cow::Owned(escape_bytes(&self.0)),
+        }
     }
 
     /// Whether the bytes are valid UTF-8, i.e. `display()` loses nothing and
@@ -133,6 +149,70 @@ impl TreeName {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+}
+
+/// Escapes only what cannot be text: every byte of an invalid UTF-8 sequence
+/// becomes `%XX`. Valid runs — `%` included — pass through untouched.
+fn escape_bytes(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len());
+    let mut rest = bytes;
+    loop {
+        match std::str::from_utf8(rest) {
+            Ok(text) => {
+                out.push_str(text);
+                return out;
+            }
+            Err(err) => {
+                let (good, bad) = rest.split_at(err.valid_up_to());
+                out.push_str(std::str::from_utf8(good).unwrap_or_default());
+                // `error_len() == None` means the input ends mid-sequence:
+                // every remaining byte is unusable.
+                let broken = err.error_len().unwrap_or(bad.len());
+                for byte in &bad[..broken] {
+                    out.push_str(&format!("%{byte:02X}"));
+                }
+                rest = &bad[broken..];
+            }
+        }
+    }
+}
+
+/// Reads `text` as the escaped form of a name, or `None` when it is not one.
+///
+/// `None` is not a failure: it means the text is to be searched **verbatim**,
+/// which is what finds a file whose name really contains those characters. It
+/// is returned for text holding no escape at all, a malformed one (`100%.txt`,
+/// `%zz`, `%E`), an escape below `0x80` (such a byte is always valid UTF-8, so
+/// it is never escaped — and refusing it keeps `50%2E.txt` from also being
+/// searched as `50..txt`), or U+FFFD (a lossy rendering pasted from another
+/// tool, which cannot be decoded back: the replacement character is three bytes
+/// and the byte it stood for is gone).
+pub fn escaped_to_bytes(text: &str) -> Option<Vec<u8>> {
+    if text.contains(char::REPLACEMENT_CHARACTER) {
+        return None;
+    }
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut escapes = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b'%' {
+            out.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+        let hex = bytes.get(i + 1..i + 3)?;
+        let byte = std::str::from_utf8(hex).ok().and_then(|h| u8::from_str_radix(h, 16).ok())?;
+        if byte < 0x80 {
+            return None;
+        }
+        out.push(byte);
+        escapes += 1;
+        i += 3;
+    }
+    // No escape: the text *is* its own bytes, and the caller's verbatim search
+    // already covers it. Saying so avoids a pointless second lookup.
+    (escapes > 0).then_some(out)
 }
 
 impl From<String> for TreeName {
@@ -528,27 +608,102 @@ mod tests {
     }
 
     #[test]
+    fn test_a_valid_name_displays_and_parses_unchanged() {
+        // The common case must not pay for the rare one: a name that is text
+        // shows exactly as it is, "%" included.
+        for text in ["vidéo.mp4", "100%.txt", "%1234.txt", "a%%b", "50%2E.txt"] {
+            let name = TreeName::from(text);
+            assert_eq!(name.display(), text, "display of {text:?}");
+            assert!(name.is_exact());
+        }
+    }
+
+    #[test]
+    fn test_an_undecodable_byte_displays_as_a_percent_escape() {
+        // One escape per faulty BYTE (not per character: an invalid byte is the
+        // code of no character at all).
+        let name = TreeName::from_bytes(LATIN1_CAFE.to_vec());
+        assert_eq!(name.display(), "caf%E9.mp4");
+        assert!(!name.is_exact());
+        // Several accents give several escapes.
+        assert_eq!(TreeName::from_bytes(b"\xe9\xe8.txt".to_vec()).display(), "%E9%E8.txt");
+    }
+
+    #[test]
+    fn test_the_escaped_form_parses_back_to_the_exact_bytes() {
+        assert_eq!(escaped_to_bytes("caf%E9.mp4").as_deref(), Some(LATIN1_CAFE));
+        assert_eq!(escaped_to_bytes("%E9%E8.txt").as_deref(), Some(&b"\xe9\xe8.txt"[..]));
+        // Lowercase hex is accepted too — a user types what they type.
+        assert_eq!(escaped_to_bytes("caf%e9.mp4").as_deref(), Some(LATIN1_CAFE));
+    }
+
+    #[test]
+    fn test_text_that_is_not_our_escaped_form_decodes_to_nothing() {
+        // Each of these is searched verbatim instead, which is what finds a
+        // file whose name really contains them.
+        for text in [
+            "100%.txt",        // a "%" that starts no escape
+            "%1234.txt",       // ...nor does this one: "12" is below 0x80
+            "%zz",             // not hex
+            "%E",              // truncated
+            "plain.txt",       // no escape at all
+            "caf\u{FFFD}.mp4", // a lossy rendering pasted from another tool
+        ] {
+            assert_eq!(escaped_to_bytes(text), None, "{text:?} must not decode");
+        }
+    }
+
+    #[test]
+    fn test_only_bytes_that_can_be_invalid_are_escapes() {
+        // Below 0x80 a byte is always valid UTF-8, so it is never escaped and
+        // "%2E" is not an escape — otherwise "50%2E.txt" would also be searched
+        // as "50..txt", a false positive for nothing.
+        assert_eq!(escaped_to_bytes("50%2E.txt"), None);
+        assert_eq!(escaped_to_bytes("%80"), Some(vec![0x80]));
+        assert_eq!(escaped_to_bytes("%FF"), Some(vec![0xFF]));
+    }
+
+    #[test]
+    fn test_display_and_parse_round_trip_for_undecodable_names() {
+        for raw in [&b"caf\xe9.mp4"[..], &b"\xff"[..], &b"a\xc3\x28b"[..]] {
+            let name = TreeName::from_bytes(raw.to_vec());
+            let shown = name.display().into_owned();
+            assert_eq!(escaped_to_bytes(&shown).as_deref(), Some(raw), "round trip of {shown:?}");
+        }
+    }
+
+    #[test]
     fn test_tree_name_from_undecodable_bytes_keeps_them() {
         let name = TreeName::from_bytes(LATIN1_CAFE.to_vec());
         assert!(!name.is_exact());
-        // Displayed the way every file manager shows it: the undecodable byte
-        // becomes the replacement character. Never an escape syntax — the user
-        // sees the file's name, not an encoding of it.
-        assert_eq!(name.display(), "caf\u{FFFD}.mp4");
+        assert_eq!(name.display(), "caf%E9.mp4");
         // ...but the bytes are untouched, so the file can still be opened.
         assert_eq!(name.as_bytes(), LATIN1_CAFE);
     }
 
     #[test]
-    fn test_tree_names_are_equal_by_bytes_not_by_display() {
-        // Two different files whose names differ only in undecodable bytes
-        // display identically. They are NOT the same node: identity is the
-        // bytes. (This is why the database keys the forest on them.)
+    fn test_two_undecodable_names_no_longer_look_alike() {
+        // Escaping the byte value is what tells them apart: a lossy rendering
+        // showed both as "caf<?>.mp4" and made the pair indistinguishable.
         let a = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
         let b = TreeName::from_bytes(b"caf\xff.mp4".to_vec());
-        assert_eq!(a.display(), b.display());
+        assert_eq!(a.display(), "caf%E9.mp4");
+        assert_eq!(b.display(), "caf%FF.mp4");
         assert_ne!(a, b);
         assert_eq!(a, TreeName::from_bytes(LATIN1_CAFE.to_vec()));
+    }
+
+    #[test]
+    fn test_equality_is_the_bytes_even_when_two_names_do_look_alike() {
+        // The one collision the escaping leaves: a file *really* named
+        // "caf%E9.mp4" shows the same text as the escaped form of
+        // "caf\xE9.mp4". They stay two distinct names — which is why a lookup
+        // searches both readings instead of picking one.
+        let literal = TreeName::from("caf%E9.mp4");
+        let escaped = TreeName::from_bytes(LATIN1_CAFE.to_vec());
+        assert_eq!(literal.display(), escaped.display());
+        assert_ne!(literal, escaped);
+        assert!(literal.is_exact() && !escaped.is_exact());
     }
 
     #[test]
@@ -576,7 +731,7 @@ mod tests {
         let value =
             Value::TreeRef { parent: None, name: TreeName::from_bytes(LATIN1_CAFE.to_vec()) };
         let json = serde_json::to_value(&value).unwrap();
-        assert_eq!(json["value"]["name"]["text"], serde_json::json!("caf\u{FFFD}.mp4"));
+        assert_eq!(json["value"]["name"]["text"], serde_json::json!("caf%E9.mp4"));
         assert_eq!(json["value"]["name"]["bytes"], serde_json::json!("636166e92e6d7034"));
         assert_eq!(roundtrip(&value), value);
     }

@@ -135,7 +135,7 @@ fn test_a_created_file_whose_name_is_not_utf8_is_tracked_live() {
     enqueue(&repo, &[FsEvent::Create(rel)]);
     executor::flush_pending(&repo).unwrap();
 
-    let uuid = resolve(&repo, "/caf\u{FFFD}.mp4").expect("the file must be tracked");
+    let uuid = resolve(&repo, "/caf%E9.mp4").expect("the file must be tracked");
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(5)));
     let Some(Value::TreeRef { name, .. }) = field_value(&repo, uuid, "mfr_path") else {
         panic!("mfr_path is not a tree_ref");

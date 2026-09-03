@@ -570,8 +570,8 @@ fn test_two_siblings_differing_only_in_undecodable_bytes_are_distinct_nodes() {
 
 #[test]
 fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
-    // The displayed name is the only handle a user has on such a file — there
-    // is no typeable exact name — so resolution accepts it.
+    // The name metafolder shows escapes the faulty byte, and that spelling is
+    // what resolves — typeable, and exact.
     let mut conn = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let file = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
@@ -585,12 +585,8 @@ fn test_a_node_with_an_undecodable_name_resolves_by_its_displayed_path() {
         file,
     );
 
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), Some(file));
-    // The path it reports back is the displayed one.
-    assert_eq!(
-        cache.path_of(&conn, "mfr_path", file).unwrap().as_deref(),
-        Some("/caf\u{FFFD}.mp4")
-    );
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(file));
+    assert_eq!(cache.path_of(&conn, "mfr_path", file).unwrap().as_deref(), Some("/caf%E9.mp4"));
 }
 
 #[test]
@@ -614,11 +610,9 @@ fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
 }
 
 #[test]
-fn test_an_ambiguous_displayed_path_resolves_to_nothing_rather_than_a_guess() {
-    // Two siblings that differ only in undecodable bytes look the same. The
-    // displayed path therefore designates neither: returning one of them would
-    // be a silent coin toss on which file the user meant
-    // (spec-data-model "Tree names").
+fn test_two_undecodable_siblings_each_resolve_on_their_own() {
+    // They used to display alike and be indistinguishable; escaping the byte
+    // value tells them apart, so neither lookup is ambiguous any more.
     let mut conn = test_conn();
     let root = tree_entry(&mut conn, "mfr_path", None, "");
     let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
@@ -629,9 +623,36 @@ fn test_an_ambiguous_displayed_path_resolves_to_nothing_rather_than_a_guess() {
     cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()), a);
     cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xff.mp4".to_vec()), b);
 
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), None);
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), Some(a));
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%FF.mp4").unwrap(), Some(b));
+}
 
-    // Each is still reachable on its own once the look-alike is gone.
-    cache.apply_remove("mfr_path", b);
-    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), Some(a));
+#[test]
+fn test_a_name_that_really_contains_the_escape_is_found_verbatim() {
+    // "%E9.txt" is both how an undecodable byte is shown and a legal file name.
+    // Typing it must find the real file — the reading a user means naturally.
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let literal = tree_entry(&mut conn, "mfr_path", Some(root), "%E9.txt");
+
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from("%E9.txt"), literal);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/%E9.txt").unwrap(), Some(literal));
+}
+
+#[test]
+fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
+    // The common case must not pay for the rare one: "100%.txt" is not an
+    // escape, and resolves as the plain name it is.
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let plain = tree_entry(&mut conn, "mfr_path", Some(root), "100%.txt");
+
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from("100%.txt"), plain);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/100%.txt").unwrap(), Some(plain));
 }

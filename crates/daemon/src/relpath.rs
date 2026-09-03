@@ -187,10 +187,18 @@ mod tests {
     }
 
     #[test]
-    fn test_an_undecodable_component_keeps_its_bytes_and_shows_a_replacement() {
+    fn test_an_undecodable_component_keeps_its_bytes_and_shows_an_escape() {
         let path = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
-        assert_eq!(path.display(), "/caf\u{FFFD}.mp4");
+        assert_eq!(path.display(), "/caf%E9.mp4");
         assert_eq!(path.name().unwrap().as_bytes(), b"caf\xe9.mp4");
+    }
+
+    #[test]
+    fn test_an_ordinary_component_is_displayed_untouched() {
+        // The escaping must not leak into the common case: a real "%" stays a
+        // real "%".
+        let path = RelPath::root().child(TreeName::from("100%.txt"));
+        assert_eq!(path.display(), "/100%.txt");
     }
 
     #[cfg(unix)]

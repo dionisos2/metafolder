@@ -988,28 +988,39 @@ fn test_an_undecodable_name_round_trips_through_the_database() {
 }
 
 #[test]
-fn test_two_names_differing_only_in_undecodable_bytes_are_distinct_siblings() {
-    // They display identically, so a text-keyed forest index would reject the
+fn test_a_literal_name_and_an_escaped_one_are_distinct_siblings() {
+    // "caf%E9.mp4" is both a legal file name and how the byte 0xE9 is shown.
+    // The two files display alike, so a text-keyed forest would reject the
     // second as a duplicate. The forest is keyed on the bytes, so both exist.
     let mut conn = test_conn();
     let root = create(
         &mut conn,
         vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })],
     );
-    let one = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
-    let two = TreeName::from_bytes(b"caf\xff.mp4".to_vec());
-    assert_eq!(one.display(), two.display(), "the test is pointless unless they collide as text");
+    let literal = TreeName::from("caf%E9.mp4");
+    let escaped = TreeName::from_bytes(b"caf\xe9.mp4".to_vec());
+    assert_eq!(
+        literal.display(),
+        escaped.display(),
+        "the test is pointless unless they collide as text"
+    );
 
     let a = create(
         &mut conn,
-        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: one.clone() })],
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: literal.clone() },
+        )],
     );
     let b = create(
         &mut conn,
-        vec![Field::new("mfr_path", Value::TreeRef { parent: Some(root.uuid), name: two.clone() })],
+        vec![Field::new(
+            "mfr_path",
+            Value::TreeRef { parent: Some(root.uuid), name: escaped.clone() },
+        )],
     );
-    assert_eq!(tree_name(&conn, a.uuid), one);
-    assert_eq!(tree_name(&conn, b.uuid), two);
+    assert_eq!(tree_name(&conn, a.uuid), literal);
+    assert_eq!(tree_name(&conn, b.uuid), escaped);
 }
 
 #[test]

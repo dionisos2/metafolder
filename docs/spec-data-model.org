@@ -94,15 +94,20 @@ them:
 - the **bytes are the identity**: equality, ordering, hashing and the forest's
   uniqueness constraint all go through them, so two files whose names differ
   only in undecodable bytes are two distinct nodes;
-- the **text is presentation only**: the name as every file manager shows it,
-  undecodable bytes replaced by U+FFFD. *No escape syntax is ever displayed or
-  typed* — the user sees the file's name, not an encoding of it.
+- the **text is presentation only**, and it is what a query spells. A name that
+  *is* text shows exactly as it is — =100%.txt= stays =100%.txt=, so the common
+  case pays nothing and no stored name ever had to be rewritten. Only a byte no
+  text can represent becomes =%XX=, its value in hex: =caf\xE9.mp4= shows as
+  =caf%E9.mp4=. One escape per faulty **byte** — an invalid byte is the code of
+  no character, so there is nothing else to write.
 
 This split is forced, not a preference. An encoding that both leaves every valid
 UTF-8 name unchanged *and* is injective cannot exist: if all valid text maps to
 itself, the text form is entirely used up and no undecodable name can map
-anywhere free. Identity must therefore live in the bytes; escaping the text
-would only move the problem onto ordinary names (=50%.txt= → =50%25.txt=).
+anywhere free. Identity must therefore live in the bytes. The escaping above is
+consequently *not* a bijection — a file really named =caf%E9.mp4= shows the same
+text — which is exactly why a lookup searches both readings (below) rather than
+picking one.
 
 Every path the daemon handles carries these bytes end to end: the reconcile
 walk, the watcher (whose buffered events persist the exact path alongside its
@@ -111,10 +116,29 @@ displayed form, so a restart loses nothing), the executor, and
 patterns are regexes the user wrote against displayed paths, and API fields
 report the displayed form.
 
-The consequence to accept: **a lookup by displayed path is not guaranteed
-unique**. Two files in one directory whose names differ only in undecodable
-bytes display identically. Resolution by path must then report the ambiguity
-rather than pick a winner — it never guesses.
+*Looking a name up.* A typed component has up to two byte readings, and **both
+are searched, the results added**:
+
+- *verbatim* — the bytes of what was typed. This is what finds a file whose name
+  really contains those characters, and it is the only reading for text that is
+  not our escaped form: no escape at all, a malformed one (=100%.txt=, =%zz=,
+  =%E=), an escape below =0x80= (such a byte is always valid UTF-8, so it is
+  never produced — refusing it keeps =50%2E.txt= from also being searched as
+  =50..txt=), or U+FFFD, which is a lossy rendering pasted from another tool and
+  cannot be decoded back (the replacement character is three bytes; the byte it
+  stood for is gone).
+- *escaped* — the bytes that form decodes to, when it is one.
+
+Adding them is deliberate: neither reading is wrong, and a user hunting for a
+file named =%1234.txt= types exactly that. A query returns a set, so returning
+both is honest. The two are told apart by the *marker* on the answer: a name
+that needed escaping travels in the object wire form below, so a client can show
+it as such.
+
+A **resolution** that must yield a single metarecord (=resolve-tree=, =mf path=,
+GUI navigation) cannot add them. It takes an optional =form= parameter
+(=verbatim= or =escaped=) selecting one reading, which is then never ambiguous;
+without it, two matches are reported as an ambiguity rather than guessed.
 
 *Wire form.* A name that is valid UTF-8 (the overwhelmingly common case) is a
 plain JSON string, byte-for-byte the shape every earlier client read. Only a

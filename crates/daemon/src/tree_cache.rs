@@ -233,8 +233,10 @@ impl TreeCache {
         self.clock += 1;
         let comps: Vec<&str> = path.split('/').collect();
 
-        let root_norm = self.normalize(&TreeName::from(comps[0]));
-        let cached_root = self.fields.get(field).and_then(|ft| ft.roots.get(&root_norm)).copied();
+        let cached_root = Self::readings(comps[0]).iter().find_map(|name| {
+            let norm = self.normalize(name);
+            self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied()
+        });
         let mut cur = match cached_root {
             Some(idx) => idx,
             None => {
@@ -242,23 +244,18 @@ impl TreeCache {
                     return Ok(None); // Full forest resident: a cache miss is absence.
                 }
                 self.misses += 1;
-                let found = self.db_child(conn, field, None, comps[0])?;
-                let Some(uuid) = found else {
+                let Some((uuid, name)) = self.db_child(conn, field, None, comps[0])? else {
                     return Ok(None);
                 };
-                self.insert_node(field, None, &TreeName::from(comps[0]), uuid)
+                self.insert_node(field, None, &name, uuid)
             }
         };
         self.touch(cur);
 
         for comp in &comps[1..] {
-            let norm = self.normalize(&TreeName::from(*comp));
-            let cached_child = self
-                .node(cur)
-                .children
-                .get(&norm)
-                .copied()
-                .or_else(|| self.child_by_display(cur, comp));
+            let cached_child = Self::readings(comp)
+                .iter()
+                .find_map(|name| self.node(cur).children.get(&self.normalize(name)).copied());
             cur = match cached_child {
                 Some(idx) => idx,
                 None => {
@@ -267,12 +264,12 @@ impl TreeCache {
                     }
                     self.misses += 1;
                     let parent_uuid = self.node(cur).uuid;
-                    let found = self.db_child(conn, field, Some(parent_uuid), comp)?;
-                    let Some(uuid) = found else {
+                    let Some((uuid, name)) = self.db_child(conn, field, Some(parent_uuid), comp)?
+                    else {
                         self.evict_to_limit();
                         return Ok(None);
                     };
-                    self.insert_node(field, Some(cur), &TreeName::from(*comp), uuid)
+                    self.insert_node(field, Some(cur), &name, uuid)
                 }
             };
             self.touch(cur);
@@ -598,75 +595,50 @@ impl TreeCache {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
-    /// Resolves one path component against the database, the way
-    /// [`Self::child_by_display`] resolves it in memory: by exact bytes, and —
-    /// only for a component that does not decode — by displayed name, refusing
-    /// to pick when several rows share it.
+    /// Resolves one path component against the database, trying the same byte
+    /// readings [`Self::readings`] gives. Returns the name that matched, so the
+    /// node is cached under the name it really has rather than under what was
+    /// typed.
     fn db_child(
         &self,
         conn: &Connection,
         field: &str,
         parent: Option<Uuid>,
         comp: &str,
-    ) -> Result<Option<Uuid>> {
-        if !comp.contains(char::REPLACEMENT_CHARACTER) {
-            return db::find_tree_child_opts(conn, field, parent, comp, self.case_insensitive);
+    ) -> Result<Option<(Uuid, TreeName)>> {
+        for name in Self::readings(comp) {
+            let found = if name.is_exact() {
+                db::find_tree_child_opts(
+                    conn,
+                    field,
+                    parent,
+                    &name.display(),
+                    self.case_insensitive,
+                )?
+            } else {
+                db::find_tree_child_by_bytes(conn, field, parent, name.as_bytes())?
+            };
+            if let Some(uuid) = found {
+                return Ok(Some((uuid, name)));
+            }
         }
-        // A lossy component has no exact form to match on: the text column is
-        // all there is, and it may name several files.
-        let found =
-            db::find_tree_children_displaying(conn, field, parent, comp, self.case_insensitive)?;
-        if found.len() > 1 {
-            crate::diagnostics::warn(
-                "tree cache",
-                format!(
-                    "{comp:?} names several files that differ only in undecodable bytes; \
-                     rename them to tell them apart"
-                ),
-            );
-            return Ok(None);
-        }
-        Ok(found.into_iter().next())
+        Ok(None)
     }
 
-    /// A child matched by its *displayed* name rather than by its bytes.
+    /// The byte readings a typed path component can have: what the user typed,
+    /// verbatim, and — when it spells the escaped form — the bytes that form
+    /// decodes to (spec-data-model "Tree names").
     ///
-    /// The only handle anyone has on a file whose name does not decode is what
-    /// it is shown as — U+FFFD where the undecodable bytes are — since there is
-    /// no exact name to type. Resolution therefore accepts the displayed form,
-    /// at the documented price that it is not guaranteed unique: two siblings
-    /// differing only in undecodable bytes display alike (spec-data-model
-    /// "Tree names"). This is the *fallback*, tried only when the exact byte
-    /// key missed, so an ordinary path never pays for the scan.
-    ///
-    /// When *several* children share that displayed name, the path designates
-    /// none of them and this resolves to nothing: returning one would be a
-    /// silent coin toss on which file the caller meant. The ambiguity goes to
-    /// the diagnostics feed, so it reaches the user instead of looking like a
-    /// missing file.
-    fn child_by_display(&self, parent: usize, comp: &str) -> Option<usize> {
-        // Only a component that is itself lossy can match a lossy name; every
-        // other component would already have matched on its exact bytes.
-        if !comp.contains(char::REPLACEMENT_CHARACTER) {
-            return None;
+    /// Both are searched and the results added, because neither reading is
+    /// wrong: `%E9.txt` is how an undecodable byte is shown *and* a perfectly
+    /// legal file name. Which one the user meant is told apart by the marker on
+    /// the answer, not guessed here.
+    fn readings(comp: &str) -> Vec<TreeName> {
+        let verbatim = TreeName::from(comp);
+        match metafolder_core::metarecord::escaped_to_bytes(comp) {
+            Some(bytes) => vec![verbatim, TreeName::from_bytes(bytes)],
+            None => vec![verbatim],
         }
-        let wanted = self.normalize(&TreeName::from(comp));
-        let mut matches = self.node(parent).children.values().copied().filter(|&idx| {
-            let name = &self.node(idx).name;
-            !name.is_exact() && self.normalize(&TreeName::from(name.display().as_ref())) == wanted
-        });
-        let first = matches.next()?;
-        if matches.next().is_some() {
-            crate::diagnostics::warn(
-                "tree cache",
-                format!(
-                    "{comp:?} names several files that differ only in undecodable bytes; \
-                     rename them to tell them apart"
-                ),
-            );
-            return None;
-        }
-        Some(first)
     }
 
     /// The map key for a name: its exact bytes, with the *decodable* runs
