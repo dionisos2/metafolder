@@ -7,11 +7,17 @@ use std::ffi::OsStr;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use crate::fs_path::{from_handle, is_escaped, to_handle};
+
 #[derive(Serialize, Debug, PartialEq)]
 pub struct DirEntry {
     pub name: String,
     pub path: String,
     pub is_dir: bool,
+    /// The name holds bytes no text can represent, so what is shown is its
+    /// escaped form and not literally what the disk says (spec-data-model
+    /// "Tree names"). The panel marks such a row.
+    pub escaped: bool,
 }
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -25,13 +31,19 @@ pub struct StatInfo {
 
 #[tauri::command]
 pub fn fs_read_dir(path: String) -> Result<Vec<DirEntry>, String> {
-    let entries = std::fs::read_dir(&path).map_err(|e| format!("cannot read {path}: {e}"))?;
+    let dir = from_handle(&path);
+    let entries = std::fs::read_dir(&dir).map_err(|e| format!("cannot read {path}: {e}"))?;
     let mut listed = Vec::new();
     for entry in entries.flatten() {
+        let entry_path = entry.path();
         listed.push(DirEntry {
-            name: entry.file_name().to_string_lossy().into_owned(),
-            path: entry.path().display().to_string(),
+            // Both are escaped forms, so a name that no text can represent is
+            // still shown, still typeable, and — unlike the lossy rendering this
+            // replaced — still names the file it came from.
+            name: to_handle(Path::new(&entry.file_name())),
+            path: to_handle(&entry_path),
             is_dir: entry.file_type().map(|t| t.is_dir()).unwrap_or(false),
+            escaped: is_escaped(&entry_path),
         });
     }
     listed.sort_by(|a, b| a.name.cmp(&b.name));
@@ -53,7 +65,8 @@ fn home_dir_from(home: Option<&OsStr>) -> String {
 
 #[tauri::command]
 pub fn fs_stat(path: String) -> Result<StatInfo, String> {
-    let metadata = std::fs::metadata(&path).map_err(|e| format!("cannot stat {path}: {e}"))?;
+    let metadata =
+        std::fs::metadata(from_handle(&path)).map_err(|e| format!("cannot stat {path}: {e}"))?;
     let mtime = metadata
         .modified()
         .ok()
@@ -74,14 +87,15 @@ pub fn fs_stat(path: String) -> Result<StatInfo, String> {
 /// Whether a path already exists (following no symlink, so a dangling symlink
 /// still counts as present — we must not silently overwrite it).
 fn exists(path: &str) -> bool {
-    std::fs::symlink_metadata(path).is_ok()
+    std::fs::symlink_metadata(from_handle(path)).is_ok()
 }
 
 /// Creates a single new directory `path` (its parent must already exist).
 /// Errors if it already exists.
 #[tauri::command]
 pub fn fs_mkdir(path: String) -> Result<(), String> {
-    std::fs::create_dir(&path).map_err(|e| format!("cannot create directory {path}: {e}"))
+    std::fs::create_dir(from_handle(&path))
+        .map_err(|e| format!("cannot create directory {path}: {e}"))
 }
 
 /// Creates a new empty file `path`. Errors if it already exists (never
@@ -91,7 +105,7 @@ pub fn fs_create_file(path: String) -> Result<(), String> {
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&path)
+        .open(from_handle(&path))
         .map(|_| ())
         .map_err(|e| format!("cannot create file {path}: {e}"))
 }
@@ -103,7 +117,7 @@ pub fn fs_move(from: String, to: String) -> Result<(), String> {
     if exists(&to) {
         return Err(format!("{to} already exists"));
     }
-    move_path(Path::new(&from), Path::new(&to))
+    move_path(&from_handle(&from), &from_handle(&to))
         .map_err(|e| format!("cannot move {from} to {to}: {e}"))
 }
 
@@ -114,7 +128,7 @@ pub fn fs_copy(from: String, to: String) -> Result<(), String> {
     if exists(&to) {
         return Err(format!("{to} already exists"));
     }
-    copy_path(Path::new(&from), Path::new(&to))
+    copy_path(&from_handle(&from), &from_handle(&to))
         .map_err(|e| format!("cannot copy {from} to {to}: {e}"))
 }
 
@@ -123,11 +137,13 @@ pub fn fs_copy(from: String, to: String) -> Result<(), String> {
 /// panel routes deletions through the trash instead.
 #[tauri::command]
 pub fn fs_delete(path: String) -> Result<(), String> {
-    let is_dir = std::fs::symlink_metadata(&path)
+    let target = from_handle(&path);
+    let is_dir = std::fs::symlink_metadata(&target)
         .map_err(|e| format!("cannot stat {path}: {e}"))?
         .file_type()
         .is_dir();
-    let result = if is_dir { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+    let result =
+        if is_dir { std::fs::remove_dir_all(&target) } else { std::fs::remove_file(&target) };
     result.map_err(|e| format!("cannot delete {path}: {e}"))
 }
 

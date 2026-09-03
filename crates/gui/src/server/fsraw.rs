@@ -38,7 +38,11 @@ pub async fn serve(request: Request<Body>) -> Response {
     let Some(path) = path else {
         return (StatusCode::BAD_REQUEST, "missing 'path' query parameter").into_response();
     };
-    if !std::path::Path::new(&path).is_file() {
+    // The `file` panel hands back the escaped handle it was given, so a name no
+    // text can represent still reaches the disk exactly (spec-data-model
+    // "Tree names").
+    let path = crate::fs_path::from_handle(&path);
+    if !path.is_file() {
         return StatusCode::NOT_FOUND.into_response();
     }
 

@@ -110,6 +110,15 @@
         color: var(--mf-warning, #d6a75e);
         padding: 4px 6px;
       }
+      /* A name holding bytes that are not text is shown escaped (%XX), so the
+         row says so: what is on screen is not literally what the disk holds
+         (spec-data-model "Tree names"). Amber like the unmounted case — this is
+         something to know about, not an error. */
+      .escaped-marker {
+        color: var(--mf-warning, #d6a75e);
+        margin-left: 4px;
+        cursor: help;
+      }
       .badge {
         font-size: 0.8em;
         color: var(--mf-fg-dim, #8a8a96);

@@ -28,7 +28,9 @@ pub struct Params {
 }
 
 pub async fn serve(State(state): State<ServerState>, Query(params): Query<Params>) -> Response {
-    let path = PathBuf::from(params.path);
+    // The panels hand back the escaped handle they were given, so the exact
+    // bytes come back here (spec-data-model "Tree names").
+    let path = crate::fs_path::from_handle(&params.path);
 
     // Resolve the file's repository (its cache directory). A file outside any
     // repo gets no thumbnail — no ffmpeg, nothing written; the panel shows a

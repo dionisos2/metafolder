@@ -1385,10 +1385,33 @@ commands for the currently focused panel type.
 Direct filesystem access via the GUI backend (Tauri/Rust). Available to all
 panel types; not routed through the daemon.
 
+*Paths are handles.* The frontend speaks JSON, so every path it holds is text —
+but a POSIX path is a byte string that need not be UTF-8 (see [[file:spec-data-model.org][spec-data-model]]
+"Tree names"). Every path crossing this boundary is therefore in the same
+=%XX= escaped form the rest of metafolder shows: itself when the path is text,
+=/dir/caf%E9.mp4= when it holds a byte no text can represent. A panel slices and
+joins it like the plain path it usually is, and hands it back unchanged — to an
+=fs= call, to =?path== on =/fsraw=, =/thumbnail= or =/__media-probe= — and the
+backend turns it into the exact bytes before touching the disk.
+
+Rendering it lossily instead, as this used to, produced a path that named
+nothing: the row appeared in the file manager and *every* action on it failed,
+because =caf<?>.mp4= is three bytes where the disk has one.
+
+A handle that spells an escape has two readings, and an operation on the disk
+needs one: **existence decides**, the literal file winning when it is really
+there. A path that exists under neither reading stays verbatim, so creating
+=new%file.txt= makes exactly that.
+
+=readDir= marks an entry whose name needed escaping with =escaped: true=; the
+file-manager shows those rows with a ⚠ and says renaming the file is what makes
+it ordinary again.
+
 #+BEGIN_SRC js
 // List directory contents
 const metarecords = await metafolder.fs.readDir('/path/to/dir')
-// metarecords: [{name: "foo.mp3", path: "/path/to/dir/foo.mp3", is_dir: false}, ...]
+// metarecords: [{name: "foo.mp3", path: "/path/to/dir/foo.mp3", is_dir: false,
+//                escaped: false}, ...]
 
 // Stat a single path
 const info = await metafolder.fs.stat('/path/to/file')

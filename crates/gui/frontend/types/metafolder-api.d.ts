@@ -218,9 +218,18 @@ declare namespace Metafolder {
   }
 
   interface FsEntry {
+    /** The name as it is shown and typed: itself when the name is text, its
+     *  `%XX` escaped form when it holds bytes no text can represent. */
     name: string;
+    /** The same escaping applied to the whole path. It is a *handle*: hand it
+     *  back unchanged (fs commands, `?path=` URLs) and the backend turns it
+     *  into the exact bytes. Slicing and joining it works as for a plain
+     *  path. */
     path: string;
     is_dir: boolean;
+    /** The name needed escaping, so what is shown is not literally what the
+     *  disk holds — the row is marked and the file is worth renaming. */
+    escaped?: boolean;
   }
 
   interface Fs {

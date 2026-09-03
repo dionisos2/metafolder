@@ -13,6 +13,7 @@ pub mod daemon_proxy;
 pub mod diagnostics;
 pub mod events;
 pub mod fs_commands;
+pub mod fs_path;
 pub mod history;
 pub mod ignore;
 pub mod keybindings;

@@ -249,6 +249,27 @@ async fn test_fsraw_serves_files_with_hostile_names() {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn test_fsraw_serves_a_file_whose_name_is_not_utf8() {
+    // The panels are handed an escaped handle (`caf%E9.mp4`) because JSON only
+    // carries text; it must reach the disk as the byte it stands for. Serving
+    // the handle literally would 404 — the file manager would list the file and
+    // the preview would refuse it.
+    use std::os::unix::ffi::OsStrExt;
+    let (_guard, _config, router) = setup();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join(std::ffi::OsStr::from_bytes(b"caf\xe9.mp4"));
+    std::fs::write(&file, "movie").unwrap();
+
+    let handle = metafolder_gui::fs_path::to_handle(&file);
+    assert!(handle.ends_with("caf%E9.mp4"), "handle should be escaped: {handle}");
+    let (status, _, body) =
+        get(&router, &format!("/fsraw?path={}", encode_uri_component(&handle))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"movie");
+}
+
 #[tokio::test]
 async fn test_fsraw_supports_range_requests() {
     let (_guard, _config, router) = setup();

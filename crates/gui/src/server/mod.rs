@@ -206,7 +206,7 @@ async fn media_probe(
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let probe = tokio::task::spawn_blocking(move || {
-        crate::media_support::probe_file(std::path::Path::new(&params.path))
+        crate::media_support::probe_file(&crate::fs_path::from_handle(&params.path))
     })
     .await;
     match probe {

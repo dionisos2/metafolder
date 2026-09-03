@@ -293,6 +293,7 @@ export async function mount(root, metafolder) {
               internal && 'internal',
               ignored && 'ignored',
               unmounted && 'unmounted',
+              item.escaped && 'escaped-name',
             ],
             onclick: () => select(index),
             ondblclick: () => activate(index),
@@ -301,6 +302,23 @@ export async function mount(root, metafolder) {
           },
           el('span', { class: 'icon' }, item.is_dir ? '📁' : fileTypeGlyph(item.name)),
           el('span', { class: 'name' }, item.name),
+          // A name holding bytes no text can represent is shown escaped, so say
+          // so: what is on screen is not literally what the disk holds, and
+          // renaming the file is what makes it ordinary again.
+          ...(item.escaped
+            ? [
+                el(
+                  'span',
+                  {
+                    class: 'escaped-marker',
+                    title:
+                      'This name holds bytes that are not text; it is shown escaped ' +
+                      '(%XX). Rename the file to make it ordinary.',
+                  },
+                  '⚠',
+                ),
+              ]
+            : []),
           el(
             'span',
             { class: 'badge' },
