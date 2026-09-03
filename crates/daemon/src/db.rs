@@ -961,6 +961,29 @@ pub fn find_tree_child(
 
 /// Like [`find_tree_child`], optionally matching `name` case-insensitively
 /// (SQLite NOCASE — ASCII only; spec-platform leaves Unicode folding open).
+/// Every child of `parent` whose name *displays* as `name`, for the ambiguous
+/// lookup: a name that does not decode has no exact form to match on, so the
+/// text column is all there is — and it can match more than one row. The caller
+/// decides what to do with several (spec-data-model "Tree names").
+pub fn find_tree_children_displaying(
+    conn: &Connection,
+    field_name: &str,
+    parent: Option<Uuid>,
+    name: &str,
+    case_insensitive: bool,
+) -> Result<Vec<Uuid>> {
+    let collate = if case_insensitive { " COLLATE NOCASE" } else { "" };
+    let parent_blob = uuid_to_bytes(parent.unwrap_or(ZERO_UUID));
+    let mut stmt = conn.prepare(&format!(
+        "SELECT metarecord_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'tree_ref'
+           AND value_uuid = ?2 AND value_name = ?3{collate}"
+    ))?;
+    let rows =
+        stmt.query_map(params![field_name, parent_blob, name], |r| r.get::<_, Vec<u8>>(0))?;
+    rows.map(|bytes| bytes_to_uuid(bytes?)).collect()
+}
+
 pub fn find_tree_child_opts(
     conn: &Connection,
     field_name: &str,

@@ -242,8 +242,7 @@ impl TreeCache {
                     return Ok(None); // Full forest resident: a cache miss is absence.
                 }
                 self.misses += 1;
-                let found =
-                    db::find_tree_child_opts(conn, field, None, comps[0], self.case_insensitive)?;
+                let found = self.db_child(conn, field, None, comps[0])?;
                 let Some(uuid) = found else {
                     return Ok(None);
                 };
@@ -268,13 +267,7 @@ impl TreeCache {
                     }
                     self.misses += 1;
                     let parent_uuid = self.node(cur).uuid;
-                    let found = db::find_tree_child_opts(
-                        conn,
-                        field,
-                        Some(parent_uuid),
-                        comp,
-                        self.case_insensitive,
-                    )?;
+                    let found = self.db_child(conn, field, Some(parent_uuid), comp)?;
                     let Some(uuid) = found else {
                         self.evict_to_limit();
                         return Ok(None);
@@ -605,6 +598,37 @@ impl TreeCache {
 
     // ── Internals ────────────────────────────────────────────────────────────
 
+    /// Resolves one path component against the database, the way
+    /// [`Self::child_by_display`] resolves it in memory: by exact bytes, and —
+    /// only for a component that does not decode — by displayed name, refusing
+    /// to pick when several rows share it.
+    fn db_child(
+        &self,
+        conn: &Connection,
+        field: &str,
+        parent: Option<Uuid>,
+        comp: &str,
+    ) -> Result<Option<Uuid>> {
+        if !comp.contains(char::REPLACEMENT_CHARACTER) {
+            return db::find_tree_child_opts(conn, field, parent, comp, self.case_insensitive);
+        }
+        // A lossy component has no exact form to match on: the text column is
+        // all there is, and it may name several files.
+        let found =
+            db::find_tree_children_displaying(conn, field, parent, comp, self.case_insensitive)?;
+        if found.len() > 1 {
+            crate::diagnostics::warn(
+                "tree cache",
+                format!(
+                    "{comp:?} names several files that differ only in undecodable bytes; \
+                     rename them to tell them apart"
+                ),
+            );
+            return Ok(None);
+        }
+        Ok(found.into_iter().next())
+    }
+
     /// A child matched by its *displayed* name rather than by its bytes.
     ///
     /// The only handle anyone has on a file whose name does not decode is what
@@ -614,6 +638,12 @@ impl TreeCache {
     /// differing only in undecodable bytes display alike (spec-data-model
     /// "Tree names"). This is the *fallback*, tried only when the exact byte
     /// key missed, so an ordinary path never pays for the scan.
+    ///
+    /// When *several* children share that displayed name, the path designates
+    /// none of them and this resolves to nothing: returning one would be a
+    /// silent coin toss on which file the caller meant. The ambiguity goes to
+    /// the diagnostics feed, so it reaches the user instead of looking like a
+    /// missing file.
     fn child_by_display(&self, parent: usize, comp: &str) -> Option<usize> {
         // Only a component that is itself lossy can match a lossy name; every
         // other component would already have matched on its exact bytes.
@@ -621,15 +651,22 @@ impl TreeCache {
             return None;
         }
         let wanted = self.normalize(&TreeName::from(comp));
-        self.node(parent)
-            .children
-            .values()
-            .find(|&&idx| {
-                let name = &self.node(idx).name;
-                !name.is_exact()
-                    && self.normalize(&TreeName::from(name.display().as_ref())) == wanted
-            })
-            .copied()
+        let mut matches = self.node(parent).children.values().copied().filter(|&idx| {
+            let name = &self.node(idx).name;
+            !name.is_exact() && self.normalize(&TreeName::from(name.display().as_ref())) == wanted
+        });
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            crate::diagnostics::warn(
+                "tree cache",
+                format!(
+                    "{comp:?} names several files that differ only in undecodable bytes; \
+                     rename them to tell them apart"
+                ),
+            );
+            return None;
+        }
+        Some(first)
     }
 
     /// The map key for a name: its exact bytes, with the *decodable* runs

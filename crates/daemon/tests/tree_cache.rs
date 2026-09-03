@@ -612,3 +612,26 @@ fn test_case_folding_still_applies_but_keeps_undecodable_bytes_distinct() {
     // ...and the two undecodable siblings stay two nodes.
     assert_eq!(cache.children_of(&conn, "mfr_path", root).unwrap().len(), 3);
 }
+
+#[test]
+fn test_an_ambiguous_displayed_path_resolves_to_nothing_rather_than_a_guess() {
+    // Two siblings that differ only in undecodable bytes look the same. The
+    // displayed path therefore designates neither: returning one of them would
+    // be a silent coin toss on which file the user meant
+    // (spec-data-model "Tree names").
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let a = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+    let b = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xff.mp4");
+
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()), a);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from_bytes(b"caf\xff.mp4".to_vec()), b);
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), None);
+
+    // Each is still reachable on its own once the look-alike is gone.
+    cache.apply_remove("mfr_path", b);
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf\u{FFFD}.mp4").unwrap(), Some(a));
+}
