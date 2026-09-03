@@ -57,6 +57,34 @@ struct FieldTree {
     by_uuid: HashMap<Uuid, Vec<usize>>,
 }
 
+/// What resolving one path component yielded.
+enum Resolved<T> {
+    /// The node it names.
+    Found(T),
+    /// Not here — another source (the database) may still know.
+    Missing,
+    /// The readings name different files: the path designates neither, and no
+    /// further lookup may override that.
+    Ambiguous,
+}
+
+/// Which reading of a typed path to resolve (spec-data-model "Tree names").
+///
+/// A component can name two different files at once — one whose name really is
+/// `%E9.txt`, one whose name is the byte `0xE9` — so a lookup that must yield a
+/// *single* metarecord has to be told which, or refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PathForm {
+    /// Try both; resolve to nothing when they name different files.
+    #[default]
+    Any,
+    /// The bytes as typed — what finds a file whose name really contains them.
+    Verbatim,
+    /// The bytes the escaped form decodes to.
+    Escaped,
+}
+
 pub struct TreeCache {
     arena: Vec<Option<Node>>,
     free: Vec<usize>,
@@ -230,21 +258,38 @@ impl TreeCache {
         field: &str,
         path: &str,
     ) -> Result<Option<Uuid>> {
+        self.resolve_path_as(conn, field, path, PathForm::Any)
+    }
+
+    /// [`Self::resolve_path`] restricted to one reading of the typed text
+    /// (spec-data-model "Tree names"). Naming a reading is what makes the
+    /// lookup unambiguous when a path could designate two different files.
+    pub fn resolve_path_as(
+        &mut self,
+        conn: &Connection,
+        field: &str,
+        path: &str,
+        form: PathForm,
+    ) -> Result<Option<Uuid>> {
         self.clock += 1;
         let comps: Vec<&str> = path.split('/').collect();
 
-        let cached_root = Self::readings(comps[0]).iter().find_map(|name| {
-            let norm = self.normalize(name);
-            self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied()
-        });
-        let mut cur = match cached_root {
-            Some(idx) => idx,
-            None => {
+        let roots: Vec<usize> = Self::readings(comps[0], form)
+            .iter()
+            .filter_map(|name| {
+                let norm = self.normalize(name);
+                self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied()
+            })
+            .collect();
+        let mut cur = match Self::arbitrate(&roots, comps[0]) {
+            Resolved::Ambiguous => return Ok(None),
+            Resolved::Found(idx) => idx,
+            Resolved::Missing => {
                 if self.complete {
                     return Ok(None); // Full forest resident: a cache miss is absence.
                 }
                 self.misses += 1;
-                let Some((uuid, name)) = self.db_child(conn, field, None, comps[0])? else {
+                let Some((uuid, name)) = self.db_child(conn, field, None, comps[0], form)? else {
                     return Ok(None);
                 };
                 self.insert_node(field, None, &name, uuid)
@@ -253,18 +298,17 @@ impl TreeCache {
         self.touch(cur);
 
         for comp in &comps[1..] {
-            let cached_child = Self::readings(comp)
-                .iter()
-                .find_map(|name| self.node(cur).children.get(&self.normalize(name)).copied());
-            cur = match cached_child {
-                Some(idx) => idx,
-                None => {
+            cur = match self.pick(cur, comp, form) {
+                Resolved::Ambiguous => return Ok(None),
+                Resolved::Found(idx) => idx,
+                Resolved::Missing => {
                     if self.complete {
                         return Ok(None); // Full forest resident: a cache miss is absence.
                     }
                     self.misses += 1;
                     let parent_uuid = self.node(cur).uuid;
-                    let Some((uuid, name)) = self.db_child(conn, field, Some(parent_uuid), comp)?
+                    let Some((uuid, name)) =
+                        self.db_child(conn, field, Some(parent_uuid), comp, form)?
                     else {
                         self.evict_to_limit();
                         return Ok(None);
@@ -605,24 +649,151 @@ impl TreeCache {
         field: &str,
         parent: Option<Uuid>,
         comp: &str,
+        form: PathForm,
     ) -> Result<Option<(Uuid, TreeName)>> {
-        for name in Self::readings(comp) {
-            let found = if name.is_exact() {
-                db::find_tree_child_opts(
+        let mut hits = Vec::new();
+        for name in Self::readings(comp, form) {
+            // By bytes, always: the text column now holds the *escaped* display,
+            // so `caf%E9.mp4` is what a file really named that AND one named
+            // with the byte 0xE9 both store — comparing it would confuse the two
+            // readings the caller just asked to tell apart.
+            let mut found = db::find_tree_child_by_bytes(conn, field, parent, name.as_bytes())?;
+            if found.is_none() && self.case_insensitive {
+                // Only a case-insensitive filesystem needs the text compare, for
+                // its COLLATE NOCASE; it cannot distinguish the two readings,
+                // which is why it is the fallback rather than the rule.
+                found = db::find_tree_child_opts(
                     conn,
                     field,
                     parent,
                     &name.display(),
                     self.case_insensitive,
-                )?
-            } else {
-                db::find_tree_child_by_bytes(conn, field, parent, name.as_bytes())?
-            };
+                )?;
+            }
             if let Some(uuid) = found {
-                return Ok(Some((uuid, name)));
+                hits.push((uuid, name));
             }
         }
-        Ok(None)
+        // Arbitrated on the uuid: one file reached by both readings is one
+        // answer; two different files are none.
+        let uuids: Vec<Uuid> = hits.iter().map(|(uuid, _)| *uuid).collect();
+        let Resolved::Found(uuid) = Self::arbitrate(&uuids, comp) else {
+            return Ok(None);
+        };
+        Ok(hits.into_iter().find(|(candidate, _)| *candidate == uuid))
+    }
+
+    /// The cached child of `parent` a typed component names, or why there is
+    /// none — the two readings naming *different* children means the path
+    /// designates neither, and picking one would be a silent coin toss.
+    fn pick(&self, parent: usize, comp: &str, form: PathForm) -> Resolved<usize> {
+        let found: Vec<usize> = Self::readings(comp, form)
+            .iter()
+            .filter_map(|name| self.node(parent).children.get(&self.normalize(name)).copied())
+            .collect();
+        Self::arbitrate(&found, comp)
+    }
+
+    /// The one match, or why there is none. Both readings landing on the *same*
+    /// node is not an ambiguity.
+    ///
+    /// Telling `Ambiguous` from `Missing` is the whole point: they were one
+    /// value once, and the database fallback then re-introduced the very guess
+    /// the in-memory side had just refused.
+    fn arbitrate<T: Copy + PartialEq>(found: &[T], comp: &str) -> Resolved<T> {
+        match found {
+            [] => Resolved::Missing,
+            [one] => Resolved::Found(*one),
+            _ if found.iter().all(|x| x == &found[0]) => Resolved::Found(found[0]),
+            _ => {
+                crate::diagnostics::warn(
+                    "tree cache",
+                    format!(
+                        "{comp:?} names two different files — one whose name really is that \
+                         text, one whose name holds the bytes it escapes; say which with the \
+                         `form` parameter"
+                    ),
+                );
+                Resolved::Ambiguous
+            }
+        }
+    }
+
+    /// Resolves a path the daemon built itself, **by exact bytes**.
+    ///
+    /// Its own walk holds the real name, so it must never land on a file that
+    /// merely *displays* the same text: re-parsing the displayed path would let
+    /// a file really named `caf%E9.mp4` answer for one named with the byte
+    /// `0xE9`, and reconcile would then reuse the wrong metarecord.
+    pub fn resolve_rel(
+        &mut self,
+        conn: &Connection,
+        field: &str,
+        rel: &crate::relpath::RelPath,
+    ) -> Result<Option<Uuid>> {
+        self.clock += 1;
+        let mut cur = match self.root_node(conn, field)? {
+            Some(idx) => idx,
+            None => return Ok(None),
+        };
+        for name in rel.components() {
+            let norm = self.normalize(name);
+            cur = match self.node(cur).children.get(&norm).copied() {
+                Some(idx) => idx,
+                None => {
+                    if self.complete {
+                        return Ok(None);
+                    }
+                    self.misses += 1;
+                    let parent_uuid = self.node(cur).uuid;
+                    let found = if name.is_exact() {
+                        db::find_tree_child_opts(
+                            conn,
+                            field,
+                            Some(parent_uuid),
+                            &name.display(),
+                            self.case_insensitive,
+                        )?
+                    } else {
+                        db::find_tree_child_by_bytes(
+                            conn,
+                            field,
+                            Some(parent_uuid),
+                            name.as_bytes(),
+                        )?
+                    };
+                    let Some(uuid) = found else {
+                        self.evict_to_limit();
+                        return Ok(None);
+                    };
+                    self.insert_node(field, Some(cur), name, uuid)
+                }
+            };
+            self.touch(cur);
+        }
+        let uuid = self.node(cur).uuid;
+        self.evict_to_limit();
+        Ok(Some(uuid))
+    }
+
+    /// The forest root of `field` (the empty-named node), cached or fetched.
+    fn root_node(&mut self, conn: &Connection, field: &str) -> Result<Option<usize>> {
+        let empty = TreeName::default();
+        let norm = self.normalize(&empty);
+        if let Some(idx) = self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied() {
+            self.touch(idx);
+            return Ok(Some(idx));
+        }
+        if self.complete {
+            return Ok(None);
+        }
+        self.misses += 1;
+        let Some(uuid) = db::find_tree_child_by_bytes(conn, field, None, empty.as_bytes())? else {
+            return Ok(None);
+        };
+        let idx = self.insert_node(field, None, &empty, uuid);
+        self.touch(idx);
+        Ok(Some(idx))
     }
 
     /// The byte readings a typed path component can have: what the user typed,
@@ -633,11 +804,19 @@ impl TreeCache {
     /// wrong: `%E9.txt` is how an undecodable byte is shown *and* a perfectly
     /// legal file name. Which one the user meant is told apart by the marker on
     /// the answer, not guessed here.
-    fn readings(comp: &str) -> Vec<TreeName> {
+    fn readings(comp: &str, form: PathForm) -> Vec<TreeName> {
         let verbatim = TreeName::from(comp);
-        match metafolder_core::metarecord::escaped_to_bytes(comp) {
-            Some(bytes) => vec![verbatim, TreeName::from_bytes(bytes)],
-            None => vec![verbatim],
+        let escaped = metafolder_core::metarecord::escaped_to_bytes(comp).map(TreeName::from_bytes);
+        match (form, escaped) {
+            (PathForm::Verbatim, _) => vec![verbatim],
+            // A component with nothing to decode reads the same either way, and
+            // must still resolve: naming the escaped form of `/dir/caf%E9.mp4`
+            // says how to read that last component, not that `dir` holds an
+            // escape too.
+            (PathForm::Escaped, Some(escaped)) => vec![escaped],
+            (PathForm::Escaped, None) => vec![verbatim],
+            (PathForm::Any, Some(escaped)) => vec![verbatim, escaped],
+            (PathForm::Any, None) => vec![verbatim],
         }
     }
 

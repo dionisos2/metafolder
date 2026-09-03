@@ -244,15 +244,26 @@ struct ResolvePathBody {
     /// whose first component is the empty root name), no leading `/` for a
     /// named-root forest such as tags (e.g. `tag1/tag2`).
     path: String,
+    /// Which reading of the path to resolve (spec-data-model "Tree names"):
+    /// `verbatim` for the characters as written, `escaped` for the bytes a
+    /// `%XX` stands for. Absent = both, which resolves to nothing when they
+    /// name different files rather than picking one.
+    #[serde(default)]
+    form: crate::tree_cache::PathForm,
 }
 
 /// `POST /repos/:repo/tree/resolve-path`: resolves a repo-root-relative path in
 /// the TreeRef `field` (default `mfr_path`) to the uuid of the node at that
 /// path, or `null` when no such node exists. The inverse of `resolve-tree`
 /// (uuid → paths). Used to set a TreeRef value from a path: resolve the parent
-/// path to a uuid, then post `{parent, name}`. Paths are unique within a forest
-/// (sibling names are unique), so at most one node matches. One in-memory
-/// round-trip through the tree cache.
+/// path to a uuid, then post `{parent, name}`. One in-memory round-trip through
+/// the tree cache.
+///
+/// Sibling names are unique, so at most one node matches — *per reading*. A
+/// component that spells the escaped form of an undecodable byte can name two
+/// different files (one really called `%E9.txt`, one holding the byte), and
+/// `form` says which is meant; without it such a path resolves to `null`
+/// rather than to a guess.
 async fn resolve_tree_path(
     State(state): State<Arc<AppState>>,
     Path(repo): Path<String>,
@@ -263,7 +274,7 @@ async fn resolve_tree_path(
     with_repo(&state, repo_uuid, move |repo_state| {
         let conn = repo_state.conn.lock_recover();
         let mut cache = repo_state.lock_cache();
-        let uuid = cache.resolve_path(&conn, &body.field, &body.path)?;
+        let uuid = cache.resolve_path_as(&conn, &body.field, &body.path, body.form)?;
         Ok(Json(json!({ "uuid": uuid.map(hex) })))
     })
     .await

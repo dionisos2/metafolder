@@ -5,7 +5,7 @@
 use metafolder_core::metarecord::{Field, TreeName, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
-use metafolder_daemon::tree_cache::TreeCache;
+use metafolder_daemon::tree_cache::{PathForm, TreeCache};
 use rusqlite::Connection;
 use uuid::Uuid;
 
@@ -655,4 +655,78 @@ fn test_a_path_with_no_escape_is_untouched_by_any_of_this() {
     cache.apply_insert("mfr_path", Some(root), &TreeName::from("100%.txt"), plain);
 
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/100%.txt").unwrap(), Some(plain));
+}
+
+// ── Choosing a reading (spec-data-model "Tree names") ────────────────────────
+
+/// A directory holding both a file *really* named "caf%E9.mp4" and one whose
+/// name is the byte 0xE9 — the only pair that still displays alike.
+fn look_alikes(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid) {
+    let root = tree_entry(conn, "mfr_path", None, "");
+    let literal = tree_entry(conn, "mfr_path", Some(root), "caf%E9.mp4");
+    let escaped = tree_entry_bytes(conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert("mfr_path", Some(root), &TreeName::from("caf%E9.mp4"), literal);
+    cache.apply_insert(
+        "mfr_path",
+        Some(root),
+        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
+        escaped,
+    );
+    (cache, root, literal, escaped)
+}
+
+#[test]
+fn test_a_single_uuid_resolution_refuses_to_pick_between_the_two_readings() {
+    let mut conn = test_conn();
+    let (mut cache, _, _, _) = look_alikes(&mut conn);
+    // Both readings match different files: the path names neither on its own.
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/caf%E9.mp4").unwrap(), None);
+}
+
+#[test]
+fn test_naming_the_reading_resolves_it_unambiguously() {
+    let mut conn = test_conn();
+    let (mut cache, _, literal, escaped) = look_alikes(&mut conn);
+    let resolve = |cache: &mut TreeCache, form| {
+        cache.resolve_path_as(&conn, "mfr_path", "/caf%E9.mp4", form).unwrap()
+    };
+    assert_eq!(resolve(&mut cache, PathForm::Verbatim), Some(literal));
+    assert_eq!(resolve(&mut cache, PathForm::Escaped), Some(escaped));
+}
+
+#[test]
+fn test_a_form_that_matches_nothing_resolves_to_nothing() {
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+    let mut cache = TreeCache::new(false);
+    cache.apply_insert("mfr_path", None, &TreeName::from(""), root);
+    cache.apply_insert(
+        "mfr_path",
+        Some(root),
+        &TreeName::from_bytes(b"caf\xe9.mp4".to_vec()),
+        escaped,
+    );
+    // Only the escaped reading exists here.
+    let p = "/caf%E9.mp4";
+    assert_eq!(cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Verbatim).unwrap(), None);
+    assert_eq!(
+        cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Escaped).unwrap(),
+        Some(escaped)
+    );
+    // With no form named, the single match is returned: nothing to arbitrate.
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", p).unwrap(), Some(escaped));
+}
+
+#[test]
+fn test_resolving_by_exact_bytes_never_consults_the_other_reading() {
+    // What the daemon's own walk does: it holds the real bytes, so it must
+    // never fall onto a file that merely *displays* the same.
+    use metafolder_daemon::relpath::RelPath;
+    let mut conn = test_conn();
+    let (mut cache, _, _, escaped) = look_alikes(&mut conn);
+    let rel = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
+    assert_eq!(cache.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(escaped));
 }

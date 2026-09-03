@@ -199,7 +199,7 @@ pub fn reconcile_full_reported(
         if meta.is_file() {
             disk_files.push(rel.clone());
         }
-        if cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?.is_none() {
+        if cache.resolve_rel(writer.connection(), "mfr_path", rel)?.is_none() {
             new_files.push((rel.clone(), meta.clone()));
         }
     }
@@ -397,7 +397,7 @@ pub fn reconcile_full_reported(
         if claimed.contains(rel) {
             continue;
         }
-        if cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?.is_some() {
+        if cache.resolve_rel(writer.connection(), "mfr_path", rel)?.is_some() {
             continue; // Already created as a parent of an earlier path.
         }
         create_record_for(&mut writer, &mut cache, &root, rel, &[], compute_mime)?;
@@ -420,9 +420,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) =
-                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
-            {
+            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
                 refresh_stat_fields(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -440,9 +438,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) =
-                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
-            {
+            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -461,9 +457,7 @@ pub fn reconcile_full_reported(
                     return Err(cancelled());
                 }
             }
-            if let Some(uuid) =
-                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
-            {
+            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }
@@ -568,7 +562,7 @@ pub fn reconcile_metarecord_reported(
         }
         // The subtree root itself was made eligible by the caller setting
         // mf_watch directly; descendants were eligibility-checked by walk().
-        match cache.resolve_path(writer.connection(), "mfr_path", &rel.display())? {
+        match cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
             Some(existing) => {
                 if refresh {
                     refresh_stat_fields(&mut writer, &root, existing, rel)?;
@@ -594,9 +588,7 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) =
-                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
-            {
+            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
                 maybe_compute_mime(&mut writer, &root, uuid, rel)?;
             }
         }
@@ -616,9 +608,7 @@ pub fn reconcile_metarecord_reported(
             if !meta.is_file() {
                 continue;
             }
-            if let Some(uuid) =
-                cache.resolve_path(writer.connection(), "mfr_path", &rel.display())?
-            {
+            if let Some(uuid) = cache.resolve_rel(writer.connection(), "mfr_path", rel)? {
                 maybe_extract_metadata(&mut writer, &root, uuid, rel, &map)?;
             }
         }

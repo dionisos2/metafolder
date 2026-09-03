@@ -645,11 +645,17 @@ The inverse of =resolve-tree=: resolves a repo-root-relative path (components
 split on =/=, in the [[file:spec-file-tracking.org][Path string format]] — the filesystem forest is
 leading-=/=-rooted, so its first component is the empty root name; a named-root
 forest has no leading =/=) in a TreeRef forest to the uuid of the node at that
-path. Body ={"field"?: <field> (default =mfr_path=), "path": "/music/jazz"}=;
-response ={"uuid": "<hex>" | null}= (null = no such node). Paths are unique
-within a forest (sibling names are unique), so at most one node matches. Used to
-*set* a TreeRef value from a path: resolve the parent path to a uuid, then post
-=(parent, name)=. One in-memory round-trip through the tree cache.
+path. Body ={"field"?: <field> (default =mfr_path=), "path": "/music/jazz",
+"form"?: "verbatim" | "escaped"}=; response ={"uuid": "<hex>" | null}= (null = no
+such node). Used to *set* a TreeRef value from a path: resolve the parent path to
+a uuid, then post =(parent, name)=. One in-memory round-trip through the tree
+cache.
+
+Sibling names are unique, so at most one node matches — *per reading*. A
+component spelling the escaped form of an undecodable byte can name two
+different files at once (one really called =%E9.txt=, one holding the byte
+=0xE9=); =form= says which is meant, and without it such a path answers =null=
+rather than a guess. See [[*Tree names]].
 
 * CLI
 

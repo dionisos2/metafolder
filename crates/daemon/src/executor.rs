@@ -605,7 +605,7 @@ impl Apply<'_, '_> {
     }
 
     fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
-        self.cache.resolve_path(self.writer.connection(), "mfr_path", &rel.display())
+        self.cache.resolve_rel(self.writer.connection(), "mfr_path", rel)
     }
 
     /// Resolves the parent directory entry of `rel`, creating any missing
@@ -1060,9 +1060,7 @@ pub(crate) fn ensure_parent_metarecords(
     let mut prefix = RelPath::root();
     for comp in rel.parent().components() {
         prefix = prefix.child(comp.clone());
-        if let Some(existing) =
-            cache.resolve_path(writer.connection(), "mfr_path", &prefix.display())?
-        {
+        if let Some(existing) = cache.resolve_rel(writer.connection(), "mfr_path", &prefix)? {
             parent = existing;
             continue;
         }
