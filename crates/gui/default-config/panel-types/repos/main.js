@@ -175,19 +175,23 @@ export async function mount(root, metafolder) {
             ),
           ),
           el('ul', { class: 'repo-tasks', 'data-tasks-for': repo.repo_uuid }),
+          el('div', { class: 'repo-watch', 'data-watch-for': repo.repo_uuid }),
         ),
       ),
     );
     // Repaint the (now empty) task blocks right away so they don't wait a full
     // poll interval to appear.
     await pollTasks();
+    await pollWatch();
   }
 
   // ── Running tasks ─────────────────────────────────────────────────────────
   // Poll the daemon for in-flight tasks (spec-tasks) and surface the active
-  // ones under their repository, each with a Stop button. Reconcile and query
-  // are cancellable; flush is shown but not stoppable.
-  const CANCELLABLE = new Set(['reconcile', 'query']);
+  // ones under their repository, each with a Stop button. Reconcile, query and
+  // flush are cancellable — stopping a flush pauses the repository's tracking
+  // (spec-file-tracking "Pausing ingestion"), which the row below then offers
+  // to resume.
+  const CANCELLABLE = new Set(['reconcile', 'query', 'flush']);
 
   async function pollTasks() {
     /** @type {Task[]} */
@@ -224,7 +228,11 @@ export async function mount(root, metafolder) {
           children.push(
             el(
               'button',
-              { class: 'task-stop', type: 'button', onclick: () => void stopTask(repoUuid, task.id) },
+              {
+                class: 'task-stop',
+                type: 'button',
+                onclick: () => void stopTask(repoUuid, task.id, task.kind),
+              },
               'Stop',
             ),
           );
@@ -234,15 +242,77 @@ export async function mount(root, metafolder) {
     );
   }
 
-  /** @param {string} repoUuid @param {string} taskId */
-  async function stopTask(repoUuid, taskId) {
+  /** @param {string} repoUuid @param {string} taskId @param {string} kind */
+  async function stopTask(repoUuid, taskId, kind) {
     try {
       await daemon.call('POST', `/repos/${repoUuid}/tasks/${taskId}/cancel`);
-      void statusBar.message('stopping task…', 3000);
+      // A stopped flush leaves the repository paused on purpose: say so, or the
+      // user is left wondering why nothing is being tracked any more.
+      void statusBar.message(
+        kind === 'flush' ? 'flush stopped — tracking paused, nothing lost' : 'stopping task…',
+        kind === 'flush' ? 6000 : 3000,
+      );
     } catch (error) {
       void statusBar.message(`cannot stop task: ${messageOf(error)}`, 6000);
     }
     await pollTasks();
+    await pollWatch();
+  }
+
+  // ── Paused tracking ───────────────────────────────────────────────────────
+  // A repository whose ingestion is paused (its flush was stopped) records
+  // nothing until it is resumed — and looks broken if that is not said out
+  // loud. Each row carries the notice and its Resume button.
+
+  async function pollWatch() {
+    for (const container of qsa(list, '.repo-watch')) {
+      const repoUuid = container.dataset.watchFor;
+      if (!repoUuid) continue;
+      /** @type {{paused?: boolean, pending_events?: number|null}|null} */
+      let status = null;
+      try {
+        status = /** @type {{paused?: boolean, pending_events?: number|null}} */ (
+          await daemon.call('GET', `/repos/${repoUuid}/watch`)
+        );
+      } catch {
+        continue; // A transient hiccup: leave the last paint in place.
+      }
+      if (!status?.paused) {
+        container.replaceChildren();
+        continue;
+      }
+      const waiting =
+        typeof status.pending_events === 'number'
+          ? ` — ${status.pending_events} event(s) waiting`
+          : '';
+      container.replaceChildren(
+        el('span', { class: 'watch-paused' }, `tracking paused${waiting}`),
+        el(
+          'button',
+          {
+            class: 'watch-resume',
+            type: 'button',
+            title: 'Resume tracking and apply the buffered events',
+            onclick: (/** @type {Event} */ event) => {
+              event.stopPropagation();
+              void resumeWatch(repoUuid);
+            },
+          },
+          'Resume',
+        ),
+      );
+    }
+  }
+
+  /** @param {string} repoUuid */
+  async function resumeWatch(repoUuid) {
+    try {
+      await daemon.call('POST', `/repos/${repoUuid}/watch/resume`);
+      void statusBar.message('tracking resumed', 3000);
+    } catch (error) {
+      void statusBar.message(`cannot resume tracking: ${messageOf(error)}`, 6000);
+    }
+    await pollWatch();
   }
 
   // Unload a repository from the daemon (spec-main "Repository management"):
@@ -440,8 +510,12 @@ export async function mount(root, metafolder) {
   });
   await refresh();
 
-  // Keep the per-repo task blocks live while the panel is mounted.
-  const taskTimer = setInterval(() => void pollTasks(), taskPollMs);
+  // Keep the per-repo task blocks — and the paused-tracking notice, which a
+  // stop from anywhere else also raises — live while the panel is mounted.
+  const taskTimer = setInterval(() => {
+    void pollTasks();
+    void pollWatch();
+  }, taskPollMs);
   return () => clearInterval(taskTimer);
 }
 

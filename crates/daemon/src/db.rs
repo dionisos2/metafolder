@@ -907,20 +907,54 @@ pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
     Ok(uuids)
 }
 
-/// Orphaned metarecords of this repository (`mfr_path` = Nothing) whose stored
-/// `mfr_size` matches. First step of the fingerprint cascade.
-pub fn find_orphans_by_size(conn: &Connection, size: i64) -> Result<Vec<Uuid>> {
+/// An orphaned metarecord a re-appearing file can be matched against: its
+/// size and the two stored hashes the fingerprint cascade compares.
+#[derive(Debug, Clone)]
+pub struct OrphanCandidate {
+    pub uuid: Uuid,
+    pub size: i64,
+    pub partial_hash: String,
+    pub full_hash: String,
+}
+
+/// Every orphaned metarecord of this repository (`mfr_path` = Nothing) that
+/// carries both fingerprints — the only ones an arrival can be matched
+/// against, since identity is confirmed by the stored full hash.
+///
+/// One query for the whole set, deliberately: asking per size instead
+/// (`WHERE mfr_size = ?`) reads as the cheaper question but SQLite has no
+/// index on a field's *value*, so it drives the join from `mfr_size` and walks
+/// every tracked file of the repository — once per arriving file. A directory
+/// of a few thousand files dropped into a watched repo then costs a quadratic
+/// number of row reads, which is most of what a big flush spends its time on.
+pub fn hashed_orphans(conn: &Connection) -> Result<Vec<OrphanCandidate>> {
+    // CROSS JOIN pins the join order: the orphans (few, and an index seek on
+    // `field_name, value_type`) drive, the rest is a lookup per orphan.
     let mut stmt = conn.prepare(
-        "SELECT p.metarecord_uuid FROM field p
-         JOIN field s ON s.metarecord_uuid = p.metarecord_uuid
-              AND s.field_name = 'mfr_size' AND s.value_type = 'int' AND s.value_int = ?1
+        "SELECT p.metarecord_uuid, s.value_int, ph.value_text, fh.value_text
+         FROM field p
+         CROSS JOIN field s ON s.metarecord_uuid = p.metarecord_uuid
+              AND s.field_name = 'mfr_size' AND s.value_type = 'int'
+         CROSS JOIN field ph ON ph.metarecord_uuid = p.metarecord_uuid
+              AND ph.field_name = 'mfr_partial_hash' AND ph.value_type = 'string'
+         CROSS JOIN field fh ON fh.metarecord_uuid = p.metarecord_uuid
+              AND fh.field_name = 'mfr_full_hash' AND fh.value_type = 'string'
          WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'",
     )?;
-    let uuids = stmt
-        .query_map(params![size], |r| r.get::<_, Vec<u8>>(0))?
-        .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
-        .collect::<Result<Vec<Uuid>>>()?;
-    Ok(uuids)
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, Vec<u8>>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, String>(3)?,
+        ))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (uuid, size, partial_hash, full_hash) = row?;
+        out.push(OrphanCandidate { uuid: bytes_to_uuid(uuid)?, size, partial_hash, full_hash });
+    }
+    Ok(out)
 }
 
 /// One page of [`list_entries`]: metarecords after `after` (exclusive), at most

@@ -86,6 +86,17 @@ enum Command {
         #[command(subcommand)]
         command: Option<MountCommand>,
     },
+    /// Watcher ingestion: show, pause or resume the recording of filesystem
+    /// events
+    ///
+    /// A flush can be long — a directory of a hundred thousand files arrives as
+    /// one batch — and while it runs the repository answers nothing else.
+    /// `pause` stops the flush in progress and keeps the executor from starting
+    /// another; the events stay buffered, and `resume` applies them.
+    Watch {
+        #[command(subcommand)]
+        command: Option<WatchCommand>,
+    },
     /// Metarecord operations: `mf metarecord [selector] <verb>`
     ///
     /// The selector picks the target metarecord(s) and precedes the verb:
@@ -577,6 +588,28 @@ enum MountCommand {
 }
 
 #[derive(Subcommand)]
+enum WatchCommand {
+    /// Show whether ingestion is running or paused — the default
+    Status {
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+    /// Stop the flush in progress and pause ingestion (nothing is lost)
+    Pause {
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+    /// Resume ingestion and apply what was buffered meanwhile
+    Resume {
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum SyncCommand {
     /// Compute a sync plan (into a freshly recreated plan repo)
     Plan {
@@ -874,6 +907,13 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         }
         Command::Log { command } => dispatch_log(ctx, command),
         Command::Trash { file, command } => dispatch_trash(ctx, file, command),
+        Command::Watch { command } => {
+            match command.unwrap_or(WatchCommand::Status { json: false }) {
+                WatchCommand::Status { json } => commands::watch_status(ctx, json),
+                WatchCommand::Pause { json } => commands::watch_pause(ctx, json),
+                WatchCommand::Resume { json } => commands::watch_resume(ctx, json),
+            }
+        }
         Command::Mount { command } => match command.unwrap_or(MountCommand::List { json: false }) {
             MountCommand::List { json } => commands::mount_list(ctx, json),
             MountCommand::Forget { uuid, yes } => commands::mount_forget(ctx, &uuid, yes),

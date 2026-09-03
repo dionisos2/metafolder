@@ -311,6 +311,30 @@ fn group_kind(ev: &FsEvent) -> GroupKind {
 pub struct FlushStats {
     pub events: usize,
     pub revisions: usize,
+    /// The flush was stopped at the user's request: the group it was applying
+    /// was abandoned, the buffer was left in place, and ingestion is now paused
+    /// (spec-file-tracking "Pausing ingestion").
+    pub cancelled: bool,
+}
+
+/// The error a flush unwinds with when it observes a cancellation request.
+/// Carried through `anyhow` and recognised by downcast, so every `?` on the
+/// way out abandons the group's transaction exactly as a failure would — but
+/// the outcome is a pause, not a failure.
+#[derive(Debug)]
+pub struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("flush cancelled")
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
+/// Whether an error is the cancellation marker.
+fn is_cancelled(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<Cancelled>().is_some()
 }
 
 /// How many times a batch the executor cannot apply is retried before it is
@@ -331,7 +355,9 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     use std::sync::atomic::Ordering;
     match flush_pending_once(repo) {
         Ok(stats) => {
-            repo.flush_failures.store(0, Ordering::Relaxed);
+            if !stats.cancelled {
+                repo.flush_failures.store(0, Ordering::Relaxed);
+            }
             Ok(stats)
         }
         Err(err) => {
@@ -367,6 +393,11 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
     if repo.is_rollback_locked() {
         return Ok(FlushStats::default());
     }
+    // Ingestion paused (spec-file-tracking "Pausing ingestion"): the watcher
+    // keeps buffering, nothing is applied until a resume.
+    if repo.is_ingestion_paused() {
+        return Ok(FlushStats::default());
+    }
     let mut conn = repo.conn.lock_recover();
     let mut cache = repo.lock_cache();
 
@@ -377,7 +408,7 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
 
     let (events, max_id) = load_pending(&conn)?;
     if events.is_empty() {
-        return Ok(FlushStats { events: 0, revisions: revisions_from_restore });
+        return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
     }
     let events = compact(correlate_renames(events));
     let n_events = events.len();
@@ -416,6 +447,20 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
     repo.tasks.mark_running(task);
     repo.tasks.set_progress(task, "flush", None, None);
 
+    // Ancestor watch/ignore reads and compiled patterns, shared by every event
+    // of the flush: a per-event cache re-reads the chain and recompiles each
+    // `mf_ignore` pattern for every single file.
+    let mut elig = eligibility::EligibilityCache::default();
+
+    // Cooperative stop: the registry flag is read at every event boundary (and
+    // inside the two loops one event can hide a whole tree behind — a directory
+    // scan and an orphan cascade).
+    // Either the task's own flag, or a pause that arrived while this flush was
+    // still loading and compacting its batch — before the task existed for the
+    // route to cancel. Without the second, a stop landing in that window would
+    // be silently ignored, which on a huge batch is a window of seconds.
+    let cancel = || repo.tasks.is_cancel_requested(task) || repo.is_ingestion_paused();
+
     let work = (|| -> Result<usize> {
         let mut revisions = 0;
         for (_, group) in groups {
@@ -428,8 +473,12 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
                 offline: &offline,
                 orphan_limit: repo.orphan_cascade_limit,
                 departed_index: None,
+                elig: &mut elig,
+                orphan_index: None,
+                cancel: &cancel,
             };
             for ev in group {
+                apply.check_cancelled()?;
                 apply.apply(ev)?;
             }
             let wrote = apply.writer.op_count() > 0;
@@ -449,12 +498,52 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
     match work {
         Ok(revisions) => {
             repo.tasks.finish(task, None);
-            Ok(FlushStats { events: n_events, revisions: revisions + revisions_from_restore })
+            Ok(FlushStats {
+                events: n_events,
+                revisions: revisions + revisions_from_restore,
+                cancelled: false,
+            })
+        }
+        // Stopped by the user: the group in progress rolled back with its
+        // writer, the pending buffer is untouched (it is deleted only on a
+        // completed flush), and ingestion stays paused until a resume — without
+        // that, the next event would restart the flush just stopped.
+        Err(e) if is_cancelled(&e) => {
+            resync_cache(&conn, &mut cache);
+            repo.pause_ingestion();
+            repo.tasks.mark_cancelled(task);
+            crate::diagnostics::warn(
+                "executor",
+                format!(
+                    "flush stopped: {n_events} filesystem event(s) left buffered, \
+                     ingestion paused until resumed"
+                ),
+            );
+            Ok(FlushStats { events: n_events, revisions: revisions_from_restore, cancelled: true })
         }
         Err(e) => {
+            resync_cache(&conn, &mut cache);
             repo.tasks.fail(task, &e.to_string());
             Err(e)
         }
+    }
+}
+
+/// Rebuilds the tree cache from the database after a group was abandoned.
+///
+/// The cache is maintained *incrementally* as events are applied (`apply_insert`
+/// / `apply_rename` / `apply_remove`), in memory, next to the writes — and a
+/// dropped writer rolls the writes back but not the cache. Without this, a
+/// stopped (or failed) flush leaves the cache claiming paths no committed
+/// metarecord holds, and every later resolution of them answers a uuid that is
+/// not there. Rebuilding costs one scan of the forest and only happens on a
+/// path that has already given up.
+fn resync_cache(conn: &Connection, cache: &mut TreeCache) {
+    if let Err(err) = cache.populate(conn) {
+        crate::diagnostics::error(
+            "executor",
+            format!("could not rebuild the tree cache after an abandoned flush: {err:#}"),
+        );
     }
 }
 
@@ -540,6 +629,20 @@ struct Apply<'a, 'c> {
     /// hundred files then holds the connection for minutes, and every query
     /// queues behind it.
     departed_index: Option<HashMap<StatKey, Vec<RelPath>>>,
+    /// Ancestor `mf_watch` / `mf_ignore` reads and compiled `mf_ignore`
+    /// regexes, shared by every event of the flush (the reconcile walk's
+    /// [`eligibility::EligibilityCache`]). Nothing the executor writes changes
+    /// those two fields, so no entry of it can go stale mid-flush.
+    elig: &'a mut eligibility::EligibilityCache,
+    /// The matchable orphans (`mfr_path` = Nothing, both hashes stored) indexed
+    /// by size, built on first use and dropped whenever this group orphans a
+    /// metarecord (a new orphan belongs in it) or re-homes one (it no longer
+    /// does). Without it each arriving file asks the database its own
+    /// orphan question, which costs a walk over every tracked file.
+    orphan_index: Option<HashMap<i64, Vec<db::OrphanCandidate>>>,
+    /// Cooperative stop probe (the flush task's cancellation flag). Read at
+    /// every event, and inside the loops that can run long on a single event.
+    cancel: &'a dyn Fn() -> bool,
 }
 
 /// The stat a rename preserves exactly — kind, size, mtime — as a lookup key.
@@ -558,6 +661,16 @@ fn stat_key(kind: Option<&Value>, size: Option<&Value>, mtime: Option<&Value>) -
 }
 
 impl Apply<'_, '_> {
+    /// Fails with [`Cancelled`] once the user has asked the flush to stop.
+    /// Every caller propagates it with `?`, so the group's writer is dropped
+    /// (rolling its transaction back) on the way out.
+    fn check_cancelled(&self) -> Result<()> {
+        if (self.cancel)() {
+            return Err(Cancelled.into());
+        }
+        Ok(())
+    }
+
     fn apply(&mut self, ev: FsEvent) -> Result<()> {
         // An offline mount point holds no content to observe: whatever the
         // watcher reported there is about a volume that is not plugged in
@@ -601,7 +714,12 @@ impl Apply<'_, '_> {
     }
 
     fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
-        eligibility::is_eligible(self.writer.connection(), self.cache, &rel.display())
+        eligibility::is_eligible_cached(
+            self.writer.connection(),
+            self.cache,
+            &rel.display(),
+            self.elig,
+        )
     }
 
     fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
@@ -640,6 +758,10 @@ impl Apply<'_, '_> {
                 Err(_) => continue, // Vanished mid-scan; a reconcile can catch up.
             };
             for entry in entries.flatten() {
+                // A pasted tree can be arbitrarily large, and it all rides on
+                // one event: the stop is honoured here too, not only between
+                // events.
+                self.check_cancelled()?;
                 // A POSIX name is a byte string; such a file is ingested like
                 // any other (spec-data-model "Tree names").
                 let child = dir.child(TreeName::from_bytes(crate::relpath::file_name_bytes(
@@ -805,6 +927,8 @@ impl Apply<'_, '_> {
             olds.push((u, self.cache.path_of(self.writer.connection(), "mfr_path", u)?));
         }
         for (u, old) in olds {
+            // A cascade over a whole subtree is as long as the subtree.
+            self.check_cancelled()?;
             if let Some(old) = old {
                 self.writer.set_field_as(
                     OpType::FileDeleted,
@@ -816,6 +940,9 @@ impl Apply<'_, '_> {
             self.writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
+        // These records are orphans now: a later arrival in this same group may
+        // legitimately match one, so the index has to be built again.
+        self.orphan_index = None;
         Ok(())
     }
 
@@ -944,30 +1071,53 @@ impl Apply<'_, '_> {
     /// size pre-filter, then partial hash, then a stored full hash must
     /// confirm identity (spec watcher `Rename(To)` semantics).
     fn find_orphan_match(&mut self, abs: &Path, size: i64) -> Result<Option<Uuid>> {
-        let candidates = db::find_orphans_by_size(self.writer.connection(), size)?;
-        if candidates.is_empty() {
-            return Ok(None);
-        }
+        self.index_orphans()?;
+        let candidates = match self.orphan_index.as_ref().and_then(|m| m.get(&size)) {
+            Some(candidates) if !candidates.is_empty() => candidates.clone(),
+            _ => return Ok(None),
+        };
         let partial = fingerprint::partial_hash(abs)?;
         let mut full: Option<String> = None;
         for candidate in candidates {
-            let conn = self.writer.connection();
-            let stored_partial = db::string_field(conn, candidate, "mfr_partial_hash")?;
-            let stored_full = db::string_field(conn, candidate, "mfr_full_hash")?;
-            let (Some(stored_partial), Some(stored_full)) = (stored_partial, stored_full) else {
-                continue; // Without a stored full hash, identity cannot be confirmed.
-            };
-            if stored_partial != partial {
+            if candidate.partial_hash != partial {
                 continue;
             }
             if full.is_none() {
                 full = Some(fingerprint::full_hash(abs)?);
             }
-            if full.as_deref() == Some(stored_full.as_str()) {
-                return Ok(Some(candidate));
+            if full.as_deref() == Some(candidate.full_hash.as_str()) {
+                // It is about to get a path again: no later arrival of this
+                // flush may claim it too.
+                self.forget_orphan(candidate.uuid);
+                return Ok(Some(candidate.uuid));
             }
         }
         Ok(None)
+    }
+
+    /// Builds [`Apply::orphan_index`] once per group: every matchable orphan of
+    /// the repository, indexed by size. One query, against one per arriving
+    /// file.
+    fn index_orphans(&mut self) -> Result<()> {
+        if self.orphan_index.is_some() {
+            return Ok(());
+        }
+        let mut index: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
+        for candidate in db::hashed_orphans(self.writer.connection())? {
+            index.entry(candidate.size).or_default().push(candidate);
+        }
+        self.orphan_index = Some(index);
+        Ok(())
+    }
+
+    /// Drops a metarecord from the orphan index: it has just been re-homed, so
+    /// it is no longer an orphan.
+    fn forget_orphan(&mut self, uuid: Uuid) {
+        if let Some(index) = self.orphan_index.as_mut() {
+            for candidates in index.values_mut() {
+                candidates.retain(|c| c.uuid != uuid);
+            }
+        }
     }
 
     /// `Modify(Data)`: refresh size and mtime, invalidate the hashes.

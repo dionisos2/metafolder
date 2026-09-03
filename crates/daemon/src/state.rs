@@ -61,6 +61,12 @@ pub struct RepoState {
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
+    /// Ingestion of filesystem events is paused (spec-file-tracking "Pausing
+    /// ingestion"): the watcher keeps buffering events into
+    /// `pending_operation`, the executor applies none until a resume. Set by
+    /// stopping a flush, and by `POST /watch/pause`. In memory like the task
+    /// registry: a reload or a restart starts ingesting again.
+    pub ingestion_paused: std::sync::atomic::AtomicBool,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -108,6 +114,7 @@ impl RepoState {
             index: Mutex::new(None),
             flush_failures: std::sync::atomic::AtomicU32::new(0),
             orphan_cascade_limit: settings.orphan_cascade_limit,
+            ingestion_paused: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -161,6 +168,33 @@ impl RepoState {
     /// True while a coordinated rollback navigation holds the lock.
     pub fn is_rollback_locked(&self) -> bool {
         self.rollback_lock.lock_recover().is_some()
+    }
+
+    /// True while filesystem-event ingestion is paused for this repository.
+    pub fn is_ingestion_paused(&self) -> bool {
+        self.ingestion_paused.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Pauses ingestion and stops the flush in progress, if any: the running
+    /// flush observes the cancellation at its next event, abandons the group it
+    /// was applying and leaves the whole batch buffered. Returns whether a
+    /// flush was actually asked to stop.
+    pub fn pause_ingestion(&self) -> bool {
+        self.ingestion_paused.store(true, std::sync::atomic::Ordering::Relaxed);
+        match self.tasks.active_id(crate::tasks::TaskKind::Flush) {
+            Some(id) => self.tasks.request_cancel(id) == crate::tasks::CancelOutcome::Requested,
+            None => false,
+        }
+    }
+
+    /// Resumes ingestion and pings the executor, so what accumulated while
+    /// paused is flushed after the usual quiet period. No-op when not paused.
+    pub fn resume_ingestion(&self) {
+        self.ingestion_paused.store(false, std::sync::atomic::Ordering::Relaxed);
+        let handles = self.handles.lock_recover();
+        if let Some(handles) = handles.as_ref() {
+            handles.executor.pinger().ping();
+        }
     }
 
     /// Recomputes the watcher's eligible-directory set after a manual write that

@@ -617,6 +617,46 @@ arrive over a span longer than the batching window and be split across multiple
 revisions. This is acceptable — each revision is still rollbackable
 individually.
 
+*** Pausing ingestion
+
+A flush is not always short. A directory of a hundred thousand files dropped
+into a watched repository arrives as one batch, and applying it takes as long as
+it takes — during which the repository's connection is held and nothing else
+about that repository answers. The user must be able to say *stop*.
+
+Stopping a flush is therefore a real operation, and it means **pause ingestion
+for this repository**:
+
+- The flush polls a cancellation flag as it applies events, and stops at the
+  next event boundary. The group in progress is *abandoned, not committed* (its
+  transaction is dropped), so no half-group is ever visible; groups already
+  committed stay committed.
+- The pending buffer is *left untouched*. Nothing is lost, and nothing is
+  half-recorded: on resume the whole batch is applied again from the start,
+  exactly as it is after a crash (the buffer is replayed at load, and the event
+  semantics are idempotent for that reason).
+- The *tree cache is rebuilt* from the database. It is maintained incrementally
+  as events are applied, in memory and outside the transaction, so the rollback
+  that undoes the writes does not undo it: without the rebuild the cache would
+  go on resolving paths to metarecords that were never committed.
+- The repository then stays **paused**: the watcher keeps recording events into
+  =pending_operation=, and the executor does not flush them. This is the
+  difference between stopping a flush and merely deferring it — without the
+  pause, the next event would start the very flush the user just stopped.
+- A cancelled flush is *not* a failed one: it does not count against the failure
+  budget above, and never leads to the batch being dropped.
+
+Ingestion is resumed explicitly (see [[*Watch status, pause and resume]]).
+Resuming flushes what accumulated meanwhile, as a normal flush. A paused
+repository is otherwise fully functional: queries, writes, reconcile and
+rollback all work — a reconcile even picks up what the buffered events carried,
+since it reads the filesystem directly.
+
+The pause is *in memory*, like the task registry: unloading the repository or
+restarting the daemon clears it, and the buffered events are then replayed at
+load. It is a deliberate "let me look at this before it lands", not a durable
+setting — the durable way to stop tracking a subtree is =mf_watch=.
+
 *** Event semantics
 
 | Filesystem event   | Action                                                                                                     |
@@ -949,6 +989,33 @@ This is the endpoint a client uses to explain a subtree that looks empty or
 stale, instead of presenting it as deleted — see
 [[file:spec-gui.org][spec-gui.org]] "Unmounted volumes".
 
+** Watch status, pause and resume
+
+#+BEGIN_SRC
+GET  /repos/:repo_uuid/watch
+POST /repos/:repo_uuid/watch/pause
+POST /repos/:repo_uuid/watch/resume
+#+END_SRC
+
+Reads and sets whether the executor is ingesting filesystem events for this
+repository (see [[*Pausing ingestion]]). All three answer the same body:
+
+#+BEGIN_SRC json
+{"paused": true, "pending_events": 12043}
+#+END_SRC
+
+- =paused= — whether ingestion is paused. In memory: a reload or a daemon
+  restart starts unpaused.
+- =pending_events= — how many filesystem events are waiting in
+  =pending_operation= (what a resume would apply).
+
+=pause= also *cancels the flush in progress*, if any — it is the same operation
+as cancelling that flush's task (see [[file:spec-tasks.org][spec-tasks.org]]
+"Cancellation"), reachable without knowing a task id. =resume= clears the pause
+and pings the executor, so what accumulated is flushed after the usual quiet
+period. Both are idempotent: pausing a paused repository (or resuming a running
+one) is =200= and changes nothing.
+
 ** Eligibility explain
 
 #+BEGIN_SRC
@@ -1100,6 +1167,23 @@ unless =-y= is given.
 
 There is no =mf mount add=: mount points are detected, not declared. Mounting a
 volume and running =mf reconcile= is what records one.
+
+** =mf watch {status, pause, resume}=
+
+Controls the ingestion of filesystem events for the repository (see
+[[*Pausing ingestion]]).
+
+=status= (the default) calls =GET /watch= and prints one line — =running= or
+=paused=, with the number of buffered events:
+
+#+BEGIN_SRC
+paused     12043 events waiting
+#+END_SRC
+
+=pause= calls =POST /watch/pause=: it stops the flush in progress (its
+uncommitted group is abandoned, its events stay buffered) and keeps the executor
+from starting another. =resume= calls =POST /watch/resume= and prints how many
+events are about to be applied. =--json= prints the raw body for all three.
 
 ** =mf order <folder> [--meta <field>] [--max-gap <n>] [--dry-run]=
 

@@ -46,6 +46,9 @@ function fakeDaemon() {
   const repos: Repo[] = [];
   const tasks: Record<string, unknown>[] = [];
   const cancelled: string[] = [];
+  // Ingestion state of every repo of this fake daemon (spec-file-tracking
+  // "Watch status, pause and resume").
+  const watch = { paused: false, pending: 0 };
   let nextUuid = 1;
   const uuid = () => String(nextUuid++).padStart(32, '0');
   const calls: { method: string; path: string; body: unknown }[] = [];
@@ -94,10 +97,17 @@ function fakeDaemon() {
     if (method === 'POST' && /^\/repos\/[^/]+\/schema\/check$/.test(bare)) {
       return { status: 200, body: { violations: [] } };
     }
+    if (method === 'GET' && /^\/repos\/[^/]+\/watch$/.test(bare)) {
+      return { status: 200, body: { paused: watch.paused, pending_events: watch.pending } };
+    }
+    if (method === 'POST' && /^\/repos\/[^/]+\/watch\/resume$/.test(bare)) {
+      watch.paused = false;
+      return { status: 200, body: { paused: false, pending_events: watch.pending } };
+    }
     return { status: 404, body: { error: `unrouted ${method} ${bare}` } };
   }
 
-  return { repos, tasks, cancelled, request, calls };
+  return { repos, tasks, cancelled, watch, request, calls };
 }
 
 /** The real panel API, with `invoke` routed to the fake daemon. */
@@ -325,7 +335,7 @@ describe('repos panel — running tasks', () => {
     daemon.tasks.push({
       id: 't2',
       repo_uuid: 'r1',
-      kind: 'flush',
+      kind: 'load',
       status: 'running',
       phase: null,
       done: null,
@@ -336,8 +346,56 @@ describe('repos panel — running tasks', () => {
     await settle();
 
     const task = shadow.querySelector('.repo-tasks .repo-task') as HTMLElement;
-    expect(task?.textContent).toContain('flush');
+    expect(task?.textContent).toContain('load');
     expect(task.querySelector('.task-stop')).toBeNull();
+  });
+
+  test('a flush can be stopped — it is the one internal task the user sizes', async () => {
+    const { api, daemon } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    daemon.tasks.push({
+      id: 't3',
+      repo_uuid: 'r1',
+      kind: 'flush',
+      status: 'running',
+      phase: 'flush',
+      done: null,
+      total: null,
+    });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const task = shadow.querySelector('.repo-tasks .repo-task') as HTMLElement;
+    expect(task?.textContent).toContain('flush');
+    (task.querySelector('.task-stop') as HTMLElement).click();
+    await settle();
+    expect(daemon.cancelled).toEqual(['t3']);
+  });
+});
+
+describe('repos panel — paused tracking', () => {
+  test('a paused repository says so, and Resume restarts it', async () => {
+    const { api, daemon } = setup({ activeRepo: 'r1' });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    daemon.watch.paused = true;
+    daemon.watch.pending = 1204;
+
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const notice = shadow.querySelector('.repo-watch') as HTMLElement;
+    expect(notice.textContent).toContain('tracking paused');
+    expect(notice.textContent).toContain('1204');
+
+    (notice.querySelector('.watch-resume') as HTMLElement).click();
+    await settle();
+    expect(daemon.watch.paused).toBe(false);
+
+    // Once resumed, the notice goes away.
+    await settle();
+    expect((shadow.querySelector('.repo-watch') as HTMLElement).textContent).toBe('');
   });
 });
 

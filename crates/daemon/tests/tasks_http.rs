@@ -275,10 +275,33 @@ async fn cancel_active_reconcile_sets_the_flag_and_returns_the_task() {
 }
 
 #[tokio::test]
-async fn cancel_flush_task_is_400() {
+async fn cancel_flush_task_stops_it_and_pauses_ingestion() {
+    // A flush is internal but its size is the user's doing, so it *is*
+    // stoppable — and stopping it pauses the repository's tracking, or the next
+    // event would start the very flush that was just stopped
+    // (spec-file-tracking "Pausing ingestion").
     let (app, state, repo) = app_with_repo("cancelflush");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();
     let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Flush);
+    state.repo(repo_uuid).unwrap().tasks.mark_running(id);
+    let hex = id.as_simple().to_string();
+
+    let (status, body) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["id"].as_str().unwrap(), hex);
+    assert!(state.repo(repo_uuid).unwrap().tasks.is_cancel_requested(id));
+    assert!(
+        state.repo(repo_uuid).unwrap().is_ingestion_paused(),
+        "stopping a flush pauses ingestion"
+    );
+}
+
+#[tokio::test]
+async fn cancel_load_task_is_400() {
+    // `load` is a warmup with nothing to roll back: still not cancellable.
+    let (app, state, repo) = app_with_repo("cancelload");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Load);
     let hex = id.as_simple().to_string();
     let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);

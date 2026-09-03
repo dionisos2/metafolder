@@ -78,7 +78,7 @@ Built-in panel types:
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
 | =log=            | Event log (revisions and operations)                         |
-| =repos=          | Repository list, init, load, unload, per-repo running tasks   |
+| =repos=          | Repository list, init, load, unload, per-repo running tasks, paused-tracking notice |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
@@ -1551,6 +1551,21 @@ never spawns a workspace.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:open-init= / =repos:open-load= from there.
+
+*** Paused tracking
+
+The per-repo task block lists the repository's in-flight tasks with a *Stop*
+button for the cancellable kinds — =flush= among them (see
+[[file:spec-tasks.org][spec-tasks.org]] "Cancellation"). Stopping a flush is not
+a plain cancel: it *pauses* the repository's tracking, so the panel says so
+rather than leaving a repository that silently records nothing.
+
+Under each repository, when =GET /repos/:repo/watch= reports =paused=, the row
+shows =tracking paused — N event(s) waiting= in the warning colour (amber, the
+"act on this" colour the unmounted-volume marking already uses — not the error
+red: nothing is broken) next to a *Resume* button calling
+=POST /repos/:repo/watch/resume=. The state is polled on the same cadence as the
+task block, so a pause triggered from the CLI shows up here too.
 
 ** Metarecord management
 

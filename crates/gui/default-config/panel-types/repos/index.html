@@ -85,6 +85,24 @@
         border-color: var(--mf-error, #c44c56);
         color: var(--mf-error, #c44c56);
       }
+      /* Paused tracking: amber, like an unavailable volume — a state to act
+         on, not an error (spec-file-tracking "Pausing ingestion"). */
+      .repo-watch:not(:empty) {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 2px 8px 6px 20px;
+        font-size: 0.85em;
+      }
+      .watch-paused {
+        color: var(--mf-warning, #d6a75e);
+      }
+      .watch-resume {
+        padding: 1px 8px;
+        font-size: 0.9em;
+        border-color: var(--mf-warning, #d6a75e);
+        color: var(--mf-warning, #d6a75e);
+      }
       .uuid {
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.85em;

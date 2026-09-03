@@ -3559,6 +3559,30 @@ fn test_mf_tag_subsumption_exclusivity_deny_list() {
 }
 
 #[test]
+fn test_watch_status_pause_and_resume() {
+    let (repo, _root) = init_repo("watchpause");
+
+    // A freshly loaded repository ingests filesystem events.
+    let out = mf(&["-u", &repo, "watch"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("running"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("0 event(s) waiting"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "pause"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("paused"), "stdout: {}", out.stdout);
+
+    // The pause is repository state, not a property of the call that set it.
+    let out = mf(&["-u", &repo, "watch", "status", "--json"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("\"paused\": true"), "stdout: {}", out.stdout);
+
+    let out = mf(&["-u", &repo, "watch", "resume"]);
+    assert_ok(&out);
+    assert!(out.stdout.starts_with("running"), "stdout: {}", out.stdout);
+}
+
+#[test]
 fn test_mount_list_and_forget() {
     let (repo, root) = init_repo("mount");
     let dir = root.join("photos");

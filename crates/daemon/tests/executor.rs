@@ -409,6 +409,51 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
 }
 
 #[test]
+fn test_arrival_matches_an_orphan_created_by_the_same_flush() {
+    // The delete and the arrival ride in one batch: the file is removed from
+    // one directory and turns up in another before the quiet period elapses.
+    // The orphan the delete group produces must still be visible to the
+    // arrival group's fingerprint search — which any per-flush caching of the
+    // orphan set has to keep true.
+    let (repo, root, _) = setup("same_flush_orphan");
+    write_file(&root, "a/song.mp3", b"some audio content");
+    enqueue(&repo, &[FsEvent::Create("/a".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let uuid = resolve(&repo, "/a/song.mp3").unwrap();
+
+    let partial = metafolder_daemon::fingerprint::partial_hash(&root.join("a/song.mp3")).unwrap();
+    let full = metafolder_daemon::fingerprint::full_hash(&root.join("a/song.mp3")).unwrap();
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(uuid, "mfr_partial_hash", Value::String(partial)).unwrap();
+        w.set_field(uuid, "mfr_full_hash", Value::String(full)).unwrap();
+        w.commit().unwrap();
+    }
+
+    // Both halves in the same batch, deletion first (its own group).
+    std::fs::create_dir_all(root.join("b")).unwrap();
+    std::fs::rename(root.join("a/song.mp3"), root.join("b/song.mp3")).unwrap();
+    enqueue(
+        &repo,
+        &[
+            FsEvent::Remove("/a/song.mp3".into()),
+            FsEvent::Create("/b".into()),
+            FsEvent::RenameTo("/b/song.mp3".into()),
+        ],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(
+        resolve(&repo, "/b/song.mp3"),
+        Some(uuid),
+        "an orphan produced earlier in the same flush must still be matchable"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_rename_to_without_match_creates_new_metarecord() {
     let (repo, root, _) = setup("arrival2");
     write_file(&root, "fresh.txt", b"brand new");
@@ -807,6 +852,63 @@ fn test_departures_do_not_make_a_flush_superlinear() {
     );
 }
 
+// Every file arriving in a watched directory is checked against the orphaned
+// metarecords, so a file that comes back keeps its metadata. Asked of the
+// database per file ("the orphans whose `mfr_size` is N"), that question has no
+// index to answer it — `field` is indexed by name and type, never by value — so
+// SQLite reads every `mfr_size` row of the repository, once per arriving file.
+// The flush is then quadratic in the repository, not in the batch: the same
+// directory that lands in a second in a fresh repo takes minutes in a real one.
+//
+// The bound is again a *ratio*: the same arrivals, flushed into a small
+// repository and into one already holding eight times as many files. The
+// matchable orphans are read once per group, so the two must cost about the
+// same.
+#[test]
+fn test_arrival_cost_does_not_grow_with_the_repository() {
+    const N: usize = 300;
+
+    /// Flushes `N` arrivals into a repository already holding `existing` files.
+    fn timed_flush(prefix: &str, existing: usize) -> std::time::Duration {
+        let (repo, root, _) = setup(prefix);
+
+        if existing > 0 {
+            for i in 0..existing {
+                write_file(&root, &format!("kept/f{i}.txt"), format!("kept-{i}").as_bytes());
+            }
+            enqueue(&repo, &[FsEvent::Create("/kept".into())]);
+            executor::flush_pending(&repo).unwrap();
+            assert!(resolve(&repo, "/kept/f0.txt").is_some(), "the existing files are tracked");
+        }
+
+        for i in 0..N {
+            write_file(&root, &format!("new/g{i}.txt"), format!("new-{i}").as_bytes());
+        }
+        enqueue(&repo, &[FsEvent::Create("/new".into())]);
+
+        let start = std::time::Instant::now();
+        executor::flush_pending(&repo).unwrap();
+        let elapsed = start.elapsed();
+
+        assert!(resolve(&repo, "/new/g0.txt").is_some(), "the arriving files are tracked");
+        elapsed
+    }
+
+    let small = timed_flush("scale_small", 0);
+    let big = timed_flush("scale_big", 8 * N);
+
+    // A wide margin on purpose: the defect this pins multiplied the flush by
+    // *fifty* at this size, while a timed ratio on a machine running the rest
+    // of the suite in parallel wobbles by a factor of a few. Five separates the
+    // two without turning a busy machine into a red build.
+    assert!(
+        big < small * 5,
+        "{N} arrivals took {small:?} in an empty repository but {big:?} in one holding \
+         {} files — the arrival path scales with the repository, not with the batch",
+        8 * N,
+    );
+}
+
 // ── Mass-orphan circuit breaker ───────────────────────────────────────────────
 
 #[test]
@@ -852,4 +954,77 @@ fn test_a_cascade_larger_than_the_limit_is_refused() {
     assert!(matches!(field_value(&repo_state, kept, "mfr_path"), Some(Value::TreeRef { .. })));
     // The small deletion in the same batch is unaffected.
     assert_eq!(field_value(&repo_state, small, "mfr_path"), Some(Value::Nothing));
+}
+
+// ── Stopping a flush (spec-file-tracking "Pausing ingestion") ─────────────────
+
+/// The number of buffered filesystem events left waiting.
+fn pending_events(repo: &RepoState) -> i64 {
+    count(repo, "SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE 'fs_%'")
+}
+
+#[test]
+fn test_paused_ingestion_applies_nothing_and_keeps_the_buffer() {
+    let (repo, root, _) = setup("paused");
+    write_file(&root, "a.txt", b"a");
+    repo.pause_ingestion();
+
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+    let stats = executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(stats.events, 0, "nothing is applied while paused");
+    assert!(resolve(&repo, "/a.txt").is_none(), "no metarecord was created");
+    assert_eq!(pending_events(&repo), 1, "the event is still buffered");
+
+    // Resuming applies exactly what was waiting.
+    repo.resume_ingestion();
+    let stats = executor::flush_pending(&repo).unwrap();
+    assert_eq!(stats.events, 1);
+    assert!(resolve(&repo, "/a.txt").is_some());
+    assert_eq!(pending_events(&repo), 0);
+}
+
+#[test]
+fn test_stopping_a_flush_pauses_ingestion_and_loses_nothing() {
+    let (repo, root, _) = setup("stopflush");
+    // Big enough that the flush is still running when the stop arrives, and
+    // small enough to stay a fast test.
+    for i in 0..400 {
+        write_file(&root, &format!("/dropped/f{i}.txt"), b"x");
+    }
+    enqueue(&repo, &[FsEvent::Create("/dropped".into())]);
+
+    // Stop it from another thread — exactly what the cancel route does — a
+    // moment *after* the task appears, so the flush is caught mid-tree rather
+    // than at its first event. That is the interesting case: by then the
+    // abandoned group has already inserted directory nodes into the in-memory
+    // tree cache, which rolling the transaction back does not undo.
+    let watcher = Arc::clone(&repo);
+    let stopper = std::thread::spawn(move || loop {
+        if let Some(id) = watcher.tasks.active_id(TaskKind::Flush) {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+            return watcher.tasks.request_cancel(id);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    });
+
+    let stats = executor::flush_pending(&repo).unwrap();
+    stopper.join().unwrap();
+
+    assert!(stats.cancelled, "the flush reports it was stopped");
+    assert!(repo.is_ingestion_paused(), "stopping a flush pauses ingestion");
+    // One event, so one group: abandoning it leaves the tree entirely unwritten
+    // — in the database *and* in the tree cache, which is maintained alongside
+    // the writes and would otherwise keep answering with uncommitted uuids.
+    assert!(resolve(&repo, "/dropped").is_none(), "the abandoned group wrote nothing");
+    assert_eq!(pending_events(&repo), 1, "the event is still buffered");
+    let tasks = repo.tasks.list();
+    let flush = tasks.iter().find(|t| t.kind == TaskKind::Flush).expect("a flush task is recorded");
+    assert_eq!(flush.status, TaskStatus::Cancelled);
+
+    // A stop is not a failure: nothing is dropped, and resuming applies it all.
+    repo.resume_ingestion();
+    executor::flush_pending(&repo).unwrap();
+    assert!(resolve(&repo, "/dropped/f399.txt").is_some(), "everything lands after the resume");
+    assert_eq!(pending_events(&repo), 0);
 }

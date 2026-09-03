@@ -1751,6 +1751,43 @@ pub fn mount_forget(ctx: &Ctx, uuid: &str, yes: bool) -> Result<i32, CliError> {
     field_unset(ctx, uuid, "mfr_mount", true)
 }
 
+// ── Watcher ingestion (spec-file-tracking "Pausing ingestion") ────────────────
+
+/// Renders the shared `{paused, pending_events}` body of the three `watch`
+/// routes as one line.
+fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError> {
+    if raw_json {
+        print_pretty(resp);
+        return Ok(0);
+    }
+    let state = if resp["paused"].as_bool().unwrap_or(false) { "paused" } else { "running" };
+    match resp["pending_events"].as_i64() {
+        Some(n) => println!("{state:<10}\t{n} event(s) waiting"),
+        // The connection is held by the very flush being stopped: the count is
+        // not worth queueing behind it.
+        None => println!("{state:<10}\t(event count unavailable: the repository is busy)"),
+    }
+    Ok(0)
+}
+
+pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.get(&format!("{base}/watch"), &[])?;
+    print_watch(&resp, raw_json)
+}
+
+pub fn watch_pause(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.post(&format!("{base}/watch/pause"), &json!({}))?;
+    print_watch(&resp, raw_json)
+}
+
+pub fn watch_resume(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.post(&format!("{base}/watch/resume"), &json!({}))?;
+    print_watch(&resp, raw_json)
+}
+
 // ── Schema (spec-schema) ──────────────────────────────────────────────────────
 
 pub fn schema_check(ctx: &Ctx, predicate: Option<&str>, raw_json: bool) -> Result<i32, CliError> {

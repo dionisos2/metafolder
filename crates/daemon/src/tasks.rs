@@ -43,11 +43,14 @@ pub enum TaskKind {
 
 impl TaskKind {
     /// Whether a task of this kind can be cancelled (spec-tasks "Cancellation").
-    /// `flush` is internal and transient; `load` is a harmless warmup; `prune`
-    /// and `rollback` are single atomic transactions with no cooperative
-    /// cancellation point (interrupting one would only roll it back).
+    /// `flush` is internal, but its size is the user's doing — a single batch
+    /// can carry a whole directory tree — so it *is* stoppable, and stopping it
+    /// pauses ingestion (spec-file-tracking "Pausing ingestion"). `load` is a
+    /// harmless warmup; `prune` and `rollback` are single atomic transactions
+    /// with no cooperative cancellation point (interrupting one would only roll
+    /// it back).
     pub fn is_cancellable(self) -> bool {
-        !matches!(self, TaskKind::Flush | TaskKind::Load | TaskKind::Prune | TaskKind::Rollback)
+        !matches!(self, TaskKind::Load | TaskKind::Prune | TaskKind::Rollback)
     }
 }
 
@@ -264,11 +267,15 @@ impl TaskRegistry {
 
     /// Whether any *cancellable* task (reconcile/query) is currently active.
     /// Used to refuse unloading a repository out from under in-flight work — the
-    /// user is asked to stop the task first. Transient `flush` tasks are ignored.
+    /// user is asked to stop the task first. `flush` tasks are ignored although
+    /// they are cancellable: they are internal and constant, so counting them
+    /// would make an unload fail at random while the watcher works.
     pub fn has_active_cancellable(&self) -> bool {
         let mut tasks = self.tasks.lock_recover();
         Self::evict_locked(&mut tasks, Instant::now());
-        tasks.values().any(|t| t.status.is_active() && t.kind.is_cancellable())
+        tasks
+            .values()
+            .any(|t| t.status.is_active() && t.kind.is_cancellable() && t.kind != TaskKind::Flush)
     }
 
     /// Whether a `load` warmup task is currently active. Used to refuse an
@@ -506,10 +513,20 @@ mod tests {
     }
 
     #[test]
-    fn request_cancel_rejects_flush_and_terminal_and_unknown() {
+    fn request_cancel_accepts_a_flush() {
+        // Stopping a flush is a supported operation: it pauses ingestion
+        // (spec-file-tracking "Pausing ingestion").
         let r = reg();
         let flush = r.start(TaskKind::Flush);
-        assert_eq!(r.request_cancel(flush), CancelOutcome::NotCancellable);
+        assert_eq!(r.request_cancel(flush), CancelOutcome::Requested);
+        assert!(r.is_cancel_requested(flush));
+    }
+
+    #[test]
+    fn request_cancel_rejects_uncancellable_terminal_and_unknown() {
+        let r = reg();
+        let load = r.start(TaskKind::Load);
+        assert_eq!(r.request_cancel(load), CancelOutcome::NotCancellable);
 
         let done = r.start(TaskKind::Reconcile);
         r.finish(done, None);
@@ -523,7 +540,8 @@ mod tests {
         let r = reg();
         assert!(!r.has_active_cancellable(), "empty registry");
 
-        // An active flush does not count (transient, internal).
+        // An active flush does not count (internal and constant), even though
+        // it is cancellable.
         let flush = r.start(TaskKind::Flush);
         r.mark_running(flush);
         assert!(!r.has_active_cancellable(), "flush is ignored");

@@ -92,6 +92,9 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
         .route("/repos/:repo/mounts", get(mounts))
+        .route("/repos/:repo/watch", get(watch_status))
+        .route("/repos/:repo/watch/pause", post(watch_pause))
+        .route("/repos/:repo/watch/resume", post(watch_resume))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/track", post(track))
@@ -648,15 +651,25 @@ async fn cancel_task(
     State(state): State<Arc<AppState>>,
     Path((repo, task)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    use crate::tasks::CancelOutcome;
+    use crate::tasks::{CancelOutcome, TaskKind};
     let task_uuid = parse_uuid(&task)?;
     let repo = state.repo(parse_uuid(&repo)?)?;
+    let kind = repo.tasks.get(task_uuid).map(|t| t.kind);
     match repo.tasks.request_cancel(task_uuid) {
-        CancelOutcome::Requested => repo
-            .tasks
-            .get(task_uuid)
-            .map(|t| Json(serde_json::to_value(t).expect("task serialization")))
-            .ok_or_else(|| ApiError::not_found(format!("Task not found: {task_uuid}"))),
+        CancelOutcome::Requested => {
+            // Stopping a flush is the same operation as pausing ingestion
+            // (spec-file-tracking "Pausing ingestion"): set the pause here
+            // rather than leaving it to the worker, so it holds even if that
+            // flush happened to finish just before it saw the request —
+            // otherwise the user asked for a stop and tracking carried on.
+            if kind == Some(TaskKind::Flush) {
+                repo.pause_ingestion();
+            }
+            repo.tasks
+                .get(task_uuid)
+                .map(|t| Json(serde_json::to_value(t).expect("task serialization")))
+                .ok_or_else(|| ApiError::not_found(format!("Task not found: {task_uuid}")))
+        }
         CancelOutcome::AlreadyTerminal => {
             Err(ApiError::conflict(format!("Task already finished: {task_uuid}")))
         }
@@ -1673,6 +1686,66 @@ async fn mounts(
         Ok(Json(json!({ "mounts": mounts })))
     })
     .await
+}
+
+/// The body all three `watch` routes answer with (spec-file-tracking "Watch
+/// status, pause and resume"): whether ingestion is paused, and how many
+/// filesystem events are waiting to be applied.
+///
+/// The count is *best effort*: reading it needs the connection, which the very
+/// flush the caller may be trying to stop is holding. Rather than queue behind
+/// it — which would make `pause` useless exactly when it matters — the count is
+/// reported as `null` when the connection is busy.
+fn watch_view(repo_state: &RepoState) -> serde_json::Value {
+    let pending = repo_state.conn.try_lock().ok().and_then(|conn| {
+        conn.query_row(
+            "SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE 'fs_%'",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .ok()
+    });
+    json!({ "paused": repo_state.is_ingestion_paused(), "pending_events": pending })
+}
+
+/// `GET /repos/:repo/watch`: whether the executor is ingesting filesystem
+/// events for this repository, and how many are buffered.
+async fn watch_status(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let repo_state = state.repo(repo_uuid)?;
+    Ok(Json(watch_view(&repo_state)))
+}
+
+/// `POST /repos/:repo/watch/pause`: stops the flush in progress (if any) and
+/// keeps the executor from starting another (spec-file-tracking "Pausing
+/// ingestion"). The buffered events are left in place; a resume applies them.
+///
+/// Deliberately *not* run through `with_repo`: it must answer while a flush
+/// holds the connection — that is the whole point — so it touches only the
+/// in-memory pause flag and the task registry.
+async fn watch_pause(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let repo_state = state.repo(repo_uuid)?;
+    repo_state.pause_ingestion();
+    Ok(Json(watch_view(&repo_state)))
+}
+
+/// `POST /repos/:repo/watch/resume`: resumes ingestion and pings the executor,
+/// so the buffered events are applied after the usual quiet period.
+async fn watch_resume(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let repo_state = state.repo(repo_uuid)?;
+    repo_state.resume_ingestion();
+    Ok(Json(watch_view(&repo_state)))
 }
 
 /// `POST /repos/:repo/orphans/scan`: read-only disk scan for tracked

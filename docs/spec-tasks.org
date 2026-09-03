@@ -312,6 +312,11 @@ user-initiated tasks. (Clients MAY offer a filter to hide =flush= tasks, since
 flushes are frequent — one per 500 ms quiet period of filesystem activity — but
 the default is to show them.)
 
+It is also *cancellable*, unlike the other internal kinds: a flush is the one
+piece of internal work whose size the user controls, and stopping it is how a
+misfired copy or a huge move is kept out of the database. Cancelling it pauses
+ingestion for the repository — see [[*Cancellation]].
+
 ** Cancellation
 
 A task that is still active (=pending= or =running=) can be stopped:
@@ -336,7 +341,18 @@ Requests cancellation of the task. The mechanism depends on the kind:
   cadence those phases already checkpoint at (the index scan's progress step, the
   assembly loop), and bails when it is set. The waiting =POST …/query= client
   receives a =409= (=query cancelled=) instead of results either way.
-- *flush* — *not cancellable* (it is short and internal). → =400=.
+- *flush* — *cooperative, and it pauses ingestion*. A flush is internal, but it
+  is not always short: one batch can carry a whole directory tree, and while it
+  runs the repository answers nothing else. It polls the cancellation flag
+  between events and stops at the next one, *dropping the group's transaction*
+  (committed groups stay committed, the half-applied one leaves no trace). The
+  pending buffer is left untouched — nothing is lost — and the repository is
+  left **paused**: the watcher keeps buffering events, the executor flushes
+  none, until ingestion is resumed explicitly
+  (=POST …/watch/resume=, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
+  "Pausing ingestion"). Without that pause the next event would immediately
+  restart the flush the user just stopped. A cancelled flush does not count
+  against the executor's failure budget: it is a decision, not a failure.
 - *load* — *not cancellable* (a partial warmup just falls back to the DB, so
   there is nothing to roll back). → =400=.
 - *prune* / *rollback* — *not cancellable* (each is a single atomic
@@ -367,7 +383,8 @@ returns (the query's SQL).
 | Reconcile requested while one is in flight  | 409         | In-flight task at =GET …/tasks=         |
 | Task id unknown / evicted                   | 404         |                                         |
 | Cancel of a terminal task                   | 409         | Nothing to stop                         |
-| Cancel of a =flush=/=load=/=prune=/=rollback= task | 400  | Not cancellable                         |
+| Cancel of a =load=/=prune=/=rollback= task  | 400         | Not cancellable                         |
+| Cancel of a =flush= task                    | 200         | Stops it *and* pauses ingestion         |
 
 (Other statuses are as in [[file:spec-main.org][spec-main.org]] "Error
 handling".)
@@ -436,8 +453,8 @@ progress never saturates it:
 - The poll cadence is chosen entirely client-side, independently of the CLI.
 
 The *repos panel* additionally lists each repository's active tasks beneath it,
-each with a *Stop* button for the cancellable kinds (reconcile, query) that
-calls =POST …/tasks/:id/cancel= (see [[*Cancellation]]). It polls =GET /tasks=
+each with a *Stop* button for the cancellable kinds (reconcile, query, flush)
+that calls =POST …/tasks/:id/cancel= (see [[*Cancellation]]). It polls =GET /tasks=
 on its own cadence while mounted. This is the in-panel counterpart to the global
 task bar: it ties a running task to the repository it belongs to and gives a
 direct affordance to stop it.
