@@ -759,6 +759,15 @@ fn test_query_bare_uuid_atom_selects_that_metarecord() {
     assert_ok(&out);
     assert_eq!(out.stdout.trim(), "");
 
+    // The shipped simplified grammar passes a pasted UUID through, so -s works
+    // too (mf_cfg installs the shipped core config).
+    let out = mf_cfg(&["-u", &repo, "metarecord", "-q", &a, "-s", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), a);
+    let out = mf_cfg(&["-u", &repo, "metarecord", "-q", &format!("{a} rating>3"), "-s", "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), a);
+
     // The typed flag decides the output shape (spec-data-model "mf metarecord
     // [-i|-q] get"): the same UUID through -i is the full JSON object.
     let out = mf(&["-u", &repo, "metarecord", "-i", &a, "get"]);

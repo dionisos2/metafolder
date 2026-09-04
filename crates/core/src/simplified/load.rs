@@ -97,6 +97,47 @@ mod tests {
     }
 
     #[test]
+    fn default_grammar_expands_a_bare_uuid() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        let u = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+        let v = "47ab0000000000000000000000000001";
+        // A pasted UUID passes through to the DSL verbatim — one form in both
+        // languages (spec-query, the UUID-atom bullet).
+        assert_eq!(expand(&g, u).unwrap(), u);
+        assert_eq!(expand(&g, &format!("{u} rating>3")).unwrap(), format!("{u} AND rating > 3"));
+        assert_eq!(expand(&g, &format!("{u} OR {v}")).unwrap(), format!("{u} OR {v}"));
+        assert_eq!(expand(&g, &format!("!{u}")).unwrap(), format!("NOT {u}"));
+        // ... and expands to the UuidIn the DSL parses it as.
+        for input in [u, &format!("{u} rating>3"), &format!("{u} OR {v}")] {
+            crate::dsl::parse_query(&expand(&g, input).unwrap()).expect("valid DSL");
+        }
+        assert_eq!(
+            crate::dsl::parse_query(&expand(&g, u).unwrap()).unwrap(),
+            crate::query::Query::UuidIn { uuids: vec![uuid::Uuid::try_parse(u).unwrap()] }
+        );
+    }
+
+    #[test]
+    fn default_grammar_expands_a_reference_to_a_uuid() {
+        let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
+        let u = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+        // The records pointing *at* that metarecord — a tag, or any ref field.
+        assert_eq!(expand(&g, &format!("tag->{u}")).unwrap(), format!("tag -> ({u})"));
+        // The field alias applies here like anywhere else.
+        assert_eq!(expand(&g, &format!("p->{u}")).unwrap(), format!("mfr_path -> ({u})"));
+        let dsl = expand(&g, &format!("tag->{u}")).unwrap();
+        assert_eq!(
+            crate::dsl::parse_query(&dsl).unwrap(),
+            crate::query::Query::Follows {
+                field: "tag".into(),
+                target: crate::query::FollowTarget::Condition(Box::new(
+                    crate::query::Query::UuidIn { uuids: vec![uuid::Uuid::try_parse(u).unwrap()] }
+                )),
+            }
+        );
+    }
+
+    #[test]
     fn default_grammar_expands_osm_predicates() {
         let g = parse_grammar(DEFAULT_GRAMMAR).unwrap();
         // Path-mode OSM over a tree_ref field (`p` = mfr_path); multi-term

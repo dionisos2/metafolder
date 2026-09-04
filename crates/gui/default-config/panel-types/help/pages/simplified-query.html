@@ -78,9 +78,11 @@ genre=jazz OR genre=blues
 </p>
 <p>
   So a DSL form has no simplified equivalent unless a grammar rule gives it one.
-  A <strong>bare UUID</strong> (see <a data-help-page="queries">the normal
-  DSL</a>) is the case you meet in practice: paste one into the frozen DSL box,
-  not into the simplified box — or add a rule for it in the grammar below.
+  The shipped grammar gives one to the <strong>bare UUID</strong>: a pasted
+  32-hex identifier passes straight through to the
+  <a data-help-page="queries">DSL atom</a>, and
+  <code>tag-&gt;&lt;uuid&gt;</code> selects the records pointing at it. A UUID
+  therefore works in either box.
 </p>
 
 <h2>Editing the grammar</h2>

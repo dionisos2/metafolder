@@ -58,6 +58,11 @@ predicate =
   | "##=" v:tagpath         => tag -> (mf_schema = "tag" AND path = {str($v)})
   | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})
   | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)}))
+  # A pasted UUID — 32 hex characters, what the GUI's `Copy UUID` puts on the
+  # clipboard — selects that one metarecord. `tag->UUID` selects the records
+  # whose `tag` (or any ref field) points *at* it instead.
+  | u:UUID                  => $u
+  | f:field "->" u:UUID     => $f -> ($u)
   | "fav"                   => rating >= 4
 
 # Field aliases: map a few names, pass the rest through. `p` = the file path

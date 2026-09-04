@@ -39,7 +39,7 @@ pub struct Item {
 pub enum Expr {
     /// `"lit"` — matches one input token whose text equals this (decoded) text.
     Lit(String),
-    /// `WORD` / `NUMBER` / `STRING` — matches a token of that class.
+    /// `WORD` / `NUMBER` / `STRING` / `UUID` — matches a token of that class.
     Class(TokKind),
     /// A reference to another production.
     Rule(String),
@@ -420,6 +420,7 @@ impl PatternParser {
                 "WORD" => Expr::Class(TokKind::Word),
                 "NUMBER" => Expr::Class(TokKind::Number),
                 "STRING" => Expr::Class(TokKind::Str),
+                "UUID" => Expr::Class(TokKind::Uuid),
                 _ => Expr::Rule(name),
             }),
             Some(PTok::LParen) => {
@@ -605,5 +606,16 @@ mod tests {
         assert!(parse_grammar("a = ( WORD").is_err()); // unclosed group
         assert!(parse_grammar("| a").is_err()); // alternative before any production
         assert!(parse_grammar("a =").is_err()); // no alternatives
+    }
+
+    #[test]
+    fn uuid_terminal_is_a_token_class() {
+        assert_eq!(
+            g("a = UUID"),
+            vec![Production {
+                name: "a".into(),
+                alts: vec![alt(vec![item(Expr::Class(TokKind::Uuid))], None)],
+            }]
+        );
     }
 }

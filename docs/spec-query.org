@@ -573,12 +573,21 @@ discarding whitespace between tokens:
 | =NUMBER=  | integer or float literal                                                  |
 | =STRING=  | a double-quoted literal ='"' … '"'= (with escapes)                        |
 | =SYMBOL=  | a maximal run of punctuation characters (=:=, =~=, =>=, =>==, =..=, =+=, …) |
+| =UUID=    | exactly 32 ASCII hex characters — a metarecord UUID                        |
 | =(= =)=   | grouping, each its own token                                              |
 
 Whitespace is insignificant except as a token separator: =genre=jazz= and
 =genre = jazz= tokenize identically, and so do =100MB= and =100 MB=. Maximal
 munch on =WORD= gives free word boundaries — a literal ="tag"= in the grammar
 never matches the token =tags=.
+
+=UUID= is matched *before* =NUMBER= and =WORD=, since a UUID may start with
+either a digit or a letter and would otherwise be split in two. The run must be
+maximal on both sides — 33 hex characters are not a =NUMBER= followed by a
+=UUID=, and =<32 hex>_x= is one =WORD=. A run that is not exactly 32 long is
+left to =NUMBER=/=WORD= as before: the fixed tokenizer reports nothing, the
+grammar decides (unlike the normal DSL's lexer, which can name a truncated
+UUID because it knows a bare hex run has only one possible meaning there).
 
 ** Grammar notation
 
@@ -593,7 +602,7 @@ A grammar is a list of named productions; the start production is =query=.
 | =a ** s= =a ++ s=     | repetition separated by =s=: zero+, one+                                      |
 | =( ... )=             | grouping                                                                       |
 | ="lit"=               | matches one token whose text equals =lit=                                     |
-| =WORD= =NUMBER= =STRING= | matches a token of that class                                              |
+| =WORD= =NUMBER= =STRING= =UUID= | matches a token of that class                                       |
 | =label:item=          | binds =item='s match to =label= (a single value, or the list for a repetition) |
 | =item => template=    | the production's output template                                              |
 
@@ -675,6 +684,8 @@ predicate =
   | "##=" v:tagpath         => tag -> (mf_schema = "tag" AND path = {str($v)})    # exact node, full path
   | "#="  v:tagpath         => tag -> (mf_schema = "tag" AND path =>* {str($v)})  # subtree, full path
   | "#"   v:tagosm          => tag -> (mf_schema = "tag" AND osm(path, {str($v)})) # fuzzy: osm over the path
+  | u:UUID                  => $u                # a pasted UUID: that one metarecord
+  | f:field "->" u:UUID     => $f -> ($u)        # the records pointing at it
   | "fav"                   => rating >= 4
 
 # field aliases: map a few names, pass the rest through. `p` = the file path;
@@ -718,6 +729,13 @@ accept an unquoted slash-path (=#=musique/jazz=). The four sigils =#=, =#==,
 negate, keep a space (=! #musique=) — a bare =!#= lexes as one symbol token.
 The file-path field is aliased to the terse =p= (=p osm "sci fi"=, =p ?=),
 leaving the word =path= to pass through as the tag hierarchy field name.
+
+A *pasted UUID* passes straight through: the =UUID= token class carries it to
+the normal DSL's own UUID atom (see [[*Query DSL]]), so the identifier the GUI
+copies works in the simplified box too — one form in both languages, no sigil.
+=tag->UUID= (or any ref field) selects the records pointing *at* it, the
+=Follows= form the tag macros above build by path. No other rule can start with
+a =UUID= token, so its position among the alternatives is immaterial.
 
 The date macros read as English: =modified younger 3d= (modified within the last
 three days) → =mfr_mtime > @<now − 3 days>=; =created older 2 weeks= →
