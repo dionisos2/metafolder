@@ -453,6 +453,8 @@ impl Parser {
             Ok(query)
         } else if let Some(mode) = self.peek_osm_call() {
             self.osm_call(mode)
+        } else if self.peek_same_call() {
+            self.same_call()
         } else if let Some(uuid) = self.peek_uuid_atom() {
             self.next();
             Ok(Query::UuidIn { uuids: vec![uuid] })
@@ -483,6 +485,34 @@ impl Parser {
             _ => return None,
         };
         (self.tokens.get(self.pos + 1) == Some(&Tok::LParen)).then_some(mode)
+    }
+
+    /// `same` is a function-call operator too, recognised only when the
+    /// identifier is immediately followed by `(` — so a field literally named
+    /// `same` stays usable as an ordinary predicate.
+    fn peek_same_call(&self) -> bool {
+        matches!(self.peek(), Some(Tok::Ident(name)) if name == "same")
+            && self.tokens.get(self.pos + 1) == Some(&Tok::LParen)
+    }
+
+    /// `"same" "(" field "," query ")"` — the second argument is a whole query
+    /// (it goes through the full precedence chain), so the reference set can be
+    /// named any way a query can: a bare UUID atom, a path, a combinator.
+    fn same_call(&mut self) -> Result<Query, String> {
+        self.next(); // the `same` identifier
+        self.expect(Tok::LParen)?;
+        let field = match self.next() {
+            Some(Tok::Ident(name)) => name,
+            Some(Tok::Hex(text)) => text,
+            Some(tok) => {
+                return Err(format!("expected a field name in same(...), got {}", describe(&tok)))
+            }
+            None => return Err("expected a field name in same(...)".into()),
+        };
+        self.expect(Tok::Comma)?;
+        let target = self.or_expr()?;
+        self.expect(Tok::RParen)?;
+        Ok(Query::SameAs { field, target: Box::new(target) })
     }
 
     /// `("osm" | "osmd") "(" field "," string ")"` — the term string is split
@@ -931,6 +961,82 @@ mod tests {
         );
     }
 
+    // ── same-value matching (same) ───────────────────────────────────────────
+
+    fn same(field: &str, target: Query) -> Query {
+        Query::SameAs { field: field.into(), target: Box::new(target) }
+    }
+
+    #[test]
+    fn test_same_call_with_uuid_atom() {
+        assert_eq!(
+            ok(&format!("same(mfr_duplicate_group, {U1})")),
+            same("mfr_duplicate_group", uuid_in(&[U1]))
+        );
+    }
+
+    #[test]
+    fn test_same_call_with_predicate_target() {
+        assert_eq!(
+            ok(r#"same(mfr_duplicate_group, mfr_path = "/a/b.txt")"#),
+            same(
+                "mfr_duplicate_group",
+                Query::Eq { field: "mfr_path".into(), value: Value::String("/a/b.txt".into()) }
+            )
+        );
+    }
+
+    #[test]
+    fn test_same_call_target_is_a_full_query() {
+        // The second argument goes through the whole precedence chain, so it
+        // may be a combinator without extra parentheses.
+        assert_eq!(
+            ok(r#"same(artist, rating > 3 OR seen = true)"#),
+            same(
+                "artist",
+                Query::Or {
+                    operands: vec![
+                        Query::Gt { field: "rating".into(), value: Value::Int(3) },
+                        Query::Eq { field: "seen".into(), value: Value::Bool(true) },
+                    ]
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn test_same_composes_with_and_not() {
+        // "the *others* identical to this one" — the spec's spelling.
+        assert_eq!(
+            ok(&format!("same(mfr_duplicate_group, {U1}) AND NOT {U1}")),
+            Query::And {
+                operands: vec![
+                    same("mfr_duplicate_group", uuid_in(&[U1])),
+                    Query::Not { operand: Box::new(uuid_in(&[U1])) },
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_same_rejects_bad_shapes() {
+        err("same mfr_size"); // missing parens
+        err("same(mfr_size)"); // missing target argument
+        err("same(mfr_size 1 = 1)"); // missing comma
+        err(r#"same("x", a = 1)"#); // first argument must be a field identifier
+        err("same(mfr_size, )"); // the target must be a query
+    }
+
+    #[test]
+    fn test_field_named_same_still_usable() {
+        // `same` is only special when immediately followed by '(': a field
+        // literally named `same` remains usable as a predicate.
+        assert_eq!(
+            ok(r#"same = "x""#),
+            Query::Eq { field: "same".into(), value: Value::String("x".into()) }
+        );
+    }
+
     // ── combinators and precedence ───────────────────────────────────────────
 
     #[test]
@@ -1196,6 +1302,10 @@ mod tests {
             ok(&format!(r#"osm({name}, "x")"#)),
             Query::Osm { field: name.into(), terms: vec!["x".into()], mode: OsmMode::Path }
         );
+        assert_eq!(
+            ok(&format!("same({name}, rating = 3)")),
+            Query::SameAs { field: name.into(), target: Box::new(eq_int("rating", 3)) }
+        );
     }
 
     #[test]
@@ -1265,6 +1375,14 @@ mod tests {
                     field: "path".into(),
                     value: Value::String("music/jazz".into()),
                 })),
+            }
+        );
+        // "What else is byte-identical to this file", from the same page.
+        assert_eq!(
+            ok(r#"same(mfr_duplicate_group, 8f3a2b1c4d5e6f708192a3b4c5d6e7f8)"#),
+            Query::SameAs {
+                field: "mfr_duplicate_group".into(),
+                target: Box::new(uuid_in(&["8f3a2b1c4d5e6f708192a3b4c5d6e7f8"])),
             }
         );
         // That tag or any tag below it in the hierarchy: the inclusive subtree.

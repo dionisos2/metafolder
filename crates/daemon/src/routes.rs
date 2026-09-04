@@ -91,6 +91,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/tasks/:task", get(get_task))
         .route("/repos/:repo/tasks/:task/cancel", post(cancel_task))
         .route("/repos/:repo/reconcile", post(full_reconcile))
+        .route("/repos/:repo/duplicates/scan", post(duplicates_scan))
         .route("/repos/:repo/mounts", get(mounts))
         .route("/repos/:repo/watch", get(watch_status))
         .route("/repos/:repo/watch/pause", post(watch_pause))
@@ -1848,6 +1849,80 @@ async fn full_reconcile(
             }
             // A bail triggered by the cancel flag becomes a `cancelled` task, not
             // a `failed` one — the distinction the user asked for.
+            Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
+            Err(e) => repo_state.tasks.fail(task_id, &e.message),
+        }
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
+}
+
+#[derive(Deserialize)]
+struct DuplicatesBody {
+    /// Files smaller than this are skipped; `1` (the default) excludes
+    /// zero-length files, which free nothing when removed.
+    #[serde(default = "default_min_size")]
+    min_size: i64,
+    /// Ignore every stored hash and recompute.
+    #[serde(default)]
+    rehash: bool,
+    /// Restrict the scan to this metarecord's subtree (32-char hex).
+    #[serde(default)]
+    metarecord: Option<String>,
+}
+
+fn default_min_size() -> i64 {
+    1
+}
+
+impl Default for DuplicatesBody {
+    fn default() -> Self {
+        Self { min_size: default_min_size(), rehash: false, metarecord: None }
+    }
+}
+
+/// `POST /repos/:repo/duplicates/scan`: starts a duplicate scan as a background
+/// task (spec-duplicates, spec-tasks "The duplicate scan as a task"). Returns
+/// `202 Accepted` with the task id immediately; the summary is read from
+/// `GET …/tasks/:id`. A concurrent scan is rejected with `409`.
+///
+/// There is deliberately no listing endpoint: the scan *writes* its conclusion,
+/// so reading it back is an ordinary query over the fields it wrote.
+async fn duplicates_scan(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Option<Json<DuplicatesBody>>,
+) -> Result<Response, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let body = payload.map(|Json(b)| b).unwrap_or_default();
+    if body.min_size < 0 {
+        return Err(ApiError::bad_request("min_size must not be negative"));
+    }
+    let scope = body.metarecord.as_deref().map(parse_uuid).transpose()?;
+    let repo_state = state.repo(repo_uuid)?;
+    repo_state.ensure_writable()?;
+    let task_id = repo_state.tasks.start_unique(TaskKind::Duplicates).ok_or_else(|| {
+        ApiError::conflict("a duplicate scan is already in progress for this repository")
+    })?;
+
+    let opts =
+        crate::duplicates::ScanOptions { min_size: body.min_size, rehash: body.rehash, scope };
+    tokio::task::spawn_blocking(move || {
+        repo_state.tasks.mark_running(task_id);
+        let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        };
+        let cancel = || repo_state.tasks.is_cancel_requested(task_id);
+        let outcome = crate::duplicates::scan_reported(
+            &repo_state,
+            &opts,
+            &crate::tasks::Reporter::new(&progress, &cancel),
+        );
+        match outcome {
+            Ok(result) => {
+                let value = serde_json::to_value(result).expect("scan result serialization");
+                repo_state.tasks.finish(task_id, Some(value));
+            }
             Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
             Err(e) => repo_state.tasks.fail(task_id, &e.message),
         }

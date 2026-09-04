@@ -78,6 +78,19 @@ pub fn stat_fields(path: &Path) -> Result<Vec<Field>> {
         ));
         fields.push(Field::new("mfr_uid", Value::Int(meta.uid() as i64)));
         fields.push(Field::new("mfr_gid", Value::Int(meta.gid() as i64)));
+        // `mfr_inode` marks a *hard-linked* file by its presence alone (the
+        // `mfr_mount` convention), so it is written only when there is more
+        // than one name for the bytes. Everything it needs is already in the
+        // `stat` above, so it costs no syscall — and nothing at all for the
+        // overwhelming majority of files. The device is part of the value
+        // because an inode number is unique only within one filesystem, and a
+        // repository may span several (spec-duplicates "Hard links").
+        if meta.nlink() > 1 {
+            fields.push(Field::new(
+                "mfr_inode",
+                Value::String(format!("{}:{}", meta.dev(), meta.ino())),
+            ));
+        }
     }
     Ok(fields)
 }

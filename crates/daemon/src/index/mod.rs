@@ -95,6 +95,7 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
             operands.iter().for_each(|o| collect_path_targets(o, out));
         }
         Query::Not { operand } => collect_path_targets(operand, out),
+        Query::SameAs { target, .. } => collect_path_targets(target, out),
         _ => {}
     }
 }
@@ -126,6 +127,7 @@ pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
                 collect_node_paths(c, out);
             }
         }
+        Query::SameAs { target, .. } => collect_node_paths(target, out),
         _ => {}
     }
 }
@@ -165,6 +167,7 @@ pub fn contains_osm_path(q: &Query) -> bool {
         Query::Follows { target, .. } | Query::FollowsTransitive { target, .. } => {
             matches!(target, FollowTarget::Condition(c) if contains_osm_path(c))
         }
+        Query::SameAs { target, .. } => contains_osm_path(target),
         _ => false,
     }
 }
@@ -854,6 +857,17 @@ impl RepoIndex {
             }
 
             Query::Follows { field, target } => self.follows(field, target, roots),
+            // Like a traversal seed, the target is evaluated *unrestricted*:
+            // narrowing it would drop the very records whose values define the
+            // answer. The answer itself is then intersected by the shared tail.
+            Query::SameAs { field, target } => {
+                let seed = self.eval(target, roots)?;
+                match self.fields.get(field) {
+                    _ if seed.is_empty() => Ok(RoaringBitmap::new()),
+                    Some(fi) => fi.same_as(&seed),
+                    None => Ok(RoaringBitmap::new()),
+                }
+            }
             Query::FollowsTransitive { field, target, inclusive } => {
                 self.follows_transitive(field, target, *inclusive, roots)
             }

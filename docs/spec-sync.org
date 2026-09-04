@@ -660,9 +660,9 @@ are never written because each repository re-derives them. Closing over a
 =Ref=-valued =mfr_*= field would materialise a counterpart for something that is
 never synced — a bare, empty record per referent on the target side, for no
 purpose. No =mfr_*= field is =Ref=-valued today (=mfr_path= is a =TreeRef=,
-=mfr_mount= a =String=), so nothing exercises this yet;
+=mfr_mount= a =String=), so nothing exercised it;
 =mfr_duplicate_group= ([[file:spec-duplicates.org][spec-duplicates.org]]) is the
-first, and the filter belongs in =ref_targets= before it lands.
+first, and =ref_targets= applies the filter.
 
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no

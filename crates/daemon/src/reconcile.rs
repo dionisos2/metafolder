@@ -62,39 +62,10 @@ pub fn reconcile(repo: &RepoState) -> Result<ReconcileResult, ApiError> {
 /// to bound the cost of progress updates on large repositories.
 const PROGRESS_STEP: usize = 128;
 
-/// Cooperative cancellation probe: returns `true` once the task has been asked
-/// to stop (spec-tasks "Cancellation"). Checked alongside the progress
-/// checkpoints; when it returns `true` the reconcile bails early, dropping its
-/// `Writer` so the in-progress transaction rolls back.
-pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
-
-/// Phase progress sink: `(phase, done, total)`, with `done`/`total` absent when
-/// the phase cannot place a cursor (spec-tasks "Display" renders those as an
-/// indeterminate spinner). Reported at phase boundaries and, inside the heavy
-/// loops, throttled to every [`PROGRESS_STEP`] items.
-pub type ProgressFn<'a> = &'a dyn Fn(&str, Option<u64>, Option<u64>);
-
-/// The two callbacks a reported reconcile carries: where to report phase
-/// progress, and how to learn the task was cancelled. They always travel
-/// together — one pair per task — so they are passed as one.
-pub struct Reporter<'a> {
-    progress: ProgressFn<'a>,
-    cancel: CancelProbe<'a>,
-}
-
-impl<'a> Reporter<'a> {
-    pub fn new(progress: ProgressFn<'a>, cancel: CancelProbe<'a>) -> Self {
-        Self { progress, cancel }
-    }
-
-    fn progress(&self, phase: &str, done: Option<u64>, total: Option<u64>) {
-        (self.progress)(phase, done, total);
-    }
-
-    fn is_cancelled(&self) -> bool {
-        (self.cancel)()
-    }
-}
+/// The task-progress plumbing every reported worker shares (spec-tasks
+/// "Progress"). Re-exported here because reconcile was its first user; the
+/// duplicate scan reports the same way.
+pub use crate::tasks::{CancelProbe, ProgressFn, Reporter};
 
 /// A reconcile that never cancels (used by the synchronous, non-task wrappers).
 fn never() -> impl Fn() -> bool {
@@ -797,13 +768,14 @@ fn refresh_stat_fields(writer: &mut Writer, root: &Path, uuid: Uuid, rel: &RelPa
     let Ok(stat) = fs_meta::stat_fields_in(root, &rel.to_abs(root)) else {
         return Ok(());
     };
-    for field in stat {
+    for field in &stat {
         let current = db::get_field_rows_named(writer.connection(), uuid, &field.name)?;
         if current.len() == 1 && current[0].value == field.value {
             continue;
         }
-        writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
+        writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value.clone())?;
     }
+    crate::executor::clear_absent_conditional_stat_fields(writer, uuid, &stat)?;
     Ok(())
 }
 

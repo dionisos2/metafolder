@@ -11,6 +11,22 @@ use xxhash_rust::xxh3::Xxh3;
 
 const PARTIAL_CHUNK: u64 = 4096;
 
+/// The fields derived from a file's *content*, which therefore all die together
+/// the moment that content changes: the two hashes, the `stat` stamp recording
+/// what they were computed from (spec-duplicates "The hash cache and its
+/// validity stamp"), and the duplicate group the file was placed in.
+///
+/// One list, so a new derived field cannot be added to the scan and forgotten by
+/// the invalidation — which would leave a metarecord claiming a duplicate it no
+/// longer is.
+pub const CONTENT_DERIVED_FIELDS: &[&str] = &[
+    "mfr_partial_hash",
+    "mfr_full_hash",
+    "mfr_hash_mtime",
+    "mfr_hash_size",
+    "mfr_duplicate_group",
+];
+
 /// Hex xxHash3 of the first and last 4 KiB of the file (the chunks overlap
 /// on files smaller than 8 KiB; this is fine — the hash stays deterministic).
 pub fn partial_hash(path: &Path) -> Result<String> {

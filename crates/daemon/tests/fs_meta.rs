@@ -147,3 +147,66 @@ fn test_stat_fields_for_a_directory() {
     assert_eq!(mfr_type.value, Value::String("dir".into()));
     std::fs::remove_dir(dir).unwrap();
 }
+
+// ── Hard links (mfr_inode) ────────────────────────────────────────────────────
+
+#[cfg(unix)]
+#[test]
+fn test_mfr_inode_absent_on_a_single_linked_file() {
+    // The field's *presence* is what marks a hard-linked file, so an ordinary
+    // file must carry none at all.
+    let path = temp_file(b"alone");
+    let fields = fs_meta::stat_fields(&path).unwrap();
+    assert!(
+        fields.iter().all(|f| f.name != "mfr_inode"),
+        "a file with one name must carry no mfr_inode"
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn test_mfr_inode_present_and_shared_across_hard_links() {
+    use std::os::unix::fs::MetadataExt;
+
+    let dir = TempDir::new("inode");
+    let first = dir.join("first");
+    let second = dir.join("second");
+    std::fs::write(&first, b"shared bytes").unwrap();
+    std::fs::hard_link(&first, &second).unwrap();
+
+    let inode_of = |p: &std::path::Path| {
+        fs_meta::stat_fields(p)
+            .unwrap()
+            .into_iter()
+            .find(|f| f.name == "mfr_inode")
+            .map(|f| f.value)
+    };
+
+    let meta = std::fs::symlink_metadata(&first).unwrap();
+    let expected = Value::String(format!("{}:{}", meta.dev(), meta.ino()));
+    // Both names report the same identity — that is what lets the duplicate
+    // scan count them as one file.
+    assert_eq!(inode_of(&first), Some(expected.clone()));
+    assert_eq!(inode_of(&second), Some(expected));
+
+    // Drop one link: the survivor is an ordinary file again.
+    std::fs::remove_file(&second).unwrap();
+    assert_eq!(inode_of(&first), None, "nlink back to 1 ⇒ no mfr_inode");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_mfr_inode_distinguishes_two_separate_files() {
+    let dir = TempDir::new("inode2");
+    let a = dir.join("a");
+    let b = dir.join("b");
+    std::fs::write(&a, b"same bytes").unwrap();
+    std::fs::write(&b, b"same bytes").unwrap();
+    // Identical content, distinct inodes — and with one name each, neither
+    // carries the field.
+    for p in [&a, &b] {
+        let fields = fs_meta::stat_fields(p).unwrap();
+        assert!(fields.iter().all(|f| f.name != "mfr_inode"));
+    }
+}

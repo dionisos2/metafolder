@@ -2,6 +2,7 @@
 //! unlogged read helpers. All writes must go through [`crate::log::Writer`]
 //! so that the event log stays consistent with the data tables.
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -905,6 +906,129 @@ pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
         .map(|r| r.map_err(Into::into).and_then(bytes_to_uuid))
         .collect::<Result<Vec<Uuid>>>()?;
     Ok(uuids)
+}
+
+// ── Duplicate detection (spec-duplicates) ─────────────────────────────────────
+
+/// Every tracked *file* with its recorded size: `(uuid, mfr_size)`.
+///
+/// One query for the whole repository, deliberately — asking per size reads as
+/// the cheaper question but there is no index on a field's *value*, so it walks
+/// every tracked file once per question (see [`hashed_orphans`] for the same
+/// trap). The duplicate scan groups these in memory instead.
+pub fn tracked_files_with_size(conn: &Connection) -> Result<Vec<(Uuid, i64)>> {
+    // CROSS JOIN pins the join order: the `mfr_type = 'file'` rows drive.
+    let mut stmt = conn.prepare(
+        "SELECT t.metarecord_uuid, s.value_int
+         FROM field t
+         CROSS JOIN field s ON s.metarecord_uuid = t.metarecord_uuid
+              AND s.field_name = 'mfr_size' AND s.value_type = 'int'
+         CROSS JOIN field p ON p.metarecord_uuid = t.metarecord_uuid
+              AND p.field_name = 'mfr_path' AND p.value_type = 'tree_ref'
+         WHERE t.field_name = 'mfr_type' AND t.value_type = 'string'
+           AND t.value_text = 'file'",
+    )?;
+    let rows = stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (uuid, size) = row?;
+        out.push((bytes_to_uuid(uuid)?, size));
+    }
+    Ok(out)
+}
+
+/// The stored content hashes of one metarecord, with the `stat` stamp they were
+/// computed under (spec-duplicates "The hash cache and its validity stamp").
+#[derive(Debug, Default, Clone)]
+pub struct StoredHashes {
+    pub partial: Option<String>,
+    pub full: Option<String>,
+    /// `(mtime_ms, size)`. `None` when either half is missing, which makes the
+    /// entry unusable — an unstamped hash is one no scan may trust.
+    pub stamp: Option<(i64, i64)>,
+}
+
+/// The whole repository's hash cache in one query, so the scan never asks per
+/// file.
+pub fn hash_cache(conn: &Connection) -> Result<HashMap<Uuid, StoredHashes>> {
+    let mut stmt = conn.prepare(
+        "SELECT metarecord_uuid, field_name, value_text, value_int
+         FROM field
+         WHERE field_name IN
+             ('mfr_partial_hash', 'mfr_full_hash', 'mfr_hash_mtime', 'mfr_hash_size')",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, Vec<u8>>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, Option<String>>(2)?,
+            r.get::<_, Option<i64>>(3)?,
+        ))
+    })?;
+    let mut out: HashMap<Uuid, StoredHashes> = HashMap::new();
+    let mut mtimes: HashMap<Uuid, i64> = HashMap::new();
+    let mut sizes: HashMap<Uuid, i64> = HashMap::new();
+    for row in rows {
+        let (uuid, name, text, int) = row?;
+        let uuid = bytes_to_uuid(uuid)?;
+        let entry = out.entry(uuid).or_default();
+        match (name.as_str(), text, int) {
+            ("mfr_partial_hash", Some(t), _) => entry.partial = Some(t),
+            ("mfr_full_hash", Some(t), _) => entry.full = Some(t),
+            ("mfr_hash_mtime", _, Some(n)) => {
+                mtimes.insert(uuid, n);
+            }
+            ("mfr_hash_size", _, Some(n)) => {
+                sizes.insert(uuid, n);
+            }
+            _ => {}
+        }
+    }
+    for (uuid, entry) in out.iter_mut() {
+        if let (Some(m), Some(s)) = (mtimes.get(uuid), sizes.get(uuid)) {
+            entry.stamp = Some((*m, *s));
+        }
+    }
+    Ok(out)
+}
+
+/// Every `duplicate_group` metarecord, keyed by its `(size, hash)` identity.
+///
+/// The size is part of the key, not decoration: two different size classes
+/// could in principle produce the same hash, and the scan's find-or-create has
+/// to stay well defined (spec-duplicates "Duplicate groups").
+pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT h.metarecord_uuid, z.value_int, h.value_text
+         FROM field h
+         CROSS JOIN field z ON z.metarecord_uuid = h.metarecord_uuid
+              AND z.field_name = 'mfr_content_size' AND z.value_type = 'int'
+         WHERE h.field_name = 'mfr_content_hash' AND h.value_type = 'string'",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+    })?;
+    let mut out = HashMap::new();
+    for row in rows {
+        let (uuid, size, hash) = row?;
+        out.insert((size, hash), bytes_to_uuid(uuid)?);
+    }
+    Ok(out)
+}
+
+/// The metarecords whose `field_name` is a `Ref` to `target`.
+pub fn ref_field_owners(conn: &Connection, field_name: &str, target: Uuid) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT metarecord_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'ref' AND value_uuid = ?2",
+    )?;
+    let rows =
+        stmt.query_map(params![field_name, uuid_to_bytes(target)], |r| r.get::<_, Vec<u8>>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(bytes_to_uuid(row?)?);
+    }
+    Ok(out)
 }
 
 /// An orphaned metarecord a re-appearing file can be matched against: its

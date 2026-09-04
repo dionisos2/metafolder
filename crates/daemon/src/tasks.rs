@@ -16,6 +16,49 @@ use metafolder_core::sync::MutexExt;
 use serde::Serialize;
 use uuid::Uuid;
 
+/// Cooperative cancellation probe: returns `true` once the task has been asked
+/// to stop (spec-tasks "Cancellation"). A worker checks it alongside its
+/// progress checkpoints and bails, dropping its `Writer` so the in-progress
+/// transaction rolls back.
+pub type CancelProbe<'a> = &'a dyn Fn() -> bool;
+
+/// Phase progress sink: `(phase, done, total)`, with `done`/`total` absent when
+/// the phase cannot place a cursor (spec-tasks "Display" renders those as an
+/// indeterminate spinner). Reported at phase boundaries and, inside the heavy
+/// loops, throttled so the cost of reporting stays bounded.
+pub type ProgressFn<'a> = &'a dyn Fn(&str, Option<u64>, Option<u64>);
+
+/// The two callbacks a reported worker carries: where to report phase progress,
+/// and how to learn the task was cancelled. They always travel together — one
+/// pair per task — so they are passed as one.
+pub struct Reporter<'a> {
+    progress: ProgressFn<'a>,
+    cancel: CancelProbe<'a>,
+}
+
+/// The do-nothing pair, for a synchronous caller with no task behind it.
+const SILENT_PROGRESS: ProgressFn<'static> = &|_, _, _| {};
+const NEVER_CANCELLED: CancelProbe<'static> = &|| false;
+
+impl<'a> Reporter<'a> {
+    pub fn new(progress: ProgressFn<'a>, cancel: CancelProbe<'a>) -> Self {
+        Self { progress, cancel }
+    }
+
+    /// A reporter that reports nothing and never cancels.
+    pub fn silent() -> Reporter<'static> {
+        Reporter { progress: SILENT_PROGRESS, cancel: NEVER_CANCELLED }
+    }
+
+    pub fn progress(&self, phase: &str, done: Option<u64>, total: Option<u64>) {
+        (self.progress)(phase, done, total);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        (self.cancel)()
+    }
+}
+
 /// How long a terminal (`done`/`failed`) task is retained before eviction.
 pub const RETENTION: Duration = Duration::from_secs(10);
 
@@ -23,6 +66,10 @@ pub const RETENTION: Duration = Duration::from_secs(10);
 #[serde(rename_all = "snake_case")]
 pub enum TaskKind {
     Reconcile,
+    /// The duplicate scan (spec-duplicates). Same 409 dedup rule as reconcile,
+    /// and cancellable: hashes are committed in batches, so stopping keeps the
+    /// expensive work already done.
+    Duplicates,
     Query,
     Flush,
     /// Warming a freshly loaded repository: populating the tree cache and

@@ -680,3 +680,30 @@ fn metadata_off_extracts_nothing() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn reconcile_records_and_then_removes_mfr_inode() {
+    // `mfr_inode`'s presence marks a hard-linked file. A stat set is applied as
+    // "set these fields", so its disappearance has to be written explicitly —
+    // otherwise a file that lost its second name keeps claiming to be linked
+    // and the reclaimable space is over-reported (spec-duplicates "Hard links").
+    let (repo, root) = setup("inode");
+    write_file(&root, "a.txt", b"shared");
+    std::fs::hard_link(root.join("a.txt"), root.join("b.txt")).unwrap();
+    reconcile::reconcile(&repo).unwrap();
+
+    let a = resolve(&repo, "/a.txt").unwrap();
+    let b = resolve(&repo, "/b.txt").unwrap();
+    let inode = field_value(&repo, a, "mfr_inode");
+    assert!(inode.is_some(), "a hard-linked file must carry mfr_inode");
+    assert_eq!(inode, field_value(&repo, b, "mfr_inode"), "both names, one inode");
+
+    std::fs::remove_file(root.join("b.txt")).unwrap();
+    // The removal is written by the *refresh* pass, which is opt-in.
+    reconcile::reconcile_full(&repo, None, false, false, true).unwrap();
+    assert_eq!(
+        field_value(&repo, a, "mfr_inode"),
+        None,
+        "back to a single name ⇒ the field must be gone, not stale"
+    );
+}

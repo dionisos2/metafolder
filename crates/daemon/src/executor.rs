@@ -621,10 +621,12 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
             }
             "restore_clear_path" => {
                 writer.set_field_as(OpType::FileDeleted, entity, "mfr_path", Value::Nothing)?;
+                writer.clear_field_as(OpType::FileDeleted, entity, "mfr_duplicate_group")?;
             }
             "restore_clear_hashes" => {
-                writer.clear_field_as(OpType::FileModified, entity, "mfr_partial_hash")?;
-                writer.clear_field_as(OpType::FileModified, entity, "mfr_full_hash")?;
+                for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
+                    writer.clear_field_as(OpType::FileModified, entity, name)?;
+                }
             }
             other => anyhow::bail!("unknown restoration op_type '{other}'"),
         }
@@ -970,6 +972,10 @@ impl Apply<'_, '_> {
                 )?;
             }
             self.writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
+            // No file, no duplicate. The *hashes* stay: re-homing this record
+            // when the file reappears is exactly what they are for
+            // (spec-duplicates "Invariant").
+            self.writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
         }
         self.cache.apply_remove("mfr_path", uuid);
         // These records are orphans now: a later arrival in this same group may
@@ -1183,19 +1189,29 @@ impl Apply<'_, '_> {
             };
             stored("mfr_size") == new_of("mfr_size")
                 && stored("mfr_mtime") == new_of("mfr_mtime")
-                && stored("mfr_partial_hash").is_none()
-                && stored("mfr_full_hash").is_none()
+                && crate::fingerprint::CONTENT_DERIVED_FIELDS
+                    .iter()
+                    .all(|name| stored(name).is_none())
         };
         if unchanged {
             return Ok(());
         }
-        for field in stat {
-            if matches!(field.name.as_str(), "mfr_size" | "mfr_mtime") {
-                self.writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
+        for field in &stat {
+            if matches!(field.name.as_str(), "mfr_size" | "mfr_mtime" | "mfr_inode") {
+                self.writer.set_field_as(
+                    OpType::FileModified,
+                    uuid,
+                    &field.name,
+                    field.value.clone(),
+                )?;
             }
         }
-        self.writer.clear_field_as(OpType::FileModified, uuid, "mfr_partial_hash")?;
-        self.writer.clear_field_as(OpType::FileModified, uuid, "mfr_full_hash")?;
+        clear_absent_conditional_stat_fields(&mut self.writer, uuid, &stat)?;
+        // The content changed, so everything derived from it is stale — the
+        // hashes, their stamp, and the duplicate group they justified.
+        for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
+            self.writer.clear_field_as(OpType::FileModified, uuid, name)?;
+        }
         Ok(())
     }
 
@@ -1210,16 +1226,44 @@ impl Apply<'_, '_> {
         let Ok(stat) = fs_meta::stat_fields(&self.abs(rel)) else {
             return Ok(());
         };
-        for field in stat {
+        for field in &stat {
             if matches!(
                 field.name.as_str(),
-                "mfr_permissions" | "mfr_uid" | "mfr_gid" | "mfr_mtime"
+                "mfr_permissions" | "mfr_uid" | "mfr_gid" | "mfr_mtime" | "mfr_inode"
             ) {
-                self.writer.set_field_as(OpType::FileModified, uuid, &field.name, field.value)?;
+                self.writer.set_field_as(
+                    OpType::FileModified,
+                    uuid,
+                    &field.name,
+                    field.value.clone(),
+                )?;
             }
         }
+        // Gaining or losing a hard link is an attribute change, not a content
+        // one, so this is where a link count crossing 1 is recorded.
+        clear_absent_conditional_stat_fields(&mut self.writer, uuid, &stat)?;
         Ok(())
     }
+}
+
+/// Writes the *disappearance* of the conditional stat fields — today only
+/// `mfr_inode`, which a file carries while it has more than one name.
+///
+/// A stat field set is applied as "set these fields", never as "make the stored
+/// set equal to this", so a field that stops being produced would otherwise
+/// linger: a file that lost its second name would keep claiming to be
+/// hard-linked, and the duplicate scan would under-count the space a removal
+/// frees (spec-duplicates "Hard links"). Clearing an already-absent field is a
+/// no-op, so this costs nothing in the common case.
+pub(crate) fn clear_absent_conditional_stat_fields(
+    writer: &mut Writer,
+    uuid: Uuid,
+    stat: &[Field],
+) -> Result<()> {
+    if !stat.iter().any(|f| f.name == "mfr_inode") {
+        writer.clear_field_as(OpType::FileModified, uuid, "mfr_inode")?;
+    }
+    Ok(())
 }
 
 /// Resolves the parent directory entry of `rel`, creating any missing

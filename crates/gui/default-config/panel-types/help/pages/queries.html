@@ -172,13 +172,26 @@ author -&gt; (name = "Coltrane")</pre>
   path; <code>osmd</code> matches a field's text directly.
 </p>
 
+<h2>Same value as this one — <code>same</code></h2>
+<p>
+  <code>same(field, query)</code> matches the metarecords sharing a value of
+  <code>field</code> with a metarecord the sub-query matches — without your ever
+  naming the value. <code>same(mfr_duplicate_group, &lt;uuid&gt;)</code> gives the
+  files byte-identical to that one; <code>same(mfr_meta_artist, &lt;uuid&gt;)</code>
+  the other tracks by its artist. It is reflexive (a record belongs to its own
+  class), so "the <em>others</em>" is
+  <code>same(f, &lt;uuid&gt;) AND NOT &lt;uuid&gt;</code>.
+</p>
+
 <h2>Examples</h2>
 <pre>mfr_path IS ABSENT
 mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
 mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
 tag -&gt; (path = "music/jazz")
 mf_schema = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))
-8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating &gt; 3</pre>
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating &gt; 3
+same(mfr_duplicate_group, 8f3a2b1c4d5e6f708192a3b4c5d6e7f8)
+same(mfr_meta_artist, mfr_path = "/music/a.flac")</pre>
 
 <p>
   See also: <a data-help-page="simplified-query">the simplified query language</a>,

@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use metafolder_core::metarecord::Value;
+use metafolder_core::metarecord::{Field, Value};
 use metafolder_daemon::db;
 use metafolder_daemon::executor::{self, FsEvent};
 use metafolder_daemon::log::{self, Writer};
@@ -487,6 +487,87 @@ fn test_modify_data_refreshes_and_invalidates_hashes() {
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(19)));
     assert_eq!(field_value(&repo, uuid, "mfr_partial_hash"), None, "hashes invalidated");
     assert_eq!(field_value(&repo, uuid, "mfr_full_hash"), None);
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_modify_data_invalidates_the_whole_content_derived_family() {
+    // The hashes, the stamp they were computed under, and the duplicate group
+    // they justified all die with the content (spec-duplicates "Invariant").
+    let (repo, root, _) = setup("modifyfamily");
+    write_file(&root, "m.txt", b"v1");
+    enqueue(&repo, &[FsEvent::Create("/m.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let uuid = resolve(&repo, "/m.txt").unwrap();
+    let group = {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let group = w
+            .create_metarecord(vec![Field::new(
+                "mf_schema",
+                Value::String("duplicate_group".into()),
+            )])
+            .unwrap()
+            .uuid;
+        w.set_field(uuid, "mfr_partial_hash", Value::String("aaaa".into())).unwrap();
+        w.set_field(uuid, "mfr_full_hash", Value::String("bbbb".into())).unwrap();
+        w.set_field(uuid, "mfr_hash_mtime", Value::DateTime(1_700_000_000_000)).unwrap();
+        w.set_field(uuid, "mfr_hash_size", Value::Int(2)).unwrap();
+        w.set_field(uuid, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        w.commit().unwrap();
+        group
+    };
+
+    write_file(&root, "m.txt", b"version two, longer");
+    enqueue(&repo, &[FsEvent::ModifyData("/m.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    for name in metafolder_daemon::fingerprint::CONTENT_DERIVED_FIELDS {
+        assert_eq!(field_value(&repo, uuid, name), None, "{name} should be invalidated");
+    }
+    // The group metarecord itself survives — pruning it is the scan's job.
+    assert!(field_value(&repo, group, "mf_schema").is_some());
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_remove_clears_the_duplicate_group_but_keeps_the_hashes() {
+    // An orphan is no longer a live duplicate; but the hashes are exactly what
+    // re-homes it when the file comes back, so they must survive.
+    let (repo, root, _) = setup("removegroup");
+    write_file(&root, "d.txt", b"content");
+    enqueue(&repo, &[FsEvent::Create("/d.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let uuid = resolve(&repo, "/d.txt").unwrap();
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let group = w
+            .create_metarecord(vec![Field::new(
+                "mf_schema",
+                Value::String("duplicate_group".into()),
+            )])
+            .unwrap()
+            .uuid;
+        w.set_field(uuid, "mfr_partial_hash", Value::String("aaaa".into())).unwrap();
+        w.set_field(uuid, "mfr_full_hash", Value::String("bbbb".into())).unwrap();
+        w.set_field(uuid, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        w.commit().unwrap();
+    }
+
+    std::fs::remove_file(root.join("d.txt")).unwrap();
+    enqueue(&repo, &[FsEvent::Remove("/d.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(field_value(&repo, uuid, "mfr_path"), Some(Value::Nothing));
+    assert_eq!(field_value(&repo, uuid, "mfr_duplicate_group"), None, "group link cleared");
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_full_hash"),
+        Some(Value::String("bbbb".into())),
+        "the hashes must survive an orphaning — they re-home the file"
+    );
 
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -259,6 +259,32 @@ async fn concurrent_reconcile_is_rejected_with_409() {
 }
 
 #[tokio::test]
+async fn concurrent_duplicate_scan_is_rejected_with_409() {
+    // Same rule as reconcile, and for the same reason: a second run would only
+    // redo work already in progress (spec-tasks "Concurrency").
+    let (app, state, repo) = app_with_repo("dupdedup");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    state.repo(repo_uuid).unwrap().tasks.start_unique(TaskKind::Duplicates).unwrap();
+
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/duplicates/scan")).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn a_duplicate_scan_task_is_cancellable() {
+    // Unlike prune/rollback: hashes are committed in batches, so stopping keeps
+    // the expensive work already done.
+    let (app, state, repo) = app_with_repo("dupcancel");
+    let repo_uuid = Uuid::parse_str(&repo).unwrap();
+    let id = state.repo(repo_uuid).unwrap().tasks.start(TaskKind::Duplicates);
+    state.repo(repo_uuid).unwrap().tasks.mark_running(id);
+    let hex = id.as_simple().to_string();
+    let (status, _) = request(&app, "POST", &format!("/repos/{repo}/tasks/{hex}/cancel")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(state.repo(repo_uuid).unwrap().tasks.is_cancel_requested(id));
+}
+
+#[tokio::test]
 async fn cancel_active_reconcile_sets_the_flag_and_returns_the_task() {
     let (app, state, repo) = app_with_repo("cancelok");
     let repo_uuid = Uuid::parse_str(&repo).unwrap();

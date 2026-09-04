@@ -130,6 +130,7 @@ fn node_count(q: &Query) -> usize {
             FollowTarget::Condition(c) => node_count(c),
             FollowTarget::Path(_) => 0,
         },
+        Query::SameAs { target, .. } => node_count(target),
         _ => 0, // leaf predicates
     };
     1 + children
@@ -175,6 +176,7 @@ pub fn validate_query(q: &Query) -> Result<(), ApiError> {
             FollowTarget::Condition(c) => validate_query(c),
             FollowTarget::Path(_) => Ok(()),
         },
+        Query::SameAs { target, .. } => validate_query(target),
         _ => Ok(()),
     }
 }
@@ -315,6 +317,10 @@ pub fn resolve_index_leaves(
         Query::Not { operand } => {
             Query::Not { operand: Box::new(resolve_index_leaves(conn, cache, operand)?) }
         }
+        Query::SameAs { field, target } => Query::SameAs {
+            field: field.clone(),
+            target: Box::new(resolve_index_leaves(conn, cache, target)?),
+        },
         other => other.clone(),
     })
 }
@@ -939,6 +945,36 @@ impl<'a> Compiler<'a> {
                 OsmMode::Direct => self.osm_direct(field, terms),
                 OsmMode::Path => self.osm_path(field, terms),
             },
+
+            // Same-value matching: the rows of `field` whose value tuple also
+            // occurs among the `field` rows of the target set. The whole tuple
+            // is compared with `IS` (NULL-safe equality) under an equal
+            // `value_type`, so one statement covers every value type — the
+            // unused columns are NULL on both sides and compare equal.
+            // `Nothing` rows are excluded on both sides: sharing an absence is
+            // not sharing a value.
+            Query::SameAs { field, target } => {
+                // The sub-query is compiled first so its `?` placeholders are
+                // pushed before this node's, matching the order they appear in
+                // the assembled SQL.
+                let sub = self.compile_node(target)?;
+                self.push_text(field);
+                self.push_text(field);
+                Ok(self.add(format!(
+                    "SELECT DISTINCT a.metarecord_uuid AS uuid FROM field a \
+                     WHERE a.field_name = ? AND a.value_type != 'nothing' \
+                       AND EXISTS (SELECT 1 FROM field b \
+                                    WHERE b.field_name = ? AND b.value_type != 'nothing' \
+                                      AND b.metarecord_uuid IN (SELECT uuid FROM {sub}) \
+                                      AND b.value_type = a.value_type \
+                                      AND b.value_text IS a.value_text \
+                                      AND b.value_int IS a.value_int \
+                                      AND b.value_real IS a.value_real \
+                                      AND b.value_uuid IS a.value_uuid \
+                                      AND b.value_ref_repo IS a.value_ref_repo \
+                                      AND b.value_name_bytes IS a.value_name_bytes)"
+                )))
+            }
 
             Query::Follows { field, target } => match target {
                 FollowTarget::Condition(cond) => {

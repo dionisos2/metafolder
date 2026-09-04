@@ -831,12 +831,24 @@ fn field_signature(m: &Json) -> Vec<(String, Json)> {
 }
 
 /// The target UUIDs of a record's `ref`-valued fields (for referential closure).
+///
+/// Restricted to the fields the metadata diff actually writes: user fields,
+/// `mf_*`, and `mfr_path`. Every *other* `mfr_*` field is content- or
+/// stat-derived and each repository re-derives its own (spec-sync "The metadata
+/// diff"), so closing over one would materialise a counterpart for something
+/// that is never synced — a bare, empty record per referent on the target side,
+/// for no purpose. `mfr_duplicate_group` (spec-duplicates) is the first
+/// `Ref`-valued field this applies to.
 fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliError> {
     let m = ctx
         .client
         .get(&format!("/repos/{}/metarecords/{}", repo.as_simple(), record.as_simple()), &[])?;
     let mut out = Vec::new();
     for f in m["fields"].as_array().cloned().unwrap_or_default() {
+        let name = f["name"].as_str().unwrap_or_default();
+        if name.starts_with("mfr_") && name != "mfr_path" {
+            continue;
+        }
         if f["value"]["type"] == "ref" {
             if let Some(u) = f["value"]["value"].as_str().and_then(|s| Uuid::parse_str(s).ok()) {
                 if !out.contains(&u) {

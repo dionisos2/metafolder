@@ -2,6 +2,7 @@ pub mod config;
 pub mod daemon_config;
 pub mod db;
 pub mod diagnostics;
+pub mod duplicates;
 pub mod eligibility;
 pub mod error;
 pub mod executor;

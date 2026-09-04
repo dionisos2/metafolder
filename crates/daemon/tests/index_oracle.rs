@@ -1359,3 +1359,86 @@ fn tree_ref_sort_with_a_detached_node() {
     o.check_paginated_with_roots(&all, &[("loc", true)], 1);
     o.check_paginated_with_roots(&all, &[("loc", false)], 1);
 }
+
+#[test]
+fn same_as_is_served_by_the_index() {
+    // `SameAs` walks each encoding's value → ids partition, so it must agree
+    // with the SQL self-join on every encoding: categorical (string, bool),
+    // BSI (int, datetime) and reverse (ref, tree_ref) — plus the shapes where
+    // it composes with the rest of the IR.
+    let mut o = Oracle::new();
+    let root = o.create(vec![tref("loc", None, "root")]);
+    let group = o.create(vec![Field::new("kind", s("group"))]);
+    let other = o.create(vec![Field::new("kind", s("group"))]);
+
+    let a = o.create(vec![
+        tref("loc", Some(root), "a"),
+        Field::new("artist", s("Coltrane")),
+        Field::new("rate", i(9)),
+        Field::new("seen", Value::Bool(true)),
+        Field::new("when", dt("2024-01-01")),
+        Field::new("grp", Value::Ref(group)),
+    ]);
+    let _b = o.create(vec![
+        tref("loc", Some(root), "b"),
+        Field::new("artist", s("Coltrane")),
+        Field::new("rate", i(9)),
+        Field::new("seen", Value::Bool(true)),
+        Field::new("when", dt("2024-01-01")),
+        Field::new("grp", Value::Ref(group)),
+    ]);
+    let _c = o.create(vec![
+        tref("loc", Some(root), "c"),
+        Field::new("artist", s("Davis")),
+        Field::new("rate", i(3)),
+        Field::new("seen", Value::Bool(false)),
+        Field::new("when", dt("2020-06-01")),
+        Field::new("grp", Value::Ref(other)),
+    ]);
+    // A `Nothing` row and a record missing the field entirely: neither may
+    // contribute a "shared value".
+    let _nothing = o.create(vec![Field::new("artist", Value::Nothing)]);
+    let _bare = o.create(vec![Field::new("kind", s("bare"))]);
+
+    let same = |field: &str, target: Query| Query::SameAs {
+        field: field.into(),
+        target: Box::new(target),
+    };
+    let this = |u: Uuid| Query::UuidIn { uuids: vec![u] };
+
+    for q in [
+        // one per encoding
+        same("artist", this(a)),
+        same("rate", this(a)),
+        same("seen", this(a)),
+        same("when", this(a)),
+        same("grp", this(a)),
+        same("loc", this(a)),
+        // the degenerate targets
+        same("artist", this(_nothing)),
+        same("artist", this(_bare)),
+        same("artist", Query::UuidIn { uuids: vec![] }),
+        same("never_written", this(a)),
+        // a target that is a whole query, not a uuid
+        same("artist", eq("rate", i(9))),
+        same("grp", eq("kind", s("group"))),
+        // composed with the rest of the IR
+        and(vec![same("artist", this(a)), gt("rate", i(5))]),
+        Query::Or { operands: vec![same("artist", this(a)), eq("kind", s("bare"))] },
+        Query::Not { operand: Box::new(same("artist", this(a))) },
+        // "the others", the spec's spelling
+        and(vec![same("artist", this(a)), Query::Not { operand: Box::new(this(a)) }]),
+        // a text predicate and a traversal inside the target
+        same("artist", Query::Matches { field: "artist".into(), pattern: "^Col".into() }),
+        same("rate", follows("loc", eq("kind", s("group")))),
+        // and `same` itself as a traversal target
+        follows("grp", same("kind", this(group))),
+    ] {
+        o.check(&q);
+        o.check_count(&q);
+    }
+
+    // Sorting over a `same`-filtered universe.
+    o.check_sorted(&same("artist", this(a)), &[("rate", true)], None);
+    o.check_sorted(&same("artist", this(a)), &[("rate", false)], Some(1));
+}

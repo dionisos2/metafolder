@@ -3317,6 +3317,51 @@ fn test_sync_run_translates_ref() {
 }
 
 #[test]
+fn test_sync_does_not_materialise_a_duplicate_group() {
+    // `mfr_duplicate_group` is content-derived, so the metadata diff never
+    // writes it and each repository computes its own groups. The referential
+    // closure must agree: closing over it would plant a bare, empty group
+    // record in B for no purpose (spec-duplicates "Cross-repo sync").
+    let (a, _adir) = tracked_repo("dupclosure_a", &[("doc.txt", b"x")]);
+    let (b, _bdir) = tracked_repo("dupclosure_b", &[]);
+    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let group_a = create_metarecord(&a, &["mf_schema:string=duplicate_group"]);
+    assert_ok(&mf(&[
+        "-u",
+        &a,
+        "metarecord",
+        "-i",
+        &xa,
+        "field",
+        "add",
+        &format!("mfr_duplicate_group:ref={group_a}"),
+        "--force",
+    ]));
+
+    let intents = write_intents(
+        "dupclosure",
+        &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
+    );
+    assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
+    assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
+
+    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    assert!(is_hex_uuid(&xb), "the file itself still syncs: {xb}");
+    assert_eq!(
+        field_value_of(&b, &xb, "mfr_duplicate_group"),
+        None,
+        "the group link must not be synced"
+    );
+    let groups = mf(&["-u", &b, "metarecord", "-q", "mf_schema = \"duplicate_group\"", "get"]);
+    assert_ok(&groups);
+    assert!(
+        groups.stdout.trim().is_empty(),
+        "no group record may be materialised in B: {}",
+        groups.stdout
+    );
+}
+
+#[test]
 fn test_sync_run_moves_diverged_file() {
     // Two files linked across different paths (a.txt ↔ b.txt) — the state after a
     // rename. Never synced → A wins; run moves the canonical-B file and record to

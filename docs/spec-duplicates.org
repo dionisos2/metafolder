@@ -211,17 +211,24 @@ runs.
 *** =size= — group by size
 
 Every eligible file is partitioned by =mfr_size=; size classes with a single
-member are discarded. This is the cheap filter that makes the rest tractable,
-and it is served from the in-memory index
-([[file:spec-indexing.org][spec-indexing.org]]): =mfr_size= is an =Int=, so its
-=FieldIndex= is a BSI holding a complete value → bitmap partition, and the size
-classes are read straight off it. The partition covers every record carrying an
-=mfr_size=, directories included, so each class is first intersected with the
-*eligible* bitmap — =mfr_type = "file"= and a live =mfr_path=, itself an
-ordinary indexed query — and only then tested for more than one member. When the
-index is unavailable for the field the daemon falls back to
-=SELECT value_int, COUNT(*) … GROUP BY value_int HAVING COUNT(*) > 1= over the
-same restriction, exactly as query evaluation falls back from the index to SQL.
+member are discarded. This is the cheap filter that makes the rest tractable.
+
+*One query for the whole repository*, returning =(uuid, mfr_size)= for every
+record that is a file with a live =mfr_path= (=db::tracked_files_with_size=);
+the classes are then formed in memory. Asking per size instead reads as the
+cheaper question but there is no index on a field's *value*, so it walks every
+tracked file once per question — the trap already documented on
+=db::hashed_orphans=.
+
+The in-memory index ([[file:spec-indexing.org][spec-indexing.org]]) is
+deliberately *not* used here, though =mfr_size= is an =Int= and its BSI does
+hold a complete value → bitmap partition. Reading the classes off it would save
+one scan of three field rows per file — and the scan needs the uuid, the size
+and the path of every surviving candidate regardless, so the saving lands on a
+phase that is not the bottleneck: the phases that follow read file *content*.
+A second code path, with its own oracle obligation, is not worth a gain that
+disappears next to one =open()=. Revisit only with a measurement showing phase 1
+dominating a real scan.
 
 *** =partial= — partial hashes
 
@@ -410,19 +417,19 @@ of one repository's own content, and each side computes it by scanning.
 Group metarecords are likewise out of scope: they have no =mfr_path=, so no
 placement, and nothing synced references them.
 
-*One correction is required for that to hold.* Referential closure collects a
+*One correction was required for that to hold.* Referential closure collects a
 record's outgoing references with =ref_targets= (=crates/core/src/sync/plan.rs=),
-which walks **every** =ref=-valued field with no filter on the field name. It
-would therefore materialise a bare, empty group metarecord on the target side —
-one per duplicate group — purely because member files reference it, even though
-the field itself is never written. The closure must be restricted to the fields
-the diff actually writes, mirroring the rule already stated for the diff: skip
-=mfr_*= names other than =mfr_path=.
+which walked **every** =ref=-valued field with no filter on the field name. It
+therefore materialised a bare, empty group metarecord on the target side — one
+per duplicate group — purely because member files reference it, even though the
+field itself is never written. The closure is now restricted to the fields the
+diff actually writes, mirroring the rule already stated for the diff: =mfr_*=
+names other than =mfr_path= are skipped.
 
-This is a *pre-existing* gap rather than one introduced here: no =mfr_*= field is
-=Ref=-valued today (=mfr_path= is a =TreeRef=, =mfr_mount= a =String=), so
-nothing currently triggers it. =mfr_duplicate_group= would be the first, so the
-fix belongs with this feature.
+The gap was *pre-existing* rather than introduced here: no =mfr_*= field was
+=Ref=-valued (=mfr_path= is a =TreeRef=, =mfr_mount= a =String=), so nothing
+triggered it. =mfr_duplicate_group= is the first, which is why the fix landed
+with this feature.
 
 * Open questions
 

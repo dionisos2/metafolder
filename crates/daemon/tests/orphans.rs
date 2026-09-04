@@ -207,3 +207,35 @@ fn clear_skips_a_uuid_whose_file_still_exists() {
 
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn clear_orphans_also_clears_the_duplicate_group_link() {
+    // `mf orphan clear` performs the same transition as the watcher's delete,
+    // so it carries the same consequence: the record is no longer a live
+    // duplicate (spec-duplicates "Invariant"). The hashes stay — they are what
+    // re-homes the file if it reappears.
+    let (repo, root) = setup("clear-dupgroup");
+    write_file(&root, "gone.txt", b"data");
+    reconcile::reconcile(&repo).unwrap();
+    let gone = resolve(&repo, "/gone.txt").unwrap();
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let group = w
+            .create_metarecord(vec![metafolder_core::metarecord::Field::new(
+                "mf_schema",
+                Value::String("duplicate_group".into()),
+            )])
+            .unwrap()
+            .uuid;
+        w.set_field(gone, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        w.set_field(gone, "mfr_full_hash", Value::String("bbbb".into())).unwrap();
+        w.commit().unwrap();
+    }
+    std::fs::remove_file(root.join("gone.txt")).unwrap();
+
+    assert_eq!(orphans::clear_orphans(&repo, &[gone]).unwrap(), 1);
+
+    assert_eq!(field_value(&repo, gone, "mfr_duplicate_group"), None);
+    assert_eq!(field_value(&repo, gone, "mfr_full_hash"), Some(Value::String("bbbb".into())));
+}

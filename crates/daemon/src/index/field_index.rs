@@ -175,6 +175,25 @@ impl FieldIndex {
         }
     }
 
+    /// The ids sharing a value with `target` — the in-memory `SameAs`
+    /// (spec-query "Same-value matching"). Every encoding holds a complete
+    /// value → ids partition of its non-`Nothing` rows, so the answer is the
+    /// union of the buckets `target` touches: cardinality-bounded, and reflexive
+    /// for free (a target's own id sits in its own bucket).
+    ///
+    /// A field seen only through `Nothing` values has no partition to walk, so
+    /// it defers to SQL rather than answer an empty set.
+    pub fn same_as(&self, target: &RoaringBitmap) -> Result<RoaringBitmap, Unsupported> {
+        match self {
+            FieldIndex::Categorical(c) => Ok(union_intersecting(&c.by_value, target)),
+            FieldIndex::Bsi(b) => Ok(union_intersecting(&b.exact, target)),
+            FieldIndex::Reverse(r) => Ok(union_intersecting(&r.exact, target)),
+            FieldIndex::Unimplemented(kind) => {
+                Err(super::unsupported(format!("'same' on a '{kind}' field")))
+            }
+        }
+    }
+
     /// Whether `FollowsTransitive` applies: only `tree_ref` forests.
     pub fn supports_transitive(&self) -> bool {
         matches!(self, FieldIndex::Reverse(r) if r.kind == RefKind::TreeRef)
@@ -734,6 +753,22 @@ fn value_uuid_of(value: &Value) -> Option<Uuid> {
 /// Unions the bitmaps of a value partition whose key satisfies `keep`, skipping
 /// any bucket disjoint from `restrict` and intersecting the result with it. The
 /// shared core of every in-memory text scan (`Matches`, OSM, term nodes).
+/// Unions the bitmaps of every value bucket that `target` touches — the shared
+/// core of [`FieldIndex::same_as`]. Unlike [`scan_partition`] the test is on the
+/// bucket's *ids*, not on the key's text, so it is value-type agnostic.
+fn union_intersecting<K>(
+    partition: &HashMap<K, RoaringBitmap>,
+    target: &RoaringBitmap,
+) -> RoaringBitmap {
+    let mut out = RoaringBitmap::new();
+    for ids in partition.values() {
+        if intersects(target, ids) {
+            out |= ids;
+        }
+    }
+    out
+}
+
 fn scan_partition<K>(
     partition: &HashMap<K, RoaringBitmap>,
     text_of: impl Fn(&K) -> Option<&str>,

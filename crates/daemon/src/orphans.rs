@@ -99,6 +99,9 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
                 writer.set_field_as(OpType::FileDeleted, u, "mfr_path_old", Value::String(old))?;
             }
             writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
+            // Same transition as the watcher's, so it carries the same consequence:
+            // an orphan is no longer a live duplicate (spec-duplicates "Invariant").
+            writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
         }
         cache.apply_remove("mfr_path", uuid);
         cleared += 1;

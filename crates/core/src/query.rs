@@ -112,6 +112,23 @@ pub enum Query {
         mode: OsmMode,
     },
 
+    // --- Same-value matching ---
+    /// The metarecord holds, in `field`, at least one non-`Nothing` value that
+    /// a metarecord matching `target` also holds in the *same* field — the
+    /// equivalence class of "shares a value with this one", without the caller
+    /// having to name the value.
+    ///
+    /// Reflexive: the target's own metarecords match, since a record trivially
+    /// shares its values with itself ("the others" is `SameAs` AND NOT target).
+    /// `Nothing` rows never participate — the same exclusion `IsPresent` makes.
+    /// It compares *values*, so it works on every value type: on a `Ref` field
+    /// it yields the records pointing at the same referent, on a string field
+    /// those carrying the same text.
+    SameAs {
+        field: String,
+        target: Box<Query>,
+    },
+
     // --- Explicit set ---
     /// The metarecord's UUID is one of `uuids` (32-hex in JSON). Bridges the
     /// resource layer and the `/query/*` set layer: it lets set operations
@@ -332,6 +349,22 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"osm","field":"mfr_path","terms":["scien","fic"],"mode":"path"}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_same_as_json_format() {
+        let q = Query::SameAs {
+            field: "mfr_duplicate_group".into(),
+            target: Box::new(Query::Eq {
+                field: "mfr_path".into(),
+                value: Value::String("/a/b.txt".into()),
+            }),
+        };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"same_as","field":"mfr_duplicate_group","target":{"type":"eq","field":"mfr_path","value":{"type":"string","value":"/a/b.txt"}}}"#
         );
         assert_eq!(roundtrip(&q), q);
     }

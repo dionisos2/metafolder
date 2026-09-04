@@ -112,6 +112,39 @@ async fn test_invalid_regex_is_rejected() {
 }
 
 #[tokio::test]
+async fn test_same_as_over_the_wire() {
+    // Pins the `same_as` JSON tag and its `target` sub-query shape end to end:
+    // the DSL is compiled client-side, so this body is what the daemon actually
+    // receives.
+    let (app, repo, _root) = setup("sameas").await;
+    let group = create(&app, &repo, json!([])).await;
+    // A plain user field: `mfr_duplicate_group` would need `force` on the
+    // create route, and the wire shape under test is the query's, not the write's.
+    let ref_to_group =
+        |uuid: &str| json!([{"name": "grp", "value": {"type": "ref", "value": uuid}}]);
+    let a = create(&app, &repo, ref_to_group(&group)).await;
+    let b = create(&app, &repo, ref_to_group(&group)).await;
+    let elsewhere = create(&app, &repo, json!([])).await;
+    let _c = create(&app, &repo, ref_to_group(&elsewhere)).await;
+
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "same_as", "field": "grp",
+                              "target": {"type": "uuid_in", "uuids": [a]}}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "query failed: {body}");
+    let mut got: Vec<String> =
+        body.as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect();
+    let mut expected = vec![a, b];
+    got.sort();
+    expected.sort();
+    assert_eq!(got, expected, "same_as should return the record and its twin: {body}");
+}
+
+#[tokio::test]
 async fn test_osm_path_on_a_string_field_is_rejected() {
     // `osm` path mode is tree_ref-only: on a string field the daemon answers 400
     // with the "use osmd" hint (spec-query). The rejection lives in the SQL

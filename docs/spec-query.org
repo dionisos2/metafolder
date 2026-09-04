@@ -265,7 +265,7 @@ Two modes, chosen by the caller (see the DSL functions =osm= / =osmd=):
   state* — no denormalised path text, and a rename/move costs nothing beyond the
   existing tree-cache upkeep.
 
-** Same-value matching (=same=)
+** Same-value matching (=same=, implemented)
 
 =SameAs= answers "the metarecords that share a value of =field= with *this*
 one" without the caller having to know what that value is:
