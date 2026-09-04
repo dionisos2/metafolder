@@ -1042,6 +1042,7 @@ fn dispatch_metarecord(
             commands::metarecord_get(
                 ctx,
                 selector.as_deref(),
+                by_id,
                 select.as_deref(),
                 &sort,
                 limit,
@@ -1072,7 +1073,7 @@ fn dispatch_metarecord(
                 .ok_or_else(|| Usage("a field operation requires a selector (-q or -i)".into()))?;
             match verb {
                 FieldVerb::Get { name, resolve } => {
-                    commands::field_get(ctx, &sel, &name, resolve.as_deref())
+                    commands::field_get(ctx, &sel, by_id, &name, resolve.as_deref())
                 }
                 FieldVerb::Set { specs, force } => commands::field_set(ctx, &sel, &specs, force),
                 FieldVerb::Add { spec, force } => commands::add(ctx, &sel, &spec, force),

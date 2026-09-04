@@ -36,7 +36,8 @@ and the set layer: it lets the =/query/*= operations target an *explicit set of
 UUIDs* instead of a predicate. JSON: ={"type": "uuid_in", "uuids": ["<32hex>", ...]}=
 (an empty list matches nothing). It is the canonical way to read or write *several
 named metarecords at once* in one request — e.g. a GUI multi-selection — rather
-than one request per UUID.
+than one request per UUID. The DSL spells it as a *bare UUID atom* (see
+[[*Query DSL]]).
 
 * Daemon
 
@@ -401,7 +402,7 @@ query     := or_expr
 or_expr   := and_expr ( "OR" and_expr )*
 and_expr  := unary ( "AND" unary )*
 unary     := "NOT" unary | atom
-atom      := "(" query ")" | osm_call | predicate
+atom      := "(" query ")" | uuid | osm_call | predicate
 
 predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field cmp_op literal
@@ -417,6 +418,7 @@ literal   := int | float | string | "true" | "false" | datetime
 datetime  := "@" string | "@" int        # ISO-8601 string, or raw Unix ms
 field     := identifier
 string    := '"' ... '"'
+uuid      := 32 ASCII hexadecimal characters
 #+END_SRC
 
 - Keywords (=AND=, =OR=, =NOT=, =IS=, =PRESENT=, =ABSENT=, =UNKNOWN=,
@@ -456,6 +458,30 @@ string    := '"' ... '"'
   operators recognised only when immediately followed by =(=, so a field literally
   named =osm= stays usable as a predicate (=osm = "x"=). =osm= on a non-=TreeRef=
   field is rejected with =400= — use =osmd=.
+- A *bare UUID atom* is a predicate on the metarecord's own identity: 32 ASCII
+  hexadecimal characters standing alone where a predicate is expected compile to
+  =UuidIn= with that single UUID. This is the DSL surface of the identity
+  bridge described under [[*Variants]], so a UUID copied out of the GUI pastes
+  straight into a query and composes with everything else:
+  =3f2a…9b AND rating > 3=, =3f2a…9b OR 7c11…04=,
+  =NOT 3f2a…9b=. There is **one** accepted spelling — the 32-hex form that every
+  service emits. The hyphenated, braced and URN forms are *not* DSL syntax (they
+  remain accepted by the JSON wire format, which is lenient on input), and a
+  quoted ="<32hex>"= is not a UUID atom either: a bare string is still a parse
+  error, since the point of the atom is to paste an identifier verbatim.
+  Matching is case-insensitive.
+  - A UUID atom is *not* a field: =3f2a…9b IS PRESENT= is meaningless. Since a
+    field name may itself be 32 hexadecimal characters, the parser disambiguates
+    with a one-token lookahead — a 32-hex token *followed by an operator* is a
+    field name (=abcdef…ab = 3= keeps working), one followed by anything else is
+    a UUID. Same shape as the =osm=/=osmd= rule above.
+  - A run of 8 or more hexadecimal characters that is *not* exactly 32 long is
+    reported as a truncated UUID rather than as a stray field name or number,
+    since that is what a half-pasted identifier looks like.
+  - Composing an identity with a reference needs no extra syntax: the sub-query
+    form of =->= expresses "the field references *this* metarecord" as
+    =tag -> (3f2a…9b)=, served in memory by the bitmap index (a =Follows= over a
+    one-element =UuidIn=). This is why the DSL has no =Ref= *value* literal.
 - A *datetime literal* is =@= followed by either a quoted ISO-8601 string
   (=@"2024-01-01"=, =@"2024-01-01 12:30:00"=; any form =core::date::iso_to_ms=
   accepts, UTC) or a bare integer of Unix milliseconds (=@1704067200000=). It
@@ -476,6 +502,10 @@ mfr_path = "/music/jazz"                     # the one metarecord at this exact 
 tag -> (path = "music/jazz")                 # records carrying exactly this tag
 tag -> (path =>* "music/jazz")               # ... this tag or any tag beneath it
 mf_schema = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8            # one metarecord, by UUID
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 OR 47ab0000000000000000000000000001
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating > 3
+tag -> (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)   # records referencing that tag
 #+END_SRC
 
 ** =mf query <predicate>=

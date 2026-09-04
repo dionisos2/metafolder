@@ -737,6 +737,7 @@ fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str) -> Result<i32, Cli
 pub fn metarecord_get(
     ctx: &Ctx,
     selector: Option<&str>,
+    by_id: bool,
     select: Option<&str>,
     sort: &[String],
     limit: Option<usize>,
@@ -754,7 +755,10 @@ pub fn metarecord_get(
         None => list(ctx, limit),
         // A UUID selector (-i) prints the full metadata object (`--select`
         // restricts it); a query selector (-q, already expanded) lists UUIDs.
-        Some(s) if Uuid::parse_str(s).is_ok() => {
+        // The *typed flag* decides, never the shape of the text: a bare UUID is
+        // valid DSL (spec-query, the UUID-atom bullet), so `-q <uuid>` is an
+        // ordinary query and must print a UUID line like any other `-q`.
+        Some(s) if by_id => {
             let fields: Option<Vec<String>> = select
                 .filter(|sel| *sel != "*")
                 .map(|sel| sel.split(',').map(|f| f.trim().to_string()).collect());
@@ -874,16 +878,19 @@ pub fn field_set(
 pub fn field_get(
     ctx: &Ctx,
     selector: &str,
+    by_id: bool,
     name: &str,
     resolve: Option<&str>,
 ) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let uuid = match parse_target(selector)? {
-        Target::Entry(uuid) => uuid,
-        Target::Predicate(_) if resolve.is_some() => {
+        // As in `metarecord_get`, the typed flag decides: `-q <uuid>` is a
+        // query, so it takes the query path even though its text is a UUID.
+        Target::Entry(uuid) if by_id => uuid,
+        _ if resolve.is_some() => {
             return Err(CliError::Usage("--resolve requires -i <uuid>".into()))
         }
-        Target::Predicate(_) => {
+        _ => {
             return query(
                 ctx,
                 &QueryArgs {

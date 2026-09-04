@@ -730,6 +730,44 @@ fn test_query_prints_matching_uuids() {
     assert_eq!(out.stdout.trim(), high);
 }
 
+// A bare UUID atom in the DSL (spec-query "Query DSL"): the whole point is
+// that a UUID copied out of the GUI runs as a query and composes with the rest.
+#[test]
+fn test_query_bare_uuid_atom_selects_that_metarecord() {
+    let (repo, _root) = init_repo("query_uuid_atom");
+    let a = create_metarecord(&repo, &["rating:int=5"]);
+    let b = create_metarecord(&repo, &["rating:int=1"]);
+
+    let out = mf(&["-u", &repo, "metarecord", "-q", &a, "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), a);
+
+    // Two pasted UUIDs fold into one set membership.
+    let out = mf(&["-u", &repo, "metarecord", "-q", &format!("{a} OR {b}"), "get"]);
+    assert_ok(&out);
+    let mut got: Vec<&str> = out.stdout.lines().collect();
+    got.sort_unstable();
+    let mut want = vec![a.as_str(), b.as_str()];
+    want.sort_unstable();
+    assert_eq!(got, want);
+
+    // ... and compose with an ordinary predicate.
+    let out = mf(&["-u", &repo, "metarecord", "-q", &format!("{a} AND rating > 3"), "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), a);
+    let out = mf(&["-u", &repo, "metarecord", "-q", &format!("{b} AND rating > 3"), "get"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.trim(), "");
+
+    // The typed flag decides the output shape (spec-data-model "mf metarecord
+    // [-i|-q] get"): the same UUID through -i is the full JSON object.
+    let out = mf(&["-u", &repo, "metarecord", "-i", &a, "get"]);
+    assert_ok(&out);
+    let json: serde_json::Value =
+        serde_json::from_str(&out.stdout).expect("-i get should print JSON");
+    assert_eq!(json[0]["uuid"], serde_json::Value::String(a.clone()));
+}
+
 #[test]
 fn test_query_simplified_expands_before_running() {
     let (repo, _root) = init_repo("query_simplified");

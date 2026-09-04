@@ -140,6 +140,28 @@ author -&gt; (name = "Coltrane")</pre>
   itself.)
 </p>
 
+<h2>By UUID</h2>
+<p>
+  A <strong>bare UUID</strong> — 32 hexadecimal characters on their own — selects
+  that one metarecord. <em>Copy UUID</em> in the
+  <a data-help-page="metarecord-detail">metarecord detail</a> context menu puts
+  one on the clipboard, so it pastes straight into the DSL box and composes with
+  everything else:
+</p>
+<pre>8f3a2b1c4d5e6f708192a3b4c5d6e7f8
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 OR 47ab0000000000000000000000000001
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating &gt; 3</pre>
+<p>
+  Write it unquoted and without dashes — that is the one form, and the form
+  every panel shows. To select the records <em>pointing at</em> a metarecord
+  (for a tag, a ref field…), put the UUID in a <code>-&gt;</code> step:
+</p>
+<pre>tag -&gt; (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)</pre>
+<p>
+  This is DSL only: the simplified box has no UUID form, so freeze the DSL
+  editor (<em>Show normal DSL</em>) to paste one.
+</p>
+
 <h2>Ordered-substring — <code>osm</code> / <code>osmd</code></h2>
 <p>
   <code>osm(field, "terms")</code> matches when each whitespace-separated term
@@ -153,7 +175,8 @@ author -&gt; (name = "Coltrane")</pre>
 mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
 mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
 tag -&gt; (path = "music/jazz")
-mf_schema = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))</pre>
+mf_schema = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))
+8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating &gt; 3</pre>
 
 <p>
   See also: <a data-help-page="simplified-query">the simplified query language</a>,

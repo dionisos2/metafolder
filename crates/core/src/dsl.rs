@@ -26,6 +26,10 @@ enum Tok {
     Arrow,        // ->
     ArrowStar,    // ->*
     FatArrowStar, // =>*  (inclusive transitive: self ∪ descendants)
+    /// A run of exactly 32 ASCII hex characters: a bare UUID atom, or — when an
+    /// operator follows — a field name that happens to be 32 hex characters
+    /// long. Carries the source text so the parser can read it either way.
+    Hex(String),
     Eq,
     Neq,
     Lt,
@@ -69,6 +73,7 @@ fn describe(tok: &Tok) -> String {
         Tok::Float(f) => format!("number {f}"),
         Tok::DateTime(ms) => format!("datetime {ms}"),
         Tok::Ident(name) => format!("identifier '{name}'"),
+        Tok::Hex(text) => format!("UUID {text}"),
         Tok::And => "'AND'".into(),
         Tok::Or => "'OR'".into(),
         Tok::Not => "'NOT'".into(),
@@ -87,6 +92,14 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
     let mut tokens = Vec::new();
     let mut i = 0;
     while i < chars.len() {
+        // A UUID atom is lexed before the number and word branches, since its
+        // first character may be either a digit or a letter.
+        if chars[i].is_ascii_hexdigit() {
+            if let Some(tok) = lex_hex_run(&chars, &mut i)? {
+                tokens.push(tok);
+                continue;
+            }
+        }
         match chars[i] {
             c if c.is_whitespace() => i += 1,
             '(' => {
@@ -227,6 +240,73 @@ fn lex_string(chars: &[char], i: &mut usize) -> Result<Tok, String> {
     Err("unterminated string literal".into())
 }
 
+/// Lexes a maximal run of ASCII hex characters as a UUID atom
+/// (spec-query "Query DSL", the UUID-atom bullet).
+///
+/// Returns `Some` for a run of exactly 32 (a UUID, or a 32-hex field name —
+/// the parser decides by what follows); `None` when the run is *not*
+/// UUID-shaped, leaving `i` untouched so the ordinary number and word branches
+/// lex it as they always did. The one error case is a run that starts with a
+/// digit, contains a hex letter and is not 32 long: such a run lexes as a
+/// number immediately followed by an identifier, which is never valid, so it
+/// can only be a half-pasted identifier — reporting it as one beats
+/// "expected a field name, got number 8".
+fn lex_hex_run(chars: &[char], i: &mut usize) -> Result<Option<Tok>, String> {
+    let start = *i;
+    let mut end = start;
+    while end < chars.len() && chars[end].is_ascii_hexdigit() {
+        end += 1;
+    }
+    // A longer word (`deadbeefzz`, `abcdef_x`, `123abcz`) is not a UUID: leave
+    // it to `lex_word` / `lex_number`.
+    if chars.get(end).is_some_and(|c| c.is_alphanumeric() || *c == '_') {
+        return Ok(None);
+    }
+    let text: String = chars[start..end].iter().collect();
+    let len = end - start;
+    if len == 32 {
+        *i = end;
+        return Ok(Some(Tok::Hex(text)));
+    }
+    // A hyphenated UUID stops the run at the first '-': it is the likeliest
+    // paste from another tool, so name the form we take instead of reporting
+    // its first group as a truncated UUID.
+    if chars.get(end) == Some(&'-') {
+        let dashed: String = chars[start..chars.len().min(start + 36)].iter().collect();
+        if let Ok(uuid) = uuid::Uuid::try_parse(&dashed) {
+            return Err(format!(
+                "'{dashed}' is a hyphenated UUID, which is not query syntax: \
+                 write it as {}",
+                uuid.as_simple()
+            ));
+        }
+    }
+    let digit_initial = chars[start].is_ascii_digit();
+    let has_letter = text.chars().any(|c| c.is_ascii_alphabetic());
+    if digit_initial && has_letter && len >= TRUNCATED_UUID_MIN {
+        return Err(truncated_uuid_error(&text));
+    }
+    Ok(None)
+}
+
+/// Hex-run length from which a malformed run is reported as a truncated UUID
+/// rather than as a stray token.
+const TRUNCATED_UUID_MIN: usize = 8;
+
+fn truncated_uuid_error(text: &str) -> String {
+    format!(
+        "'{text}' looks like a truncated UUID ({} hex characters, expected 32)",
+        text.chars().count()
+    )
+}
+
+/// Whether `text` is a hex run long enough to be a half-pasted UUID — used to
+/// refine an error message, never to accept anything.
+fn looks_like_truncated_uuid(text: &str) -> bool {
+    let len = text.chars().count();
+    len >= TRUNCATED_UUID_MIN && len != 32 && text.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 fn lex_number(chars: &[char], i: &mut usize) -> Result<Tok, String> {
     let start = *i;
     if chars[*i] == '-' {
@@ -279,6 +359,25 @@ struct Parser {
     pos: usize,
 }
 
+/// Whether a token can follow a field name in a predicate — the lookahead that
+/// tells a 32-hex field name from a bare UUID atom.
+fn is_operator(tok: &Tok) -> bool {
+    matches!(
+        tok,
+        Tok::Is
+            | Tok::Eq
+            | Tok::Neq
+            | Tok::Lt
+            | Tok::Lte
+            | Tok::Gt
+            | Tok::Gte
+            | Tok::Matches
+            | Tok::Arrow
+            | Tok::ArrowStar
+            | Tok::FatArrowStar
+    )
+}
+
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
         self.tokens.get(self.pos)
@@ -306,11 +405,22 @@ impl Parser {
             self.next();
             operands.push(self.and_expr()?);
         }
-        Ok(if operands.len() == 1 {
-            operands.pop().expect("one operand")
-        } else {
-            Query::Or { operands }
-        })
+        if operands.len() == 1 {
+            return Ok(operands.pop().expect("one operand"));
+        }
+        // A pasted multi-selection (`<uuid> OR <uuid> OR …`) is one set
+        // membership, not a chain of Ors.
+        if operands.iter().all(|q| matches!(q, Query::UuidIn { .. })) {
+            let uuids = operands
+                .into_iter()
+                .flat_map(|q| match q {
+                    Query::UuidIn { uuids } => uuids,
+                    _ => unreachable!("checked above"),
+                })
+                .collect();
+            return Ok(Query::UuidIn { uuids });
+        }
+        Ok(Query::Or { operands })
     }
 
     fn and_expr(&mut self) -> Result<Query, String> {
@@ -343,9 +453,24 @@ impl Parser {
             Ok(query)
         } else if let Some(mode) = self.peek_osm_call() {
             self.osm_call(mode)
+        } else if let Some(uuid) = self.peek_uuid_atom() {
+            self.next();
+            Ok(Query::UuidIn { uuids: vec![uuid] })
         } else {
             self.predicate()
         }
+    }
+
+    /// A bare UUID atom: a 32-hex token *not* followed by an operator (one
+    /// followed by one is a field name that happens to be 32 hex characters
+    /// long, so `abcdef…ab = 3` keeps working). Same one-token lookahead as
+    /// `peek_osm_call`.
+    fn peek_uuid_atom(&self) -> Option<uuid::Uuid> {
+        let Some(Tok::Hex(text)) = self.peek() else { return None };
+        if self.tokens.get(self.pos + 1).is_some_and(is_operator) {
+            return None;
+        }
+        uuid::Uuid::try_parse(text).ok()
     }
 
     /// `osm`/`osmd` are function-call operators, recognised only when the
@@ -368,6 +493,7 @@ impl Parser {
         self.expect(Tok::LParen)?;
         let field = match self.next() {
             Some(Tok::Ident(name)) => name,
+            Some(Tok::Hex(text)) => text,
             Some(tok) => {
                 return Err(format!("expected a field name in {kw}(...), got {}", describe(&tok)))
             }
@@ -390,7 +516,21 @@ impl Parser {
 
     fn predicate(&mut self) -> Result<Query, String> {
         let field = match self.next() {
-            Some(Tok::Ident(name)) => name,
+            Some(Tok::Ident(name)) => {
+                if looks_like_truncated_uuid(&name) && !self.peek().is_some_and(is_operator) {
+                    return Err(truncated_uuid_error(&name));
+                }
+                name
+            }
+            // Only reachable when an operator follows (`atom` takes the UUID
+            // branch otherwise): a field name of exactly 32 hex characters.
+            Some(Tok::Hex(text)) => text,
+            Some(Tok::Str(s)) if uuid::Uuid::parse_str(&s).is_ok() => {
+                return Err(format!(
+                    "a quoted string is not a query: write the UUID unquoted ({})",
+                    uuid::Uuid::parse_str(&s).expect("checked above").as_simple()
+                ))
+            }
             Some(tok) => return Err(format!("expected a field name, got {}", describe(&tok))),
             None => return Err("expected a field name, got end of input".into()),
         };
@@ -477,6 +617,10 @@ impl Parser {
             Some(Tok::Str(s)) => Ok(Value::String(s)),
             Some(Tok::True) => Ok(Value::Bool(true)),
             Some(Tok::False) => Ok(Value::Bool(false)),
+            Some(Tok::Hex(text)) => Err(format!(
+                "a UUID is not a value literal; to match a reference to it write \
+                 'field -> ({text})'"
+            )),
             Some(tok) => Err(format!("expected a literal value, got {}", describe(&tok))),
             None => Err("expected a literal value, got end of input".into()),
         }
@@ -946,6 +1090,163 @@ mod tests {
     #[test]
     fn test_unbalanced_parenthesis() {
         err("(a = 1");
+    }
+
+    // ── bare UUID atoms (spec-query "Query DSL", the UUID-atom bullet) ───────
+
+    const U1: &str = "8f3a2b1c4d5e6f708192a3b4c5d6e7f8";
+    const U2: &str = "47ab0000000000000000000000000001";
+
+    fn uuid_in(hexes: &[&str]) -> Query {
+        Query::UuidIn {
+            uuids: hexes.iter().map(|h| uuid::Uuid::parse_str(h).expect("test uuid")).collect(),
+        }
+    }
+
+    #[test]
+    fn test_bare_uuid_atom() {
+        assert_eq!(ok(U1), uuid_in(&[U1]));
+    }
+
+    #[test]
+    fn test_bare_uuid_atom_is_case_insensitive() {
+        assert_eq!(ok(&U1.to_uppercase()), uuid_in(&[U1]));
+    }
+
+    #[test]
+    fn test_uuid_atom_starting_with_a_letter() {
+        // Lexing must not depend on whether the first hex digit is a letter
+        // (`lex_word`'s branch) or a digit (`lex_number`'s).
+        let u = "f13a2b1c4d5e6f708192a3b4c5d6e7f8";
+        assert_eq!(ok(u), uuid_in(&[u]));
+    }
+
+    #[test]
+    fn test_uuid_atoms_composed_with_and_or_not() {
+        assert_eq!(
+            ok(&format!("{U1} AND rating > 3")),
+            Query::And {
+                operands: vec![
+                    uuid_in(&[U1]),
+                    Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                ]
+            }
+        );
+        assert_eq!(ok(&format!("NOT {U1}")), Query::Not { operand: Box::new(uuid_in(&[U1])) });
+        assert_eq!(
+            ok(&format!("({U1} OR rating > 3) AND seen = true")),
+            Query::And {
+                operands: vec![
+                    Query::Or {
+                        operands: vec![
+                            uuid_in(&[U1]),
+                            Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                        ]
+                    },
+                    Query::Eq { field: "seen".into(), value: Value::Bool(true) },
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_or_of_uuid_atoms_folds_into_one_uuid_in() {
+        // A pasted multi-selection is one set membership, not a chain of Ors.
+        assert_eq!(ok(&format!("{U1} OR {U2}")), uuid_in(&[U1, U2]));
+        // ... but only when *every* operand is a UUID atom.
+        assert_eq!(
+            ok(&format!("{U1} OR rating > 3")),
+            Query::Or {
+                operands: vec![
+                    uuid_in(&[U1]),
+                    Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn test_uuid_atom_as_follows_target() {
+        // "the records whose `tag` field references this metarecord" — no Ref
+        // value literal needed.
+        assert_eq!(
+            ok(&format!("tag -> ({U1})")),
+            Query::Follows {
+                field: "tag".into(),
+                target: FollowTarget::Condition(Box::new(uuid_in(&[U1]))),
+            }
+        );
+    }
+
+    #[test]
+    fn test_thirty_two_hex_field_name_stays_a_field() {
+        // A field name may itself be 32 hex characters: followed by an operator
+        // it is a field, not a UUID (one-token lookahead).
+        let name = "abcdefabcdefabcdefabcdefabcdefab";
+        assert_eq!(ok(&format!("{name} = 3")), eq_int(name, 3));
+        assert_eq!(ok(&format!("{name} IS PRESENT")), Query::IsPresent { field: name.into() });
+        assert_eq!(
+            ok(&format!("{name} -> (rating = 3)")),
+            Query::Follows {
+                field: name.into(),
+                target: FollowTarget::Condition(Box::new(eq_int("rating", 3))),
+            }
+        );
+        assert_eq!(
+            ok(&format!(r#"osm({name}, "x")"#)),
+            Query::Osm { field: name.into(), terms: vec!["x".into()], mode: OsmMode::Path }
+        );
+    }
+
+    #[test]
+    fn test_quoted_uuid_is_not_an_atom() {
+        // One canonical spelling: the bare 32-hex form. A bare string stays a
+        // parse error, and the message points at the right form.
+        let msg = err(&format!(r#""{U1}""#));
+        assert!(msg.contains("UUID"), "message should mention UUID: {msg}");
+    }
+
+    #[test]
+    fn test_hyphenated_uuid_is_not_dsl_syntax() {
+        // The likeliest paste from another tool: name the accepted form rather
+        // than reporting its first 8 characters as a truncated UUID.
+        let msg = err("8f3a2b1c-4d5e-6f70-8192-a3b4c5d6e7f8");
+        assert!(msg.contains(U1), "message should show the 32-hex form: {msg}");
+        assert!(msg.contains("hyphen"), "message should name the hyphenated form: {msg}");
+    }
+
+    #[test]
+    fn test_truncated_uuid_is_reported_as_such() {
+        // A half-pasted identifier must not read as a stray field name or a
+        // bad number.
+        for input in ["8f3a2b1c4d5e", "8f3a2b1c4d5e6f708192a3b4c5d6e7f", "abcdefabcdef"] {
+            let msg = err(input);
+            assert!(
+                msg.contains("UUID"),
+                "'{input}' should be reported as a truncated UUID: {msg}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_short_hex_runs_are_still_ordinary_tokens() {
+        // Below the 8-character threshold nothing changes: `abcdef` is a field
+        // name, `123` a number.
+        assert_eq!(ok("abcdef = 1"), eq_int("abcdef", 1));
+        assert_eq!(ok("a = 123"), eq_int("a", 123));
+        assert_eq!(ok("deadbeef = 1"), eq_int("deadbeef", 1));
+    }
+
+    #[test]
+    fn test_uuid_in_operand_position_points_at_the_follows_form() {
+        // There is no `Ref` value literal: the error names the form that works.
+        let msg = err(&format!("tag = {U1}"));
+        assert!(msg.contains("->"), "message should point at the follows form: {msg}");
+    }
+
+    #[test]
+    fn test_thirty_three_hex_characters_is_not_a_uuid() {
+        err(&format!("{U1}f"));
     }
 
     // The two tag-query examples shipped in the GUI help (queries.html "Tags"):

@@ -715,7 +715,16 @@ positional, and one selector serves every verb including =field=):
 
 =-q= and =-i= are mutually exclusive; =-s= requires =-q=. =-s= expansion is a
 pure client-side transformation (the shared grammar in =core=), never a daemon
-round-trip. Example: =mf -n music metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true=.
+round-trip.
+
+*The typed flag decides, never the shape of its text.* A bare 32-hex UUID is
+valid DSL (a =UuidIn= atom — see [[file:spec-query.org][spec-query.org]]), so
+=-q <uuid>= is an ordinary query and behaves like every other =-q=, while
+=-i <uuid>= keeps the resource-layer behaviour. The two differ only in output
+shape (=get=) and in what =field get --resolve= accepts; every other verb
+compiles both to the same =uuid_in= request. Where a target is instead a
+*positional* =<query|uuid>= argument (=mf path=, =mf tag= targets…), no flag was
+typed and the shape decides, as before. Example: =mf -n music metarecord -q 'mfr_path ->* "/docs"' field set reviewed:bool=true=.
 
 ** Verb pattern
 
@@ -774,7 +783,8 @@ needs =-i=; =delete= and =field= need a selector; =get= defaults to all.
 Reads metarecords; subsumes the former =list=, =query= and =get=:
 - with =-i <uuid>=, prints that metarecord's full JSON object (fields incl. ids);
 - with =-q= or no selector (match-all), prints the matching UUIDs, one per line
-  (internal pagination over =next_cursor=).
+  (internal pagination over =next_cursor=) — including =-q <uuid>=, a query like
+  any other (see the flag-decides rule under [[*Selector options]]).
 
 The selector may also be given as =--eq name[:type]=value= (repeatable, AND-ed):
 a *safe* exact-match query built without interpolating anything into the query
