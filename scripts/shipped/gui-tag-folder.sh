@@ -91,12 +91,12 @@ handle() { # <uuid> <treepath> <abs> <dir|file>
     mf_gui_progress --phase "$tp"
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [Esc] stop" \
-            y n m s escape)
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop" \
+            y n m s q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [Esc] stop" \
-            y n s escape)
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop" \
+            y n s q)
     fi
     case $answer in
         y)

@@ -81,7 +81,7 @@ assert "mixed: 'yes' child dir is not descended into" \
 mock_reset
 setup_top
 mock_prompt '/top'
-mock_input escape
+mock_input q
 out=$(bash "$SCRIPT" music); code=$?
 assert "stop: exits 0" [ "$code" -eq 0 ]
 assert_contains "stop: reports stopped" "$out" stopped

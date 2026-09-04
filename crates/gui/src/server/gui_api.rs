@@ -2,10 +2,11 @@
 
 use super::ServerState;
 use crate::events;
-use crate::keybindings::CompiledBinding;
+use crate::keybindings::{CompiledBinding, KeybindingSet};
 use crate::server::command_wait::CommandOutcome;
 use crate::server::input_wait::{InputOutcome, PromptOutcome};
 use crate::state::layout::SlotId;
+use crate::state::{GuiState, Question};
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -14,6 +15,7 @@ use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 fn error_response(status: StatusCode, message: &str) -> Response {
@@ -401,34 +403,40 @@ pub struct InputBody {
     timeout_ms: Option<u64>,
 }
 
-/// Pushes the compiled table plus the temporary `answer:send` bindings, and
-/// broadcasts the input-wait state (including its `prompt` question) so the
-/// frontend can show a dedicated question bar.
-fn push_keytable(
-    state: &ServerState,
-    temp_keys: &[String],
-    prompt: Option<&str>,
-    workspaces: &[String],
-) {
-    let mut bindings: Vec<CompiledBinding> = state.keybindings.lock_recover().compiled();
-    for key in temp_keys {
-        if let Ok(keys) = crate::keybindings::parse_combo(key) {
-            bindings.push(CompiledBinding {
-                keys,
-                invocation: format!("answer:send {key}"),
-                when: None,
-                text_input: false,
-                focus: None,
-            });
+/// Pushes the compiled table — plus the temporary `answer:send` bindings, while
+/// the script keys are enabled — and broadcasts the live question so the
+/// frontend can show its dedicated bar with the right checkbox state.
+///
+/// Both are derived from `GuiState`, not from arguments, so flipping the
+/// checkbox (`script-keys:toggle`) re-pushes exactly the same question with or
+/// without its answer bindings: a disabled key must not stay bound as a
+/// fallback, or the panel's own `y` would still lose to the script's.
+pub fn push_keytable(gui: &GuiState, keybindings: &Mutex<KeybindingSet>) {
+    let question = gui.question();
+    let enabled = gui.script_keys_enabled();
+    let mut bindings: Vec<CompiledBinding> = keybindings.lock_recover().compiled();
+    if enabled {
+        for key in question.iter().flat_map(|q| &q.keys) {
+            if let Ok(keys) = crate::keybindings::parse_combo(key) {
+                bindings.push(CompiledBinding {
+                    keys,
+                    invocation: format!("answer:send {key}"),
+                    when: None,
+                    text_input: false,
+                    focus: None,
+                });
+            }
         }
     }
-    state.gui.notify(events::KEYBINDINGS_CHANGED, json!({ "bindings": bindings }));
-    state.gui.notify(
+    gui.notify(events::KEYBINDINGS_CHANGED, json!({ "bindings": bindings }));
+    gui.notify(
         events::INPUT_WAIT_CHANGED,
-        json!({ "active": !temp_keys.is_empty() || state.input.is_active(),
-                "temp_keys": temp_keys,
-                "prompt": prompt,
-                "workspaces": workspaces }),
+        json!({ "active": question.is_some(),
+                "temp_keys": question.as_ref().map(|q| q.keys.clone()).unwrap_or_default(),
+                "prompt": question.as_ref().and_then(|q| q.prompt.clone()),
+                "workspaces": question.as_ref().map(|q| q.workspaces.clone()).unwrap_or_default(),
+                "task": question.as_ref().and_then(|q| q.task.clone()),
+                "script_keys": enabled }),
     );
 }
 
@@ -470,7 +478,8 @@ impl Drop for WaitGuard<'_> {
     fn drop(&mut self) {
         self.state.input.end();
         if self.keytable {
-            push_keytable(self.state, &[], None, &[]);
+            self.state.gui.set_question(None);
+            push_keytable(&self.state.gui, &self.state.keybindings);
         }
         if let Some(task) = &self.task {
             self.state.gui.script_waiting(task, false);
@@ -483,11 +492,28 @@ pub async fn post_input(
     body: Option<Json<InputBody>>,
 ) -> Response {
     let body = body.map(|Json(b)| b).unwrap_or_default();
+    // The user's ways out of the question are not a script's to take (spec-gui
+    // "Reserved keys"). Checked before the lock, so a refused wait leaves the
+    // next script free to ask.
+    let reserved =
+        crate::keybindings::reserved_combos(&state.keybindings.lock_recover().compiled());
+    if let Some(key) = body.keys.iter().find(|key| crate::keybindings::is_reserved(&reserved, key))
+    {
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            &format!("'{key}' is reserved by the GUI and cannot be awaited by a script"),
+        );
+    }
     let Some(receiver) = state.input.begin_input() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
-    let workspaces = script_workspaces(&state, body.task.as_deref());
-    push_keytable(&state, &body.keys, body.prompt.as_deref(), &workspaces);
+    state.gui.set_question(Some(Question {
+        keys: body.keys.clone(),
+        prompt: body.prompt.clone(),
+        workspaces: script_workspaces(&state, body.task.as_deref()),
+        task: body.task.clone(),
+    }));
+    push_keytable(&state.gui, &state.keybindings);
     let _guard = WaitGuard::begin(&state, body.task.clone(), true);
 
     let outcome = match body.timeout_ms {

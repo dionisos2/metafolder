@@ -55,11 +55,11 @@ for uuid in "${uuids[@]}"; do
     mf_gui_progress --done "$i" --total "$total" --phase "$rel"
     mf_gui_show_file "$abs"
     case "$(mf_gui_ask_answer \
-        "[y →] $TAG   [n ←] not $TAG   [s ↓] skip   [Esc] quit — $rel" y n s escape)" in
+        "[y →] $TAG   [n ←] not $TAG   [s ↓] skip   [q] quit — $rel" y n s q)" in
         y) mf tag -i "$uuid" add "$TAG" >/dev/null; yes=$((yes + 1)) ;;
         n) mf tag -i "$uuid" deny "$TAG" >/dev/null; no=$((no + 1)) ;;
         s) skipped=$((skipped + 1)) ;;
-        *) break ;; # escape
+        *) break ;; # q, or the question could not be answered
     esac
 done
 

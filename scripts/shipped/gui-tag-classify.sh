@@ -70,10 +70,10 @@ while :; do
     T=$(gui_tag_next "$UNIVERSE" "$POS" "$NEG") || break # no question left
 
     mf_gui_progress --phase "$T"
-    case "$(mf_gui_ask_answer "add tag '$T' ?   [y →] oui   [n ←] non   [Esc] stop" y n escape)" in
+    case "$(mf_gui_ask_answer "add tag '$T' ?   [y →] oui   [n ←] non   [q] stop" y n q)" in
         y) mf tag -i "$UUID" add "$T" >/dev/null; yes=$((yes + 1)) ;;
         n) mf tag -i "$UUID" deny "$T" >/dev/null; no=$((no + 1)) ;;
-        *) break ;; # escape
+        *) break ;; # q, or the question could not be answered
     esac
 done
 

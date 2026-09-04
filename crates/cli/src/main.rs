@@ -752,7 +752,9 @@ enum GuiCommand {
     },
     /// Wait for one of the given keys and print it
     Input {
-        /// Keys to bind for the duration of the wait (e.g. y n escape)
+        /// Keys to bind for the duration of the wait (e.g. y n q). The GUI
+        /// keeps `escape`, `tab` and `:` for the user and refuses a wait
+        /// asking for one of them
         #[arg(required = true)]
         keys: Vec<String>,
         /// Question shown in the GUI's dedicated input bar while waiting

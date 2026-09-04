@@ -121,6 +121,8 @@ fn register_builtins(registry: &CommandRegistry) {
         ("log:undo", "Undo the last revision of the active repository", true),
         ("log:redo", "Re-apply the revision ahead of HEAD", true),
         ("answer:send", "Resolve the pending script input wait", true),
+        ("script-keys:toggle", "Give the script's keys back to the GUI, or take them again", true),
+        ("script:stop", "Stop the running script (the one asking, by default)", true),
         ("pick:confirm", "Confirm the value picker's selection", true),
         ("pick:cancel", "Cancel the value picker", true),
         // Help (spec-gui "Help"). `log=false`: the help-cursor drives these on
@@ -439,6 +441,8 @@ pub fn run(options: Options) {
             commands::adopt_repo,
             commands::list_commands,
             commands::register_command,
+            commands::script_keys_toggle,
+            commands::script_stop,
             commands::suggest_keybinding,
             commands::get_compiled_keybindings,
             commands::set_user_keybinding,

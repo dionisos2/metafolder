@@ -13,6 +13,7 @@ use metafolder_core::sync::MutexExt;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use workspace::{MessageEntry, Workspace, WorkspaceInfo};
@@ -45,6 +46,10 @@ struct ScriptTask {
     /// True while the script blocks on an input/prompt wait: it is *not*
     /// working, so the entry stops spinning and says the answer is awaited.
     waiting: bool,
+    /// The run's process-group leader, when the GUI launched it: what
+    /// `script:stop` signals to end the script and every child it spawned.
+    /// `None` for a run registered without one (tests, a foreign launcher).
+    pid: Option<u32>,
 }
 
 pub struct GuiState {
@@ -55,7 +60,26 @@ pub struct GuiState {
     /// Kept out of `Inner` so the workspace/message lock is never held across
     /// the notify that broadcasts the running set.
     scripts: Mutex<HashMap<String, ScriptTask>>,
+    /// Whether a script's awaited keys currently reach the script (spec-gui
+    /// "Script keys"). The question bar's checkbox flips it; it holds for the
+    /// rest of the session, but every new run starts with its keys live.
+    script_keys: AtomicBool,
+    /// The question a script is asking right now, kept so the keytable can be
+    /// re-pushed (with or without the temporary answer bindings) when the
+    /// checkbox flips. `None` when no input wait is up.
+    question: Mutex<Option<Question>>,
     notifier: Arc<dyn FrontendNotifier>,
+}
+
+/// The live `POST /gui/input` question: what the frontend shows in the question
+/// bar, and what the temporary answer bindings are built from.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Question {
+    pub keys: Vec<String>,
+    pub prompt: Option<String>,
+    pub workspaces: Vec<String>,
+    /// The asking script's run id, so escape knows which run to stop.
+    pub task: Option<String>,
 }
 
 struct Inner {
@@ -306,7 +330,13 @@ impl GuiState {
         };
         let id = inner.new_workspace(None, None);
         inner.assign(&id, SlotId::Left).expect("assigning the initial workspace cannot fail");
-        GuiState { inner: Mutex::new(inner), scripts: Mutex::new(HashMap::new()), notifier }
+        GuiState {
+            inner: Mutex::new(inner),
+            scripts: Mutex::new(HashMap::new()),
+            script_keys: AtomicBool::new(true),
+            question: Mutex::new(None),
+            notifier,
+        }
     }
 
     /// Marks a shell script (run id `task_id`, launched from `ws_id`) as running
@@ -323,7 +353,52 @@ impl GuiState {
                 ..Default::default()
             },
         );
+        // A new run always starts with its keys live: the checkbox is a choice
+        // about the script being answered, not a lasting handicap for the next.
+        self.set_script_keys(true);
         self.emit_scripts();
+    }
+
+    /// Records (or forgets) the process-group leader of run `task_id` — set
+    /// right after the spawn, cleared as soon as the child is reaped: a reaped
+    /// pid can be recycled, and a stale one would aim a later signal at
+    /// whatever process inherited the number. Unknown run ids are ignored.
+    pub fn script_set_pid(&self, task_id: &str, pid: Option<u32>) {
+        if let Some(task) = self.scripts.lock_recover().get_mut(task_id) {
+            task.pid = pid;
+        }
+    }
+
+    /// The process group of run `task_id`, when the GUI launched it.
+    pub fn script_pid(&self, task_id: &str) -> Option<u32> {
+        self.scripts.lock_recover().get(task_id).and_then(|t| t.pid)
+    }
+
+    /// Whether run `task_id` is the one blocked on the current question.
+    pub fn script_is_waiting(&self, task_id: &str) -> bool {
+        self.scripts.lock_recover().get(task_id).is_some_and(|t| t.waiting)
+    }
+
+    /// Whether a script's awaited keys currently reach the script.
+    pub fn script_keys_enabled(&self) -> bool {
+        self.script_keys.load(Ordering::Relaxed)
+    }
+
+    /// Sets that flag (the question bar's checkbox, `script-keys:toggle`).
+    /// Returns the new value.
+    pub fn set_script_keys(&self, enabled: bool) -> bool {
+        self.script_keys.store(enabled, Ordering::Relaxed);
+        enabled
+    }
+
+    /// The question a script is asking right now, if any.
+    pub fn question(&self) -> Option<Question> {
+        self.question.lock_recover().clone()
+    }
+
+    /// Replaces it (a wait beginning, or its guard clearing it).
+    pub fn set_question(&self, question: Option<Question>) {
+        *self.question.lock_recover() = question;
     }
 
     /// Records that run `task_id` owns workspace `ws_id` — called when a script

@@ -28,6 +28,7 @@ struct Ctx {
     input: Arc<InputWait>,
     commands: Arc<CommandWait>,
     bench: Arc<BenchBuffer>,
+    keybindings: Arc<std::sync::Mutex<metafolder_gui::keybindings::KeybindingSet>>,
     router: axum::Router,
 }
 
@@ -70,7 +71,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         config,
         gui: gui.clone(),
         daemon,
-        keybindings,
+        keybindings: keybindings.clone(),
         input: input.clone(),
         commands: commands.clone(),
         bench: bench.clone(),
@@ -83,6 +84,7 @@ async fn setup_with_daemon(daemon_url: &str) -> Ctx {
         input: input.clone(),
         commands: commands.clone(),
         bench: bench.clone(),
+        keybindings,
         router: server::build_router(state),
     }
 }
@@ -387,6 +389,91 @@ async fn test_progress_updates_running_script() {
 }
 
 // ── Input wait ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_input_wait_refuses_the_reserved_keys() {
+    // A script may not take the user's ways out of its own question (spec-gui
+    // "Reserved keys"): escape, the command input, the script-keys toggle.
+    let ctx = setup().await;
+    for key in ["escape", ":", "tab"] {
+        let (status, body) =
+            request(&ctx.router, "POST", "/gui/input", Some(json!({"keys": ["y", key]}))).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "'{key}' should be refused");
+        assert!(
+            body["error"].as_str().unwrap().contains(key),
+            "the error should name the offending key: {body}"
+        );
+    }
+    // Refused before the lock is taken: a legitimate wait still starts.
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"]}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(ctx.input.resolve_answer("y"));
+    let (status, body) = waiting.await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({"event": "answer", "value": "y"}));
+}
+
+#[tokio::test]
+async fn test_input_wait_payload_carries_the_task_and_the_script_keys_flag() {
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-9", "ws-1", "gui-tag-folder.sh");
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/input",
+            Some(json!({"keys": ["y"], "task": "script-9", "prompt": "tag it?"})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let payload = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
+    assert_eq!(payload["active"], true);
+    assert_eq!(payload["task"], "script-9");
+    assert_eq!(payload["script_keys"], true);
+    assert_eq!(payload["prompt"], "tag it?");
+
+    assert!(ctx.input.resolve_answer("y"));
+    waiting.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_disabling_the_script_keys_removes_the_temporary_bindings() {
+    // Unticking the checkbox must not leave the fallback answer bindings in the
+    // table: the whole point is that the panel's own `y` wins again.
+    let ctx = setup().await;
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"]}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let pushed = |ctx: &Ctx| {
+        ctx.notifier.payloads(events::KEYBINDINGS_CHANGED).last().unwrap()["bindings"].to_string()
+    };
+    assert!(pushed(&ctx).contains("answer:send y"));
+
+    ctx.gui.set_script_keys(false);
+    metafolder_gui::server::gui_api::push_keytable(&ctx.gui, &ctx.keybindings);
+    assert!(!pushed(&ctx).contains("answer:send y"), "disabled keys must not stay bound");
+    let payload = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED).last().unwrap().clone();
+    assert_eq!(payload["script_keys"], false);
+    assert_eq!(payload["active"], true, "the question stays on screen, keys or not");
+
+    // Re-ticking it restores them.
+    ctx.gui.set_script_keys(true);
+    metafolder_gui::server::gui_api::push_keytable(&ctx.gui, &ctx.keybindings);
+    assert!(pushed(&ctx).contains("answer:send y"));
+
+    assert!(ctx.input.resolve_answer("y"));
+    waiting.await.unwrap();
+}
 
 #[tokio::test]
 async fn test_input_wait_resolves_on_answer() {

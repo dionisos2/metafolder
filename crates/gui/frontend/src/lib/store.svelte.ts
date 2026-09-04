@@ -89,7 +89,17 @@ export const store = $state({
     /// `workspaces` are the workspaces the asking script owns: the bar is shown
     /// only while one of them is on screen (empty = owned by nobody, always
     /// shown).
-    inputWait: null as { prompt: string; keys: string[]; workspaces: string[] } | null,
+    inputWait: null as {
+      prompt: string;
+      keys: string[];
+      workspaces: string[];
+      task: string | null;
+    } | null,
+    /// Whether the awaited keys of a script's question reach the script
+    /// (spec-gui "Script keys"). The question bar's checkbox flips it through
+    /// `script-keys:toggle`; Rust owns the value and pushes it here, so the
+    /// temporary answer bindings and this flag can never disagree.
+    scriptKeys: true,
     /// Shell scripts currently running (spec-gui "Scripting"): a loading
     /// indicator so a slow script never looks frozen. Fed by
     /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`
@@ -106,12 +116,14 @@ export function inputWaitState(payload: {
   temp_keys?: string[];
   prompt?: string | null;
   workspaces?: string[];
-}): { prompt: string; keys: string[]; workspaces: string[] } | null {
+  task?: string | null;
+}): { prompt: string; keys: string[]; workspaces: string[]; task: string | null } | null {
   if (!payload.active) return null;
   return {
     prompt: payload.prompt || 'Waiting for input',
     keys: payload.temp_keys ?? [],
     workspaces: payload.workspaces ?? [],
+    task: payload.task ?? null,
   };
 }
 
@@ -138,6 +150,40 @@ export function inputWaitAnswer(
 ): string | null {
   if (!wait || !combo) return null;
   return wait.keys.find((k) => k.toLowerCase() === combo) ?? null;
+}
+
+/** The question the keys should currently act on: the live input wait, but only
+ *  while one of the workspaces its script owns is on screen. A question put
+ *  away by a tab switch (spec-gui "Ownership of a script's workspaces") must not
+ *  keep the keys of the panel now in front of the user — escape above all, which
+ *  would otherwise stop a background script from an unrelated workspace. */
+export function activeQuestion(): { keys: string[]; task: string | null } | null {
+  const wait = store.ui.inputWait;
+  if (!wait) return null;
+  return ownedByVisible(wait.workspaces, visibleWorkspaces()) ? wait : null;
+}
+
+/** What a pressed key does while a script's question is up, before the normal
+ *  keybindings get a look at it (spec-gui "Script keys"):
+ *
+ *  - `escape` — always stops the asking script. No script can await it (the
+ *    GUI refuses a wait asking for a reserved key), so it is the one way out
+ *    that is guaranteed to work, whatever keys the script grabbed. A
+ *    script that needs to clean up offers its own quit key (`q` by convention).
+ *  - an awaited key — answers the script.
+ *  - anything else, or the script keys turned off at the checkbox — null: the
+ *    key falls through to the ordinary bindings (the panel's own `y` again).
+ *
+ *  Pure, so it is unit-tested; keys.ts applies the result. */
+export function inputWaitAction(
+  wait: { keys: string[]; task: string | null } | null,
+  scriptKeys: boolean,
+  combo: string | null,
+): { kind: 'answer'; value: string } | { kind: 'stop'; task: string | null } | null {
+  if (!wait || !combo || !scriptKeys) return null;
+  if (combo === 'escape') return { kind: 'stop', task: wait.task };
+  const value = inputWaitAnswer(wait, combo);
+  return value === null ? null : { kind: 'answer', value };
 }
 
 /** One running shell script, as shown in the task bar. `done`/`total` drive a
@@ -290,12 +336,12 @@ export async function initStore() {
     temp_keys?: string[];
     prompt?: string | null;
     workspaces?: string[];
-  }>(
-    'input-wait-changed',
-    (event) => {
-      store.ui.inputWait = inputWaitState(event.payload);
-    },
-  );
+    task?: string | null;
+    script_keys?: boolean;
+  }>('input-wait-changed', (event) => {
+    store.ui.inputWait = inputWaitState(event.payload);
+    store.ui.scriptKeys = event.payload.script_keys ?? true;
+  });
   // Running shell scripts: drive the loading indicator in the task bar.
   await listen<{ tasks?: ScriptTask[] }>('script-task-changed', (event) => {
     store.ui.scriptTasks = scriptTasksState(event.payload);

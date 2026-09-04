@@ -76,7 +76,7 @@ sort_dir="$work/trier2"; dest_root="$work/dest2"
 mkdir -p "$sort_dir"
 printf 'x' >"$sort_dir/mystery.bin"
 #   classify: Escape immediately (no tag); extras: favorite/rating/comment = n
-mock_input escape n n n
+mock_input q n n n
 DEST_ROOT="$dest_root" bash "$SCRIPT" "$sort_dir" >/dev/null; code=$?
 assert "norule: exits 0" [ "$code" -eq 0 ]
 assert "norule: file stays in the sort dir" [ -f "$sort_dir/mystery.bin" ]
@@ -95,7 +95,7 @@ mock_reset
 setup_common
 sort_dir="$work/trier4"; dest_root="$work/dest4"
 mkdir -p "$sort_dir/.metafolder"
-mock_input escape n n n
+mock_input q n n n
 DEST_ROOT="$dest_root" bash "$SCRIPT" "$sort_dir" >/dev/null; code=$?
 assert "skip-mf: exits 0" [ "$code" -eq 0 ]
 assert "skip-mf: .metafolder untouched" [ -d "$sort_dir/.metafolder" ]

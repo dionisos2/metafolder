@@ -60,11 +60,11 @@ assert "prune: no child tag touched" [ "$(mock_count 'tag -i rec-1 * music/*')" 
 # ── Case 3: Escape stops immediately with a zeroed summary ───────────────────
 mock_reset
 setup_common
-mock_input escape
+mock_input q
 out=$(bash "$SCRIPT" rec-1); code=$?
-assert "escape: exits 0" [ "$code" -eq 0 ]
-assert "escape: no tag op" [ "$(mock_count 'tag -i rec-1 *')" -eq 0 ]
-assert_contains "escape: zeroed summary" "$out" "0 oui, 0 non"
+assert "q: exits 0" [ "$code" -eq 0 ]
+assert "q: no tag op" [ "$(mock_count 'tag -i rec-1 *')" -eq 0 ]
+assert_contains "q: zeroed summary" "$out" "0 oui, 0 non"
 
 # ── Case 4: an empty tag vocabulary is a hard error ──────────────────────────
 mock_reset
@@ -84,7 +84,7 @@ setup_common
 mock_respond 'metarecord -q mfr_type = "file" get*'  '/some/file'   # completion (drained)
 mock_respond 'metarecord -q mfr_path = "/some/file" get' 'rec-1'    # path -> uuid
 mock_prompt '/some/file'
-mock_input escape
+mock_input q
 out=$(bash "$SCRIPT"); code=$?
 assert "prompt: exits 0" [ "$code" -eq 0 ]
 assert "prompt: resolves the chosen path to a uuid" \

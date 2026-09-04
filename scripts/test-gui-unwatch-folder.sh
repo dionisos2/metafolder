@@ -68,11 +68,11 @@ assert_contains "decline: says so" "$out" 'cancelled'
 mock_reset
 setup_top
 mock_respond 'metarecord -q mfr_path ->* "/top" get' 'u1'
-mock_input escape
+mock_input q
 bash "$SCRIPT" "$WORKDIR/top" >/dev/null; code=$?
-assert "escape: exits 0"     [ "$code" -eq 0 ]
-assert "escape: no delete"   [ "$(mock_count '*delete*')" -eq 0 ]
-assert "escape: no mf_watch" [ "$(mock_count '*mf_watch*')" -eq 0 ]
+assert "q: exits 0"     [ "$code" -eq 0 ]
+assert "q: no delete"   [ "$(mock_count '*delete*')" -eq 0 ]
+assert "q: no mf_watch" [ "$(mock_count '*mf_watch*')" -eq 0 ]
 
 # ── Case 4: an empty folder still gets unwatched, with no confirmation ───────
 mock_reset

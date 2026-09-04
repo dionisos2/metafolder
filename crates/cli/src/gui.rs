@@ -242,6 +242,11 @@ pub fn command(ctx: &GuiCtx, invocation: &str, timeout_ms: Option<u64>) -> Resul
 /// Blocks until one of `keys` is pressed and prints it; exit 1 on
 /// timeout or when the GUI closes the wait. `prompt` is the question shown in
 /// the GUI's dedicated input bar while waiting (separate from status messages).
+///
+/// The GUI refuses a wait that asks for one of the keys it keeps for the user
+/// (`escape`, and the combos that open the command input or toggle the script
+/// keys — spec-gui "Reserved keys"); that comes back as a 400, so a script that
+/// wants its own quit key offers something else (`q`, by convention).
 pub fn input(
     ctx: &GuiCtx,
     keys: &[String],

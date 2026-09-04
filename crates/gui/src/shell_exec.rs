@@ -5,6 +5,7 @@
 use crate::state::GuiState;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
@@ -23,20 +24,26 @@ pub async fn run_to_completion(
     static RUN_SEQ: AtomicU64 = AtomicU64::new(1);
     let task_id = format!("script-{}", RUN_SEQ.fetch_add(1, Ordering::Relaxed));
 
-    let mut child = Command::new("sh")
+    let mut command = Command::new("sh");
+    command
         .arg("-c")
         .arg(&command_line)
         .env("METAFOLDER_GUI_TASK", &task_id)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("cannot run shell command: {e}"))?;
+        .stderr(std::process::Stdio::piped());
+    // Its own process group, so `script:stop` can signal the script *and* every
+    // child it spawned (the `mf gui input` blocked on a question above all) with
+    // one killpg — signalling the shell alone would leave those behind.
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command.spawn().map_err(|e| format!("cannot run shell command: {e}"))?;
 
     // Show a running indicator until this function returns (spec-gui
     // "Scripting"). The guard clears it on every exit path — early `?`
     // returns and panics included — so the spinner can never get stuck on.
     gui.script_begin(&task_id, &ws_id, &script_label(&command_line));
     let _running = RunningGuard { gui: gui.clone(), task_id: task_id.clone() };
+    gui.script_set_pid(&task_id, child.id());
 
     let stdout = child.stdout.take().expect("stdout piped");
     let stderr = child.stderr.take().expect("stderr piped");
@@ -45,6 +52,9 @@ pub async fn run_to_completion(
     let err_task = tokio::spawn(forward(gui.clone(), ws_id.clone(), stderr, true));
 
     let status = child.wait().await.map_err(|e| format!("shell command failed: {e}"))?;
+    // Reaped: the pid is now free to be recycled, so it must stop naming this
+    // run (a pending `script:stop` follow-up would otherwise signal a stranger).
+    gui.script_set_pid(&task_id, None);
     let _ = out_task.await;
     let _ = err_task.await;
 
@@ -130,11 +140,63 @@ pub fn run_shell(
     Ok(())
 }
 
+/// How long a stopped script may take to die on `SIGTERM` before it is killed
+/// outright.
+const STOP_GRACE: Duration = Duration::from_secs(2);
+
+/// `script:stop` — ends run `task_id`: `SIGTERM` to its whole process group,
+/// then `SIGKILL` to whatever is still there after [`STOP_GRACE`]. Returns
+/// false when no such run is known (already finished, or never GUI-launched),
+/// so the caller can say so rather than pretend.
+///
+/// The script's pending question needs no separate resolution: killing the
+/// group takes its `mf gui input` with it, the HTTP connection drops and the
+/// wait's guard releases the lock.
+pub fn stop_script(gui: &Arc<GuiState>, task_id: &str) -> bool {
+    let Some(pid) = gui.script_pid(task_id) else { return false };
+    if !signal_group(pid, SIGTERM) {
+        return false;
+    }
+    let gui = gui.clone();
+    let task_id = task_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(STOP_GRACE).await;
+        // Still registered ⇒ it ignored the SIGTERM (or is stuck in a syscall).
+        if let Some(pid) = gui.script_pid(&task_id) {
+            signal_group(pid, SIGKILL);
+        }
+    });
+    true
+}
+
+#[cfg(unix)]
+const SIGTERM: i32 = libc::SIGTERM;
+#[cfg(unix)]
+const SIGKILL: i32 = libc::SIGKILL;
+#[cfg(not(unix))]
+const SIGTERM: i32 = 15;
+#[cfg(not(unix))]
+const SIGKILL: i32 = 9;
+
+/// Signals a whole process group (negative pid). Returns whether the signal was
+/// delivered — false for an already-reaped group, and always off Unix.
+#[cfg(unix)]
+fn signal_group(pid: u32, signal: i32) -> bool {
+    // SAFETY: `kill` is a plain syscall; a negative pid addresses the group.
+    unsafe { libc::kill(-(pid as i32), signal) == 0 }
+}
+
+#[cfg(not(unix))]
+fn signal_group(_pid: u32, _signal: i32) -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::notifier::RecordingNotifier;
     use serde_json::json;
+    use std::time::Duration;
 
     fn gui() -> Arc<GuiState> {
         Arc::new(GuiState::new(Arc::new(RecordingNotifier::new())))
@@ -165,6 +227,53 @@ mod tests {
     async fn test_unknown_workspace_errors() {
         let gui = gui();
         assert!(run_to_completion(gui, "ws-99".into(), "echo hi".into()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stop_script_kills_the_run_and_its_children() {
+        // Escape during a question must actually end the script (spec-gui
+        // "Stopping a script"): the whole process group dies, so the `mf gui
+        // input` child blocked on the question goes with it.
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        let running = tokio::spawn({
+            let gui = gui.clone();
+            // A child that outlives its parent shell unless the GROUP is signalled.
+            async move { run_to_completion(gui, "ws-1".into(), "sleep 30 & sleep 30".into()).await }
+        });
+        // Wait until the run is registered with the pid stop_script needs.
+        let mut task_id = None;
+        for _ in 0..100 {
+            let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+            let id = payloads
+                .last()
+                .and_then(|p| p["tasks"][0]["task"].as_str().map(str::to_string))
+                .filter(|id| gui.script_pid(id).is_some());
+            if let Some(id) = id {
+                task_id = Some(id);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let task_id = task_id.expect("the run should be registered with a pid");
+
+        assert!(stop_script(&gui, &task_id), "stopping a live run reports success");
+        let stopped = tokio::time::timeout(Duration::from_secs(5), running).await;
+        assert!(stopped.is_ok(), "the killed script must not outlive its stop");
+        // The run is gone from the registry, so a second stop finds nothing.
+        assert!(!stop_script(&gui, &task_id));
+    }
+
+    #[test]
+    fn test_script_keys_are_re_enabled_by_every_new_run() {
+        // The checkbox holds for the rest of the session, but a *new* script
+        // starts with its keys live: nobody should silently lose them.
+        let gui = gui();
+        assert!(gui.script_keys_enabled());
+        gui.set_script_keys(false);
+        assert!(!gui.script_keys_enabled());
+        gui.script_begin("script-1", "ws-1", "gui-tag-folder.sh");
+        assert!(gui.script_keys_enabled());
     }
 
     #[test]

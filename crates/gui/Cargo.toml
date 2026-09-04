@@ -40,8 +40,10 @@ clap = { version = "4", features = ["derive"] }
 # WebKit web-process crashes (reload instead of a frozen window).
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = { version = "2.0", features = ["v2_20"] }
-# setrlimit on the sandboxed media helpers (sandbox.rs): bwrap bounds what a
-# decoder can *reach*, rlimits bound what it can *consume*.
+
+# setrlimit on the sandboxed media helpers (sandbox.rs) and killpg on a stopped
+# script's process group (shell_exec.rs).
+[target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [dev-dependencies]

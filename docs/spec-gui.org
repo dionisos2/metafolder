@@ -414,7 +414,8 @@ A running script's *question* does **not** share this line. When a
 wait accepts — is shown in a *dedicated bar* just above the status line (the
 same place as the pending key-sequence reminder), so a status or error message
 can never overwrite the question the user is being asked. The bar clears when
-the wait resolves.
+the wait resolves. It also carries the "script keys" checkbox and a reminder
+that escape stops the script (see [[*Script keys]]).
 
 ** Command input
 
@@ -556,6 +557,10 @@ only while at least one owned workspace is in a visible slot, so switching tab
 puts the script's questions away instead of leaving them over unrelated
 panels. A wait with no run id is owned by nobody and is always shown.
 
+The keys follow the bar: while the question is put away, they are not
+intercepted either — the panel now in front of the user keeps its own =y=, and
+escape does not stop a script whose question is off screen.
+
 *** Working vs. awaiting an answer
 
 The task-bar entry distinguishes the two states, because a script alternates
@@ -570,6 +575,47 @@ A question awaits the keys the script lists. By convention the shipped scripts
 offer the arrow keys next to the letters, with a mapping that is the same
 everywhere: =→= yes, =←= no, =↑= mixed, =↓= skip. A walk over a tree also
 offers =skip=, which leaves the entry alone — for a folder, its whole subtree.
+
+*** Script keys
+
+While a question is up, the keys it awaits are *borrowed from the GUI*: they
+take absolute priority over every panel and global binding, so a script
+offering =y/n/s= is never in conflict with an =n= binding in the focused panel.
+That is what makes a question answerable without looking — and what makes the
+panel underneath unusable meanwhile.
+
+The question bar therefore carries a *checkbox* ("script keys"). Unticked, the
+script's keys are given back: the temporary answer bindings are removed from
+the compiled table (not merely ignored — a disabled key must not stay bound as
+a fallback) and every key means again what it means in the panel. The question
+stays on screen, with its keys struck through, and can still be answered by
+typing =answer:send <value>= in the command input, or by ticking the box again.
+
+=script-keys:toggle= flips it (default =tab=). The choice holds for the rest of
+the session, so a user who works with the keys off is not made to untick at
+every question — but *every new run starts with its keys live*, so a script is
+never silently deprived of the answers it is waiting for.
+
+*** Reserved keys
+
+Three combos are the user's way out of a question, and a script may not take
+them: =escape=, whatever activates the command input (=:=), and whatever
+toggles the script keys (=tab=). They are derived from the compiled keybinding
+table, so rebinding =command-input:activate= moves the reservation with it.
+=POST /gui/input= *rejects* a wait that asks for one of them (=400=), rather
+than accepting a question the GUI would not honour.
+
+Escape, while the script keys are enabled, *stops the asking script*: the run's
+whole process group is signalled (=SIGTERM=, then =SIGKILL= if it is still
+there two seconds later), which takes the =mf gui input= blocked on the
+question with it and releases the wait. It is the one key guaranteed to work
+whatever the script grabbed. With the script keys disabled, escape means what
+it means in the GUI (=editing:unfocus=), and the question can be abandoned with
+=script:stop= from the command input.
+
+A script that has cleanup to do therefore cannot rely on escape: it offers its
+own quit key — =q= by convention in every shipped script — which it receives as
+an ordinary answer and can act on before exiting.
 
 *** Failure is never silent
 
@@ -973,6 +1019,8 @@ Behaviours:
 | =editing:goto-line-start= | Move cursor to start of line (=text-input = true=)            |
 | =editing:goto-line-end=   | Move cursor to end of line (=text-input = true=)              |
 | =answer:send <value>=     | Resolve the current =POST /gui/input= wait with =<value>=     |
+| =script-keys:toggle=      | Give the keys a script's question awaits back to the GUI, or take them again (default =tab=; see [[*Script keys]]) |
+| =script:stop [<task>]=    | Stop a running script — its whole process group. No argument: the script asking the current question |
 | =pick:confirm=            | Confirm the focused picker's selection, hand its UUID back to the calling form (see [[*Value picker]]) |
 | =pick:cancel=             | Cancel the focused picker, returning to the calling form with no value |
 | =message:clear=           | Clear the =message= panel log for this workspace              |
@@ -2583,7 +2631,10 @@ Registers an input wait and blocks until the =answer:send= command is
 executed (by any means: the awaited-key interception described below, a
 permanent user binding, or a manual invocation via the command input).
 
-The optional =keys= array is the set of keys the wait accepts. While the
+The optional =keys= array is the set of keys the wait accepts. A key the GUI
+reserves (=escape=, the command-input and script-keys combos — see
+[[*Reserved keys]]) is refused: the whole call fails with =400= and no wait is
+registered, so the next script is free to ask. While the
 wait is active these keys take *absolute priority* over normal keybindings:
 pressing one answers the script (=answer:send <key>=) and never also fires a
 panel/global shortcut bound to the same key — so a script offering =y/n/s=
@@ -2591,7 +2642,10 @@ is never in conflict with an =n= binding in the focused panel. Keys the wait
 does *not* list keep their normal behaviour. (The temporary bindings are
 also installed as a fallback for manual/user resolution, but the awaited
 keys are intercepted ahead of the matcher so scope precedence cannot let a
-more-specific binding win.) If =keys= is absent or empty, no keys are
+more-specific binding win.) The user can hand them all back at the question
+bar's checkbox ([[*Script keys]]), which removes those temporary bindings.
+
+If =keys= is absent or empty, no keys are
 awaited; the user can still resolve the wait by typing =answer:send <value>=
 manually in the command input.
 
@@ -2617,8 +2671,10 @@ Responses: ={"event": "answer", "value": "left"}= / ={"event": "timeout"}= /
 ={"event": "closed"}=.
 
 The =input-wait-changed= event the shell consumes carries =active=,
-=temp_keys=, =prompt= and =workspaces= (the owning script's workspaces, empty
-when unowned).
+=temp_keys=, =prompt=, =workspaces= (the owning script's workspaces, empty
+when unowned), =task= (the owning run id, so escape knows which script to stop)
+and =script_keys= (the checkbox state). It is re-emitted, with the keytable,
+whenever the checkbox flips.
 
 *** =POST /gui/prompt=
 
@@ -2679,7 +2735,7 @@ scripts need neither =curl= nor =jq=. The GUI base URL comes from
 | =mf gui progress [--done N] [--total M] [--phase P] [--task ID]= | Updates the running script's task-bar indicator (=--task= defaults to =METAFOLDER_GUI_TASK=; no-op outside the GUI) |
 | =mf gui command <invocation>... [--timeout-ms]=      | Runs a command invocation through the GUI (exit 1 on error/timeout) |
 | =mf gui bench [--clear]=                             | Prints the recorded bench measures (JSON), or clears the buffer    |
-| =mf gui input <key>... [--prompt <text>] [--timeout-ms]= | Waits for one of the keys, prints it (=--prompt= shows a question in the dedicated bar; exit 1 on timeout/close) |
+| =mf gui input <key>... [--prompt <text>] [--timeout-ms]= | Waits for one of the keys, prints it (=--prompt= shows a question in the dedicated bar; exit 1 on timeout/close, or on a [[*Reserved keys][reserved key]]) |
 | =mf gui prompt <text> [--completion <v>]... [--completions-stdin] [--timeout-ms]= | Prompts in the command input, prints the answer (exit 1 on cancel) |
 
 =mf gui prompt --completions-stdin= is how a script obtains a *missing argument*

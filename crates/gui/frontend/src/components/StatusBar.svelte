@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ownedByVisible, store, visibleWorkspaces, workspaceById } from '../lib/store.svelte';
+  import { dispatch } from '../lib/commands';
 
   // One bar when both visible slots show the same workspace; two
   // otherwise (spec-gui "Status bar").
@@ -41,8 +42,25 @@
   <div class="input-wait" data-help-topic="scripting">
     <span class="question">{store.ui.inputWait.prompt}</span>
     {#each store.ui.inputWait.keys as key (key)}
-      <span class="keycap">{key}</span>
+      <span class="keycap" class:off={!store.ui.scriptKeys}>{key}</span>
     {/each}
+    <!-- The script's keys are borrowed from the panels: this is where they are
+         given back, without abandoning the question (spec-gui "Script keys"). -->
+    <label class="script-keys" title="Let the script's keys take priority over the GUI shortcuts">
+      <input
+        type="checkbox"
+        checked={store.ui.scriptKeys}
+        onchange={(event) => {
+          // A focused checkbox IS a text input as far as key handling goes, and
+          // would swallow every shortcut — including the script's own keys —
+          // until the user clicked elsewhere. Hand the focus straight back.
+          (event.currentTarget as HTMLElement).blur();
+          void dispatch('script-keys:toggle');
+        }}
+      />
+      script keys
+    </label>
+    <span class="hint dim">escape stops the script</span>
   </div>
 {/if}
 
@@ -122,6 +140,25 @@
     border: 1px solid var(--mf-accent, #4c56c4);
     color: var(--mf-accent, #4c56c4);
     background: var(--mf-bg, #1e1e24);
+  }
+  /* Keys handed back to the panels: shown, but plainly not live. */
+  .input-wait .keycap.off {
+    border-color: var(--mf-fg-dim, #8a8a96);
+    color: var(--mf-fg-dim, #8a8a96);
+    text-decoration: line-through;
+  }
+  .input-wait .script-keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: auto;
+    color: var(--mf-fg-dim, #8a8a96);
+    font-size: 0.9em;
+    cursor: pointer;
+  }
+  .input-wait .hint.dim {
+    color: var(--mf-fg-dim, #8a8a96);
+    font-size: 0.9em;
   }
   .status-bars {
     display: flex;

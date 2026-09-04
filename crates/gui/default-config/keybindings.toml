@@ -16,6 +16,12 @@
 ":" = { command = "command-input:activate" }
 "!" = { command = "bash-input:activate" }
 
+# A script's question (spec-gui "Script keys"): `tab` hands the keys the script
+# awaits back to the panels — and takes them again — without abandoning the
+# question. Escape always stops the asking script, and neither of these, nor
+# whatever activates the command input, can be awaited by a script.
+"tab" = { command = "script-keys:toggle" }
+
 # Text editing (fire even while a text input is focused).
 "escape" = { command = "editing:unfocus", text-input = true }
 "ctrl+q" = { command = "editing:discard", text-input = true }

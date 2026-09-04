@@ -31,7 +31,7 @@ mock_reset
 setup_gui
 mock_prompt 'music/jazz'                     # the tag being applied
 mock_respond 'metarecord -q * get' $'u1\nu2\nu3\nu4\nu5'
-mock_input y n s escape                       # f1=yes f2=no f3=skip f4=STOP
+mock_input y n s q                       # f1=yes f2=no f3=skip f4=STOP
 out=$(bash "$SCRIPT"); code=$?
 
 assert "walk: exits 0" [ "$code" -eq 0 ]

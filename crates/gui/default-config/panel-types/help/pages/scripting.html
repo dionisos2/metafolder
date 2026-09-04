@@ -1,0 +1,51 @@
+<h1>Scripts and their questions</h1>
+<p>
+  A shell script driven by <code>mf gui</code> (run it with
+  <code>script:run</code>) can take over a workspace, show files and
+  <strong>ask you questions</strong>. A question appears in its own bar just
+  above the status line, with the keys it accepts, so no status or error message
+  can ever hide it. It belongs to the workspaces that script owns: switching tab
+  puts it away.
+</p>
+
+<h2>Answering</h2>
+<p>
+  Press one of the keys shown. By convention the shipped scripts pair the arrow
+  keys with the letters, the same way everywhere: <kbd>→</kbd> yes,
+  <kbd>←</kbd> no, <kbd>↑</kbd> mixed, <kbd>↓</kbd> skip. You can also type
+  <code>answer:send &lt;value&gt;</code> in the
+  <a data-help-page="command-input">command input</a>.
+</p>
+
+<h2>Script keys, and getting them back</h2>
+<p>
+  While a question is up, the keys it awaits are <em>borrowed from the GUI</em>:
+  they beat every panel and global shortcut, so a script offering
+  <code>y</code>/<code>n</code>/<code>s</code> is never in conflict with an
+  <code>n</code> binding in the panel underneath — and the panel underneath is
+  unusable meanwhile.
+</p>
+<p>
+  The <strong>“script keys” checkbox</strong> in the question bar hands them
+  back. Unticked, every key means again what it means in the panel; the question
+  stays on screen (its keys struck through) and can still be answered from the
+  command input, or by ticking the box again. <code>script-keys:toggle</code>
+  (<kbd>Tab</kbd>) flips it. Your choice holds for the rest of the session, but
+  every <em>new</em> run starts with its keys live.
+</p>
+
+<h2>Stopping a script</h2>
+<p>
+  <kbd>Escape</kbd> stops the asking script outright — the run and every command
+  it started. It always works, whatever keys the script grabbed, because no
+  script is allowed to take it: <kbd>Escape</kbd>, <kbd>Tab</kbd> and
+  <code>:</code> are <strong>reserved</strong>, and a script asking for one of
+  them is refused. With the script keys unticked, <kbd>Escape</kbd> is an
+  ordinary GUI key again and <code>script:stop</code> does the same job from the
+  command input.
+</p>
+<p>
+  Because a stopped script does not get to clean up, scripts that need to offer
+  their own exit do it with <code>q</code> — the quit key of every shipped
+  script.
+</p>

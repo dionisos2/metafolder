@@ -115,7 +115,7 @@ assert_eq "pair: exactly one file tagged no" 1 "$neg"
 # record already carries tags, so we assert the run COMPLETES rather than a
 # specific delta.
 hy_reset
-hy_input escape            # stop at the first question
+hy_input q            # stop at the first question
 cout=$(bash "$CLASSIFY" "$TOP" 2>&1)
 assert_contains "classify: completes against the real daemon" "$cout" "terminée"
 

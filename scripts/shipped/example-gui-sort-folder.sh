@@ -32,8 +32,9 @@ mf_gui_bind_repo
 # metarecord if needed and always prints the uuid (existing or new).
 ensure_metarecord() { mf track "$1"; }
 
-# ask "<question>" -> prints y | n | escape  (escape also on timeout/GUI closed).
-ask() { mf_gui_ask_answer "$1" y n escape; }
+# ask "<question>" -> prints y | n | q  ("escape" too, when the question could
+# not be answered at all: a timeout, a closed GUI). Anything but y/n stops.
+ask() { mf_gui_ask_answer "$1" y n q; }
 
 # The tag paths a metarecord references through its `tag` field — resolved in
 # one round-trip (each ref → the tag entry's `path` TreeRef → its path string).
@@ -79,7 +80,7 @@ for abs in "$SORT_DIR"/*; do
 
     # 3) Extra field questions — three patterns to copy:
     #    (a) a boolean flag: the yes/no answer *is* the value.
-    case "$(ask "Mark as favorite?   [y/n]   Esc = stop")" in
+    case "$(ask "Mark as favorite?   [y/n]   q = stop")" in
         y) mf metarecord -i "$uuid" field set favorite:bool=true >/dev/null ;;
         n) : ;;
         *) stop=1 ;;
@@ -87,7 +88,7 @@ for abs in "$SORT_DIR"/*; do
     [ -n "$stop" ] && break
 
     #    (b) "add? -> value" for a number.
-    case "$(ask "Add a rating?   [y/n]   Esc = stop")" in
+    case "$(ask "Add a rating?   [y/n]   q = stop")" in
         y) v=$(mf gui prompt "Value for rate (integer): ") || v=""
            [ -n "$v" ] && mf metarecord -i "$uuid" field set "rate:int=$v" >/dev/null ;;
         n) : ;;
@@ -96,7 +97,7 @@ for abs in "$SORT_DIR"/*; do
     [ -n "$stop" ] && break
 
     #    (c) same pattern for free text.
-    case "$(ask "Add a comment?   [y/n]   Esc = stop")" in
+    case "$(ask "Add a comment?   [y/n]   q = stop")" in
         y) v=$(mf gui prompt "Comment: ") || v=""
            [ -n "$v" ] && mf metarecord -i "$uuid" field set "comment:string=$v" >/dev/null ;;
         n) : ;;

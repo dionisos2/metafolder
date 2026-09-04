@@ -520,6 +520,41 @@ pub fn answer_send(app: AppHandle, value: String) -> Result<(), String> {
     }
 }
 
+/// `script-keys:toggle` — the question bar's checkbox: whether a script's
+/// awaited keys still take priority over the GUI's own (spec-gui "Script
+/// keys"). Re-pushes the keytable so the temporary answer bindings follow the
+/// flag, and the question bar's checkbox with it. Returns the new value.
+#[tauri::command]
+pub fn script_keys_toggle(app: AppHandle) -> bool {
+    let enabled = app.gui.set_script_keys(!app.gui.script_keys_enabled());
+    crate::server::gui_api::push_keytable(&app.gui, &app.keybindings);
+    enabled
+}
+
+/// `script:stop [<task>]` — ends a running script (escape during its question,
+/// or a manual invocation). With no run id it stops the script asking the
+/// current question. A question owned by nobody has no script to stop: the wait
+/// is closed instead, so the GUI never keeps a bar for an answer that will
+/// never come.
+#[tauri::command]
+pub fn script_stop(app: AppHandle, task: Option<String>) -> Result<(), String> {
+    let task = task.or_else(|| app.gui.question().and_then(|q| q.task));
+    match task {
+        Some(task) => {
+            if crate::shell_exec::stop_script(&app.gui, &task) {
+                Ok(())
+            } else {
+                Err(format!("no running script '{task}' to stop"))
+            }
+        }
+        None => {
+            // Nothing to kill: just release whoever is waiting.
+            app.input.close_all();
+            Ok(())
+        }
+    }
+}
+
 /// A panel reported a `performance.measure` (the bench harness): append it to
 /// the buffer that `GET /gui/bench` reads.
 #[tauri::command]

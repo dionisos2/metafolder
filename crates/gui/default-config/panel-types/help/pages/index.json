@@ -54,6 +54,15 @@
     "aliases": ["input-history", "input history", "history", "recall"]
   },
   {
+    "id": "scripting",
+    "title": "Scripts and their questions",
+    "file": "scripting.html",
+    "aliases": [
+      "scripting", "script", "scripts", "script-keys", "script keys",
+      "question", "answer:send", "script:run", "script:stop"
+    ]
+  },
+  {
     "id": "command-input",
     "title": "Command input",
     "file": "command-input.html",

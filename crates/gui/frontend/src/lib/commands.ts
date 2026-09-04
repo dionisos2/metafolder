@@ -1080,6 +1080,19 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       // Resolves a script's POST /gui/input wait.
       await invoke('answer_send', { value: args.join(' ') });
       return true;
+    case 'script-keys:toggle': {
+      // The question bar's checkbox: hand the script's keys back to the panels,
+      // or take them again. Rust owns the flag and re-pushes the keytable, so
+      // the temporary answer bindings follow it (spec-gui "Script keys").
+      const enabled = await invoke<boolean>('script_keys_toggle');
+      await status(enabled ? 'script keys enabled' : 'script keys disabled', 'info');
+      return true;
+    }
+    case 'script:stop':
+      // Escape during a question, or a manual invocation: end the run (and the
+      // question with it). No argument = whichever script is asking.
+      await invoke('script_stop', { task: args[0] ?? null });
+      return true;
     case 'status:clear': {
       // Dismiss the transient status-bar message (and the last-command echo).
       const ws = focusedWs();

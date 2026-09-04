@@ -182,8 +182,13 @@ _mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
 
 # Ask a question and print the answer as a LETTER: each of y/n/m/s in <letters>
 # also awaits its arrow key, and the pressed arrow is folded back onto the
-# letter — so a caller's `case` only ever deals with y/n/m/s/escape.
-#     case "$(mf_gui_ask_answer "$msg" y n m s escape)" in ...
+# letter — so a caller's `case` only ever deals with y/n/m/s and its quit key.
+#
+# `escape` is NOT a key a script may await: the GUI keeps it to stop the script
+# outright, whatever keys the script grabbed (spec-gui "Reserved keys"), and
+# refuses a wait that asks for it. A script with cleanup to do offers `q`
+# instead — by convention the quit key of every shipped script.
+#     case "$(mf_gui_ask_answer "$msg" y n m s q)" in ...
 mf_gui_ask_answer() { # <message> <letter>...
     local msg=$1 letter arrow pressed
     shift
@@ -204,8 +209,10 @@ mf_gui_ask_answer() { # <message> <letter>...
 }
 
 # Ask a question in the GUI and wait for one key:
-#     key=$(mf_gui_ask "message" y n escape)
-# Prints the pressed key; 'escape' on timeout or a closed GUI. Targets the
+#     key=$(mf_gui_ask "message" y n q)
+# Prints the pressed key; 'escape' when the question could not be answered at
+# all — a timeout, a closed GUI, a refused wait — which every caller's default
+# branch stops on, like the quit key. Targets the
 # session workspace (WS) when one is open.
 mf_gui_ask() {
     local msg=$1 key why err rc

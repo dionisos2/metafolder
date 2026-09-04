@@ -85,6 +85,40 @@ fn normalize_chord(chord: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// Commands whose keybinding a script may never take over: they are the user's
+/// only ways out of a script's question (spec-gui "Reserved keys").
+const RESERVED_COMMANDS: [&str; 2] = ["command-input:activate", "script-keys:toggle"];
+
+/// The combos a script's `mf gui input` may not await: whatever opens the
+/// command input, whatever toggles the script keys, and `escape` (which always
+/// stops the script). Single chords only — a script awaits one key press, so a
+/// multi-chord sequence can never collide with it. Sorted and deduplicated.
+pub fn reserved_combos(compiled: &[CompiledBinding]) -> Vec<String> {
+    let mut combos: Vec<String> = compiled
+        .iter()
+        .filter(|b| {
+            b.keys.len() == 1
+                && RESERVED_COMMANDS
+                    .iter()
+                    .any(|c| b.invocation == *c || b.invocation.starts_with(&format!("{c} ")))
+        })
+        .map(|b| b.keys[0].clone())
+        .chain(std::iter::once("escape".to_string()))
+        .collect();
+    combos.sort();
+    combos.dedup();
+    combos
+}
+
+/// Whether `key` (a script's key name, in any case) is one of `reserved`.
+/// A malformed key is *not* reserved: the caller rejects it on its own terms.
+pub fn is_reserved(reserved: &[String], key: &str) -> bool {
+    match parse_combo(key) {
+        Ok(keys) if keys.len() == 1 => reserved.contains(&keys[0]),
+        _ => false,
+    }
+}
+
 /// A combo's TOML value: either a single binding or, when the same combo needs
 /// several `when`-scoped bindings (e.g. `down` in every list panel), an array
 /// of them.
@@ -535,5 +569,41 @@ mod tests {
         let escape = table.iter().find(|b| b.keys == ["escape"]).unwrap();
         assert!(escape.text_input);
         assert_eq!(escape.when, None);
+    }
+
+    #[test]
+    fn test_reserved_combos_are_the_exits_plus_escape() {
+        // The user's ways out of a script question must never be a script's to
+        // take (spec-gui "Reserved keys"): whatever opens the command input,
+        // whatever toggles the script keys, and escape.
+        let defaults = r#"
+":" = { command = "command-input:activate" }
+"ctrl+p" = { command = "command-input:activate" }
+"tab" = { command = "script-keys:toggle" }
+"y" = { command = "metarecord-list:next" }
+"g g" = { command = "metarecord-list:goto-top" }
+"#;
+        let set = KeybindingSet::from_sources(defaults, "").unwrap();
+        let reserved = reserved_combos(&set.compiled());
+        assert_eq!(reserved, vec![":", "ctrl+p", "escape", "tab"]);
+
+        // A script's key is compared normalized, so "Escape" and "CTRL+P" hit.
+        assert!(is_reserved(&reserved, "Escape"));
+        assert!(is_reserved(&reserved, "ctrl+P"));
+        assert!(is_reserved(&reserved, "tab"));
+        assert!(!is_reserved(&reserved, "y"));
+        // Garbage is not reserved: the caller reports it as a malformed key.
+        assert!(!is_reserved(&reserved, "ctrl+"));
+    }
+
+    #[test]
+    fn test_reserved_combos_ignore_sequences() {
+        // A multi-chord sequence cannot be a script key at all (a script awaits
+        // single presses), so it never enters the reserved set.
+        let defaults = r#"
+"g c" = { command = "command-input:activate" }
+"#;
+        let set = KeybindingSet::from_sources(defaults, "").unwrap();
+        assert_eq!(reserved_combos(&set.compiled()), vec!["escape"]);
     }
 }

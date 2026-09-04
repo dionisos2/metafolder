@@ -7,7 +7,7 @@
 pub mod bench;
 pub mod command_wait;
 mod fsraw;
-mod gui_api;
+pub mod gui_api;
 pub mod input_wait;
 mod panel_assets;
 mod thumbnail;

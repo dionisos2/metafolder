@@ -129,6 +129,17 @@ pop() {
 # 2. GUI key/value prompts come from their queues.
 case "$sig" in
     "gui input"*)
+        # The GUI refuses a wait that asks for one of the keys it keeps for the
+        # user (spec-gui "Reserved keys"): escape stops the script, tab toggles
+        # the script keys, ":" opens the command input. Refuse them here too, or
+        # a script asking for one would pass its tests and fail in the GUI.
+        for a in "$@"; do
+            case "$a" in
+                escape|tab|:)
+                    echo "'$a' is reserved by the GUI and cannot be awaited by a script" >&2
+                    exit 1 ;;
+            esac
+        done
         if v=$(pop "$dir/q/__input"); then
             # @fail: the wait could not even be registered (closed GUI, 409).
             [ "$v" = "@fail" ] && { echo "input wait ended: closed" >&2; exit 1; }

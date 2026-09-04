@@ -12,9 +12,10 @@ import { resolveClickTopic } from '../../../panel-shim/help.js';
 import { deepActiveElement, dispatch, hasEditingTarget, setFullscreen } from './commands';
 import { setHelpCursor } from './cursor';
 import {
+  activeQuestion,
   flashStatus,
   focusedPanelType,
-  inputWaitAnswer,
+  inputWaitAction,
   slotPayload,
   store,
 } from './store.svelte';
@@ -118,11 +119,19 @@ export function installKeys() {
       // "n"), which the general matcher would otherwise rank higher. Not while
       // a text input is focused, though — there the key is text the user is
       // typing (the temporary answer bindings are text_input=false likewise).
-      const answer = textInput ? null : inputWaitAnswer(store.ui.inputWait, combo);
-      if (answer) {
+      // Turning the script keys off at the question bar's checkbox gives every
+      // key back to the panels; escape always stops the asking script.
+      const action = textInput
+        ? null
+        : inputWaitAction(activeQuestion(), store.ui.scriptKeys, combo);
+      if (action) {
         event.preventDefault();
         event.stopPropagation();
-        void dispatch(`answer:send ${answer}`);
+        void dispatch(
+          action.kind === 'answer'
+            ? `answer:send ${action.value}`
+            : `script:stop${action.task ? ` ${action.task}` : ''}`,
+        );
         return;
       }
       // setBindings resets the sequence buffer: only on real changes.
