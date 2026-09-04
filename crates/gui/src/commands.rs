@@ -35,6 +35,8 @@ pub struct App {
     pub cache_sizes: crate::config::CacheSizes,
     /// Shared panel UX timing knobs (config.toml `[panels]`).
     pub panel_settings: crate::config::PanelSettings,
+    /// Per-panel-type default values (config.toml `[panel-defaults.<type>]`).
+    pub panel_defaults: crate::config::PanelDefaults,
     /// Per-field `ref` picker seed queries (config.toml `[picker-seeds]`).
     pub picker_seeds: std::collections::HashMap<String, String>,
     /// Per-field `ref` value completion seeds (config.toml
@@ -99,6 +101,9 @@ pub struct InitialState {
     pub cache_sizes: crate::config::CacheSizes,
     /// Shared panel UX timing knobs, exposed to panels as `metafolder.settings`.
     pub panel_settings: crate::config::PanelSettings,
+    /// Per-panel-type defaults, exposed to each panel as `metafolder.defaults`
+    /// (keyed by panel-type name).
+    pub panel_defaults: crate::config::PanelDefaults,
     /// Session token (spec-auth): the shell attaches it to requests to the GUI
     /// server's protected routes (`/fsraw`, `/thumbnail`, `/__media-probe`).
     pub session_token: String,
@@ -118,6 +123,7 @@ pub fn get_initial_state(app: AppHandle) -> Result<InitialState, String> {
         page_sizes: app.page_sizes.clone(),
         cache_sizes: app.cache_sizes.clone(),
         panel_settings: app.panel_settings.clone(),
+        panel_defaults: app.panel_defaults.clone(),
         session_token: app.gui_token.to_string(),
     })
 }

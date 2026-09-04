@@ -43,6 +43,7 @@ function stubApi(handlers: Map<string, Handler>, initial: Record<string, unknown
     sessionToken: 'token',
     pageSize: 100,
     settings: {},
+    defaults: {},
     visible: false,
     onVisibility: noop,
     whenVisible: noop, // keep start() from running (no eager fetch)

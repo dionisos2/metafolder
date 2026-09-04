@@ -58,6 +58,9 @@ export interface PanelApiCtx {
   pageSize?: number;
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
   panelSettings?: Record<string, number>;
+  /** This panel type's default values (config.toml `[panel-defaults.<type>]`),
+   *  kebab-cased keys, values verbatim from the TOML. */
+  panelDefaults?: Record<string, unknown>;
   root: ShadowRoot;
   visibilityGate: VisibilityGate;
 }
@@ -71,6 +74,16 @@ export interface PanelApiInstance {
   pushMessageAppended(entry: unknown): void;
   /** The panel's slot visibility changed. */
   pushVisibility(visible: boolean, slot: string | null): void;
+}
+
+/** `a-b-c` → `aBC`: config tables are written in kebab-case (like the rest of
+ *  `config.toml`), panels read them as JS properties. */
+function camelCaseKeys(table: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(table)) {
+    out[key.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase())] = value;
+  }
+  return out;
 }
 
 export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiInstance {
@@ -176,6 +189,13 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     taskPollMs: raw['task-poll-ms'],
   });
 
+  // This panel type's configured defaults (config.toml
+  // `[panel-defaults.<panel-type>]`), exposed as a frozen camelCase object.
+  // Untyped on purpose: panel types are user-extensible, so the shell passes
+  // the table through and each panel reads the keys it knows, falling back to
+  // its own constant for a key the user did not configure.
+  const panelDefaults = Object.freeze(camelCaseKeys(ctx.panelDefaults ?? {})) as Metafolder.Defaults;
+
   // Menus render in the shell document (showMenu appends there), so viewport
   // coordinates stay correct across shadow boundaries. Callable *and* carrying
   // `addDefaultItems`: an object literal cannot satisfy a call signature, hence
@@ -222,6 +242,13 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     // so panels should read them as `metafolder.settings.xxx ?? <fallback>`.
     get settings() {
       return panelSettings;
+    },
+    // Configured defaults for this panel type (config.toml
+    // `[panel-defaults.<panel-type>]`), as a frozen camelCase object. A key the
+    // user did not configure is undefined, so panels read them as
+    // `metafolder.defaults.xxx ?? <fallback>`.
+    get defaults() {
+      return panelDefaults;
     },
 
     onVisibility(listener: (visible: boolean, slot: string | null) => void) {

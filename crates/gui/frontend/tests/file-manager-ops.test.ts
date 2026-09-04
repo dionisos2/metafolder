@@ -63,6 +63,7 @@ function stub(repo: string | null) {
     panelType: 'file-manager',
     pageSize: 100,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
+    defaults: {},
     visible: true,
     onVisibility: noop,
     // Run the deferred start immediately so currentDir is populated.

@@ -86,6 +86,7 @@
         sessionToken: store.sessionToken,
         pageSize: store.pageSizes[panelType],
         panelSettings: store.panelSettings,
+        panelDefaults: store.panelDefaults[panelType],
         root: shadow,
         visibilityGate,
       },

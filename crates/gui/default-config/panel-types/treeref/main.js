@@ -11,6 +11,9 @@ import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
 import { childrenQuery, treeNameOf, treeRefPath } from './queries.js';
 
 const PAGE_DEFAULT = 200;
+// The tree_ref field the panel opens on. The effective value comes from the
+// GUI config (`[panel-defaults.treeref].field`), overridden by the stored
+// `treeref:field` workspace variable; this is only the fallback.
 const DEFAULT_FIELD = 'mfr_path';
 
 /**
@@ -23,10 +26,11 @@ const DEFAULT_FIELD = 'mfr_path';
 export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, cache } = metafolder;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
+  const defaultField = metafolder.defaults.field ?? DEFAULT_FIELD;
 
   /** @type {string|null} */
   let repo = null;
-  let field = DEFAULT_FIELD;
+  let field = defaultField;
   /** @type {Node[]} the path from a forest root to the current node */
   let stack = [];
   /** @type {Node[]} the current node's direct children */

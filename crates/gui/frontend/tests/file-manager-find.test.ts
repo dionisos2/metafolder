@@ -62,6 +62,7 @@ function stub() {
     panelType: 'file-manager',
     pageSize: 100,
     settings: { statusMessageMs: 1000, statusErrorMs: 2000 },
+    defaults: {},
     visible: true,
     onVisibility: noop,
     whenVisible: (fn: () => void) => fn(),

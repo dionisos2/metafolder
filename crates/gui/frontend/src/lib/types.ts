@@ -67,6 +67,9 @@ export interface InitialState {
   cache_sizes: CacheSizes;
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
   panel_settings: Record<string, number>;
+  /** Per-panel-type defaults, keyed by panel-type name (config.toml
+   *  `[panel-defaults.<type>]`); each table's keys are kebab-cased. */
+  panel_defaults: Record<string, Record<string, unknown>>;
   /** Session token (spec-auth) for the GUI server's protected routes. */
   session_token: string;
 }

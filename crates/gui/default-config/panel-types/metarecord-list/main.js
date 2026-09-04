@@ -30,17 +30,38 @@ import {
 // this is only the fallback, and the per-workspace page-size variable still
 // overrides it.
 const DEFAULT_PAGE_SIZE_FALLBACK = 100;
+// Initial table columns. The effective value comes from the GUI config
+// (`[panel-defaults.metarecord-list].columns`), overridden in turn by the
+// per-workspace `metarecord-list:columns` variable; this is only the fallback.
 const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
 // Fields the finder (quick OSM filter) searches by default, each with an
 // explicit mode (`field:path` for the tree_ref path, `field:direct` for a plain
 // value) so it never depends on the async field catalog. A bare `field` (no
 // mode) auto-detects from the catalog. Missing fields contribute nothing.
-// Overridable per workspace via `metarecord-list:finder-fields`.
+// Configured by `[panel-defaults.metarecord-list].finder-fields`, overridable
+// per workspace via `metarecord-list:finder-fields`.
 const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:direct', 'name:direct'];
 // Idle delay before the finder re-runs the query, so a burst of typing sends
 // one request rather than one per keystroke.
 const FINDER_DEBOUNCE_MS = 500;
-const GRID_NAME_COLUMN = parseColumns('mfr_path:path')[0];
+// The column shown as a tile's name in grid mode
+// (`[panel-defaults.metarecord-list].grid-name-column`).
+const DEFAULT_GRID_NAME_COLUMN = 'mfr_path:path';
+
+/**
+ * Parses a columns spec, falling back to `fallback` when it is missing, empty
+ * or invalid — a bad configured value must never break the panel.
+ * @param {string|undefined} spec @param {string} fallback @returns {Column[]}
+ */
+function parseColumnsOr(spec, fallback) {
+  try {
+    const parsed = parseColumns(spec ?? '');
+    if (parsed.length > 0) return parsed;
+  } catch {
+    /* invalid spec (stale config or persisted value): fall back */
+  }
+  return parseColumns(fallback);
+}
 
 /**
  * A column spec, as ./columns.js parses it.
@@ -67,13 +88,22 @@ export async function mount(root, metafolder) {
   // UX timing knobs (config.toml `[panels]`), with the module fallbacks below.
   const { settings } = metafolder;
   const finderDebounceMs = settings.finderDebounceMs ?? FINDER_DEBOUNCE_MS;
+  // Initial values from the GUI config (`[panel-defaults.metarecord-list]`),
+  // with the module constants as fallbacks. A value persisted per workspace
+  // (columns, finder fields) still wins over both.
+  const defaultColumns = metafolder.defaults.columns ?? DEFAULT_COLUMNS;
+  const defaultFinderFields = metafolder.defaults.finderFields ?? DEFAULT_FINDER_FIELDS;
+  const gridNameColumn = parseColumnsOr(
+    metafolder.defaults.gridNameColumn,
+    DEFAULT_GRID_NAME_COLUMN,
+  )[0];
   const livePreviewMs = settings.livePreviewDebounceMs ?? 130;
   const statusMessageMs = settings.statusMessageMs ?? 5000;
 
   /** @type {string|null} */
   let repo = null;
   /** @type {Column[]} persisted per workspace (spec strings) */
-  let columns = parseColumns(DEFAULT_COLUMNS);
+  let columns = parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
   /** @type {Record<string, number>} column spec -> px; persisted per workspace */
   let widths = {};
   /** @type {Metafolder.Metarecord[]} */
@@ -94,7 +124,7 @@ export async function mount(root, metafolder) {
   let orphanUuids = [];
   let finderText = ''; // quick OSM filter, AND-ed onto the base query
   /** @type {string[]} */
-  let finderFields = DEFAULT_FINDER_FIELDS.slice();
+  let finderFields = defaultFinderFields.slice();
   /** @type {ReturnType<typeof setTimeout>|undefined} */
   let finderTimer;
   let normalShown = true; // zone B (normal DSL) revealed? (default: yes)
@@ -571,7 +601,7 @@ export async function mount(root, metafolder) {
           el(
             'div',
             { class: 'name' },
-            cellQuickText(GRID_NAME_COLUMN, metarecord) || metarecord.uuid.slice(0, 8),
+            cellQuickText(gridNameColumn, metarecord) || metarecord.uuid.slice(0, 8),
           ),
         );
         fillOrphan(card, metarecord);
@@ -844,7 +874,7 @@ export async function mount(root, metafolder) {
     } catch {
       /* stale persisted value: fall back to the defaults */
     }
-    columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
+    columns = parsed.length > 0 ? parsed : parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
     columnsInput.value = columns.map((c) => c.spec).join(' ');
   }
 
@@ -859,7 +889,7 @@ export async function mount(root, metafolder) {
       columnsError.textContent = messageOf(error);
       return;
     }
-    columns = parsed.length > 0 ? parsed : parseColumns(DEFAULT_COLUMNS);
+    columns = parsed.length > 0 ? parsed : parseColumnsOr(defaultColumns, DEFAULT_COLUMNS);
     columnsInput.value = columns.map((c) => c.spec).join(' ');
     await reresolveColumns();
     render();
@@ -1469,7 +1499,7 @@ export async function mount(root, metafolder) {
     if (queryRan) void fetchPage(true);
   });
   workspace.onChange('metarecord-list:finder-fields', (value) => {
-    finderFields = Array.isArray(value) && value.length ? value : DEFAULT_FINDER_FIELDS.slice();
+    finderFields = Array.isArray(value) && value.length ? value : defaultFinderFields.slice();
     updateFinderFieldsLabel();
     if (queryRan) void fetchPage(true);
   });
@@ -1487,7 +1517,7 @@ export async function mount(root, metafolder) {
   finderFields =
     Array.isArray(storedFinderFields) && storedFinderFields.length
       ? storedFinderFields
-      : DEFAULT_FINDER_FIELDS.slice();
+      : defaultFinderFields.slice();
   updateFinderFieldsLabel();
 
   // Restore the two-zone query editor (values only — no daemon call here).

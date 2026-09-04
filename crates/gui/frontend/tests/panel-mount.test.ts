@@ -43,7 +43,7 @@ function shadowFor(panelType: string): ShadowRoot {
 }
 
 /** A metafolder API that answers everything with an empty result. */
-function stubApi(panelType: string) {
+function stubApi(panelType: string, defaults: Record<string, unknown> = {}) {
   const noop = () => {};
   return {
     ready: Promise.resolve(),
@@ -53,6 +53,7 @@ function stubApi(panelType: string) {
     sessionToken: 'token',
     pageSize: 100,
     settings: {},
+    defaults,
     visible: false,
     onVisibility: noop,
     whenVisible: noop,
@@ -101,6 +102,55 @@ function stubApi(panelType: string) {
     contextMenu: Object.assign(noop, { addDefaultItems: noop }),
   };
 }
+
+describe('panel defaults come from the GUI config', () => {
+  // `[panel-defaults.<panel-type>]` reaches a panel as `metafolder.defaults`;
+  // each panel opens on those values instead of its own module constants.
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => new Response('[]', { status: 200 })),
+  );
+
+  test('metarecord-list opens on the configured columns and finder fields', async () => {
+    const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
+    const root = shadowFor('metarecord-list');
+    await mod.mount(
+      root,
+      stubApi('metarecord-list', {
+        columns: 'label mfr_type',
+        finderFields: ['label:direct', 'name:direct'],
+      }) as unknown as Metafolder.Api,
+    );
+    expect((root.getElementById('columns-input') as HTMLInputElement).value).toBe(
+      'label mfr_type',
+    );
+    expect(root.getElementById('finder-fields')?.textContent).toBe('label name');
+  });
+
+  test('metarecord-list falls back to its own defaults on an invalid columns spec', async () => {
+    const mod = await import('../../default-config/panel-types/metarecord-list/main.js');
+    const root = shadowFor('metarecord-list');
+    await mod.mount(
+      root,
+      stubApi('metarecord-list', { columns: 'label:nonsense' }) as unknown as Metafolder.Api,
+    );
+    expect((root.getElementById('columns-input') as HTMLInputElement).value).toBe(
+      'mfr_path:path mfr_type &version',
+    );
+  });
+
+  test('treeref opens on the configured tree_ref field', async () => {
+    const mod = await import('../../default-config/panel-types/treeref/main.js');
+    const root = shadowFor('treeref');
+    await mod.mount(
+      root,
+      stubApi('treeref', { field: 'path' }) as unknown as Metafolder.Api,
+    );
+    // The button carries the select widget's caret after the field name, and
+    // `toContain` would pass on the `mfr_path` fallback too — strip and compare.
+    expect(root.getElementById('field')?.textContent?.replace(/\W/g, '')).toBe('path');
+  });
+});
 
 describe('every panel mounts against its own markup', () => {
   // The help panel fetches its page manifest at mount; the others touch no network.

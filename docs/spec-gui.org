@@ -758,6 +758,42 @@ is exposed to panels through =metafolder.config.refCompletionSeed(field)=. The
 tag model's three ref fields (=tag= / =negative_tag= / =mixed_tag=) are seeded by
 default against their =path= hierarchy.
 
+** Panel defaults
+
+A panel's *initial* values — the columns =metarecord-list= opens on, the
+=tree_ref= field =treeref= explores, which extensions the =file= panel previews
+as text — are user configuration, not constants baked into the panel code. They
+live in =~/.config/metafolder/gui/config.toml=, one table per panel type:
+
+#+BEGIN_SRC toml
+[panel-defaults.metarecord-list]
+columns       = "mfr_path:path mfr_type &version"
+finder-fields = ["mfr_path:path", "label:direct", "name:direct"]
+
+[panel-defaults.treeref]
+field = "mfr_path"
+#+END_SRC
+
+Each table is handed to the panel of that name (and to no other) as
+=metafolder.defaults=, with the keys camelCased — so a *custom* panel type gets
+its own defaults the same way, with no Rust-side knowledge of its keys: the
+tables are passed through verbatim. Three rules make the mechanism safe:
+
+- *Every key is optional.* An absent key (or table) leaves the panel on its own
+  module fallback, so a minimal =config.toml= still runs and a new panel
+  default never breaks an existing configuration.
+- *A bad value falls back, it never breaks the panel.* An invalid columns spec
+  or a non-numeric limit is ignored in favour of the built-in value.
+- *Persisted state still wins.* Where a panel already stores the setting per
+  workspace (=metarecord-list:columns=, =metarecord-list:finder-fields=,
+  =treeref:field=), the configured default is only the value used when nothing
+  is stored yet.
+
+Timing knobs shared by *all* panels (=[panels]=: status durations, debounces)
+and the per-panel page sizes (=[page-size]=) stay in their own tables, reaching
+panels as =metafolder.settings= / =metafolder.pageSize=. What belongs in
+=[panel-defaults]= is what one panel type alone gives meaning to.
+
 ** Tab bar
 
 A row of tabs at the top of the window. Each tab represents one workspace.
@@ -1499,6 +1535,17 @@ side.
 const seed = (await metafolder.config.pickerSeed('tag')) ?? undefined
 #+END_SRC
 
+**** =metafolder.defaults=
+
+This panel type's *configured defaults*: the =[panel-defaults.<panel-type>]=
+table of =~/.config/metafolder/gui/config.toml=, handed over synchronously as a
+frozen object with the keys camelCased (=text-preview-limit= reads as
+=textPreviewLimit=). See [[*Panel defaults]].
+
+#+BEGIN_SRC js
+const columns = metafolder.defaults.columns ?? DEFAULT_COLUMNS
+#+END_SRC
+
 **** =metafolder.commands= and =metafolder.addKeybinding=
 
 #+BEGIN_SRC js
@@ -1722,8 +1769,12 @@ of the panel (see [[*Query editor (two zones)]]). An empty query matches all
 metarecords.
 
 Default display mode: =table= with columns =mfr_path:path= (resolved path),
-=mfr_type=, =&version=. The =metarecord-list:set-mode= command switches between
-display modes.
+=mfr_type=, =&version= — configurable as
+=[panel-defaults.metarecord-list].columns= (see [[*Panel defaults]]), and
+overridden by the stored =metarecord-list:columns= of the workspace. The
+=metarecord-list:set-mode= command switches between display modes; grid mode
+names each tile with =[panel-defaults.metarecord-list].grid-name-column=
+(default =mfr_path:path=).
 
 The columns input is a separate row below the query editor, with its own
 /Apply/ button (=metarecord-list:focus-columns= focuses it). The panel always
@@ -1799,9 +1850,11 @@ in the =metarecord-list:effective-query= workspace variable on every fetch, so
 another panel — the =metarecord-detail= bulk field-edit commands — can target
 exactly what the list shows, the live finder narrowing included.
 
-The searched fields default to =mfr_path:path label:direct name:direct= and are
-overridable per workspace via the =metarecord-list:finder-fields= variable (a
-list of =field= or =field:mode= entries); a value picker may seed it. The finder
+The searched fields default to =mfr_path:path label:direct name:direct=,
+configurable as =[panel-defaults.metarecord-list].finder-fields= (see
+[[*Panel defaults]]) and overridable per workspace via the
+=metarecord-list:finder-fields= variable (a list of =field= or =field:mode=
+entries); a value picker may seed it. The finder
 text itself persists in =metarecord-list:finder=. When the panel is opened as a
 value picker (its workspace has a =pick_request=), the finder is focused on
 first display.
@@ -1923,6 +1976,16 @@ depending on the file type; falls back to a plain-text view for text files;
 shows "no preview available" for unsupported formats. Works with both tracked
 and untracked files.
 
+Which extensions take which route — and how much of a text file is read into
+the preview — is configuration, not a constant:
+=[panel-defaults.file].image-extensions= / =audio-extensions= /
+=video-extensions= / =text-extensions= and =text-preview-limit= (default 256
+KiB, fetched with a =Range= header so a multi-GB log only pulls that prefix).
+See [[*Panel defaults]]. The text extensions are a *fast path*, not the only
+way in: any other extension is decided by sniffing the fetched bytes, so an
+unlisted script still previews — while a listed one previews even when the
+sniff would reject its encoding (UTF-16 holds NULs).
+
 GIFs are shown as a still of their first frame by default (an animation
 looping in a preview is more often a distraction than wanted). While a GIF is
 previewed, the media toolbar shows an *animate* checkbox (unchecked by
@@ -1961,6 +2024,10 @@ focused):
 | =file:zoom-out=   | =-=         | Shrink by one step                                  |
 | =file:zoom-fit=   | ~=~         | Fit the available space (aspect preserved) — default |
 | =file:zoom-reset= | =0=         | Original (1:1) size                                 |
+
+The step and the bounds of a manual zoom are configurable
+(=[panel-defaults.file].zoom-step= / =zoom-min= / =zoom-max=, defaults 1.25 /
+0.05 / 40 — see [[*Panel defaults]]).
 
 "Fit" fills the viewer, scaling to whichever of full width or full height comes
 first without distortion. A manual zoom (=+= / =-= / =0=) sizes the media in
@@ -2145,7 +2212,8 @@ by the daemon. The primary use is observing a tag hierarchy.
 
 *Field picker*: a dropdown of the repo's TreeRef field names
 (=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
-default. Changing the field resets navigation to the roots. =treeref:set-field=
+default, configurable as =[panel-defaults.treeref].field= (see
+[[*Panel defaults]]) and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set-field=
 (=f=) is its keyboard equivalent: it asks for the field name in the command
 input, completing over the same list and pre-filled with the current field, and
 mirrors the pick back into the dropdown.

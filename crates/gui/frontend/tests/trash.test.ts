@@ -82,6 +82,7 @@ function stub() {
   const statusBar = { message: vi.fn(async () => {}), error: vi.fn(async () => {}) };
   const api = {
     settings: {},
+    defaults: {},
     trash,
     workspace,
     statusBar,

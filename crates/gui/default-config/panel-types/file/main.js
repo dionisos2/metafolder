@@ -31,6 +31,8 @@ import { fetchMounts, offlineMountFor, relativeTo, unavailableLabel } from '/__m
 // the fallback when no config value is provided.
 const DIR_PAGE_DEFAULT = 150;
 
+// Extension sets and viewer limits below are *fallbacks*: the effective values
+// come from the GUI config (`[panel-defaults.file]`), read in `mount`.
 const IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']);
 const AUDIO = new Set(['mp3', 'ogg', 'oga', 'flac', 'wav', 'm4a', 'opus', 'wma', 'aac']);
 const VIDEO = new Set([
@@ -52,6 +54,23 @@ const ZOOM_STEP = 1.25;
 const ZOOM_MIN = 0.05;
 const ZOOM_MAX = 40;
 
+/** A configured extension list as a lowercase Set, or `fallback` when the
+ *  config has none (or something that is not a list of strings).
+ *  @param {unknown} configured @param {Set<string>} fallback */
+function extensionSet(configured, fallback) {
+  if (!Array.isArray(configured)) return fallback;
+  const extensions = configured.filter((e) => typeof e === 'string');
+  return extensions.length ? new Set(extensions.map((e) => e.toLowerCase())) : fallback;
+}
+
+/** A configured number, or `fallback` when it is missing or not a finite one.
+ *  @param {unknown} configured @param {number} fallback */
+function positiveNumber(configured, fallback) {
+  return typeof configured === 'number' && Number.isFinite(configured) && configured > 0
+    ? configured
+    : fallback;
+}
+
 /**
  * The metarecord the selection points at, as metarecord-list publishes it.
  * @typedef {{uuid: string, repo: string}} Selected
@@ -67,6 +86,17 @@ export async function mount(root, metafolder) {
   const { workspace, fs, commands, daemon, statusBar } = metafolder;
   const dirPage = metafolder.pageSize ?? DIR_PAGE_DEFAULT;
   const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
+  // Which extensions preview as what, and the viewer's limits (GUI config
+  // `[panel-defaults.file]`, falling back to the module constants above).
+  const { defaults } = metafolder;
+  const image = extensionSet(defaults.imageExtensions, IMAGE);
+  const audio = extensionSet(defaults.audioExtensions, AUDIO);
+  const video = extensionSet(defaults.videoExtensions, VIDEO);
+  const text = extensionSet(defaults.textExtensions, TEXT);
+  const textPreviewLimit = positiveNumber(defaults.textPreviewLimit, TEXT_PREVIEW_LIMIT);
+  const zoomStep = positiveNumber(defaults.zoomStep, ZOOM_STEP);
+  const zoomMin = positiveNumber(defaults.zoomMin, ZOOM_MIN);
+  const zoomMax = positiveNumber(defaults.zoomMax, ZOOM_MAX);
 
   /** @type {string[]} */
   let paths = [];
@@ -238,7 +268,7 @@ export async function mount(root, metafolder) {
     if (!zoomTarget) return;
     if (zoomMode === 'fit') zoomFactor = shownScale(zoomTarget) || 1;
     zoomMode = 'manual';
-    zoomFactor = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoomFactor * mult));
+    zoomFactor = Math.min(zoomMax, Math.max(zoomMin, zoomFactor * mult));
     applyZoom();
   }
 
@@ -611,7 +641,7 @@ export async function mount(root, metafolder) {
     detachDirScroll = pager.attach(grid);
   }
 
-  // Text preview. Fetches only the first `TEXT_PREVIEW_LIMIT` bytes (the GUI
+  // Text preview. Fetches only the first `textPreviewLimit` bytes (the GUI
   // server honours the Range header — 206 Partial Content — so even a multi-GB
   // log only pulls this capped prefix into memory), then either renders it as a
   // <pre> or, when `force` is false and the bytes look binary, gives up.
@@ -631,7 +661,7 @@ export async function mount(root, metafolder) {
     const current = () => generation === renderGeneration;
     try {
       const response = await fetch(url, {
-        headers: { range: `bytes=0-${TEXT_PREVIEW_LIMIT - 1}` },
+        headers: { range: `bytes=0-${textPreviewLimit - 1}` },
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const bytes = new Uint8Array(await response.arrayBuffer());
@@ -643,7 +673,7 @@ export async function mount(root, metafolder) {
       const text = new TextDecoder().decode(bytes);
       const pre = el('pre', {}, text);
       viewer.replaceChildren(pre);
-      if (response.status === 206 && bytes.length >= TEXT_PREVIEW_LIMIT) {
+      if (response.status === 206 && bytes.length >= textPreviewLimit) {
         pre.textContent += '\n… (truncated preview)';
       }
     } catch (error) {
@@ -699,7 +729,7 @@ export async function mount(root, metafolder) {
     const extension = (path.split('.').pop() ?? '').toLowerCase();
     const url = rawUrl(path);
 
-    if (IMAGE.has(extension)) {
+    if (image.has(extension)) {
       const gif = extension === 'gif';
       gifAnimateWrap.hidden = !gif;
       const img = el('img', { onerror: () => placeholder('cannot load the file') });
@@ -720,9 +750,9 @@ export async function mount(root, metafolder) {
       }
       viewer.replaceChildren(img);
       setZoomTarget(img);
-    } else if (AUDIO.has(extension) || VIDEO.has(extension)) {
-      await renderMedia(VIDEO.has(extension) ? 'video' : 'audio', path, url, generation);
-    } else if (TEXT.has(extension)) {
+    } else if (audio.has(extension) || video.has(extension)) {
+      await renderMedia(video.has(extension) ? 'video' : 'audio', path, url, generation);
+    } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
       await renderText(url, generation, true);
     } else {
@@ -785,11 +815,11 @@ export async function mount(root, metafolder) {
   // their toolbar buttons. The handlers no-op unless an image/video is shown.
   void commands.register('file:zoom-in', {
     label: 'File: zoom in',
-    handler: () => zoomBy(ZOOM_STEP),
+    handler: () => zoomBy(zoomStep),
   });
   void commands.register('file:zoom-out', {
     label: 'File: zoom out',
-    handler: () => zoomBy(1 / ZOOM_STEP),
+    handler: () => zoomBy(1 / zoomStep),
   });
   void commands.register('file:zoom-fit', {
     label: 'File: fit to the available space',
@@ -926,8 +956,8 @@ export async function mount(root, metafolder) {
     });
   });
 
-  byId(root, 'zoom-in').addEventListener('click', () => zoomBy(ZOOM_STEP));
-  byId(root, 'zoom-out').addEventListener('click', () => zoomBy(1 / ZOOM_STEP));
+  byId(root, 'zoom-in').addEventListener('click', () => zoomBy(zoomStep));
+  byId(root, 'zoom-out').addEventListener('click', () => zoomBy(1 / zoomStep));
   byId(root, 'zoom-fit').addEventListener('click', zoomFit);
   byId(root, 'zoom-reset').addEventListener('click', zoomReset);
 

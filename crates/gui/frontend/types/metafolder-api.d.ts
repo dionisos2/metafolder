@@ -70,6 +70,37 @@ declare namespace Metafolder {
     taskPollMs?: number;
   }
 
+  /** Per-panel-type defaults from `config.toml` (`[panel-defaults.<type>]`),
+   *  camelCased. Every key is optional: an unconfigured one is undefined and
+   *  the panel falls back to its own module constant. The built-in panels'
+   *  keys are declared for type-checking; the index signature carries a custom
+   *  panel type's own keys, which the GUI knows nothing about. */
+  interface Defaults {
+    /** metarecord-list: initial table columns (columns-input syntax). */
+    columns?: string;
+    /** metarecord-list: fields the finder searches (`field[:mode]`). */
+    finderFields?: string[];
+    /** metarecord-list: the column shown as a tile's name in grid mode. */
+    gridNameColumn?: string;
+    /** treeref: the tree_ref field whose forest the panel opens on. */
+    field?: string;
+    /** file: extensions previewed as an image. */
+    imageExtensions?: string[];
+    /** file: extensions played as audio. */
+    audioExtensions?: string[];
+    /** file: extensions played as video. */
+    videoExtensions?: string[];
+    /** file: extensions taking the text-preview fast path. */
+    textExtensions?: string[];
+    /** file: bytes of a text file read into the preview. */
+    textPreviewLimit?: number;
+    /** file: image zoom step (a multiplier) and bounds. */
+    zoomStep?: number;
+    zoomMin?: number;
+    zoomMax?: number;
+    readonly [key: string]: unknown;
+  }
+
   interface Bench {
     measure<T>(name: string, fn: () => T): T;
     record(name: string, durationMs: number): void;
@@ -406,6 +437,9 @@ declare namespace Metafolder {
      *  (config.toml `[page-size]`); undefined for panels without an entry. */
     readonly pageSize: number | undefined;
     readonly settings: Settings;
+    /** This panel type's configured defaults (config.toml
+     *  `[panel-defaults.<panel-type>]`); `{}` when the user configured none. */
+    readonly defaults: Defaults;
     readonly visible: boolean;
     onVisibility(listener: (visible: boolean, slot: string | null) => void): void;
     whenVisible(fn: () => void): void;

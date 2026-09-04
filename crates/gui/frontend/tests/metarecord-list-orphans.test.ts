@@ -59,6 +59,7 @@ function stubApi(handlers: Map<string, Handler>, calls: Call[], orphans: () => s
       sessionToken: 'token',
       pageSize: 100,
       settings: {},
+      defaults: {},
       visible: true,
       onVisibility: noop,
       whenVisible: (fn: () => void) => fn(),

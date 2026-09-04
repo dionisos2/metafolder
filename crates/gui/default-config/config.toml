@@ -110,3 +110,52 @@ tag          = 'path'
 negative_tag = 'path'
 mixed_tag    = 'path'
 # author       = 'full_name'
+
+# Per-panel-type default values (spec-gui "Panel defaults"). Each table is
+# handed verbatim to the panel of that name as `metafolder.defaults` (keys
+# camelCased: `text-preview-limit` reads as `metafolder.defaults.textPreviewLimit`),
+# so a custom panel type gets its own table the same way — the GUI knows
+# nothing about the keys. Omit a key (or the whole table) and the panel falls
+# back to the built-in value shown below. These are *initial* values: where a
+# panel persists the setting per workspace (columns, finder fields, the treeref
+# field), the stored workspace value still wins.
+
+[panel-defaults.metarecord-list]
+# Columns of the table mode, in the columns input's own syntax.
+columns = "mfr_path:path mfr_type &version"
+# Fields the finder (quick OSM filter) searches, each with an explicit mode
+# (`field:path` for a tree_ref's assembled path, `field:direct` for a plain
+# value); a bare `field` auto-detects from the field catalog. A missing field
+# contributes nothing, so listing one that only some repos have is safe.
+finder-fields = ["mfr_path:path", "label:direct", "name:direct"]
+# The column shown as each tile's name in grid mode.
+grid-name-column = "mfr_path:path"
+
+[panel-defaults.treeref]
+# The tree_ref field whose forest the panel opens on.
+field = "mfr_path"
+
+[panel-defaults.file]
+# Extensions previewed as an image / played as audio / played as video. These
+# decide what the preview *tries*; a codec the WebView cannot decode is
+# reported by the media probe regardless.
+image-extensions = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"]
+audio-extensions = ["mp3", "ogg", "oga", "flac", "wav", "m4a", "opus", "wma", "aac"]
+video-extensions = [
+  "mp4", "webm", "mkv", "mov", "avi", "wmv", "m4v", "mpg", "mpeg", "flv", "3gp", "ts", "m2ts",
+]
+# Known text extensions: a *fast path* to the text preview, not the only way in
+# (any other extension is decided by sniffing the bytes), and the way a file
+# whose encoding the sniff rejects (UTF-16 holds NULs) still previews. Add an
+# extension here rather than expecting the sniff to cover it.
+text-extensions = [
+  "txt", "md", "org", "json", "toml", "yaml", "yml", "xml", "html", "css", "js", "ts",
+  "rs", "py", "sh", "c", "h", "cpp", "java", "log", "csv", "ini", "conf",
+]
+# Bytes of a text file read into the preview (the rest is elided). Default: 256 KiB.
+text-preview-limit = 262144
+# Image zoom: a step multiplies the current scale; the bounds keep the manual
+# size sane.
+zoom-step = 1.25
+zoom-min = 0.05
+zoom-max = 40

@@ -110,6 +110,15 @@ impl Default for PanelSettings {
     }
 }
 
+/// Per-panel-type default values (the `[panel-defaults.<panel-type>]` tables of
+/// `config.toml`), handed to each panel as `metafolder.defaults` (spec-gui
+/// "Panel defaults"). Deliberately untyped: panel types are user-extensible, so
+/// the GUI cannot know a custom panel's keys — a table is passed through to its
+/// panel verbatim, and each panel keeps its own module fallback for a key the
+/// user did not configure.
+pub type PanelDefaults =
+    std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>>;
+
 /// GUI settings read from `~/.config/metafolder/gui/config.toml` (spec-config;
 /// spec-gui "Connection to the daemon"). Missing fields fall back to the
 /// defaults below — notably the daemon's own default port, so a fresh install
@@ -130,6 +139,9 @@ pub struct GuiConfig {
     pub cache: CacheSizes,
     /// UX timing knobs shared by the panels (`[panels]`).
     pub panels: PanelSettings,
+    /// Per-panel-type default values (`[panel-defaults.<panel-type>]`), passed
+    /// through to each panel as `metafolder.defaults`.
+    pub panel_defaults: PanelDefaults,
     /// Per-field-name seed queries for `ref` value pickers (spec-gui "Picker
     /// seeds"), read from the `[picker-seeds]` table: field name → query text
     /// (in the `metarecord-list` query box's syntax, where the seed is injected).
@@ -179,6 +191,7 @@ impl Default for GuiConfig {
             settings: Settings::default(),
             cache: CacheSizes::default(),
             panels: PanelSettings::default(),
+            panel_defaults: PanelDefaults::new(),
             picker_seeds: std::collections::HashMap::new(),
             ref_completion_seeds: std::collections::HashMap::new(),
             open_with: vec!["xdg-open".to_string()],
@@ -553,6 +566,68 @@ mod tests {
         let parsed: GuiConfig =
             toml::from_str("open-with = ['mpv', 'gimp', 'xdg-open']\n").unwrap();
         assert_eq!(parsed.open_with, vec!["mpv", "gimp", "xdg-open"]);
+    }
+
+    #[test]
+    fn test_panel_defaults_default_empty_and_parse_per_panel_type() {
+        // Absent table: no defaults at all, and every panel falls back to its
+        // own module constant.
+        let empty: GuiConfig = toml::from_str("").unwrap();
+        assert!(empty.panel_defaults.is_empty());
+
+        let parsed: GuiConfig = toml::from_str(
+            "[panel-defaults.metarecord-list]\ncolumns = 'name mfr_type'\n             finder-fields = ['label:direct']\n\n             [panel-defaults.my-custom-panel]\nwhatever = 3\n",
+        )
+        .unwrap();
+        let list = parsed.panel_defaults.get("metarecord-list").unwrap();
+        assert_eq!(list["columns"], serde_json::json!("name mfr_type"));
+        assert_eq!(list["finder-fields"], serde_json::json!(["label:direct"]));
+        // Unknown panel types pass through untouched: a user-written panel type
+        // gets its own defaults without any Rust-side knowledge of it.
+        assert_eq!(
+            parsed.panel_defaults.get("my-custom-panel").unwrap()["whatever"],
+            serde_json::json!(3)
+        );
+        assert!(!parsed.panel_defaults.contains_key("treeref"));
+    }
+
+    #[test]
+    fn test_panel_defaults_keep_toml_scalar_types() {
+        // Numbers, floats, booleans and arrays survive the TOML → JSON hop, so
+        // a panel reads a real number rather than a string.
+        let parsed: GuiConfig = toml::from_str(
+            "[panel-defaults.file]\ntext-preview-limit = 262144\nzoom-step = 1.25\n             image-extensions = ['png', 'jpg']\n",
+        )
+        .unwrap();
+        let file = parsed.panel_defaults.get("file").unwrap();
+        assert_eq!(file["text-preview-limit"], serde_json::json!(262144));
+        assert_eq!(file["zoom-step"], serde_json::json!(1.25));
+        assert_eq!(file["image-extensions"], serde_json::json!(["png", "jpg"]));
+    }
+
+    #[test]
+    fn test_shipped_config_carries_the_panel_defaults() {
+        // The shipped default-config file is the documented source of the
+        // panel defaults: the module constants are only fallbacks.
+        let shipped = include_str!("../default-config/config.toml");
+        let parsed: GuiConfig = toml::from_str(shipped).unwrap();
+        let list = parsed.panel_defaults.get("metarecord-list").unwrap();
+        assert_eq!(list["columns"], serde_json::json!("mfr_path:path mfr_type &version"));
+        assert_eq!(
+            list["finder-fields"],
+            serde_json::json!(["mfr_path:path", "label:direct", "name:direct"])
+        );
+        assert_eq!(list["grid-name-column"], serde_json::json!("mfr_path:path"));
+        assert_eq!(
+            parsed.panel_defaults.get("treeref").unwrap()["field"],
+            serde_json::json!("mfr_path")
+        );
+        let file = parsed.panel_defaults.get("file").unwrap();
+        assert_eq!(file["text-preview-limit"], serde_json::json!(262144));
+        assert_eq!(file["zoom-step"], serde_json::json!(1.25));
+        assert_eq!(file["zoom-min"], serde_json::json!(0.05));
+        assert_eq!(file["zoom-max"], serde_json::json!(40));
+        assert!(file["video-extensions"].as_array().unwrap().contains(&serde_json::json!("mkv")));
     }
 
     fn kb_dir() -> ConfigDir {

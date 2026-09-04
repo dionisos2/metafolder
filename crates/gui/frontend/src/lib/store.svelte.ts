@@ -30,6 +30,7 @@ export const store = $state({
   pageSizes: {} as Record<string, number>,
   /** Shared panel UX timing knobs (config.toml `[panels]`), kebab-cased keys. */
   panelSettings: {} as Record<string, number>,
+  panelDefaults: {} as Record<string, Record<string, unknown>>,
   daemonUrl: '',
   daemonConnected: true,
   /** False when the daemon is reachable but reports an `api_version` this GUI
@@ -291,6 +292,7 @@ export async function initStore() {
   store.sessionToken = initial.session_token;
   store.pageSizes = initial.page_sizes;
   store.panelSettings = initial.panel_settings;
+  store.panelDefaults = initial.panel_defaults;
   store.daemonUrl = initial.daemon_url;
   // Apply the configured daemon-data cache budgets to the shared singleton
   // (created at import time, before the initial state was available).

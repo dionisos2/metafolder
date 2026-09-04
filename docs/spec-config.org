@@ -41,7 +41,7 @@ A single git repository at =~/.config/metafolder/= (respecting
   daemon/
     config.toml                  ← repos to auto-load
   gui/
-    config.toml                  ← daemon-port + gui-port + [page-size]
+    config.toml                  ← daemon-port + gui-port + [page-size] + [panel-defaults]
     keybindings.toml
     style.css
     panel-types/
@@ -56,7 +56,11 @@ port its own HTTP server binds (=gui-port=, default 7524). The =mf gui= CLI read
 =gui-port=, so there is no runtime port discovery file. The optional
 =[page-size]= table tunes progressive list loading per panel
 (=metarecord-list= 100, =file= 150, =file-manager= 200 by default); each key is
-a panel-type name. =.gitignore= is part
+a panel-type name. The =[panel-defaults.<panel-type>]= tables hold each panel's
+own initial values (the columns =metarecord-list= opens on, the extensions the
+=file= panel previews as text…), handed to that panel as =metafolder.defaults=
+— a custom panel type gets its table the same way (see
+[[file:spec-gui.org][spec-gui]] "Panel defaults"). =.gitignore= is part
 of the shipped defaults (committed on =default=).
 
 The =mf= CLI reads =cli/config.toml= at startup, the same optional-with-defaults

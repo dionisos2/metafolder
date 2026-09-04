@@ -125,6 +125,41 @@ describe('panel api — identity', () => {
     const { api } = setup();
     expect(api.settings.finderDebounceMs).toBeUndefined();
   });
+
+  test('defaults exposes this panel type\'s config table, camelCased and frozen', () => {
+    const noop = vi.fn();
+    const gate = { get visible() { return false; }, set() {}, whenVisible: vi.fn() };
+    const instance = createPanelApi(
+      { invoke: vi.fn(), dispatch: vi.fn(), registerHandler: noop, onCommandsChanged: noop, addDefaultMenuItems: noop },
+      {
+        wsId: 'ws-1',
+        panelType: 'metarecord-list',
+        guiServer: 'http://127.0.0.1:7524',
+        sessionToken: 't',
+        panelDefaults: {
+          columns: 'name mfr_type',
+          'finder-fields': ['label:direct'],
+          'text-preview-limit': 42,
+        },
+        root: {} as ShadowRoot,
+        visibilityGate: gate,
+      },
+    );
+    const defaults = (instance.api as any).defaults;
+    // Kebab keys become camelCase; values (strings, arrays, numbers) pass through.
+    expect(defaults.columns).toBe('name mfr_type');
+    expect(defaults.finderFields).toEqual(['label:direct']);
+    expect(defaults.textPreviewLimit).toBe(42);
+    // Unconfigured keys are undefined (the panel falls back to its own constant).
+    expect(defaults.gridNameColumn).toBeUndefined();
+    expect(Object.isFrozen(defaults)).toBe(true);
+  });
+
+  test('defaults is an empty object without a panelDefaults context', () => {
+    const { api } = setup();
+    expect(api.defaults).toEqual({});
+    expect(api.defaults.columns).toBeUndefined();
+  });
 });
 
 describe('panel api — daemon', () => {

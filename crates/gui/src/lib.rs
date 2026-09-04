@@ -206,6 +206,7 @@ pub fn run(options: Options) {
     let settings = gui_config.settings.clone();
     let cache_sizes = gui_config.cache.clone();
     let panel_settings = gui_config.panels.clone();
+    let panel_defaults = gui_config.panel_defaults.clone();
     let health_poll_interval = settings.daemon_health_poll();
     let daemon_url = match options.daemon_port {
         Some(port) => format!("http://127.0.0.1:{port}"),
@@ -253,6 +254,7 @@ pub fn run(options: Options) {
                 settings: settings.clone(),
                 cache_sizes: cache_sizes.clone(),
                 panel_settings: panel_settings.clone(),
+                panel_defaults: panel_defaults.clone(),
                 daemon: daemon.clone(),
                 input: input.clone(),
                 commands: command_wait.clone(),
