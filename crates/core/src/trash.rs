@@ -807,7 +807,7 @@ pub struct DaemonError {
 
 impl DaemonError {
     /// A non-HTTP failure raised by the glue itself (a malformed uuid, …).
-    fn local(message: impl Into<String>) -> Self {
+    pub fn local(message: impl Into<String>) -> Self {
         Self { status: None, message: message.into() }
     }
 }

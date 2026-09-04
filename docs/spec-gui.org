@@ -994,6 +994,7 @@ Behaviours:
 | =metarecord-list:orphans-exit= | Leave the orphan view and restore the editor-driven query. The banner's "Exit" button |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
+| =order:run [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
@@ -2294,6 +2295,32 @@ completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.
+
+** Order a folder's children
+
+=order:run= is the GUI half of =mf order= (see
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "=mf order="): it numbers
+the *direct children* of one folder so a "sort by position" orders them sensibly
+— files into =order_position_file=, directories into =order_position_dir=, an
+existing position never overwritten — and then marks the folder itself with
+=order_numbered = true=.
+
+The heuristic and the daemon orchestration are the CLI's, shared in
+=metafolder_core::order=; the shell only collects *which* folder, as an
+[[*Interactive command arguments (command mode)]] argument:
+
+- prompt ="Number the children of:"=, pre-filled with the same target directory
+  the =ignore:*= commands use (the file manager's current directory, else the
+  selected metarecord's directory, else the repository root);
+- completion = every tracked directory of the active repository, the root shown
+  as =/=; a hand-typed path is accepted too (a missing leading =/= is added, a
+  trailing one dropped).
+
+The folder is resolved to its metarecord through =POST .../tree/resolve-path=;
+an untracked path is a status-bar error, never a silent no-op. On success the
+status bar reports the path and the number of positions written (or that every
+child already had one). Unlike the CLI there is no dry run: the message names
+what changed, and the write is one revision, undoable with =log:undo=.
 
 ** Unmounted volumes
 

@@ -12,7 +12,7 @@ use metafolder_core::metarecord::Value;
 use metafolder_core::query::Query;
 
 use crate::client::{CliError, Client};
-use crate::{dsl, fieldspec, order};
+use crate::{dsl, fieldspec};
 
 pub struct Ctx {
     pub client: Client,
@@ -1061,18 +1061,6 @@ pub fn track(ctx: &Ctx, path: &Path) -> Result<i32, CliError> {
 fn field_value<'a>(fields: &'a Json, name: &str) -> Option<&'a Json> {
     fields.as_array()?.iter().find(|f| f["name"].as_str() == Some(name)).map(|f| &f["value"])
 }
-/// A string field's value (`{type, value: "..."}`).
-fn field_str<'a>(fields: &'a Json, name: &str) -> Option<&'a str> {
-    field_value(fields, name)?["value"].as_str()
-}
-/// An integer field's value.
-fn field_int(fields: &Json, name: &str) -> Option<i64> {
-    field_value(fields, name)?["value"].as_i64()
-}
-/// A TreeRef field's leaf `name` (the basename, for `mfr_path`).
-fn tree_ref_name(fields: &Json, name: &str) -> Option<String> {
-    Some(field_value(fields, name)?["value"]["name"].as_str()?.to_string())
-}
 /// A bool field's value.
 fn field_bool(fields: &Json, name: &str) -> Option<bool> {
     field_value(fields, name)?["value"].as_bool()
@@ -1082,8 +1070,8 @@ fn field_bool(fields: &Json, name: &str) -> Option<bool> {
 /// the folder's direct children so that "sort by position" orders them sensibly
 /// (album tracks, series seasons, …). Files and directories are numbered
 /// independently; an already-set position is never overwritten. The heuristic
-/// (metadata, then a shared name pattern, then creation date) lives in
-/// [`crate::order`]. `--dry-run` prints the plan without writing.
+/// and the daemon orchestration live in `metafolder_core::order` (shared with
+/// the GUI's `order:run`); this is the path→uuid resolution and the printing.
 pub fn order(
     ctx: &Ctx,
     folder: &Path,
@@ -1091,104 +1079,36 @@ pub fn order(
     max_gap: i64,
     dry_run: bool,
 ) -> Result<i32, CliError> {
-    let base = ctx.repo_base()?;
-    // Resolve the folder to its repo-root-relative path through the daemon
-    // (track is idempotent; resolve-tree walks the chain), so symlinks and
-    // `.`/`..` are handled exactly as the daemon sees them.
+    let repo = repo_id(ctx)?;
+    // Resolve the folder to its metarecord through the daemon (track is
+    // idempotent; it creates the metarecord if needed and always prints the
+    // uuid), so symlinks and `.`/`..` are handled exactly as the daemon sees
+    // them.
     let abs = absolutize(folder)?;
-    let tracked = ctx.client.post(&format!("{base}/track"), &json!({ "path": abs }))?;
+    let tracked = ctx.client.post(&format!("/repos/{repo}/track"), &json!({ "path": abs }))?;
     let folder_uuid = tracked["uuid"]
         .as_str()
         .ok_or_else(|| CliError::Op(format!("cannot track {abs} (is it inside the repo root?)")))?
         .to_string();
-    let resolved = ctx.client.post(
-        &format!("{base}/query/fields/resolve-tree"),
-        &json!({ "query": {"type": "uuid_in", "uuids": [folder_uuid]} }),
-    )?;
-    // The endpoint returns the folder's path in the leading-"/"-rooted form that
-    // `Follows` path targets expect (the repo root resolves to the empty string,
-    // which targets the root itself).
-    let rel = resolved[&folder_uuid]
-        .as_array()
-        .and_then(|paths| paths.first())
-        .and_then(|p| p.as_str())
-        .ok_or_else(|| CliError::Op("the folder has no resolvable mfr_path".into()))?;
 
-    // Direct children, with all their fields, in one paginated pass.
-    let query = json!({ "type": "follows", "field": "mfr_path", "target": rel });
-    let mut files: Vec<order::Item> = Vec::new();
-    let mut dirs: Vec<order::Item> = Vec::new();
-    let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut cursor: Option<String> = None;
-    loop {
-        let mut body = json!({ "query": query, "select": "*", "limit": ctx.page_size });
-        if let Some(c) = &cursor {
-            body["cursor"] = json!(c);
-        }
-        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
-        for entry in resp["results"].as_array().into_iter().flatten() {
-            let Some(uuid) = entry["uuid"].as_str() else { continue };
-            let fields = &entry["fields"];
-            let name = tree_ref_name(fields, "mfr_path").unwrap_or_else(|| uuid.to_string());
-            let btime = field_str(fields, "mfr_btime").and_then(metafolder_core::date::iso_to_ms);
-            let is_dir = field_str(fields, "mfr_type") == Some("dir");
-            names.insert(uuid.to_string(), name.clone());
-            if is_dir {
-                dirs.push(order::Item {
-                    key: uuid.to_string(),
-                    name,
-                    meta: None,
-                    btime,
-                    existing: field_int(fields, order::FIELD_DIR),
-                });
-            } else {
-                files.push(order::Item {
-                    key: uuid.to_string(),
-                    name,
-                    meta: field_int(fields, meta_field),
-                    btime,
-                    existing: field_int(fields, order::FIELD_FILE),
-                });
-            }
-        }
-        match resp["next_cursor"].as_str() {
-            Some(c) => cursor = Some(c.to_string()),
-            None => break,
-        }
-    }
-
-    if files.is_empty() && dirs.is_empty() {
-        return Err(CliError::Op(format!(
-            "no tracked children under {rel} — reconcile the folder first (mf reconcile)"
-        )));
-    }
-
-    let file_plan = order::assign_positions(&files, max_gap);
-    let dir_plan = order::assign_positions(&dirs, max_gap);
+    let outcome = metafolder_core::order::run(
+        &TrashDaemon(&ctx.client),
+        &repo,
+        &folder_uuid,
+        meta_field,
+        max_gap,
+        ctx.page_size,
+        dry_run,
+    )
+    .map_err(trash_daemon_err)?;
 
     if dry_run {
-        for (field, plan) in [(order::FIELD_FILE, &file_plan), (order::FIELD_DIR, &dir_plan)] {
-            for a in plan {
-                let name = names.get(&a.key).map(String::as_str).unwrap_or(a.key.as_str());
-                println!("{}\t{field}={}\t{name}", a.key, a.position);
-            }
+        for p in &outcome.planned {
+            println!("{}\t{}={}\t{}", p.key, p.field, p.position, p.name);
         }
         return Ok(0);
     }
-
-    let mut written = 0usize;
-    for (field, plan) in [(order::FIELD_FILE, &file_plan), (order::FIELD_DIR, &dir_plan)] {
-        for a in plan {
-            ctx.client.request(
-                "PUT",
-                &format!("{base}/metarecords/{}/fields/{field}", a.key),
-                &[],
-                Some(&json!({ "value": {"type": "int", "value": a.position} })),
-            )?;
-            written += 1;
-        }
-    }
-    println!("{written}");
+    println!("{}", outcome.written);
     Ok(0)
 }
 

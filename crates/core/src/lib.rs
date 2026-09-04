@@ -8,6 +8,7 @@ pub mod hex;
 pub mod ignore;
 pub mod ignore_presets;
 pub mod metarecord;
+pub mod order;
 pub mod progress;
 pub mod query;
 pub mod repo_init;

@@ -8,7 +8,6 @@ pub mod config;
 pub mod fieldspec;
 pub mod gui;
 pub mod log;
-pub mod order;
 pub mod sync;
 pub mod tag;
 pub mod trash;
@@ -17,4 +16,8 @@ pub mod trash;
 // `metafolder_cli::dsl::parse_query` keeps working. The progress-bar renderer
 // also lives in core (shared with the daemon's startup auto-load).
 pub use metafolder_core::dsl;
+// The folder-ordering heuristic and its daemon orchestration live in core
+// (shared with the GUI's `order:run`, like `trash`/`sync`); re-exported so
+// `metafolder_cli::order::…` keeps working.
+pub use metafolder_core::order;
 pub use metafolder_core::progress;

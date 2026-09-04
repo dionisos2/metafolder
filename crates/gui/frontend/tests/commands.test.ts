@@ -13,6 +13,7 @@ import {
   filterCommands,
   filterCompletions,
   needsMessagePanel,
+  orderFolderPath,
   parseInvocation,
   promptsForInput,
   registerArgs,
@@ -29,6 +30,27 @@ import type { LayoutView } from '../src/lib/types';
 describe('recent builtin', () => {
   test('registers its metarecord argument spec at module load', () => {
     expect(argSpecFor('recent')?.map((s) => s.name)).toEqual(['metarecord']);
+  });
+});
+
+// `order:run` collects the folder to number in the minibuffer (spec-gui
+// "Order"), pre-filled with the deduced target and completing over the
+// repository's tracked directories.
+describe('order:run builtin', () => {
+  test('registers its folder argument spec at module load', () => {
+    expect(argSpecFor('order:run')?.map((s) => s.name)).toEqual(['folder']);
+    expect(promptsForInput('order:run')).toBe(true);
+  });
+
+  test('normalises the typed folder to a repo-root-relative path', () => {
+    // The root is the empty path, and "/" is how it is shown and typed.
+    expect(orderFolderPath('/')).toBe('');
+    expect(orderFolderPath('')).toBe('');
+    expect(orderFolderPath('  /album ')).toBe('/album');
+    // A path typed without its leading slash still resolves.
+    expect(orderFolderPath('album/1999')).toBe('/album/1999');
+    // A trailing slash is decoration, not a different node.
+    expect(orderFolderPath('/album/')).toBe('/album');
   });
 });
 

@@ -1230,8 +1230,20 @@ differences) and positions are not compacted:
 3. *Creation date* — everything left, by =mfr_btime= ascending (missing btime
    last, then by name), each at =next=.
 
+Once the children are numbered the *folder* is marked with =order_numbered =
+true= (a plain boolean field, written once — a re-run on an already marked
+folder produces no revision for it). It tells a processed folder from an
+untreated one: =order_numbered = true= finds the folders already numbered,
+=order_numbered is absent= the ones still to do.
+
 =--dry-run= prints the planned =uuid<TAB>field=pos<TAB>name= lines without
-writing; otherwise the number of fields written is printed.
+writing — the marker included, nothing at all is written; otherwise the number
+of fields written is printed (the marker is not counted).
+
+The heuristic and the whole orchestration (read the children, write the
+positions, mark the folder) live in =metafolder_core::order=, shared with the
+GUI's =order:run= command (see [[file:spec-gui.org][spec-gui.org]] "Order a
+folder's children").
 
 ** Configuring the watch scope
 

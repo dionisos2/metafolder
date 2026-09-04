@@ -2,10 +2,12 @@
 //! integer `order-position` to the children of a folder so a "sort by position"
 //! puts them in a sensible order — album tracks, series seasons, etc.
 //!
-//! Pure, deterministic, and unit-tested here; the HTTP orchestration (read the
-//! children, write the fields) lives in `commands::order`. Files and directories
-//! are numbered independently (two separate fields), so this function is called
-//! once per kind.
+//! The heuristic is pure, deterministic and unit-tested here; the HTTP
+//! orchestration (read the children, write the positions, mark the folder) is
+//! [`run`], below — shared by `mf order` and the GUI's `order:run`, like
+//! `crate::trash` and `crate::sync`. Files and directories are numbered
+//! independently (two separate fields), so [`assign_positions`] is called once
+//! per kind.
 //!
 //! For every item we know its basename `name`, an optional integer ordering
 //! `meta` (e.g. `mfr_meta_track`), an optional creation time `btime`, and an
@@ -193,6 +195,188 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
     out
 }
 
+// ── Daemon orchestration (shared by `mf order` and the GUI's `order:run`) ────
+//
+// Reading the children, applying the heuristic and writing the positions is the
+// same work in both front-ends, so — like `crate::trash` and `crate::sync` — it
+// lives here behind the synchronous `DaemonClient` trait; the CLI and the GUI
+// bring their own HTTP client.
+
+use crate::trash::{DaemonClient, DaemonError};
+use serde_json::{json, Value};
+
+/// The boolean field written on the *folder* once its children are numbered, so
+/// an already-processed folder can be recognised (`order_numbered = true`) and
+/// the untreated ones found (`order_numbered is absent`). Never written by a
+/// dry run, and left alone when it is already `true` (no revision on a re-run).
+pub const FIELD_NUMBERED: &str = "order_numbered";
+
+/// One planned write, in the reporting form both front-ends print.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Planned {
+    /// The child metarecord uuid.
+    pub key: String,
+    /// Its basename (for the human-readable report).
+    pub name: String,
+    /// [`FIELD_FILE`] or [`FIELD_DIR`].
+    pub field: &'static str,
+    pub position: i64,
+}
+
+/// What a run did (or, for a dry run, would do).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Outcome {
+    /// The folder's repo-root-relative path, as the daemon resolved it.
+    pub path: String,
+    /// Every position that was (or would be) written, files then directories.
+    pub planned: Vec<Planned>,
+    /// Positions actually written (0 for a dry run).
+    pub written: usize,
+    /// Whether this run wrote the [`FIELD_NUMBERED`] marker on the folder.
+    pub marked: bool,
+}
+
+/// The `value` object of the first field named `name` in a `fields` array.
+fn field_value<'a>(fields: &'a Value, name: &str) -> Option<&'a Value> {
+    fields.as_array()?.iter().find(|f| f["name"].as_str() == Some(name)).map(|f| &f["value"])
+}
+
+fn field_str<'a>(fields: &'a Value, name: &str) -> Option<&'a str> {
+    field_value(fields, name)?["value"].as_str()
+}
+
+fn field_int(fields: &Value, name: &str) -> Option<i64> {
+    field_value(fields, name)?["value"].as_i64()
+}
+
+/// A TreeRef field's leaf `name` (the basename, for `mfr_path`).
+fn tree_ref_name(fields: &Value, name: &str) -> Option<String> {
+    Some(field_value(fields, name)?["value"]["name"].as_str()?.to_string())
+}
+
+/// Numbers the direct children of the folder metarecord `folder_uuid`.
+///
+/// Reads the folder's path, its tracked children and their ordering inputs,
+/// applies [`assign_positions`] to files and directories independently, writes
+/// the positions of the children that had none, then marks the folder with
+/// [`FIELD_NUMBERED`]. `dry_run` stops after the plan, writing nothing at all
+/// (marker included). `page_size` is the query pagination size.
+pub fn run(
+    client: &dyn DaemonClient,
+    repo: &str,
+    folder_uuid: &str,
+    meta_field: &str,
+    max_gap: i64,
+    page_size: usize,
+    dry_run: bool,
+) -> Result<Outcome, DaemonError> {
+    let base = format!("/repos/{repo}");
+    let folder = client.get(&format!("{base}/metarecords/{folder_uuid}"))?;
+
+    // The endpoint returns the folder's path in the leading-"/"-rooted form that
+    // `Follows` path targets expect (the repo root resolves to the empty string,
+    // which targets the root itself).
+    let resolved = client.post(
+        &format!("{base}/query/fields/resolve-tree"),
+        &json!({ "query": {"type": "uuid_in", "uuids": [folder_uuid]} }),
+    )?;
+    let path = resolved[folder_uuid]
+        .as_array()
+        .and_then(|paths| paths.first())
+        .and_then(|p| p.as_str())
+        .ok_or_else(|| DaemonError::local("the folder has no resolvable mfr_path"))?
+        .to_string();
+
+    // Direct children, with all their fields, in one paginated pass.
+    let query = json!({ "type": "follows", "field": "mfr_path", "target": path });
+    let mut files: Vec<Item> = Vec::new();
+    let mut dirs: Vec<Item> = Vec::new();
+    let mut names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({ "query": query, "select": "*", "limit": page_size });
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let resp = client.post(&format!("{base}/query"), &body)?;
+        for entry in resp["results"].as_array().into_iter().flatten() {
+            let Some(uuid) = entry["uuid"].as_str() else { continue };
+            let fields = &entry["fields"];
+            let name = tree_ref_name(fields, "mfr_path").unwrap_or_else(|| uuid.to_string());
+            let btime = field_str(fields, "mfr_btime").and_then(crate::date::iso_to_ms);
+            let is_dir = field_str(fields, "mfr_type") == Some("dir");
+            names.insert(uuid.to_string(), name.clone());
+            if is_dir {
+                dirs.push(Item {
+                    key: uuid.to_string(),
+                    name,
+                    meta: None,
+                    btime,
+                    existing: field_int(fields, FIELD_DIR),
+                });
+            } else {
+                files.push(Item {
+                    key: uuid.to_string(),
+                    name,
+                    meta: field_int(fields, meta_field),
+                    btime,
+                    existing: field_int(fields, FIELD_FILE),
+                });
+            }
+        }
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+
+    if files.is_empty() && dirs.is_empty() {
+        return Err(DaemonError::local(format!(
+            "no tracked children under {path} — reconcile the folder first"
+        )));
+    }
+
+    let file_plan = assign_positions(&files, max_gap);
+    let dir_plan = assign_positions(&dirs, max_gap);
+    let mut planned: Vec<Planned> = Vec::new();
+    for (field, plan) in [(FIELD_FILE, &file_plan), (FIELD_DIR, &dir_plan)] {
+        for a in plan {
+            planned.push(Planned {
+                key: a.key.clone(),
+                name: names.get(&a.key).cloned().unwrap_or_else(|| a.key.clone()),
+                field,
+                position: a.position,
+            });
+        }
+    }
+
+    if dry_run {
+        return Ok(Outcome { path, planned, written: 0, marked: false });
+    }
+
+    for p in &planned {
+        client.put(
+            &format!("{base}/metarecords/{}/fields/{}", p.key, p.field),
+            &json!({ "value": {"type": "int", "value": p.position} }),
+        )?;
+    }
+
+    // The folder marker: written once, so re-running `order` on an already
+    // numbered folder produces no revision at all.
+    let already = field_value(&folder["fields"], FIELD_NUMBERED)
+        .map(|v| v["value"] == Value::Bool(true))
+        .unwrap_or(false);
+    if !already {
+        client.put(
+            &format!("{base}/metarecords/{folder_uuid}/fields/{FIELD_NUMBERED}"),
+            &json!({ "value": {"type": "bool", "value": true} }),
+        )?;
+    }
+
+    let written = planned.len();
+    Ok(Outcome { path, planned, written, marked: !already })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,5 +478,140 @@ mod tests {
         assert_eq!(pos["early"], 1);
         assert_eq!(pos["mid"], 2);
         assert_eq!(pos["late"], 3);
+    }
+}
+
+#[cfg(test)]
+mod orchestration_tests {
+    use super::*;
+    use crate::trash::{DaemonClient, DaemonError};
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    /// A daemon stub: canned responses per (method, path prefix), every request
+    /// recorded so the writes can be asserted.
+    struct Stub {
+        calls: Mutex<Vec<(String, String, Option<Value>)>>,
+        folder: Value,
+        children: Value,
+    }
+
+    impl Stub {
+        fn new(folder: Value, children: Value) -> Self {
+            Self { calls: Mutex::new(Vec::new()), folder, children }
+        }
+        fn writes(&self) -> Vec<(String, Value)> {
+            self.calls
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(m, _, _)| m == "PUT")
+                .map(|(_, p, b)| (p.clone(), b.clone().unwrap_or(Value::Null)))
+                .collect()
+        }
+    }
+
+    impl DaemonClient for Stub {
+        fn request(
+            &self,
+            method: &str,
+            path: &str,
+            body: Option<&Value>,
+        ) -> Result<Value, DaemonError> {
+            self.calls.lock().unwrap().push((method.to_string(), path.to_string(), body.cloned()));
+            if path.ends_with("/query/fields/resolve-tree") {
+                return Ok(json!({ "folder": ["/album"] }));
+            }
+            if path.ends_with("/query") {
+                return Ok(self.children.clone());
+            }
+            if method == "GET" && path.ends_with("/metarecords/folder") {
+                return Ok(self.folder.clone());
+            }
+            Ok(json!({}))
+        }
+    }
+
+    fn field(name: &str, value: Value) -> Value {
+        json!({ "name": name, "value": value })
+    }
+
+    fn child(uuid: &str, name: &str, kind: &str) -> Value {
+        json!({
+            "uuid": uuid,
+            "fields": [
+                field("mfr_path", json!({"type": "tree_ref", "value": {"parent": "folder", "name": name}})),
+                field("mfr_type", json!({"type": "string", "value": kind})),
+            ]
+        })
+    }
+
+    fn children() -> Value {
+        json!({
+            "results": [
+                child("a", "song1.avi", "file"),
+                child("b", "song2.avi", "file"),
+                child("c", "extra", "dir"),
+            ]
+        })
+    }
+
+    #[test]
+    fn test_run_numbers_children_and_marks_the_folder() {
+        let stub = Stub::new(json!({"uuid": "folder", "fields": []}), children());
+        let outcome = run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false)
+            .expect("order runs");
+
+        assert_eq!(outcome.path, "/album");
+        assert_eq!(outcome.written, 3, "two files and one directory get a position");
+        assert!(outcome.marked, "the folder is marked as numbered");
+
+        let writes = stub.writes();
+        let marker = writes
+            .iter()
+            .find(|(p, _)| p.ends_with(&format!("/metarecords/folder/fields/{FIELD_NUMBERED}")))
+            .expect("the folder carries the numbered marker");
+        assert_eq!(marker.1, json!({ "value": {"type": "bool", "value": true} }));
+        assert!(writes
+            .iter()
+            .any(|(p, _)| p.contains("/metarecords/a/fields/order_position_file")));
+        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/c/fields/order_position_dir")));
+    }
+
+    #[test]
+    fn test_run_does_not_rewrite_an_existing_marker() {
+        // The marker is already true: a re-run must not produce a revision for
+        // it (positions are never overwritten either, so the run is a no-op).
+        let folder = json!({
+            "uuid": "folder",
+            "fields": [field(FIELD_NUMBERED, json!({"type": "bool", "value": true}))]
+        });
+        let stub = Stub::new(folder, children());
+        let outcome =
+            run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false).unwrap();
+        assert!(!outcome.marked, "an existing marker is left alone");
+        assert!(
+            !stub.writes().iter().any(|(p, _)| p.ends_with(FIELD_NUMBERED)),
+            "no write on the marker"
+        );
+    }
+
+    #[test]
+    fn test_dry_run_writes_nothing() {
+        let stub = Stub::new(json!({"uuid": "folder", "fields": []}), children());
+        let outcome =
+            run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, true).unwrap();
+        assert_eq!(outcome.written, 0);
+        assert!(!outcome.marked);
+        assert_eq!(outcome.planned.len(), 3, "the plan is still reported");
+        assert!(stub.writes().is_empty(), "a dry run never writes");
+    }
+
+    #[test]
+    fn test_run_without_tracked_children_is_an_error() {
+        let stub = Stub::new(json!({"uuid": "folder", "fields": []}), json!({ "results": [] }));
+        let err = run(&stub, "repo", "folder", "mfr_meta_track", DEFAULT_MAX_GAP, 500, false)
+            .expect_err("an empty folder is an error");
+        assert!(err.message.contains("no tracked children"), "got {}", err.message);
     }
 }

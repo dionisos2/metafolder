@@ -174,8 +174,9 @@ enum Command {
     },
     /// Number a folder's direct children for sorting: assigns
     /// `order_position_file` / `order_position_dir` (files and dirs are numbered
-    /// independently; an existing position is never overwritten). Orders by an
-    /// ordering metadata, then a shared name pattern, then creation date.
+    /// independently; an existing position is never overwritten), then marks the
+    /// folder itself `order_numbered = true`. Orders by an ordering metadata,
+    /// then a shared name pattern, then creation date.
     Order {
         /// The folder whose direct children to number
         path: PathBuf,

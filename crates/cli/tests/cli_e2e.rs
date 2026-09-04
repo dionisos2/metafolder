@@ -3407,6 +3407,7 @@ fn test_order_numbers_folder_children() {
         assert_ok(&out);
         out.stdout.trim().to_string()
     };
+    let album_uuid = track(album.clone());
     let song0 = track(album.join("song0.avi"));
     let song1 = track(album.join("song1.avi"));
     let song3 = track(album.join("song3.avi"));
@@ -3432,11 +3433,16 @@ fn test_order_numbers_folder_children() {
     assert_eq!(pos(&readme, "order_position_file"), "5");
     assert_eq!(pos(&extra, "order_position_dir"), "1");
 
+    // The folder itself is marked as numbered, so processed folders can be told
+    // apart from untreated ones.
+    assert_eq!(pos(&album_uuid, "order_numbered"), "true");
+
     // A second run never overwrites an existing position: nothing is written.
     let again = mf(&["-u", &repo, "order", album.to_str().unwrap(), "--meta", "track_no"]);
     assert_ok(&again);
     assert_eq!(again.stdout.trim(), "0", "second run must write nothing");
     assert_eq!(pos(&song0, "order_position_file"), "1");
+    assert_eq!(pos(&album_uuid, "order_numbered"), "true", "the marker survives a re-run");
 }
 
 // ── CLI primitives: --eq, --tsv, --resolve ────────────────────────────────────

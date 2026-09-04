@@ -390,6 +390,14 @@ async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
     await status('no active repository');
     return null;
   }
+  return { repo, dir: await defaultTargetDir(repo) };
+}
+
+/** The directory a path-scoped builtin acts on by default: the file manager's
+ *  current directory, else the selected metarecord's directory, else the
+ *  repository root — as a repo-root-relative path (`''` is the root). Shared by
+ *  the `ignore:*` commands and `order:run`. */
+async function defaultTargetDir(repo: string): Promise<string> {
   const ws = focusedWs();
   const fmDir = ws
     ? await invoke<string | null>('ws_get_var', { wsId: ws, key: 'file-manager:dir' })
@@ -400,14 +408,13 @@ async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
         key: 'selected_metarecord',
       })
     : null;
-  const dir = await targetDir({
+  return await targetDir({
     call: daemonJson,
     repo,
     repoRoot: await repoRoot(repo),
     fmDir: typeof fmDir === 'string' ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
   });
-  return { repo, dir };
 }
 
 /** Applies one preset to the context directory with the given mode, reporting
@@ -487,6 +494,64 @@ async function listIgnore(): Promise<void> {
     await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'message' });
   }
   await invoke('append_message', { wsId: ws, text: lines.join('\n') });
+}
+
+// ── Order a folder's children (the `order:run` builtin) ─────────────────────
+// The GUI half of `mf order` (spec-gui "Order"): the heuristic and the daemon
+// work are shared Rust (`metafolder_core::order`, behind the `order_run`
+// command); the shell only collects *which* folder, in the minibuffer.
+
+/** The repo-root-relative form of a folder typed or picked in the minibuffer:
+ *  `'/'` (and an empty draft) is the repository root — the empty path the
+ *  daemon's tree uses — a missing leading slash is added and a trailing one
+ *  dropped, so a hand-typed path resolves like a picked one. */
+export function orderFolderPath(raw: string): string {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (trimmed === '') return '';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+/** Completion candidates for the `folder` argument: every tracked directory of
+ *  the active repository, the root shown as `/`. One `resolve-tree` round-trip
+ *  over the `mfr_type = "dir"` set — the candidate list the input filters by
+ *  ordered substring. */
+async function orderFolderCandidates(): Promise<string[]> {
+  const repo = focusedRepo();
+  if (!repo) return [];
+  const resolved = (await daemonJson('POST', `/repos/${repo}/query/fields/resolve-tree`, {
+    query: { type: 'eq', field: 'mfr_type', value: { type: 'string', value: 'dir' } },
+    field: 'mfr_path',
+  })) as Record<string, string[] | null> | null;
+  const paths = new Set<string>(['/']);
+  for (const list of Object.values(resolved ?? {})) {
+    for (const path of list ?? []) if (path) paths.add(path);
+  }
+  return [...paths].sort();
+}
+
+registerArgs('order:run', [
+  {
+    name: 'folder',
+    prompt: () => 'Number the children of:',
+    initial: async () => {
+      const repo = focusedRepo();
+      if (!repo) return '/';
+      return (await defaultTargetDir(repo)) || '/';
+    },
+    complete: () => orderFolderCandidates(),
+  },
+]);
+
+/** `order:run`: numbers the direct children of `path` (files and directories
+ *  independently) and marks the folder, reporting what was written. */
+async function runOrder(path: string): Promise<void> {
+  const repo = focusedRepo();
+  if (!repo) {
+    await status('no active repository');
+    return;
+  }
+  const report = await invoke<{ message: string }>('order_run', { repo, path });
+  await status(report.message, 'info');
 }
 
 registerArgs('script:run', [
@@ -972,6 +1037,9 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     }
     case 'ignore:list':
       await listIgnore();
+      return true;
+    case 'order:run':
+      await runOrder(orderFolderPath(args.join(' ')));
       return true;
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });
