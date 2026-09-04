@@ -4,7 +4,7 @@
 //!
 //! The heuristic is pure, deterministic and unit-tested here; the HTTP
 //! orchestration (read the children, write the positions, mark the folder) is
-//! [`run`], below — shared by `mf order` and the GUI's `order:run`, like
+//! [`run`], below — shared by `mf order` and the GUI's `mf:order`, like
 //! `crate::trash` and `crate::sync`. Files and directories are numbered
 //! independently (two separate fields), so [`assign_positions`] is called once
 //! per kind.
@@ -195,7 +195,7 @@ pub fn assign_positions(items: &[Item], threshold: i64) -> Vec<Assignment> {
     out
 }
 
-// ── Daemon orchestration (shared by `mf order` and the GUI's `order:run`) ────
+// ── Daemon orchestration (shared by `mf order` and the GUI's `mf:order`) ────
 //
 // Reading the children, applying the heuristic and writing the positions is the
 // same work in both front-ends, so — like `crate::trash` and `crate::sync` — it

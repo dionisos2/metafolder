@@ -114,7 +114,7 @@ fn register_builtins(registry: &CommandRegistry) {
         ("file:open-with", "Open the selected file or folder with an external program", true),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
-        ("order:run", "Number a folder's direct children (order_position_*)", true),
+        ("mf:order", "Number a folder's direct children (order_position_*)", true),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),

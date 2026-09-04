@@ -249,6 +249,13 @@ controls — an individual tab or a specific slot's =×= (their action is
 covered by =workspace:goto= / =workspace:close= / =panel:hide=) — need not
 each carry their own command.
 
+Naming: a panel type's commands are prefixed with the panel type
+(=metarecord-list:next=), the shell's own with the concept they act on
+(=panel:split=, =workspace:new=). A command that is simply *the GUI half of a
+=mf= subcommand* — same work, same fields, the CLI's orchestration — takes the
+=mf:= prefix and the CLI verb, so the link is immediate: =mf:order= is
+=mf order=. (=reconcile:run= predates the rule and keeps its name.)
+
 Each command carries a =log= flag (default =true=): when set, every
 invocation is echoed to the workspace [[*Message view][message panel]] as
 =​> name args= before the command runs. Panels register commands with
@@ -994,7 +1001,7 @@ Behaviours:
 | =metarecord-list:orphans-exit= | Leave the orphan view and restore the editor-driven query. The banner's "Exit" button |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
-| =order:run [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
+| =mf:order [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
@@ -2298,7 +2305,7 @@ completion:
 
 ** Order a folder's children
 
-=order:run= is the GUI half of =mf order= (see
+=mf:order= is the GUI half of =mf order= (see
 [[file:spec-file-tracking.org][spec-file-tracking.org]] "=mf order="): it numbers
 the *direct children* of one folder so a "sort by position" orders them sensibly
 — files into =order_position_file=, directories into =order_position_dir=, an

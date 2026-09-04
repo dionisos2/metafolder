@@ -1071,7 +1071,7 @@ fn field_bool(fields: &Json, name: &str) -> Option<bool> {
 /// (album tracks, series seasons, …). Files and directories are numbered
 /// independently; an already-set position is never overwritten. The heuristic
 /// and the daemon orchestration live in `metafolder_core::order` (shared with
-/// the GUI's `order:run`); this is the path→uuid resolution and the printing.
+/// the GUI's `mf:order`); this is the path→uuid resolution and the printing.
 pub fn order(
     ctx: &Ctx,
     folder: &Path,

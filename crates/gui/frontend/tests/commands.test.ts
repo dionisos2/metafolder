@@ -33,13 +33,13 @@ describe('recent builtin', () => {
   });
 });
 
-// `order:run` collects the folder to number in the minibuffer (spec-gui
+// `mf:order` collects the folder to number in the minibuffer (spec-gui
 // "Order"), pre-filled with the deduced target and completing over the
 // repository's tracked directories.
-describe('order:run builtin', () => {
+describe('mf:order builtin', () => {
   test('registers its folder argument spec at module load', () => {
-    expect(argSpecFor('order:run')?.map((s) => s.name)).toEqual(['folder']);
-    expect(promptsForInput('order:run')).toBe(true);
+    expect(argSpecFor('mf:order')?.map((s) => s.name)).toEqual(['folder']);
+    expect(promptsForInput('mf:order')).toBe(true);
   });
 
   test('normalises the typed folder to a repo-root-relative path', () => {

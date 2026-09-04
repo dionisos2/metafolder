@@ -17,7 +17,7 @@ pub mod trash;
 // also lives in core (shared with the daemon's startup auto-load).
 pub use metafolder_core::dsl;
 // The folder-ordering heuristic and its daemon orchestration live in core
-// (shared with the GUI's `order:run`, like `trash`/`sync`); re-exported so
+// (shared with the GUI's `mf:order`, like `trash`/`sync`); re-exported so
 // `metafolder_cli::order::…` keeps working.
 pub use metafolder_core::order;
 pub use metafolder_core::progress;

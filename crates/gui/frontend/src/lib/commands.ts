@@ -396,7 +396,7 @@ async function ignoreContext(): Promise<{ repo: string; dir: string } | null> {
 /** The directory a path-scoped builtin acts on by default: the file manager's
  *  current directory, else the selected metarecord's directory, else the
  *  repository root — as a repo-root-relative path (`''` is the root). Shared by
- *  the `ignore:*` commands and `order:run`. */
+ *  the `ignore:*` commands and `mf:order`. */
 async function defaultTargetDir(repo: string): Promise<string> {
   const ws = focusedWs();
   const fmDir = ws
@@ -496,7 +496,7 @@ async function listIgnore(): Promise<void> {
   await invoke('append_message', { wsId: ws, text: lines.join('\n') });
 }
 
-// ── Order a folder's children (the `order:run` builtin) ─────────────────────
+// ── Order a folder's children (the `mf:order` builtin) ─────────────────────
 // The GUI half of `mf order` (spec-gui "Order"): the heuristic and the daemon
 // work are shared Rust (`metafolder_core::order`, behind the `order_run`
 // command); the shell only collects *which* folder, in the minibuffer.
@@ -529,7 +529,7 @@ async function orderFolderCandidates(): Promise<string[]> {
   return [...paths].sort();
 }
 
-registerArgs('order:run', [
+registerArgs('mf:order', [
   {
     name: 'folder',
     prompt: () => 'Number the children of:',
@@ -542,7 +542,7 @@ registerArgs('order:run', [
   },
 ]);
 
-/** `order:run`: numbers the direct children of `path` (files and directories
+/** `mf:order`: numbers the direct children of `path` (files and directories
  *  independently) and marks the folder, reporting what was written. */
 async function runOrder(path: string): Promise<void> {
   const repo = focusedRepo();
@@ -1038,7 +1038,7 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'ignore:list':
       await listIgnore();
       return true;
-    case 'order:run':
+    case 'mf:order':
       await runOrder(orderFolderPath(args.join(' ')));
       return true;
     case 'reconcile:run':
