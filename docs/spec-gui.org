@@ -82,6 +82,7 @@ Built-in panel types:
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
+| =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see [[file:spec-duplicates.org][spec-duplicates.org]] "GUI") |
 | =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
 
 Users can add custom panel types by creating a new directory under
@@ -1037,6 +1038,8 @@ Behaviours:
 | =metarecord-list:orphans-exit= | Leave the orphan view and restore the editor-driven query. The banner's "Exit" button |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
+| =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
+| =metarecord:duplicates= | Show what else is byte-identical to the selected metarecord, as a =metarecord-list= on =same(mfr_duplicate_group, <uuid>)= |
 | =mf:order [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
@@ -2370,6 +2373,41 @@ completion:
 - Status bar: ="Reconcile: N created, M updated, P unchanged."=
 - Full output (per-file actions and candidate stale matches) is appended to the
   =message= panel type.
+
+** Duplicates
+
+=mf:duplicate-scan= is the GUI half of =mf duplicate scan= (see
+[[file:spec-duplicates.org][spec-duplicates.org]]): it calls
+=POST .../duplicates/scan= (202 + task id) and, like =reconcile:run=, polls the
+task only to know when it ends — live progress belongs to the [[*Task bar]].
+Its optional arguments (=--min-size=, =--rehash=, a subtree) are collected as
+[[*Interactive command arguments (command mode)]] arguments, all with defaults,
+so a bare invocation runs the ordinary whole-repository scan. On completion the
+status bar shows ="Duplicates: N groups, M files, 4.5 GiB reclaimable."= and the
+full summary goes to the =message= panel.
+
+The =full= phase reports *bytes* rather than files (see
+[[file:spec-tasks.org][spec-tasks.org]] "Duplicate scan progress phases"), so the
+task bar formats this phase's counts as a size.
+
+The *duplicates panel* (=panel:set-type duplicates=, suggested default =t u=)
+lists the groups — reclaimable space, size, member count, hash — worst first,
+each expanding to its members' paths with a marker on those sharing an inode
+with another member. It is an ordinary query view over
+=mf_schema = "duplicate_group"= sorted on =mfr_duplicate_reclaimable=, and its
+members are an ordinary metarecord selection, so it needs *no deletion logic of
+its own*: =metarecord:trash= and the shared file actions already apply, with
+their existing confirmations. Nothing in this panel deletes a file implicitly,
+and there is deliberately no "remove all but one" action — choosing which copy
+survives is the user's, and the panel's job is to make that choice informed.
+
+=metarecord:duplicates= works from the other direction: on any metarecord
+carrying =mfr_duplicate_group= it opens a =metarecord-list= on
+=same(mfr_duplicate_group, <uuid>)= ([[file:spec-query.org][spec-query.org]]
+"Same-value matching"), which is how a file's twins are reached without the
+caller ever handling a hash. =metarecord-detail= shows the same thing passively:
+when =mfr_duplicate_group= is present it renders a "N duplicates" line that
+activates the command.
 
 ** Order a folder's children
 

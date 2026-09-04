@@ -57,6 +57,7 @@ Availability of the =mfr_*= stat-derived fields per platform:
 | =mfr_permissions=  | yes             | yes               | *never written* (absent)      |
 | =mfr_uid=          | yes             | yes               | *never written* (absent)      |
 | =mfr_gid=          | yes             | yes               | *never written* (absent)      |
+| =mfr_inode=        | yes             | yes               | *never written* (absent)      |
 | =mfr_mount=        | yes             | yes (no identity) | *never written* (absent)      |
 
 - =mfr_permissions=, =mfr_uid=, =mfr_gid= are Unix-specific. On Windows they
@@ -66,6 +67,14 @@ Availability of the =mfr_*= stat-derived fields per platform:
   refresh them).
 - =mfr_btime= is read through =std::fs::Metadata::created()=, which abstracts
   the per-OS source. It is absent when the filesystem does not provide it.
+- =mfr_inode= (=st_dev=/=st_ino=, written only when =st_nlink > 1= — see
+  [[file:spec-duplicates.org][spec-duplicates.org]] "Hard links") comes from the
+  Unix =MetadataExt=, so it needs no syscall of its own. =std= exposes no
+  equivalent on Windows — the file index there requires
+  =GetFileInformationByHandle= — so the field is simply absent, like
+  =mfr_btime= on a filesystem without creation times. A repository scanned on
+  Windows reports every file as its own inode, which over-counts reclaimable
+  space rather than under-counting it.
 - Hashing (=mfr_partial_hash=, =mfr_full_hash=) is pure content-based
   (=xxhash-rust=) and fully portable.
 - =mfr_mount= marks a mount point; its detection and the identity string it

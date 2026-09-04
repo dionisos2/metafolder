@@ -29,6 +29,7 @@ CLI provides a DSL that compiles to this representation.
 | FollowsTransitive   | =follows_transitive=  | =TreeRef= only: metarecord is a descendant of the target (a path, or any metarecord matching a condition); =inclusive: true= also matches the target itself (the whole subtree) |
 | Matches             | =matches=             | String field matches a regex pattern                           |
 | Osm                 | =osm=                 | Ordered-substring match over a field's text (=direct=) or its =TreeRef= path (=path=) |
+| SameAs              | =same_as=             | The field shares at least one value with a metarecord matching the sub-query |
 | UuidIn              | =uuid_in=             | Metarecord UUID is in an explicit list (=uuids=, 32-hex)        |
 
 =UuidIn= is the bridge between the resource layer (a single thing at its URL)
@@ -264,6 +265,59 @@ Two modes, chosen by the caller (see the DSL functions =osm= / =osmd=):
   state* — no denormalised path text, and a rename/move costs nothing beyond the
   existing tree-cache upkeep.
 
+** Same-value matching (=same=)
+
+=SameAs= answers "the metarecords that share a value of =field= with *this*
+one" without the caller having to know what that value is:
+
+#+BEGIN_SRC json
+{"type": "same_as", "field": "mfr_duplicate_group",
+ "target": {"type": "uuid_in", "uuids": ["3f2a…9b"]}}
+#+END_SRC
+
+A metarecord matches when at least one of its non-=Nothing= =field= values is
+equal to at least one non-=Nothing= =field= value of some metarecord matching
+=target=. =Nothing= rows never participate — "the same absence" is not a
+resemblance — which is the same exclusion =IsPresent= makes.
+
+It is *reflexive*: the target's own metarecords match, since a record trivially
+shares its values with itself. This is the equivalence class, not the
+neighbourhood; "the *others*" is =same(f, X) AND NOT X=. (Deliberately the
+opposite default from =->*=, which is strict and needs ~=>*~ to include its
+root: there, self-inclusion is a special case of a traversal; here, excluding
+self would break the class.) A target metarecord with no =field= value
+contributes nothing, and an empty target matches nothing.
+
+The predicate is *field-typed like any other*: it compares values, not
+references, so it applies to every value type. =same(mfr_duplicate_group, X)=
+compares =Ref= values and yields byte-identical files; =same(mfr_meta_artist,
+X)= compares strings; =same(mfr_size, X)= compares integers. Only the field's
+own type decides.
+
+*** Why not a reverse arrow
+
+The traversal this replaces would be an inverse =Follows= — "the records
+referenced *by* a record matching the sub-query" — spelled =field <- (query)=.
+That spelling is unavailable: the lexer reads =<= then a =-= followed by a
+digit as a negative literal, so =size<-5= already means =size < -5= and a =<-=
+token would silently change it. Beyond the lexing, =same= is the more useful
+primitive: an inverse arrow would express the duplicate case only as the
+double traversal =f -> (f <- (…))=, while =same= says it once and generalises
+to non-reference fields.
+
+*** Evaluation
+
+In the bitmap index ([[file:spec-indexing.org][spec-indexing.org]]) every
+encoding — categorical, BSI and reverse — holds a complete value → bitmap
+partition of its field. =SameAs= evaluates =target= to a bitmap, then walks that
+partition keeping the values whose bitmap intersects it, and unions them: the
+existing "walk the distinct values, test against a restriction" pattern that
+already serves the text predicates. The cost is the field's *cardinality*, not
+its row count.
+
+The SQL fallback is the same statement in relational form: the rows of =field=
+whose value tuple appears among the =field= rows of the target set.
+
 ** HTTP API
 
 *** =POST /repos/:repo_uuid/query=
@@ -402,7 +456,7 @@ query     := or_expr
 or_expr   := and_expr ( "OR" and_expr )*
 and_expr  := unary ( "AND" unary )*
 unary     := "NOT" unary | atom
-atom      := "(" query ")" | uuid | osm_call | predicate
+atom      := "(" query ")" | uuid | osm_call | same_call | predicate
 
 predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field cmp_op literal
@@ -412,6 +466,7 @@ predicate := field "IS" ( "PRESENT" | "ABSENT" | "UNKNOWN" )
            | field "=>*" ( string | "(" query ")" )
 
 osm_call  := ( "osm" | "osmd" ) "(" field "," string ")"
+same_call := "same" "(" field "," query ")"
 
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
 literal   := int | float | string | "true" | "false" | datetime
@@ -458,6 +513,13 @@ uuid      := 32 ASCII hexadecimal characters
   operators recognised only when immediately followed by =(=, so a field literally
   named =osm= stays usable as a predicate (=osm = "x"=). =osm= on a non-=TreeRef=
   field is rejected with =400= — use =osmd=.
+- =same(field, query)= compiles to =SameAs= (see [[*Same-value matching]]): the
+  metarecords whose =field= holds at least one value also held, in the same
+  field, by a metarecord matching =query=. Recognised only when immediately
+  followed by =(=, like =osm=/=osmd=, so a field named =same= stays usable. The
+  second argument is a full query, so the reference set can be named any way a
+  query can — most often a bare UUID atom (=same(mfr_duplicate_group, 3f2a…9b)=)
+  or a path (=same(mfr_duplicate_group, mfr_path = "/a/b.txt")=).
 - A *bare UUID atom* is a predicate on the metarecord's own identity: 32 ASCII
   hexadecimal characters standing alone where a predicate is expected compile to
   =UuidIn= with that single UUID. This is the DSL surface of the identity
@@ -506,6 +568,8 @@ mf_schema = "tag" AND (osm(path, "musi jazz") OR osmd(label, "jazz"))
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8 OR 47ab0000000000000000000000000001
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating > 3
 tag -> (8f3a2b1c4d5e6f708192a3b4c5d6e7f8)   # records referencing that tag
+same(mfr_duplicate_group, 8f3a2b1c4d5e6f708192a3b4c5d6e7f8)  # its byte-identical twins
+same(mfr_meta_artist, mfr_path = "/music/a.flac")             # same artist as that file
 #+END_SRC
 
 ** =mf query <predicate>=

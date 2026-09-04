@@ -26,7 +26,20 @@ when the previous one is insufficient:
    Computed on first open; stored in the database alongside the metarecord.
 3. *Full hash* — xxHash3 of the entire file content.
    Computed only when size and partial hash both match and a definitive
-   identity check is required (e.g. deduplication confirmation).
+   identity check is required — re-homing an orphan, or confirming a duplicate
+   group ([[file:spec-duplicates.org][spec-duplicates.org]]).
+
+A stored hash describes the file *as it was when the hash was computed*, so it
+is only reusable while the file has not changed since. The watcher's =Modify=
+invalidation covers the watched case; where watching is off the subtree is
+deliberately frozen and no event fires, so the hashes carry their own stamp —
+=mfr_hash_mtime= and =mfr_hash_size=, written and cleared with them. A stored
+hash is trusted only while both still match the live =stat=. Using mtime this
+way does not contradict the rule above: that rule forbids mtime as a criterion
+of *identity*, whereas here it invalidates a *cache*, and it fails safe — a
+mismatch costs a recomputation, never a wrong match. See
+[[file:spec-duplicates.org][spec-duplicates.org]] "The hash cache and its
+validity stamp".
 
 Hash functions are provided by the =xxhash-rust= crate. For content-based
 similarity between files that do not share an exact hash (e.g. slightly
@@ -680,16 +693,29 @@ setting — the durable way to stop tracking a subtree is =mf_watch=.
 | Filesystem event   | Action                                                                                                     |
 |--------------------+------------------------------------------------------------------------------------------------------------|
 | =Create=           | Resolve the path first: if a metarecord already holds this =mfr_path=, refresh it as for =Modify(Data)= (idempotent — crash replay, or a file that appeared where the database already expected one, e.g. a cross-repo sync placement). Otherwise look up the parent UUID via the tree cache and create a metarecord with =mfr_path= TreeRef and fields =mfr_type=, =mfr_size=, =mfr_mtime=, =mfr_permissions=, =mfr_uid=, =mfr_gid= |
-| =Remove=           | Snapshot the current path into =mfr_path_old= (see "Orphan origin" below), then set =mfr_path= to =Nothing= (metarecord preserved); if a directory, cascade both to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
+| =Remove=           | Snapshot the current path into =mfr_path_old= (see "Orphan origin" below), then set =mfr_path= to =Nothing= (metarecord preserved) and delete =mfr_duplicate_group= (the hashes are deliberately *kept* — re-homing a re-appearing file needs them); if a directory, cascade both to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID). If the destination path is *itself tracked*, the rename destroyed the file that was there: that metarecord is orphaned first (as for =Remove=), then the moved one takes the position — one metarecord may hold a given tree position |
 | =Rename(From)=     | File left the watched scope: snapshot =mfr_path_old= then set =mfr_path= to =Nothing= (as for =Remove=); if a directory, cascade both to all descendants in the same transaction. *Not applied when the same batch finds the file again* inside a directory created in it (see "Moves into a new directory" below) — the two halves are re-paired into a move |
 | =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned metarecords (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new metarecord |
-| =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash= and =mfr_full_hash= |
+| =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash=, =mfr_full_hash=, their stamp (=mfr_hash_mtime=, =mfr_hash_size=) and =mfr_duplicate_group= — the content that made it a duplicate is gone (see [[file:spec-duplicates.org][spec-duplicates.org]]) |
 | =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
 
 On platforms where the =Data= / =Metadata= distinction is unavailable (e.g.
 some macOS or Windows backends), the daemon falls back to =Modify(Data)=
 semantics (full refresh + hash invalidation).
+
+*=mfr_inode= is part of the stat field set*, written by every path that refreshes
+stat fields (=Create=, both =Modify= forms, reconcile's create and refresh
+phases) and by none other. Unlike the rest it is *conditional*: the value
+="<st_dev>:<st_ino>"= is written when =st_nlink > 1= and removed when the link
+count is back to one, so the field's presence alone means "this file has more
+than one name" (see [[file:spec-duplicates.org][spec-duplicates.org]] "Hard
+links"). =st_dev=, =st_ino= and =st_nlink= all come from the =stat= these paths
+already perform, so the field costs no extra syscall. Note that creating or
+removing a link produces an event for *that* path only: the paths already
+pointing at the inode see their link count change with no event of their own, so
+their =mfr_inode= is stale until a reconcile re-stats them (see
+[[file:spec-duplicates.org][spec-duplicates.org]] "Known staleness").
 
 *Undone deletions.* A =Remove= / =Rename(From)= is applied only if its path is
 *still gone at flush time*: the check is deferred to application, not enqueue, so

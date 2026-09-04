@@ -1,0 +1,452 @@
+#+TITLE: Metafolder — Duplicate Detection Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+Finding the files of a repository that hold *byte-identical content*, and
+recording that fact in the database so it can be queried, sorted and acted upon
+like any other metadata.
+
+Detection is a *scan*: an observable background task
+([[file:spec-tasks.org][spec-tasks.org]]) that walks the tracked set, computes
+the missing content hashes, and writes its conclusion as ordinary metarecords
+and fields. It does **not** return a listing. Once the scan has run, "which
+files have a duplicate", "which groups waste the most space" and "what else is
+identical to this file" are plain queries over stored fields
+([[file:spec-query.org][spec-query.org]]) — which is the whole reason the result
+is written rather than reported.
+
+Nothing here deletes or moves a file. The scan is purely a metadata operation;
+disposing of a duplicate is the user's act, through the ordinary file tools
+(=mf trash -f=, the GUI's trash action — [[file:spec-trash.org][spec-trash.org]]).
+
+* Concepts
+
+** What counts as a duplicate
+
+Two metarecords are duplicates when their files have identical content. The
+candidate set is deliberately narrow — only what the scan can compare
+meaningfully:
+
+- =mfr_type = "file"= only. Directories are excluded (their "content" is their
+  subtree, not bytes); *symlinks* are excluded too, since hashing one would
+  read through to its target — a symlink's content is =mfr_symlink_target=,
+  which compares directly with no hashing at all.
+- A metarecord with no live =mfr_path= (=Nothing=, or absent) is excluded:
+  there is no file to hash.
+- *Zero-length files are never grouped.* They are all identical to each other,
+  which is true and useless: the space reclaimable by removing them is
+  =0 × (n − 1) = 0=. Excluding them also keeps the largest group in a typical
+  repository from being the least interesting one. =--min-size= raises the
+  bar further.
+- Paths at or below an *offline* mount point are skipped
+  ([[file:spec-file-tracking.org][spec-file-tracking.org]] "Offline subtrees"),
+  as are unreadable files (=EACCES=, =ENOTCONN=). Both are counted in the
+  summary as =skipped=; neither is an error.
+
+Eligibility (=mf_watch= / =mf_ignore=) is *not* consulted: the scan is driven by
+the **tracked set**, like the orphan scan and unlike reconcile's walk. A subtree
+whose watching was turned off still holds metarecords, and those files are still
+duplicates of each other.
+
+** Hash collisions: why byte comparison is not required
+
+The content hash is xxHash3-64 (=mfr_full_hash=,
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "File fingerprint"). It
+is not a cryptographic hash, which raises the question of whether a group may
+contain two files that are not in fact identical. For *accidental* collisions
+the answer is no, by a wide margin.
+
+Files are only ever compared *within a size class*, so the relevant birthday
+bound is over the members of one group, not over the repository: for =k= files
+of equal size and distinct content, the probability that any two collide is
+about =k²/2·2⁶⁴= — 3 × 10⁻¹⁶ at =k = 100=, 3 × 10⁻¹² at =k = 10 000=. Even the
+degenerate case of a million distinct files all sharing one size stays at
+3 × 10⁻⁸.
+
+That is orders of magnitude below the probability of the *verification itself*
+going wrong: at a typical unrecoverable-read-error rate of 10⁻¹⁵ per bit,
+re-reading a terabyte to compare two files byte by byte carries a ~10⁻³ chance
+of a read error. **A byte-for-byte confirmation pass would be more dangerous
+than the risk it claims to remove**, and the scan therefore does not perform
+one.
+
+What "not cryptographic" does mean is that a collision can be *manufactured*
+cheaply by someone who wants one. The residual risk is an attacker who plants a
+file crafted to collide with one of yours, so that a dedup tool offers to remove
+the original. This is a documented limit, not a defended one. Note that the
+usual mitigation — a secret per-repository hash seed — is *excluded by design*:
+[[file:spec-sync.org][spec-sync.org]] compares =mfr_full_hash= across two
+repositories as a content signature, so the hash must stay repository-independent.
+Moving to a keyed or cryptographic hash (BLAKE3) would be a change of a persisted
+format, hence a migration.
+
+** Hard links
+
+Several paths may name the same inode. Their contents are identical by
+construction, so they *are* duplicates — but removing one frees nothing, and a
+tool that reports reclaimable space without accounting for them lies.
+
+The daemon therefore records =mfr_inode= (=String=, ="<dev>:<ino>"=) on a file
+whose link count is greater than one. Both numbers come from the =stat= the
+walk already performs (=st_dev=, =st_ino=, =st_nlink= via =MetadataExt=), so the
+field costs **no additional syscall**; and because it is written only when
+=st_nlink > 1=, it costs nothing at all for the overwhelming majority of files.
+Its *presence* is what marks a hard-linked file — the same convention as
+=mfr_mount=, whose presence marks a mount point.
+
+The device number is part of the value because an inode number is unique only
+within one filesystem, and a repository may span several
+([[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points").
+
+Within a duplicate group, members sharing one =mfr_inode= value are one file
+under several names. Reclaimable space is therefore computed over *distinct
+inodes*, a member without =mfr_inode= counting as its own:
+
+: reclaimable = mfr_content_size × (distinct inodes − 1)
+
+*Known staleness.* Creating or removing a link fires a filesystem event for
+*that* path only — the link count of the paths already pointing at the inode
+changes with no event of their own. So after =ln A B=, =B= is recorded with its
+=mfr_inode= while =A= keeps none until something re-stats it, and the group
+counts them as two distinct inodes: reclaimable space is *over*-reported (the
+error is on the side of promising space that removing a name would not free,
+never of hiding a real duplicate). Symmetrically, removing one link of a pair
+leaves a now-meaningless =mfr_inode= on the survivor, which is harmless — one
+member alone with a value counts once either way. Reconcile's stat pass corrects
+both.
+
+** The hash cache and its validity stamp
+
+Hashing is the expensive part of the scan, so hashes are stored and reused
+(=mfr_partial_hash=, =mfr_full_hash=). A stored hash is only usable if the file
+has not changed since it was computed, and the watcher's invalidation
+([[file:spec-file-tracking.org][spec-file-tracking.org]] "Event semantics":
+=Modify= clears both hashes) does not cover every case — a subtree whose
+watching is off is deliberately frozen, and a file modified there keeps a hash
+that no longer describes it.
+
+The scan therefore records, atomically with the hashes, the file state they were
+computed from:
+
+- =mfr_hash_mtime= (=DateTime=) — the file's modification time at hash time;
+- =mfr_hash_size= (=Int=) — its size at hash time.
+
+A stored hash is trusted only when *both* still match the live =stat=; otherwise
+it is recomputed. The two are needed together: =mtime= alone misses a
+timestamp-preserving rewrite, and =mfr_size= cannot serve because reconcile's
+=refresh= updates it without touching the hashes — the stamp has to be
+self-contained.
+
+*This does not contradict* [[file:spec-file-tracking.org][spec-file-tracking.org]]'s
+rule that "mtime is never used as a criterion". That rule governs *identity* —
+deciding that two files are the same. Here mtime governs *cache invalidation* —
+deciding that a derived value is stale — and it fails safe: a mismatch causes a
+recomputation, never a false identity.
+
+The stamp is a strong heuristic, not a proof. Modification times have
+one-second granularity on some filesystems and can be moved backwards
+(=touch -t=, =rsync --times=, archive extraction), so a same-second,
+same-size rewrite slips through. =--rehash= ignores every stored hash and is the
+escape hatch when that matters.
+
+** Duplicate groups
+
+Each set of identical files is recorded as a *metarecord of its own* — not as a
+field repeated on the files. A group is a first-class thing: it can be queried,
+sorted, counted, and can later carry a decision of its own ("this is the copy I
+keep"), none of which a flat field on each file would allow. It is the same
+modelling as hierarchical tags, which are also metarecords referenced by the
+records they classify.
+
+A group metarecord carries:
+
+| Field                       | Type   | Description                                             |
+|-----------------------------+--------+---------------------------------------------------------|
+| =mf_schema=                 | String | ="duplicate_group"= — the metarecord's type              |
+| =mfr_content_hash=          | String | the members' =mfr_full_hash=                             |
+| =mfr_content_size=          | Int    | the members' size in bytes                               |
+| =mfr_duplicate_count=       | Int    | members at the last scan                                 |
+| =mfr_duplicate_reclaimable= | Int    | bytes freed by reducing the group to one file            |
+
+and each member file carries =mfr_duplicate_group= (=Ref=) pointing at it.
+
+A group metarecord has no =mfr_path=: it is an abstract record, like a tag.
+
+*The group's identity is the pair (=mfr_content_size=, =mfr_content_hash=)*, not
+the hash alone. Size is not needed to tell two *members* apart — they are only
+ever compared within one size class — but it is needed to keep the scan's
+find-or-create well defined, since two different size classes could in principle
+produce the same hash.
+
+=mfr_duplicate_count= and =mfr_duplicate_reclaimable= are redundant with the
+members, and stored anyway: sorting is a daemon-side operation over stored field
+values, so "the groups that waste the most space, worst first" is only a
+single sorted query if the number is a field.
+
+*** Invariant
+
+: mfr_duplicate_group present  ⟹  the file exists and had an identical twin at the last scan
+
+which makes =mfr_duplicate_group IS PRESENT= the exact query for "files having a
+duplicate". Three writers maintain it:
+
+- the *scan*, which is the only thing that ever sets it;
+- the *hash invalidation* path (=Modify=), which clears it alongside the hashes
+  and their stamp: a file whose content changed is no longer a known duplicate;
+- the *orphaning* path (watcher =Remove=, =mf orphan clear=), which clears it
+  when =mfr_path= becomes =Nothing=. The hashes are deliberately *not* cleared
+  there — a re-appearing file is re-homed by fingerprint match, which needs them.
+
+A group left with fewer than two live members is stale but harmless; it is
+removed by the next complete scan.
+
+* Daemon
+
+** The scan
+
+Four phases. Each narrows the candidate set before the next, more expensive one
+runs.
+
+*** =size= — group by size
+
+Every eligible file is partitioned by =mfr_size=; size classes with a single
+member are discarded. This is the cheap filter that makes the rest tractable,
+and it is served from the in-memory index
+([[file:spec-indexing.org][spec-indexing.org]]): =mfr_size= is an =Int=, so its
+=FieldIndex= is a BSI holding a complete value → bitmap partition, and the size
+classes are read straight off it. The partition covers every record carrying an
+=mfr_size=, directories included, so each class is first intersected with the
+*eligible* bitmap — =mfr_type = "file"= and a live =mfr_path=, itself an
+ordinary indexed query — and only then tested for more than one member. When the
+index is unavailable for the field the daemon falls back to
+=SELECT value_int, COUNT(*) … GROUP BY value_int HAVING COUNT(*) > 1= over the
+same restriction, exactly as query evaluation falls back from the index to SQL.
+
+*** =partial= — partial hashes
+
+For each surviving file, =mfr_partial_hash= is computed unless a *valid* stored
+one exists (see "The hash cache"). Within each size class, partial hashes
+occurring only once eliminate their file; the rest go on.
+
+*** =full= — full hashes, and the groups
+
+For each file still in play, =mfr_full_hash= is computed unless a valid stored
+one exists. Files sharing (size, full hash) form a group.
+
+Size classes are processed **largest first**, and each class's groups are
+written as it completes rather than at the end. A cancelled scan therefore
+leaves a correct partial result containing the most valuable groups, instead of
+nothing.
+
+*** =prune= — removing what no longer holds
+
+Reached only when the previous phases completed. It removes
+=mfr_duplicate_group= from records that are no longer members, and deletes group
+metarecords with fewer than two members. A cancelled scan skips this phase, so
+stale groups survive until the next complete run.
+
+** Writes and revisions
+
+Two kinds of write with two commit policies:
+
+- *Hash-cache writes* (=mfr_partial_hash=, =mfr_full_hash=, =mfr_hash_mtime=,
+  =mfr_hash_size=, =mfr_inode=) are committed **in batches**, one revision per
+  batch. A per-file transaction would cost one =fsync= each
+  ([[file:spec-event-log.org][spec-event-log.org]]); a single transaction for
+  the whole scan would throw away every hash computed so far if the scan is
+  cancelled — and the hash cache is precisely the work worth keeping.
+- *Group writes* are committed per size class, as described above; the =prune=
+  phase's removals are one final revision.
+
+A field is only written when it is absent or its value changed, so a *re-scan of
+an unchanged repository writes nothing*. The first scan is the expensive one;
+the log volume of later ones is negligible.
+
+** Progress and duration estimate
+
+| Phase      | =done= / =total=                                          |
+|------------+-----------------------------------------------------------|
+| =size=     | files partitioned / eligible files                        |
+| =partial=  | files hashed / files to hash                              |
+| =full=     | **bytes** hashed / bytes to hash                          |
+| =prune=    | groups checked / groups                                   |
+
+The =full= phase counts *bytes*, not files, because file sizes span several
+orders of magnitude and a file count would make the bar meaningless. Its total
+is known exactly before the phase starts — it is the sum of the =mfr_size= of
+the files that reached it — so once throughput is observed the remaining time is
+a straightforward extrapolation. The =partial= phase reads a bounded 8 KiB per
+file, so its per-file cost is near-constant (seek-bound) and a file count is the
+right unit there.
+
+** =POST /repos/:repo_uuid/duplicates/scan=
+
+Asynchronous, exactly like reconcile
+([[file:spec-tasks.org][spec-tasks.org]] "Reconcile as a task"): =409 Conflict=
+when a =duplicates= task is already =pending= or =running= for this repository,
+otherwise =202 Accepted= with ={"task_id": "<32hex>"}=.
+
+Body (all optional):
+
+| Key          | Default | Description                                                        |
+|--------------+---------+--------------------------------------------------------------------|
+| =min_size=   | =1=     | Files smaller than this are skipped (=1= excludes empty files)      |
+| =rehash=     | =false= | Ignore every stored hash and recompute                             |
+| =metarecord= | —       | 32-hex: restrict the scan to that metarecord's subtree             |
+
+The task result is a summary — never a listing:
+
+#+BEGIN_SRC json
+{"groups": 128, "files": 291, "reclaimable": 4823710720,
+ "hashed_partial": 5540, "hashed_full": 412, "skipped": 3}
+#+END_SRC
+
+*There is no listing endpoint.* Reading the result is an ordinary query over the
+written fields, through the existing set layer — which is the point of writing
+them.
+
+** Wire compatibility
+
+Nothing here requires an =API_VERSION= bump. Every part is *additive*: a new
+endpoint, a new task kind, new =mfr_*= fields, and a new =Query= variant. No
+existing shape, name or semantic changes, so an older client keeps working
+against a newer daemon.
+
+The reverse pairing is the one to handle in the clients: a *newer* client
+sending =same_as= — or =POST /duplicates/scan= — to an *older* daemon gets a
+=400= / =404=, which the CLI and GUI must surface as "this daemon does not
+support duplicate detection" rather than as an opaque error. That is what the
+version handshake in =GET /health= is for, and it is why the mismatch must not
+be papered over by bumping the version for an additive change: the bump exists
+to warn about *incompatibility*, and spending it here would train the warning to
+be ignored.
+
+** Querying duplicates
+
+#+BEGIN_SRC
+mf_schema = "duplicate_group"                       # every group
+mfr_duplicate_group IS PRESENT                      # every file having a duplicate
+same(mfr_duplicate_group, 3f2a…9b)                  # the files identical to that one
+same(mfr_duplicate_group, mfr_path = "/a/b.txt")    # ... designated by path
+#+END_SRC
+
+sorted with the ordinary =--sort= — =mfr_duplicate_reclaimable:desc= on the
+groups is the "worst offenders first" listing.
+
+The third form is what makes the group model usable from a file's point of view
+without the caller ever having to learn its hash; it needs the =same= predicate
+specified in [[file:spec-query.org][spec-query.org]].
+
+* CLI
+
+** =mf duplicate {list, scan, clear}=
+
+=list= is the group default, so =mf duplicate= ≡ =mf duplicate list=.
+
+*** =mf duplicate [list] [-v] [--sort <field[:asc|desc]>] [--limit <n>]=
+
+Prints one row per group — hash (abbreviated), size, member count, reclaimable
+space — sorted by =mfr_duplicate_reclaimable= descending by default. With
+=-v=/=--verbose=, each group is followed by its members' paths, a =+= marking
+members that share an inode with another member.
+
+#+BEGIN_SRC
+RECLAIMABLE  SIZE      COUNT  HASH
+    3.2 GiB   1.6 GiB      3  a41f0c9e…
+    806 MiB   403 MiB      3  77b2e510…
+#+END_SRC
+
+This is a formatting convenience over =POST /query=; it issues exactly the query
+shown in "Querying duplicates" and holds no logic of its own.
+
+*** =mf duplicate scan [--min-size <size>] [--rehash] [--metarecord <uuid>] [--poll-interval <ms>] [--json]=
+
+Calls =POST /duplicates/scan=, follows the task to completion showing its phase
+and progress (the same treatment =mf reconcile= gives its own task), and prints
+the summary:
+
+#+BEGIN_SRC
+groups: 128  files: 291  reclaimable: 4.5 GiB   (hashed 5540 partial, 412 full; 3 skipped)
+#+END_SRC
+
+=<size>= for =--min-size= is a human size, the same spelling =mf trash prune -s=
+accepts (=100mb=, =1g=, =512k=; base 1024).
+
+*** =mf duplicate clear [-y]=
+
+Removes the feature's footprint: every =duplicate_group= metarecord and every
+=mfr_duplicate_group= field, in one revision. Prompts for confirmation unless
+=-y=. The hash cache is *not* touched — it is valid, expensive, and useful to
+reconcile and sync independently of duplicate detection.
+
+* GUI
+
+- =mf:duplicate-scan= — the GUI half of =mf duplicate scan= (hence the =mf:=
+  prefix, spec-gui "Naming"), run with the shared task progress bar exactly as
+  =reconcile:run= is. Its options are collected as interactive command
+  arguments, all defaulted, so a bare invocation is the ordinary scan.
+- =metarecord:duplicates= — opens a =metarecord-list= on
+  =same(mfr_duplicate_group, <selected uuid>)=: "show me what else is identical
+  to this". Offered as a context-menu item in the metarecord panels, and shown
+  in =metarecord-detail= as a "N duplicates" line whenever
+  =mfr_duplicate_group= is present.
+- *duplicates panel* (=panel:set-type duplicates=, suggested binding =t u=) —
+  the groups, worst-reclaimable first, each expanding to its members with their
+  paths and a marker on hard-linked ones. It carries no deletion logic of its
+  own: the members are an ordinary metarecord selection, so the shared file
+  actions (=metarecord:trash=, open, reveal) already apply.
+
+* Cross-repo sync
+
+Duplicate data is **never synchronised**, and this needs no rule of its own.
+=mfr_duplicate_group=, =mfr_inode=, =mfr_hash_mtime= and =mfr_hash_size= are
+=mfr_*= fields other than =mfr_path=, and [[file:spec-sync.org][spec-sync.org]]
+("The metadata diff") already states that every such field is never written by
+the field diff because it is stat- or content-derived and each repository
+re-derives its own. That is exactly right here: "has a duplicate" is a property
+of one repository's own content, and each side computes it by scanning.
+
+Group metarecords are likewise out of scope: they have no =mfr_path=, so no
+placement, and nothing synced references them.
+
+*One correction is required for that to hold.* Referential closure collects a
+record's outgoing references with =ref_targets= (=crates/core/src/sync/plan.rs=),
+which walks **every** =ref=-valued field with no filter on the field name. It
+would therefore materialise a bare, empty group metarecord on the target side —
+one per duplicate group — purely because member files reference it, even though
+the field itself is never written. The closure must be restricted to the fields
+the diff actually writes, mirroring the rule already stated for the diff: skip
+=mfr_*= names other than =mfr_path=.
+
+This is a *pre-existing* gap rather than one introduced here: no =mfr_*= field is
+=Ref=-valued today (=mfr_path= is a =TreeRef=, =mfr_mount= a =String=), so
+nothing currently triggers it. =mfr_duplicate_group= would be the first, so the
+fix belongs with this feature.
+
+* Open questions
+
+** Duplicate directories
+
+Two directories with identical contents are a duplicate in the sense a user
+cares about, and are not detected here: the scan compares file bytes only. A
+directory hash (a Merkle fold over the children's =mfr_full_hash= and names)
+would fit the same group model, and its invalidation is the hard part — every
+ancestor's hash dies with any descendant's write. Deferred.
+
+** Near-duplicates
+
+Files that are *nearly* identical (a re-encoded video, a resized image) are out
+of scope: they share no hash. The similarity machinery
+([[file:spec-file-tracking.org][spec-file-tracking.org]] "File Similarity")
+scores filenames, not content, and the TLSH content hash mentioned there is not
+implemented. If it ever is, near-duplicates want a different model than an exact
+group anyway — a score between two files, not an equivalence class.
+
+** Retention of the decision
+
+A group metarecord is currently rebuilt by each scan and carries no user data.
+Once it does — "this is the copy I keep" — the scan's find-or-create must
+preserve it across runs, which the (size, hash) identity already allows, and
+=mf duplicate clear= must stop being harmless. Deferred until there is a reason
+to store such a decision.

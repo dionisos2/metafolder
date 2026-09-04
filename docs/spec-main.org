@@ -328,6 +328,7 @@ section; this section defines the conventions shared by all commands.
 | [[file:spec-trash.org][spec-trash.org]]             | =mf trash {list,restore,prune}=                   |
 | [[file:spec-tasks.org][spec-tasks.org]]             | =mf task {list,show}=                              |
 | [[file:spec-sync.org][spec-sync.org]]               | =mf sync= (v2)                                    |
+| [[file:spec-duplicates.org][spec-duplicates.org]]   | =mf duplicate {list,scan,clear}=                  |
 
 ** Global options
 

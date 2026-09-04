@@ -268,10 +268,14 @@ The stored fields for a file/directory metarecord are:
 | =mfr_permissions=  | mfr    | String     | Unix permission bits as octal string, e.g. ="0644"=; Unix only, never written on Windows (see [[file:spec-platform.org][spec-platform.org]]) |
 | =mfr_uid=          | mfr    | Int        | Owner user ID; Unix only, never written on Windows                                                         |
 | =mfr_gid=          | mfr    | Int        | Owner group ID; Unix only, never written on Windows                                                        |
+| =mfr_inode=        | mfr    | String     | ="<dev>:<ino>"=; present only on a file whose link count exceeds one — its presence is what marks a *hard-linked* file (see [[file:spec-duplicates.org][spec-duplicates.org]]). Unix only, never written on Windows |
 | =mfr_mime=         | mfr    | String     | MIME type from content analysis (see [[file:spec-platform.org][spec-platform.org]]); computed by reconcile (opt-out) for files that lack it; absent when undetectable or not yet computed |
 | =mfr_partial_hash= | mfr    | String     | Hex xxHash3 of first+last 4 KB; absent if not yet computed or invalidated by =Modify=                      |
 | =mfr_full_hash=    | mfr    | String     | Hex xxHash3 of full content; absent if not yet computed                                                    |
+| =mfr_hash_mtime=   | mfr    | DateTime   | The file's =mfr_mtime= when the stored hashes were computed; written and cleared with them (see [[file:spec-duplicates.org][spec-duplicates.org]] "The hash cache") |
+| =mfr_hash_size=    | mfr    | Int        | The file's size when the stored hashes were computed; written and cleared with them |
 | =mfr_mount=        | mfr    | String     | Present on a *directory* metarecord that is a mount point: best-effort identity of the mounted volume (see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mount points"). Its presence, not its value, marks the mount point; never cleared by the daemon |
+| =mfr_duplicate_group= | mfr | Ref        | The =duplicate_group= metarecord this file belongs to; present ⟹ the file exists and had a byte-identical twin at the last scan (see [[file:spec-duplicates.org][spec-duplicates.org]]) |
 | =mf_watch=         | mf     | Bool       | Opt-in watch flag; controls whether this metarecord and its descendants are tracked (see [[*Watch and Ignore]])  |
 | =mf_ignore=        | mf     | String     | Regex pattern (multi-map: one row per pattern); controls which paths are excluded (see [[*Watch and Ignore]]) |
 | =mf_sync=          | mf     | String     | =internal= (default) / =external=: whether metafolder or an external tool owns this metarecord's content during cross-repo sync; inherited down the =mfr_path= tree (see [[file:spec-sync.org][spec-sync.org]]) |
@@ -280,6 +284,13 @@ The user schema feature defines one additional reserved =mf_*= field:
 =mf_schema= (String, multi-map — metarecord type declaration). The constraints
 themselves live in an external schema file, not in the database; see
 [[file:spec-schema.org][spec-schema.org]].
+
+Duplicate detection adds one *daemon-created* metarecord type that is not a file:
+a =duplicate_group= (=mf_schema = "duplicate_group"=, no =mfr_path=), carrying
+=mfr_content_hash=, =mfr_content_size=, =mfr_duplicate_count= and
+=mfr_duplicate_reclaimable=. It is the only place where the daemon writes an
+=mf_*= field of its own accord; no =force= is involved, since =mf_*= fields need
+none. See [[file:spec-duplicates.org][spec-duplicates.org]].
 
 The =mfr_path= TreeRef stores =(value_uuid, value_name)= for each metarecord.
 

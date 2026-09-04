@@ -653,6 +653,17 @@ positions being unique, find-or-create never duplicates, and a position found
 occupied by a different record at run time is a forest violation (=400=),
 skipped and reported.
 
+*The closure spans only the fields the diff writes.* Collecting a record's
+outgoing references must apply the same filter as [[*The metadata diff]]: user
+fields, =mf_*= fields and =mfr_path=, and *not* the other =mfr_*= fields, which
+are never written because each repository re-derives them. Closing over a
+=Ref=-valued =mfr_*= field would materialise a counterpart for something that is
+never synced — a bare, empty record per referent on the target side, for no
+purpose. No =mfr_*= field is =Ref=-valued today (=mfr_path= is a =TreeRef=,
+=mfr_mount= a =String=), so nothing exercises this yet;
+=mfr_duplicate_group= ([[file:spec-duplicates.org][spec-duplicates.org]]) is the
+first, and the filter belongs in =ref_targets= before it lands.
+
 =Ref= values have no foreign-key constraint on =value_uuid= (see schema). The
 system tolerates dangling refs: =Follows= on a dangling =Ref= simply returns no
 results. Circular references (A → B → A) are likewise permitted; =Follows= is
