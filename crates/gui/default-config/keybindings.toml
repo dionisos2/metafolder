@@ -23,7 +23,12 @@
 "tab" = { command = "script-keys:toggle" }
 
 # Text editing (fire even while a text input is focused).
-"escape" = { command = "editing:unfocus", text-input = true }
+"escape" = [
+  { command = "editing:unfocus", text-input = true },
+  # In the find bar, escape closes the search (and unpaints it) rather than
+  # merely leaving the input.
+  { command = "find:close", focus = "find" },
+]
 "ctrl+q" = { command = "editing:discard", text-input = true }
 "ctrl+a" = { command = "editing:goto-line-start", text-input = true }
 "ctrl+e" = { command = "editing:goto-line-end", text-input = true }
@@ -201,6 +206,9 @@
   # panel accelerators work again without a separate Escape. Shift+Enter (below)
   # re-runs but keeps the focus for another edit.
   { command = "metarecord-list:submit-finder", focus = "finder" },
+  # In the find bar, Enter walks to the next match (shift+Enter the previous),
+  # the way a browser's find behaves.
+  { command = "find:next", focus = "find" },
   { command = "metarecord-list:open", when = "metarecord-list" },
   { command = "file-manager:activate", when = "file-manager" },
   { command = "treeref:descend", when = "treeref" },
@@ -291,7 +299,10 @@
 # driving the query), q = the normal DSL (its command opens + freezes the
 # editor). c a clears all three at once. Shift+Enter in the finder re-runs but
 # keeps the focus.
-"shift+enter" = { command = "metarecord-list:apply-finder", focus = "finder" }
+"shift+enter" = [
+  { command = "metarecord-list:apply-finder", focus = "finder" },
+  { command = "find:prev", focus = "find" },
+]
 "e f" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "e s" = { command = "metarecord-list:edit-simplified", when = "metarecord-list" }
 "e q" = { command = "metarecord-list:edit-normal", when = "metarecord-list" }
@@ -373,6 +384,13 @@
 "shift+down" = { command = "file:volume-down", when = "file" }
 # Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
 "ctrl+m" = { command = "file:mute", when = "file" }
+
+# Find in panel (spec-gui "Find in panel"): the browser's Ctrl-F over the text
+# the focused panel currently renders. `text-input = true` so it also works
+# from inside a panel's own search box, and pressing it again re-focuses the
+# find bar and selects what is in it. Enter / shift+Enter / escape while the
+# bar has the focus are the focus-scoped entries in the sections above.
+"ctrl+f" = { command = "find:in-panel", text-input = true }
 
 # Panel types can still suggest their own keybindings at runtime
 # (metafolder.addKeybinding) — useful for third-party panels. Those are the

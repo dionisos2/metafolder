@@ -548,6 +548,29 @@ mod tests {
         assert!(table.iter().any(|b| b.keys == ["ctrl+enter"]
             && b.focus.as_deref() == Some("finder")
             && b.invocation == "pick:confirm"));
+
+        // Find in panel (spec-gui "Find in panel"): ctrl+f opens it from
+        // anywhere, text input included, and the stepping keys are scoped to
+        // the find bar's own focus so they never shadow a panel's Enter.
+        assert!(table
+            .iter()
+            .any(|b| b.keys == ["ctrl+f"] && b.invocation == "find:in-panel" && b.text_input));
+        assert!(enter
+            .iter()
+            .any(|b| b.focus.as_deref() == Some("find") && b.invocation == "find:next"));
+        assert!(table.iter().any(|b| b.keys == ["shift+enter"]
+            && b.focus.as_deref() == Some("find")
+            && b.invocation == "find:prev"));
+        assert!(table.iter().any(|b| b.keys == ["escape"]
+            && b.focus.as_deref() == Some("find")
+            && b.invocation == "find:close"));
+        // The find commands the bindings name must exist as builtins, or the
+        // keys would dispatch into nothing.
+        let registry = crate::command_registry::CommandRegistry::default();
+        crate::register_builtins(&registry);
+        for name in ["find:in-panel", "find:next", "find:prev", "find:close"] {
+            assert!(registry.list().iter().any(|c| c.name == name), "missing builtin {name}");
+        }
     }
 
     // ── Compilation ──────────────────────────────────────────────────────

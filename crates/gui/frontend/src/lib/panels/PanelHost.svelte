@@ -5,6 +5,7 @@
   import { addDefaultMenuItems } from '../keys';
   import { focusedWs, refreshCommands, slotPayload, store } from '../store.svelte';
   import { createPanelApi, type PanelApiInstance } from './api';
+  import { setFindRootProvider } from './roots';
   import { helpCursorSheet } from '../cursor';
   import type { CommandDef, SlotId } from '../types';
   import { createVisibilityGate } from '../../../../panel-shim/visibility.js';
@@ -39,7 +40,15 @@
   // base sheet sizing the body stand-in.
   const userSheet = new CSSStyleSheet();
   const baseSheet = new CSSStyleSheet();
-  baseSheet.replaceSync(':host{display:block;height:100%}.mf-panel-body{width:100%;height:100%;box-sizing:border-box}');
+  // The find bar paints its matches with the CSS Custom Highlight API, which
+  // needs a `::highlight()` rule in the tree the text lives in — i.e. in every
+  // panel's shadow root (spec-gui "Find in panel").
+  baseSheet.replaceSync(
+    ':host{display:block;height:100%}' +
+      '.mf-panel-body{width:100%;height:100%;box-sizing:border-box}' +
+      '::highlight(mf-find){background-color:var(--mf-find, #6f5b12);color:#fff}' +
+      '::highlight(mf-find-current){background-color:var(--mf-find-current, #d8a657);color:#000}',
+  );
 
   const instanceKey = (wsId: string, panelType: string) => `${wsId}|${panelType}`;
 
@@ -218,6 +227,14 @@
   onMount(() => {
     window.addEventListener('resize', sync);
 
+    // Shell features acting on "whatever panel is on screen" (the find bar)
+    // reach the focused panel's shadow root through this.
+    setFindRootProvider(() => {
+      const payload = slotPayload(store.layout.focused);
+      if (!payload.visible || !payload.workspace_id || !payload.panel_type) return null;
+      return instances.get(instanceKey(payload.workspace_id, payload.panel_type))?.shadow ?? null;
+    });
+
     // Initialize the shared user stylesheet, kept live on style changes.
     void fetch(`${base}/__style.css`)
       .then((r) => r.text())
@@ -281,6 +298,7 @@
       resizeObserver?.disconnect();
       for (const unlisten of unlisteners) void unlisten.then((fn) => fn());
       setPanelDispatch(null);
+      setFindRootProvider(null);
     };
   });
 </script>

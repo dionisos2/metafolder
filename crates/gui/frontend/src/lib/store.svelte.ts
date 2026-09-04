@@ -100,6 +100,18 @@ export const store = $state({
     /// `script-keys:toggle`; Rust owns the value and pushes it here, so the
     /// temporary answer bindings and this flag can never disagree.
     scriptKeys: true,
+    /// The find bar (spec-gui "Find in panel"): a browser-style Ctrl-F over
+    /// the focused panel's rendered text. `open` shows the bar (and the
+    /// focus tick re-focuses its input when Ctrl-F is pressed again),
+    /// `count`/`index` report the matches of `needle` — index -1 when there
+    /// is none.
+    find: {
+      open: false,
+      needle: '',
+      count: 0,
+      index: -1,
+      focusTick: 0,
+    },
     /// Shell scripts currently running (spec-gui "Scripting"): a loading
     /// indicator so a slow script never looks frozen. Fed by
     /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`

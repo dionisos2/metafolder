@@ -4,6 +4,7 @@
 
 import { osmMatch } from '../../../panel-shim/finder.js';
 import { setHelpCursor } from './cursor';
+import { closeFind, openFind, stepFind } from './find';
 import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } from './ignore';
 import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
@@ -1053,6 +1054,19 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
       await runScript(path, ws);
       return true;
     }
+    case 'find:in-panel':
+      openFind(args[0]);
+      return true;
+    case 'find:next':
+      stepFind(1);
+      return true;
+    case 'find:prev':
+      stepFind(-1);
+      return true;
+    case 'find:close':
+      closeFind();
+      return true;
+
     case 'help':
     case 'help:help': {
       // Open the help panel for an optional topic. The topic (raw arg text) is

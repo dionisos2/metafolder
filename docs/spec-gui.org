@@ -1005,6 +1005,9 @@ Behaviours:
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
+| =find:in-panel [text]= | Open the find bar over the focused panel (default =ctrl+f=) — see [[*Find in panel]] |
+| =find:next= / =find:prev= | Go to the next / previous find match (wrapping) |
+| =find:close=         | Close the find bar and unpaint its matches     |
 | =help=               | Open the =help= panel (alias of =help:help=)   |
 | =help:help [text]=   | Open the =help= panel for a topic (an exact name opens its page; else search) |
 | =help:help-cursor=   | Turn the pointer into =?=; the next click opens the matching help page (escape cancels) |
@@ -1194,6 +1197,43 @@ Keybindings are stored in =~/.config/metafolder-gui/keybindings.toml=
 (see [[*Keybinding]] for the =when= and =text-input= scope dimensions).
 The =config:open= command opens a settings view where they can be edited
 interactively; changes take effect immediately.
+
+** Find in panel
+
+=Ctrl+f= searches the *text the focused panel currently renders* — the
+browser's own find, over one panel. It is a shell feature, not a panel one: no
+panel implements anything, and it therefore works in every panel type, built-in
+or third-party, including the =help= pages it was first asked for.
+
+- The find bar appears above the command input, with the match position
+  (=3/17=, or =no match=). Typing re-runs the search on every keystroke.
+- =Enter= / =Shift+Enter= step to the next / previous match, wrapping at both
+  ends; =Escape= closes the bar. These are =focus = "find"= keybindings, so
+  they only apply while the bar has the focus (see [[*Keybinding]]).
+- =Ctrl+f= again re-focuses the bar and selects its content, so a second press
+  starts a new search. The needle survives a close, so =Ctrl+f Enter= resumes
+  the previous one.
+- The current match is painted distinctly from the others and scrolled into
+  view — but only when it is not comfortably visible already, so incremental
+  typing does not make the text jump under the reader. Painting uses the CSS
+  Custom Highlight API (=::highlight(mf-find)= / =::highlight(mf-find-current)=,
+  styled in the sheet every panel adopts): *no DOM is mutated*, so a panel's
+  markup, event handlers and re-renders are untouched by a search running over
+  them.
+- Every operation re-runs the search against the panel as it is *now* rather
+  than reusing the previous match list: panels re-render under the bar (a query
+  re-runs, a page loads, the slot shows another workspace), and a stale match
+  would highlight text that is no longer there.
+- What is searched is what is *rendered*: hidden subtrees are skipped, source
+  indentation collapses the way the layout collapses it (so a term broken over
+  two lines in a help page still matches), and block elements are separated so
+  two paragraphs never concatenate into a word nobody can see. A match may span
+  inline markup (=hello <b>world</b>=).
+- Its scope is one panel's *loaded* DOM — like a browser's find, and unlike a
+  query. Rows a paged list has not fetched are not searched; that is what the
+  finder and the query editor are for (see [[*Finder (quick filter)]]).
+- =find:in-panel <text>= searches =text= directly, so a script can drive the
+  find bar through =mf gui command= like any other command.
 
 ** Help
 

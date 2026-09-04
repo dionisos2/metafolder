@@ -11,6 +11,15 @@
     ]
   },
   {
+    "id": "find",
+    "title": "Find in panel (Ctrl+F)",
+    "file": "find.html",
+    "aliases": [
+      "find", "find:in-panel", "find:next", "find:prev", "find:close",
+      "ctrl-f", "ctrl+f", "search-in-page", "find-in-page"
+    ]
+  },
+  {
     "id": "keybindings",
     "title": "Keyboard shortcuts",
     "file": "keybindings.html",

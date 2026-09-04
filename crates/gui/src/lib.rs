@@ -125,6 +125,13 @@ fn register_builtins(registry: &CommandRegistry) {
         ("script:stop", "Stop the running script (the one asking, by default)", true),
         ("pick:confirm", "Confirm the value picker's selection", true),
         ("pick:cancel", "Cancel the value picker", true),
+        // Find in panel (spec-gui "Find in panel"). `log=false`: stepping
+        // through matches is a keystroke-level action, not a command worth a
+        // message-log line.
+        ("find:in-panel", "Find text in the focused panel (optional text)", false),
+        ("find:next", "Go to the next find match", false),
+        ("find:prev", "Go to the previous find match", false),
+        ("find:close", "Close the find bar", false),
         // Help (spec-gui "Help"). `log=false`: the help-cursor drives these on
         // every click, which would otherwise flood the message log.
         ("help", "Open the help panel (optional topic)", false),

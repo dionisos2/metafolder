@@ -6,6 +6,7 @@
   import TabBar from './components/TabBar.svelte';
   import Slot from './components/Slot.svelte';
   import CommandInput from './components/CommandInput.svelte';
+  import FindBar from './components/FindBar.svelte';
   import StatusBar from './components/StatusBar.svelte';
   import TaskBar from './components/TaskBar.svelte';
   import ConfigOverlay from './components/ConfigOverlay.svelte';
@@ -84,6 +85,7 @@
           <Slot id="right" />
         {/if}
       </div>
+      <FindBar />
       <CommandInput />
       <TaskBar />
       <StatusBar />

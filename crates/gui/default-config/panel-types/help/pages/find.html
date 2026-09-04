@@ -1,0 +1,60 @@
+<h1>Find in panel (Ctrl+F)</h1>
+<p>
+  <code>Ctrl+f</code> searches the text the focused panel is currently showing —
+  the browser's own find, over one panel. It works in <em>every</em> panel type,
+  these help pages included: the shell drives it against whatever panel is
+  focused, so no panel has to implement anything.
+</p>
+
+<h2>Keys</h2>
+<table>
+  <tbody>
+    <tr>
+      <td><code>Ctrl+f</code></td>
+      <td>
+        open the find bar (above the command input) and start typing. Pressing
+        it again re-focuses the bar and selects what is in it, so a second press
+        starts a new search. The text you searched for is kept when the bar
+        closes, so <code>Ctrl+f</code> then <code>Enter</code> resumes it.
+      </td>
+    </tr>
+    <tr>
+      <td><code>Enter</code> / <code>Shift+Enter</code></td>
+      <td>next / previous match, wrapping around at both ends.</td>
+    </tr>
+    <tr>
+      <td><code>Escape</code></td>
+      <td>close the bar and remove the highlighting.</td>
+    </tr>
+  </tbody>
+</table>
+<p>
+  The bar shows the position of the current match (<code>3/17</code>) or
+  <code>no match</code>. The current match is painted differently from the
+  others and scrolled into view — but only when it is not already comfortably
+  visible, so the text does not jump around while you type.
+</p>
+
+<h2>What it searches</h2>
+<p>
+  What the panel <strong>renders</strong>, exactly like a browser's find. A term
+  broken over several lines in the source still matches, and a match can span
+  inline markup; hidden parts of a panel are not searched, and neither is
+  anything the panel has not loaded — the rows of a
+  <a data-help-page="metarecord-list">list</a> beyond the page you are looking
+  at, for instance.
+</p>
+<p>
+  So this is <em>reading</em> what is on screen, not
+  <a data-help-page="queries">querying</a> the repository. To search a whole
+  repository, use the list panel's finder (<code>/</code>) or its query editor —
+  they ask the daemon, and they match records you cannot currently see.
+</p>
+
+<h2>From a script</h2>
+<p>
+  <code>find:in-panel &lt;text&gt;</code> searches <code>text</code> straight
+  away, so a <a data-help-page="scripting">script</a> can drive it with
+  <code>mf gui command 'find:in-panel "…"'</code>, along with
+  <code>find:next</code>, <code>find:prev</code> and <code>find:close</code>.
+</p>
