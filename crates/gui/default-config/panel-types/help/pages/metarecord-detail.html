@@ -34,6 +34,17 @@
   without it a <code>tag</code> value would show nothing but a UUID.
 </p>
 
+<h2>Copying the UUID</h2>
+<p>
+  <em>Copy UUID</em> in the context menu puts this metarecord's identifier on the
+  clipboard. Pasted into a query box it <strong>is</strong> a query — a bare
+  32-hex UUID selects that one record, and composes with the rest
+  (<code>&lt;uuid&gt; AND rating &gt; 3</code>, <code>&lt;uuid&gt; OR &lt;uuid&gt;</code>,
+  <code>tag -&gt; (&lt;uuid&gt;)</code> for the records pointing at it). It is
+  <a data-help-page="queries">normal-DSL</a> syntax only, so freeze the DSL
+  editor before pasting.
+</p>
+
 <h2>Editing</h2>
 <p>Move between fields with the arrows / <code>j</code>/<code>k</code>. Then:</p>
 <table>

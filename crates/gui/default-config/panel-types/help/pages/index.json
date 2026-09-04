@@ -77,7 +77,8 @@
     "file": "queries.html",
     "aliases": [
       "query", "focus-query", "dsl", "normal-dsl", "matches", "match",
-      "follows", "traversal", "present", "absent", "unknown", "osm", "osmd"
+      "follows", "traversal", "present", "absent", "unknown", "osm", "osmd",
+      "uuid", "uuid_in"
     ]
   },
   {
