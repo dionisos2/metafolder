@@ -546,6 +546,50 @@ session can set panel types, display messages in the status bar, activate the
 command input with a prompt, and block waiting for user key input. Only one
 script session may hold the input-wait lock at a time.
 
+*** Ownership of a script's workspaces
+
+Everything a script puts on screen belongs to the *workspaces that script
+owns*: the workspace it was launched from, plus every workspace it creates
+(=POST /gui/workspaces= carrying its run id — a script that opens two scratch
+workspaces owns both). Its question bar and its [[*Task bar]] entry are shown
+only while at least one owned workspace is in a visible slot, so switching tab
+puts the script's questions away instead of leaving them over unrelated
+panels. A wait with no run id is owned by nobody and is always shown.
+
+*** Working vs. awaiting an answer
+
+The task-bar entry distinguishes the two states, because a script alternates
+between long daemon round-trips and questions and the user must know when it is
+their turn: it *spins* (or shows its determinate bar) while the script works,
+and while the script blocks on =POST /gui/input= / =POST /gui/prompt= it stops
+moving and says the answer is awaited.
+
+*** Answer keys
+
+A question awaits the keys the script lists. By convention the shipped scripts
+offer the arrow keys next to the letters, with a mapping that is the same
+everywhere: =→= yes, =←= no, =↑= mixed, =↓= skip. A walk over a tree also
+offers =skip=, which leaves the entry alone — for a folder, its whole subtree.
+
+*** Failure is never silent
+
+A script killed mid-run (=set -e=, a failing =mf= call) would otherwise
+disappear without a trace: its output goes to the message log of the workspace
+it was *launched from*, while the scratch workspace it took over is removed by
+its own teardown. So a non-zero exit is reported on the launching workspace's
+status bar, naming the script and the exit code, in addition to the =[exit N]=
+line in that workspace's message log. The shipped helper library
+(=lib/mf-gui.sh=) adds an =ERR= trap naming the failing command and line, and
+posts a script's final outcome only after the session teardown, so it lands on
+a workspace that outlives the run.
+
+A question that could not be *asked* is equally not silent. =mf gui input=
+fails on a timeout, a closed GUI, or a =409=; the helper reports the reason
+before ending the run, instead of answering =escape= as if the user had pressed
+it. And a wait whose HTTP request goes away — the script was killed while
+blocked — releases the input lock as it is dropped, so the next script's first
+question is not refused with =409= for the rest of the GUI's life.
+
 ** Repo indicator
 
 A read-only label in the slot's header bar showing the name of the active
@@ -807,10 +851,15 @@ tracks them itself (=script-task-changed=) rather than polling =GET /tasks=.
 The entry is labelled by the script's base name; it is a spinner by default and
 becomes a *determinate progress bar* when the script reports =done=/=total= via
 =mf gui progress= (which also sets a =phase= label for the current step, e.g.
-the file being processed). When the GUI launches a script it injects a per-run
-id as =METAFOLDER_GUI_TASK=, which =mf gui progress= reads so a script addresses
-its own entry regardless of the focused workspace; outside the GUI the variable
-is unset and the call is a harmless no-op.
+the file being processed). While the script is blocked on a user answer it
+neither spins nor advances: it says the answer is awaited, so "still working" and
+"your turn" are never confused. Unlike a daemon task, a script's entry is scoped
+to the workspaces that script owns (see [[*Script session]]) and is hidden with
+them. When the GUI launches a script it injects a per-run id as
+=METAFOLDER_GUI_TASK=, which =mf gui progress=, =mf gui input=, =mf gui prompt=
+and =mf gui workspace new= all read so a script addresses its own entry
+regardless of the focused workspace; outside the GUI the variable is unset and
+the call is a harmless no-op.
 
 ** Command input
 
@@ -2384,11 +2433,16 @@ Creates a new workspace. Returns its id.
 
 Request body (all fields optional):
 #+BEGIN_SRC json
-{"active_repo": "<repo_uuid>"}
+{"active_repo": "<repo_uuid>", "task": "script-3"}
 #+END_SRC
 
 If =active_repo= is absent, the workspace uses the daemon's first loaded
 repository (from =GET /repos=), or =null= if no repositories are loaded.
+
+=task= is the run id of the script creating the workspace
+(=METAFOLDER_GUI_TASK=, sent by =mf gui workspace new=): the new workspace then
+belongs to that script (see [[*Script session]]). An absent or unknown run id
+claims nothing.
 
 Response: ={"id": "ws-3"}=
 
@@ -2548,13 +2602,23 @@ wait accepts. Absent =prompt= ⇒ a generic "Waiting for input" label.
 
 Only one =POST /gui/input= at a time; concurrent calls return =409=.
 
+The optional =task= is the asking script's run id (=METAFOLDER_GUI_TASK=). It
+scopes the question to the workspaces that script owns and marks its task-bar
+entry "awaiting an answer" for the lifetime of the wait (see
+[[*Script session]]). Absent or unknown ⇒ the wait is owned by nobody.
+
 Request body:
 #+BEGIN_SRC json
-{"keys": ["left", "right", "escape"], "prompt": "Which action?", "timeout_ms": null}
+{"keys": ["left", "right", "escape"], "prompt": "Which action?",
+ "task": "script-3", "timeout_ms": null}
 #+END_SRC
 
 Responses: ={"event": "answer", "value": "left"}= / ={"event": "timeout"}= /
 ={"event": "closed"}=.
+
+The =input-wait-changed= event the shell consumes carries =active=,
+=temp_keys=, =prompt= and =workspaces= (the owning script's workspaces, empty
+when unowned).
 
 *** =POST /gui/prompt=
 
@@ -2562,7 +2626,11 @@ Activates the command input with a custom prompt. Blocks until =Enter= or
 =Escape=. Mutually exclusive with =POST /gui/input= (same lock).
 
 Request body:
-={"prompt": "Enter a rating (1-5): ", "completions": [], "timeout_ms": null}=
+={"prompt": "Enter a rating (1-5): ", "completions": [], "task": "script-3",
+  "timeout_ms": null}=
+
+=task= is the asking script's run id, as for [[*=POST /gui/input=]]: it marks
+that script's task-bar entry "awaiting an answer" while the prompt is up.
 
 The optional =completions= array is offered by the command input's
 autocomplete while the prompt is active (same prefix-then-substring

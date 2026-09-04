@@ -164,9 +164,22 @@ struct Out {
 }
 
 fn mf_gui(gui: &StubGui, args: &[&str]) -> Out {
+    mf_gui_run(gui, args, None)
+}
+
+/// `mf gui …` as the GUI itself launches a script: with the run id it injects.
+fn mf_gui_as_script(gui: &StubGui, args: &[&str], task: &str) -> Out {
+    mf_gui_run(gui, args, Some(task))
+}
+
+fn mf_gui_run(gui: &StubGui, args: &[&str], task: Option<&str>) -> Out {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_mf"));
     cmd.arg("gui").arg("--gui-url").arg(&gui.url).args(args);
     cmd.env_remove("METAFOLDER_GUI_URL");
+    match task {
+        Some(task) => cmd.env("METAFOLDER_GUI_TASK", task),
+        None => cmd.env_remove("METAFOLDER_GUI_TASK"),
+    };
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
     let output = cmd.output().unwrap();
     Out {
@@ -230,6 +243,26 @@ fn test_gui_workspace_new_and_rm() {
         )
     );
     assert_eq!(requests[1].1, "/gui/workspaces/ws-9");
+}
+
+/// A script's calls carry the run id the GUI injected, so the workspace it
+/// creates and the questions it asks belong to it (spec-gui "Script session").
+#[test]
+fn test_a_script_run_carries_its_run_id() {
+    let gui = stub();
+    assert_ok(&mf_gui_as_script(&gui, &["workspace", "new"], "script-3"));
+    assert_ok(&mf_gui_as_script(&gui, &["input", "y", "n"], "script-3"));
+    assert_ok(&mf_gui_as_script(&gui, &["prompt", "Tag: "], "script-3"));
+
+    let requests = gui.recorded.all();
+    assert_eq!(requests[0].2["task"], json!("script-3"));
+    assert_eq!(requests[1].2["task"], json!("script-3"));
+    assert_eq!(requests[2].2["task"], json!("script-3"));
+    // Outside the GUI the field is absent, not null: the request is exactly
+    // what it always was.
+    let gui = stub();
+    assert_ok(&mf_gui(&gui, &["workspace", "new"]));
+    assert!(gui.recorded.all()[0].2.get("task").is_none());
 }
 
 #[test]

@@ -9,8 +9,43 @@
 # leave the GUI's layout wrecked or an orphan workspace behind. Requires the
 # `mf` CLI on PATH and a running GUI with a repository in the focused workspace.
 
+# ── Failure reporting ─────────────────────────────────────────────────────────
+# A GUI script that dies under `set -e` used to leave NOTHING on screen: its
+# stdout/stderr go to the message log of the workspace it was launched from,
+# which is not the scratch workspace it took over — and the session teardown
+# removes that one, so the run just vanished mid-question. Sourcing this file
+# therefore installs an ERR trap that names the failing command, and routes
+# every report to the *launching* workspace, which outlives the session.
+#
+# `set -E` makes the trap fire inside functions and subshells too. Bash keeps
+# both errexit and the ERR trap disabled wherever a failure is already being
+# tested (`cmd || handler`, `if cmd`), so a handled failure — a cancelled
+# prompt, say — never reports.
+set -E
+
+# The workspace to report to: the one the GUI launched the script from (it owns
+# the script's message log), saved before the session takeover. Empty until
+# mf_gui_session_open, where reports go to the focused workspace instead.
+_MF_HOME_WS=""
+
+# Print a report on stderr (→ the launching workspace's message log and the
+# terminal) and raise it on that workspace's status bar. Never fatal.
+mf_gui_report() { # <text>
+    printf '%s\n' "$*" >&2
+    if [ -n "$_MF_HOME_WS" ]; then
+        mf gui message "$*" --workspace "$_MF_HOME_WS" >/dev/null 2>&1 || :
+    else
+        mf gui message "$*" >/dev/null 2>&1 || :
+    fi
+}
+
+_mf_gui_on_err() { # <exit code> <line> <command>
+    mf_gui_report "error: line $2: '$3' exited $1"
+}
+trap '_mf_gui_on_err "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
 # Print an error and exit 1.
-mf_die() { echo "error: $*" >&2; exit 1; }
+mf_die() { mf_gui_report "error: $*"; exit 1; }
 
 # Bind METAFOLDER_REPO to the repository of the focused GUI workspace.
 # Sets (and exports) REPO for the rest of the script.
@@ -21,12 +56,27 @@ mf_gui_bind_repo() {
 
 # Internal: restore the saved layout and remove the scratch workspace. Installed
 # as the EXIT trap by mf_gui_session_open; every step is best-effort.
+# Runs only in the top-level shell: a command substitution inherits the trap,
+# and letting a subshell's exit tear the session down would kill the run.
 _mf_gui_session_cleanup() {
+    [ "${BASHPID:-$$}" = "$$" ] || return 0
     [ -n "${_MF_WS:-}" ] && mf gui workspace rm "$_MF_WS" >/dev/null 2>&1 || :
     [ -n "${_MF_SAVED_LEFT:-}" ] && mf gui layout left "$_MF_SAVED_LEFT" >/dev/null 2>&1 || :
     [ -n "${_MF_SAVED_RIGHT:-}" ] && mf gui layout right "$_MF_SAVED_RIGHT" >/dev/null 2>&1 || :
     [ -n "${_MF_TMP:-}" ] && rm -rf "$_MF_TMP" 2>/dev/null || :
+    # The outcome is posted only now: while the session was open it would have
+    # landed on the scratch workspace this very function removes.
+    [ -n "${_MF_OUTCOME:-}" ] && mf_gui_report "$_MF_OUTCOME"
     return 0
+}
+
+# The script's final, user-visible outcome. Printed on stdout right away (the
+# message log), and raised on the launching workspace's status bar once the
+# session is torn down — a `mf gui message` sent before that goes to the scratch
+# workspace and disappears with it.
+mf_gui_finish() { # <text>
+    _MF_OUTCOME=$1
+    printf '%s\n' "$1"
 }
 
 # A temp directory removed automatically when the session's EXIT trap fires
@@ -45,6 +95,9 @@ mf_gui_session_open() {
     local right=${1:-metarecord-detail}
     _MF_SAVED_LEFT=$(mf gui layout left)
     _MF_SAVED_RIGHT=$(mf gui layout right)
+    # Report to the workspace that was on screen before the takeover: the
+    # scratch one below does not survive the run.
+    [ "$_MF_SAVED_LEFT" = "-" ] || _MF_HOME_WS=$_MF_SAVED_LEFT
     _MF_WS=$(mf gui workspace new --repo "$REPO") || mf_die "cannot create a workspace"
     trap _mf_gui_session_cleanup EXIT
     mf gui layout left "$_MF_WS" >/dev/null
@@ -115,17 +168,65 @@ mf_gui_path_uuid() { # <treepath>
 #     mf_gui_progress --done 3 --total 10 --phase "/music/x.mp3"
 mf_gui_progress() { mf gui progress "$@" >/dev/null 2>&1 || :; }
 
+# The arrow keys that double the letter answers, so a question can be answered
+# without looking at the keyboard: → yes, ← no, ↑ mixed, ↓ skip. The mapping is
+# fixed (spec-gui "Script session") so every script answers the same way.
+_mf_gui_arrow_for() { # <letter> -> its arrow key, or nothing
+    case $1 in
+        y) printf 'right' ;;
+        n) printf 'left' ;;
+        m) printf 'up' ;;
+        s) printf 'down' ;;
+    esac
+}
+
+# Ask a question and print the answer as a LETTER: each of y/n/m/s in <letters>
+# also awaits its arrow key, and the pressed arrow is folded back onto the
+# letter — so a caller's `case` only ever deals with y/n/m/s/escape.
+#     case "$(mf_gui_ask_answer "$msg" y n m s escape)" in ...
+mf_gui_ask_answer() { # <message> <letter>...
+    local msg=$1 letter arrow pressed
+    shift
+    local keys=()
+    for letter in "$@"; do
+        keys+=("$letter")
+        arrow=$(_mf_gui_arrow_for "$letter")
+        [ -n "$arrow" ] && keys+=("$arrow")
+    done
+    pressed=$(mf_gui_ask "$msg" "${keys[@]}")
+    case $pressed in
+        right) printf 'y\n' ;;
+        left)  printf 'n\n' ;;
+        up)    printf 'm\n' ;;
+        down)  printf 's\n' ;;
+        *)     printf '%s\n' "$pressed" ;;
+    esac
+}
+
 # Ask a question in the GUI and wait for one key:
 #     key=$(mf_gui_ask "message" y n escape)
 # Prints the pressed key; 'escape' on timeout or a closed GUI. Targets the
 # session workspace (WS) when one is open.
 mf_gui_ask() {
-    local msg=$1
+    local msg=$1 key why err rc
     shift
     if [ -n "${WS:-}" ]; then
         mf gui message "$msg" --workspace "$WS" >/dev/null
     else
         mf gui message "$msg" >/dev/null
     fi
-    mf gui input "$@" 2>/dev/null || echo escape
+    # `mf gui input` fails on a timeout, a closed GUI, or a 409 (another wait
+    # still holds the lock). All three end the run like Escape does — but the
+    # reason must NOT be swallowed: silently answering "escape" is exactly what
+    # made a script look like it "just stopped" for no reason.
+    err=$(mktemp 2>/dev/null) || err=""
+    key=$(mf gui input "$@" 2>"${err:-/dev/null}")
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        why=$([ -n "$err" ] && cat "$err" 2>/dev/null)
+        mf_gui_report "the question could not be answered (${why:-no reason given}) — stopping"
+        key=escape
+    fi
+    [ -n "$err" ] && rm -f "$err"
+    printf '%s\n' "$key"
 }

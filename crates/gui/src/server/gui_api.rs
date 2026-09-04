@@ -51,13 +51,21 @@ pub async fn list_workspaces(State(state): State<ServerState>) -> Response {
 pub struct CreateWorkspaceBody {
     #[serde(default)]
     active_repo: Option<String>,
+    /// The run id of the script creating this workspace (`METAFOLDER_GUI_TASK`,
+    /// sent by `mf gui workspace new`). The workspace then belongs to that
+    /// script, which is how a script that opens two scratch workspaces keeps
+    /// its question bar visible in both (spec-gui "Script session").
+    #[serde(default)]
+    task: Option<String>,
 }
 
 pub async fn create_workspace(
     State(state): State<ServerState>,
     body: Option<Json<CreateWorkspaceBody>>,
 ) -> Response {
-    let mut active_repo = body.and_then(|Json(b)| b.active_repo);
+    let body = body.map(|Json(b)| b).unwrap_or_default();
+    let task = body.task;
+    let mut active_repo = body.active_repo;
     // Resolve the repo's human name so the workspace is auto-named after it
     // (spec-gui "Workspace name"); best-effort, falls back to "Workspace N".
     let mut repo_name = None;
@@ -71,6 +79,9 @@ pub async fn create_workspace(
         repo_name = state.daemon.repo_name(uuid).await;
     }
     let id = state.gui.create_workspace_named(active_repo, repo_name);
+    if let Some(task) = task {
+        state.gui.script_claim_workspace(&task, &id);
+    }
     Json(json!({ "id": id })).into_response()
 }
 
@@ -377,6 +388,11 @@ pub async fn post_progress(
 pub struct InputBody {
     #[serde(default)]
     keys: Vec<String>,
+    /// The asking script's run id (`METAFOLDER_GUI_TASK`). It scopes the
+    /// question to the workspaces that script owns and marks its task-bar entry
+    /// "awaiting an answer" rather than "working".
+    #[serde(default)]
+    task: Option<String>,
     /// Question shown while the wait is active, in a dedicated bar separate
     /// from the status/error line (spec-gui "Scripting"). Optional.
     #[serde(default)]
@@ -388,7 +404,12 @@ pub struct InputBody {
 /// Pushes the compiled table plus the temporary `answer:send` bindings, and
 /// broadcasts the input-wait state (including its `prompt` question) so the
 /// frontend can show a dedicated question bar.
-fn push_keytable(state: &ServerState, temp_keys: &[String], prompt: Option<&str>) {
+fn push_keytable(
+    state: &ServerState,
+    temp_keys: &[String],
+    prompt: Option<&str>,
+    workspaces: &[String],
+) {
     let mut bindings: Vec<CompiledBinding> = state.keybindings.lock_recover().compiled();
     for key in temp_keys {
         if let Ok(keys) = crate::keybindings::parse_combo(key) {
@@ -406,8 +427,55 @@ fn push_keytable(state: &ServerState, temp_keys: &[String], prompt: Option<&str>
         events::INPUT_WAIT_CHANGED,
         json!({ "active": !temp_keys.is_empty() || state.input.is_active(),
                 "temp_keys": temp_keys,
-                "prompt": prompt }),
+                "prompt": prompt,
+                "workspaces": workspaces }),
     );
+}
+
+/// The workspaces the asking script owns, for scoping its question bar. Empty
+/// for a wait with no run id (or one the GUI never launched): such a wait
+/// belongs to nobody and is always shown.
+fn script_workspaces(state: &ServerState, task: Option<&str>) -> Vec<String> {
+    task.map(|task| state.gui.script_workspaces(task)).unwrap_or_default()
+}
+
+/// Undoes everything a wait installs, on *every* exit path — a resolved answer,
+/// a timeout, and crucially a cancelled handler future.
+///
+/// The last one is why this is a guard and not a tail of statements: when the
+/// HTTP client goes away (a script killed mid-question), axum drops the handler
+/// future where it is suspended. Releasing the lock only after the `await`
+/// meant it stayed held forever, so every later wait answered 409 for the rest
+/// of the GUI's life — the next script appeared to "just stop" at its first
+/// question, with nothing on screen to say why (spec-gui "Script session").
+struct WaitGuard<'a> {
+    state: &'a ServerState,
+    /// The asking script's run id, marked "awaiting an answer" meanwhile.
+    task: Option<String>,
+    /// Input waits install temporary answer bindings + a question bar to
+    /// remove; prompts install neither.
+    keytable: bool,
+}
+
+impl<'a> WaitGuard<'a> {
+    fn begin(state: &'a ServerState, task: Option<String>, keytable: bool) -> Self {
+        if let Some(task) = &task {
+            state.gui.script_waiting(task, true);
+        }
+        Self { state, task, keytable }
+    }
+}
+
+impl Drop for WaitGuard<'_> {
+    fn drop(&mut self) {
+        self.state.input.end();
+        if self.keytable {
+            push_keytable(self.state, &[], None, &[]);
+        }
+        if let Some(task) = &self.task {
+            self.state.gui.script_waiting(task, false);
+        }
+    }
 }
 
 pub async fn post_input(
@@ -418,7 +486,9 @@ pub async fn post_input(
     let Some(receiver) = state.input.begin_input() else {
         return error_response(StatusCode::CONFLICT, "another input wait is active");
     };
-    push_keytable(&state, &body.keys, body.prompt.as_deref());
+    let workspaces = script_workspaces(&state, body.task.as_deref());
+    push_keytable(&state, &body.keys, body.prompt.as_deref(), &workspaces);
+    let _guard = WaitGuard::begin(&state, body.task.clone(), true);
 
     let outcome = match body.timeout_ms {
         Some(ms) => tokio::time::timeout(Duration::from_millis(ms), receiver)
@@ -427,9 +497,6 @@ pub async fn post_input(
             .and_then(Result::ok),
         None => receiver.await.ok(),
     };
-    state.input.end(); // release the lock on timeout paths
-    push_keytable(&state, &[], None); // remove temporary bindings + question
-
     let payload = match outcome {
         Some(InputOutcome::Answer(value)) => json!({"event": "answer", "value": value}),
         Some(InputOutcome::Closed) => json!({"event": "closed"}),
@@ -441,6 +508,9 @@ pub async fn post_input(
 #[derive(Deserialize)]
 pub struct PromptBody {
     prompt: String,
+    /// The asking script's run id — see [`InputBody::task`].
+    #[serde(default)]
+    task: Option<String>,
     /// Values offered by the command input autocomplete during the prompt.
     #[serde(default)]
     completions: Vec<String>,
@@ -459,6 +529,7 @@ pub async fn post_prompt(
         events::PROMPT_REQUESTED,
         json!({ "prompt": body.prompt, "completions": body.completions }),
     );
+    let _guard = WaitGuard::begin(&state, body.task.clone(), false);
 
     let outcome = match body.timeout_ms {
         Some(ms) => tokio::time::timeout(Duration::from_millis(ms), receiver)
@@ -467,7 +538,6 @@ pub async fn post_prompt(
             .and_then(Result::ok),
         None => receiver.await.ok(),
     };
-    state.input.end();
 
     let payload = match outcome {
         Some(PromptOutcome::Confirm(text)) => json!({"event": "confirm", "text": text}),

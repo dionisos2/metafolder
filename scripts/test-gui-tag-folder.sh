@@ -124,4 +124,74 @@ assert "root: subtree tagged with the empty-string form" \
 assert "root: never uses the broken \"/\" tree-query form" \
     [ "$(mock_count 'tag -q mfr_path ->* "/"*')" -eq 0 ]
 
+# ── Case 8: the arrow keys answer too (→ yes, ← no, ↑ mixed, ↓ skip) ────────
+mock_reset
+setup_top
+mock_respond 'metarecord -q mfr_path -> "/top" get'    $'file-a\nfile-b\ndir-sub'
+mock_respond 'metarecord -i file-a field get mfr_type' 'file'
+mock_respond 'metarecord -i file-b field get mfr_type' 'file'
+mock_respond 'metarecord -i dir-sub field get mfr_type' 'dir'
+mock_respond 'path --relative file-a'                  '/top/a.txt'
+mock_respond 'path --relative file-b'                  '/top/b.txt'
+mock_respond 'path --relative dir-sub'                 '/top/sub'
+mock_prompt '/top'
+#   top=↑(mixed)  a.txt=→(yes)  b.txt=←(no)  sub=↓(skip)
+mock_input up right left down
+out=$(bash "$SCRIPT" music); code=$?
+assert "arrows: exits 0" [ "$code" -eq 0 ]
+assert "arrows: up marks the parent mixed" [ "$(mock_count 'tag -i dir-top mixed music')" -eq 1 ]
+assert "arrows: right adds" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+assert "arrows: left denies" [ "$(mock_count 'tag -i file-b deny music')" -eq 1 ]
+assert "arrows: down skips (no tag op on the dir)" [ "$(mock_count 'tag -i dir-sub *')" -eq 0 ]
+assert "arrows: the awaited key list offers the arrows" \
+    [ "$(mock_count 'gui input*right*')" -ge 1 ]
+
+# ── Case 9: skip on a folder leaves its whole subtree alone ──────────────────
+mock_reset
+setup_top
+mock_respond 'metarecord -q mfr_path -> "/top" get'     $'dir-sub\nfile-b'
+mock_respond 'metarecord -i dir-sub field get mfr_type' 'dir'
+mock_respond 'metarecord -i file-b field get mfr_type'  'file'
+mock_respond 'path --relative dir-sub'                  '/top/sub'
+mock_respond 'path --relative file-b'                   '/top/b.txt'
+mock_prompt '/top'
+#   top=m  sub=s (skipped whole)  b.txt=y
+mock_input m s y
+out=$(bash "$SCRIPT" music); code=$?
+assert "skip: exits 0" [ "$code" -eq 0 ]
+assert "skip: no tag op on the skipped folder" [ "$(mock_count 'tag -i dir-sub *')" -eq 0 ]
+assert "skip: the skipped subtree is never descended into" \
+    [ "$(mock_count 'metarecord -q mfr_path -> "/top/sub" get')" -eq 0 ]
+assert "skip: the walk continues with the next sibling" \
+    [ "$(mock_count 'tag -i file-b add music')" -eq 1 ]
+assert_contains "skip: the summary counts it" "$out" "1 skipped"
+
+# ── Case 10: a failing `mf tag` is reported, not a silent "stopped" ──────────
+# `set -e` is disabled inside a tested command, so a failing tag call used to
+# surface as the handler returning non-zero — indistinguishable from "the user
+# pressed Escape". The run must abort loudly instead (spec-gui "Script session").
+mock_reset
+setup_top
+mock_respond 'tag -i dir-top add music' '@exit:1'
+mock_prompt '/top'
+mock_input y
+out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
+err=$(cat "$MF_MOCK_DIR/err")
+assert "tag failure: non-zero exit" [ "$code" -ne 0 ]
+assert_contains "tag failure: names the failing step" "$err$out" "/top"
+assert "tag failure: does not claim a clean stop" \
+    [ "$(printf '%s' "$out" | grep -c '^stopped\.$')" -eq 0 ]
+
+# ── Case 11: an unanswerable question says why instead of vanishing ─────────
+# A closed GUI (or a 409 from a leaked wait) makes `mf gui input` fail. Treating
+# that as a silent Escape is what made a run look like it "just stopped".
+mock_reset
+setup_top
+mock_prompt '/top'
+mock_input @fail
+out=$(bash "$SCRIPT" music 2>"$MF_MOCK_DIR/err"); code=$?
+err=$(cat "$MF_MOCK_DIR/err")
+assert_contains "unanswerable: explains itself" "$err" "could not be answered"
+assert "unanswerable: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
+
 assert_summary

@@ -1,17 +1,16 @@
 <script lang="ts">
-  import { store, workspaceById } from '../lib/store.svelte';
+  import { ownedByVisible, store, visibleWorkspaces, workspaceById } from '../lib/store.svelte';
 
   // One bar when both visible slots show the same workspace; two
   // otherwise (spec-gui "Status bar").
-  const barWorkspaces = $derived.by(() => {
-    const ids: string[] = [];
-    for (const slot of [store.layout.left, store.layout.right]) {
-      if (slot.visible && slot.workspace_id !== null && !ids.includes(slot.workspace_id)) {
-        ids.push(slot.workspace_id);
-      }
-    }
-    return ids;
-  });
+  const barWorkspaces = $derived.by(visibleWorkspaces);
+
+  // A script's question belongs to the workspaces that script owns: switching
+  // to another tab puts it away instead of leaving it on screen over unrelated
+  // panels (spec-gui "Script session"). A wait owned by nobody is always shown.
+  const questionVisible = $derived(
+    store.ui.inputWait !== null && ownedByVisible(store.ui.inputWait.workspaces, barWorkspaces),
+  );
 
   // Pending key sequence: one entry per continuation, sorted by keys.
   const keyHints = $derived.by(() => {
@@ -38,7 +37,7 @@
 
 <!-- A running script's question (POST /gui/input) lives here, not on the
      status line, so an error message can never hide it. -->
-{#if store.ui.inputWait}
+{#if store.ui.inputWait && questionVisible}
   <div class="input-wait" data-help-topic="scripting">
     <span class="question">{store.ui.inputWait.prompt}</span>
     {#each store.ui.inputWait.keys as key (key)}

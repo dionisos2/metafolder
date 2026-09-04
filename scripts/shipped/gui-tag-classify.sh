@@ -5,8 +5,8 @@
 # `metarecord-detail` panel), then asks a descending series of questions
 # "add tag <path> ?" chosen by scripts/gui-tag-next.sh:
 #
-#   y      -> the file HAS the tag       (mf tag add)
-#   n      -> the file does NOT have it  (mf tag deny)
+#   y / →  -> the file HAS the tag       (mf tag add)
+#   n / ←  -> the file does NOT have it  (mf tag deny)
 #   Escape -> stop
 #
 # The question ORDER (descend into a tag's children only once it is accepted,
@@ -70,13 +70,11 @@ while :; do
     T=$(gui_tag_next "$UNIVERSE" "$POS" "$NEG") || break # no question left
 
     mf_gui_progress --phase "$T"
-    case "$(mf_gui_ask "add tag '$T' ?   [y] oui   [n] non   [Esc] stop" y n escape)" in
+    case "$(mf_gui_ask_answer "add tag '$T' ?   [y →] oui   [n ←] non   [Esc] stop" y n escape)" in
         y) mf tag -i "$UUID" add "$T" >/dev/null; yes=$((yes + 1)) ;;
         n) mf tag -i "$UUID" deny "$T" >/dev/null; no=$((no + 1)) ;;
         *) break ;; # escape
     esac
 done
 
-SUMMARY="Classification de $UUID terminée : $yes oui, $no non"
-mf gui message "$SUMMARY" --timeout-ms 5000
-echo "$SUMMARY"
+mf_gui_finish "Classification de $UUID terminée : $yes oui, $no non"

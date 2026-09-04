@@ -77,4 +77,28 @@ assert "empty: exits 0" [ "$code" -eq 0 ]
 assert_contains "empty: zeroed summary" "$out" "0 yes, 0 no, 0 skipped"
 assert "empty: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
 
+# ── Case: the arrow keys answer, and the summary survives the teardown ───────
+# The summary used to be posted while the scratch workspace was still on screen,
+# so the session teardown removed it along with the workspace. It must land on
+# the workspace the script was launched from, AFTER the scratch one is gone.
+mock_reset
+setup_gui
+mock_prompt 'music/jazz'
+mock_respond 'metarecord -q * get' $'u1\nu2\nu3'
+mock_input right left down                    # → yes, ← no, ↓ skip
+out=$(bash "$SCRIPT"); code=$?
+assert "arrows: exits 0" [ "$code" -eq 0 ]
+assert "arrows: right adds" [ "$(mock_count 'tag -i u1 add music/jazz')" -eq 1 ]
+assert "arrows: left denies" [ "$(mock_count 'tag -i u2 deny music/jazz')" -eq 1 ]
+assert "arrows: down skips" [ "$(mock_count 'tag -i u3 *')" -eq 0 ]
+assert_contains "arrows: summary counts them" "$out" "1 yes, 1 no, 1 skipped"
+assert "summary: posted to the launching workspace" \
+    [ "$(mock_count 'gui message *--workspace saved-left*')" -ge 1 ]
+# Order matters: the scratch workspace is removed first, so the message cannot
+# land on a workspace that is about to disappear.
+rm_line=$(mf_log | grep -n '^gui workspace rm' | head -n1 | cut -d: -f1)
+msg_line=$(mf_log | grep -n '^gui message .*--workspace saved-left' | head -n1 | cut -d: -f1)
+assert "summary: posted after the scratch workspace is removed" \
+    [ "$msg_line" -gt "$rm_line" ]
+
 assert_summary

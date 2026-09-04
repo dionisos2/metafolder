@@ -8,8 +8,12 @@
 #                (mfr_path ->* folder).
 #   n (non)   -> `mf tag deny` on the same scope.
 #   m (mixed) -> `mf tag mixed` on the folder only, then descend: ask again for
-#                each direct child (files: y/n; sub-dirs: y/n/m). Mixed sub-dirs
-#                are processed in turn until none remains unprocessed.
+#                each direct child (files: y/n/s; sub-dirs: y/n/m/s). Mixed
+#                sub-dirs are processed in turn until none remains unprocessed.
+#   s (skip)  -> leave this entry alone: no tag op, and for a folder no descent
+#                either — the whole subtree is left for another run.
+#
+# The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip.
 #
 # `mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
 # adds the ref idempotently, and applies the subsumption/exclusivity rewrites
@@ -65,50 +69,84 @@ mf_gui_session_open metarecord-detail
 # Apply T over a node and its whole subtree (self + descendants). One `mf tag`
 # call per scope; the subsumption is handled server-side across the whole set.
 apply_tree() { # <uuid> <treepath> <verb: add|deny>
-    mf tag -i "$1" "$3" "$TAG" >/dev/null
-    mf tag -q "mfr_path ->* \"$(mf_gui_query_path "$2")\"" "$3" "$TAG" >/dev/null
+    mf tag -i "$1" "$3" "$TAG" >/dev/null \
+        && mf tag -q "mfr_path ->* \"$(mf_gui_query_path "$2")\"" "$3" "$TAG" >/dev/null
 }
 
-# handle_dir / handle_file return 1 to signal "stop the whole run".
-handle_dir() { # <uuid> <treepath> <abs>
-    mf_gui_show_file "$3"
-    mf_gui_progress --phase "$2"
-    case "$(mf_gui_ask "'$2' has tag '$TAG'?   [y] oui   [n] non   [m] mixed   [Esc] stop" y n m escape)" in
-        y) apply_tree "$1" "$2" add ;;
-        n) apply_tree "$1" "$2" deny ;;
-        m) mf tag -i "$1" mixed "$TAG" >/dev/null; QUEUE+=("$1") ;;
-        *) return 1 ;;
-    esac
-}
-handle_file() { # <uuid> <treepath> <abs>
-    mf_gui_show_file "$3"
-    mf_gui_progress --phase "$2"
-    case "$(mf_gui_ask "'$2' has tag '$TAG'?   [y] oui   [n] non   [Esc] stop" y n escape)" in
-        y) mf tag -i "$1" add "$TAG" >/dev/null ;;
-        n) mf tag -i "$1" deny "$TAG" >/dev/null ;;
-        *) return 1 ;;
+# How the walk ended: "" = still going, "user" = Escape, anything else is an
+# ERROR MESSAGE. The two must stay apart. Bash disables `set -e` wherever a
+# failure is tested, so a `mf tag` that failed inside a handler used to surface
+# only as "the handler returned non-zero" — indistinguishable from Escape, and
+# the run ended with a cheerful "stopped." and exit 0 (spec-gui "Script
+# session"). Now a failed tag op aborts loudly with its own message.
+STOP=""
+SKIPPED=0
+QUEUE=()
+
+# Ask about one entry and apply the answer. For a folder, yes/no cover the whole
+# subtree, mixed descends, skip leaves the subtree untouched.
+handle() { # <uuid> <treepath> <abs> <dir|file>
+    local uuid=$1 tp=$2 abs=$3 kind=$4 answer
+    mf_gui_show_file "$abs"
+    mf_gui_progress --phase "$tp"
+    if [ "$kind" = dir ]; then
+        answer=$(mf_gui_ask_answer \
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [Esc] stop" \
+            y n m s escape)
+    else
+        answer=$(mf_gui_ask_answer \
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [Esc] stop" \
+            y n s escape)
+    fi
+    case $answer in
+        y)
+            if [ "$kind" = dir ]; then
+                apply_tree "$uuid" "$tp" add || STOP="cannot tag '$tp'"
+            else
+                mf tag -i "$uuid" add "$TAG" >/dev/null || STOP="cannot tag '$tp'"
+            fi ;;
+        n)
+            if [ "$kind" = dir ]; then
+                apply_tree "$uuid" "$tp" deny || STOP="cannot untag '$tp'"
+            else
+                mf tag -i "$uuid" deny "$TAG" >/dev/null || STOP="cannot untag '$tp'"
+            fi ;;
+        m)
+            if mf tag -i "$uuid" mixed "$TAG" >/dev/null; then
+                QUEUE+=("$uuid")
+            else
+                STOP="cannot mark '$tp' mixed"
+            fi ;;
+        s) SKIPPED=$((SKIPPED + 1)) ;;   # a folder's whole subtree, untouched
+        *) STOP=user ;;
     esac
 }
 
 # Ask about the top folder; recurse into mixed folders breadth-first.
-QUEUE=()
-stop=""
-handle_dir "$FOLDER_UUID" "$FOLDER_TP" "$FOLDER_ABS" || stop=1
+handle "$FOLDER_UUID" "$FOLDER_TP" "$FOLDER_ABS" dir
 
-while [ -z "$stop" ] && [ ${#QUEUE[@]} -gt 0 ]; do
+while [ -z "$STOP" ] && [ ${#QUEUE[@]} -gt 0 ]; do
     parent=${QUEUE[0]}; QUEUE=("${QUEUE[@]:1}")
     parent_tp=$(mf path --relative "$parent")
     while IFS= read -r child || [ -n "$child" ]; do
         [ -n "$child" ] || continue
-        ctype=$(mf metarecord -i "$child" field get mfr_type | head -n1)
+        [ -z "$STOP" ] || break
+        # No `| head -n1` here: with `pipefail`, head closing the pipe early can
+        # fail the whole read and kill the run.
+        ctype=$(mf metarecord -i "$child" field get mfr_type)
+        ctype=${ctype%%$'\n'*}
         ctp=$(mf path --relative "$child")
         cabs=$(mf path "$child" 2>/dev/null || true)
         if [ "$ctype" = dir ]; then
-            handle_dir "$child" "$ctp" "$cabs" || { stop=1; break; }
+            handle "$child" "$ctp" "$cabs" dir
         else
-            handle_file "$child" "$ctp" "$cabs" || { stop=1; break; }
+            handle "$child" "$ctp" "$cabs" file
         fi
     done < <(mf metarecord -q "mfr_path -> \"$(mf_gui_query_path "$parent_tp")\"" get)
 done
 
-[ -n "$stop" ] && echo "stopped." || echo "done tagging '$TAG' under $FOLDER_TP."
+case $STOP in
+    "")   mf_gui_finish "done tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped)." ;;
+    user) mf_gui_finish "stopped tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped)." ;;
+    *)    mf_gui_finish "tagging '$TAG' aborted: $STOP"; exit 1 ;;
+esac

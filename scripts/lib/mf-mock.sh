@@ -26,6 +26,8 @@
 #                                     is a printf %b template (\n → newline),
 #                                     or @exit:<n>, or @queue:<name>
 #   mock_input   <key> [<key>…]       enqueue answers for `mf gui input`
+#                                     (@fail = the call itself fails, as a
+#                                     closed GUI or a 409 does)
 #   mock_prompt  <val> [<val>|@cancel] enqueue answers for `mf gui prompt`
 #                                     (@cancel or an empty queue = user Escaped)
 #   mock_queue   <name> <val> [<val>…] enqueue values for a @queue:<name> row
@@ -128,6 +130,8 @@ pop() {
 case "$sig" in
     "gui input"*)
         if v=$(pop "$dir/q/__input"); then
+            # @fail: the wait could not even be registered (closed GUI, 409).
+            [ "$v" = "@fail" ] && { echo "input wait ended: closed" >&2; exit 1; }
             [ -n "$v" ] || v=escape
             printf '%s\n' "$v"
         else

@@ -61,7 +61,9 @@ INSIDE=$(mf metarecord -q "$SUBTREE" get | grep -c . || true)
 # confirmed — unless there is nothing to delete, in which case unwatching alone
 # is harmless and needs no key press.
 if [ "$INSIDE" -gt 0 ]; then
-    case "$(mf_gui_ask "Stop watching '$FOLDER_TP' and DELETE the $INSIDE metarecords inside it?   [y] yes   [n/Esc] no" y n escape)" in
+    case "$(mf_gui_ask_answer \
+        "Stop watching '$FOLDER_TP' and DELETE the $INSIDE metarecords inside it?   [y →] yes   [n ← / Esc] no" \
+        y n escape)" in
         y) ;;
         *) echo "cancelled."; exit 0 ;;
     esac

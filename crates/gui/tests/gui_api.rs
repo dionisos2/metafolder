@@ -452,6 +452,83 @@ async fn test_input_wait_broadcasts_its_prompt() {
 }
 
 #[tokio::test]
+async fn test_input_wait_carries_the_script_workspaces_and_marks_it_waiting() {
+    // A script's question belongs to the workspaces that script owns: the shell
+    // shows the question bar only while one of them is on screen (spec-gui
+    // "Script session"). The task entry also stops spinning while the script is
+    // blocked, so "still working" and "your turn" are distinguishable.
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-7", "ws-1", "gui-tag-folder.sh");
+    let (status, body) =
+        request(&ctx.router, "POST", "/gui/workspaces", Some(json!({"task": "script-7"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let scratch = body["id"].as_str().unwrap().to_string();
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/input",
+            Some(json!({"keys": ["y", "n"], "prompt": "tagged?", "task": "script-7"})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    let active =
+        waits.iter().find(|p| p["active"] == json!(true)).expect("an active input-wait event");
+    assert_eq!(active["workspaces"], json!(["ws-1", scratch]));
+
+    let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
+    assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(true));
+
+    assert!(ctx.input.resolve_answer("y"));
+    let _ = waiting.await.unwrap();
+
+    let waits = ctx.notifier.payloads(events::INPUT_WAIT_CHANGED);
+    assert_eq!(waits.last().unwrap()["workspaces"], json!([]));
+    let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
+    assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(false));
+}
+
+#[tokio::test]
+async fn test_a_workspace_created_without_a_task_is_owned_by_nobody() {
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-7", "ws-1", "gui-tag-folder.sh");
+    let (_, _) = request(&ctx.router, "POST", "/gui/workspaces", Some(json!({}))).await;
+    assert_eq!(ctx.gui.script_workspaces("script-7"), vec!["ws-1".to_string()]);
+}
+
+#[tokio::test]
+async fn test_prompt_marks_the_script_waiting_too() {
+    let ctx = setup().await;
+    ctx.gui.script_begin("script-8", "ws-1", "gui-tag-folder.sh");
+    ctx.notifier.clear();
+
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(
+            &router,
+            "POST",
+            "/gui/prompt",
+            Some(json!({"prompt": "Tag: ", "task": "script-8"})),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
+    assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(true));
+
+    assert!(ctx.input.resolve_prompt(true, Some("jazz".into())));
+    let _ = waiting.await.unwrap();
+    let tasks = ctx.notifier.payloads(events::SCRIPT_TASK_CHANGED);
+    assert_eq!(tasks.last().unwrap()["tasks"][0]["waiting"], json!(false));
+}
+
+#[tokio::test]
 async fn test_concurrent_input_waits_conflict() {
     let ctx = setup().await;
     let router = ctx.router.clone();
@@ -468,6 +545,51 @@ async fn test_concurrent_input_waits_conflict() {
     ctx.input.close_all();
     let (_, body) = waiting.await.unwrap();
     assert_eq!(body, json!({"event": "closed"}));
+}
+
+#[tokio::test]
+async fn test_a_dropped_input_request_releases_the_lock() {
+    // A script killed mid-question (or a `mf` that gives up) drops the HTTP
+    // request; the handler's future is then cancelled. If it left the lock held,
+    // EVERY later wait would answer 409 for the rest of the GUI's life — the
+    // next script would appear to "just stop" at its first question, with
+    // nothing on screen to say why (spec-gui "Script session").
+    let ctx = setup().await;
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/input", Some(json!({"keys": ["y"]}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(ctx.input.is_active());
+
+    waiting.abort();
+    let _ = waiting.await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!ctx.input.is_active(), "the lock is released when the request is dropped");
+
+    // The temporary answer bindings went with it, and a new wait can start.
+    let bindings = ctx.notifier.payloads(events::KEYBINDINGS_CHANGED);
+    assert!(!bindings.last().unwrap()["bindings"].to_string().contains("answer:send y"));
+    let (status, body) =
+        request(&ctx.router, "POST", "/gui/input", Some(json!({"timeout_ms": 30}))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["event"], json!("timeout"));
+}
+
+#[tokio::test]
+async fn test_a_dropped_prompt_request_releases_the_lock() {
+    let ctx = setup().await;
+    let router = ctx.router.clone();
+    let waiting = tokio::spawn(async move {
+        request(&router, "POST", "/gui/prompt", Some(json!({"prompt": "Tag: "}))).await
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(ctx.input.is_active());
+
+    waiting.abort();
+    let _ = waiting.await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!ctx.input.is_active(), "the lock is released when the request is dropped");
 }
 
 #[tokio::test]

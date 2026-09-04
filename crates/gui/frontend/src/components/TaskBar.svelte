@@ -7,7 +7,7 @@
   // ones) is the point.
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
-  import { store } from '../lib/store.svelte';
+  import { ownedByVisible, store, visibleWorkspaces } from '../lib/store.svelte';
 
   interface Task {
     id: string;
@@ -47,14 +47,29 @@
   function label(t: Task): string {
     return t.phase ? `${t.kind} · ${t.phase}` : t.kind;
   }
+
+  // Unlike daemon tasks, a script's entry belongs to the workspaces that script
+  // owns — it is part of what the script displays, so it goes away with its tab
+  // (spec-gui "Script session").
+  const scripts = $derived(
+    store.ui.scriptTasks.filter((s) => ownedByVisible(s.workspaces, visibleWorkspaces())),
+  );
 </script>
 
-{#if tasks.length > 0 || store.ui.scriptTasks.length > 0}
+{#if tasks.length > 0 || scripts.length > 0}
   <div class="task-bar" data-help-topic="task-bar">
-    {#each store.ui.scriptTasks as s (s.task)}
-      <div class="task">
+    {#each scripts as s (s.task)}
+      <div class="task" class:waiting={s.waiting}>
         <span class="label">{s.label}{s.phase ? ` · ${s.phase}` : ''}</span>
-        {#if s.done != null && s.total != null}
+        <!-- Blocked on an answer: the script is NOT working, and the difference
+             is the whole point — the spinner is how one tells "the queries are
+             still running" from "it is your turn". -->
+        {#if s.waiting}
+          <span class="awaiting">⏎ your answer</span>
+          {#if s.done != null && s.total != null}
+            <span class="counts">{s.done}/{s.total}</span>
+          {/if}
+        {:else if s.done != null && s.total != null}
           <progress class="bar" value={s.done} max={s.total}></progress>
           <span class="counts">{s.done}/{s.total}</span>
         {:else}
@@ -92,6 +107,15 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+  }
+  /* A waiting script is idle, not slow: no motion, and the label brightens so
+     the eye lands on the entry whose question is on screen. */
+  .task.waiting .label {
+    color: var(--mf-fg, #d8d8e0);
+  }
+  .awaiting {
+    color: var(--mf-accent, #4c56c4);
+    font-weight: 600;
   }
   .label {
     color: var(--mf-fg-dim, #8a8a96);

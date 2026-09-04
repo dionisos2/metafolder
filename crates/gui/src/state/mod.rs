@@ -37,6 +37,14 @@ struct ScriptTask {
     phase: Option<String>,
     done: Option<u64>,
     total: Option<u64>,
+    /// The workspaces this script owns: the one it was launched from, plus
+    /// every workspace it created through the GUI API. A script's question and
+    /// task entry are shown only while one of them is on screen (spec-gui
+    /// "Script session"), so switching tab puts them away.
+    workspaces: Vec<String>,
+    /// True while the script blocks on an input/prompt wait: it is *not*
+    /// working, so the entry stops spinning and says the answer is awaited.
+    waiting: bool,
 }
 
 pub struct GuiState {
@@ -308,8 +316,47 @@ impl GuiState {
     pub fn script_begin(&self, task_id: &str, ws_id: &str, label: &str) {
         self.scripts.lock_recover().insert(
             task_id.to_string(),
-            ScriptTask { ws_id: ws_id.to_string(), label: label.to_string(), ..Default::default() },
+            ScriptTask {
+                ws_id: ws_id.to_string(),
+                label: label.to_string(),
+                workspaces: vec![ws_id.to_string()],
+                ..Default::default()
+            },
         );
+        self.emit_scripts();
+    }
+
+    /// Records that run `task_id` owns workspace `ws_id` — called when a script
+    /// creates one through `POST /gui/workspaces` with its run id. Idempotent;
+    /// an unknown run id is ignored (a script run outside the GUI owns nothing).
+    pub fn script_claim_workspace(&self, task_id: &str, ws_id: &str) {
+        {
+            let mut scripts = self.scripts.lock_recover();
+            let Some(task) = scripts.get_mut(task_id) else { return };
+            if task.workspaces.iter().any(|w| w == ws_id) {
+                return;
+            }
+            task.workspaces.push(ws_id.to_string());
+        }
+        self.emit_scripts();
+    }
+
+    /// The workspaces run `task_id` owns; empty for an unknown run id.
+    pub fn script_workspaces(&self, task_id: &str) -> Vec<String> {
+        self.scripts.lock_recover().get(task_id).map(|t| t.workspaces.clone()).unwrap_or_default()
+    }
+
+    /// Marks run `task_id` as blocked on (or released from) a user answer.
+    /// Unknown run ids are ignored, and an unchanged flag rebroadcasts nothing.
+    pub fn script_waiting(&self, task_id: &str, waiting: bool) {
+        {
+            let mut scripts = self.scripts.lock_recover();
+            let Some(task) = scripts.get_mut(task_id) else { return };
+            if task.waiting == waiting {
+                return;
+            }
+            task.waiting = waiting;
+        }
         self.emit_scripts();
     }
 
@@ -358,6 +405,8 @@ impl GuiState {
                     "phase": t.phase,
                     "done": t.done,
                     "total": t.total,
+                    "workspaces": t.workspaces,
+                    "waiting": t.waiting,
                 })
             })
             .collect();

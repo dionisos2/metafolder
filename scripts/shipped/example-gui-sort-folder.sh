@@ -33,7 +33,7 @@ mf_gui_bind_repo
 ensure_metarecord() { mf track "$1"; }
 
 # ask "<question>" -> prints y | n | escape  (escape also on timeout/GUI closed).
-ask() { mf_gui_ask "$1" y n escape; }
+ask() { mf_gui_ask_answer "$1" y n escape; }
 
 # The tag paths a metarecord references through its `tag` field — resolved in
 # one round-trip (each ref → the tag entry's `path` TreeRef → its path string).
@@ -122,4 +122,4 @@ for abs in "$SORT_DIR"/*; do
     fi
 done
 
-[ -n "$stop" ] && echo "stopped." || echo "done."
+[ -n "$stop" ] && mf_gui_finish "stopped." || mf_gui_finish "done."

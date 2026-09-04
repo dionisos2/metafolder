@@ -86,7 +86,10 @@ export const store = $state({
     /// shown in a dedicated bar so a status/error message cannot hide it
     /// (spec-gui "Scripting"). Null when no input wait is active. `prompt` is
     /// always a display string (a generic label when the script gave none).
-    inputWait: null as { prompt: string; keys: string[] } | null,
+    /// `workspaces` are the workspaces the asking script owns: the bar is shown
+    /// only while one of them is on screen (empty = owned by nobody, always
+    /// shown).
+    inputWait: null as { prompt: string; keys: string[]; workspaces: string[] } | null,
     /// Shell scripts currently running (spec-gui "Scripting"): a loading
     /// indicator so a slow script never looks frozen. Fed by
     /// `script-task-changed`; empty when nothing runs. `done`/`total`/`phase`
@@ -102,9 +105,24 @@ export function inputWaitState(payload: {
   active: boolean;
   temp_keys?: string[];
   prompt?: string | null;
-}): { prompt: string; keys: string[] } | null {
+  workspaces?: string[];
+}): { prompt: string; keys: string[]; workspaces: string[] } | null {
   if (!payload.active) return null;
-  return { prompt: payload.prompt || 'Waiting for input', keys: payload.temp_keys ?? [] };
+  return {
+    prompt: payload.prompt || 'Waiting for input',
+    keys: payload.temp_keys ?? [],
+    workspaces: payload.workspaces ?? [],
+  };
+}
+
+/** Whether something owned by `owned` workspaces should be on screen, given the
+ *  `visible` ones. An empty or absent owner list means "owned by nobody" — a
+ *  wait the GUI did not launch from a script — and is always shown. Pure, so it
+ *  is unit-tested; used for both the question bar and the task-bar entry
+ *  (spec-gui "Script session"). */
+export function ownedByVisible(owned: string[] | undefined, visible: string[]): boolean {
+  if (!owned || owned.length === 0) return true;
+  return owned.some((ws) => visible.includes(ws));
 }
 
 /** The awaited key that a pressed `combo` answers during a script input wait
@@ -132,12 +150,31 @@ export interface ScriptTask {
   phase?: string | null;
   done?: number | null;
   total?: number | null;
+  /// Every workspace the script owns (launching + created); the entry shows
+  /// only while one of them is on screen.
+  workspaces?: string[];
+  /// True while the script is blocked on a user answer — it is not working, so
+  /// the entry must not spin.
+  waiting?: boolean;
 }
 
 /** Normalizes a `script-task-changed` payload to the running-scripts list. Pure,
  *  so it is unit-tested. */
 export function scriptTasksState(payload: { tasks?: ScriptTask[] }): ScriptTask[] {
   return payload.tasks ?? [];
+}
+
+/** The workspace ids currently on screen, in slot order and deduplicated (both
+ *  slots may show the same one). This is the scope a script's question bar and
+ *  task-bar entry are shown in, and the set the status bar renders. */
+export function visibleWorkspaces(): string[] {
+  const ids: string[] = [];
+  for (const slot of [store.layout.left, store.layout.right]) {
+    if (slot.visible && slot.workspace_id !== null && !ids.includes(slot.workspace_id)) {
+      ids.push(slot.workspace_id);
+    }
+  }
+  return ids;
 }
 
 export function slotPayload(id: SlotId) {
@@ -248,7 +285,12 @@ export async function initStore() {
   });
   // A script's `POST /gui/input` wait: keep its question in a dedicated bar,
   // never on the status line where an error would overwrite it.
-  await listen<{ active: boolean; temp_keys?: string[]; prompt?: string | null }>(
+  await listen<{
+    active: boolean;
+    temp_keys?: string[];
+    prompt?: string | null;
+    workspaces?: string[];
+  }>(
     'input-wait-changed',
     (event) => {
       store.ui.inputWait = inputWaitState(event.payload);

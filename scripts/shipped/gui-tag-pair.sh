@@ -4,9 +4,9 @@
 # metafolder GUI. Asks for a tag (autocompleting over the existing vocabulary),
 # then walks every file with no opinion on it yet, shows it, and waits for a key:
 #
-#   y      -> the file HAS the tag      (mf tag add)
-#   n      -> the file does NOT have it (mf tag deny)
-#   s      -> skip this file
+#   y / →  -> the file HAS the tag      (mf tag add)
+#   n / ←  -> the file does NOT have it (mf tag deny)
+#   s / ↓  -> skip this file
 #   Escape -> stop
 #
 # The tag model (entries + tag/negative_tag refs, TreeRef `path` hierarchy,
@@ -54,7 +54,8 @@ for uuid in "${uuids[@]}"; do
     rel=$(mf path --relative "$uuid")
     mf_gui_progress --done "$i" --total "$total" --phase "$rel"
     mf_gui_show_file "$abs"
-    case "$(mf_gui_ask "[y] $TAG   [n] not $TAG   [s] skip   [Esc] quit — $rel" y n s escape)" in
+    case "$(mf_gui_ask_answer \
+        "[y →] $TAG   [n ←] not $TAG   [s ↓] skip   [Esc] quit — $rel" y n s escape)" in
         y) mf tag -i "$uuid" add "$TAG" >/dev/null; yes=$((yes + 1)) ;;
         n) mf tag -i "$uuid" deny "$TAG" >/dev/null; no=$((no + 1)) ;;
         s) skipped=$((skipped + 1)) ;;
@@ -62,6 +63,4 @@ for uuid in "${uuids[@]}"; do
     esac
 done
 
-SUMMARY="Tagging '$TAG' done: $yes yes, $no no, $skipped skipped"
-mf gui message "$SUMMARY" --timeout-ms 5000
-echo "$SUMMARY"
+mf_gui_finish "Tagging '$TAG' done: $yes yes, $no no, $skipped skipped"

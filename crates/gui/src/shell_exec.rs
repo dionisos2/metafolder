@@ -51,6 +51,16 @@ pub async fn run_to_completion(
     if !status.success() {
         let code = status.code().map_or("?".to_string(), |c| c.to_string());
         gui.append_message(&ws_id, &format!("[exit {code}]"))?;
+        // The message log alone is not enough: a GUI script writes it into a
+        // scratch workspace its own teardown removes, so a run killed by
+        // `set -e` would vanish without a trace. Say so on the launching
+        // workspace's status bar too (spec-gui "Script session").
+        let _ = gui.post_status(
+            &ws_id,
+            &format!("{} failed (exit {code})", script_label(&command_line)),
+            "error",
+            None,
+        );
     }
     Ok(())
 }
@@ -124,6 +134,7 @@ pub fn run_shell(
 mod tests {
     use super::*;
     use crate::notifier::RecordingNotifier;
+    use serde_json::json;
 
     fn gui() -> Arc<GuiState> {
         Arc::new(GuiState::new(Arc::new(RecordingNotifier::new())))
@@ -203,6 +214,69 @@ mod tests {
         assert_eq!(task["done"], 4);
         assert_eq!(task["total"], 10, "total persists across a done-only update");
         assert_eq!(task["phase"], "/music/x.mp3");
+    }
+
+    #[test]
+    fn test_script_claims_the_workspaces_it_creates() {
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        gui.script_begin("script-1", "ws-launch", "gui-tag-folder.sh");
+        // A script that opens two scratch workspaces owns all three.
+        gui.script_claim_workspace("script-1", "ws-a");
+        gui.script_claim_workspace("script-1", "ws-b");
+        gui.script_claim_workspace("script-1", "ws-a"); // idempotent
+
+        let payloads = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        let task = &payloads.last().unwrap()["tasks"][0];
+        assert_eq!(task["workspaces"], json!(["ws-launch", "ws-a", "ws-b"]));
+        assert_eq!(gui.script_workspaces("script-1"), vec!["ws-launch", "ws-a", "ws-b"]);
+        // An unknown run id claims nothing and has no workspaces.
+        gui.script_claim_workspace("nope", "ws-c");
+        assert!(gui.script_workspaces("nope").is_empty());
+    }
+
+    #[test]
+    fn test_script_waiting_flag_tracks_the_input_wait() {
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        gui.script_begin("script-1", "ws-1", "gui-tag-pair.sh");
+        let running = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        assert_eq!(running.last().unwrap()["tasks"][0]["waiting"], json!(false));
+
+        gui.script_waiting("script-1", true);
+        let waiting = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        assert_eq!(waiting.last().unwrap()["tasks"][0]["waiting"], json!(true));
+
+        gui.script_waiting("script-1", false);
+        let back = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED);
+        assert_eq!(back.last().unwrap()["tasks"][0]["waiting"], json!(false));
+
+        // An unknown run id is ignored (no panic, no new broadcast).
+        let before = notifier.payloads(crate::events::SCRIPT_TASK_CHANGED).len();
+        gui.script_waiting("nope", true);
+        assert_eq!(notifier.payloads(crate::events::SCRIPT_TASK_CHANGED).len(), before);
+    }
+
+    #[tokio::test]
+    async fn test_a_failing_script_says_so_in_the_status_bar() {
+        // A script killed by `set -e` leaves nothing on screen: its message log
+        // lives in a scratch workspace the session teardown removes. The exit
+        // code must therefore also reach the launching workspace's status bar.
+        let notifier = Arc::new(RecordingNotifier::new());
+        let gui = Arc::new(GuiState::new(notifier.clone()));
+        let ws = gui.workspaces()[0].id.clone();
+        run_to_completion(gui.clone(), ws.clone(), "echo boom 1>&2; exit 4".into()).await.unwrap();
+
+        let statuses = notifier.payloads(crate::events::STATUS_MESSAGE);
+        let failed = statuses
+            .iter()
+            .find(|p| p["kind"] == "error")
+            .expect("a failing script posts an error status");
+        assert_eq!(failed["workspace_id"], json!(ws));
+        assert!(
+            failed["text"].as_str().unwrap().contains('4'),
+            "the exit code is named: {failed:?}"
+        );
     }
 
     #[tokio::test]

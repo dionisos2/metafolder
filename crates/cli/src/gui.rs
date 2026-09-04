@@ -55,6 +55,23 @@ impl GuiCtx {
 
 const SLOTS: [&str; 2] = ["left", "right"];
 
+/// This script's GUI run id, injected as `METAFOLDER_GUI_TASK` when the GUI
+/// launched it. `None` outside the GUI, where every call carrying it is a
+/// lenient no-op.
+fn run_task() -> Option<String> {
+    std::env::var("METAFOLDER_GUI_TASK").ok()
+}
+
+/// Adds this run's id to a request body, if there is one. Absent rather than
+/// `null` outside the GUI, so a plain `mf gui …` sends exactly what it always
+/// sent.
+fn with_run_task(mut body: Json) -> Json {
+    if let Some(task) = run_task() {
+        body["task"] = json!(task);
+    }
+    body
+}
+
 fn check_slot(slot: &str) -> Result<(), CliError> {
     if SLOTS.contains(&slot) {
         Ok(())
@@ -92,10 +109,12 @@ pub fn repo(ctx: &GuiCtx) -> Result<i32, CliError> {
 }
 
 pub fn workspace_new(ctx: &GuiCtx, repo: Option<&str>) -> Result<i32, CliError> {
-    let body = match repo {
-        Some(repo) => json!({"active_repo": repo}),
+    // The run id makes the new workspace belong to this script, so the GUI
+    // scopes its questions and task entry to it (spec-gui "Script session").
+    let body = with_run_task(match repo {
+        Some(repo) => json!({ "active_repo": repo }),
         None => json!({}),
-    };
+    });
     let resp = ctx.client.post("/gui/workspaces", &body)?;
     println!("{}", resp["id"].as_str().unwrap_or_default());
     Ok(0)
@@ -173,7 +192,7 @@ pub fn progress(
     phase: Option<&str>,
     task: Option<String>,
 ) -> Result<i32, CliError> {
-    let task = task.or_else(|| std::env::var("METAFOLDER_GUI_TASK").ok());
+    let task = task.or_else(run_task);
     let body = json!({"task": task, "done": done, "total": total, "phase": phase});
     ctx.client.request("POST", "/gui/progress", &[], Some(&body))?;
     Ok(0)
@@ -229,7 +248,7 @@ pub fn input(
     prompt: Option<&str>,
     timeout_ms: Option<u64>,
 ) -> Result<i32, CliError> {
-    let body = json!({"keys": keys, "prompt": prompt, "timeout_ms": timeout_ms});
+    let body = with_run_task(json!({"keys": keys, "prompt": prompt, "timeout_ms": timeout_ms}));
     let resp = ctx.client.post("/gui/input", &body)?;
     match resp["event"].as_str() {
         Some("answer") => {
@@ -262,7 +281,9 @@ pub fn prompt(
             completions.push(line);
         }
     }
-    let body = json!({"prompt": text, "completions": completions, "timeout_ms": timeout_ms});
+    let body = with_run_task(
+        json!({"prompt": text, "completions": completions, "timeout_ms": timeout_ms}),
+    );
     let resp = ctx.client.post("/gui/prompt", &body)?;
     match resp["event"].as_str() {
         Some("confirm") => {
