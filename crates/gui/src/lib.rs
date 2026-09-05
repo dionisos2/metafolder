@@ -11,6 +11,7 @@ pub mod commands;
 pub mod config;
 pub mod daemon_proxy;
 pub mod diagnostics;
+pub mod duplicates;
 pub mod events;
 pub mod fs_commands;
 pub mod fs_path;
@@ -114,6 +115,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("file:open-with", "Open the selected file or folder with an external program", true),
         ("script:run", "Run an installed helper script", true),
         ("reconcile:run", "Reconcile the active repository with the filesystem", true),
+        (
+            "mf:duplicate-scan",
+            "Scan the active repository for byte-identical files (mf duplicate scan)",
+            true,
+        ),
         ("mf:order", "Number a folder's direct children (order_position_*)", true),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
@@ -483,6 +489,7 @@ pub fn run(options: Options) {
             commands::expand_query,
             commands::grammar_source,
             reconcile::reconcile_run,
+            duplicates::duplicate_scan,
             sync::sync_status,
             sync::sync_link,
             sync::sync_unlink,

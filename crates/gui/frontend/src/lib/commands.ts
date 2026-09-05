@@ -1044,6 +1044,12 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
     case 'reconcile:run':
       if (ws) await invoke('reconcile_run', { wsId: ws });
       return true;
+    case 'mf:duplicate-scan':
+      // The GUI half of `mf duplicate scan` (spec-duplicates "GUI"). Options
+      // stay CLI-only, as `mf trash prune`'s do: this runs the ordinary
+      // whole-repository scan, and the Rust side posts its own status.
+      if (ws) await invoke('duplicate_scan', { wsId: ws });
+      return true;
     case 'metarecord:trash': {
       // Send the selected metarecord's file to the trash (spec-trash.org).
       // Reversible (restore from the trash panel), but confirmed anyway since

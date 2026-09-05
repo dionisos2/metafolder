@@ -789,6 +789,28 @@ export async function mount(root, metafolder) {
     await fetchPage(true);
   }
 
+  // ── Duplicates (spec-duplicates "GUI") ────────────────────────────────────
+
+  /** Show what else is byte-identical to the selected metarecord. The point of
+   *  the group model is reaching a file's twins without the caller ever
+   *  handling a hash, so this is just `same(...)` typed into the DSL zone —
+   *  visible, editable and composable, not a hidden override like the orphan
+   *  view (whose `uuid_in` set has no DSL spelling). */
+  async function showDuplicates() {
+    const selected = /** @type {{uuid?: string} | null} */ (
+      (await workspace.get('selected_metarecord')) ?? null
+    );
+    const uuid = selected && typeof selected === 'object' ? selected.uuid : null;
+    if (!uuid) {
+      await statusBar.message('no metarecord is selected', statusMessageMs);
+      return;
+    }
+    normalInput.value = `same(mfr_duplicate_group, ${uuid})`;
+    if (!normalShown) await setNormalShown(true);
+    if (!normalFrozen) await setNormalFrozen(true);
+    await applyQuery();
+  }
+
   /** Leave the orphan view and restore the editor-driven query. */
   async function exitOrphans() {
     if (orphanMode) orphanMode = false;
@@ -1240,6 +1262,10 @@ export async function mount(root, metafolder) {
   void commands.register('metarecord-list:clear-queries', {
     label: 'Metarecord list: clear the finder, simplified and normal query fields',
     handler: () => clearAllQueries(),
+  });
+  void commands.register('metarecord-list:duplicates', {
+    label: "Metarecord list: show the selected metarecord's byte-identical twins",
+    handler: () => showDuplicates(),
   });
   void commands.register('metarecord-list:orphans', {
     label: 'Metarecord list: show orphaned metarecords (tracked file missing)',

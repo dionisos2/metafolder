@@ -396,18 +396,24 @@ reconcile and sync independently of duplicate detection.
 
 - =mf:duplicate-scan= — the GUI half of =mf duplicate scan= (hence the =mf:=
   prefix, spec-gui "Naming"), run with the shared task progress bar exactly as
-  =reconcile:run= is. Its options are collected as interactive command
-  arguments, all defaulted, so a bare invocation is the ordinary scan.
-- =metarecord:duplicates= — opens a =metarecord-list= on
+  =reconcile:run= is. Its *options stay CLI-only*, as =mf trash prune='s
+  size/age selectors do: the command runs the ordinary whole-repository scan,
+  which is what a bare invocation should mean; a prompt on every run to retype
+  the default would be worse than useless. A cancelled scan is reported as an
+  outcome, not an error — what it found is kept.
+- =metarecord-list:duplicates= — sets the panel's DSL query to
   =same(mfr_duplicate_group, <selected uuid>)=: "show me what else is identical
-  to this". Offered as a context-menu item in the metarecord panels, and shown
-  in =metarecord-detail= as a "N duplicates" line whenever
-  =mfr_duplicate_group= is present.
-- *duplicates panel* (=panel:set-type duplicates=, suggested binding =t u=) —
-  the groups, worst-reclaimable first, each expanding to its members with their
-  paths and a marker on hard-linked ones. It carries no deletion logic of its
-  own: the members are an ordinary metarecord selection, so the shared file
-  actions (=metarecord:trash=, open, reveal) already apply.
+  to this". It is a *visible, editable* query rather than a hidden override
+  like the orphan view, whose =uuid_in= set has no DSL spelling; so it composes
+  with everything else the box can express.
+- *duplicates panel* (=panel:set-type duplicates=, default =t u=) — the groups,
+  worst-reclaimable first, collapsed; =Enter= expands one into its members'
+  paths, =+= marking a member that shares an inode with another. It carries no
+  deletion logic of its own: highlighting a member publishes it as
+  =selected_metarecord=, so =metarecord:trash= and the shared file actions
+  already apply, with their existing confirmations. There is deliberately no
+  "remove all but one" — choosing which copy survives is the user's, and the
+  panel's job is to make that choice informed.
 
 * Cross-repo sync
 

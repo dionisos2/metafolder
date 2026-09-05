@@ -1039,7 +1039,7 @@ Behaviours:
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
-| =metarecord:duplicates= | Show what else is byte-identical to the selected metarecord, as a =metarecord-list= on =same(mfr_duplicate_group, <uuid>)= |
+| =metarecord-list:duplicates= | Set the query to the selected metarecord's byte-identical twins — =same(mfr_duplicate_group, <uuid>)= — in the DSL zone, so it stays visible and editable |
 | =mf:order [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
@@ -2380,11 +2380,13 @@ completion:
 [[file:spec-duplicates.org][spec-duplicates.org]]): it calls
 =POST .../duplicates/scan= (202 + task id) and, like =reconcile:run=, polls the
 task only to know when it ends — live progress belongs to the [[*Task bar]].
-Its optional arguments (=--min-size=, =--rehash=, a subtree) are collected as
-[[*Interactive command arguments (command mode)]] arguments, all with defaults,
-so a bare invocation runs the ordinary whole-repository scan. On completion the
-status bar shows ="Duplicates: N groups, M files, 4.5 GiB reclaimable."= and the
-full summary goes to the =message= panel.
+Its options (=--min-size=, =--rehash=, a subtree) stay *CLI-only*, the way
+=mf trash prune='s selectors do: the command runs the ordinary
+whole-repository scan, which is what a bare invocation should mean. On
+completion the status bar shows
+="Duplicates: N groups, M files, 4.5G reclaimable."= and the full summary goes
+to the =message= panel. A *cancelled* scan is reported as an outcome rather than
+an error — the hashes and groups it wrote are kept.
 
 The =full= phase reports *bytes* rather than files (see
 [[file:spec-tasks.org][spec-tasks.org]] "Duplicate scan progress phases"), so the
@@ -2401,13 +2403,14 @@ their existing confirmations. Nothing in this panel deletes a file implicitly,
 and there is deliberately no "remove all but one" action — choosing which copy
 survives is the user's, and the panel's job is to make that choice informed.
 
-=metarecord:duplicates= works from the other direction: on any metarecord
-carrying =mfr_duplicate_group= it opens a =metarecord-list= on
-=same(mfr_duplicate_group, <uuid>)= ([[file:spec-query.org][spec-query.org]]
-"Same-value matching"), which is how a file's twins are reached without the
-caller ever handling a hash. =metarecord-detail= shows the same thing passively:
-when =mfr_duplicate_group= is present it renders a "N duplicates" line that
-activates the command.
+=metarecord-list:duplicates= works from the other direction: it sets the
+panel's DSL query to =same(mfr_duplicate_group, <selected uuid>)=
+([[file:spec-query.org][spec-query.org]] "Same-value matching"), which is how a
+file's twins are reached without the caller ever handling a hash. It writes the
+query into the *visible* DSL zone rather than overriding it invisibly (as the
+orphan view must, its =uuid_in= set having no DSL spelling), so the result
+composes with everything else the box can express — =AND NOT <uuid>= for "the
+others", an extra predicate to narrow it.
 
 ** Order a folder's children
 

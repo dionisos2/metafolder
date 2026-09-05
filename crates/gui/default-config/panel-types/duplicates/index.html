@@ -1,0 +1,120 @@
+<!doctype html>
+<!-- Built-in panel type: duplicates — the repository's groups of byte-identical
+     files, worst reclaimable space first (spec-duplicates "GUI"). It carries no
+     deletion logic of its own: a member row is an ordinary metarecord
+     selection, so `metarecord:trash` and the shared file actions already
+     apply. -->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>duplicates</title>
+    <style>
+      .mf-panel-body {
+        margin: 0;
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        font-size: 13px;
+      }
+      #toolbar {
+        display: flex;
+        gap: 6px;
+        padding: 4px 8px;
+        background: var(--mf-bg-raised, #26262e);
+        align-items: center;
+      }
+      button {
+        font: inherit;
+        background: var(--mf-bg, #1e1e24);
+        color: var(--mf-fg, #d8d8e0);
+        border: 1px solid var(--mf-fg-dim, #8a8a96);
+        border-radius: 3px;
+        padding: 1px 8px;
+        cursor: pointer;
+      }
+      #entries {
+        flex: 1;
+        overflow-y: auto;
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      #entries li {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 3px 10px;
+        cursor: default;
+        white-space: nowrap;
+      }
+      #entries li:hover,
+      #entries li.cursor {
+        background: var(--mf-cursor, #39408c);
+        box-shadow: inset 3px 0 0 var(--mf-accent, #4c56c4);
+      }
+      li.member {
+        padding-left: 28px;
+      }
+      .twisty {
+        flex: none;
+        width: 1em;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .size {
+        flex: none;
+        width: 7em;
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+      }
+      .reclaim {
+        font-weight: 600;
+      }
+      .count {
+        flex: none;
+        width: 4em;
+        text-align: right;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      .hash {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--mf-fg-dim, #8a8a96);
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      .path {
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.9em;
+      }
+      /* A member sharing an inode with another: removing this name frees
+         nothing, so it must not read like a candidate for deletion. */
+      .linked {
+        flex: none;
+        color: var(--mf-warn, #d8a657);
+      }
+      .placeholder {
+        padding: 20px;
+        text-align: center;
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+      #status-line {
+        padding: 3px 10px;
+        background: var(--mf-bg-raised, #26262e);
+        color: var(--mf-fg-dim, #8a8a96);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="toolbar">
+      <button id="scan">Scan</button>
+      <button id="refresh">Refresh</button>
+    </div>
+    <p class="placeholder" id="placeholder">Loading…</p>
+    <ul id="entries" hidden></ul>
+    <div id="status-line"></div>
+  </body>
+</html>

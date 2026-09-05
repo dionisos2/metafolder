@@ -94,6 +94,7 @@
 "t y" = { command = "panel:set-type sync" }
 "t p" = { command = "panel:set-type help" }
 "t v" = { command = "panel:set-type recent" }
+"t u" = { command = "panel:set-type duplicates" }
 
 # Help (spec-gui "Help"). "h" then a letter; F1 also arms the help cursor.
 "h h" = { command = "help:help" }
@@ -140,6 +141,7 @@
   { command = "log:next", when = "log" },
   { command = "trash:next", when = "trash" },
   { command = "recent:next", when = "recent" },
+  { command = "duplicates:next", when = "duplicates" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "up" = [
@@ -152,6 +154,7 @@
   { command = "log:prev", when = "log" },
   { command = "trash:prev", when = "trash" },
   { command = "recent:prev", when = "recent" },
+  { command = "duplicates:prev", when = "duplicates" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -164,6 +167,7 @@
   { command = "log:next", when = "log" },
   { command = "trash:next", when = "trash" },
   { command = "recent:next", when = "recent" },
+  { command = "duplicates:next", when = "duplicates" },
   { command = "metarecord:field-next", when = "metarecord-detail" },
 ]
 "k" = [
@@ -174,6 +178,7 @@
   { command = "log:prev", when = "log" },
   { command = "trash:prev", when = "trash" },
   { command = "recent:prev", when = "recent" },
+  { command = "duplicates:prev", when = "duplicates" },
   { command = "metarecord:field-prev", when = "metarecord-detail" },
 ]
 
@@ -216,6 +221,7 @@
   { command = "log:toggle-ops", when = "log" },
   { command = "trash:restore", when = "trash" },
   { command = "recent:open", when = "recent" },
+  { command = "duplicates:toggle", when = "duplicates" },
   { command = "metarecord:field-edit", when = "metarecord-detail" },
 ]
 
@@ -225,6 +231,7 @@
   { command = "treeref:descend", when = "treeref" },
   { command = "ref-list:open", when = "ref-list" },
   { command = "recent:open", when = "recent" },
+  { command = "duplicates:toggle", when = "duplicates" },
   # In the file panel left/right seek the previewed media (see the transport
   # section below); with no media shown they do nothing.
   { command = "file:seek-forward", when = "file" },
