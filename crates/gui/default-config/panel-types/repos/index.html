@@ -103,6 +103,20 @@
         border-color: var(--mf-warning, #d6a75e);
         color: var(--mf-warning, #d6a75e);
       }
+      /* Subtrees the watch budget could not afford: amber like a pause — a
+         state to act on, and the repository is still fully tracked. */
+      .watch-excluded {
+        padding: 1px 8px;
+        font-size: 0.9em;
+        border-color: var(--mf-warning, #d6a75e);
+        color: var(--mf-warning, #d6a75e);
+      }
+      /* The kernel refusing watches to a daemon under its own ceiling is
+         someone else's doing and nothing was recorded: an error, not a state
+         the user chose (spec-file-tracking "Two different failures"). */
+      .watch-starved {
+        color: var(--mf-error, #c44c56);
+      }
       .uuid {
         font-family: var(--mf-font-mono, monospace);
         font-size: 0.85em;

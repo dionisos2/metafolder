@@ -259,33 +259,55 @@ export async function mount(root, metafolder) {
     await pollWatch();
   }
 
-  // ── Paused tracking ───────────────────────────────────────────────────────
-  // A repository whose ingestion is paused (its flush was stopped) records
-  // nothing until it is resumed — and looks broken if that is not said out
-  // loud. Each row carries the notice and its Resume button.
+  // ── Tracking notices ──────────────────────────────────────────────────────
+  // Three conditions leave a repository recording less than it looks like it
+  // does, and each one makes it look broken if it is not said out loud: its
+  // ingestion is paused, its watch budget could not cover the whole tree, or
+  // the kernel is refusing watches to a daemon that has not reached its own
+  // ceiling. All three live on the repository's row.
+
+  /**
+   * @typedef {{limit: number|null, share: number, cap: number|null,
+   *            starved: boolean, exceeded_dirs: number}} WatchBudget
+   * @typedef {{paused?: boolean, pending_events?: number|null,
+   *            watched_dirs?: number, watch_budget?: WatchBudget}} WatchStatus
+   */
 
   async function pollWatch() {
     for (const container of qsa(list, '.repo-watch')) {
       const repoUuid = container.dataset.watchFor;
       if (!repoUuid) continue;
-      /** @type {{paused?: boolean, pending_events?: number|null}|null} */
+      /** @type {WatchStatus|null} */
       let status = null;
       try {
-        status = /** @type {{paused?: boolean, pending_events?: number|null}} */ (
+        status = /** @type {WatchStatus} */ (
           await daemon.call('GET', `/repos/${repoUuid}/watch`)
         );
       } catch {
         continue; // A transient hiccup: leave the last paint in place.
       }
-      if (!status?.paused) {
-        container.replaceChildren();
-        continue;
-      }
+      container.replaceChildren(...watchNotices(repoUuid, status));
+    }
+  }
+
+  /**
+   * The notices a repository's tracking state deserves, in order of how much
+   * they mean: nothing at all when everything is watched and running.
+   * @param {string} repoUuid
+   * @param {WatchStatus|null} status
+   * @returns {Element[]}
+   */
+  function watchNotices(repoUuid, status) {
+    /** @type {Element[]} */
+    const notices = [];
+    if (!status) return notices;
+
+    if (status.paused) {
       const waiting =
         typeof status.pending_events === 'number'
           ? ` — ${status.pending_events} event(s) waiting`
           : '';
-      container.replaceChildren(
+      notices.push(
         el('span', { class: 'watch-paused' }, `tracking paused${waiting}`),
         el(
           'button',
@@ -301,6 +323,75 @@ export async function mount(root, metafolder) {
           'Resume',
         ),
       );
+    }
+
+    const budget = status.watch_budget;
+    if (!budget) return notices;
+
+    // Someone else holds the watches. Transient and external, so the daemon
+    // records nothing — which is exactly why it has to be visible for as long
+    // as it lasts (spec-file-tracking "Two different failures").
+    if (budget.starved) {
+      notices.push(
+        el(
+          'span',
+          {
+            class: 'watch-starved',
+            title:
+              'Another program holds the inotify watches. This daemon is below its own ' +
+              'ceiling, so nothing was recorded — changes in the directories it could not ' +
+              'watch go unnoticed until a reconcile.',
+          },
+          'out of inotify watches',
+        ),
+      );
+    }
+
+    // Subtrees the budget could not afford. A count means little without the
+    // names, so the notice opens them.
+    if (budget.exceeded_dirs > 0) {
+      const used = status.watched_dirs ?? 0;
+      const of = budget.cap === null ? '' : ` of ${budget.cap}`;
+      notices.push(
+        el(
+          'button',
+          {
+            class: 'watch-excluded',
+            type: 'button',
+            title:
+              `${used}${of} watch(es) used (share ${budget.share}%). ` +
+              'These subtrees are still tracked — reconcile walks them — but changes ' +
+              'in them are not noticed live. Click to list them.',
+            onclick: (/** @type {Event} */ event) => {
+              event.stopPropagation();
+              void showExceeded(repoUuid);
+            },
+          },
+          `${budget.exceeded_dirs} subtree(s) unwatched`,
+        ),
+      );
+    }
+    return notices;
+  }
+
+  /**
+   * Lists the subtrees left unwatched for want of budget.
+   * @param {string} repoUuid
+   */
+  async function showExceeded(repoUuid) {
+    try {
+      const body = /** @type {{exceeded?: string[]}} */ (
+        await daemon.call('GET', `/repos/${repoUuid}/watch/exceeded`)
+      );
+      const paths = body?.exceeded ?? [];
+      void messages.append(
+        paths.length
+          ? `unwatched subtrees (watch budget): ${paths.join(', ')}`
+          : 'no subtree is excluded',
+      );
+      void statusBar.message(`${paths.length} subtree(s) listed in the messages`, 4000);
+    } catch (error) {
+      void statusBar.message(`cannot list unwatched subtrees: ${messageOf(error)}`, 6000);
     }
   }
 

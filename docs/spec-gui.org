@@ -78,7 +78,7 @@ Built-in panel types:
 | =workspace-info= | Current workspace variables — useful for debugging and scripting |
 | =message=        | Persistent log of status bar messages, shell output, and reconcile results |
 | =log=            | Event log (revisions and operations)                         |
-| =repos=          | Repository list, init, load, unload, per-repo running tasks, paused-tracking notice |
+| =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
 | =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
@@ -1747,7 +1747,12 @@ never spawns a workspace.
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
 → select a loaded repo or trigger =repos:open-init= / =repos:open-load= from there.
 
-*** Paused tracking
+*** Tracking notices
+
+Three conditions leave a repository recording less than it looks like it does,
+and each makes it look broken if it is not said out loud. All three appear on
+the repository's own row, polled on the task block's cadence — so one triggered
+from the CLI shows up here too.
 
 The per-repo task block lists the repository's in-flight tasks with a *Stop*
 button for the cancellable kinds — =flush= among them (see
@@ -1761,6 +1766,23 @@ shows =tracking paused — N event(s) waiting= in the warning colour (amber, the
 red: nothing is broken) next to a *Resume* button calling
 =POST /repos/:repo/watch/resume=. The state is polled on the same cadence as the
 task block, so a pause triggered from the CLI shows up here too.
+
+The other two come from the watch budget (see
+[[file:spec-file-tracking.org][spec-file-tracking.org]] "The watch budget"), and
+they are coloured by *who decided*, not by how bad they look:
+
+- =N subtree(s) unwatched= — amber, like the pause: the daemon reached its own
+  ceiling and recorded the frontier, the repository is still fully tracked, and
+  this is a state to act on. It is a *button*: a count means little without the
+  names, so it calls =GET /repos/:repo/watch/exceeded= and writes them to the
+  workspace's message log.
+- =out of inotify watches= — error red: the kernel is refusing watches to a
+  daemon that has *not* reached its ceiling, so another program holds them and
+  **nothing was recorded**. It is not a state the user chose and there is no
+  button for it — the remedy is outside metafolder. It is shown for exactly as
+  long as the condition lasts, which is why the daemon reports it as a field of
+  the watch status and not as a diagnostic: the diagnostics ring holds 500
+  entries and would evict such a notice under its own repetitions.
 
 ** Metarecord management
 
