@@ -384,8 +384,20 @@ pub const FLUSH_FAILURE_BUDGET: u32 = 3;
 /// budget runs out (see [`FLUSH_FAILURE_BUDGET`]) — then it is dropped, loudly,
 /// so a single unapplicable batch cannot silently switch tracking off for good.
 pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
+    flush_pending_reported(repo, &|_| {})
+}
+
+/// [`flush_pending`], reporting its progress to `report`.
+///
+/// A flush at runtime applies the handful of events of one quiet period and
+/// has nobody watching. The flush a repository *load* runs is a different
+/// animal: its backlog is whatever the filesystem did while the daemon was
+/// down, so it can be millions of events and take minutes — and it is the one
+/// load phase whose size cannot be guessed from outside. It says how much it
+/// has to do and how far it has got (spec-main "Startup report").
+pub fn flush_pending_reported(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     use std::sync::atomic::Ordering;
-    match flush_pending_once(repo) {
+    match flush_pending_once(repo, report) {
         Ok(stats) => {
             if !stats.cancelled {
                 repo.flush_failures.store(0, Ordering::Relaxed);
@@ -418,7 +430,26 @@ fn discard_pending(repo: &RepoState) -> Result<usize> {
     Ok(conn.execute("DELETE FROM pending_operation WHERE op_type LIKE 'fs_%'", [])?)
 }
 
-fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
+/// What a flush is doing, for whoever is watching it happen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FlushProgress {
+    /// The buffer as read from the database, before compaction.
+    Buffered(usize),
+    /// What compaction left to apply.
+    Compacted(usize),
+    /// Events applied so far, out of the compacted total.
+    Applied { done: usize, total: usize },
+}
+
+/// Where a flush reports its progress.
+pub type FlushReport<'a> = &'a dyn Fn(FlushProgress);
+
+/// How many events pass between two `Applied` reports. A backlog worth
+/// reporting at all is large enough that a line per event would be the slowest
+/// part of the flush.
+const REPORT_EVERY: usize = 500;
+
+fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     // While a coordinated rollback holds the lock, pending operations (watcher
     // events and restoration ops) accumulate but are not committed; they are
     // replayed once the lock is released (spec-event-log "Rollback lock").
@@ -442,8 +473,10 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
     if events.is_empty() {
         return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
     }
+    report(FlushProgress::Buffered(events.len()));
     let events = compact(correlate_renames(events));
     let n_events = events.len();
+    report(FlushProgress::Compacted(n_events));
 
     // Paths renamed away with no matching arrival in this batch. Either the
     // file really left the repository, or it moved into a directory the watcher
@@ -495,6 +528,7 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
 
     let work = (|| -> Result<usize> {
         let mut revisions = 0;
+        let mut applied = 0usize;
         for (_, group) in groups {
             let writer = Writer::begin(&mut conn, None)?;
             let mut apply = Apply {
@@ -512,6 +546,10 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
             for ev in group {
                 apply.check_cancelled()?;
                 apply.apply(ev)?;
+                applied += 1;
+                if applied.is_multiple_of(REPORT_EVERY) {
+                    report(FlushProgress::Applied { done: applied, total: n_events });
+                }
             }
             let wrote = apply.writer.op_count() > 0;
             apply.writer.commit()?;
@@ -520,6 +558,10 @@ fn flush_pending_once(repo: &RepoState) -> Result<FlushStats> {
             }
         }
 
+        // The closing report always lands, whatever the batch size: without it
+        // a backlog under `REPORT_EVERY` would announce its size and then say
+        // nothing more.
+        report(FlushProgress::Applied { done: applied, total: n_events });
         conn.execute(
             "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
             params![max_id],

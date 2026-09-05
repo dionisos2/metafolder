@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::config::RepoConfig;
 use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
+use crate::executor::FlushProgress;
 use crate::phase::Phase;
 use crate::reconcile::ProgressFn;
 use crate::repo::{self, OpenedRepo, RepoLocator};
@@ -407,7 +408,21 @@ impl AppState {
         }
         {
             let mut p = Phase::begin(&who, "replay the buffered filesystem events");
-            let stats = crate::executor::flush_pending(&repo_state)?;
+            // The backlog is whatever the filesystem did while the daemon was
+            // down: it is the one phase whose size is unknowable from outside,
+            // so it reports its own.
+            let stats =
+                crate::executor::flush_pending_reported(&repo_state, &|progress| match progress {
+                    FlushProgress::Buffered(n) => {
+                        eprintln!("[load {who}]   {n} event(s) buffered")
+                    }
+                    FlushProgress::Compacted(n) => {
+                        eprintln!("[load {who}]   {n} event(s) after compaction")
+                    }
+                    FlushProgress::Applied { done, total } => {
+                        eprintln!("[load {who}]   applied {done}/{total}")
+                    }
+                })?;
             p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
         }
         let quiet = self.settings.watch_quiet_period();

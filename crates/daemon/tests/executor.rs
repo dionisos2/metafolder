@@ -1239,3 +1239,65 @@ fn test_stopping_a_flush_pauses_ingestion_and_loses_nothing() {
     assert!(resolve(&repo, "/dropped/f399.txt").is_some(), "everything lands after the resume");
     assert_eq!(pending_events(&repo), 0);
 }
+
+// ── Reported flush ────────────────────────────────────────────────────────────
+
+/// A load's replay of the buffered events can be the longest part of a startup
+/// — the backlog is whatever the filesystem did while the daemon was down — and
+/// it is the one phase whose size is not visible from outside. It must say how
+/// much it has to do, and how far along it is.
+#[test]
+fn test_a_reported_flush_says_how_much_it_has_and_how_far_it_got() {
+    let (repo, root, _) = setup("reported");
+    for i in 0..5 {
+        write_file(&root, &format!("f{i}.txt"), b"x");
+    }
+    let mut events: Vec<FsEvent> =
+        (0..5).map(|i| FsEvent::Create(format!("/f{i}.txt").as_str().into())).collect();
+    // A redundant event, so compaction visibly has something to remove.
+    events.push(FsEvent::ModifyData("/f0.txt".into()));
+    enqueue(&repo, &events);
+
+    let seen = std::sync::Mutex::new(Vec::new());
+    executor::flush_pending_reported(&repo, &|p| seen.lock().unwrap().push(p)).unwrap();
+    let seen = seen.into_inner().unwrap();
+
+    let buffered = seen
+        .iter()
+        .find_map(|p| match p {
+            executor::FlushProgress::Buffered(n) => Some(*n),
+            _ => None,
+        })
+        .expect("the backlog size is reported before any work");
+    assert_eq!(buffered, 6, "the buffer is reported as read, before compaction");
+
+    let compacted = seen
+        .iter()
+        .find_map(|p| match p {
+            executor::FlushProgress::Compacted(n) => Some(*n),
+            _ => None,
+        })
+        .expect("what compaction left is reported");
+    assert_eq!(compacted, 5, "the redundant modify is absorbed by the create");
+
+    let last_applied = seen
+        .iter()
+        .filter_map(|p| match p {
+            executor::FlushProgress::Applied { done, total } => Some((*done, *total)),
+            _ => None,
+        })
+        .next_back()
+        .expect("progress through the events is reported");
+    assert_eq!(last_applied, (5, 5), "the last report accounts for every event");
+}
+
+/// A flush with nothing buffered reports nothing: the load report must not
+/// carry a line per repository that had no backlog at all.
+#[test]
+fn test_an_empty_flush_reports_nothing() {
+    let (repo, root, _) = setup("reported-empty");
+    let seen = std::sync::Mutex::new(Vec::new());
+    executor::flush_pending_reported(&repo, &|p| seen.lock().unwrap().push(p)).unwrap();
+    assert!(seen.into_inner().unwrap().is_empty(), "an empty flush has nothing to say");
+    std::fs::remove_dir_all(root).unwrap();
+}
