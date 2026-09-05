@@ -1971,9 +1971,12 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     }
     let state = if resp["paused"].as_bool().unwrap_or(false) { "paused" } else { "running" };
     // The buffer is in memory, so the count is always there — no "unavailable"
-    // case to render any more.
+    // case to render any more. The watch count is worth showing next to it: one
+    // inotify watch per directory, on a budget shared with every other program
+    // on the machine (spec-file-tracking "File Watcher").
     let waiting = resp["pending_events"].as_i64().unwrap_or(0);
-    println!("{state:<10}\t{waiting} event(s) waiting");
+    let watched = resp["watched_dirs"].as_i64().unwrap_or(0);
+    println!("{state:<10}\t{waiting} event(s) waiting\t{watched} directory(ies) watched");
     Ok(0)
 }
 

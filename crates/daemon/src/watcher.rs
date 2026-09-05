@@ -49,20 +49,32 @@ struct WatcherInner {
 }
 
 impl WatcherInner {
-    /// Adds a non-recursive watch on `dir` (idempotent). Failures warn and are
-    /// swallowed: one unreadable/racing directory must never abort watching the
-    /// rest (spec-file-tracking "File Watcher").
-    fn watch_dir(&self, dir: &Path) {
+    /// Adds a non-recursive watch on `dir` (idempotent). Returns whether the
+    /// directory is now watched. Failures are swallowed: one unreadable/racing
+    /// directory must never abort watching the rest (spec-file-tracking "File
+    /// Watcher").
+    ///
+    /// `quiet` suppresses the per-directory warning, for the bulk placement
+    /// that reports its failures as one summary instead.
+    fn watch_dir_reporting(&self, dir: &Path, quiet: bool) -> Result<(), notify::Error> {
         let mut watched = self.watched.lock_recover();
         if !watched.insert(dir.to_path_buf()) {
-            return; // Already watched.
+            return Ok(()); // Already watched.
         }
         if let Some(w) = self.watcher.lock_recover().as_mut() {
             if let Err(err) = w.watch(dir, notify::RecursiveMode::NonRecursive) {
-                crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
+                if !quiet {
+                    crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
+                }
                 watched.remove(dir);
+                return Err(err);
             }
         }
+        Ok(())
+    }
+
+    fn watch_dir(&self, dir: &Path) {
+        let _ = self.watch_dir_reporting(dir, false);
     }
 
     /// Drops the watch on `dir` (its subtree left the eligible scope).
@@ -83,17 +95,66 @@ impl WatcherInner {
 
     /// Reconciles the live watches to `target`: unwatch what is no longer
     /// wanted, watch what is newly wanted.
-    fn apply(&self, target: &HashSet<PathBuf>) {
+    /// Brings the watch set to `target`, returning how many directories could
+    /// *not* be watched because the kernel's per-user budget is exhausted.
+    ///
+    /// Those failures are counted rather than each warned about: exhausting the
+    /// budget fails for every remaining directory, and the diagnostics ring
+    /// holds 500 entries — the message that matters would be evicted by its own
+    /// repetitions. The caller reports the total once (`budget_report`).
+    fn apply(&self, target: &HashSet<PathBuf>) -> usize {
         let current: Vec<PathBuf> = self.watched.lock_recover().iter().cloned().collect();
         for dir in &current {
             if !target.contains(dir) {
                 self.unwatch_dir(dir);
             }
         }
+        let mut exhausted = 0;
         for dir in target {
-            self.watch_dir(dir);
+            if let Err(err) = self.watch_dir_reporting(dir, true) {
+                if is_watch_budget_exhausted(&err) {
+                    exhausted += 1;
+                } else {
+                    crate::diagnostics::warn("watcher", format!("failed to watch {dir:?}: {err}"));
+                }
+            }
         }
+        exhausted
     }
+
+    /// How many directories this watcher currently holds a watch on.
+    fn watched_count(&self) -> usize {
+        self.watched.lock_recover().len()
+    }
+}
+
+/// Whether a watch failure is the kernel's per-user watch budget being
+/// exhausted (`ENOSPC` from `inotify_add_watch`).
+///
+/// inotify holds one watch per *directory* — there is no recursive watch, so
+/// this is the model and not a choice: a tree of N directories costs N watches,
+/// and the budget (`fs.inotify.max_user_watches`) is shared with every other
+/// program on the machine that watches files.
+fn is_watch_budget_exhausted(err: &notify::Error) -> bool {
+    const ENOSPC: i32 = 28;
+    match &err.kind {
+        notify::ErrorKind::Io(io) => io.raw_os_error() == Some(ENOSPC),
+        _ => false,
+    }
+}
+
+/// The single line reporting an exhausted watch budget, or `None` when every
+/// directory was watched. Names the limit, so the reader has the remedy and not
+/// just the symptom.
+fn budget_report(unwatched: usize, watched: usize) -> Option<String> {
+    (unwatched > 0).then(|| {
+        format!(
+            "out of inotify watches: {unwatched} directory(ies) are NOT being watched \
+             ({watched} are). Changes under them go unnoticed until a reconcile. \
+             Raise fs.inotify.max_user_watches (it is a per-user budget, shared with \
+             every other program watching files)"
+        )
+    })
 }
 
 /// The most events the ingest thread folds into a single hand-over. Large
@@ -112,13 +173,21 @@ impl WatcherHandle {
     /// Recomputes the eligible-directory set and reconciles the live watches to
     /// it. Called after a manual write changes `mf_watch`/`mf_ignore`. Takes the
     /// already-locked connection and tree cache to avoid re-locking them.
+    /// How many directories are currently watched — one inotify watch each
+    /// (see [`is_watch_budget_exhausted`]).
+    pub fn watched(&self) -> usize {
+        self.inner.watched_count()
+    }
+
+    /// Brings the watch set in line with the repository's eligibility, and
+    /// returns how many directories are watched afterwards.
     pub fn refresh(
         &self,
         conn: &Connection,
         cache: &mut TreeCache,
         root: &Path,
         internal_dir: &Path,
-    ) {
+    ) -> usize {
         let (target, total, elig) = compute_watched_dirs_timed(conn, cache, root, internal_dir);
         // A persistent diagnostic for the initial (load-time) walk and any large
         // watch reconfiguration: the filesystem read_dir cost vs the per-directory
@@ -130,7 +199,12 @@ impl WatcherHandle {
                 total.saturating_sub(elig)
             );
         }
-        self.inner.apply(&target);
+        let unwatched = self.inner.apply(&target);
+        let watched = self.inner.watched_count();
+        if let Some(report) = budget_report(unwatched, watched) {
+            crate::diagnostics::error("watcher", report);
+        }
+        watched
     }
 }
 
@@ -504,7 +578,7 @@ fn maintain_watches(
 
 #[cfg(test)]
 mod tests {
-    use super::{compute_watched_dirs_timed, relative};
+    use super::{budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted, relative};
     use crate::db;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
@@ -692,5 +766,42 @@ mod tests {
             Some("/home/.metafolder/config.json")
         );
         assert_eq!(rel("/home/.metafolder/internal/db.sqlite"), None);
+    }
+
+    // ── The kernel's watch budget ─────────────────────────────────────────────
+
+    fn enospc() -> notify::Error {
+        notify::Error::io(std::io::Error::from_raw_os_error(28))
+    }
+
+    #[test]
+    fn test_running_out_of_watches_is_recognised_for_what_it_is() {
+        // inotify holds one watch per *directory* and the budget is per user,
+        // shared with every other program that watches files. Exhausting it is
+        // not "a directory could not be watched": it is the whole rest of the
+        // tree going unwatched, and it has a name and a remedy.
+        assert!(is_watch_budget_exhausted(&enospc()));
+        assert!(!is_watch_budget_exhausted(&notify::Error::io(
+            std::io::Error::from_raw_os_error(13) // EACCES: one unreadable directory
+        )));
+    }
+
+    #[test]
+    fn test_the_budget_report_names_the_limit_and_what_it_cost() {
+        // One line, not one per directory: a placement that fails at scale
+        // fails thousands of times, and the diagnostics ring holds 500 entries
+        // — the message that matters would be evicted by its own repetitions.
+        let report = budget_report(18_000, 6_000).expect("exhaustion must be reported");
+        assert!(report.contains("18000"), "how many directories went unwatched: {report}");
+        assert!(report.contains("6000"), "how many are watched: {report}");
+        assert!(
+            report.contains("fs.inotify.max_user_watches"),
+            "the remedy must be named: {report}"
+        );
+    }
+
+    #[test]
+    fn test_no_report_when_every_directory_was_watched() {
+        assert_eq!(budget_report(0, 6_000), None);
     }
 }

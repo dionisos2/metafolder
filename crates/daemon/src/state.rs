@@ -220,13 +220,19 @@ impl RepoState {
     /// just excluded stops). No-op when the watcher is not running (unit tests,
     /// or a repository being torn down). `conn` is the already-locked
     /// connection; the tree cache is locked here.
-    pub fn refresh_watches(&self, conn: &Connection) {
+    pub fn refresh_watches(&self, conn: &Connection) -> usize {
         let handles = self.handles.lock_recover();
         let Some(handles) = handles.as_ref() else {
-            return;
+            return 0;
         };
         let mut cache = self.lock_cache();
-        handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir());
+        handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir())
+    }
+
+    /// Directories currently watched — one inotify watch each, on a budget
+    /// shared with every other program on the machine that watches files.
+    pub fn watched_dirs(&self) -> usize {
+        self.handles.lock_recover().as_ref().map_or(0, |h| h.watcher.watched())
     }
 
     /// Warms the in-memory accelerators of a freshly loaded repository:
@@ -425,9 +431,12 @@ impl RepoState {
         // that walk reads each directory's eligibility from the tree cache the
         // warmup has just filled instead of asking the database per directory.
         {
-            let _p = Phase::begin(&who, "place the filesystem watches");
+            let mut p = Phase::begin(&who, "place the filesystem watches");
             let conn = self.conn.lock_recover();
-            self.refresh_watches(&conn);
+            let watched = self.refresh_watches(&conn);
+            // One inotify watch per directory: worth stating, because the
+            // budget is per user and shared (spec-file-tracking "File Watcher").
+            p.detail(format!("{watched} directories"));
         }
         Ok(())
     }

@@ -1116,6 +1116,13 @@ repository (see [[*Pausing ingestion]]). All three answer the same body:
   buffer (what a resume would apply). Always exact: reading it does not touch
   the repository's connection, so it answers even while the flush the caller is
   trying to stop is holding it.
+- =watched_dirs= — how many directories the watcher holds a watch on. inotify
+  has no recursive watch, so this is one kernel watch each, drawn from
+  =fs.inotify.max_user_watches= — a budget shared with every other program on
+  the machine that watches files. Exhausting it is reported *once*, naming the
+  limit and how many directories went unwatched, rather than once per directory:
+  the failure repeats for every remaining directory, and the diagnostics ring
+  would evict the message under its own repetitions.
 
 =pause= also *cancels the flush in progress*, if any — it is the same operation
 as cancelling that flush's task (see [[file:spec-tasks.org][spec-tasks.org]]
