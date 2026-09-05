@@ -40,6 +40,14 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, message)
     }
 
+    /// `503 Service Unavailable`: the repository is registered but not yet
+    /// warm, so it cannot serve data (spec-main "POST /repos/load"). Distinct
+    /// from `409`: nothing conflicts, the answer is simply not available yet
+    /// and the same request will succeed once the `load` task completes.
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, message)
+    }
+
     /// `423 Locked`: a metadata write was attempted while the repository is in
     /// coordinated-rollback lock mode (spec-event-log "Rollback lock").
     pub fn locked(message: impl Into<String>) -> Self {

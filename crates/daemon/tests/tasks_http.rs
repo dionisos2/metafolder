@@ -456,3 +456,48 @@ async fn global_tasks_lists_across_repos() {
         body.as_array().unwrap().iter().map(|t| t["id"].as_str().unwrap()).collect();
     assert!(ids.contains(&id.as_simple().to_string().as_str()));
 }
+
+// ── A warming repository answers about itself, and nothing else ───────────────
+
+/// While a repository is warming, its *state* is readable and its *data* is
+/// not.
+///
+/// The accelerators are no longer optional: the executor runs against the query
+/// index and the resident forest, so a repository whose index is not built yet
+/// is not a repository that answers slowly — it is one that cannot answer at
+/// all. A client is told so with `503`, and can watch the `load` task to know
+/// when to come back.
+#[tokio::test]
+async fn a_warming_repository_refuses_data_and_reports_its_state() {
+    let state = Arc::new(AppState::new());
+    let app = routes::build(state.clone());
+    let root = temp_dir("warming");
+    let repo = state.init_repo(&root, None, None, false).unwrap().as_simple().to_string();
+    let uuid = Uuid::parse_str(&repo).unwrap();
+    let (st, _) = post(&app, &format!("/repos/{repo}/unload"), Value::Null).await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Registered but not warm: exactly the window `POST /repos/load` opens
+    // before its background task has finished.
+    let locator = metafolder_daemon::repo::RepoLocator::Root(root.path().to_path_buf());
+    assert_eq!(state.load_repo(locator).unwrap(), uuid);
+
+    let any = serde_json::json!({"query": {"type": "is_present", "field": "mfr_path"}});
+    let (st, body) = post(&app, &format!("/repos/{repo}/query"), any.clone()).await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE, "a data query must be refused: {body}");
+    let (st, body) = request(&app, "GET", &format!("/repos/{repo}/tree/roots")).await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE, "nor does any other data read: {body}");
+
+    // Its state, however, is exactly what the client needs to wait.
+    let (st, body) = request(&app, "GET", &format!("/repos/{repo}")).await;
+    assert_eq!(st, StatusCode::OK, "the repository must describe itself: {body}");
+    let (st, _) = request(&app, "GET", &format!("/repos/{repo}/tasks")).await;
+    assert_eq!(st, StatusCode::OK, "its tasks must be readable");
+    let (st, _) = request(&app, "GET", "/repos").await;
+    assert_eq!(st, StatusCode::OK);
+
+    // Once warm, it answers.
+    state.repo(uuid).unwrap().warm(&|_, _, _| {}).unwrap();
+    let (st, body) = post(&app, &format!("/repos/{repo}/query"), any).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+}

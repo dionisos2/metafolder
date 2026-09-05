@@ -82,8 +82,25 @@ async fn setup_with_schema(prefix: &str, schema: Value) -> (Router, String, Temp
         request(&second, "POST", "/repos/load", Some(json!({"root": root.to_str().unwrap()})))
             .await;
     assert_eq!(status, StatusCode::OK, "load failed: {body}");
+    // A load returns before the repository is warm, and a warming repository
+    // answers 503 to everything but its own state (spec-main "POST
+    // /repos/load"). Waiting for its `load` task is what a client does.
+    wait_ready(&second, body["repo_uuid"].as_str().unwrap()).await;
     let repo = body["repo_uuid"].as_str().unwrap().to_string();
     (second, repo, root)
+}
+
+/// Polls until the repository serves data, as a client waiting on its `load`
+/// task would.
+async fn wait_ready(app: &Router, repo: &str) {
+    for _ in 0..500 {
+        let (status, _) = request(app, "GET", &format!("/repos/{repo}/schema"), None).await;
+        if status != StatusCode::SERVICE_UNAVAILABLE {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("repository {repo} never became ready");
 }
 
 async fn create(app: &Router, repo: &str, fields: Value) -> (StatusCode, Value) {

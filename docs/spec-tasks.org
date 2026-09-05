@@ -399,8 +399,10 @@ Requests cancellation of the task. The mechanism depends on the kind:
   and is applied from the start on resume.
 - *relink* — *cancellable*, like the duplicate scan and for the same reason:
   it hashes candidate files, and each pairing it has already committed is kept.
-- *load* — *not cancellable* (a partial warmup just falls back to the DB, so
-  there is nothing to roll back). → =400=.
+- *load* — *not cancellable*. There is nothing to roll back, and nothing to
+  fall back to either: until it finishes the repository serves no data at all
+  (spec-main "POST /repos/load"), so stopping it would only strand the
+  repository. → =400=.
 - *prune* / *rollback* — *not cancellable* (each is a single atomic
   transaction with no cooperative checkpoint; interrupting one would only roll
   it back). → =400=.

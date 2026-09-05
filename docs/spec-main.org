@@ -334,9 +334,29 @@ an observable =load= task (see [[file:spec-tasks.org][spec-tasks.org]]), so a
 client can show a load progress bar. The response also carries the warmup's
 =task_id= (=null= when the repository is already warm, e.g. a redundant load;
 the id of the *running* warmup when one is already in flight), so a client can
-wait on the task without discovering it through the task list. While warming,
-the repository already answers queries (via the SQL fallback); an =unload= is
-refused with =409= until the warmup finishes. (=POST /repos/init= and startup
+wait on the task without discovering it through the task list.
+
+While warming, the repository *reports its state and refuses its data*. It
+appears in =GET /repos=, describes itself through =GET /repos/:repo=, and its
+=load= task names the phase it is on — everything a client needs to know when to
+come back. Every endpoint that reads or writes repository data answers
+=503 Service Unavailable= instead. This is not a policy choice: the query engine
+and the watcher's executor both run against the accelerators, so a repository
+whose index is not built cannot answer slowly, it can only not answer. A warmup
+that *fails* leaves the repository registered and never ready — its =load= task
+carries the error, and its data endpoints go on answering =503= until it is
+unloaded. An =unload= is refused with =409= until the warmup finishes.
+
+The repository's *configuration* — the user schema and the embedded-metadata map
+— is read before it is registered at all, not by the warmup. Those are small
+files that need no accelerator, and an invalid one makes the repository bad
+rather than slow: it fails the load itself, with the =400= naming the offending
+constraint, and nothing is registered.
+
+The load builds the accelerators *before* starting the watcher and its executor,
+so the executor works against them from its very first flush, exactly as it does
+at runtime — rather than replaying a backlog through cold database walks while
+the index it is about to need is built behind it. (=POST /repos/init= and startup
 auto-load warm synchronously — no client is watching. For each repository of
 its config's =load= list, the daemon renders the warmup itself on *its own
 stderr*: the same progress-bar format as the CLI, drawn only when stderr is a
@@ -390,6 +410,7 @@ Response body: ={"repo_uuid": "..."}=
 | Schema constraint violation            | 400         | =violations= array in body (see [[file:spec-schema.org][spec-schema.org]]) |
 | Invalid schema file (load / reload)    | 400         | Message identifies the offending constraint |
 | Invalid pagination cursor              | 400         | Cursor/query-sort mismatch     |
+| Repository still loading                  | 503    | Its accelerators are not built yet; watch its =load= task |
 | Internal error (DB, I/O)               | 500         | Error message in body          |
 
 * CLI

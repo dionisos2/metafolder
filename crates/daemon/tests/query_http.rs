@@ -518,9 +518,10 @@ async fn test_query_rejects_meaningless_comparisons_with_400() {
 
 #[tokio::test]
 async fn test_query_correct_after_async_load() {
-    // After a load (whose warmup runs in the background), a query must return
-    // correct results — whether served by the freshly built index or the SQL
-    // fallback, the load→warmup→query path must not break or mis-answer.
+    // A load warms in the background, and a query is refused with 503 until it
+    // is done. Waiting for the `load` task is what a client does, and once it
+    // has, the answer must be right: the load→warmup→query path must not break
+    // or mis-answer.
     let (app, repo, root) = setup("afterload").await;
     let node = |parent: Option<&str>, name: &str, rate: i64| {
         json!([
@@ -546,14 +547,21 @@ async fn test_query_correct_after_async_load() {
     assert_eq!(st, StatusCode::OK);
 
     let q = json!({"type": "follows_transitive", "field": "cat", "target": "docs"});
-    let (status, page) = request(
-        &app,
-        "POST",
-        &format!("/repos/{repo}/query"),
-        Some(json!({"query": q, "sort": [{"field": "rate", "order": "desc"}],
-                    "limit": 10, "count": true})),
-    )
-    .await;
+    let body = json!({"query": q, "sort": [{"field": "rate", "order": "desc"}],
+                      "limit": 10, "count": true});
+    // Refused while warming; the same request succeeds once the repository is.
+    let mut page = json!(null);
+    let mut status = StatusCode::SERVICE_UNAVAILABLE;
+    for _ in 0..200 {
+        let answered =
+            request(&app, "POST", &format!("/repos/{repo}/query"), Some(body.clone())).await;
+        status = answered.0;
+        page = answered.1;
+        if status != StatusCode::SERVICE_UNAVAILABLE {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     assert_eq!(status, StatusCode::OK, "{page}");
     assert_eq!(page["total"], json!(2));
     let results: Vec<&str> =

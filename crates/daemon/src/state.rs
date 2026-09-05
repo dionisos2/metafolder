@@ -58,6 +58,17 @@ pub struct RepoState {
     /// consulted while fresh — so it never serves stale results. `None` until
     /// the first query builds it.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
+    /// Whether the repository can serve data. False from the moment it is
+    /// registered until [`RepoState::warm`] has built the accelerators and
+    /// started the watcher. The accelerators are not optional — the query
+    /// engine and the executor both run against them — so a repository that is
+    /// not warm cannot answer slowly, it cannot answer at all: data endpoints
+    /// return `503` while this is false (spec-main "POST /repos/load").
+    ready: std::sync::atomic::AtomicBool,
+    /// Quiet period the executor waits out before flushing (`[settings]
+    /// watch-quiet-period-ms`). Held here so warming a repository needs nothing
+    /// but the repository.
+    watch_quiet_period: std::time::Duration,
     /// The watcher's buffered filesystem events, awaiting a flush
     /// (spec-file-tracking "Event batching"). In memory, deliberately: a daemon
     /// that is down misses every event anyway, and closing *that* gap needs a
@@ -119,6 +130,8 @@ impl RepoState {
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
+            ready: std::sync::atomic::AtomicBool::new(false),
+            watch_quiet_period: settings.watch_quiet_period(),
             pending: Mutex::new(Vec::new()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
@@ -232,7 +245,7 @@ impl RepoState {
     /// on this repository wait until it finishes — the load progress bar tells
     /// the user why. Idempotent enough: re-running on an already-warm repo just
     /// rebuilds, so callers skip it when [`TreeCache::is_complete`] already holds.
-    pub fn warmup(&self, progress: ProgressFn) {
+    pub fn warmup(&self, progress: ProgressFn) -> Result<(), ApiError> {
         let conn = self.conn.lock_recover();
         // Per-phase timings are logged (`[warmup <name>] …`): a persistent load
         // report, so a slow phase on a large repository is visible without a
@@ -244,53 +257,187 @@ impl RepoState {
         // and it reports a determinate progress bar. Populating the tree cache
         // afterwards re-reads the same, now warm, pages — so it is fast, where
         // run first it would silently absorb that cold cost under an
-        // indeterminate spinner. Both phases are independent and best-effort: a
-        // failure just leaves that accelerator in DB-fallback mode.
-        // The single scan over `field` collects the TreeRef forest too, so the
-        // tree cache is then built from those rows in memory — no second scan.
+        // indeterminate spinner. The single scan over `field` collects the
+        // TreeRef forest too, so the tree cache is then built from those rows in
+        // memory — no second scan.
+        //
+        // Neither is best-effort any more. They used to be, because a
+        // repository without them fell back to the SQL engine; the executor and
+        // the query engine now both work against them, so a repository that
+        // cannot build them is one that cannot serve, and the load says so
+        // rather than degrading quietly.
         let mut forest = Vec::new();
-        let built = {
+        {
             let _p = Phase::begin(&who, "build the query index");
-            match crate::index::RepoIndex::build_reported_collecting(
+            let index = crate::index::RepoIndex::build_reported_collecting(
                 &conn,
                 &mut forest,
                 &|done, total| progress("index", Some(done), Some(total)),
                 &|| false, // the load warmup is not cancellable (spec-tasks)
-            ) {
-                Ok(index) => {
-                    *self.index.lock_recover() = Some(index);
-                    true
-                }
-                Err(e) => {
-                    crate::diagnostics::warn(
-                        "warmup",
-                        format!("failed to build query index for {}: {e}", self.config.repo_uuid),
-                    );
-                    false // a bailed scan leaves `forest` partial — do not trust it
-                }
-            }
-        };
+            )
+            .map_err(|e| ApiError::internal(format!("failed to build the query index: {e:#}")))?;
+            *self.index.lock_recover() = Some(index);
+        }
 
         progress("tree cache", None, None);
         {
             let mut p = Phase::begin(&who, "populate the tree cache");
-            if built {
-                p.detail(format!("{} nodes, from the index scan", forest.len()));
-                self.lock_cache().populate_from_forest(forest);
-            } else if let Err(e) = self.lock_cache().populate(&conn) {
-                crate::diagnostics::warn(
-                    "warmup",
-                    format!("failed to populate tree cache for {}: {e}", self.config.repo_uuid),
-                );
-            }
+            p.detail(format!("{} nodes, from the index scan", forest.len()));
+            self.lock_cache().populate_from_forest(forest);
         }
+        Ok(())
+    }
 
-        // Place the watcher's directory watches now that the tree cache is
-        // populated: `watcher::start` defers this initial walk to here so each
-        // directory's eligibility is served from memory, not a per-directory DB
-        // walk (which dominated the pre-warmup walk — thousands of cold queries).
-        let _p = Phase::begin(&who, "place the filesystem watches");
-        self.refresh_watches(&conn);
+    /// Reads the repository's configuration files: the user schema and the
+    /// embedded-metadata map (spec-schema, spec-platform "Configuration").
+    ///
+    /// Deliberately *not* part of [`Self::warm`]. These are small files that
+    /// need no accelerator, and an invalid one makes the repository bad rather
+    /// than slow: it must fail the load itself, with the `400` naming the
+    /// offending constraint, instead of surfacing later as a warmup that
+    /// happens to have failed on a repository already registered.
+    pub fn load_config(&self) -> Result<(), ApiError> {
+        let who = self.name();
+        {
+            let _p = Phase::begin(&who, "load the schema");
+            let schema = crate::schema::load_for_repo(&self.metafolder_dir, &self.config)
+                .map_err(ApiError::bad_request)?;
+            *self.schema.lock_recover() = schema;
+        }
+        {
+            let _p = Phase::begin(&who, "load the metadata map");
+            let metadata_map = crate::metadata_map::MetadataMap::load_or_seed(&self.metafolder_dir)
+                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+            *self.metadata_map.lock_recover() = metadata_map;
+        }
+        Ok(())
+    }
+
+    /// Makes the repository usable: builds the accelerators, then activates it,
+    /// then declares it ready.
+    ///
+    /// This is the *whole* load, in the one order that is not a special case.
+    /// The executor works against the query index and the resident forest at
+    /// runtime; it must do so from its very first flush too, rather than
+    /// replaying a backlog through cold database walks while the index it will
+    /// need is built behind it.
+    ///
+    /// `progress` reports `(phase, done, total)` for the load progress bar; it
+    /// is a no-op for the synchronous callers (startup auto-load, `init`).
+    pub fn warm(self: &Arc<Self>, progress: ProgressFn) -> Result<(), ApiError> {
+        self.warmup(progress)?;
+        self.activate()?;
+        self.ready.store(true, std::sync::atomic::Ordering::Release);
+        Ok(())
+    }
+
+    /// Applies whatever the watcher buffered, then starts the watcher and its
+    /// executor and places the watches. Runs *after* [`Self::warmup`], so every
+    /// step of it — the replay's path resolutions above all — is served from
+    /// the accelerators rather than from cold database walks.
+    fn activate(self: &Arc<Self>) -> Result<(), ApiError> {
+        // Each step is announced: the replay below applies whatever the
+        // filesystem did while the daemon was down, which on a repository that
+        // moved a lot is the longest part of a load (spec-main "Startup
+        // report").
+        let who = self.name();
+        {
+            let mut p = Phase::begin(&who, "replay the buffered filesystem events");
+            // The backlog is whatever the filesystem did while the daemon was
+            // down: it is the one phase whose size is unknowable from outside,
+            // so it reports its own.
+            // The replay reports per event *and* per scanned directory entry;
+            // one line a second is what a person can read, and is enough to
+            // tell "still moving, here" from "stuck, here".
+            let throttle = std::cell::RefCell::new(Phase::progress_throttle());
+            // The steps below announce themselves *before* they run, which says
+            // nothing once one of them stops coming back — so a watcher outside
+            // the flush reports whatever step stays current.
+            let watchdog = Watchdog::start(&who, SLOW_EVENT);
+            // The step names alone ("resolve path") do not say which event is
+            // stuck; the current event labels them.
+            let current = std::cell::RefCell::new(String::new());
+            let stats =
+                crate::executor::flush_pending_reported(self, &|progress| match progress {
+                    FlushProgress::Buffered(n) => {
+                        eprintln!("[load {who}]   {n} event(s) buffered")
+                    }
+                    FlushProgress::Compacted(n) => {
+                        eprintln!("[load {who}]   {n} event(s) after compaction")
+                    }
+                    // The first and the last event always get a line: without
+                    // them a batch shorter than the interval says nothing at
+                    // all — which is exactly the case that looked like a hang.
+                    FlushProgress::Applying { index, total, event } => {
+                        let what = crate::executor::describe(event);
+                        if index == 1 || index == total || throttle.borrow_mut().ready() {
+                            eprintln!("[load {who}]   event {index}/{total}: {what}");
+                        }
+                        *current.borrow_mut() = format!("event {index}/{total}: {what}");
+                        watchdog.doing(current.borrow().clone());
+                    }
+                    FlushProgress::Scanning { dir, ingested } => {
+                        if throttle.borrow_mut().ready() {
+                            eprintln!(
+                                "[load {who}]     scanning {}: {ingested} entries ingested",
+                                dir.display()
+                            );
+                        }
+                        // The count is part of what the scan declares, so a
+                        // scan that is *progressing* keeps resetting the
+                        // watchdog's clock and it stays quiet — while one that
+                        // stops on a single entry is reported like any other
+                        // stuck step.
+                        watchdog.doing(format!(
+                            "{} — scanning {} ({ingested} entries in)",
+                            current.borrow(),
+                            dir.display()
+                        ));
+                    }
+                    // A step line is only ever printed because the throttle let
+                    // it through, which means the event has already been running
+                    // for a while: exactly the case where knowing the step is
+                    // the answer.
+                    FlushProgress::Step { name } => {
+                        watchdog.doing(format!("{} — {name}", current.borrow()))
+                    }
+                    // A fast event says nothing; a slow one is named with what
+                    // it cost, so the report keeps a record of where the time
+                    // went even after the load finishes.
+                    FlushProgress::Applied { index, total, elapsed } => {
+                        if elapsed >= SLOW_EVENT {
+                            eprintln!("[load {who}]   event {index}/{total} took {elapsed:?}");
+                        }
+                    }
+                })?;
+            // Stopped as soon as the flush returns: the last step stays current
+            // until the watcher is dropped, and a tick landing in that window
+            // reports a step that has already finished.
+            drop(watchdog);
+            p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
+        }
+        let quiet = self.watch_quiet_period;
+        let executor = crate::executor::spawn(self, quiet);
+        let watcher = {
+            let _p = Phase::begin(&who, "start the watcher");
+            crate::watcher::start(self, executor.pinger())?
+        };
+        *self.handles.lock_recover() = Some(RepoHandles { watcher, executor });
+
+        // The watches go last: placing them walks every eligible directory, and
+        // that walk reads each directory's eligibility from the tree cache the
+        // warmup has just filled instead of asking the database per directory.
+        {
+            let _p = Phase::begin(&who, "place the filesystem watches");
+            let conn = self.conn.lock_recover();
+            self.refresh_watches(&conn);
+        }
+        Ok(())
+    }
+
+    /// Whether the repository can serve data (see [`RepoState::ready`]).
+    pub fn is_ready(&self) -> bool {
+        self.ready.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation
@@ -376,124 +523,13 @@ impl AppState {
         if let Some(src) = self.seed_schema_path.as_deref() {
             repo::seed_schema_file(&opened.metafolder_dir, src);
         }
-        let repo_state =
-            self.activate(Arc::new(RepoState::from_opened_with(opened, &self.settings)))?;
-        // A fresh repository is tiny, so warm it synchronously (no progress bar).
-        repo_state.warmup(&|_, _, _| {});
+        let repo_state = Arc::new(RepoState::from_opened_with(opened, &self.settings));
+        repo_state.load_config()?;
+        // A fresh repository is tiny, so warm it synchronously (no progress bar):
+        // `init` returns a repository that already answers.
+        repo_state.warm(&|_, _, _| {})?;
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
-    }
-
-    /// Loads the user schema (an invalid schema file fails the load with
-    /// 400), replays any pending buffer left by a previous run, then starts
-    /// the watcher and its executor (spec: the buffer is replayed before the
-    /// repository serves requests).
-    fn activate(&self, repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
-        // Each step is announced: the replay below applies whatever the
-        // filesystem did while the daemon was down, which on a repository that
-        // moved a lot is the longest part of a load (spec-main "Startup
-        // report").
-        let who = repo_state.name();
-        {
-            let _p = Phase::begin(&who, "load the schema");
-            let schema =
-                crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
-                    .map_err(ApiError::bad_request)?;
-            *repo_state.schema.lock_recover() = schema;
-        }
-        {
-            // Load the per-repo metadata map, seeding the file when absent
-            // (spec-platform "Configuration"). A malformed file fails this
-            // repo's load only, like an invalid schema.
-            let _p = Phase::begin(&who, "load the metadata map");
-            let metadata_map =
-                crate::metadata_map::MetadataMap::load_or_seed(&repo_state.metafolder_dir)
-                    .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-            *repo_state.metadata_map.lock_recover() = metadata_map;
-        }
-        {
-            let mut p = Phase::begin(&who, "replay the buffered filesystem events");
-            // The backlog is whatever the filesystem did while the daemon was
-            // down: it is the one phase whose size is unknowable from outside,
-            // so it reports its own.
-            // The replay reports per event *and* per scanned directory entry;
-            // one line a second is what a person can read, and is enough to
-            // tell "still moving, here" from "stuck, here".
-            let throttle = std::cell::RefCell::new(Phase::progress_throttle());
-            // The steps below announce themselves *before* they run, which says
-            // nothing once one of them stops coming back — so a watcher outside
-            // the flush reports whatever step stays current.
-            let watchdog = Watchdog::start(&who, SLOW_EVENT);
-            // The step names alone ("resolve path") do not say which event is
-            // stuck; the current event labels them.
-            let current = std::cell::RefCell::new(String::new());
-            let stats =
-                crate::executor::flush_pending_reported(&repo_state, &|progress| match progress {
-                    FlushProgress::Buffered(n) => {
-                        eprintln!("[load {who}]   {n} event(s) buffered")
-                    }
-                    FlushProgress::Compacted(n) => {
-                        eprintln!("[load {who}]   {n} event(s) after compaction")
-                    }
-                    // The first and the last event always get a line: without
-                    // them a batch shorter than the interval says nothing at
-                    // all — which is exactly the case that looked like a hang.
-                    FlushProgress::Applying { index, total, event } => {
-                        let what = crate::executor::describe(event);
-                        if index == 1 || index == total || throttle.borrow_mut().ready() {
-                            eprintln!("[load {who}]   event {index}/{total}: {what}");
-                        }
-                        *current.borrow_mut() = format!("event {index}/{total}: {what}");
-                        watchdog.doing(current.borrow().clone());
-                    }
-                    FlushProgress::Scanning { dir, ingested } => {
-                        if throttle.borrow_mut().ready() {
-                            eprintln!(
-                                "[load {who}]     scanning {}: {ingested} entries ingested",
-                                dir.display()
-                            );
-                        }
-                        // The count is part of what the scan declares, so a
-                        // scan that is *progressing* keeps resetting the
-                        // watchdog's clock and it stays quiet — while one that
-                        // stops on a single entry is reported like any other
-                        // stuck step.
-                        watchdog.doing(format!(
-                            "{} — scanning {} ({ingested} entries in)",
-                            current.borrow(),
-                            dir.display()
-                        ));
-                    }
-                    // A step line is only ever printed because the throttle let
-                    // it through, which means the event has already been running
-                    // for a while: exactly the case where knowing the step is
-                    // the answer.
-                    FlushProgress::Step { name } => {
-                        watchdog.doing(format!("{} — {name}", current.borrow()))
-                    }
-                    // A fast event says nothing; a slow one is named with what
-                    // it cost, so the report keeps a record of where the time
-                    // went even after the load finishes.
-                    FlushProgress::Applied { index, total, elapsed } => {
-                        if elapsed >= SLOW_EVENT {
-                            eprintln!("[load {who}]   event {index}/{total} took {elapsed:?}");
-                        }
-                    }
-                })?;
-            // Stopped as soon as the flush returns: the last step stays current
-            // until the watcher is dropped, and a tick landing in that window
-            // reports a step that has already finished.
-            drop(watchdog);
-            p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
-        }
-        let quiet = self.settings.watch_quiet_period();
-        let executor = crate::executor::spawn(&repo_state, quiet);
-        let watcher = {
-            let _p = Phase::begin(&who, "start the watcher");
-            crate::watcher::start(&repo_state, executor.pinger())?
-        };
-        *repo_state.handles.lock_recover() = Some(RepoHandles { watcher, executor });
-        Ok(repo_state)
     }
 
     /// Loads an existing repository. Loading an already-loaded repository is
@@ -520,8 +556,13 @@ impl AppState {
         let opened = repo::load_repository(RepoLocator::Metafolder(metafolder_dir))?;
         let uuid = opened.config.repo_uuid;
         self.ensure_name_available(&opened.config.name)?;
-        let repo_state =
-            self.activate(Arc::new(RepoState::from_opened_with(opened, &self.settings)))?;
+        // Registered, not yet ready: the caller warms it — synchronously, or as
+        // the observable `load` task `POST /repos/load` returns. Until then it
+        // reports its state and refuses data (`RepoState::ready`).
+        let repo_state = Arc::new(RepoState::from_opened_with(opened, &self.settings));
+        // Before registering: an invalid schema must fail the load, not leave a
+        // registered repository that never becomes ready.
+        repo_state.load_config()?;
         self.repos.lock_recover().insert(uuid, repo_state);
         Ok(uuid)
     }
@@ -594,6 +635,23 @@ impl AppState {
             .get(&repo_uuid)
             .cloned()
             .ok_or_else(|| ApiError::not_found(format!("Repository not found: {repo_uuid}")))
+    }
+
+    /// The repository, if it can serve *data*.
+    ///
+    /// A repository is registered before it is warm, so that its state — its
+    /// entry in the listing, and the `load` task carrying the phase it is on —
+    /// is readable while it warms. Its data is not: the query engine and the
+    /// executor both run against accelerators that are not built yet, so there
+    /// is no slower answer to give, only none (spec-main "POST /repos/load").
+    pub fn ready_repo(&self, repo_uuid: Uuid) -> Result<Arc<RepoState>, ApiError> {
+        let repo = self.repo(repo_uuid)?;
+        if !repo.is_ready() {
+            return Err(ApiError::unavailable(format!(
+                "repository {repo_uuid} is still loading; watch its `load` task"
+            )));
+        }
+        Ok(repo)
     }
 
     /// Loaded repositories, sorted by UUID. `include_system` keeps daemon-internal

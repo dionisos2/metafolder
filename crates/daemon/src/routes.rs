@@ -153,7 +153,7 @@ where
     T: Send + 'static,
     F: FnOnce(&RepoState) -> Result<T, ApiError> + Send + 'static,
 {
-    let repo = state.repo(repo_uuid)?;
+    let repo = state.ready_repo(repo_uuid)?;
     tokio::task::spawn_blocking(move || f(&repo))
         .await
         .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
@@ -754,7 +754,7 @@ async fn load_repo(
 /// the running task's id so the caller can wait on it.
 fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
     let repo_state = state.repo(repo_uuid).ok()?;
-    if repo_state.lock_cache().is_complete() {
+    if repo_state.is_ready() {
         return None; // already warm (e.g. re-load of a loaded repo)
     }
     let Some(task_id) = repo_state.tasks.start_unique(TaskKind::Load) else {
@@ -763,10 +763,15 @@ fn spawn_load_warmup(state: Arc<AppState>, repo_uuid: Uuid) -> Option<Uuid> {
     };
     tokio::task::spawn_blocking(move || {
         repo_state.tasks.mark_running(task_id);
-        repo_state.warmup(&|phase, done, total| {
+        let outcome = repo_state.warm(&|phase, done, total| {
             repo_state.tasks.set_progress(task_id, phase, done, total);
         });
-        repo_state.tasks.finish(task_id, None);
+        match outcome {
+            Ok(()) => repo_state.tasks.finish(task_id, None),
+            // The repository stays registered but never becomes ready: its data
+            // endpoints keep answering 503, and this task says why.
+            Err(e) => repo_state.tasks.fail(task_id, &e.message),
+        }
     });
     Some(task_id)
 }
@@ -1522,7 +1527,7 @@ async fn get_schema(
     Path(repo): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let repo_state = state.repo(repo_uuid)?;
+    let repo_state = state.ready_repo(repo_uuid)?;
     let guard = repo_state.schema.lock_recover();
     Ok(Json(match guard.as_ref() {
         Some(schema) => schema.raw().clone(),
@@ -1893,7 +1898,7 @@ async fn duplicates_scan(
         return Err(ApiError::bad_request("min_size must not be negative"));
     }
     let scope = body.metarecord.as_deref().map(parse_uuid).transpose()?;
-    let repo_state = state.repo(repo_uuid)?;
+    let repo_state = state.ready_repo(repo_uuid)?;
     repo_state.ensure_writable()?;
     let task_id = repo_state.tasks.start_unique(TaskKind::Duplicates).ok_or_else(|| {
         ApiError::conflict("a duplicate scan is already in progress for this repository")
@@ -1935,7 +1940,7 @@ async fn orphans_relink(
     Path(repo): Path<String>,
 ) -> Result<Response, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
-    let repo_state = state.repo(repo_uuid)?;
+    let repo_state = state.ready_repo(repo_uuid)?;
     repo_state.ensure_writable()?;
     let task_id = repo_state
         .tasks

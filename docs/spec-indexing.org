@@ -416,7 +416,9 @@ defers to SQL. Without this the whole query fell back to the SQL engine, whose
 the background warmup — an observable =load= task (phases =tree cache= then
 =index=) so the GUI shows a load progress bar (see
 [[file:spec-tasks.org][spec-tasks.org]]) — so the first query pays no build cost;
-queries arriving before it completes are answered by the SQL fallback meanwhile.
+queries arriving before it completes are refused with =503= meanwhile
+(spec-main "POST /repos/load"). The build is *not* best-effort: a repository
+that cannot build its index never becomes ready.
 Freshness is maintained by
 =RepoIndex::refresh=: when the new HEAD is a *forward extension* of the built
 HEAD (the common case — writes appended), it replays that forward delta

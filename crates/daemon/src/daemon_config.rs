@@ -160,11 +160,20 @@ pub fn apply_with_progress<W: std::io::Write>(
                     let progress = std::cell::RefCell::new(
                         metafolder_core::progress::ProgressLine::new(&mut out, interactive),
                     );
-                    repo_state.warmup(&|phase, done, total| {
+                    let outcome = repo_state.warm(&|phase, done, total| {
                         progress.borrow_mut().update(&label, phase, done, total);
                     });
                     progress.into_inner().clear();
-                    let _ = writeln!(out, "[daemon] Loaded {name}");
+                    match outcome {
+                        Ok(()) => {
+                            let _ = writeln!(out, "[daemon] Loaded {name}");
+                        }
+                        Err(e) => {
+                            let warning = format!("failed to load {path}: {}", e.message);
+                            let _ = writeln!(out, "[daemon] Warning: {warning}");
+                            warnings.push(warning);
+                        }
+                    }
                 }
             }
             Err(e) => {
