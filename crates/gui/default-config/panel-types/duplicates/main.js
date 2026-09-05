@@ -10,7 +10,7 @@
 // user's, and this panel's job is to make that choice informed.
 
 import { byId, el, field, formatValue } from '/__ui.js';
-import { rowActionsProvider } from '/__file-actions.js';
+import { rowActionsProvider, baseName } from '/__file-actions.js';
 
 const GROUP_QUERY = { type: 'eq', field: 'mf_schema', value: { type: 'string', value: 'duplicate_group' } };
 const PAGE = 200;
@@ -32,7 +32,10 @@ export function humanSize(bytes) {
  *  @param {Metafolder.Metarecord} rec @param {string} name */
 function num(rec, name) {
   const f = field(rec, name);
-  const v = f ? f.value.value : null;
+  // `Value` is a union and its `nothing` arm carries no payload, so narrow
+  // before reading one.
+  if (!f || f.value.type === 'nothing') return 0;
+  const v = f.value.value;
   return typeof v === 'number' ? v : 0;
 }
 
@@ -43,7 +46,7 @@ function text(rec, name) {
 }
 
 /**
- * @typedef {{ uuid: string, path: string, linked: boolean }} Member
+ * @typedef {{ uuid: string, path: string, absPath: string, linked: boolean }} Member
  * @typedef {{ uuid: string, hash: string, size: number, count: number,
  *   reclaimable: number, expanded: boolean, members: Member[] | null }} Group
  *
@@ -54,6 +57,9 @@ export function mount(root, metafolder) {
 
   /** @type {string|null} */
   let repo = null;
+  /** The repository root, for the absolute path a file row must carry.
+   *  @type {string|null} */
+  let repoRoot = null;
   /** @type {Group[]} */
   let groups = [];
   /** Visible rows, group headers and expanded members interleaved.
@@ -89,16 +95,32 @@ export function mount(root, metafolder) {
       const li =
         row.member === null
           ? el('li', { class: i === cursorIndex ? 'cursor' : '' }, [
-              el('span', { class: 'twisty', text: row.group.expanded ? '▾' : '▸' }),
-              el('span', { class: 'size reclaim', text: humanSize(row.group.reclaimable) }),
-              el('span', { class: 'size', text: humanSize(row.group.size) }),
-              el('span', { class: 'count', text: String(row.group.count) }),
-              el('span', { class: 'hash', text: row.group.hash }),
+              el('span', { class: 'twisty' }, row.group.expanded ? '▾' : '▸'),
+              el('span', { class: 'size reclaim' }, humanSize(row.group.reclaimable)),
+              el('span', { class: 'size' }, humanSize(row.group.size)),
+              el('span', { class: 'count' }, String(row.group.count)),
+              el('span', { class: 'hash' }, row.group.hash),
             ])
-          : el('li', { class: `member${i === cursorIndex ? ' cursor' : ''}` }, [
-              el('span', { class: 'linked', text: row.member.linked ? '+' : ' ' }),
-              el('span', { class: 'path', text: row.member.path }),
-            ]);
+          : el(
+              'li',
+              {
+                class: `member${i === cursorIndex ? ' cursor' : ''}`,
+                // What `/__file-actions.js` reads off the right-clicked row —
+                // without it the shared metarecord/file menu finds nothing.
+                'data-mf-uuid': row.member.uuid,
+                ...(row.member.absPath
+                  ? {
+                      'data-mf-path': row.member.absPath,
+                      'data-mf-isdir': '0',
+                      'data-mf-name': baseName(row.member.absPath),
+                    }
+                  : {}),
+              },
+              [
+                el('span', { class: 'linked' }, row.member.linked ? '+' : ' '),
+                el('span', { class: 'path' }, row.member.path),
+              ],
+            );
       li.addEventListener('click', () => void select(i));
       li.addEventListener('dblclick', () => void activate());
       entriesList.appendChild(li);
@@ -159,11 +181,15 @@ export function mount(root, metafolder) {
       const paths = /** @type {Record<string, string[]>} */ (
         await daemon.call('POST', `/repos/${r}/query/fields/resolve-tree`, { query })
       );
-      group.members = records.map((rec) => ({
-        uuid: rec.uuid,
-        path: paths[rec.uuid]?.[0] ?? '(no path)',
-        linked: text(rec, 'mfr_inode') !== '',
-      }));
+      group.members = records.map((rec) => {
+        const rel = paths[rec.uuid]?.[0] ?? '';
+        return {
+          uuid: rec.uuid,
+          path: rel === '' ? '(no path)' : rel,
+          absPath: rel === '' || repoRoot === null ? '' : `${repoRoot}${rel}`,
+          linked: text(rec, 'mfr_inode') !== '',
+        };
+      });
     } catch (error) {
       await statusBar.error(error);
       group.members = [];
@@ -232,6 +258,7 @@ export function mount(root, metafolder) {
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
+    repoRoot = repo === null ? null : await daemon.repoRoot(repo).catch(() => null);
     await load();
   }
 
