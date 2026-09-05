@@ -45,13 +45,10 @@ async fn main() {
     );
 
     let startup_state = state.clone();
-    let warnings =
-        tokio::task::spawn_blocking(move || daemon_config::apply(&startup_state, config))
-            .await
-            .expect("startup repo loading panicked");
-    for warning in warnings {
-        eprintln!("[daemon] Warning: {warning}");
-    }
+    // `apply` reports each repository — loaded or failed — as it goes.
+    tokio::task::spawn_blocking(move || daemon_config::apply(&startup_state, config))
+        .await
+        .expect("startup repo loading panicked");
 
     let token = match metafolder_core::auth::ensure_token("daemon") {
         Ok(token) => token,

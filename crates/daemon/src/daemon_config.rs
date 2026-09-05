@@ -142,6 +142,14 @@ pub fn apply_with_progress<W: std::io::Write>(
         let path = match &locator {
             RepoLocator::Root(p) | RepoLocator::Metafolder(p) => p.display().to_string(),
         };
+        if !interactive {
+            // No progress line to watch here, so name the repository before the
+            // work starts: a long warmup is otherwise indistinguishable from a
+            // daemon that has hung. The repository's own name is not known yet
+            // — its configuration is read by the load — so the configured path
+            // is what the line can say.
+            let _ = writeln!(out, "[daemon] Loading {path}");
+        }
         match state.load_repo(locator) {
             Ok(uuid) => {
                 if let Ok(repo_state) = state.repo(uuid) {
@@ -159,7 +167,14 @@ pub fn apply_with_progress<W: std::io::Write>(
                     let _ = writeln!(out, "[daemon] Loaded {name}");
                 }
             }
-            Err(e) => warnings.push(format!("failed to load {path}: {}", e.message)),
+            Err(e) => {
+                // Reported where it happens, not batched at the end: the report
+                // is read in order, and a failure that arrives after every other
+                // repository has loaded no longer says which one it belongs to.
+                let warning = format!("failed to load {path}: {}", e.message);
+                let _ = writeln!(out, "[daemon] Warning: {warning}");
+                warnings.push(warning);
+            }
         }
     }
     warnings
@@ -264,13 +279,59 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_reports_a_failed_repository_where_it_happens() {
+        // The startup report is read top to bottom while it is being produced:
+        // a repository that cannot be opened must say so at its own place in the
+        // sequence, not in a batch printed once every other repository is done —
+        // otherwise a slow load in front of it leaves the terminal silent with
+        // no clue about what is being waited for.
+        let (state, root, name) = on_disk_repo("failing");
+        let missing = root.parent().unwrap().join("mf_daemon_apply_absent");
+        let config = DaemonConfig {
+            load: vec![RepoLocator::Root(missing.clone()), RepoLocator::Root(root)],
+            ..Default::default()
+        };
+        let mut out = Vec::new();
+        let warnings = apply_with_progress(&state, config, &mut out, false);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        let out = String::from_utf8(out).unwrap();
+        let failure = out.find("Warning").expect("the failure is missing from the report");
+        let loaded = out.find("Loaded").expect("the good repository is missing from the report");
+        assert!(failure < loaded, "the failure must be reported in place: {out:?}");
+        assert!(out.contains(&missing.display().to_string()), "{out:?}");
+        assert!(out.ends_with(&format!("[daemon] Loaded {name}\n")), "{out:?}");
+    }
+
+    #[test]
+    fn test_apply_non_interactive_announces_each_repository_before_loading_it() {
+        // Without a terminal there is no progress line, so a long warmup shows
+        // nothing at all: name the repository *before* the work starts.
+        let (state, root, name) = on_disk_repo("announce");
+        let path = root.display().to_string();
+        let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
+        let mut out = Vec::new();
+        apply_with_progress(&state, config, &mut out, false);
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out,
+            format!("[daemon] Loading {path}\n[daemon] Loaded {name}\n"),
+            "logs stay free of control chars"
+        );
+    }
+
+    #[test]
     fn test_apply_non_interactive_prints_only_the_loaded_line() {
         let (state, root, name) = on_disk_repo("pipe");
+        let path = root.display().to_string();
         let config = DaemonConfig { load: vec![RepoLocator::Root(root)], ..Default::default() };
         let mut out = Vec::new();
         let warnings = apply_with_progress(&state, config, &mut out, false);
         assert!(warnings.is_empty(), "{warnings:?}");
         let out = String::from_utf8(out).unwrap();
-        assert_eq!(out, format!("[daemon] Loaded {name}\n"), "logs stay free of control chars");
+        assert_eq!(
+            out,
+            format!("[daemon] Loading {path}\n[daemon] Loaded {name}\n"),
+            "logs stay free of control chars"
+        );
     }
 }

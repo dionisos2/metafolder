@@ -867,7 +867,7 @@ fn test_prune_reclaims_disk_space() {
 
     let dir = TempDir::new("prune-vacuum");
     let path = dir.join("db.sqlite");
-    let mut conn = db::open_database(&path).unwrap();
+    let mut conn = db::open_database(&path, "test").unwrap();
     db::init_schema(&conn).unwrap();
 
     // One large revision (sizeable snapshots), then a tiny HEAD revision.
@@ -1087,7 +1087,7 @@ fn test_an_existing_repository_migrates_to_byte_keyed_names_on_open() {
     let path = dir.path().join("db.sqlite");
 
     // A repository written before names carried their bytes.
-    let mut conn = db::open_database(&path).unwrap();
+    let mut conn = db::open_database(&path, "test").unwrap();
     db::init_schema(&conn).unwrap();
     let root = create(
         &mut conn,
@@ -1104,7 +1104,7 @@ fn test_an_existing_repository_migrates_to_byte_keyed_names_on_open() {
     drop(conn);
 
     // Opening it runs the migration.
-    let mut conn = db::open_database(&path).unwrap();
+    let mut conn = db::open_database(&path, "test").unwrap();
 
     // Existing names are untouched — the bytes are derived from the text, which
     // is lossless because an undecodable name could not have been stored here.
@@ -1131,7 +1131,7 @@ fn test_an_existing_repository_migrates_to_byte_keyed_names_on_open() {
 fn test_migrating_an_already_migrated_repository_is_a_no_op() {
     let dir = common::TempDir::new("migrate-tree-names-idempotent");
     let path = dir.path().join("db.sqlite");
-    let mut conn = db::open_database(&path).unwrap();
+    let mut conn = db::open_database(&path, "test").unwrap();
     db::init_schema(&conn).unwrap();
     let root = create(
         &mut conn,
@@ -1149,7 +1149,7 @@ fn test_migrating_an_already_migrated_repository_is_a_no_op() {
 
     // Re-opening must neither re-derive the bytes from the (lossy) text nor
     // fail: the back-fill runs only when the column is being added.
-    let conn = db::open_database(&path).unwrap();
+    let conn = db::open_database(&path, "test").unwrap();
     assert_eq!(tree_name(&conn, file.uuid), name);
 }
 
@@ -1514,4 +1514,60 @@ fn test_has_children_reflects_forward_ops() {
     // Its parent does have a forward child (HEAD).
     let parent = log::get_op(&conn, head).unwrap().unwrap().parent_id.unwrap();
     assert!(log::has_children(&conn, parent).unwrap());
+}
+
+// ── One daemon per repository ─────────────────────────────────────────────────
+
+#[test]
+fn test_a_second_open_is_refused_immediately_and_names_the_other_daemon() {
+    // The exclusive lock is the "one daemon per repository" invariant. A second
+    // daemon must learn that *at once*: rusqlite installs a 5 s busy handler, so
+    // a lock contention that is not disarmed turns every locked repository into
+    // seconds of silent sleeping at startup — and the message that finally comes
+    // out must name the cause, not the pragma that happened to hit the lock.
+    let dir = TempDir::new("second-daemon");
+    let path = dir.join("db.sqlite");
+    let held = db::open_database(&path, "test").unwrap();
+    db::init_schema(&held).unwrap();
+
+    let start = std::time::Instant::now();
+    let err = db::open_database(&path, "test").unwrap_err();
+    let elapsed = start.elapsed();
+
+    assert!(elapsed < std::time::Duration::from_secs(2), "the second open slept for {elapsed:?}");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("another metafolder daemon"),
+        "the lock must be reported as what it is, got: {message}"
+    );
+}
+
+/// Opening a repository twice must not touch the schema the second time.
+///
+/// `PRAGMA schema_version` counts DDL statements, so it is the exact witness of
+/// a migration that re-does its work on a database that no longer needs it —
+/// the kind that costs nothing on a test database and minutes of full CPU on a
+/// real one, with nothing on stderr to say what is running.
+#[test]
+fn test_reopening_a_migrated_database_runs_no_ddl() {
+    let dir = TempDir::new("steady-state-open");
+    let path = dir.join("db.sqlite");
+    let conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    drop(conn);
+
+    let schema_version = |conn: &Connection| -> i64 {
+        conn.pragma_query_value(None, "schema_version", |r| r.get(0)).unwrap()
+    };
+    // The first reopen may still complete a migration; the second one must be
+    // pure, and so must every one after it.
+    let conn = db::open_database(&path, "test").unwrap();
+    let settled = schema_version(&conn);
+    drop(conn);
+    let conn = db::open_database(&path, "test").unwrap();
+    assert_eq!(
+        schema_version(&conn),
+        settled,
+        "opening an already-migrated database rewrote a schema object"
+    );
 }

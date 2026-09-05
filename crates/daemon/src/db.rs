@@ -13,6 +13,7 @@ use metafolder_core::metarecord::{Field, MetaRecord, TreeName, Value, ZERO_UUID}
 use metafolder_core::sync::MutexExt;
 
 use crate::error::DomainError;
+use crate::phase::Phase;
 
 /// One row of the `field` table, decoded.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,17 +37,61 @@ pub fn bytes_to_uuid(bytes: Vec<u8>) -> Result<Uuid> {
 
 // ── Connection setup ──────────────────────────────────────────────────────────
 
+/// The busy handler rusqlite installs on every connection. Restored after the
+/// exclusive lock is claimed, so ordinary contention still waits as before.
+const BUSY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Whether a rusqlite error is the database being held by someone else.
+fn is_locked(e: &rusqlite::Error) -> bool {
+    use rusqlite::ffi::ErrorCode::{DatabaseBusy, DatabaseLocked};
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error { code: DatabaseBusy | DatabaseLocked, .. },
+            _
+        )
+    )
+}
+
+/// Takes the connection's exclusive lock, and reports a lock already held by
+/// another daemon as exactly that.
+///
+/// rusqlite arms a 5 s busy handler on every connection. That is the right
+/// default for transient contention, but this lock is not transient: whoever
+/// holds it holds it for the lifetime of their daemon (spec-main "one daemon
+/// per repository"). Waiting on it only turns a refusal into seconds of silence
+/// at startup — ten per repository, since the WAL attempt and its fallback each
+/// pay the handler — so the lock is claimed with the handler disarmed.
+fn claim_exclusive_lock(conn: &Connection) -> Result<()> {
+    conn.busy_timeout(std::time::Duration::ZERO).context("Failed to disarm the busy handler")?;
+    // WAL requires shared-memory files, which network filesystems do not
+    // support; fall back to DELETE journal mode there (spec-platform). A lock
+    // is not that failure, and must not be retried as if it were.
+    let outcome = match conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0))
+    {
+        Ok(_) => Ok(()),
+        Err(e) if is_locked(&e) => Err(e),
+        Err(_) => conn.pragma_update(None, "journal_mode", "DELETE"),
+    };
+    conn.busy_timeout(BUSY_TIMEOUT).context("Failed to restore the busy handler")?;
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(e) if is_locked(&e) => Err(DomainError::Conflict(
+            "another metafolder daemon is already using this repository \
+             (a repository is held by one daemon at a time)"
+                .to_string(),
+        )
+        .into()),
+        Err(e) => Err(e).context("Failed to set journal_mode"),
+    }
+}
+
 fn configure_connection(conn: &Connection) -> Result<()> {
     // An exclusive lock for the whole connection lifetime prevents a second
     // daemon instance from loading the same repository (spec-main invariant).
     conn.pragma_update(None, "locking_mode", "EXCLUSIVE").context("Failed to set locking_mode")?;
-    // WAL requires shared-memory files, which network filesystems do not
-    // support; fall back to DELETE journal mode there (spec-platform).
-    let wal =
-        conn.pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get::<_, String>(0));
-    if wal.is_err() {
-        conn.pragma_update(None, "journal_mode", "DELETE").context("Failed to set journal_mode")?;
-    }
+    claim_exclusive_lock(conn)?;
     conn.pragma_update(None, "foreign_keys", true).context("Failed to enable foreign keys")?;
     // The write and navigation hot paths go through `prepare_cached`; keep
     // enough room so the recurring statements never evict each other.
@@ -82,20 +127,38 @@ fn configure_connection(conn: &Connection) -> Result<()> {
 }
 
 /// Opens a file-backed database with all connection-level settings applied.
-pub fn open_database(path: &Path) -> Result<Connection> {
+///
+/// `who` labels the repository in the load report: each migration below is a
+/// no-op on a database that already has it, but the first database to need one
+/// pays for it in full — a column back-fill or an index build over every field
+/// row — so each announces itself (see [`crate::phase`]).
+pub fn open_database(path: &Path, who: &str) -> Result<Connection> {
     let conn = Connection::open(path)
         .with_context(|| format!("Failed to open SQLite database at {path:?}"))?;
-    configure_connection(&conn)?;
-    migrate_legacy_table_names(&conn)?;
-    ensure_pending_tracker_column(&conn)?;
-    ensure_next_version_column(&conn)?;
-    ensure_entity_version_after_column(&conn)?;
-    ensure_value_name_bytes_column(&conn)?;
-    ensure_pending_path_bytes_columns(&conn)?;
-    ensure_perf_indexes(&conn)?;
-    ensure_field_text(&conn)?;
+    {
+        let _p = Phase::begin(who, "claim the exclusive lock");
+        configure_connection(&conn)?;
+    }
+    for (what, migrate) in MIGRATIONS {
+        let _p = Phase::begin(who, *what);
+        migrate(&conn)?;
+    }
     Ok(conn)
 }
+
+/// The schema migrations, in the order they must run. Named so the load report
+/// can say which one is running.
+#[allow(clippy::type_complexity)]
+const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
+    ("migrate legacy table names", migrate_legacy_table_names),
+    ("pending_operation.tracker column", ensure_pending_tracker_column),
+    ("metarecord.next_version column", ensure_next_version_column),
+    ("operation.entity_version_after column", ensure_entity_version_after_column),
+    ("field.value_name_bytes column", ensure_value_name_bytes_column),
+    ("pending_operation path byte columns", ensure_pending_path_bytes_columns),
+    ("performance indexes", ensure_perf_indexes),
+    ("field_text trigram index", ensure_field_text),
+];
 
 /// Adds `metarecord.next_version` (the per-record monotonic version allocator,
 /// spec-data-model) to databases created before it existed. Back-fills each
@@ -226,7 +289,22 @@ fn ensure_value_name_bytes_column(conn: &Connection) -> Result<()> {
         return Ok(()); // no `field` table yet: init_schema builds the index itself
     }
     // The forest's uniqueness moves onto the bytes with it, or two siblings
-    // that differ only in undecodable bytes would still be refused.
+    // that differ only in undecodable bytes would still be refused. Only once:
+    // re-keying an index that is already keyed costs a full rebuild over every
+    // `field` row — minutes of CPU at every single startup on a large
+    // repository, with nothing to show for it.
+    let keyed_on_bytes = conn
+        .query_row(
+            "SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'idx_field_tree'",
+            [],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()?
+        .flatten()
+        .is_some_and(|sql| sql.contains("value_name_bytes"));
+    if keyed_on_bytes {
+        return Ok(());
+    }
     conn.execute_batch(
         "DROP INDEX IF EXISTS idx_field_tree;
          CREATE UNIQUE INDEX idx_field_tree ON field(field_name, value_uuid, value_name_bytes)

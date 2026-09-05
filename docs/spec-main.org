@@ -76,7 +76,20 @@ reconcile, observable queries, the task registry — are part of version 1.
   This prevents a second daemon instance from loading the same repo
   simultaneously, which would cause version drift and watcher conflicts (e.g.
   one daemon's watcher updating =mfr_path= and bumping =version= while the other
-  is committing a sync).
+  is committing a sync). A load that finds the lock already held is refused
+  *immediately* — the lock belongs to a live daemon and waiting for it is
+  pointless — with a =409 Conflict= naming the cause: another metafolder daemon
+  is already using this repository. In particular the connection's busy handler
+  must not be left to retry the lock, or every repository already held costs
+  seconds of silence at startup.
+- Opening a repository database performs *no* schema work once it is
+  up to date. Each migration is idempotent, which is not enough on its own: it
+  must also detect that its result is already in place and do nothing, rather
+  than re-apply it. A migration that re-does its work costs nothing on a small
+  database and minutes of full CPU at *every* startup on a large one — an index
+  re-keyed by dropping and recreating it is the shape to watch for. The witness
+  is =PRAGMA schema_version=, which counts DDL: it must not move across two
+  consecutive opens of the same database.
 - =TreeRef= references must form a forest (no cycles per =field_name=) with a
   maximum depth of 1000. The daemon rejects any write that would create a cycle
   or exceed this depth. The check walks the parent chain iteratively using the
@@ -119,6 +132,29 @@ metafolder = "/ssd/meta/music/.metafolder"
 - A repository that fails to load (missing path, locked database, ...) is
   reported as a warning on stderr; the daemon starts anyway and the other
   metarecords are still loaded.
+- The startup report is written as the loading goes, one repository at a time:
+  each repository is named before its load starts, and its outcome — the
+  =Loaded= line or the warning — is written before the next one is attempted.
+  Nothing about a repository is deferred to the end of the run, so a startup
+  that is taking a long time always says which repository it is waiting for.
+  On a terminal the announcement is the warmup progress line itself.
+- Within a repository, every *phase* of the load announces itself on stderr
+  before it runs — the schema migrations one by one, the case probe, the
+  schema and metadata map, the replay of buffered filesystem events, the query
+  index build, the tree cache, the watch placement:
+
+  #+BEGIN_SRC
+  [load music] field_text trigram index…
+  [load music] field_text trigram index: 4m12s
+  #+END_SRC
+
+  A phase's duration is reported when it ends, but only past a small threshold
+  (10 ms) — a load walks a dozen migrations that are no-ops, and echoing each
+  one twice would bury the one that costs. The reading rule: *the last line of
+  the report names the phase that is running*. Load work is proportional to the
+  repository, not to the code: a single phase can run for minutes at full CPU on
+  a large repository, and without this the operator can see the daemon is busy
+  but has no way to tell which phase to look at.
 
 ** Health
 

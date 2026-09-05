@@ -13,6 +13,7 @@ use crate::config::RepoConfig;
 use crate::db;
 use crate::error::DomainError;
 use crate::log::Writer;
+use crate::phase::Phase;
 
 pub const DB_FILE: &str = "db.sqlite";
 
@@ -106,7 +107,7 @@ pub fn init_repository(
     config.system = system;
     config.write(&metafolder_dir)?;
 
-    let mut conn = db::open_database(&internal_dir.join(DB_FILE))?;
+    let mut conn = db::open_database(&internal_dir.join(DB_FILE), &config.name)?;
     db::init_schema(&conn)?;
     create_root_entry(&mut conn)?;
 
@@ -167,12 +168,19 @@ pub fn load_repository(locator: RepoLocator) -> Result<OpenedRepo> {
         DomainError::BadRequest(format!("Cannot resolve path {metafolder_dir:?}: {e}"))
     })?;
     let config = RepoConfig::read(&metafolder_dir)?;
+    let who = config.name.clone();
     let internal_dir = metafolder_dir.join(INTERNAL_DIR);
     std::fs::create_dir_all(&internal_dir)
         .with_context(|| format!("Failed to create {internal_dir:?}"))?;
-    migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
-    let conn = db::open_database(&internal_dir.join(DB_FILE))?;
-    let case_insensitive = probe_case_insensitive(&internal_dir);
+    {
+        let _p = Phase::begin(&who, "migrate the on-disk layout");
+        migrate_legacy_db_layout(&metafolder_dir, &internal_dir)?;
+    }
+    let conn = db::open_database(&internal_dir.join(DB_FILE), &who)?;
+    let case_insensitive = {
+        let _p = Phase::begin(&who, "probe case sensitivity");
+        probe_case_insensitive(&internal_dir)
+    };
     Ok(OpenedRepo { config, conn, metafolder_dir, case_insensitive })
 }
 

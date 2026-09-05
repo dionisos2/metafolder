@@ -12,6 +12,7 @@ use uuid::Uuid;
 use crate::config::RepoConfig;
 use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
+use crate::phase::Phase;
 use crate::reconcile::ProgressFn;
 use crate::repo::{self, OpenedRepo, RepoLocator};
 use crate::tree_cache::TreeCache;
@@ -241,51 +242,49 @@ impl RepoState {
         // failure just leaves that accelerator in DB-fallback mode.
         // The single scan over `field` collects the TreeRef forest too, so the
         // tree cache is then built from those rows in memory — no second scan.
-        let t = std::time::Instant::now();
         let mut forest = Vec::new();
-        let built = match crate::index::RepoIndex::build_reported_collecting(
-            &conn,
-            &mut forest,
-            &|done, total| progress("index", Some(done), Some(total)),
-            &|| false, // the load warmup is not cancellable (spec-tasks)
-        ) {
-            Ok(index) => {
-                *self.index.lock_recover() = Some(index);
-                true
-            }
-            Err(e) => {
-                crate::diagnostics::warn(
-                    "warmup",
-                    format!("failed to build query index for {}: {e}", self.config.repo_uuid),
-                );
-                false // a bailed scan leaves `forest` partial — do not trust it
+        let built = {
+            let _p = Phase::begin(&who, "build the query index");
+            match crate::index::RepoIndex::build_reported_collecting(
+                &conn,
+                &mut forest,
+                &|done, total| progress("index", Some(done), Some(total)),
+                &|| false, // the load warmup is not cancellable (spec-tasks)
+            ) {
+                Ok(index) => {
+                    *self.index.lock_recover() = Some(index);
+                    true
+                }
+                Err(e) => {
+                    crate::diagnostics::warn(
+                        "warmup",
+                        format!("failed to build query index for {}: {e}", self.config.repo_uuid),
+                    );
+                    false // a bailed scan leaves `forest` partial — do not trust it
+                }
             }
         };
-        eprintln!("[warmup {who}] index build: {:?}", t.elapsed());
 
         progress("tree cache", None, None);
-        let t = std::time::Instant::now();
-        if built {
-            let n = forest.len();
-            self.lock_cache().populate_from_forest(forest);
-            eprintln!(
-                "[warmup {who}] tree cache: {:?} ({n} nodes, from the index scan)",
-                t.elapsed()
-            );
-        } else if let Err(e) = self.lock_cache().populate(&conn) {
-            crate::diagnostics::warn(
-                "warmup",
-                format!("failed to populate tree cache for {}: {e}", self.config.repo_uuid),
-            );
+        {
+            let mut p = Phase::begin(&who, "populate the tree cache");
+            if built {
+                p.detail(format!("{} nodes, from the index scan", forest.len()));
+                self.lock_cache().populate_from_forest(forest);
+            } else if let Err(e) = self.lock_cache().populate(&conn) {
+                crate::diagnostics::warn(
+                    "warmup",
+                    format!("failed to populate tree cache for {}: {e}", self.config.repo_uuid),
+                );
+            }
         }
 
         // Place the watcher's directory watches now that the tree cache is
         // populated: `watcher::start` defers this initial walk to here so each
         // directory's eligibility is served from memory, not a per-directory DB
         // walk (which dominated the pre-warmup walk — thousands of cold queries).
-        let t = std::time::Instant::now();
+        let _p = Phase::begin(&who, "place the filesystem watches");
         self.refresh_watches(&conn);
-        eprintln!("[warmup {who}] watch placement: {:?}", t.elapsed());
     }
 
     /// Rejects a metadata write with `423 Locked` while a rollback navigation
@@ -384,20 +383,39 @@ impl AppState {
     /// the watcher and its executor (spec: the buffer is replayed before the
     /// repository serves requests).
     fn activate(&self, repo_state: Arc<RepoState>) -> Result<Arc<RepoState>, ApiError> {
-        let schema = crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
-            .map_err(ApiError::bad_request)?;
-        *repo_state.schema.lock_recover() = schema;
-        // Load the per-repo metadata map, seeding the file when absent
-        // (spec-platform "Configuration"). A malformed file fails this repo's
-        // load only, like an invalid schema.
-        let metadata_map =
-            crate::metadata_map::MetadataMap::load_or_seed(&repo_state.metafolder_dir)
-                .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
-        *repo_state.metadata_map.lock_recover() = metadata_map;
-        crate::executor::flush_pending(&repo_state)?;
+        // Each step is announced: the replay below applies whatever the
+        // filesystem did while the daemon was down, which on a repository that
+        // moved a lot is the longest part of a load (spec-main "Startup
+        // report").
+        let who = repo_state.name();
+        {
+            let _p = Phase::begin(&who, "load the schema");
+            let schema =
+                crate::schema::load_for_repo(&repo_state.metafolder_dir, &repo_state.config)
+                    .map_err(ApiError::bad_request)?;
+            *repo_state.schema.lock_recover() = schema;
+        }
+        {
+            // Load the per-repo metadata map, seeding the file when absent
+            // (spec-platform "Configuration"). A malformed file fails this
+            // repo's load only, like an invalid schema.
+            let _p = Phase::begin(&who, "load the metadata map");
+            let metadata_map =
+                crate::metadata_map::MetadataMap::load_or_seed(&repo_state.metafolder_dir)
+                    .map_err(|e| ApiError::bad_request(format!("{e:#}")))?;
+            *repo_state.metadata_map.lock_recover() = metadata_map;
+        }
+        {
+            let mut p = Phase::begin(&who, "replay the buffered filesystem events");
+            let stats = crate::executor::flush_pending(&repo_state)?;
+            p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
+        }
         let quiet = self.settings.watch_quiet_period();
         let executor = crate::executor::spawn(&repo_state, quiet);
-        let watcher = crate::watcher::start(&repo_state, executor.pinger())?;
+        let watcher = {
+            let _p = Phase::begin(&who, "start the watcher");
+            crate::watcher::start(&repo_state, executor.pinger())?
+        };
         *repo_state.handles.lock_recover() = Some(RepoHandles { watcher, executor });
         Ok(repo_state)
     }
