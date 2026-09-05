@@ -206,11 +206,8 @@ fn the_executor_drops_an_event_landing_in_an_offline_mount() {
     // the identical event outside the mount point still applies.
     std::fs::remove_file(root.join("vol/a.txt")).unwrap();
     std::fs::remove_file(root.join("plain/b.txt")).unwrap();
-    {
-        let conn = repo.conn.lock().unwrap();
-        executor::enqueue(&conn, &FsEvent::Remove("/vol/a.txt".into()), None).unwrap();
-        executor::enqueue(&conn, &FsEvent::Remove("/plain/b.txt".into()), None).unwrap();
-    }
+    executor::enqueue(&repo, FsEvent::Remove("/vol/a.txt".into()), None);
+    executor::enqueue(&repo, FsEvent::Remove("/plain/b.txt".into()), None);
     executor::flush_pending(&repo).unwrap();
 
     assert!(

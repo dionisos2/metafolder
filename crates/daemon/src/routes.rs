@@ -1693,20 +1693,13 @@ async fn mounts(
 /// status, pause and resume"): whether ingestion is paused, and how many
 /// filesystem events are waiting to be applied.
 ///
-/// The count is *best effort*: reading it needs the connection, which the very
-/// flush the caller may be trying to stop is holding. Rather than queue behind
-/// it — which would make `pause` useless exactly when it matters — the count is
-/// reported as `null` when the connection is busy.
+/// The count is exact and always available: the buffer is in memory, so reading
+/// it never queues behind the flush the caller may be trying to stop.
 fn watch_view(repo_state: &RepoState) -> serde_json::Value {
-    let pending = repo_state.conn.try_lock().ok().and_then(|conn| {
-        conn.query_row(
-            "SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE 'fs_%'",
-            [],
-            |r| r.get::<_, i64>(0),
-        )
-        .ok()
-    });
-    json!({ "paused": repo_state.is_ingestion_paused(), "pending_events": pending })
+    json!({
+        "paused": repo_state.is_ingestion_paused(),
+        "pending_events": crate::executor::pending_count(repo_state),
+    })
 }
 
 /// `GET /repos/:repo/watch`: whether the executor is ingesting filesystem

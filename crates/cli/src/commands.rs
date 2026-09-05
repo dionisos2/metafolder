@@ -1932,12 +1932,10 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
         return Ok(0);
     }
     let state = if resp["paused"].as_bool().unwrap_or(false) { "paused" } else { "running" };
-    match resp["pending_events"].as_i64() {
-        Some(n) => println!("{state:<10}\t{n} event(s) waiting"),
-        // The connection is held by the very flush being stopped: the count is
-        // not worth queueing behind it.
-        None => println!("{state:<10}\t(event count unavailable: the repository is busy)"),
-    }
+    // The buffer is in memory, so the count is always there — no "unavailable"
+    // case to render any more.
+    let waiting = resp["pending_events"].as_i64().unwrap_or(0);
+    println!("{state:<10}\t{waiting} event(s) waiting");
     Ok(0)
 }
 

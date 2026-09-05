@@ -158,7 +158,29 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("pending_operation path byte columns", ensure_pending_path_bytes_columns),
     ("performance indexes", ensure_perf_indexes),
     ("field_text trigram index", ensure_field_text),
+    ("drop the persisted filesystem-event buffer", drop_persisted_fs_events),
 ];
+
+/// Deletes the filesystem events a daemon that persisted its watcher buffer left
+/// in `pending_operation` (spec-file-tracking "Event batching"): the buffer now
+/// lives in memory and these rows can no longer be replayed. What a stopped
+/// daemon missed is recovered by a reconcile — which is what recovered
+/// everything *outside* the buffer already. The `restore_*` rows of the same
+/// table belong to the log and are left alone.
+fn drop_persisted_fs_events(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master \
+         WHERE type = 'table' AND name = 'pending_operation'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(()); // fresh database: init_schema creates it empty
+    }
+    conn.execute("DELETE FROM pending_operation WHERE op_type LIKE 'fs_%'", [])
+        .context("Failed to drop the persisted filesystem-event buffer")?;
+    Ok(())
+}
 
 /// Adds `metarecord.next_version` (the per-record monotonic version allocator,
 /// spec-data-model) to databases created before it existed. Back-fills each

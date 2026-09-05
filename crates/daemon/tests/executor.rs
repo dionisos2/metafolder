@@ -43,18 +43,16 @@ fn write_file(root: &Path, rel: &str, content: &[u8]) {
 }
 
 fn enqueue(repo: &RepoState, events: &[FsEvent]) {
-    let conn = repo.conn.lock().unwrap();
     for ev in events {
-        executor::enqueue(&conn, ev, None).unwrap();
+        executor::enqueue(repo, ev.clone(), None);
     }
 }
 
 /// Enqueues `(event, cookie)` pairs, modelling notify's per-rename inotify
 /// cookie so the executor can correlate a split From/To pair.
 fn enqueue_tracked(repo: &RepoState, events: &[(FsEvent, Option<i64>)]) {
-    let conn = repo.conn.lock().unwrap();
     for (ev, tracker) in events {
-        executor::enqueue(&conn, ev, *tracker).unwrap();
+        executor::enqueue(repo, ev.clone(), *tracker);
     }
 }
 
@@ -112,7 +110,7 @@ fn test_create_event_creates_record_with_stat_fields() {
     assert_eq!(field_value(&repo, uuid, "mfr_type"), Some(Value::String("file".into())));
     assert_eq!(field_value(&repo, uuid, "mfr_size"), Some(Value::Int(5)));
     assert!(matches!(field_value(&repo, uuid, "mfr_mtime"), Some(Value::DateTime(_))));
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM pending_operation"), 0, "buffer consumed");
+    assert_eq!(executor::pending_count(&repo), 0, "buffer consumed");
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -877,47 +875,6 @@ fn test_modify_data_on_unchanged_file_is_idempotent() {
 
 // ── Resilience ────────────────────────────────────────────────────────────────
 
-// A batch the executor cannot apply must not switch tracking off for good.
-// The pending buffer is persistent so a crash loses no event, which also means
-// a batch that always fails is retried for ever — and while it is stuck, no
-// filesystem event is ever recorded again for this repository, not even after a
-// restart (the buffer is replayed at load). After a bounded number of attempts
-// the batch is dropped: those events are lost (a reconcile recovers them) but
-// the watcher lives.
-#[test]
-fn test_an_unapplicable_batch_is_dropped_instead_of_stopping_the_watcher() {
-    let (repo, root, _) = setup("poison");
-
-    // A buffered event the executor cannot even parse: every flush fails on it.
-    {
-        let conn = repo.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO pending_operation (op_type, path) VALUES ('fs_bogus', '/nowhere')",
-            [],
-        )
-        .unwrap();
-    }
-    write_file(&root, "a.txt", b"a");
-    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
-
-    // The batch is retried while the budget lasts…
-    for attempt in 1..=executor::FLUSH_FAILURE_BUDGET {
-        assert!(
-            executor::flush_pending(&repo).is_err(),
-            "attempt {attempt} must fail on the unapplicable batch",
-        );
-    }
-    assert!(resolve(&repo, "/a.txt").is_none(), "nothing was applied while it failed");
-
-    // …then it is dropped, and the watcher records again.
-    write_file(&root, "b.txt", b"b");
-    enqueue(&repo, &[FsEvent::Create("/b.txt".into())]);
-    executor::flush_pending(&repo).expect("the buffer is clear again");
-    assert!(resolve(&repo, "/b.txt").is_some(), "tracking must resume once the batch is dropped");
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
 // A flush must stay linear in the size of its batch.
 //
 // Re-pairing a move whose destination the watcher could not see compares an
@@ -1111,13 +1068,10 @@ fn test_enqueue_all_buffers_a_batch_as_one_transaction() {
         (FsEvent::Create("/b.txt".into()), Some(7)),
         (FsEvent::ModifyData("/a.txt".into()), None),
     ];
-    {
-        let mut conn = repo.conn.lock().unwrap();
-        executor::enqueue_all(&mut conn, &batch).unwrap();
-    }
-    assert_eq!(count(&repo, "SELECT COUNT(*) FROM pending_operation"), 3);
+    executor::enqueue_all(&repo, batch);
+    assert_eq!(executor::pending_count(&repo), 3);
     assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM pending_operation WHERE tracker = 7"),
+        repo.pending.lock().unwrap().iter().filter(|(_, t)| *t == Some(7)).count(),
         1,
         "the rename cookie is preserved"
     );
@@ -1129,49 +1083,11 @@ fn test_enqueue_all_buffers_a_batch_as_one_transaction() {
     assert!(resolve(&repo, "/b.txt").is_some());
 }
 
-#[test]
-fn test_buffering_a_batch_does_not_pay_a_sync_per_event() {
-    // A ratio, and only where it means something: on a filesystem whose fsync
-    // is free (a tmpfs) both paths cost the same and there is nothing to
-    // assert. Where a commit does reach the disk, batching must not be within
-    // a factor of five of one-transaction-per-event.
-    const N: usize = 500;
-    let (repo, _root, _) = setup("enqueue_cost");
-    let single: Vec<(FsEvent, Option<i64>)> =
-        (0..N).map(|i| (FsEvent::ModifyData(format!("/x/f{i}").as_str().into()), None)).collect();
-    let batched: Vec<(FsEvent, Option<i64>)> =
-        (0..N).map(|i| (FsEvent::ModifyData(format!("/y/f{i}").as_str().into()), None)).collect();
-
-    let one_by_one = {
-        let conn = repo.conn.lock().unwrap();
-        let start = std::time::Instant::now();
-        for (ev, tracker) in &single {
-            executor::enqueue(&conn, ev, *tracker).unwrap();
-        }
-        start.elapsed()
-    };
-    let together = {
-        let mut conn = repo.conn.lock().unwrap();
-        let start = std::time::Instant::now();
-        executor::enqueue_all(&mut conn, &batched).unwrap();
-        start.elapsed()
-    };
-
-    if one_by_one < std::time::Duration::from_millis(200) {
-        return; // Syncs are free here (tmpfs): the comparison says nothing.
-    }
-    assert!(
-        together * 5 < one_by_one,
-        "{N} events cost {one_by_one:?} one by one but {together:?} batched — \
-         the batch is not being committed as one transaction",
-    );
-}
-
 // ── Stopping a flush (spec-file-tracking "Pausing ingestion") ─────────────────
 
 /// The number of buffered filesystem events left waiting.
-fn pending_events(repo: &RepoState) -> i64 {
-    count(repo, "SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE 'fs_%'")
+fn pending_events(repo: &RepoState) -> usize {
+    executor::pending_count(repo)
 }
 
 #[test]
@@ -1408,4 +1324,72 @@ fn test_a_batch_of_renames_indexes_the_orphans_once() {
         builds, 1,
         "the orphan index is rebuilt per event, which is a full repository scan each time: {seen:?}"
     );
+}
+
+// ── The buffer lives in memory ────────────────────────────────────────────────
+
+/// Buffered filesystem events never reach the database.
+///
+/// They used to: the watcher wrote each one into `pending_operation` so a crash
+/// would lose none. But a daemon that is down misses every event anyway, and
+/// closing *that* gap needs a reconcile — which also closes this one. The
+/// persistence bought no coherence, cost a transaction per batch on the
+/// watcher's hot path, and created a failure mode of its own (a batch the
+/// executor cannot apply, retried for ever across restarts, because the buffer
+/// was replayed at load).
+#[test]
+fn test_buffered_events_never_reach_the_database() {
+    let (repo, root, _) = setup("ram-buffer");
+    write_file(&root, "a.txt", b"hello");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into()), FsEvent::ModifyData("/a.txt".into())]);
+
+    assert_eq!(executor::pending_count(&repo), 2, "the events are buffered in memory");
+    assert_eq!(
+        count(&repo, "SELECT COUNT(*) FROM pending_operation"),
+        0,
+        "no filesystem event is written to the database"
+    );
+
+    executor::flush_pending(&repo).unwrap();
+    assert_eq!(executor::pending_count(&repo), 0, "the flush consumed the buffer");
+    assert!(resolve(&repo, "/a.txt").is_some());
+}
+
+/// A repository opened with filesystem events left in `pending_operation` by an
+/// older daemon drops them: they can no longer be replayed, and a reconcile is
+/// what recovers what a stopped daemon missed. The `restore_*` rows in the same
+/// table belong to the log and must survive.
+#[test]
+fn test_opening_drops_filesystem_events_left_by_an_older_daemon() {
+    let (repo, root, _) = setup("legacy-buffer");
+    {
+        let conn = repo.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pending_operation (op_type, path) VALUES ('fs_create', '/stale.txt')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', '/kept')",
+            [],
+        )
+        .unwrap();
+    }
+    let db_path = repo.internal_dir().join(repo::DB_FILE);
+    drop(repo); // releases the exclusive lock
+
+    let conn = db::open_database(&db_path, "legacy").unwrap();
+    let by_prefix = |prefix: &str| -> i64 {
+        conn.query_row(
+            &format!("SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE '{prefix}%'"),
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(by_prefix("fs_"), 0, "the stale filesystem events are gone");
+    assert_eq!(by_prefix("restore_"), 1, "the log's restoration ops are untouched");
+
+    drop(conn);
+    std::fs::remove_dir_all(root).unwrap();
 }

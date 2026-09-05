@@ -212,10 +212,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     .await;
 
     // Track the file, then orphan it — one revision, two operations.
-    {
-        let conn = repo_state.conn.lock().unwrap();
-        executor::enqueue(&conn, &FsEvent::Create("/doc.txt".into()), None).unwrap();
-    }
+    executor::enqueue(&repo_state, FsEvent::Create("/doc.txt".into()), None);
     executor::flush_pending(&repo_state).unwrap();
     let file_uuid = {
         let conn = repo_state.conn.lock().unwrap();
@@ -229,10 +226,7 @@ async fn test_inverse_step_exposes_the_pre_revision_version() {
     };
 
     std::fs::remove_file(root.join("doc.txt")).unwrap();
-    {
-        let conn = repo_state.conn.lock().unwrap();
-        executor::enqueue(&conn, &FsEvent::Remove("/doc.txt".into()), None).unwrap();
-    }
+    executor::enqueue(&repo_state, FsEvent::Remove("/doc.txt".into()), None);
     executor::flush_pending(&repo_state).unwrap();
 
     let (status, body) = request(

@@ -1,8 +1,17 @@
 //! Pending-event executor (spec-file-tracking "Event batching"): the watcher
-//! enqueues raw filesystem events into the persistent `pending_operation`
-//! table; after a quiet period the executor compacts them, groups them by
-//! resulting operation type (one revision per group), and applies the event
-//! semantics to the data tables through the logged write flow.
+//! buffers raw filesystem events in memory; after a quiet period the executor
+//! compacts them, groups them by resulting operation type (one revision per
+//! group), and applies the event semantics to the data tables through the
+//! logged write flow.
+//!
+//! The buffer is deliberately *not* persisted. It used to be, so that a crash
+//! would lose no event — but a daemon that is down misses every event anyway,
+//! and closing that gap needs a reconcile, which closes this one too. Paid for,
+//! the persistence cost a transaction on the watcher's hot path and let a batch
+//! the executor could not apply survive a restart, wedging tracking for good;
+//! it needed a failure budget of its own to be survivable. The `restore_*` rows
+//! of `pending_operation` are a different population — they belong to the log
+//! (rollback skips) and stay persistent.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -42,113 +51,36 @@ pub enum FsEvent {
     ModifyMeta(RelPath),
 }
 
-/// Appends one event to the persistent buffer. `tracker` is the rename
-/// correlation cookie (notify's inotify cookie) for `RenameFrom`/`RenameTo`
-/// events, used by [`correlate_renames`] to fuse a split rename; `None` for
-/// everything else.
-pub fn enqueue(conn: &Connection, ev: &FsEvent, tracker: Option<i64>) -> Result<()> {
-    let (op_type, path, from, to): (&str, Option<&RelPath>, Option<&RelPath>, Option<&RelPath>) =
-        match ev {
-            FsEvent::Create(p) => ("fs_create", Some(p), None, None),
-            FsEvent::Remove(p) => ("fs_remove", Some(p), None, None),
-            FsEvent::Rename(a, b) => ("fs_rename", None, Some(a), Some(b)),
-            FsEvent::RenameFrom(p) => ("fs_rename_from", Some(p), None, None),
-            FsEvent::RenameTo(p) => ("fs_rename_to", Some(p), None, None),
-            FsEvent::ModifyData(p) => ("fs_modify_data", Some(p), None, None),
-            FsEvent::ModifyMeta(p) => ("fs_modify_meta", Some(p), None, None),
-        };
-    // Both forms: the text keeps the buffer readable, the bytes are what
-    // re-opens the file when its name does not decode.
-    conn.execute(
-        "INSERT INTO pending_operation
-             (op_type, path, from_path, to_path, tracker,
-              path_bytes, from_path_bytes, to_path_bytes)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![
-            op_type,
-            path.map(RelPath::display),
-            from.map(RelPath::display),
-            to.map(RelPath::display),
-            tracker,
-            path.map(RelPath::to_bytes),
-            from.map(RelPath::to_bytes),
-            to.map(RelPath::to_bytes),
-        ],
-    )?;
-    Ok(())
+/// Buffers one event for `repo`. `tracker` is the rename correlation cookie
+/// (notify's inotify cookie) for `RenameFrom`/`RenameTo` events, used by
+/// [`correlate_renames`] to fuse a split rename; `None` for everything else.
+pub fn enqueue(repo: &RepoState, ev: FsEvent, tracker: Option<i64>) {
+    repo.pending.lock_recover().push((ev, tracker));
 }
 
-/// Appends a whole batch of events in **one transaction**.
-///
-/// The watcher's own path: `notify` delivers events in a stream, and buffering
-/// them one at a time means one transaction — hence, in WAL mode, one fsync —
-/// per event. Measured on the machine this was written on: 3 ms per event that
-/// way against 0.011 ms batched, so a mass arrival spends minutes buffering
-/// (holding the repository's connection) before the flush that applies it even
-/// begins. The batch is atomic: a failure leaves none of it buffered, and the
-/// events are then simply lost like any event the watcher misses — a reconcile
-/// recovers them.
-pub fn enqueue_all(conn: &mut Connection, events: &[(FsEvent, Option<i64>)]) -> Result<()> {
-    if events.is_empty() {
-        return Ok(());
-    }
-    let tx = conn.transaction()?;
-    for (ev, tracker) in events {
-        enqueue(&tx, ev, *tracker)?;
-    }
-    tx.commit()?;
-    Ok(())
+/// Buffers a whole batch at once — what the watcher's ingest thread hands over.
+pub fn enqueue_all(repo: &RepoState, events: Vec<(FsEvent, Option<i64>)>) {
+    repo.pending.lock_recover().extend(events);
 }
 
-/// The buffered events (each with its optional tracker id) and the highest
-/// `pending_operation` row id read — the flush deletes up to that id, so events
-/// enqueued while it runs survive for the next round.
-type PendingBatch = (Vec<(FsEvent, Option<i64>)>, i64);
+/// How many events are waiting to be applied. Exact and lock-free with respect
+/// to the database connection, which is what lets `GET /watch` answer while a
+/// flush holds it.
+pub fn pending_count(repo: &RepoState) -> usize {
+    repo.pending.lock_recover().len()
+}
 
-fn load_pending(conn: &Connection) -> Result<PendingBatch> {
-    let mut stmt = conn.prepare(
-        "SELECT id, op_type, path, from_path, to_path, tracker,
-                path_bytes, from_path_bytes, to_path_bytes
-         FROM pending_operation WHERE op_type LIKE 'fs_%' ORDER BY id",
-    )?;
-    let mut events = Vec::new();
-    let mut max_id = 0;
-    // The bytes are authoritative; the text is the fallback for a row buffered
-    // by a daemon that predates them (its path was necessarily valid UTF-8).
-    let path_of = |text: Option<String>, bytes: Option<Vec<u8>>| match bytes {
-        Some(bytes) => Some(RelPath::from_bytes(&bytes)),
-        None => text.map(|t| RelPath::from_display(&t)),
-    };
-    let rows = stmt.query_map([], |r| {
-        Ok((
-            r.get::<_, i64>(0)?,
-            r.get::<_, String>(1)?,
-            path_of(r.get(2)?, r.get(6)?),
-            path_of(r.get(3)?, r.get(7)?),
-            path_of(r.get(4)?, r.get(8)?),
-            r.get::<_, Option<i64>>(5)?,
-        ))
-    })?;
-    for row in rows {
-        let (id, op, path, from, to, tracker) = row?;
-        max_id = max_id.max(id);
-        let p = || path.clone().context("missing path in pending_operation");
-        let ev = match op.as_str() {
-            "fs_create" => FsEvent::Create(p()?),
-            "fs_remove" => FsEvent::Remove(p()?),
-            "fs_rename" => FsEvent::Rename(
-                from.clone().context("missing from_path")?,
-                to.clone().context("missing to_path")?,
-            ),
-            "fs_rename_from" => FsEvent::RenameFrom(p()?),
-            "fs_rename_to" => FsEvent::RenameTo(p()?),
-            "fs_modify_data" => FsEvent::ModifyData(p()?),
-            "fs_modify_meta" => FsEvent::ModifyMeta(p()?),
-            other => anyhow::bail!("unknown pending op_type '{other}'"),
-        };
-        events.push((ev, tracker));
-    }
-    Ok((events, max_id))
+/// Takes the whole buffer for a flush. Events buffered while the flush runs
+/// land in the now-empty buffer and are picked up by the next round.
+fn take_pending(repo: &RepoState) -> Vec<(FsEvent, Option<i64>)> {
+    std::mem::take(&mut *repo.pending.lock_recover())
+}
+
+/// Puts a batch back at the head of the buffer, in order, after a flush that
+/// did not apply it — a failure to be retried, or a stop the user asked for.
+fn return_pending(repo: &RepoState, events: Vec<(FsEvent, Option<i64>)>) {
+    let mut pending = repo.pending.lock_recover();
+    pending.splice(0..0, events);
 }
 
 /// Fuses a rename that the notify backend delivered as separate
@@ -369,20 +301,12 @@ fn is_cancelled(err: &anyhow::Error) -> bool {
     err.downcast_ref::<Cancelled>().is_some()
 }
 
-/// How many times a batch the executor cannot apply is retried before it is
-/// dropped. The pending buffer is persistent so that a crash loses no event —
-/// which also means a batch that always fails is retried for ever, and while it
-/// is stuck *nothing* is recorded for the repository any more, not even after a
-/// restart (the buffer is replayed at load). Dropping the batch loses those
-/// events; a reconcile recovers them, where a dead watcher recovers nothing.
-pub const FLUSH_FAILURE_BUDGET: u32 = 3;
-
 /// Processes the whole pending buffer: compaction, grouping, application.
-/// Also used at load time to replay a buffer left by a previous daemon run.
 ///
-/// On failure the batch is left in place to be retried, until the failure
-/// budget runs out (see [`FLUSH_FAILURE_BUDGET`]) — then it is dropped, loudly,
-/// so a single unapplicable batch cannot silently switch tracking off for good.
+/// On failure — or on a stop the user asked for — the batch goes back into the
+/// buffer to be retried. It needs no escape hatch: the buffer is in memory, so
+/// a batch that can never be applied dies with the daemon rather than wedging
+/// tracking across restarts.
 pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
     flush_pending_reported(repo, &|_| {})
 }
@@ -390,44 +314,13 @@ pub fn flush_pending(repo: &RepoState) -> Result<FlushStats> {
 /// [`flush_pending`], reporting its progress to `report`.
 ///
 /// A flush at runtime applies the handful of events of one quiet period and
-/// has nobody watching. The flush a repository *load* runs is a different
-/// animal: its backlog is whatever the filesystem did while the daemon was
-/// down, so it can be millions of events and take minutes — and it is the one
-/// load phase whose size cannot be guessed from outside. It says how much it
-/// has to do and how far it has got (spec-main "Startup report").
+/// has nobody watching. A flush that has fallen behind — a directory of a
+/// hundred thousand files arriving at once, or a resume after a long pause —
+/// is a different animal: it can take minutes, and its size cannot be guessed
+/// from outside. It says how much it has to do and how far it has got
+/// (spec-main "Startup report").
 pub fn flush_pending_reported(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
-    use std::sync::atomic::Ordering;
-    match flush_pending_once(repo, report) {
-        Ok(stats) => {
-            if !stats.cancelled {
-                repo.flush_failures.store(0, Ordering::Relaxed);
-            }
-            Ok(stats)
-        }
-        Err(err) => {
-            let failures = repo.flush_failures.fetch_add(1, Ordering::Relaxed) + 1;
-            if failures >= FLUSH_FAILURE_BUDGET {
-                repo.flush_failures.store(0, Ordering::Relaxed);
-                let dropped = discard_pending(repo).unwrap_or(0);
-                crate::diagnostics::error(
-                    "executor",
-                    format!(
-                        "dropping {dropped} filesystem event(s) after {failures} failed \
-                         flushes ({err:#}); run a reconcile to pick up what they carried"
-                    ),
-                );
-            }
-            Err(err)
-        }
-    }
-}
-
-/// Deletes the buffered filesystem events, returning how many were dropped.
-/// The restoration ops (rollback skips) are left alone: they are generated by
-/// the daemon itself, not by the filesystem.
-fn discard_pending(repo: &RepoState) -> Result<usize> {
-    let conn = repo.conn.lock_recover();
-    Ok(conn.execute("DELETE FROM pending_operation WHERE op_type LIKE 'fs_%'", [])?)
+    flush_pending_once(repo, report)
 }
 
 /// What a flush is doing, for whoever is watching it happen.
@@ -494,12 +387,15 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     let mut revisions_from_restore = 0;
     revisions_from_restore += flush_restorations(&mut conn, &mut cache)?;
 
-    let (events, max_id) = load_pending(&conn)?;
-    if events.is_empty() {
+    // Taken whole: whatever the watcher buffers while this flush runs lands in
+    // the now-empty buffer and is picked up by the next round. On any path that
+    // does not apply the batch, it goes back (`return_pending`).
+    let taken = take_pending(repo);
+    if taken.is_empty() {
         return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
     }
-    report(FlushProgress::Buffered(events.len()));
-    let events = compact(correlate_renames(events));
+    report(FlushProgress::Buffered(taken.len()));
+    let events = compact(correlate_renames(taken.clone()));
     let n_events = events.len();
     report(FlushProgress::Compacted(n_events));
 
@@ -588,10 +484,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             }
         }
 
-        conn.execute(
-            "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
-            params![max_id],
-        )?;
         Ok(revisions)
     })();
 
@@ -605,10 +497,11 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             })
         }
         // Stopped by the user: the group in progress rolled back with its
-        // writer, the pending buffer is untouched (it is deleted only on a
-        // completed flush), and ingestion stays paused until a resume — without
-        // that, the next event would restart the flush just stopped.
+        // writer, the batch goes back into the buffer, and ingestion stays
+        // paused until a resume — without that, the next event would restart
+        // the flush just stopped.
         Err(e) if is_cancelled(&e) => {
+            return_pending(repo, taken);
             resync_cache(&conn, &mut cache);
             repo.pause_ingestion();
             repo.tasks.mark_cancelled(task);
@@ -622,6 +515,10 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             Ok(FlushStats { events: n_events, revisions: revisions_from_restore, cancelled: true })
         }
         Err(e) => {
+            // Retried on the next flush. Unlike the persistent buffer this
+            // replaces, a batch that can never be applied no longer outlives a
+            // restart, so it needs no failure budget to escape.
+            return_pending(repo, taken);
             resync_cache(&conn, &mut cache);
             repo.tasks.fail(task, &e.to_string());
             Err(e)

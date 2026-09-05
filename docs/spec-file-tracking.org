@@ -589,31 +589,38 @@ may run on the callback.
 
 *** Event batching
 
-The watcher does not process events one by one. Instead, it writes incoming
-events to the =pending_operation= table (see [[spec-event-log.org]]) and the
-executor commits the buffer once a quiet period of *500 ms* has elapsed with
-no new events. This default is configurable per repository.
+The watcher does not process events one by one. Instead, it buffers incoming
+events *in memory* and the executor applies the buffer once a quiet period of
+*500 ms* has elapsed with no new events. This default is configurable per
+repository.
 
-The =pending_operation= table persists across daemon restarts: any buffered
-events present at startup are replayed before the daemon accepts new requests.
+The buffer does **not** survive the daemon. It used to: the watcher wrote each
+event into the =pending_operation= table and the buffer was replayed at load.
+That bought nothing. A daemon that is down misses every event that happens while
+it is down, so the repository is already out of step with the disk on restart
+and only a =reconcile= can close that gap — and a reconcile closes the buffer's
+gap along with it. What the persistence did cost was a transaction on the
+watcher's hot path (the database is in WAL mode with the default durability, so
+every transaction is an =fsync=: 3 ms per commit against 0.011 ms in memory, on
+the same machine and filesystem), and a failure mode of its own — a batch the
+executor *could not* apply was retried for ever, restart included, silently
+switching tracking off for the repository. That needed a bounded retry budget to
+be survivable at all. In memory, a batch that cannot be applied is retried until
+the daemon stops, and stopping the daemon is what clears it.
 
-Buffering is itself done *in batches*: the watcher's ingest thread takes
+Buffering is still done *in batches*: the watcher's ingest thread takes
 everything the backend has already delivered (up to a few thousand events) and
-writes it in **one transaction**. This is not a micro-optimisation. The database
-is in WAL mode with the default durability, so every transaction is an =fsync=;
-buffering one event per transaction costs one =fsync= per event — measured at
-3 ms against 0.011 ms batched, on the same machine and filesystem. A mass
-arrival then spends *minutes* merely recording that it happened, holding the
-repository's connection throughout, before the flush that applies it even
-starts. Whatever an ingest batch cannot include is simply the next batch.
+hands it over in one go, so a mass arrival costs a handful of lock acquisitions
+rather than one per event. Whatever an ingest batch cannot include is simply the
+next batch.
 
-That persistence has a sharp edge: a batch the executor *cannot* apply would be
-retried for ever, and while it is stuck no filesystem event is recorded for the
-repository any more — a restart does not help, since the buffer is replayed at
-load. Tracking would simply stop, with nothing but a log line to say so. A batch
-is therefore retried a bounded number of times (three) and then **dropped**,
-loudly: the events it carried are lost, and a reconcile recovers them, where a
-dead watcher recovers nothing.
+A batch the executor does not apply — a failure, or a stop the user asked for —
+goes back to the head of the buffer and is retried on the next flush.
+
+The =restore_*= rows of =pending_operation= are a *different population* and stay
+persistent: they belong to the event log (restoration ops left by skipped
+rollback steps, see [[spec-event-log.org]]), not to the watcher. A repository
+opened with filesystem events left in that table by an older daemon drops them.
 
 Rationale: a user pasting N files into a directory generates N =Create= events
 in rapid succession. Batching them into one revision makes the operation
@@ -679,16 +686,15 @@ for this repository**:
   next event boundary. The group in progress is *abandoned, not committed* (its
   transaction is dropped), so no half-group is ever visible; groups already
   committed stay committed.
-- The pending buffer is *left untouched*. Nothing is lost, and nothing is
-  half-recorded: on resume the whole batch is applied again from the start,
-  exactly as it is after a crash (the buffer is replayed at load, and the event
-  semantics are idempotent for that reason).
+- The batch goes *back into the buffer*, at its head. Nothing is lost, and
+  nothing is half-recorded: on resume the whole batch is applied again from the
+  start (the event semantics are idempotent for that reason).
 - The *tree cache is rebuilt* from the database. It is maintained incrementally
   as events are applied, in memory and outside the transaction, so the rollback
   that undoes the writes does not undo it: without the rebuild the cache would
   go on resolving paths to metarecords that were never committed.
-- The repository then stays **paused**: the watcher keeps recording events into
-  =pending_operation=, and the executor does not flush them. This is the
+- The repository then stays **paused**: the watcher keeps buffering events, and
+  the executor does not flush them. This is the
   difference between stopping a flush and merely deferring it — without the
   pause, the next event would start the very flush the user just stopped.
 - A cancelled flush is *not* a failed one: it does not count against the failure
@@ -1077,8 +1083,10 @@ repository (see [[*Pausing ingestion]]). All three answer the same body:
 
 - =paused= — whether ingestion is paused. In memory: a reload or a daemon
   restart starts unpaused.
-- =pending_events= — how many filesystem events are waiting in
-  =pending_operation= (what a resume would apply).
+- =pending_events= — how many filesystem events are waiting in the in-memory
+  buffer (what a resume would apply). Always exact: reading it does not touch
+  the repository's connection, so it answers even while the flush the caller is
+  trying to stop is holding it.
 
 =pause= also *cancels the flush in progress*, if any — it is the same operation
 as cancelling that flush's task (see [[file:spec-tasks.org][spec-tasks.org]]

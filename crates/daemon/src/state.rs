@@ -58,13 +58,13 @@ pub struct RepoState {
     /// consulted while fresh — so it never serves stale results. `None` until
     /// the first query builds it.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
-    /// Consecutive failures of the pending-event flush. The buffer is
-    /// persistent by design (it survives a crash), which also means a batch the
-    /// executor cannot apply is retried for ever — and while it is stuck, no
-    /// filesystem event is ever recorded again for this repository, restart
-    /// included. After [`crate::executor::FLUSH_FAILURE_BUDGET`] attempts the
-    /// batch is dropped so tracking resumes; see `crate::executor::flush_pending`.
-    pub flush_failures: std::sync::atomic::AtomicU32,
+    /// The watcher's buffered filesystem events, awaiting a flush
+    /// (spec-file-tracking "Event batching"). In memory, deliberately: a daemon
+    /// that is down misses every event anyway, and closing *that* gap needs a
+    /// reconcile — which closes this one too. Persisting the buffer bought no
+    /// coherence, cost a transaction on the watcher's hot path, and made a batch
+    /// the executor could not apply outlive a restart.
+    pub pending: Mutex<Vec<(crate::executor::FsEvent, Option<i64>)>>,
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
@@ -119,7 +119,7 @@ impl RepoState {
             rollback_lock: Mutex::new(None),
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
-            flush_failures: std::sync::atomic::AtomicU32::new(0),
+            pending: Mutex::new(Vec::new()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
         }

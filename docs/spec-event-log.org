@@ -163,9 +163,11 @@ CREATE INDEX idx_operation_parent ON operation(parent_id);
 CREATE INDEX idx_operation_rev    ON operation(rev_id, seq);
 CREATE INDEX idx_operation_entity ON operation(entity_uuid, id);
 
--- Pending operations buffer: watcher events and restoration ops awaiting
--- commit. Execution is suspended during rollback lock; metarecords survive a
--- daemon crash and are replayed on restart.
+-- Restoration ops awaiting commit (rollback `skip`). Execution is suspended
+-- during rollback lock; they survive a daemon crash and are replayed on
+-- restart. Watcher events are NOT held here: they are buffered in memory
+-- (spec-file-tracking "Event batching"). The path/tracker columns below are
+-- what a daemon that did persist them used, kept so an older database opens.
 CREATE TABLE pending_operation (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     op_type        TEXT NOT NULL,  -- watcher event type or restoration op type
@@ -412,11 +414,10 @@ direction (unapply vs. apply).
 
 =POST /rollback/start= enters /rollback lock/ mode:
 
-- The file watcher *continues to run normally*, enqueuing events into the
-  =pending_operation= table as usual.
-- *Execution of pending operations is suspended* — buffered events and
-  restoration ops from =skip= accumulate in =pending_operation= but are not
-  committed to the data tables.
+- The file watcher *continues to run normally*, buffering events as usual.
+- *Execution of pending operations is suspended* — buffered events accumulate in
+  memory and restoration ops from =skip= accumulate in =pending_operation=, but
+  neither is committed to the data tables.
 - All metadata write endpoints return =423 Locked= until the lock is released.
 - Read-only endpoints continue to work normally.
 
@@ -436,8 +437,11 @@ If the daemon crashes during a coordinated navigation:
 
 - HEAD reflects the last committed =step= (SQLite ACID).
 - The rollback lock is not restored on restart.
-- Pending operations in =pending_operation= (watcher events + restoration ops
-  from =skip=) are replayed automatically on restart as a new revision.
+- Restoration ops from =skip= are held in =pending_operation= and replayed
+  automatically on restart as a new revision. Buffered *watcher events* are not:
+  they live in memory and a stopped daemon loses them, along with everything
+  else that happened while it was down — =reconcile= is what recovers that
+  (spec-file-tracking "Event batching").
 - Any file moves executed before the crash but after the last committed step
   leave =mfr_path= stale until the replayed restoration ops correct them.
   Running =reconcile= is still recommended to catch any remaining filesystem
