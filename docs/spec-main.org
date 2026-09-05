@@ -175,6 +175,22 @@ metafolder = "/ssd/meta/music/.metafolder"
   decides. The first and last event always get a line — a batch that finishes
   inside the interval must not go by in silence, which is the case that is
   indistinguishable from a hang.
+- Applying one event is itself several steps of very different cost (the
+  ancestor walk for eligibility, the path resolution, the fingerprint search
+  among orphans, the orphan cascade, the write), so each announces itself. But
+  an announcement cannot report the step that *stalls*: the code that would
+  report it is the code stuck inside it, and the rate limit above will have
+  swallowed its announcement a millisecond earlier. So a **watchdog** reports
+  from outside — while the same step stays current it names it once per second,
+  and it says nothing at all while the steps flow:
+
+  #+BEGIN_SRC
+  [load home]   still on: event 2/426: modified /target/…/acl-manifests.json — refresh the stat fields (4.12s)
+  [load home]   event 2/426 took 5.14s
+  #+END_SRC
+
+  An event that took longer than a second is named with its cost once it
+  finishes, so the report still says where the time went after the load ends.
 
 ** Health
 

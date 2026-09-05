@@ -449,6 +449,13 @@ pub enum FlushProgress<'a> {
     /// arrives as a single `Create` and its whole content rides on it — so the
     /// event counter alone can sit still for minutes.
     Scanning { dir: &'a RelPath, ingested: usize },
+    /// The step of the current event that is about to run. Applying one event
+    /// is a handful of steps of very different cost — an ancestor walk, a path
+    /// resolution, a fingerprint search, a cascade — and naming the event alone
+    /// does not say which of them is the slow one.
+    Step { name: &'static str },
+    /// Event `index` of `total` is done, and took `elapsed`.
+    Applied { index: usize, total: usize, elapsed: std::time::Duration },
 }
 
 /// Where a flush reports its progress.
@@ -566,7 +573,13 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 apply.check_cancelled()?;
                 applied += 1;
                 report(FlushProgress::Applying { index: applied, total: n_events, event: &ev });
+                let started = std::time::Instant::now();
                 apply.apply(ev)?;
+                report(FlushProgress::Applied {
+                    index: applied,
+                    total: n_events,
+                    elapsed: started.elapsed(),
+                });
             }
             let wrote = apply.writer.op_count() > 0;
             apply.writer.commit()?;
@@ -805,7 +818,13 @@ impl Apply<'_, '_> {
         }
     }
 
+    /// Announces the step about to run (see [`FlushProgress::Step`]).
+    fn step(&self, name: &'static str) {
+        (self.report)(FlushProgress::Step { name });
+    }
+
     fn eligible(&mut self, rel: &RelPath) -> Result<bool> {
+        self.step("eligibility walk");
         eligibility::is_eligible_cached(
             self.writer.connection(),
             self.cache,
@@ -815,12 +834,14 @@ impl Apply<'_, '_> {
     }
 
     fn resolve(&mut self, rel: &RelPath) -> Result<Option<Uuid>> {
+        self.step("resolve path");
         self.cache.resolve_rel(self.writer.connection(), "mfr_path", rel)
     }
 
     /// Resolves the parent directory entry of `rel`, creating any missing
     /// intermediate directory metarecords (with their stat fields).
     fn ensure_parents(&mut self, rel: &RelPath) -> Result<Uuid> {
+        self.step("ensure parent directories");
         ensure_parent_metarecords(&mut self.writer, self.cache, self.root, rel, &[])
     }
 
@@ -946,6 +967,7 @@ impl Apply<'_, '_> {
     /// Creates a fresh metarecord for `rel`: its `mfr_path` TreeRef plus the
     /// stat-derived fields. A no-op if the path vanished before the flush.
     fn create_record(&mut self, rel: &RelPath) -> Result<()> {
+        self.step("create the metarecord");
         let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(()); // The file disappeared before the flush.
         };
@@ -995,6 +1017,7 @@ impl Apply<'_, '_> {
     /// path is gone — a deletion, a departure, or a file destroyed by something
     /// else being moved on top of it.
     fn orphan_subtree(&mut self, uuid: Uuid) -> Result<()> {
+        self.step("orphan cascade over the subtree");
         let descendants = self.cache.descendants(self.writer.connection(), "mfr_path", uuid)?;
         // Mass-orphan circuit breaker (spec-file-tracking): a single event that
         // would null thousands of paths is a filesystem going away, not a
@@ -1038,11 +1061,51 @@ impl Apply<'_, '_> {
             // when the file reappears is exactly what they are for
             // (spec-duplicates "Invariant").
             self.writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
+            // It is an orphan now, and a later arrival in this same group may
+            // legitimately match it.
+            self.remember_orphan(u)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
-        // These records are orphans now: a later arrival in this same group may
-        // legitimately match one, so the index has to be built again.
-        self.orphan_index = None;
+        Ok(())
+    }
+
+    /// Adds a freshly orphaned metarecord to the orphan index.
+    ///
+    /// A record this cascade just orphaned is a legitimate match for a later
+    /// arrival in the same group, so the index must account for it. It used to
+    /// be *dropped* for that, which is correct and quadratic: rebuilding it
+    /// scans every orphan in the repository, and a group that orphans and
+    /// arrives in turn pays that scan per event. A build tree is exactly such a
+    /// group — the compiler renames each fresh artifact over the one it
+    /// replaces — so a few hundred buffered events became a few hundred full
+    /// scans, minutes of CPU with nothing to show. Adding the one record costs
+    /// a single read instead, and only for records this batch actually orphans.
+    ///
+    /// A record with no size or no stored hashes is not matchable and is left
+    /// out, exactly as [`db::hashed_orphans`] would have left it out. Nothing to
+    /// do when the index has not been built: the build will see this record's
+    /// own write, which is in the same transaction.
+    fn remember_orphan(&mut self, uuid: Uuid) -> Result<()> {
+        if self.orphan_index.is_none() {
+            return Ok(());
+        }
+        let Some(record) = db::get_metarecord(self.writer.connection(), uuid)? else {
+            return Ok(());
+        };
+        let (Some(Value::Int(size)), Some(Value::String(partial)), Some(Value::String(full))) =
+            (record.get("mfr_size"), record.get("mfr_partial_hash"), record.get("mfr_full_hash"))
+        else {
+            return Ok(());
+        };
+        let candidate = db::OrphanCandidate {
+            uuid,
+            size: *size,
+            partial_hash: partial.clone(),
+            full_hash: full.clone(),
+        };
+        if let Some(index) = self.orphan_index.as_mut() {
+            index.entry(candidate.size).or_default().push(candidate);
+        }
         Ok(())
     }
 
@@ -1112,6 +1175,7 @@ impl Apply<'_, '_> {
     /// serve here: a metarecord the watcher created has no stored hashes, and
     /// its file has already left the old path, so there is nothing left to hash.
     fn find_departed_match(&mut self, rel: &RelPath) -> Result<Option<RelPath>> {
+        self.step("re-pair a departed path");
         if self.departed.is_empty() {
             return Ok(None);
         }
@@ -1144,6 +1208,7 @@ impl Apply<'_, '_> {
         if self.departed_index.is_some() {
             return Ok(());
         }
+        self.step("index this batch's departures");
         let departed = self.departed; // a plain `&[String]`: not borrowed from `self`
         let mut index: HashMap<StatKey, Vec<RelPath>> = HashMap::new();
         for from in departed {
@@ -1171,6 +1236,7 @@ impl Apply<'_, '_> {
     /// size pre-filter, then partial hash, then a stored full hash must
     /// confirm identity (spec watcher `Rename(To)` semantics).
     fn find_orphan_match(&mut self, abs: &Path, size: i64) -> Result<Option<Uuid>> {
+        self.step("fingerprint search among orphans");
         self.index_orphans()?;
         let candidates = match self.orphan_index.as_ref().and_then(|m| m.get(&size)) {
             Some(candidates) if !candidates.is_empty() => candidates.clone(),
@@ -1202,6 +1268,7 @@ impl Apply<'_, '_> {
         if self.orphan_index.is_some() {
             return Ok(());
         }
+        self.step("index the repository's orphans");
         let mut index: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
         for candidate in db::hashed_orphans(self.writer.connection())? {
             index.entry(candidate.size).or_default().push(candidate);
@@ -1233,6 +1300,7 @@ impl Apply<'_, '_> {
     }
 
     fn refresh_data(&mut self, uuid: Uuid, rel: &RelPath) -> Result<()> {
+        self.step("refresh the stat fields");
         let Ok(stat) = fs_meta::stat_fields_in(self.root, &self.abs(rel)) else {
             return Ok(());
         };

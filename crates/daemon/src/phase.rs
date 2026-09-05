@@ -13,6 +13,8 @@
 //! The reading rule is therefore: the last line of the report names the step
 //! that is running, and any step that cost something says so.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long a phase must run before its completion earns a line of its own.
@@ -94,6 +96,111 @@ impl Throttle {
     }
 }
 
+/// What a phase is doing right now, and since when.
+pub struct Doing {
+    what: String,
+    since: Instant,
+    announced_at: Option<Instant>,
+}
+
+impl Doing {
+    fn new(what: String, now: Instant) -> Self {
+        Doing { what, since: now, announced_at: None }
+    }
+
+    /// Records a new current step, resetting the clock.
+    fn set(&mut self, what: String, now: Instant) {
+        if what != self.what {
+            *self = Doing::new(what, now);
+        }
+    }
+
+    /// How long the current step has been running, when it has been running
+    /// long enough to be worth a line and has not just had one.
+    ///
+    /// This is the whole decision, kept pure so it can be tested without a
+    /// clock: a step is announced once it has lasted `every`, and again on each
+    /// further `every` while it lasts.
+    fn due(&mut self, now: Instant, every: Duration) -> Option<Duration> {
+        let elapsed = now.duration_since(self.since);
+        if elapsed < every {
+            return None;
+        }
+        let fresh = self.announced_at.is_none_or(|at| now.duration_since(at) >= every);
+        fresh.then(|| {
+            self.announced_at = Some(now);
+            elapsed
+        })
+    }
+}
+
+/// Reports the step a phase is stuck on, from *outside* the phase.
+///
+/// A phase announces each step before running it, which answers "what is it
+/// doing" only for as long as the steps keep coming. It cannot answer it during
+/// a stall, which is the only time the question is asked: the code that would
+/// report the slow step is the code that is stuck inside it, and the throttle
+/// that keeps a fast load readable is precisely what swallowed that step's
+/// announcement a millisecond before it hung. So the report comes from a thread
+/// that watches instead: while the same step stays current, it says so once per
+/// interval, and says nothing at all when the steps are flowing.
+pub struct Watchdog {
+    doing: Arc<Mutex<Doing>>,
+    stop: Arc<AtomicBool>,
+    handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Watchdog {
+    /// Starts watching. `who` labels the repository, as in every other line of
+    /// the load report.
+    pub fn start(who: &str, every: Duration) -> Self {
+        let doing = Arc::new(Mutex::new(Doing::new(String::new(), Instant::now())));
+        let stop = Arc::new(AtomicBool::new(false));
+        let handle = {
+            let (doing, stop, who) = (doing.clone(), stop.clone(), who.to_string());
+            std::thread::spawn(move || {
+                // Ticks well under the interval: the point is to notice a stall
+                // promptly, not to sample it precisely.
+                let tick = every / 4;
+                while !stop.load(Ordering::Relaxed) {
+                    std::thread::sleep(tick);
+                    let mut doing = match doing.lock() {
+                        Ok(doing) => doing,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    if doing.what.is_empty() {
+                        continue;
+                    }
+                    if let Some(elapsed) = doing.due(Instant::now(), every) {
+                        eprintln!("[load {who}]   still on: {} ({elapsed:?})", doing.what);
+                    }
+                }
+            })
+        };
+        Watchdog { doing, stop, handle: Some(handle) }
+    }
+
+    /// Declares what the phase is doing now. Cheap and lock-only: it is called
+    /// from the reporting hot path.
+    pub fn doing(&self, what: impl Into<String>) {
+        let now = Instant::now();
+        let mut doing = match self.doing.lock() {
+            Ok(doing) => doing,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        doing.set(what.into(), now);
+    }
+}
+
+impl Drop for Watchdog {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -137,5 +244,49 @@ mod tests {
         // The clock restarts from the line that got through, not from the start.
         assert!(!t.ready_at(start + Duration::from_millis(1500)));
         assert!(t.ready_at(start + Duration::from_secs(2)));
+    }
+
+    #[test]
+    fn test_a_step_is_not_announced_before_it_has_lasted() {
+        // A load whose steps flow must stay silent: the watchdog exists for the
+        // one that does not come back.
+        let start = Instant::now();
+        let mut doing = Doing::new("resolve path".into(), start);
+        assert_eq!(doing.due(start + Duration::from_millis(999), Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn test_a_step_that_lasts_is_announced_once_per_interval() {
+        let every = Duration::from_secs(1);
+        let start = Instant::now();
+        let mut doing = Doing::new("refresh the stat fields".into(), start);
+        assert!(doing.due(start + Duration::from_secs(1), every).is_some());
+        // Not again straight away…
+        assert_eq!(doing.due(start + Duration::from_millis(1500), every), None);
+        // … but again on the next interval, reporting the total, not the delta.
+        let again = doing.due(start + Duration::from_secs(2), every).expect("still stuck");
+        assert_eq!(again, Duration::from_secs(2));
+    }
+
+    #[test]
+    fn test_moving_on_to_another_step_restarts_the_clock() {
+        let every = Duration::from_secs(1);
+        let start = Instant::now();
+        let mut doing = Doing::new("eligibility walk".into(), start);
+        doing.set("resolve path".into(), start + Duration::from_millis(900));
+        // 900 ms of the previous step do not count towards this one.
+        assert_eq!(doing.due(start + Duration::from_millis(1500), every), None);
+        assert!(doing.due(start + Duration::from_millis(1900), every).is_some());
+    }
+
+    #[test]
+    fn test_re_declaring_the_same_step_does_not_restart_the_clock() {
+        // The reporter re-announces the same step for every scanned entry; that
+        // must not hide a scan that is going nowhere.
+        let every = Duration::from_secs(1);
+        let start = Instant::now();
+        let mut doing = Doing::new("scanning /photos".into(), start);
+        doing.set("scanning /photos".into(), start + Duration::from_millis(900));
+        assert!(doing.due(start + Duration::from_secs(1), every).is_some());
     }
 }

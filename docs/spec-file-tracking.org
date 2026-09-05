@@ -405,6 +405,17 @@ while a volume was away are therefore picked up only by an explicit
 =mf reconcile --metarecord <mount>=, which the client is expected to offer
 rather than run behind the user's back.
 
+*** Cost of the orphan search
+
+The fingerprint search an arrival runs (=Rename(To)=, and the children of a
+directory that arrives whole) is served from an index of the repository's
+matchable orphans, built once per event group. It must be *maintained*, never
+dropped: a group that orphans a metarecord and then takes an arrival — which is
+what a rename over a tracked destination does, and what a compiler writing into
+a build tree does hundreds of times in a row — would otherwise rebuild it from a
+full scan of every orphan in the repository, once per event. A record the group
+has just orphaned is added to the index instead, which is the one read it costs.
+
 *** Mass-orphan circuit breaker
 
 Independently of mount points: a single filesystem event batch that would orphan

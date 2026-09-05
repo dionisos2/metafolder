@@ -1256,6 +1256,10 @@ fn record_flush(repo: &RepoState) -> Vec<String> {
             executor::FlushProgress::Scanning { dir, ingested } => {
                 format!("scanning {} {ingested}", dir.display())
             }
+            executor::FlushProgress::Step { name } => format!("step {name}"),
+            executor::FlushProgress::Applied { index, total, elapsed } => {
+                format!("applied {index}/{total} in {}ms", elapsed.as_millis())
+            }
         };
         seen.lock().unwrap().push(line);
     })
@@ -1325,4 +1329,83 @@ fn test_an_empty_flush_reports_nothing() {
     let (repo, root, _) = setup("reported-empty");
     assert!(record_flush(&repo).is_empty(), "an empty flush has nothing to say");
     std::fs::remove_dir_all(root).unwrap();
+}
+
+/// Naming the event is not enough when the event itself is slow: the cost of
+/// applying one is spread over a handful of steps (the eligibility walk, the
+/// path resolution, the write), and which of them is the expensive one is the
+/// whole question. Each announces itself, so the last line printed before a
+/// stall names the step and not merely the event.
+#[test]
+fn test_applying_an_event_announces_its_steps_and_its_cost() {
+    let (repo, root, _) = setup("reported-steps");
+    write_file(&root, "a.txt", b"hello");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    // Now a real modification of a tracked file: the path the load's replay
+    // spends its time in.
+    std::fs::write(root.join("a.txt"), b"hello there").unwrap();
+    enqueue(&repo, &[FsEvent::ModifyData("/a.txt".into())]);
+    let seen = record_flush(&repo);
+
+    let steps: Vec<&String> = seen.iter().filter(|l| l.starts_with("step ")).collect();
+    assert!(
+        steps.iter().any(|l| l.contains("eligibility")),
+        "the eligibility walk must name itself: {seen:?}"
+    );
+    assert!(
+        steps.iter().any(|l| l.contains("resolve")),
+        "the path resolution must name itself: {seen:?}"
+    );
+    assert!(steps.iter().any(|l| l.contains("refresh")), "the write must name itself: {seen:?}");
+    // And the event says what it cost, so a slow one is identified by number.
+    assert!(
+        seen.iter().any(|l| l.starts_with("applied 1/1 in ")),
+        "the applied event reports its duration: {seen:?}"
+    );
+}
+
+/// A batch of renames must index the repository's orphans **once**.
+///
+/// The index is what spares each arriving file its own orphan question, and it
+/// is built by a scan of every orphan in the repository. Dropping it whenever
+/// the batch orphans something turns a rename-heavy batch into one full scan
+/// per event — and a build tree is exactly such a batch: the compiler renames
+/// fresh artifacts over the ones it is replacing, all day long. A freshly
+/// orphaned record belongs *in* the index, so it is added to it.
+#[test]
+fn test_a_batch_of_renames_indexes_the_orphans_once() {
+    let (repo, root, _) = setup("orphan-index-once");
+    write_file(&root, "a.txt", b"aaa");
+    write_file(&root, "t1.txt", b"ttt");
+    enqueue(&repo, &[FsEvent::Create("/a.txt".into()), FsEvent::Create("/t1.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    assert!(resolve(&repo, "/t1.txt").is_some(), "t1.txt is tracked");
+
+    // On disk: a.txt renamed over the tracked t1.txt, and two files arriving
+    // from outside the repository (their sources were never tracked).
+    std::fs::rename(root.join("a.txt"), root.join("t1.txt")).unwrap();
+    write_file(&root, "n1.txt", b"n1");
+    write_file(&root, "n2.txt", b"n2");
+    enqueue(
+        &repo,
+        &[
+            // Unknown source, untracked destination: an orphan search.
+            FsEvent::Rename("/s1.txt".into(), "/n1.txt".into()),
+            // Tracked source over a tracked destination: the destination's
+            // metarecord is orphaned right in the middle of the group.
+            FsEvent::Rename("/a.txt".into(), "/t1.txt".into()),
+            // And another orphan search behind it.
+            FsEvent::Rename("/s2.txt".into(), "/n2.txt".into()),
+        ],
+    );
+
+    let seen = record_flush(&repo);
+
+    let builds = seen.iter().filter(|l| l.contains("index the repository's orphans")).count();
+    assert_eq!(
+        builds, 1,
+        "the orphan index is rebuilt per event, which is a full repository scan each time: {seen:?}"
+    );
 }

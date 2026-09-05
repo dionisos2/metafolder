@@ -13,10 +13,15 @@ use crate::config::RepoConfig;
 use crate::daemon_config::DaemonSettings;
 use crate::error::ApiError;
 use crate::executor::FlushProgress;
-use crate::phase::Phase;
+use crate::phase::{Phase, Watchdog};
 use crate::reconcile::ProgressFn;
 use crate::repo::{self, OpenedRepo, RepoLocator};
 use crate::tree_cache::TreeCache;
+
+/// How long one filesystem event must take before the load report names it
+/// with its cost. Below it the event is ordinary and saying so would drown the
+/// one that is not.
+const SLOW_EVENT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// One loaded repository. The SQLite connection and the tree cache each sit
 /// behind their own mutex; blocking work runs in `spawn_blocking`.
@@ -415,6 +420,13 @@ impl AppState {
             // one line a second is what a person can read, and is enough to
             // tell "still moving, here" from "stuck, here".
             let throttle = std::cell::RefCell::new(Phase::progress_throttle());
+            // The steps below announce themselves *before* they run, which says
+            // nothing once one of them stops coming back — so a watcher outside
+            // the flush reports whatever step stays current.
+            let watchdog = Watchdog::start(&who, SLOW_EVENT);
+            // The step names alone ("resolve path") do not say which event is
+            // stuck; the current event labels them.
+            let current = std::cell::RefCell::new(String::new());
             let stats =
                 crate::executor::flush_pending_reported(&repo_state, &|progress| match progress {
                     FlushProgress::Buffered(n) => {
@@ -427,12 +439,12 @@ impl AppState {
                     // them a batch shorter than the interval says nothing at
                     // all — which is exactly the case that looked like a hang.
                     FlushProgress::Applying { index, total, event } => {
+                        let what = crate::executor::describe(event);
                         if index == 1 || index == total || throttle.borrow_mut().ready() {
-                            eprintln!(
-                                "[load {who}]   event {index}/{total}: {}",
-                                crate::executor::describe(event)
-                            );
+                            eprintln!("[load {who}]   event {index}/{total}: {what}");
                         }
+                        *current.borrow_mut() = format!("event {index}/{total}: {what}");
+                        watchdog.doing(current.borrow().clone());
                     }
                     FlushProgress::Scanning { dir, ingested } => {
                         if throttle.borrow_mut().ready() {
@@ -441,8 +453,37 @@ impl AppState {
                                 dir.display()
                             );
                         }
+                        // The count is part of what the scan declares, so a
+                        // scan that is *progressing* keeps resetting the
+                        // watchdog's clock and it stays quiet — while one that
+                        // stops on a single entry is reported like any other
+                        // stuck step.
+                        watchdog.doing(format!(
+                            "{} — scanning {} ({ingested} entries in)",
+                            current.borrow(),
+                            dir.display()
+                        ));
+                    }
+                    // A step line is only ever printed because the throttle let
+                    // it through, which means the event has already been running
+                    // for a while: exactly the case where knowing the step is
+                    // the answer.
+                    FlushProgress::Step { name } => {
+                        watchdog.doing(format!("{} — {name}", current.borrow()))
+                    }
+                    // A fast event says nothing; a slow one is named with what
+                    // it cost, so the report keeps a record of where the time
+                    // went even after the load finishes.
+                    FlushProgress::Applied { index, total, elapsed } => {
+                        if elapsed >= SLOW_EVENT {
+                            eprintln!("[load {who}]   event {index}/{total} took {elapsed:?}");
+                        }
                     }
                 })?;
+            // Stopped as soon as the flush returns: the last step stays current
+            // until the watcher is dropped, and a tick landing in that window
+            // reports a step that has already finished.
+            drop(watchdog);
             p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));
         }
         let quiet = self.settings.watch_quiet_period();
