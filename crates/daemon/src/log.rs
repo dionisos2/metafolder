@@ -1107,16 +1107,19 @@ impl<'c> Writer<'c> {
         })
     }
 
-    /// True if this revision wrote an `mf_watch` or `mf_ignore` field — the
-    /// fields that determine watch/ignore eligibility. A caller that keeps a
-    /// live inotify watch set (the watcher) must refresh it after such a write,
-    /// since the set of eligible directories may have changed.
+    /// True if this revision wrote a field that decides which directories are
+    /// watched: `mf_watch` / `mf_ignore` (eligibility), or `mfr_watch_exceeded`
+    /// (the watch budget). A caller that keeps a live inotify watch set (the
+    /// watcher) must refresh it after such a write, since the set of watched
+    /// directories may have changed.
     pub fn touched_watch(&self) -> bool {
+        const DECIDES_WATCHES: &[&str] =
+            &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
         self.pending.iter().any(|op| {
             op.before
                 .iter()
                 .chain(op.after.iter())
-                .any(|f| f.name == "mf_watch" || f.name == "mf_ignore")
+                .any(|f| DECIDES_WATCHES.contains(&f.name.as_str()))
         })
     }
 

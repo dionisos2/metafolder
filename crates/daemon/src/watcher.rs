@@ -32,6 +32,7 @@ use rusqlite::Connection;
 use metafolder_core::metarecord::TreeName;
 use metafolder_core::sync::MutexExt;
 
+use crate::db;
 use crate::eligibility::{self, EligibilityCache};
 use crate::executor::{self, ExecutorPinger, FsEvent};
 use crate::relpath::RelPath;
@@ -128,6 +129,30 @@ impl WatcherInner {
     }
 }
 
+/// The kernel's per-user watch limit (`fs.inotify.max_user_watches`), or `None`
+/// where it cannot be read — every backend that is not inotify, and a Linux
+/// without `/proc`. Read once per placement; it does not change under us in any
+/// way worth polling for.
+pub fn kernel_watch_limit() -> Option<usize> {
+    std::fs::read_to_string("/proc/sys/fs/inotify/max_user_watches").ok()?.trim().parse().ok()
+}
+
+/// How many watches this daemon will spend: `share` percent of the kernel's
+/// limit (spec-file-tracking "The watch budget").
+///
+/// A ceiling it imposes on itself, not a reservation: the kernel exposes the
+/// limit, never what is still available, and nothing can be reserved. The floor
+/// of one keeps a `share` of zero from producing a repository that watches
+/// literally nothing, which reads as a broken daemon rather than as a setting.
+fn budget_cap(limit: Option<usize>, share: u8) -> Option<usize> {
+    limit.map(|limit| (limit.saturating_mul(share as usize) / 100).max(1))
+}
+
+/// The cap for a given share, read from the kernel now.
+pub fn budget_cap_for(share: u8) -> Option<usize> {
+    budget_cap(kernel_watch_limit(), share)
+}
+
 /// Whether a watch failure is the kernel's per-user watch budget being
 /// exhausted (`ENOSPC` from `inotify_add_watch`).
 ///
@@ -163,6 +188,18 @@ fn budget_report(unwatched: usize, watched: usize) -> Option<String> {
 /// stream without waiting for it to end.
 const MAX_INGEST_BATCH: usize = 4096;
 
+/// What one placement achieved (spec-file-tracking "The watch budget").
+pub struct Placement {
+    /// Directories now watched.
+    pub watched: usize,
+    /// Directories the *kernel* refused although the daemon was under its own
+    /// ceiling — someone else holds the budget. Nothing is recorded for these.
+    pub starved: usize,
+    /// Subtree roots the daemon's own ceiling could not afford, to record as
+    /// `mfr_watch_exceeded`.
+    pub frontier: Vec<String>,
+}
+
 pub struct WatcherHandle {
     // Dropping the last strong `Arc` drops the notify watcher (stopping event
     // delivery). The event callback holds only a `Weak`, so it is not a cycle.
@@ -179,32 +216,38 @@ impl WatcherHandle {
         self.inner.watched_count()
     }
 
-    /// Brings the watch set in line with the repository's eligibility, and
-    /// returns how many directories are watched afterwards.
+    /// Brings the watch set in line with the repository's eligibility, within
+    /// the budget `cap` (`None` = uncapped).
     pub fn refresh(
         &self,
         conn: &Connection,
         cache: &mut TreeCache,
         root: &Path,
         internal_dir: &Path,
-    ) -> usize {
-        let (target, total, elig) = compute_watched_dirs_timed(conn, cache, root, internal_dir);
+        cap: Option<usize>,
+    ) -> Placement {
+        let plan = compute_watched_dirs_timed(conn, cache, root, internal_dir, cap);
         // A persistent diagnostic for the initial (load-time) walk and any large
         // watch reconfiguration: the filesystem read_dir cost vs the per-directory
         // eligibility cost (served from the tree cache once warm).
-        if total.as_millis() >= 100 {
+        if plan.total.as_millis() >= 100 {
             eprintln!(
-                "[watcher] walk: {} dirs in {total:?} (fs {:?} + eligibility {elig:?})",
-                target.len(),
-                total.saturating_sub(elig)
+                "[watcher] walk: {} dirs in {:?} (fs {:?} + eligibility {:?})",
+                plan.dirs.len(),
+                plan.total,
+                plan.total.saturating_sub(plan.eligibility),
+                plan.eligibility,
             );
         }
-        let unwatched = self.inner.apply(&target);
+        let starved = self.inner.apply(&plan.dirs);
         let watched = self.inner.watched_count();
-        if let Some(report) = budget_report(unwatched, watched) {
+        // Refused by the kernel while under our own ceiling: another program is
+        // holding the budget. Transient and external — reported, never recorded
+        // (spec-file-tracking "Two different failures").
+        if let Some(report) = budget_report(starved, watched) {
             crate::diagnostics::error("watcher", report);
         }
-        watched
+        Placement { watched, starved, frontier: plan.frontier }
     }
 }
 
@@ -285,48 +328,115 @@ pub fn start(repo: &Arc<RepoState>, pinger: ExecutorPinger) -> Result<WatcherHan
 /// — a persistent diagnostic (see [`WatcherHandle::refresh`]) and the basis for
 /// deferring the initial walk until the tree cache is warm (eligibility served
 /// from memory rather than a per-directory DB walk).
+/// What a placement decided: the directories to watch, and the subtree roots the
+/// budget could not afford (spec-file-tracking "The watch budget").
+pub struct WatchPlan {
+    pub dirs: HashSet<PathBuf>,
+    /// Repo-root-relative paths to record as `mfr_watch_exceeded`. Only the
+    /// *frontier* — the subtrees the walk did not enter — never every directory
+    /// beneath: a repository too large to watch is also too large to annotate
+    /// one metarecord at a time.
+    pub frontier: Vec<String>,
+    pub total: std::time::Duration,
+    pub eligibility: std::time::Duration,
+}
+
 pub fn compute_watched_dirs_timed(
     conn: &Connection,
     cache: &mut TreeCache,
     root: &Path,
     internal_dir: &Path,
-) -> (HashSet<PathBuf>, std::time::Duration, std::time::Duration) {
+    cap: Option<usize>,
+) -> WatchPlan {
     let start = std::time::Instant::now();
     let mut elig = std::time::Duration::ZERO;
     let mut ec = EligibilityCache::default();
     let mut out = HashSet::new();
+    let mut frontier = Vec::new();
+    // Paths that override an inherited exclusion back to `false`. Few by
+    // construction — each is a deliberate user choice — and knowing them lets
+    // an excluded subtree be pruned instead of walked in search of an override
+    // that is not there.
+    let overrides = watch_exceeded_overrides(conn, cache);
     // The root directory is watched iff the root metarecord is eligible
     // (`mf_watch = true` set directly on it — the opt-in default is false).
     let t = std::time::Instant::now();
     let root_eligible = eligibility::is_eligible_cached(conn, cache, "", &mut ec);
     elig += t.elapsed();
+    macro_rules! done {
+        () => {
+            return WatchPlan { dirs: out, frontier, total: start.elapsed(), eligibility: elig }
+        };
+    }
     match root_eligible {
         Ok(true) => {
             out.insert(root.to_path_buf());
         }
-        Ok(false) => return (out, start.elapsed(), elig),
+        Ok(false) => done!(),
         Err(err) => {
             crate::diagnostics::warn("watcher", format!("root eligibility check failed: {err:#}"));
-            return (out, start.elapsed(), elig);
+            done!()
         }
     }
     // Declared mount points with nothing mounted: no watch on them, none below
     // (spec-file-tracking "Offline subtrees"). Recomputed on every refresh, so
     // a remounted volume is watched again without restarting the daemon.
     let offline = crate::mount::offline(conn, cache, root).unwrap_or_default();
-    collect_eligible_dirs(
-        conn,
-        cache,
-        root,
+    let mut walk = Walk {
         internal_dir,
-        &RelPath::root(),
-        &mut ec,
-        &offline,
-        &mut out,
-        &mut elig,
-    );
-    let total = start.elapsed();
-    (out, total, elig)
+        offline: &offline,
+        overrides: &overrides,
+        cap,
+        out: &mut out,
+        frontier: &mut frontier,
+        elig: &mut elig,
+    };
+    collect_eligible_dirs(conn, cache, root, &RelPath::root(), &mut ec, &mut walk);
+    done!()
+}
+
+/// The paths carrying `mfr_watch_exceeded = false` — the deliberate overrides
+/// inside an excluded subtree.
+fn watch_exceeded_overrides(conn: &Connection, cache: &mut TreeCache) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let uuids = match db::metarecords_with_bool(conn, eligibility::WATCH_EXCEEDED, false) {
+        Ok(uuids) => uuids,
+        Err(err) => {
+            crate::diagnostics::warn("watcher", format!("reading watch overrides failed: {err:#}"));
+            return out;
+        }
+    };
+    for uuid in uuids {
+        if let Ok(Some(path)) = cache.path_of(conn, "mfr_path", uuid) {
+            out.insert(path);
+        }
+    }
+    out
+}
+
+/// The mutable state of one placement walk, kept together so the descent takes
+/// an argument list a person can read.
+struct Walk<'a> {
+    internal_dir: &'a Path,
+    offline: &'a crate::mount::OfflineMounts,
+    overrides: &'a HashSet<String>,
+    cap: Option<usize>,
+    out: &'a mut HashSet<PathBuf>,
+    frontier: &'a mut Vec<String>,
+    elig: &'a mut std::time::Duration,
+}
+
+impl Walk<'_> {
+    /// Whether the budget still allows another watch.
+    fn has_room(&self) -> bool {
+        self.cap.is_none_or(|cap| self.out.len() < cap)
+    }
+
+    /// Whether an override lies inside `dir`, so an excluded subtree has to be
+    /// descended after all.
+    fn holds_override(&self, dir: &str) -> bool {
+        self.overrides.iter().any(|p| p == dir || p.starts_with(&format!("{dir}/")))
+    }
 }
 
 /// Depth-first descent from the eligible directory `base` (repo-root-relative,
@@ -337,15 +447,15 @@ fn collect_eligible_dirs(
     conn: &Connection,
     cache: &mut TreeCache,
     root: &Path,
-    internal_dir: &Path,
     base: &RelPath,
     ec: &mut EligibilityCache,
-    offline: &crate::mount::OfflineMounts,
-    out: &mut HashSet<PathBuf>,
-    elig: &mut std::time::Duration,
+    walk: &mut Walk,
 ) {
-    let mut stack = vec![base.clone()];
-    while let Some(dir) = stack.pop() {
+    // Each entry carries the exclusion inherited from its ancestors, so the
+    // nearest-ancestor rule costs one field read per directory and not one
+    // ancestor chain (spec-file-tracking "The watch budget").
+    let mut stack = vec![(base.clone(), false)];
+    while let Some((dir, inherited_excluded)) = stack.pop() {
         let abs = dir.to_abs(root);
         let entries = match std::fs::read_dir(&abs) {
             Ok(entries) => entries,
@@ -353,7 +463,7 @@ fn collect_eligible_dirs(
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path == internal_dir {
+            if path == *walk.internal_dir {
                 continue;
             }
             // `file_type` comes from the dir entry (no stat, no symlink follow):
@@ -369,12 +479,26 @@ fn collect_eligible_dirs(
             let display = rel.display();
             let t = std::time::Instant::now();
             let eligible = eligibility::is_eligible_cached(conn, cache, &display, ec);
-            *elig += t.elapsed();
+            *walk.elig += t.elapsed();
             match eligible {
-                Ok(true) if offline.contains(&display) => {} // Unplugged volume: frozen.
+                Ok(true) if walk.offline.contains(&display) => {} // Unplugged volume: frozen.
                 Ok(true) => {
-                    out.insert(path);
-                    stack.push(rel);
+                    let excluded = exclusion_of(conn, cache, ec, &display, inherited_excluded);
+                    if excluded {
+                        // Not watched. Descended only when a deliberate override
+                        // is known to be inside, so giving up a subtree does not
+                        // cost a walk of it at every load.
+                        if walk.holds_override(&display) {
+                            stack.push((rel, true));
+                        }
+                    } else if walk.has_room() {
+                        walk.out.insert(path);
+                        stack.push((rel, false));
+                    } else {
+                        // The budget is spent: this subtree is the frontier —
+                        // recorded, and not entered.
+                        walk.frontier.push(display);
+                    }
                 }
                 Ok(false) => {} // Ineligible directory: pruned (cascading skip).
                 Err(err) => crate::diagnostics::warn(
@@ -382,6 +506,31 @@ fn collect_eligible_dirs(
                     format!("eligibility check for {rel:?} failed: {err:#}"),
                 ),
             }
+        }
+    }
+}
+
+/// The effective `mfr_watch_exceeded` of `display`: its own value when it has
+/// one, else the value inherited from its ancestors.
+fn exclusion_of(
+    conn: &Connection,
+    cache: &mut TreeCache,
+    ec: &mut EligibilityCache,
+    display: &str,
+    inherited: bool,
+) -> bool {
+    let Ok(Some(uuid)) = cache.resolve_path(conn, "mfr_path", display) else {
+        return inherited; // Not tracked yet: it can carry no value of its own.
+    };
+    match eligibility::cached_watch_exceeded(conn, ec, uuid) {
+        Ok(Some(own)) => own,
+        Ok(None) => inherited,
+        Err(err) => {
+            crate::diagnostics::warn(
+                "watcher",
+                format!("reading {} for {display:?} failed: {err:#}", eligibility::WATCH_EXCEEDED),
+            );
+            inherited
         }
     }
 }
@@ -539,11 +688,14 @@ fn maintain_watches(
     // notify's event loop, which must never be made to wait for the connection
     // (see the module documentation).
     let mut subtree = HashSet::new();
+    let mut frontier: Vec<String> = Vec::new();
+    let cap = budget_cap_for(repo.watch_budget_share());
     {
         let conn = repo.conn.lock_recover();
         let mut cache = repo.lock_cache();
         let mut ec = EligibilityCache::default();
         let offline = crate::mount::offline(&conn, &mut cache, root).unwrap_or_default();
+        let overrides = watch_exceeded_overrides(&conn, &mut cache);
         for rel in arrivals {
             let abs = rel.to_abs(root);
             // Only a real directory (not a symlink) that is eligible is watched.
@@ -558,27 +710,36 @@ fn maintain_watches(
             }
             subtree.insert(abs);
             let mut elig = std::time::Duration::ZERO;
-            collect_eligible_dirs(
-                &conn,
-                &mut cache,
-                root,
+            let mut walk = Walk {
                 internal_dir,
-                rel,
-                &mut ec,
-                &offline,
-                &mut subtree,
-                &mut elig,
-            );
+                offline: &offline,
+                overrides: &overrides,
+                // The ceiling counts the *whole* repository, not this subtree,
+                // so what is already watched is charged against it.
+                cap: cap.map(|cap| cap.saturating_sub(inner.watched_count())),
+                out: &mut subtree,
+                frontier: &mut frontier,
+                elig: &mut elig,
+            };
+            collect_eligible_dirs(&conn, &mut cache, root, rel, &mut ec, &mut walk);
         }
     }
     for dir in &subtree {
         inner.watch_dir(dir);
     }
+    // A directory that arrived into a full budget is recorded like any other
+    // frontier, so the choice survives the session (spec-file-tracking "The
+    // watch budget").
+    if !frontier.is_empty() {
+        repo.record_watch_frontier(&frontier);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted, relative};
+    use super::{
+        budget_cap, budget_report, compute_watched_dirs_timed, is_watch_budget_exhausted, relative,
+    };
     use crate::db;
     use crate::log::Writer;
     use crate::tree_cache::TreeCache;
@@ -620,9 +781,39 @@ mod tests {
         }
 
         fn watched(&mut self) -> HashSet<PathBuf> {
+            self.plan(None).dirs
+        }
+
+        fn plan(&mut self, cap: Option<usize>) -> super::WatchPlan {
             let internal = self.internal_dir();
             let root = self.root.clone();
-            compute_watched_dirs_timed(&self.conn, &mut self.cache, &root, &internal).0
+            compute_watched_dirs_timed(&self.conn, &mut self.cache, &root, &internal, cap)
+        }
+
+        /// Gives `rel` (repo-root-relative, leading `/`) a metarecord carrying
+        /// `mfr_watch_exceeded = value`, as the daemon or the user would.
+        fn mark_exceeded(&mut self, rel: &str, value: bool) {
+            let parent_rel = rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("");
+            let parent = self
+                .cache
+                .resolve_path(&self.conn, "mfr_path", parent_rel)
+                .unwrap()
+                .expect("parent tracked");
+            let name = rel.rsplit('/').next().unwrap().to_string();
+            let mut w = Writer::begin(&mut self.conn, None).unwrap();
+            let created = w
+                .create_metarecord(vec![
+                    Field::new(
+                        "mfr_path",
+                        Value::TreeRef { parent: Some(parent), name: name.as_str().into() },
+                    ),
+                    Field::new("mfr_type", Value::String("dir".into())),
+                ])
+                .unwrap();
+            w.set_field(created.uuid, super::eligibility::WATCH_EXCEEDED, Value::Bool(value))
+                .unwrap();
+            w.commit().unwrap();
+            self.cache.clear();
         }
     }
 
@@ -803,5 +994,104 @@ mod tests {
     #[test]
     fn test_no_report_when_every_directory_was_watched() {
         assert_eq!(budget_report(0, 6_000), None);
+    }
+
+    #[test]
+    fn test_the_share_is_a_percentage_of_the_kernel_limit() {
+        // The daemon spends a share of `fs.inotify.max_user_watches` and leaves
+        // the rest to other programs — a ceiling it imposes on itself, since
+        // there is no way to reserve anything.
+        assert_eq!(budget_cap(Some(524_288), 50), Some(262_144));
+        assert_eq!(budget_cap(Some(8_192), 50), Some(4_096));
+        assert_eq!(budget_cap(Some(1_000), 100), Some(1_000));
+    }
+
+    #[test]
+    fn test_a_share_of_zero_still_leaves_room_to_watch_the_root() {
+        // 0% is the reading of "spend nothing", but a repository that watches
+        // literally nothing is indistinguishable from a broken one. One watch
+        // is the floor.
+        assert_eq!(budget_cap(Some(524_288), 0), Some(1));
+    }
+
+    #[test]
+    fn test_no_limit_means_no_cap() {
+        // Where the limit cannot be read — every backend that is not inotify,
+        // and a Linux without /proc — nothing is capped.
+        assert_eq!(budget_cap(None, 50), None);
+    }
+
+    // ── The watch budget ──────────────────────────────────────────────────────
+
+    /// Creates `count` directories directly under the root, named so the walk
+    /// order is stable enough to reason about.
+    fn dirs(f: &Fixture, count: usize) {
+        for i in 0..count {
+            std::fs::create_dir_all(f.root.join(format!("d{i:03}"))).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_the_cap_bounds_the_watches_and_names_what_it_dropped() {
+        // One inotify watch per directory, and the daemon spends only its share
+        // of the kernel's budget. What it cannot afford is not silently missing:
+        // it comes back as a frontier to record, so the choice survives the
+        // session.
+        let f = Fixture::new(true);
+        dirs(&f, 10);
+        let mut f = f;
+
+        let plan = f.plan(Some(4));
+        assert_eq!(plan.dirs.len(), 4, "the cap is the cap (root included)");
+        assert_eq!(plan.frontier.len(), 7, "every directory it could not take is named");
+        assert!(plan.dirs.contains(&f.root), "the root is watched first");
+    }
+
+    #[test]
+    fn test_no_cap_watches_everything() {
+        let f = Fixture::new(true);
+        dirs(&f, 10);
+        let mut f = f;
+        let plan = f.plan(None);
+        assert_eq!(plan.dirs.len(), 11, "root + 10");
+        assert!(plan.frontier.is_empty());
+    }
+
+    #[test]
+    fn test_an_excluded_directory_and_its_subtree_go_unwatched() {
+        // The field is inherited like `mf_watch`: excluding a directory excludes
+        // what is under it, which is what lets a user free a whole folder's
+        // worth of watches in one write.
+        let f = Fixture::new(true);
+        std::fs::create_dir_all(f.root.join("big/inner/deep")).unwrap();
+        std::fs::create_dir_all(f.root.join("small")).unwrap();
+        let mut f = f;
+        f.mark_exceeded("/big", true);
+
+        let watched = f.watched();
+        assert!(watched.contains(&f.root.join("small")), "the rest is untouched");
+        assert!(!watched.contains(&f.root.join("big")), "the excluded directory");
+        assert!(!watched.contains(&f.root.join("big/inner")), "and everything under it");
+        assert!(!watched.contains(&f.root.join("big/inner/deep")));
+    }
+
+    #[test]
+    fn test_an_override_below_an_excluded_subtree_is_watched_again() {
+        // Nearest ancestor decides, a direct value overrides — the same rule as
+        // `mf_watch`. This is how a user keeps one directory live inside a
+        // subtree they have otherwise given up on.
+        let f = Fixture::new(true);
+        std::fs::create_dir_all(f.root.join("big/inner/deep")).unwrap();
+        let mut f = f;
+        f.mark_exceeded("/big", true);
+        f.mark_exceeded("/big/inner", false);
+
+        let watched = f.watched();
+        assert!(!watched.contains(&f.root.join("big")), "still excluded");
+        assert!(watched.contains(&f.root.join("big/inner")), "the override is watched");
+        assert!(
+            watched.contains(&f.root.join("big/inner/deep")),
+            "and inheritance resumes below it"
+        );
     }
 }

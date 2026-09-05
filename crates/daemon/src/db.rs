@@ -1363,6 +1363,24 @@ pub fn tree_children(
 /// `GET /repos/:repo/fields` is served from the in-memory index
 /// (`RepoIndex::field_catalog`) instead — this SQL form is the equivalence
 /// oracle (`tests/index_oracle.rs`) and the scan-based fallback definition.
+/// The metarecords whose boolean field `name` holds `value`.
+///
+/// Seeks `idx_field_name_type`, so it costs the rows of that field name and not
+/// the table — see the `INDEXED BY` invariant in spec-main "Key invariants" for
+/// why a join here would have to be told which index to use.
+pub fn metarecords_with_bool(conn: &Connection, name: &str, value: bool) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT metarecord_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'bool' AND value_int = ?2",
+    )?;
+    let rows = stmt.query_map(params![name, i64::from(value)], |r| r.get::<_, Vec<u8>>(0))?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(bytes_to_uuid(row?)?);
+    }
+    Ok(out)
+}
+
 pub fn distinct_field_names(
     conn: &Connection,
     type_filter: Option<&str>,

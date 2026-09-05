@@ -654,6 +654,22 @@ enum MountCommand {
 }
 
 #[derive(Subcommand)]
+enum ExceededCommand {
+    /// List the subtrees left unwatched for want of budget — the default
+    List,
+    /// Stop watching a subtree, returning its watches to the budget
+    Set {
+        /// Repo-root-relative directory, leading slash
+        path: String,
+    },
+    /// Watch a subtree again (fails if the budget has no room)
+    Clear {
+        /// Repo-root-relative directory, leading slash
+        path: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum WatchCommand {
     /// Show whether ingestion is running or paused — the default
     Status {
@@ -669,6 +685,14 @@ enum WatchCommand {
     },
     /// Resume ingestion and apply what was buffered meanwhile
     Resume {
+        /// Print the raw JSON response body
+        #[arg(long)]
+        json: bool,
+    },
+    /// Subtrees left unwatched for want of inotify watches (the budget)
+    Exceeded {
+        #[command(subcommand)]
+        command: Option<ExceededCommand>,
         /// Print the raw JSON response body
         #[arg(long)]
         json: bool,
@@ -980,6 +1004,17 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
                 WatchCommand::Status { json } => commands::watch_status(ctx, json),
                 WatchCommand::Pause { json } => commands::watch_pause(ctx, json),
                 WatchCommand::Resume { json } => commands::watch_resume(ctx, json),
+                WatchCommand::Exceeded { command, json } => {
+                    match command.unwrap_or(ExceededCommand::List) {
+                        ExceededCommand::List => commands::watch_exceeded_list(ctx, json),
+                        ExceededCommand::Set { path } => {
+                            commands::watch_exceeded_set(ctx, &path, true, json)
+                        }
+                        ExceededCommand::Clear { path } => {
+                            commands::watch_exceeded_set(ctx, &path, false, json)
+                        }
+                    }
+                }
             }
         }
         Command::Mount { command } => match command.unwrap_or(MountCommand::List { json: false }) {

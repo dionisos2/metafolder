@@ -96,6 +96,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/watch", get(watch_status))
         .route("/repos/:repo/watch/pause", post(watch_pause))
         .route("/repos/:repo/watch/resume", post(watch_resume))
+        .route("/repos/:repo/watch/exceeded", get(watch_exceeded_list).post(watch_exceeded_set))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/orphans/relink", post(orphans_relink))
@@ -1699,10 +1700,19 @@ async fn mounts(
 /// The count is exact and always available: the buffer is in memory, so reading
 /// it never queues behind the flush the caller may be trying to stop.
 fn watch_view(repo_state: &RepoState) -> serde_json::Value {
+    let share = repo_state.watch_budget_share();
+    let limit = crate::watcher::kernel_watch_limit();
     json!({
         "paused": repo_state.is_ingestion_paused(),
         "pending_events": crate::executor::pending_count(repo_state),
         "watched_dirs": repo_state.watched_dirs(),
+        "watch_budget": {
+            "limit": limit,
+            "share": share,
+            "cap": crate::watcher::budget_cap_for(share),
+            "starved": repo_state.starved_watches(),
+            "exceeded_dirs": repo_state.exceeded_dirs(),
+        },
     })
 }
 
@@ -1926,6 +1936,92 @@ async fn duplicates_scan(
     });
 
     Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
+}
+
+#[derive(Deserialize)]
+struct WatchExceededBody {
+    /// Repo-root-relative path of the directory, leading `/`.
+    path: String,
+    /// `true` stops watching the subtree, `false` watches it again.
+    exceeded: bool,
+}
+
+/// `GET /repos/:repo/watch/exceeded`: the subtree roots left unwatched for want
+/// of budget (spec-file-tracking "The watch budget").
+async fn watch_exceeded_list(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = repo_state.conn.lock_recover();
+        let mut cache = repo_state.lock_cache();
+        let uuids =
+            crate::db::metarecords_with_bool(&conn, crate::eligibility::WATCH_EXCEEDED, true)?;
+        let mut paths: Vec<String> = uuids
+            .into_iter()
+            .filter_map(|uuid| cache.path_of(&conn, "mfr_path", uuid).ok().flatten())
+            .collect();
+        paths.sort();
+        Ok(Json(json!({ "count": paths.len(), "exceeded": paths })))
+    })
+    .await
+}
+
+/// `POST /repos/:repo/watch/exceeded`: sets or clears `mfr_watch_exceeded` on
+/// one directory.
+///
+/// Setting it always succeeds — it only ever returns watches to the budget.
+/// Clearing it is refused with `409` when the budget has no headroom, naming
+/// what to give up first: watching that subtree would need watches that are not
+/// there, and silently doing nothing would be worse than saying so.
+async fn watch_exceeded_set(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<WatchExceededBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let body = payload?.0;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        if !body.exceeded {
+            let cap = crate::watcher::budget_cap_for(repo_state.watch_budget_share());
+            let watched = repo_state.watched_dirs();
+            if cap.is_some_and(|cap| watched >= cap) {
+                return Err(ApiError::conflict(format!(
+                    "the watch budget is full ({watched} of {} directories): \
+                     give up another subtree first (`mf watch exceeded set <dir>`)",
+                    cap.unwrap_or(watched)
+                )));
+            }
+        }
+        let uuid = {
+            let conn = repo_state.conn.lock_recover();
+            let mut cache = repo_state.lock_cache();
+            cache
+                .resolve_path(&conn, "mfr_path", &body.path)?
+                .ok_or_else(|| ApiError::not_found(format!("No metarecord at {}", body.path)))?
+        };
+        {
+            let mut conn = repo_state.conn.lock_recover();
+            let mut writer = crate::log::Writer::begin(&mut conn, None)?;
+            if body.exceeded {
+                writer.set_field(
+                    uuid,
+                    crate::eligibility::WATCH_EXCEEDED,
+                    metafolder_core::metarecord::Value::Bool(true),
+                )?;
+            } else {
+                writer.delete_fields_named(uuid, crate::eligibility::WATCH_EXCEEDED)?;
+            }
+            writer.commit()?;
+        }
+        // The watch set follows immediately, as it does for `mf_watch`.
+        let conn = repo_state.conn.lock_recover();
+        let watched = repo_state.refresh_watches(&conn);
+        Ok(Json(json!({ "path": body.path, "exceeded": body.exceeded, "watched_dirs": watched })))
+    })
+    .await
 }
 
 /// `POST /repos/:repo/orphans/relink`: re-home orphaned metarecords onto the

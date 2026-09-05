@@ -16,6 +16,11 @@ use crate::state::AppState;
 /// filesystem event before flushing the pending buffer. See [`DaemonSettings`].
 pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
 
+/// Default share of the kernel's per-user watch limit one daemon will spend.
+/// Half, so a second metafolder daemon and every other program that watches
+/// files still have somewhere to go.
+pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
+
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
 /// "Mass-orphan circuit breaker"). `0` disables the check.
@@ -32,6 +37,11 @@ pub struct DaemonSettings {
     /// aggressively (fewer revisions, more latency); useful on slow/network
     /// filesystems that emit bursts of events.
     pub watch_quiet_period_ms: u64,
+    /// Percentage of the kernel's per-user watch limit this daemon will spend
+    /// (spec-file-tracking "The watch budget"). A ceiling it imposes on itself
+    /// so other programs keep some, not a reservation — nothing can be
+    /// reserved, and the kernel never says what is still free.
+    pub watch_budget_share: u8,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
     /// would null thousands of paths is a filesystem going away, not a
@@ -43,6 +53,7 @@ impl Default for DaemonSettings {
     fn default() -> Self {
         DaemonSettings {
             watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
+            watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
         }
     }

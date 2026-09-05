@@ -58,6 +58,17 @@ pub struct RepoState {
     /// consulted while fresh — so it never serves stale results. `None` until
     /// the first query builds it.
     pub index: Mutex<Option<crate::index::RepoIndex>>,
+    /// Percentage of the kernel's watch limit this repository may spend
+    /// (`[settings] watch-budget-share`).
+    watch_budget_share: u8,
+    /// The kernel refused watches while this daemon was still under its own
+    /// ceiling: another program holds the budget. A *state*, not a message —
+    /// it lasts as long as the condition, so a client can keep it on screen
+    /// (spec-file-tracking "Two different failures").
+    starved_watches: std::sync::atomic::AtomicBool,
+    /// Subtree roots carrying `mfr_watch_exceeded = true`, counted at each
+    /// placement (see [`RepoState::exceeded_dirs`]).
+    exceeded_dirs: std::sync::atomic::AtomicUsize,
     /// Whether the repository can serve data. False from the moment it is
     /// registered until [`RepoState::warm`] has built the accelerators and
     /// started the watcher. The accelerators are not optional — the query
@@ -128,6 +139,9 @@ impl RepoState {
             tasks: crate::tasks::TaskRegistry::new(repo_uuid),
             index: Mutex::new(None),
             ready: std::sync::atomic::AtomicBool::new(false),
+            watch_budget_share: settings.watch_budget_share,
+            starved_watches: std::sync::atomic::AtomicBool::new(false),
+            exceeded_dirs: std::sync::atomic::AtomicUsize::new(0),
             watch_quiet_period: settings.watch_quiet_period(),
             pending: Mutex::new(Vec::new()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
@@ -221,12 +235,41 @@ impl RepoState {
     /// or a repository being torn down). `conn` is the already-locked
     /// connection; the tree cache is locked here.
     pub fn refresh_watches(&self, conn: &Connection) -> usize {
-        let handles = self.handles.lock_recover();
-        let Some(handles) = handles.as_ref() else {
-            return 0;
+        let cap = crate::watcher::budget_cap_for(self.watch_budget_share);
+        let placement = {
+            let handles = self.handles.lock_recover();
+            let Some(handles) = handles.as_ref() else {
+                return 0;
+            };
+            let mut cache = self.lock_cache();
+            handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir(), cap)
         };
+        if !placement.frontier.is_empty() {
+            self.record_watch_frontier(&placement.frontier);
+        }
+        self.starved_watches.store(placement.starved > 0, std::sync::atomic::Ordering::Relaxed);
+        let excluded =
+            crate::db::metarecords_with_bool(conn, crate::eligibility::WATCH_EXCEEDED, true)
+                .map_or(0, |v| v.len());
+        self.exceeded_dirs.store(excluded, std::sync::atomic::Ordering::Relaxed);
+        placement.watched
+    }
+
+    /// Records the subtree roots the watch budget could not afford, as
+    /// `mfr_watch_exceeded = true` (spec-file-tracking "The watch budget").
+    ///
+    /// Only the frontier reaches here — the subtrees the placement did not
+    /// enter — so a repository too large to watch does not also pay one write
+    /// per directory to say so.
+    pub fn record_watch_frontier(&self, frontier: &[String]) {
+        let mut conn = self.conn.lock_recover();
         let mut cache = self.lock_cache();
-        handles.watcher.refresh(conn, &mut cache, &self.config.root, &self.internal_dir())
+        if let Err(err) = write_watch_frontier(&mut conn, &mut cache, &self.config.root, frontier) {
+            crate::diagnostics::warn(
+                "watcher",
+                format!("could not record the watch frontier: {err:#}"),
+            );
+        }
     }
 
     /// Directories currently watched — one inotify watch each, on a budget
@@ -441,6 +484,29 @@ impl RepoState {
         Ok(())
     }
 
+    /// The share of the kernel's watch limit this repository may spend.
+    pub fn watch_budget_share(&self) -> u8 {
+        self.watch_budget_share
+    }
+
+    /// How many subtree roots carry `mfr_watch_exceeded = true` — what the
+    /// budget could not afford, and what `mf watch exceeded` reshapes.
+    ///
+    /// Kept in memory rather than counted on demand: `GET /watch` must answer
+    /// while a flush holds the connection — that is the whole point of being
+    /// able to `pause` one — so it may take no lock the flush could be holding.
+    /// Refreshed by every placement, which is when it can change (a write to
+    /// the field triggers one, `Writer::touched_watch`).
+    pub fn exceeded_dirs(&self) -> usize {
+        self.exceeded_dirs.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the kernel is refusing watches although this daemon is under its
+    /// own ceiling (spec-file-tracking "Two different failures").
+    pub fn starved_watches(&self) -> bool {
+        self.starved_watches.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Whether the repository can serve data (see [`RepoState::ready`]).
     pub fn is_ready(&self) -> bool {
         self.ready.load(std::sync::atomic::Ordering::Acquire)
@@ -457,6 +523,56 @@ impl RepoState {
             Ok(())
         }
     }
+}
+
+/// Writes `mfr_watch_exceeded = true` on each subtree root of `frontier`,
+/// creating the directory's metarecord when it has none yet.
+fn write_watch_frontier(
+    conn: &mut Connection,
+    cache: &mut TreeCache,
+    root: &Path,
+    frontier: &[String],
+) -> anyhow::Result<()> {
+    let mut writer = crate::log::Writer::begin(conn, None)?;
+    for rel in frontier {
+        let path = crate::relpath::RelPath::from_display(rel);
+        let uuid = match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
+            Some(uuid) => uuid,
+            None => {
+                // Not tracked yet — a directory the placement met before
+                // reconcile did. It gets the metarecord its exclusion hangs on.
+                let parent = crate::executor::ensure_parent_metarecords(
+                    &mut writer,
+                    cache,
+                    root,
+                    &path,
+                    &[],
+                )?;
+                let name = path.name().cloned().unwrap_or_default();
+                let created = writer.create_metarecord(vec![
+                    metafolder_core::metarecord::Field::new(
+                        "mfr_path",
+                        metafolder_core::metarecord::Value::TreeRef {
+                            parent: Some(parent),
+                            name: name.clone(),
+                        },
+                    ),
+                    metafolder_core::metarecord::Field::new(
+                        "mfr_type",
+                        metafolder_core::metarecord::Value::String("dir".into()),
+                    ),
+                ])?;
+                cache.apply_insert("mfr_path", Some(parent), &name, created.uuid);
+                created.uuid
+            }
+        };
+        writer.set_field(
+            uuid,
+            crate::eligibility::WATCH_EXCEEDED,
+            metafolder_core::metarecord::Value::Bool(true),
+        )?;
+    }
+    writer.commit()
 }
 
 /// Background machinery of a loaded repository. Held by the RepoState so it

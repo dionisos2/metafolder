@@ -26,6 +26,16 @@
 # network filesystems that emit bursts of events. Default: 500.
 watch-quiet-period-ms = 500
 
+# Percentage of the kernel's per-user inotify watch limit
+# (fs.inotify.max_user_watches) that this daemon will spend. One watch is needed
+# per watched directory — inotify has no recursive watch — and the limit is
+# shared with every other program on the machine that watches files, so the
+# daemon caps its own appetite rather than taking everything. Directories beyond
+# the cap are marked mfr_watch_exceeded and are not watched live; they stay
+# fully tracked, and `mf watch exceeded` reshapes the choice. Inert on macOS and
+# Windows, whose backends watch a tree with one registration. Default: 50.
+watch-budget-share = 50
+
 # Mass-orphan circuit breaker: the largest number of metarecords a single
 # watcher batch may orphan (set mfr_path = Nothing) in one cascade. A batch that
 # would null more than this is a filesystem going away — an unmount metafolder

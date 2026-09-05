@@ -1977,7 +1977,83 @@ fn print_watch(resp: &serde_json::Value, raw_json: bool) -> Result<i32, CliError
     let waiting = resp["pending_events"].as_i64().unwrap_or(0);
     let watched = resp["watched_dirs"].as_i64().unwrap_or(0);
     println!("{state:<10}\t{waiting} event(s) waiting\t{watched} directory(ies) watched");
+    // A budget in trouble adds its own lines, so neither condition passes
+    // unnoticed (spec-file-tracking "The watch budget").
+    let budget = &resp["watch_budget"];
+    if budget["starved"].as_bool().unwrap_or(false)
+        || budget["exceeded_dirs"].as_i64().unwrap_or(0) > 0
+    {
+        print_watch_budget(resp);
+    }
     Ok(0)
+}
+
+/// `mf watch exceeded` / `... list`: the subtrees the watch budget could not
+/// afford (spec-file-tracking "The watch budget").
+pub fn watch_exceeded_list(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let resp = ctx.client.get(&format!("{base}/watch/exceeded"), &[])?;
+    if raw_json {
+        print_pretty(&resp);
+        return Ok(0);
+    }
+    let paths = resp["exceeded"].as_array().cloned().unwrap_or_default();
+    if paths.is_empty() {
+        println!("no subtree is excluded: every eligible directory is watched");
+    } else {
+        for path in &paths {
+            println!("{}", path.as_str().unwrap_or_default());
+        }
+    }
+    // The budget line belongs with the list: the count means nothing without
+    // what it is counted against.
+    let status = ctx.client.get(&format!("{base}/watch"), &[])?;
+    print_watch_budget(&status);
+    Ok(0)
+}
+
+/// `mf watch exceeded {set, clear} <dir>`.
+pub fn watch_exceeded_set(
+    ctx: &Ctx,
+    path: &str,
+    exceeded: bool,
+    raw_json: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let body = json!({"path": path, "exceeded": exceeded});
+    let resp = ctx.client.request("POST", &format!("{base}/watch/exceeded"), &[], Some(&body))?;
+    if raw_json {
+        print_pretty(&resp);
+    } else {
+        let watched = resp["watched_dirs"].as_i64().unwrap_or(0);
+        let verb = if exceeded { "no longer watched" } else { "watched again" };
+        println!("{path}: {verb}\t{watched} directory(ies) watched");
+    }
+    Ok(0)
+}
+
+/// The budget line shared by `watch status` and `watch exceeded`.
+fn print_watch_budget(resp: &serde_json::Value) {
+    let budget = &resp["watch_budget"];
+    let n = |key: &str| budget[key].as_i64();
+    match (n("cap"), n("limit")) {
+        (Some(cap), Some(limit)) => println!(
+            "budget    \t{} of {cap} watch(es) used (share {}% of {limit})",
+            resp["watched_dirs"].as_i64().unwrap_or(0),
+            budget["share"].as_i64().unwrap_or(0),
+        ),
+        // No inotify: the backend watches a tree with one registration.
+        _ => println!("budget    \tunlimited on this platform"),
+    }
+    if let Some(n) = n("exceeded_dirs").filter(|n| *n > 0) {
+        println!("excluded  \t{n} subtree(s) left unwatched (`mf watch exceeded`)");
+    }
+    if budget["starved"].as_bool().unwrap_or(false) {
+        println!(
+            "STARVED   \tthe kernel is refusing watches although this daemon is under its \
+             own ceiling: another program holds them. Nothing was recorded."
+        );
+    }
 }
 
 pub fn watch_status(ctx: &Ctx, raw_json: bool) -> Result<i32, CliError> {

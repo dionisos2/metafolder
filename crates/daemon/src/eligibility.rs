@@ -12,6 +12,11 @@ use uuid::Uuid;
 use crate::db;
 use crate::tree_cache::TreeCache;
 
+/// The field recording a directory the watch budget could not afford
+/// (spec-file-tracking "The watch budget"). Reserved (`mfr_*`), inherited down
+/// the `mfr_path` tree like `mf_watch`.
+pub const WATCH_EXCEEDED: &str = "mfr_watch_exceeded";
+
 /// Per-run memoisation for [`is_eligible_cached`]. Ancestor `mf_watch` /
 /// `mf_ignore` values and compiled `mf_ignore` regexes are stable for the
 /// duration of a reconcile walk, so caching them turns the walk's per-entry
@@ -22,6 +27,7 @@ pub struct EligibilityCache {
     regex: HashMap<String, Regex>,
     watch: HashMap<Uuid, Option<bool>>,
     ignore: HashMap<Uuid, Vec<String>>,
+    exceeded: HashMap<Uuid, Option<bool>>,
 }
 
 /// Why [`explain`] decided the way it did — the step of the eligibility
@@ -288,6 +294,25 @@ fn cached_watch(conn: &Connection, ec: &mut EligibilityCache, uuid: Uuid) -> Res
     }
     let v = db::bool_field(conn, uuid, "mf_watch")?;
     ec.watch.insert(uuid, v);
+    Ok(v)
+}
+
+/// The value `mfr_watch_exceeded` takes *directly* on a metarecord, cached.
+///
+/// The field is inherited down the `mfr_path` tree like `mf_watch` — the
+/// nearest ancestor that defines it decides, a value set on the directory
+/// itself overrides — so the descent carries the inherited answer and consults
+/// this only for an override (spec-file-tracking "The watch budget").
+pub fn cached_watch_exceeded(
+    conn: &Connection,
+    ec: &mut EligibilityCache,
+    uuid: Uuid,
+) -> Result<Option<bool>> {
+    if let Some(v) = ec.exceeded.get(&uuid) {
+        return Ok(*v);
+    }
+    let v = db::bool_field(conn, uuid, WATCH_EXCEEDED)?;
+    ec.exceeded.insert(uuid, v);
     Ok(v)
 }
 

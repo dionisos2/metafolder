@@ -233,10 +233,11 @@ fn bench_index_build_and_folder_query() {
     let internal = repo.internal_dir();
 
     let mut empty = TreeCache::new(false);
-    let (dirs, total_cold, elig_cold) = metafolder_daemon::watcher::compute_watched_dirs_timed(
-        &conn, &mut empty, &root_dir, &internal,
+    let cold = metafolder_daemon::watcher::compute_watched_dirs_timed(
+        &conn, &mut empty, &root_dir, &internal, None,
     );
-    eprintln!("\n#3 watcher walk over {} eligible dirs:", dirs.len());
+    let (total_cold, elig_cold) = (cold.total, cold.eligibility);
+    eprintln!("\n#3 watcher walk over {} eligible dirs:", cold.dirs.len());
     eprintln!(
         "   empty cache (eligibility → DB) : total {total_cold:?}  (fs {:?} + eligibility {elig_cold:?})",
         total_cold.saturating_sub(elig_cold)
@@ -244,9 +245,10 @@ fn bench_index_build_and_folder_query() {
 
     let mut warm = TreeCache::new(false);
     warm.populate(&conn).unwrap();
-    let (_dirs, total_warm, elig_warm) = metafolder_daemon::watcher::compute_watched_dirs_timed(
-        &conn, &mut warm, &root_dir, &internal,
+    let warm_plan = metafolder_daemon::watcher::compute_watched_dirs_timed(
+        &conn, &mut warm, &root_dir, &internal, None,
     );
+    let (total_warm, elig_warm) = (warm_plan.total, warm_plan.eligibility);
     eprintln!(
         "   full cache  (eligibility → mem): total {total_warm:?}  (fs {:?} + eligibility {elig_warm:?})",
         total_warm.saturating_sub(elig_warm)

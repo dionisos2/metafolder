@@ -568,8 +568,9 @@ both paths are inside the same watched tree. =Rename(From)= alone means the
 file definitively left the repository (destination is outside the watched
 tree or in a different repo root). =Rename(To)= alone means the file arrived
 from outside. On backends where rename correlation is unavailable, a rename
-surfaces as =Remove= + =Create= and identity is recovered via the fingerprint
-search of the =Rename(To)= path (see
+surfaces as =Remove= + =Create=, and identity is *not* recovered inline: the
+file is tracked afresh and the old metarecord is left orphaned until an
+[[*Relinking orphans][=mf orphan relink=]] (see
 [[file:spec-platform.org][spec-platform.org]]).
 
 =notify='s own From/To correlation can still fail under load and deliver a
@@ -615,6 +616,77 @@ connection would freeze every watch placement — and deadlock outright against 
 write that recomputes the watch set while holding that connection (see
 [[*Behaviour when =mf_watch= or =mf_ignore= changes]]). Nothing that can block
 may run on the callback.
+
+*** The watch budget
+
+inotify holds *one watch per directory*. There is no recursive watch — the
+=notify= crate's recursive mode walks the tree and places one watch per
+directory too — so a tree of N eligible directories costs N kernel watches. The
+supply is =fs.inotify.max_user_watches=, a **per-user** budget shared with every
+other program on the machine that watches files, and each watch costs on the
+order of a kilobyte of unswappable kernel memory. (FSEvents and
+ReadDirectoryChangesW watch a tree with a single registration; everything in
+this section is inert on those backends.)
+
+**** The share
+
+=[settings] watch-budget-share= (percentage, default 50) caps how much of
+=max_user_watches= one daemon will spend: =cap = max_user_watches × share ÷ 100=.
+
+It is a *self-imposed ceiling, not a reservation*. The kernel exposes the limit,
+not what is still available, and there is no way to reserve anything — so the
+share bounds this daemon's appetite and leaves the rest for other programs by
+convention. Nothing guarantees that the remainder is free, nor that our share
+is.
+
+**** Two different failures
+
+Reaching the ceiling and being refused by the kernel are not the same event and
+do not get the same answer.
+
+- *Our cap is reached.* The repository wants more watches than this daemon will
+  spend. That is a lasting property of this repository on this machine, and it
+  is recorded: =mfr_watch_exceeded= (below).
+- *The kernel refuses (=ENOSPC=) while we are under our cap.* The budget was
+  taken by something else. That is a *transient, external* condition, and
+  recording it would freeze another program's momentary appetite into this
+  repository for good. So **no field is written**: the condition is reported and
+  the placement stops there. It surfaces as =watch_budget.starved= in
+  =GET /watch= — an *état*, not a message, because the diagnostics ring holds
+  500 entries and would evict the notice under its own repetitions; a client can
+  therefore show it for as long as it lasts.
+
+**** =mfr_watch_exceeded=
+
+A reserved field (=mfr_*=: written by the daemon, and by the user with
+=force=), *inherited* down the =mfr_path= tree exactly like =mf_watch= —
+nearest ancestor defining it wins, a value set directly on a directory
+overrides it. =true= means: *place no inotify watch here*.
+
+It means nothing else. The subtree stays fully tracked: reconcile walks it,
+queries return it, the orphan and duplicate scans consider it, =mf_watch=
+continues to say what the user *wants* watched. The field records only what the
+budget could not afford live, so changes there are noticed by the next
+=reconcile= instead of immediately.
+
+- The daemon writes it on the **frontier** of what the placement could not take
+  — the subtree roots it did not enter — never on every directory beneath. That
+  is what makes the mechanism affordable in the very case that triggers it: a
+  repository too large to watch is also a repository too large to annotate one
+  metarecord at a time.
+- It is *sticky*. The daemon never clears it on its own, so the unwatched set is
+  the same from one session to the next and the user can reshape it deliberately.
+  A budget that has since grown shows up as headroom in =watch_budget=; the user
+  reclaims it explicitly.
+- Writing it re-triggers watch placement, like =mf_watch= and =mf_ignore=.
+- Clearing it when there is no headroom is refused with =409=, naming what to
+  free first. Setting it is always allowed: it only ever returns watches.
+- Like every =mfr_*= field except =mfr_path=, it does not travel through sync
+  (see [[file:spec-sync.org][spec-sync.org]]) — a watch budget is a fact about
+  one machine.
+
+Exercised in tests by lowering =watch-budget-share= far enough that an ordinary
+fixture exceeds it.
 
 *** Event batching
 
@@ -1107,7 +1179,9 @@ Reads and sets whether the executor is ingesting filesystem events for this
 repository (see [[*Pausing ingestion]]). All three answer the same body:
 
 #+BEGIN_SRC json
-{"paused": true, "pending_events": 12043}
+{"paused": true, "pending_events": 12043, "watched_dirs": 22838,
+ "watch_budget": {"limit": 524288, "share": 50, "cap": 262144,
+                  "starved": false, "exceeded_dirs": 3}}
 #+END_SRC
 
 - =paused= — whether ingestion is paused. In memory: a reload or a daemon
@@ -1116,13 +1190,16 @@ repository (see [[*Pausing ingestion]]). All three answer the same body:
   buffer (what a resume would apply). Always exact: reading it does not touch
   the repository's connection, so it answers even while the flush the caller is
   trying to stop is holding it.
-- =watched_dirs= — how many directories the watcher holds a watch on. inotify
-  has no recursive watch, so this is one kernel watch each, drawn from
-  =fs.inotify.max_user_watches= — a budget shared with every other program on
-  the machine that watches files. Exhausting it is reported *once*, naming the
-  limit and how many directories went unwatched, rather than once per directory:
-  the failure repeats for every remaining directory, and the diagnostics ring
-  would evict the message under its own repetitions.
+- =watched_dirs= — how many directories the watcher holds a watch on: one
+  kernel watch each (see [[*The watch budget]]).
+- =watch_budget= — the supply and what became of it. =limit= is
+  =fs.inotify.max_user_watches=, =share= the configured percentage, =cap= their
+  product; =exceeded_dirs= counts the subtree roots carrying
+  =mfr_watch_exceeded=; =starved= is true while the kernel refuses watches
+  although the cap is not reached — another program is holding them. =starved=
+  is a *state*, readable for as long as it lasts, precisely so a client can keep
+  it on screen: the diagnostics ring holds 500 entries and would evict such a
+  notice under its own repetitions.
 
 =pause= also *cancels the flush in progress*, if any — it is the same operation
 as cancelling that flush's task (see [[file:spec-tasks.org][spec-tasks.org]]
@@ -1289,22 +1366,41 @@ unless =-y= is given.
 There is no =mf mount add=: mount points are detected, not declared. Mounting a
 volume and running =mf reconcile= is what records one.
 
-** =mf watch {status, pause, resume}=
+** =mf watch {status, pause, resume, exceeded}=
 
 Controls the ingestion of filesystem events for the repository (see
-[[*Pausing ingestion]]).
+[[*Pausing ingestion]]) and the watch budget (see [[*The watch budget]]).
 
 =status= (the default) calls =GET /watch= and prints one line — =running= or
-=paused=, with the number of buffered events:
+=paused=, the number of buffered events and the number of watched directories:
 
 #+BEGIN_SRC
-paused     12043 events waiting
+paused     12043 event(s) waiting	22838 directory(ies) watched
 #+END_SRC
+
+A budget in trouble adds a second line, so neither condition can pass unnoticed:
+the number of subtrees excluded for want of watches, and whether the kernel is
+refusing watches to a daemon that has not reached its own ceiling.
 
 =pause= calls =POST /watch/pause=: it stops the flush in progress (its
 uncommitted group is abandoned, its events stay buffered) and keeps the executor
 from starting another. =resume= calls =POST /watch/resume= and prints how many
 events are about to be applied. =--json= prints the raw body for all three.
+
+=exceeded= manages =mfr_watch_exceeded=, the subtrees left unwatched for want of
+budget. It is named after the field rather than after an intention, because it
+is *not* how one says what to watch — that is =mf_watch=, and it is unaffected.
+This is the pathological case, and the command says so.
+
+- =exceeded= / =exceeded list= — the directories carrying the field, with the
+  budget line from =status=.
+- =exceeded set <dir>= — stop watching that subtree, returning its watches to
+  the budget. Always allowed.
+- =exceeded clear <dir>= — watch it again. Refused with =409= when there is no
+  headroom, naming what to =set= first.
+
+The field is reserved, so the same thing can be done by writing it directly with
+=force=; the commands only spare the ceremony.
 
 ** =mf order <folder> [--meta <field>] [--max-gap <n>] [--dry-run]=
 

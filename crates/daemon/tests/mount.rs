@@ -158,7 +158,7 @@ fn the_watcher_places_no_watch_inside_an_offline_mount() {
     let dirs = {
         let conn = repo.conn.lock().unwrap();
         let mut cache = repo.cache.lock().unwrap();
-        watcher::compute_watched_dirs_timed(&conn, &mut cache, &root, &internal).0
+        watcher::compute_watched_dirs_timed(&conn, &mut cache, &root, &internal, None).dirs
     };
 
     assert!(dirs.contains(&root.path().to_path_buf()));
