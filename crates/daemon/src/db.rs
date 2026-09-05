@@ -997,36 +997,63 @@ pub fn hash_cache(conn: &Connection) -> Result<HashMap<Uuid, StoredHashes>> {
 /// The size is part of the key, not decoration: two different size classes
 /// could in principle produce the same hash, and the scan's find-or-create has
 /// to stay well defined (spec-duplicates "Duplicate groups").
-pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), Uuid>> {
+pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), DuplicateGroup>> {
     let mut stmt = conn.prepare(
-        "SELECT h.metarecord_uuid, z.value_int, h.value_text
+        "SELECT h.metarecord_uuid, z.value_int, h.value_text, c.value_int, r.value_int
          FROM field h
          CROSS JOIN field z ON z.metarecord_uuid = h.metarecord_uuid
               AND z.field_name = 'mfr_content_size' AND z.value_type = 'int'
+         LEFT JOIN field c ON c.metarecord_uuid = h.metarecord_uuid
+              AND c.field_name = 'mfr_duplicate_count' AND c.value_type = 'int'
+         LEFT JOIN field r ON r.metarecord_uuid = h.metarecord_uuid
+              AND r.field_name = 'mfr_duplicate_reclaimable' AND r.value_type = 'int'
          WHERE h.field_name = 'mfr_content_hash' AND h.value_type = 'string'",
     )?;
     let rows = stmt.query_map([], |r| {
-        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+        Ok((
+            r.get::<_, Vec<u8>>(0)?,
+            r.get::<_, i64>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<i64>>(3)?,
+            r.get::<_, Option<i64>>(4)?,
+        ))
     })?;
     let mut out = HashMap::new();
     for row in rows {
-        let (uuid, size, hash) = row?;
-        out.insert((size, hash), bytes_to_uuid(uuid)?);
+        let (uuid, size, hash, count, reclaimable) = row?;
+        out.insert((size, hash), DuplicateGroup { uuid: bytes_to_uuid(uuid)?, count, reclaimable });
     }
     Ok(out)
 }
 
-/// The metarecords whose `field_name` is a `Ref` to `target`.
-pub fn ref_field_owners(conn: &Connection, field_name: &str, target: Uuid) -> Result<Vec<Uuid>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT metarecord_uuid FROM field
-         WHERE field_name = ?1 AND value_type = 'ref' AND value_uuid = ?2",
+/// A `duplicate_group` metarecord as stored: its uuid and the counters the last
+/// scan wrote, so a re-scan can tell an unchanged counter from a changed one
+/// without asking the database again.
+#[derive(Debug, Clone)]
+pub struct DuplicateGroup {
+    pub uuid: Uuid,
+    pub count: Option<i64>,
+    pub reclaimable: Option<i64>,
+}
+
+/// Every `Ref` row of `field_name` as `metarecord -> target`, in one query.
+///
+/// The duplicate scan loads this once instead of asking per record while it
+/// writes: a read inside the write path is one round trip per member, and the
+/// question ("does this record already point at this group?") is the same
+/// whole-repository fact for all of them.
+pub fn ref_field_map(conn: &Connection, field_name: &str) -> Result<HashMap<Uuid, Uuid>> {
+    let mut stmt = conn.prepare(
+        "SELECT metarecord_uuid, value_uuid FROM field
+         WHERE field_name = ?1 AND value_type = 'ref'",
     )?;
-    let rows =
-        stmt.query_map(params![field_name, uuid_to_bytes(target)], |r| r.get::<_, Vec<u8>>(0))?;
-    let mut out = Vec::new();
+    let rows = stmt.query_map(params![field_name], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?))
+    })?;
+    let mut out = HashMap::new();
     for row in rows {
-        out.push(bytes_to_uuid(row?)?);
+        let (owner, target) = row?;
+        out.insert(bytes_to_uuid(owner)?, bytes_to_uuid(target)?);
     }
     Ok(out)
 }

@@ -227,14 +227,43 @@ matters: the singleton cut is by far the largest of the scan, so resolving every
 eligible file's path first would construct a string per file and throw most of
 them away a moment later.
 
-The in-memory index ([[file:spec-indexing.org][spec-indexing.org]]) is
-deliberately *not* used here, though =mfr_size= is an =Int= and its BSI does
-hold exactly this partition (=BsiIndex::exact=, value → bitmap). Once the cut
-above is made where it belongs, what the index would save is one scan of three
-field rows per file — on the phase that is not the bottleneck, since the ones
-that follow read file *content*. A second code path, with its own oracle
-obligation, is not worth a gain that disappears next to a single =open()=.
-Revisit only with a measurement showing phase 1 dominating a real scan.
+** What the scan reads, and why it is SQL
+
+The scan asks the database exactly *five* bulk questions, all before it writes
+anything, and nothing per record after that:
+
+| Read                                | Answers                                     |
+|-------------------------------------+---------------------------------------------|
+| =tracked_files_with_size=           | the candidate set and its size classes      |
+| =hash_cache=                        | the stored hashes and their stamp           |
+| =string_field_owners("mfr_inode")=  | which members are hard-linked               |
+| =duplicate_groups=                  | the existing groups and their counters      |
+| =ref_field_map("mfr_duplicate_group")= | the existing member links                |
+
+The last two are what keep the *write* path read-free: "does this record already
+point at this group?" and "has this counter changed?" are answered against the
+maps loaded up front, so a member costs no round trip and the prune computes its
+work from the same maps. A read inside a write loop is one round trip per member,
+and the question it asks is the same whole-repository fact for all of them.
+
+*The in-memory index could answer all five.* This is worth stating precisely,
+because the index is more capable here than a "reverse index" reading of it
+suggests: besides the value → bitmap partitions it maintains =SortReps=
+(=field_index.rs=), a =HashMap<id, SortRep>= *per field*, which is a forward map
+id → value. So =mfr_size= comes from =BsiIndex::exact= (exact =u64= keys — the
+sort representative is an =f64= and must not be used for grouping), the stored
+hashes and =mfr_inode= from =sort[field].min[id]= in O(1), "records carrying a
+link" from =present[field]=, and the referrers of a group from
+=ReverseIndex::by_value_uuid=.
+
+It is deliberately not used, and the reason is *not* the read cost. It is that
+the index is optional and derived: absent until the repo is warmed, refusing the
+encodings it does not implement, and valid only while =built_at_head= matches
+HEAD — which a batch-writing scan invalidates at its first commit. Every read
+served from it therefore needs an SQL twin and an oracle obligation, and the
+gain lands on the phases that are *not* the bottleneck: the ones that follow
+open files and read their bytes. Revisit with a measurement showing the reads
+above dominating a real scan.
 
 *** =partial= — partial hashes
 

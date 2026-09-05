@@ -119,6 +119,11 @@ pub fn scan_reported(
     };
     let inodes: HashMap<Uuid, String> =
         db::string_field_owners(&conn, "mfr_inode")?.into_iter().collect();
+    // The group links as they stand, loaded once. The write path then answers
+    // "does this record already point there?" in memory instead of spending a
+    // round trip per member, and the prune computes its work from the same map
+    // rather than re-asking per group.
+    let mut links = db::ref_field_map(&conn, "mfr_duplicate_group")?;
     let files = db::tracked_files_with_size(&conn)?;
 
     // Partition on `(uuid, size)` alone first. A size class of one cannot hold
@@ -263,6 +268,7 @@ pub fn scan_reported(
             *size,
             members,
             &mut existing,
+            &mut links,
             &mut grouped,
             &mut touched,
             &mut result,
@@ -272,7 +278,7 @@ pub fn scan_reported(
     // ── Phase 4: prune what no longer holds ─────────────────────────────────
     // Only reached when the phases above completed: a cancelled scan leaves
     // stale groups for the next complete run rather than a half-pruned state.
-    prune(&mut conn, &existing, &grouped, &touched, scope.as_ref(), reporter)?;
+    prune(&mut conn, &existing, &mut links, &grouped, &touched, scope.as_ref(), reporter)?;
 
     Ok(result)
 }
@@ -402,7 +408,8 @@ fn write_class_groups(
     conn: &mut rusqlite::Connection,
     size: i64,
     members: &[Candidate],
-    existing: &mut HashMap<(i64, String), Uuid>,
+    existing: &mut HashMap<(i64, String), db::DuplicateGroup>,
+    links: &mut HashMap<Uuid, Uuid>,
     grouped: &mut HashSet<Uuid>,
     touched: &mut HashSet<Uuid>,
     result: &mut ScanResult,
@@ -437,9 +444,10 @@ fn write_class_groups(
         // Identity is the pair (size, hash), not the hash alone: two different
         // size classes could in principle produce the same hash, and the
         // find-or-create has to stay well defined.
-        let group = match existing.get(&(size, hash.clone())) {
-            Some(uuid) => *uuid,
-            None => {
+        let key = (size, hash.clone());
+        let entry = match existing.entry(key) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
                 let created = writer
                     .create_metarecord(vec![
                         Field::new("mf_schema", Value::String(GROUP_SCHEMA.to_string())),
@@ -448,16 +456,45 @@ fn write_class_groups(
                     ])
                     .map_err(ApiError::from)?
                     .uuid;
-                existing.insert((size, hash.clone()), created);
-                created
+                e.insert(db::DuplicateGroup { uuid: created, count: None, reclaimable: None })
             }
         };
-        set_if_changed(&mut writer, group, "mfr_duplicate_count", Value::Int(count))?;
-        set_if_changed(&mut writer, group, "mfr_duplicate_reclaimable", Value::Int(reclaimable))?;
+        let group = entry.uuid;
+        // Writing only what changed is what makes a re-scan of an unchanged
+        // repository produce no operation at all — `Writer::commit` then drops
+        // the empty revision. The comparison is against the values loaded up
+        // front, so it costs no read here.
+        if entry.count != Some(count) {
+            writer
+                .set_field_as(OpType::FileModified, group, "mfr_duplicate_count", Value::Int(count))
+                .map_err(ApiError::from)?;
+            entry.count = Some(count);
+        }
+        if entry.reclaimable != Some(reclaimable) {
+            writer
+                .set_field_as(
+                    OpType::FileModified,
+                    group,
+                    "mfr_duplicate_reclaimable",
+                    Value::Int(reclaimable),
+                )
+                .map_err(ApiError::from)?;
+            entry.reclaimable = Some(reclaimable);
+        }
         touched.insert(group);
 
         for member in group_members {
-            set_if_changed(&mut writer, member.uuid, "mfr_duplicate_group", Value::Ref(group))?;
+            if links.get(&member.uuid) != Some(&group) {
+                writer
+                    .set_field_as(
+                        OpType::FileModified,
+                        member.uuid,
+                        "mfr_duplicate_group",
+                        Value::Ref(group),
+                    )
+                    .map_err(ApiError::from)?;
+                links.insert(member.uuid, group);
+            }
             grouped.insert(member.uuid);
         }
         result.groups += 1;
@@ -468,29 +505,12 @@ fn write_class_groups(
     Ok(())
 }
 
-/// Writes a field only when its stored value differs, so a re-scan of an
-/// unchanged repository produces no operation — and `Writer::commit` then drops
-/// the empty revision entirely.
-fn set_if_changed(
-    writer: &mut Writer,
-    uuid: Uuid,
-    name: &str,
-    value: Value,
-) -> Result<(), ApiError> {
-    let current =
-        db::get_field_rows_named(writer.connection(), uuid, name).map_err(ApiError::from)?;
-    if current.len() == 1 && current[0].value == value {
-        return Ok(());
-    }
-    writer.set_field_as(OpType::FileModified, uuid, name, value).map_err(ApiError::from)?;
-    Ok(())
-}
-
 /// Removes what the scan disproved: the group link of a record the scan did not
 /// place in a group, and every group left with fewer than two members.
 fn prune(
     conn: &mut rusqlite::Connection,
-    existing: &HashMap<(i64, String), Uuid>,
+    existing: &HashMap<(i64, String), db::DuplicateGroup>,
+    links: &mut HashMap<Uuid, Uuid>,
     grouped: &HashSet<Uuid>,
     touched: &HashSet<Uuid>,
     scope: Option<&HashSet<Uuid>>,
@@ -500,31 +520,37 @@ fn prune(
     reporter.progress("prune", Some(0), Some(total));
     let mut writer = Writer::begin(conn, None).map_err(ApiError::from)?;
 
-    // Driven by the records that *currently carry a link* — one query, and it
-    // catches every way of ceasing to be a duplicate at once: the twin changed,
-    // the file grew out of its size class, it fell under `min_size`, it stopped
-    // being a file. This is what keeps "`mfr_duplicate_group` present ⟹ it had
-    // a twin at the last scan" true. A scoped scan touches only its own subtree.
-    let linked = db::metarecords_with_field(writer.connection(), "mfr_duplicate_group")
-        .map_err(ApiError::from)?;
-    for uuid in linked {
-        if grouped.contains(&uuid) || scope.is_some_and(|s| !s.contains(&uuid)) {
-            continue;
-        }
+    // Driven by the records that *currently carry a link* — the map loaded at
+    // the start and kept current by the writes above, so this asks the database
+    // nothing. It catches every way of ceasing to be a duplicate at once: the
+    // twin changed, the file grew out of its size class, it fell under
+    // `min_size`, it stopped being a file. That is what keeps
+    // "`mfr_duplicate_group` present ⟹ it had a twin at the last scan" true.
+    // A scoped scan touches only its own subtree.
+    let stale: Vec<Uuid> = links
+        .keys()
+        .copied()
+        .filter(|uuid| !grouped.contains(uuid) && scope.is_none_or(|s| s.contains(uuid)))
+        .collect();
+    for uuid in stale {
         writer
             .clear_field_as(OpType::FileModified, uuid, "mfr_duplicate_group")
             .map_err(ApiError::from)?;
+        links.remove(&uuid);
     }
 
     for (i, group) in existing.values().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("prune", Some(i as u64), Some(total));
         }
-        if touched.contains(group) {
+        if touched.contains(&group.uuid) {
             continue;
         }
-        let members = db::ref_field_owners(writer.connection(), "mfr_duplicate_group", *group)
-            .map_err(ApiError::from)?;
+        let members: Vec<Uuid> = links
+            .iter()
+            .filter(|(_, target)| **target == group.uuid)
+            .map(|(owner, _)| *owner)
+            .collect();
         if members.len() > 1 {
             continue;
         }
@@ -532,8 +558,9 @@ fn prune(
             writer
                 .clear_field_as(OpType::FileModified, member, "mfr_duplicate_group")
                 .map_err(ApiError::from)?;
+            links.remove(&member);
         }
-        writer.delete_metarecord(*group).map_err(ApiError::from)?;
+        writer.delete_metarecord(group.uuid).map_err(ApiError::from)?;
     }
     writer.commit().map_err(ApiError::from)?;
     Ok(())
