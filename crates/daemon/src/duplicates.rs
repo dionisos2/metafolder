@@ -121,9 +121,14 @@ pub fn scan_reported(
         db::string_field_owners(&conn, "mfr_inode")?.into_iter().collect();
     let files = db::tracked_files_with_size(&conn)?;
 
+    // Partition on `(uuid, size)` alone first. A size class of one cannot hold
+    // a duplicate, and that is by far the biggest cut of the scan — so nothing
+    // heavier than an integer is built until it has been made: resolving every
+    // eligible file's path here would construct a string per file and throw
+    // most of them away a moment later.
     let total = files.len() as u64;
     reporter.progress("size", Some(0), Some(total));
-    let mut by_size: HashMap<i64, Vec<Candidate>> = HashMap::new();
+    let mut by_size: HashMap<i64, Vec<Uuid>> = HashMap::new();
     for (i, (uuid, size)) in files.into_iter().enumerate() {
         if i % PROGRESS_STEP == 0 {
             reporter.progress("size", Some(i as u64), Some(total));
@@ -137,30 +142,45 @@ pub fn scan_reported(
         if scope.as_ref().is_some_and(|s| !s.contains(&uuid)) {
             continue;
         }
-        let Some(rel) = cache.path_of(&conn, "mfr_path", uuid)? else {
-            continue;
-        };
-        // The filesystem root itself is a directory; an offline volume reads
-        // back as an empty directory and must be left frozen, not scanned.
-        if rel.is_empty() || offline.contains(&rel) {
-            continue;
-        }
-        by_size.entry(size).or_default().push(Candidate {
-            uuid,
-            rel,
-            size,
-            inode: inodes.get(&uuid).cloned(),
-            partial: None,
-            full: None,
-        });
+        by_size.entry(size).or_default().push(uuid);
     }
-    // A size class of one cannot hold a duplicate: this is the cheap filter
-    // that makes the rest tractable.
     by_size.retain(|_, members| members.len() > 1);
+
+    // Only now, for the survivors, the per-file work: a path (and with it the
+    // offline-volume guard, which needs one).
+    let mut classes: Vec<(i64, Vec<Candidate>)> = Vec::with_capacity(by_size.len());
+    for (size, uuids) in by_size {
+        let mut members = Vec::with_capacity(uuids.len());
+        for uuid in uuids {
+            let Some(rel) = cache.path_of(&conn, "mfr_path", uuid)? else {
+                continue;
+            };
+            // The filesystem root itself is a directory; an offline volume
+            // reads back as an empty directory and must be left frozen, not
+            // scanned.
+            if rel.is_empty() || offline.contains(&rel) {
+                continue;
+            }
+            members.push(Candidate {
+                uuid,
+                rel,
+                size,
+                inode: inodes.get(&uuid).cloned(),
+                partial: None,
+                full: None,
+            });
+        }
+        // A class can fall below two members here — an unresolvable path, an
+        // offline volume. Dropping it is an economy rather than a correction:
+        // the partial-hash phase eliminates a lone member anyway, but only
+        // after opening the file and reading 8 KiB of it for nothing.
+        if members.len() > 1 {
+            classes.push((size, members));
+        }
+    }
 
     // Largest first, so a cancelled scan still leaves the most valuable groups
     // recorded rather than nothing.
-    let mut classes: Vec<(i64, Vec<Candidate>)> = by_size.into_iter().collect();
     classes.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
 
     // ── Phase 2: partial hashes ─────────────────────────────────────────────

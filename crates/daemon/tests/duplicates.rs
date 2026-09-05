@@ -171,6 +171,44 @@ fn directories_are_not_candidates() {
     assert_eq!(result.groups, 0, "two same-size directories are not duplicates");
 }
 
+#[test]
+fn an_offline_volume_freezes_its_files_and_can_empty_a_class() {
+    // A declared mount point with nothing mounted at it is offline, and its
+    // whole subtree is frozen: the files there are unreadable in the sense that
+    // matters (the directory reads back empty), so the scan must not consider
+    // them. Here that takes the only twin out of a two-member size class, which
+    // must then produce no group at all rather than a group of one.
+    let (repo, root) = setup("offline");
+    write_file(&root, "vol/a.txt", b"identical twins");
+    write_file(&root, "b.txt", b"identical twins");
+    reconcile::reconcile(&repo).unwrap();
+
+    // Control: without the mount marking they are an ordinary pair.
+    assert_eq!(duplicates::scan(&repo, &ScanOptions::default()).unwrap().groups, 1);
+
+    let vol = resolve(&repo, "/vol");
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        // Nothing is mounted at this ordinary directory, so it reads as offline.
+        w.set_field(vol, "mfr_mount", Value::String("uuid:not-plugged-in".into())).unwrap();
+        w.commit().unwrap();
+    }
+
+    let result = duplicates::scan(&repo, &ScanOptions::default()).unwrap();
+    assert_eq!(result.groups, 0, "the frozen twin leaves a class of one: {result:?}");
+    assert_eq!(
+        group_of(&repo, resolve(&repo, "/b.txt")),
+        None,
+        "and the survivor's stale link is cleared"
+    );
+    assert_eq!(
+        group_of(&repo, resolve(&repo, "/vol/a.txt")),
+        None,
+        "the frozen file keeps no link either"
+    );
+}
+
 // ── Hard links ───────────────────────────────────────────────────────────────
 
 #[cfg(unix)]

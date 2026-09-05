@@ -220,15 +220,21 @@ cheaper question but there is no index on a field's *value*, so it walks every
 tracked file once per question — the trap already documented on
 =db::hashed_orphans=.
 
+*The partition is formed on =(uuid, size)= alone*, and the singleton classes are
+discarded, **before** anything heavier is built. Only the survivors then get a
+path resolved (and with it the offline-volume guard, which needs one). This
+matters: the singleton cut is by far the largest of the scan, so resolving every
+eligible file's path first would construct a string per file and throw most of
+them away a moment later.
+
 The in-memory index ([[file:spec-indexing.org][spec-indexing.org]]) is
 deliberately *not* used here, though =mfr_size= is an =Int= and its BSI does
-hold a complete value → bitmap partition. Reading the classes off it would save
-one scan of three field rows per file — and the scan needs the uuid, the size
-and the path of every surviving candidate regardless, so the saving lands on a
-phase that is not the bottleneck: the phases that follow read file *content*.
-A second code path, with its own oracle obligation, is not worth a gain that
-disappears next to one =open()=. Revisit only with a measurement showing phase 1
-dominating a real scan.
+hold exactly this partition (=BsiIndex::exact=, value → bitmap). Once the cut
+above is made where it belongs, what the index would save is one scan of three
+field rows per file — on the phase that is not the bottleneck, since the ones
+that follow read file *content*. A second code path, with its own oracle
+obligation, is not worth a gain that disappears next to a single =open()=.
+Revisit only with a measurement showing phase 1 dominating a real scan.
 
 *** =partial= — partial hashes
 
