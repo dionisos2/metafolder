@@ -202,3 +202,25 @@ fn test_load_config_errors_without_a_config_file() {
     let (_guard, config) = temp_config();
     assert!(config.load_config().is_err());
 }
+
+// The file-manager's two toggles that had no key: jumping to the root (the
+// disk root when no repository is active) and revealing dot-entries.
+#[test]
+fn test_file_manager_root_and_hidden_keybindings() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    let compiled = config.load_keybindings().unwrap().compiled();
+
+    let in_fm = |keys: &[&str]| -> Option<String> {
+        compiled
+            .iter()
+            .find(|b| {
+                b.keys.iter().map(String::as_str).eq(keys.iter().copied())
+                    && b.when.as_deref() == Some("file-manager")
+            })
+            .map(|b| b.invocation.clone())
+    };
+
+    assert_eq!(in_fm(&["/"]).as_deref(), Some("file-manager:goto-root"));
+    assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle-hidden"));
+}

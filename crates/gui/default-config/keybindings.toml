@@ -284,6 +284,15 @@
 "f2" = { command = "file-manager:rename", when = "file-manager" }
 "ctrl+d" = { command = "file-manager:duplicate", when = "file-manager" }
 "ctrl+shift+n" = { command = "file-manager:new-folder", when = "file-manager" }
+# Jump to the root — the repository's, or the filesystem's when no repository is
+# active — on the key that means root in a path. `/` is the metarecord-list
+# finder elsewhere, so the two never meet.
+"/" = [
+  { command = "metarecord-list:focus-finder", when = "metarecord-list" },
+  { command = "file-manager:goto-root", when = "file-manager" },
+]
+# Show/hide dot-entries, on the combo the desktop file managers use.
+"ctrl+h" = { command = "file-manager:toggle-hidden", when = "file-manager" }
 
 # metarecord-list: selection, finder, query editing.
 "space" = [
@@ -293,7 +302,6 @@
   { command = "file:play-pause", when = "file" },
 ]
 "ctrl+space" = { command = "metarecord-list:select-none", when = "metarecord-list" }
-"/" = { command = "metarecord-list:focus-finder", when = "metarecord-list" }
 "ctrl+/" = { command = "metarecord-list:focus-query", when = "metarecord-list" }
 
 # Editing the three search fields by chord (in addition to `/` and `ctrl+/`).

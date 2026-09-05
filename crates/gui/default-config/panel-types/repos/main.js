@@ -123,6 +123,31 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // The keyboard path to loading a repository (`repos:load`): no form to fill
+  // in — the folder picker opens straight away and the pick is loaded. A
+  // failure has no form to land in, so it is said in the status bar.
+  async function loadPicked() {
+    const path = await pickRunner.request({
+      panel: 'file-manager',
+      vars: { 'file-manager:start-dir': await homeDirCached() },
+      result: 'path',
+      repo: null, // browse the raw disk: the folder is not a loaded repo yet
+      name: 'Pick a repository',
+      prompt:
+        'Highlight the repository folder (\u201c.\u201d = current directory) \u2014 ' +
+        'Ctrl+Enter to confirm, Ctrl+Esc to cancel',
+    });
+    if (!path) return; // cancelled
+    try {
+      const loaded = /** @type {{repo_uuid: string}} */ (
+        await daemon.call('POST', '/repos/load', { root: path })
+      );
+      await onCreated(loadForm, loaded.repo_uuid);
+    } catch (error) {
+      await statusBar.error(messageOf(error), statusErrorMs);
+    }
+  }
+
   async function refresh() {
     /** @type {Repo[]} */
     let repos;
@@ -577,9 +602,9 @@ export async function mount(root, metafolder) {
     label: 'Repos: open the init form',
     handler: () => toggleForm(initForm, true),
   });
-  void commands.register('repos:open-load', {
-    label: 'Repos: open the load form',
-    handler: () => toggleForm(loadForm, true),
+  void commands.register('repos:load', {
+    label: 'Repos: pick a folder and load the repository in it',
+    handler: loadPicked,
   });
   void commands.register('repos:refresh', {
     label: 'Repos: refresh the repository list',

@@ -108,6 +108,7 @@ export async function mount(root, metafolder) {
   const pathElement = byId(root, 'current-path');
   const addButton = byId(root, 'add', HTMLButtonElement);
   const constrainBox = byId(root, 'constrain', HTMLInputElement);
+  const gotoRootButton = byId(root, 'goto-root');
   const showHiddenBox = byId(root, 'show-hidden', HTMLInputElement);
   const statusLine = byId(root, 'status-line');
   const listingElement = byId(root, 'listing');
@@ -597,12 +598,17 @@ export async function mount(root, metafolder) {
     return items;
   }
 
+  // Jump to "the root": the repository's when one is active, the filesystem's
+  // otherwise — with no repo there is no repo root to name, and the panel is
+  // then a plain disk browser, where "/" is the only root there is.
   async function gotoRoot() {
-    if (!repo || repoRoot === null) {
-      void statusBar.message('no active repository', 4000);
-      return;
-    }
-    await open(repoRoot);
+    await open(repoRoot ?? '/');
+  }
+
+  // Which root the button offers, so it never promises a repo root that the
+  // panel has no repository for.
+  function renderRootButton() {
+    gotoRootButton.textContent = repoRoot === null ? 'root' : 'repo root';
   }
 
   // ── Reveal a path (spec-gui "Cross-panel selection") ───────────────────────
@@ -907,7 +913,7 @@ export async function mount(root, metafolder) {
   showHiddenBox.addEventListener('change', () => void setShowHidden(showHiddenBox.checked));
   const detachScroll = pager.attach(listingElement);
   byId(root, 'up').addEventListener('click', () => void goUp());
-  byId(root, 'goto-root').addEventListener('click', () => void gotoRoot());
+  gotoRootButton.addEventListener('click', () => void gotoRoot());
   byId(root, 'refresh').addEventListener('click', () => void refresh());
   addButton.addEventListener('click', () => void addSelected());
 
@@ -916,7 +922,7 @@ export async function mount(root, metafolder) {
     handler: addSelected,
   });
   void commands.register('file-manager:goto-root', {
-    label: 'File manager: jump to the repo root',
+    label: 'File manager: jump to the root (the repo root, or / with no repo)',
     handler: gotoRoot,
   });
   void commands.register('file-manager:refresh', {
@@ -1037,6 +1043,7 @@ export async function mount(root, metafolder) {
       internalDir = null;
       placeholderElement.textContent = 'No active repository — browsing the disk.';
     }
+    renderRootButton();
     // A pending reveal request (from another panel's "open folder" action) wins
     // over the plain seed; otherwise fall back to the seed, the repo root, or /.
     const revealed = await consumeReveal();

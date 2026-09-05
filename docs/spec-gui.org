@@ -295,7 +295,7 @@ command name written into the input when a suggestion is accepted.
 leading verb, so the right command is findable without running it:
 - =open-X= — opens an in-panel *form or overlay* (mouse-oriented), e.g.
   =metarecord:open-add-field=, =metarecord-list:open-bulk-edit=,
-  =repos:open-init= / =open-load= / =open-retype=.
+  =repos:open-init= / =open-retype=.
 - =focus-X= — moves keyboard *focus* to an existing input field of the panel,
   e.g. =metarecord-list:focus-query= / =focus-columns= / =focus-finder=.
 - =edit-= / =set-= / =add-= / =delete-X= (verb first) — a *minibuffer*
@@ -985,7 +985,7 @@ Behaviours:
 | =daemon:set-url=     | Change daemon URL                              |
 | =repos:open=         | Switch focused panel slot to =repos= for repo selection |
 | =repos:open-init=         | Open init-repo form                            |
-| =repos:open-load=         | Open load-repo form                            |
+| =repos:load=              | Pick a folder and load the repository in it     |
 | =workspace:new=      | Create a new workspace, assign to both slots   |
 | =workspace:close=    | Close the focused slot's workspace (slot falls back to the previous workspace) |
 | =workspace:rename=   | Rename the focused slot's workspace            |
@@ -1076,10 +1076,10 @@ Behaviours:
 | =message:clear=           | Clear the =message= panel log for this workspace              |
 | =status:clear=            | Dismiss the transient status-bar message (default =ctrl+l=)   |
 | =file-manager:track=        | Add selected path via =POST .../track= (=mf_watch = false=)   |
-| =file-manager:goto-root=  | Jump to the =active_repo= root in =file-manager=              |
+| =file-manager:goto-root=  | Jump to the root in =file-manager= — the =active_repo= root, or =/= with no repo (default =/=) |
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
-| =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager=       |
+| =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
 | =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; the entry name is collected in the command input, completing over the listing) |
 | =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
@@ -1737,15 +1737,21 @@ error message appears in the status bar and the form remains open.
 
 *** Load repo
 
-=repos:open-load= is a command of the =repos= panel type. It transforms the
-=repos= panel to show an inline form with a single =root= input, also paired
-with the *Browse…* folder picker. Submitting calls =POST /repos/load=. On
-success the loaded repo is adopted in place when the current workspace has no
-=active_repo= yet, otherwise it is only added to the list; like init, load
-never spawns a workspace.
+The *Load repo* button of the =repos= panel transforms it to show an inline
+form with a single =root= input, also paired with the *Browse…* folder picker.
+Submitting calls =POST /repos/load=. On success the loaded repo is adopted in
+place when the current workspace has no =active_repo= yet, otherwise it is only
+added to the list; like init, load never spawns a workspace.
+
+=repos:load= is the same load without the form: the command opens the folder
+picker straight away (a =file-manager= picker on the raw disk, started at the
+home directory) and loads the folder that is picked, adopting it under the same
+rule. Cancelling the picker loads nothing. Since there is no form to land in,
+a =POST /repos/load= failure — the folder is not a repository — is reported in
+the status bar. The form remains for typing or correcting a path by hand.
 
 The intended flow is: =repos:open= (global) → navigate to the =repos= panel
-→ select a loaded repo or trigger =repos:open-init= / =repos:open-load= from there.
+→ select a loaded repo or trigger =repos:open-init= / =repos:load= from there.
 
 *** Tracking notices
 
@@ -2155,7 +2161,13 @@ anywhere.
 disk. Adding files to the DB is only available for paths inside the
 =active_repo= root; attempting it outside returns an error in the status bar.
 When =active_repo= is =null=, the checkbox is disabled and =file-manager:track=
-/ =file-manager:goto-root= return an error.
+returns an error.
+
+The toolbar's root button (and =file-manager:goto-root=, default =/=) jumps to
+the =active_repo= root — but with no repository there is no repo root to jump
+to, and the panel is then a plain disk browser: the button reads *root* instead
+of *repo root* and goes to the filesystem root (=/=). It is never a dead end,
+and never an error.
 
 *Selection*: moving the cursor sets =workspace.selected_paths= to a
 single-element list containing the highlighted path. If the path has an
@@ -2169,7 +2181,8 @@ file), and drops the root constraint if the target lies outside the repo. See
 [[*Cross-panel selection]].
 
 *Keyboard*: =Up= / =Down= navigate; =Enter= expands a directory or confirms
-selection for a file; =Backspace= goes up one level; =r= refreshes;
+selection for a file; =Backspace= goes up one level; =/= jumps to the root and
+=Ctrl+H= shows/hides the dot-entries; =r= refreshes;
 =Delete= deletes the highlighted entry; =F2= renames; =Ctrl+C= / =Ctrl+X= /
 =Ctrl+V= copy / cut / paste; =Ctrl+D= duplicates; =Ctrl+Shift+N= creates a
 folder.
@@ -2216,9 +2229,10 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | Command                   | Description                                              |
 |---------------------------+----------------------------------------------------------|
 | =file-manager:track=        | Add the selected path to the DB via =POST .../track= (creates metarecord with =mf_watch = false=; parent metarecords created automatically). Error if already tracked (=409=) or outside =active_repo= root. |
-| =file-manager:goto-root=  | Jump to the =active_repo= root directory                 |
+| =file-manager:goto-root=  | Jump to the root directory: the =active_repo= root, or =/= when no repository is active (=/=) |
 | =file-manager:refresh=    | Reload the current directory (and tracked status), keeping the cursor |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox                 |
+| =file-manager:toggle-hidden= | Show/hide the dot-entries (=ctrl+h=)                  |
 | =file-manager:new-folder= | Create a new folder in the current directory (name prompted) |
 | =file-manager:new-file=   | Create a new empty file in the current directory (name prompted) |
 | =file-manager:rename=     | Rename the selected entry (=F2=; name pre-filled)        |

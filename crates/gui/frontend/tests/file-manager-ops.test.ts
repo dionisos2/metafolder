@@ -288,6 +288,28 @@ describe('file-manager filesystem operations', () => {
     expect(fs.readDir).toHaveBeenCalled();
   });
 
+  // Browsing the disk with no repository, "repo root" names nothing: the button
+  // says "root" and goes to the filesystem root, so the jump is never a dead end.
+  test('with no active repository the root button jumps to the disk root', async () => {
+    const { handlers, root } = await mount(null);
+    expect(root.getElementById('goto-root')!.textContent).toBe('root');
+    // Descend into dir1 (index 2: '.', '..', dir1) so the jump has somewhere
+    // to come back from.
+    await handlers.get('file-manager:first')!();
+    await handlers.get('file-manager:next')!();
+    await handlers.get('file-manager:next')!();
+    await handlers.get('file-manager:activate')!();
+    expect(root.getElementById('current-path')!.textContent).toBe('/dir1');
+
+    await handlers.get('file-manager:goto-root')!();
+    expect(root.getElementById('current-path')!.textContent).toBe('/');
+  });
+
+  test('with a repository the root button still names the repo root', async () => {
+    const { root } = await mount('repo-1');
+    expect(root.getElementById('goto-root')!.textContent).toBe('repo root');
+  });
+
   test('mounts with a minimal config (default timing / page size)', async () => {
     const s = stub(null);
     (s.api as { settings: unknown }).settings = {};

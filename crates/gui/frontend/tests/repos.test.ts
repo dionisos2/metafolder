@@ -116,6 +116,8 @@ function setup(options: { activeRepo?: string | null } = {}) {
   const vars = new Map<string, unknown>([['active_repo', options.activeRepo ?? null]]);
   const dispatch = vi.fn(async (_invocation: string) => {});
   const handlers = new Map<string, (...a: string[]) => unknown>();
+  /** Every value-picker session the panel opened (spec-gui "Value picker"). */
+  const picks: Record<string, unknown>[] = [];
   // `repo_init` is a Tauri command, not an HTTP call: it does POST /repos/init
   // plus the ignore preset, and returns the new uuid (crates/gui/src/repo_init.rs).
   const initRepo = vi.fn(async (args: Record<string, unknown>) => {
@@ -144,6 +146,9 @@ function setup(options: { activeRepo?: string | null } = {}) {
         return null;
       case 'register_command':
         return null;
+      case 'pick_start':
+        picks.push((args!.spec as Record<string, unknown>));
+        return 'ws-2';
       case 'post_status':
       case 'append_message':
       case 'suggest_keybinding':
@@ -173,7 +178,17 @@ function setup(options: { activeRepo?: string | null } = {}) {
       visibilityGate: { visible: true, set: () => {}, whenVisible: (fn: () => void) => fn() },
     },
   );
-  return { api: instance.api, daemon, vars, dispatch, invoke, handlers, initRepo };
+  return {
+    api: instance.api,
+    daemon,
+    vars,
+    dispatch,
+    invoke,
+    handlers,
+    initRepo,
+    picks,
+    pushVarChanged: instance.pushVarChanged,
+  };
 }
 
 /** The panel's own commands, as the shell would invoke them. */
@@ -455,7 +470,7 @@ describe('repos panel — field retype', () => {
 });
 
 describe('repos panel — commands', () => {
-  test('open-init and open-load reveal their forms', async () => {
+  test('open-init reveals its form', async () => {
     const { api, handlers } = setup();
     const shadow = shadowForRepos();
     await mount(shadow, api);
@@ -465,15 +480,84 @@ describe('repos panel — commands', () => {
     expect((shadow.getElementById('init-form') as HTMLElement).classList.contains('hidden')).toBe(
       false,
     );
-    await command(handlers, 'repos:open-load')();
-    expect((shadow.getElementById('load-form') as HTMLElement).classList.contains('hidden')).toBe(
-      false,
-    );
     // Cancel closes the form again.
-    (shadow.querySelector('#load-form .cancel') as HTMLElement).click();
+    (shadow.querySelector('#init-form .cancel') as HTMLElement).click();
+    expect((shadow.getElementById('init-form') as HTMLElement).classList.contains('hidden')).toBe(
+      true,
+    );
+  });
+
+  // `repos:load` is the keyboard path: no form to fill, just the folder picker
+  // and the load — the typed-path form stays behind the "Load repo" button.
+  test('load opens the folder picker and loads what was picked', async () => {
+    const { api, daemon, vars, handlers, picks, pushVarChanged } = setup({ activeRepo: null });
+    daemon.repos.push({ repo_uuid: 'r1', name: 'photos', root: '/tmp/photos' });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    daemon.calls.length = 0;
+
+    const running = command(handlers, 'repos:load')();
+    await settle();
+    expect(picks).toHaveLength(1);
+    expect((picks[0].panel as { type: string }).type).toBe('file-manager');
+    expect(picks[0].result).toBe('path');
+    expect(picks[0].repo).toBe(null); // the folder is not a repo of ours yet
+
+    pushVarChanged('pick_result', { token: picks[0].token, path: '/tmp/photos' });
+    await running;
+    await settle();
+
+    expect(
+      daemon.calls.some(
+        (c) => c.path === '/repos/load' && (c.body as { root: string }).root === '/tmp/photos',
+      ),
+    ).toBe(true);
+    // A workspace with no repository adopts the one just loaded.
+    expect(vars.get('active_repo')).toBe('r1');
+    // No form was opened on the way.
     expect((shadow.getElementById('load-form') as HTMLElement).classList.contains('hidden')).toBe(
       true,
     );
+  });
+
+  test('cancelling the folder picker loads nothing', async () => {
+    const { api, daemon, handlers, picks, pushVarChanged } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+    daemon.calls.length = 0;
+
+    const running = command(handlers, 'repos:load')();
+    await settle();
+    pushVarChanged('pick_result', { token: picks[0].token, cancelled: true });
+    await running;
+    await settle();
+
+    expect(daemon.calls.some((c) => c.path === '/repos/load')).toBe(false);
+  });
+
+  test('a folder that is not a repository is reported in the status bar', async () => {
+    const { api, daemon, handlers, picks, pushVarChanged, invoke } = setup({ activeRepo: null });
+    const shadow = shadowForRepos();
+    await mount(shadow, api);
+    await settle();
+
+    const running = command(handlers, 'repos:load')();
+    await settle();
+    pushVarChanged('pick_result', { token: picks[0].token, path: '/tmp/not-a-repo' });
+    await running;
+    await settle();
+
+    expect(daemon.repos).toHaveLength(0);
+    // The picker left no form on screen, so the error has to be said out loud.
+    expect(
+      invoke.mock.calls.some(
+        ([name, args]) =>
+          name === 'post_status' &&
+          String((args as { text?: string }).text ?? '').includes('not a repository'),
+      ),
+    ).toBe(true);
   });
 
   test('refresh picks up a repository loaded from elsewhere', async () => {
