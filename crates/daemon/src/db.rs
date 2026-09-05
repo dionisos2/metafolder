@@ -994,18 +994,22 @@ pub fn all_tracked_metarecords(conn: &Connection) -> Result<Vec<Uuid>> {
 /// the cheaper question but there is no index on a field's *value*, so it walks
 /// every tracked file once per question (see [`hashed_orphans`] for the same
 /// trap). The duplicate scan groups these in memory instead.
-pub fn tracked_files_with_size(conn: &Connection) -> Result<Vec<(Uuid, i64)>> {
-    // CROSS JOIN pins the join order: the `mfr_type = 'file'` rows drive.
-    let mut stmt = conn.prepare(
-        "SELECT t.metarecord_uuid, s.value_int
+/// See [`tracked_files_with_size`]; a constant for the same reason as
+/// [`HASHED_ORPHANS_SQL`].
+pub const TRACKED_FILES_WITH_SIZE_SQL: &str = "\
+SELECT t.metarecord_uuid, s.value_int
          FROM field t
-         CROSS JOIN field s ON s.metarecord_uuid = t.metarecord_uuid
+         CROSS JOIN field s INDEXED BY idx_field_metarecord
+              ON s.metarecord_uuid = t.metarecord_uuid
               AND s.field_name = 'mfr_size' AND s.value_type = 'int'
-         CROSS JOIN field p ON p.metarecord_uuid = t.metarecord_uuid
+         CROSS JOIN field p INDEXED BY idx_field_metarecord
+              ON p.metarecord_uuid = t.metarecord_uuid
               AND p.field_name = 'mfr_path' AND p.value_type = 'tree_ref'
          WHERE t.field_name = 'mfr_type' AND t.value_type = 'string'
-           AND t.value_text = 'file'",
-    )?;
+           AND t.value_text = 'file'";
+
+pub fn tracked_files_with_size(conn: &Connection) -> Result<Vec<(Uuid, i64)>> {
+    let mut stmt = conn.prepare(TRACKED_FILES_WITH_SIZE_SQL)?;
     let rows = stmt.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?)))?;
     let mut out = Vec::new();
     for row in rows {
@@ -1075,18 +1079,24 @@ pub fn hash_cache(conn: &Connection) -> Result<HashMap<Uuid, StoredHashes>> {
 /// The size is part of the key, not decoration: two different size classes
 /// could in principle produce the same hash, and the scan's find-or-create has
 /// to stay well defined (spec-duplicates "Duplicate groups").
-pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), DuplicateGroup>> {
-    let mut stmt = conn.prepare(
-        "SELECT h.metarecord_uuid, z.value_int, h.value_text, c.value_int, r.value_int
+/// See [`duplicate_groups`]; a constant for the same reason as
+/// [`HASHED_ORPHANS_SQL`].
+pub const DUPLICATE_GROUPS_SQL: &str = "\
+SELECT h.metarecord_uuid, z.value_int, h.value_text, c.value_int, r.value_int
          FROM field h
-         CROSS JOIN field z ON z.metarecord_uuid = h.metarecord_uuid
+         CROSS JOIN field z INDEXED BY idx_field_metarecord
+              ON z.metarecord_uuid = h.metarecord_uuid
               AND z.field_name = 'mfr_content_size' AND z.value_type = 'int'
-         LEFT JOIN field c ON c.metarecord_uuid = h.metarecord_uuid
+         LEFT JOIN field c INDEXED BY idx_field_metarecord
+              ON c.metarecord_uuid = h.metarecord_uuid
               AND c.field_name = 'mfr_duplicate_count' AND c.value_type = 'int'
-         LEFT JOIN field r ON r.metarecord_uuid = h.metarecord_uuid
+         LEFT JOIN field r INDEXED BY idx_field_metarecord
+              ON r.metarecord_uuid = h.metarecord_uuid
               AND r.field_name = 'mfr_duplicate_reclaimable' AND r.value_type = 'int'
-         WHERE h.field_name = 'mfr_content_hash' AND h.value_type = 'string'",
-    )?;
+         WHERE h.field_name = 'mfr_content_hash' AND h.value_type = 'string'";
+
+pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), DuplicateGroup>> {
+    let mut stmt = conn.prepare(DUPLICATE_GROUPS_SQL)?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, Vec<u8>>(0)?,
@@ -1156,20 +1166,24 @@ pub struct OrphanCandidate {
 /// every tracked file of the repository — once per arriving file. A directory
 /// of a few thousand files dropped into a watched repo then costs a quadratic
 /// number of row reads, which is most of what a big flush spends its time on.
-pub fn hashed_orphans(conn: &Connection) -> Result<Vec<OrphanCandidate>> {
-    // CROSS JOIN pins the join order: the orphans (few, and an index seek on
-    // `field_name, value_type`) drive, the rest is a lookup per orphan.
-    let mut stmt = conn.prepare(
-        "SELECT p.metarecord_uuid, s.value_int, ph.value_text, fh.value_text
+/// See [`hashed_orphans`]. A constant so the plan can be asserted by a test:
+/// this query is one `INDEXED BY` away from being quadratic.
+pub const HASHED_ORPHANS_SQL: &str = "\
+SELECT p.metarecord_uuid, s.value_int, ph.value_text, fh.value_text
          FROM field p
-         CROSS JOIN field s ON s.metarecord_uuid = p.metarecord_uuid
+         CROSS JOIN field s INDEXED BY idx_field_metarecord
+              ON s.metarecord_uuid = p.metarecord_uuid
               AND s.field_name = 'mfr_size' AND s.value_type = 'int'
-         CROSS JOIN field ph ON ph.metarecord_uuid = p.metarecord_uuid
+         CROSS JOIN field ph INDEXED BY idx_field_metarecord
+              ON ph.metarecord_uuid = p.metarecord_uuid
               AND ph.field_name = 'mfr_partial_hash' AND ph.value_type = 'string'
-         CROSS JOIN field fh ON fh.metarecord_uuid = p.metarecord_uuid
+         CROSS JOIN field fh INDEXED BY idx_field_metarecord
+              ON fh.metarecord_uuid = p.metarecord_uuid
               AND fh.field_name = 'mfr_full_hash' AND fh.value_type = 'string'
-         WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'",
-    )?;
+         WHERE p.field_name = 'mfr_path' AND p.value_type = 'nothing'";
+
+pub fn hashed_orphans(conn: &Connection) -> Result<Vec<OrphanCandidate>> {
+    let mut stmt = conn.prepare(HASHED_ORPHANS_SQL)?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, Vec<u8>>(0)?,

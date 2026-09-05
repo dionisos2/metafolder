@@ -1571,3 +1571,44 @@ fn test_reopening_a_migrated_database_runs_no_ddl() {
         "opening an already-migrated database rewrote a schema object"
     );
 }
+
+// ── Join plans (correlated reads must seek, not scan) ─────────────────────────
+
+/// The three whole-repository reads join `field` to itself on
+/// `metarecord_uuid`, and each one is a single planner decision away from being
+/// quadratic.
+///
+/// `idx_field_name_type(field_name, value_type)` and
+/// `idx_field_metarecord(metarecord_uuid, field_name)` both offer two equality
+/// columns, so with no statistics SQLite is free to pick either — and it picks
+/// the first, which does not carry `metarecord_uuid`. The correlated side then
+/// *scans every row of that field name in the repository* to find the one it
+/// wants: on a repository with 500 000 orphans the orphan read did not finish
+/// in ten minutes, against half a second once the join seeks. A `CROSS JOIN`
+/// pins the join order but says nothing about the index, which is why each of
+/// these carries `INDEXED BY`.
+#[test]
+fn test_the_repository_wide_reads_seek_their_correlated_rows() {
+    let conn = test_conn();
+    for (what, sql) in [
+        ("hashed orphans", db::HASHED_ORPHANS_SQL),
+        ("tracked files with size", db::TRACKED_FILES_WITH_SIZE_SQL),
+        ("duplicate groups", db::DUPLICATE_GROUPS_SQL),
+    ] {
+        let plan = query_plan(&conn, sql);
+        // The driving table is free to use whichever index suits it; *every*
+        // other line is a correlated lookup and must go through the index keyed
+        // by the uuid. Counting them is the point — leaving one join unguarded
+        // is enough to make the whole read quadratic.
+        let lines = plan.split('|').filter(|l| !l.trim().is_empty()).count();
+        let correlated = plan.matches("idx_field_metarecord").count();
+        assert_eq!(
+            correlated,
+            lines - 1,
+            "{what}: {} of {} correlated joins seek by metarecord_uuid: {plan}",
+            correlated,
+            lines - 1
+        );
+        assert_eq!(plan.matches("SCAN").count(), 0, "{what}: a scan crept in: {plan}");
+    }
+}

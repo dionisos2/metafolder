@@ -90,6 +90,18 @@ reconcile, observable queries, the task registry — are part of version 1.
   re-keyed by dropping and recreating it is the shape to watch for. The witness
   is =PRAGMA schema_version=, which counts DDL: it must not move across two
   consecutive opens of the same database.
+- A query that joins =field= to itself on =metarecord_uuid= must say
+  =INDEXED BY idx_field_metarecord= on every correlated side. The EAV schema
+  offers two indexes with two equality columns each —
+  =idx_field_name_type(field_name, value_type)= and
+  =idx_field_metarecord(metarecord_uuid, field_name)= — and the database carries
+  no statistics (=ANALYZE= is never run), so SQLite is free to pick the first.
+  It does not carry the uuid, so the correlated side then *scans every row of
+  that field name in the repository* to keep one: the read becomes quadratic in
+  the repository. Measured on the bundled SQLite with 20 000 orphaned
+  metarecords, the orphan read took 39.9 s unguarded against 17 ms guarded. A
+  =CROSS JOIN= pins the join *order* and says nothing about the index, so it is
+  not a substitute.
 - =TreeRef= references must form a forest (no cycles per =field_name=) with a
   maximum depth of 1000. The daemon rejects any write that would create a cycle
   or exceed this depth. The check walks the parent chain iteratively using the

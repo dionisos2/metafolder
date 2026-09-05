@@ -416,6 +416,12 @@ a build tree does hundreds of times in a row — would otherwise rebuild it from
 full scan of every orphan in the repository, once per event. A record the group
 has just orphaned is added to the index instead, which is the one read it costs.
 
+The scan that *builds* the index joins =field= to itself on =metarecord_uuid=,
+and must seek those rows rather than scan them — see the =INDEXED BY= invariant
+in [[file:spec-main.org][spec-main.org]]. Unguarded it is quadratic in the
+repository, which on a build tree (where most metarecords are orphans of deleted
+artifacts) is the difference between milliseconds and never finishing.
+
 *** Mass-orphan circuit breaker
 
 Independently of mount points: a single filesystem event batch that would orphan
