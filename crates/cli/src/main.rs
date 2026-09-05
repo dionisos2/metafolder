@@ -75,6 +75,16 @@ enum Command {
         #[command(subcommand)]
         command: Option<OrphanCommand>,
     },
+    /// Duplicates: list the groups of byte-identical files, or scan for them
+    ///
+    /// The scan writes its conclusion — one `duplicate_group` metarecord per
+    /// set, referenced by its members through `mfr_duplicate_group` — so the
+    /// listing is an ordinary query and "what else is identical to this file"
+    /// is `same(mfr_duplicate_group, <uuid>)`. Nothing here deletes a file.
+    Duplicate {
+        #[command(subcommand)]
+        command: Option<DuplicateCommand>,
+    },
     /// Mount points: list the repository's removable volumes, or forget one
     ///
     /// A directory that is a mount point is marked with `mfr_mount` by the
@@ -559,6 +569,49 @@ enum TrashCommand {
 }
 
 #[derive(Subcommand)]
+enum DuplicateCommand {
+    /// List the duplicate groups, worst reclaimable space first — the default
+    List {
+        /// Also print each group's members, `+` marking a hard link
+        #[arg(short = 'v', long = "verbose")]
+        verbose: bool,
+        /// Sort key, `field[:asc|desc]` (default: mfr_duplicate_reclaimable:desc)
+        #[arg(long = "sort")]
+        sort: Option<String>,
+        /// Show at most this many groups
+        #[arg(long = "limit")]
+        limit: Option<usize>,
+    },
+    /// Scan for byte-identical files and record the groups
+    Scan {
+        /// Skip files smaller than this human size (default 1: excludes empty files)
+        #[arg(long = "min-size")]
+        min_size: Option<String>,
+        /// Ignore every stored hash and recompute
+        #[arg(long = "rehash")]
+        rehash: bool,
+        /// Restrict the scan to this metarecord's subtree
+        #[arg(long = "metarecord", value_name = "UUID")]
+        metarecord: Option<String>,
+        /// Print the raw JSON summary
+        #[arg(long = "json")]
+        json: bool,
+        /// Print the task id and return instead of waiting
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+        /// Milliseconds between task polls
+        #[arg(long = "poll-interval", value_name = "MS")]
+        poll_interval: Option<u64>,
+    },
+    /// Delete every duplicate group and every link to one (the hashes are kept)
+    Clear {
+        /// Skip the confirmation prompt
+        #[arg(short = 'y', long = "yes")]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum OrphanCommand {
     /// List orphaned metarecords (uuid, stale path) — the default
     List,
@@ -921,6 +974,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             MountCommand::List { json } => commands::mount_list(ctx, json),
             MountCommand::Forget { uuid, yes } => commands::mount_forget(ctx, &uuid, yes),
         },
+        Command::Duplicate { command } => dispatch_duplicate(ctx, command),
         Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
             OrphanCommand::List => commands::orphan_list(ctx),
             OrphanCommand::Clear { yes } => commands::orphan_clear(ctx, yes),
@@ -1201,6 +1255,31 @@ fn dispatch_trash(ctx: &Ctx, file: Option<PathBuf>, command: Option<TrashCommand
             let mode = commands::trash_prune_mode(size.as_deref(), older_than.as_deref(), all)?;
             commands::trash_prune(ctx, mode, dry_run)
         }
+    }
+}
+
+fn dispatch_duplicate(ctx: &Ctx, command: Option<DuplicateCommand>) -> CmdResult {
+    match command.unwrap_or(DuplicateCommand::List { verbose: false, sort: None, limit: None }) {
+        DuplicateCommand::List { verbose, sort, limit } => {
+            commands::duplicate_list(ctx, verbose, sort.as_deref(), limit)
+        }
+        DuplicateCommand::Scan { min_size, rehash, metarecord, json, no_wait, poll_interval } => {
+            // The same human-size spelling `mf trash prune -s` accepts.
+            let min_size = match min_size.as_deref() {
+                Some(text) => metafolder_cli::trash::parse_size(text)?,
+                None => 1,
+            };
+            commands::duplicate_scan(
+                ctx,
+                min_size,
+                rehash,
+                metarecord.as_deref(),
+                json,
+                no_wait,
+                poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms),
+            )
+        }
+        DuplicateCommand::Clear { yes } => commands::duplicate_clear(ctx, yes),
     }
 }
 

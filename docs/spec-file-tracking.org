@@ -736,6 +736,16 @@ the daemon itself just recorded, e.g. a cross-repo sync file operation) from
 churning versions; a genuine change differs in =stat= and is applied
 normally.
 
+The check is on the *stat alone*, deliberately: what a redundant event must not
+do is *destroy* derived data. A =Modify(Data)= that is applied clears the
+content-derived fields — the hashes, their stamp, and =mfr_duplicate_group=
+([[file:spec-duplicates.org][spec-duplicates.org]] "Invariant") — so making the
+skip conditional on those being absent would invert it, and every echo would
+throw away a valid hash cache and a scan's whole result with it. Size and mtime
+are the same evidence of "unchanged" the hash stamp relies on, and they fail the
+same safe way: a same-second, same-size rewrite is missed and reconcile is what
+catches it.
+
 *Moves into a new directory.* A move is delivered as a =Rename(From)= /
 =Rename(To)= pair that compaction fuses back into one =Rename(Both)=. When the
 *destination directory is itself new* — "create a folder, drop a file into it" —

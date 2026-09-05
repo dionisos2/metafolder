@@ -1476,7 +1476,21 @@ fn poll_task(
             }
             _ => {
                 let phase = task["phase"].as_str().unwrap_or("");
-                progress.update(label, phase, task["done"].as_u64(), task["total"].as_u64());
+                // Some phases count bytes rather than items (spec-tasks
+                // "Duplicate scan progress phases"); the phase name is what
+                // says so, as the spec asks clients to read it.
+                let unit = if phase == "full" {
+                    metafolder_core::progress::Unit::Bytes
+                } else {
+                    metafolder_core::progress::Unit::Count
+                };
+                progress.update_in(
+                    label,
+                    phase,
+                    task["done"].as_u64(),
+                    task["total"].as_u64(),
+                    unit,
+                );
                 std::thread::sleep(std::time::Duration::from_millis(poll_interval_ms));
             }
         }
@@ -1630,6 +1644,236 @@ pub fn orphan_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
     let resp = ctx.client.post(&format!("{base}/orphans/clear"), &json!({ "uuids": uuids }))?;
     let cleared = resp["cleared"].as_u64().unwrap_or(0);
     println!("cleared {cleared}");
+    Ok(0)
+}
+
+// ── Duplicate detection (spec-duplicates "CLI") ───────────────────────────────
+
+/// The DSL selecting every duplicate group, and the field the listing sorts on.
+const GROUPS_QUERY: &str = r#"mf_schema = "duplicate_group""#;
+const RECLAIMABLE: &str = "mfr_duplicate_reclaimable";
+
+/// `mf duplicate list` — the groups, worst reclaimable space first.
+///
+/// A formatting convenience over `POST /query` and nothing more: it issues the
+/// query any client could, which is the point of the scan writing its result
+/// rather than returning it.
+pub fn duplicate_list(
+    ctx: &Ctx,
+    verbose: bool,
+    sort: Option<&str>,
+    limit: Option<usize>,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let sort = sort.unwrap_or(RECLAIMABLE);
+    let (field, ascending) = match sort.split_once(':') {
+        Some((f, "asc")) => (f, true),
+        Some((f, "desc")) => (f, false),
+        Some((_, other)) => {
+            return Err(CliError::Usage(format!("unknown sort order '{other}' (asc|desc)")))
+        }
+        None => (sort, false),
+    };
+    // A `select` query is paginated, so it is fetched page by page like every
+    // other listing; `--limit` caps the total rather than one page.
+    let query = metafolder_core::dsl::parse_query(GROUPS_QUERY).map_err(CliError::Usage)?;
+    let sort = json!([{"field": field, "order": if ascending { "asc" } else { "desc" }}]);
+    let select =
+        json!(["mfr_content_hash", "mfr_content_size", "mfr_duplicate_count", RECLAIMABLE]);
+    let mut groups = Vec::new();
+    let mut remaining = limit;
+    let mut cursor: Option<String> = None;
+    loop {
+        let page = remaining.map_or(ctx.page_size, |r| r.min(ctx.page_size));
+        if page == 0 {
+            break;
+        }
+        let mut body = json!({"query": query, "select": select, "sort": sort, "limit": page});
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
+        let results = resp["results"].as_array().cloned().unwrap_or_default();
+        if let Some(r) = remaining.as_mut() {
+            *r = r.saturating_sub(results.len());
+        }
+        groups.extend(results);
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    if groups.is_empty() {
+        println!("No duplicate groups. Run `mf duplicate scan` first.");
+        return Ok(0);
+    }
+
+    println!("{:>11}  {:>9}  {:>5}  HASH", "RECLAIMABLE", "SIZE", "COUNT");
+    for group in &groups {
+        let field = |name: &str| -> u64 {
+            group["fields"]
+                .as_array()
+                .and_then(|fields| fields.iter().find(|f| f["name"] == name))
+                .and_then(|f| f["value"]["value"].as_u64())
+                .unwrap_or(0)
+        };
+        let hash = group["fields"]
+            .as_array()
+            .and_then(|fields| fields.iter().find(|f| f["name"] == "mfr_content_hash"))
+            .and_then(|f| f["value"]["value"].as_str())
+            .unwrap_or("?");
+        println!(
+            "{:>11}  {:>9}  {:>5}  {hash}",
+            format_size(field(RECLAIMABLE)),
+            format_size(field("mfr_content_size")),
+            field("mfr_duplicate_count"),
+        );
+        if verbose {
+            print_group_members(ctx, &base, group["uuid"].as_str().unwrap_or_default())?;
+        }
+    }
+    Ok(0)
+}
+
+/// The members' paths under their group, a `+` marking those sharing an inode
+/// with another member — removing such a name frees nothing.
+fn print_group_members(ctx: &Ctx, base: &str, group: &str) -> Result<(), CliError> {
+    let member_query = json!({"type": "eq", "field": "mfr_duplicate_group",
+                              "value": {"type": "ref", "value": group}});
+    // The envelope only exists when `limit` is sent (spec-data-model "Response
+    // envelope"), so page through like every other listing.
+    let mut members = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({
+            "query": member_query,
+            "select": ["mfr_path", "mfr_inode"],
+            "limit": ctx.page_size,
+        });
+        if let Some(c) = &cursor {
+            body["cursor"] = json!(c);
+        }
+        let resp = ctx.client.post(&format!("{base}/query"), &body)?;
+        members.extend(resp["results"].as_array().cloned().unwrap_or_default());
+        match resp["next_cursor"].as_str() {
+            Some(c) => cursor = Some(c.to_string()),
+            None => break,
+        }
+    }
+    // One `resolve-tree` round-trip for the whole group (uuid → [paths]).
+    let resolved = ctx
+        .client
+        .post(&format!("{base}/query/fields/resolve-tree"), &json!({"query": member_query}))?;
+    for member in &members {
+        let Some(uuid) = member["uuid"].as_str() else { continue };
+        let linked = member["fields"]
+            .as_array()
+            .is_some_and(|fields| fields.iter().any(|f| f["name"] == "mfr_inode"));
+        let mark = if linked { '+' } else { ' ' };
+        let path = resolved[uuid]
+            .as_array()
+            .and_then(|paths| paths.first())
+            .and_then(|p| p.as_str())
+            .unwrap_or("(no path)");
+        println!("  {mark} {path}");
+    }
+    Ok(())
+}
+
+/// `mf duplicate scan` — start the scan and follow its task to completion.
+pub fn duplicate_scan(
+    ctx: &Ctx,
+    min_size: u64,
+    rehash: bool,
+    entry: Option<&str>,
+    raw_json: bool,
+    no_wait: bool,
+    poll_interval_ms: u64,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut body = json!({"min_size": min_size, "rehash": rehash});
+    if let Some(uuid) = entry {
+        let uuid = Uuid::parse_str(uuid)
+            .map_err(|_| CliError::Usage(format!("invalid metarecord UUID: '{uuid}'")))?;
+        body["metarecord"] = json!(uuid.as_simple().to_string());
+    }
+    let started = ctx
+        .client
+        .request("POST", &format!("{base}/duplicates/scan"), &[], Some(&body))
+        .map_err(unsupported_daemon)?;
+    let task_id = started["task_id"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("duplicate scan: daemon did not return a task id".into()))?
+        .to_string();
+    if no_wait {
+        println!("{task_id}");
+        return Ok(0);
+    }
+    let resp = poll_task(ctx, &base, &task_id, "duplicates", poll_interval_ms)?;
+    if raw_json {
+        println!("{resp}");
+    } else {
+        println!("{}", format_duplicate_scan(&resp));
+    }
+    Ok(0)
+}
+
+/// A daemon that predates duplicate detection answers 404 on the endpoint.
+/// `API_VERSION` is deliberately not bumped for it (the change is additive), so
+/// the clear message has to come from here.
+fn unsupported_daemon(error: CliError) -> CliError {
+    match &error {
+        CliError::Op(message) if message.contains("404") || message.contains("not found") => {
+            CliError::Op("this daemon does not support duplicate detection".into())
+        }
+        _ => error,
+    }
+}
+
+fn format_duplicate_scan(resp: &Json) -> String {
+    let n = |key: &str| resp[key].as_u64().unwrap_or(0);
+    format!(
+        "groups: {}  files: {}  reclaimable: {}   (hashed {} partial, {} full; {} skipped)",
+        n("groups"),
+        n("files"),
+        format_size(n("reclaimable")),
+        n("hashed_partial"),
+        n("hashed_full"),
+        n("skipped"),
+    )
+}
+
+/// `mf duplicate clear` — remove every group metarecord and every link to one.
+/// The hash cache is left alone: it is valid, expensive, and useful to
+/// reconcile and sync independently of duplicate detection.
+pub fn duplicate_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let groups = metafolder_core::dsl::parse_query(GROUPS_QUERY).map_err(CliError::Usage)?;
+    let found = ctx.client.post(&format!("{base}/query"), &json!({"query": groups}))?;
+    let count = found.as_array().map(Vec::len).unwrap_or(0);
+    if count == 0 {
+        println!("No duplicate groups to clear.");
+        return Ok(0);
+    }
+    if !yes {
+        let prompt = format!("Delete {count} duplicate group(s) and every link to them? [y/N] ");
+        if !confirm(&prompt)? {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+    // The links first: a group deleted while records still point at it would
+    // leave them dangling until the next scan.
+    ctx.client.post(
+        &format!("{base}/query/fields/unset"),
+        &json!({
+            "query": {"type": "is_present", "field": "mfr_duplicate_group"},
+            "name": "mfr_duplicate_group",
+            "force": true,
+        }),
+    )?;
+    ctx.client.post(&format!("{base}/query/delete"), &json!({"query": groups}))?;
+    println!("cleared {count} group(s)");
     Ok(0)
 }
 
@@ -2058,18 +2302,7 @@ pub fn trash_prune(ctx: &Ctx, mode: PruneMode, dry_run: bool) -> Result<i32, Cli
 
 /// Human-readable byte count (base 1024, one decimal above KiB).
 fn format_size(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "K", "M", "G", "T"];
-    let mut v = bytes as f64;
-    let mut i = 0;
-    while v >= 1024.0 && i < UNITS.len() - 1 {
-        v /= 1024.0;
-        i += 1;
-    }
-    if i == 0 {
-        format!("{bytes}{}", UNITS[0])
-    } else {
-        format!("{v:.1}{}", UNITS[i])
-    }
+    metafolder_core::progress::human_size(bytes)
 }
 
 /// Coarse "how long ago" from a unix-ms timestamp.

@@ -367,7 +367,7 @@ RECLAIMABLE  SIZE      COUNT  HASH
 This is a formatting convenience over =POST /query=; it issues exactly the query
 shown in "Querying duplicates" and holds no logic of its own.
 
-*** =mf duplicate scan [--min-size <size>] [--rehash] [--metarecord <uuid>] [--poll-interval <ms>] [--json]=
+*** =mf duplicate scan [--min-size <size>] [--rehash] [--metarecord <uuid>] [--poll-interval <ms>] [--json] [--no-wait]=
 
 Calls =POST /duplicates/scan=, follows the task to completion showing its phase
 and progress (the same treatment =mf reconcile= gives its own task), and prints
@@ -378,7 +378,12 @@ groups: 128  files: 291  reclaimable: 4.5 GiB   (hashed 5540 partial, 412 full; 
 #+END_SRC
 
 =<size>= for =--min-size= is a human size, the same spelling =mf trash prune -s=
-accepts (=100mb=, =1g=, =512k=; base 1024).
+accepts (=100mb=, =1g=, =512k=; base 1024). =--no-wait= prints the task id and
+returns, as =mf reconcile= does, leaving the follow-up to =mf task=.
+
+The =full= phase's counts are *bytes*, so the progress line renders them as
+sizes (=4.8M/9.5M=) rather than as raw numbers — the phase name is what says so,
+which is what spec-tasks asks clients to read.
 
 *** =mf duplicate clear [-y]=
 

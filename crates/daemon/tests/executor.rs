@@ -533,6 +533,62 @@ fn test_modify_data_invalidates_the_whole_content_derived_family() {
 }
 
 #[test]
+fn test_an_echo_on_an_unchanged_file_keeps_the_hash_cache_and_the_group() {
+    // A `Create`/`Modify` event that describes a state the database already
+    // holds — a tool touching a file without changing it, a crash replay, a
+    // sync echo — must produce nothing. It used to clear the hashes anyway,
+    // which (once duplicate detection existed) made a scan's whole result
+    // evaporate the moment the watcher caught up.
+    let (repo, root, _) = setup("echo");
+    write_file(&root, "steady.txt", b"unchanged");
+    enqueue(&repo, &[FsEvent::Create("/steady.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+    let uuid = resolve(&repo, "/steady.txt").unwrap();
+    let group = {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let group = w
+            .create_metarecord(vec![Field::new(
+                "mf_schema",
+                Value::String("duplicate_group".into()),
+            )])
+            .unwrap()
+            .uuid;
+        w.set_field(uuid, "mfr_partial_hash", Value::String("aaaa".into())).unwrap();
+        w.set_field(uuid, "mfr_full_hash", Value::String("bbbb".into())).unwrap();
+        w.set_field(uuid, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        w.commit().unwrap();
+        group
+    };
+    let revisions_before = count(&repo, "SELECT COUNT(*) FROM revision");
+
+    // The file is untouched: same bytes, same mtime.
+    enqueue(
+        &repo,
+        &[FsEvent::ModifyData("/steady.txt".into()), FsEvent::Create("/steady.txt".into())],
+    );
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_full_hash"),
+        Some(Value::String("bbbb".into())),
+        "an echo must not destroy the hash cache"
+    );
+    assert_eq!(
+        field_value(&repo, uuid, "mfr_duplicate_group"),
+        Some(Value::Ref(group)),
+        "nor the duplicate group it justified"
+    );
+    assert_eq!(
+        count(&repo, "SELECT COUNT(*) FROM revision"),
+        revisions_before,
+        "and must write no revision at all"
+    );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn test_remove_clears_the_duplicate_group_but_keeps_the_hashes() {
     // An orphan is no longer a live duplicate; but the hashes are exactly what
     // re-homes it when the file comes back, so they must survive.

@@ -3316,6 +3316,144 @@ fn test_sync_run_translates_ref() {
     assert_ne!(person_b, person_a, "distinct local uuids");
 }
 
+// ── Duplicate detection (spec-duplicates "CLI") ──────────────────────────────
+
+#[test]
+fn test_duplicate_scan_then_list() {
+    let (repo, _dir) = tracked_repo(
+        "dupcli",
+        &[
+            ("a.txt", b"the very same bytes"),
+            ("b.txt", b"the very same bytes"),
+            ("c.txt", b"quite different!!!!"),
+        ],
+    );
+
+    let scan = mf(&["-u", &repo, "duplicate", "scan"]);
+    assert_ok(&scan);
+    assert!(scan.stdout.contains("groups: 1"), "summary: {}", scan.stdout);
+    assert!(scan.stdout.contains("files: 2"), "summary: {}", scan.stdout);
+
+    // `list` is the group default, so bare `mf duplicate` lists.
+    let list = mf(&["-u", &repo, "duplicate"]);
+    assert_ok(&list);
+    assert!(list.stdout.contains("RECLAIMABLE"), "header: {}", list.stdout);
+    let rows: Vec<&str> = list.stdout.lines().skip(1).filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(rows.len(), 1, "one group listed: {}", list.stdout);
+
+    // The verbose form names the members.
+    let verbose = mf(&["-u", &repo, "duplicate", "list", "-v"]);
+    assert_ok(&verbose);
+    assert!(verbose.stdout.contains("/a.txt"), "members: {}", verbose.stdout);
+    assert!(verbose.stdout.contains("/b.txt"), "members: {}", verbose.stdout);
+    assert!(!verbose.stdout.contains("/c.txt"), "the unique file is not a member");
+}
+
+#[test]
+fn test_duplicate_list_is_empty_before_a_scan() {
+    let (repo, _dir) = tracked_repo("dupempty", &[("a.txt", b"same"), ("b.txt", b"same")]);
+    let list = mf(&["-u", &repo, "duplicate"]);
+    assert_ok(&list);
+    assert!(list.stdout.contains("No duplicate"), "expected the empty line: {}", list.stdout);
+}
+
+#[test]
+fn test_duplicate_scan_min_size_takes_a_human_size() {
+    let (repo, _dir) = tracked_repo(
+        "dupmin",
+        &[("s1", b"tiny"), ("s2", b"tiny"), ("b1", &[7u8; 4096]), ("b2", &[7u8; 4096])],
+    );
+    let scan = mf(&["-u", &repo, "duplicate", "scan", "--min-size", "1k"]);
+    assert_ok(&scan);
+    assert!(scan.stdout.contains("groups: 1"), "only the big pair: {}", scan.stdout);
+}
+
+#[test]
+fn test_duplicate_scan_rejects_a_bad_size() {
+    let (repo, _dir) = tracked_repo("dupbadsize", &[]);
+    let out = mf(&["-u", &repo, "duplicate", "scan", "--min-size", "banana"]);
+    assert_eq!(out.code, 2, "a malformed size is a usage error: {}", out.stderr);
+}
+
+#[cfg(unix)]
+#[test]
+fn test_duplicate_list_marks_hard_links() {
+    // Three names, two inodes: the listing marks the linked pair and the
+    // reclaimable figure counts one copy, not two.
+    let (repo, dir) = tracked_repo("duplink", &[("orig", b"linked content!!")]);
+    std::fs::hard_link(dir.join("orig"), dir.join("link")).unwrap();
+    std::fs::write(dir.join("copy"), b"linked content!!").unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+
+    let list = mf(&["-u", &repo, "duplicate", "list", "-v"]);
+    assert_ok(&list);
+    let marked: Vec<&str> =
+        list.stdout.lines().filter(|l| l.trim_start().starts_with('+')).collect();
+    assert_eq!(marked.len(), 2, "both names of the linked inode are marked: {}", list.stdout);
+    assert!(list.stdout.contains("16B"), "one copy's worth is reclaimable: {}", list.stdout);
+}
+
+#[test]
+fn test_duplicate_clear_removes_the_groups() {
+    let (repo, _dir) =
+        tracked_repo("dupclear", &[("a.txt", b"same bytes"), ("b.txt", b"same bytes")]);
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    assert_eq!(
+        mf(&["-u", &repo, "metarecord", "-q", "mfr_duplicate_group IS PRESENT", "get"])
+            .stdout
+            .split_whitespace()
+            .count(),
+        2
+    );
+
+    let cleared = mf(&["-u", &repo, "duplicate", "clear", "-y"]);
+    assert_ok(&cleared);
+    assert!(cleared.stdout.contains("cleared"), "summary: {}", cleared.stdout);
+
+    let groups = mf(&["-u", &repo, "metarecord", "-q", "mf_schema = \"duplicate_group\"", "get"]);
+    assert_ok(&groups);
+    assert!(groups.stdout.trim().is_empty(), "no group left: {}", groups.stdout);
+    let linked = mf(&["-u", &repo, "metarecord", "-q", "mfr_duplicate_group IS PRESENT", "get"]);
+    assert_ok(&linked);
+    assert!(linked.stdout.trim().is_empty(), "no link left: {}", linked.stdout);
+
+    // The hash cache is deliberately untouched: it is valid, expensive, and
+    // useful to reconcile and sync independently of duplicate detection.
+    let hashed = mf(&["-u", &repo, "metarecord", "-q", "mfr_full_hash IS PRESENT", "get"]);
+    assert_ok(&hashed);
+    assert_eq!(hashed.stdout.split_whitespace().count(), 2, "hashes kept: {}", hashed.stdout);
+}
+
+#[test]
+fn test_duplicate_same_query_reaches_the_twins() {
+    // The point of the group model: from one file to its twins, without the
+    // caller ever handling a hash.
+    let (repo, _dir) = tracked_repo(
+        "dupsame",
+        &[("a.txt", b"twin content"), ("b.txt", b"twin content"), ("c.txt", b"other conten")],
+    );
+    assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
+    let a = query_one(&repo, "mfr_path = \"a.txt\"");
+
+    let peers =
+        mf(&["-u", &repo, "metarecord", "-q", &format!("same(mfr_duplicate_group, {a})"), "get"]);
+    assert_ok(&peers);
+    assert_eq!(peers.stdout.split_whitespace().count(), 2, "the class: {}", peers.stdout);
+
+    let others = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        &format!("same(mfr_duplicate_group, {a}) AND NOT {a}"),
+        "get",
+    ]);
+    assert_ok(&others);
+    assert_eq!(others.stdout.split_whitespace().count(), 1, "the others: {}", others.stdout);
+    assert_ne!(others.stdout.trim(), a);
+}
+
 #[test]
 fn test_sync_does_not_materialise_a_duplicate_group() {
     // `mfr_duplicate_group` is content-derived, so the metadata diff never

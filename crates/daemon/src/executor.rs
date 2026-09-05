@@ -1175,11 +1175,21 @@ impl Apply<'_, '_> {
             return Ok(());
         };
         let new_of = |name: &str| stat.iter().find(|f| f.name == name).map(|f| f.value.clone());
-        // Idempotent: when the stored stat already matches the file and the hashes
-        // are already cleared, produce no operation (no version bump). This
-        // suppresses a watcher echo of a change the daemon itself just recorded —
-        // e.g. a cross-repo sync file operation (spec-sync "Suppressing sync's own
-        // echoes"), and a crash replay (spec-file-tracking).
+        // Idempotent: when the recorded size *and* mtime already match the file,
+        // this event describes a state the database is already in — produce no
+        // operation (no version bump). It suppresses a watcher echo of a change
+        // the daemon itself just recorded (a cross-repo sync file operation,
+        // spec-sync "Suppressing sync's own echoes"), a crash replay, and the
+        // spurious `Create`/`Modify` a tool can fire without touching content.
+        //
+        // The check deliberately looks at the *stat only*. It used to also
+        // require the hashes to be absent, which made every such echo destroy a
+        // valid hash cache — and, once duplicate detection existed, the
+        // `mfr_duplicate_group` that went with it (spec-duplicates "Invariant"):
+        // a scan's whole result could evaporate a second after it finished.
+        // Size + mtime is the same evidence of "unchanged" the hash stamp
+        // relies on, and it fails the same safe way: a same-second, same-size
+        // rewrite is missed, and reconcile is what catches it.
         let unchanged = {
             let conn = self.writer.connection();
             let stored = |name: &str| -> Option<Value> {
@@ -1189,9 +1199,7 @@ impl Apply<'_, '_> {
             };
             stored("mfr_size") == new_of("mfr_size")
                 && stored("mfr_mtime") == new_of("mfr_mtime")
-                && crate::fingerprint::CONTENT_DERIVED_FIELDS
-                    .iter()
-                    .all(|name| stored(name).is_none())
+                && new_of("mfr_mtime").is_some()
         };
         if unchanged {
             return Ok(());
