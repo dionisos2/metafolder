@@ -98,6 +98,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/watch/resume", post(watch_resume))
         .route("/repos/:repo/orphans/scan", post(orphans_scan))
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
+        .route("/repos/:repo/orphans/relink", post(orphans_relink))
         .route("/repos/:repo/track", post(track))
         .route("/repos/:repo/eligibility", post(eligibility_explain))
         .route("/repos/:repo/ignore/effective", get(effective_ignore))
@@ -1914,6 +1915,44 @@ async fn duplicates_scan(
         match outcome {
             Ok(result) => {
                 let value = serde_json::to_value(result).expect("scan result serialization");
+                repo_state.tasks.finish(task_id, Some(value));
+            }
+            Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),
+            Err(e) => repo_state.tasks.fail(task_id, &e.message),
+        }
+    });
+
+    Ok((StatusCode::ACCEPTED, Json(json!({"task_id": hex(task_id)}))).into_response())
+}
+
+/// `POST /repos/:repo/orphans/relink`: re-home orphaned metarecords onto the
+/// files that carry their content (spec-file-tracking "Relinking orphans").
+///
+/// Asynchronous like the duplicate scan, and for the same reason: it hashes
+/// candidate files. `202` with the task id; the result travels with the task.
+async fn orphans_relink(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Response, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let repo_state = state.repo(repo_uuid)?;
+    repo_state.ensure_writable()?;
+    let task_id = repo_state
+        .tasks
+        .start_unique(TaskKind::Relink)
+        .ok_or_else(|| ApiError::conflict("a relink is already in progress for this repository"))?;
+
+    tokio::task::spawn_blocking(move || {
+        repo_state.tasks.mark_running(task_id);
+        let progress = |phase: &str, done: Option<u64>, total: Option<u64>| {
+            repo_state.tasks.set_progress(task_id, phase, done, total);
+        };
+        let cancel = || repo_state.tasks.is_cancel_requested(task_id);
+        let outcome =
+            orphans::relink_reported(&repo_state, &crate::tasks::Reporter::new(&progress, &cancel));
+        match outcome {
+            Ok(result) => {
+                let value = serde_json::to_value(result).expect("relink result serialization");
                 repo_state.tasks.finish(task_id, Some(value));
             }
             Err(_) if cancel() => repo_state.tasks.mark_cancelled(task_id),

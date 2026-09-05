@@ -1781,6 +1781,44 @@ fn print_group_members(ctx: &Ctx, base: &str, group: &str) -> Result<(), CliErro
 }
 
 /// `mf duplicate scan` — start the scan and follow its task to completion.
+/// `mf orphan relink`: re-home orphans onto the files that carry their content
+/// (spec-file-tracking "Relinking orphans"). Asynchronous like the duplicate
+/// scan — it hashes candidates — so it polls the task the daemon returns.
+pub fn orphan_relink(
+    ctx: &Ctx,
+    raw_json: bool,
+    no_wait: bool,
+    poll_interval: Option<u64>,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let started = ctx
+        .client
+        .request("POST", &format!("{base}/orphans/relink"), &[], Some(&json!({})))
+        .map_err(unsupported_daemon)?;
+    let task_id = started["task_id"]
+        .as_str()
+        .ok_or_else(|| CliError::Op("relink: daemon did not return a task id".into()))?
+        .to_string();
+    if no_wait {
+        println!("{task_id}");
+        return Ok(0);
+    }
+    let interval = poll_interval.unwrap_or(ctx.reconcile_poll_interval_ms);
+    let resp = poll_task(ctx, &base, &task_id, "relink", interval)?;
+    if raw_json {
+        println!("{resp}");
+    } else {
+        let n = |key: &str| resp[key].as_u64().unwrap_or(0);
+        println!(
+            "relinked: {}  conflicts: {}  skipped: {}",
+            n("relinked"),
+            n("conflicts"),
+            n("skipped")
+        );
+    }
+    Ok(0)
+}
+
 pub fn duplicate_scan(
     ctx: &Ctx,
     min_size: u64,

@@ -365,17 +365,26 @@ fn test_rename_from_clears_path() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-// ── Arrival (Rename(To)) with fingerprint match ───────────────────────────────
+// ── Arrival (Rename(To)) ──────────────────────────────────────────────────────
 
+/// A file that arrives is tracked afresh, even when an orphan holds its exact
+/// content.
+///
+/// The flush used to search the orphans for a full-hash match and re-home one.
+/// That search can only pay off by *hashing the arriving file*, and a single
+/// event can carry a whole subtree: an operation heavy enough to belong to a
+/// command the user runs, not to the event path. It is now `orphan relink`
+/// (spec-file-tracking "Relinking orphans"), and the metadata waits on the
+/// orphan until it is run.
 #[test]
-fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
+fn test_an_arrival_does_not_re_home_an_orphan_by_fingerprint() {
     let (repo, root, _) = setup("arrival");
     write_file(&root, "song.mp3", b"some audio content");
     enqueue(&repo, &[FsEvent::Create("/song.mp3".into())]);
     executor::flush_pending(&repo).unwrap();
     let uuid = resolve(&repo, "/song.mp3").unwrap();
 
-    // Store the fingerprints (normally computed by reconcile/dedup).
+    // Store the fingerprints (normally computed by the duplicate scan).
     let partial = metafolder_daemon::fingerprint::partial_hash(&root.join("song.mp3")).unwrap();
     let full = metafolder_daemon::fingerprint::full_hash(&root.join("song.mp3")).unwrap();
     {
@@ -386,7 +395,7 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
         w.commit().unwrap();
     }
 
-    // The file leaves the repo, then comes back elsewhere.
+    // The file leaves the repository, then comes back elsewhere.
     std::fs::rename(root.join("song.mp3"), std::env::temp_dir().join("mf_outside.mp3")).unwrap();
     enqueue(&repo, &[FsEvent::RenameFrom("/song.mp3".into())]);
     executor::flush_pending(&repo).unwrap();
@@ -397,55 +406,12 @@ fn test_rename_to_reuses_orphan_when_full_hash_confirms() {
     enqueue(&repo, &[FsEvent::Create("/back".into()), FsEvent::RenameTo("/back/song2.mp3".into())]);
     executor::flush_pending(&repo).unwrap();
 
+    let arrived = resolve(&repo, "/back/song2.mp3").expect("the arriving file is tracked");
+    assert_ne!(arrived, uuid, "the flush must not have hashed its way back to the orphan");
     assert_eq!(
-        resolve(&repo, "/back/song2.mp3"),
-        Some(uuid),
-        "the orphaned entry must be reused on full-hash match"
-    );
-
-    std::fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn test_arrival_matches_an_orphan_created_by_the_same_flush() {
-    // The delete and the arrival ride in one batch: the file is removed from
-    // one directory and turns up in another before the quiet period elapses.
-    // The orphan the delete group produces must still be visible to the
-    // arrival group's fingerprint search — which any per-flush caching of the
-    // orphan set has to keep true.
-    let (repo, root, _) = setup("same_flush_orphan");
-    write_file(&root, "a/song.mp3", b"some audio content");
-    enqueue(&repo, &[FsEvent::Create("/a".into())]);
-    executor::flush_pending(&repo).unwrap();
-    let uuid = resolve(&repo, "/a/song.mp3").unwrap();
-
-    let partial = metafolder_daemon::fingerprint::partial_hash(&root.join("a/song.mp3")).unwrap();
-    let full = metafolder_daemon::fingerprint::full_hash(&root.join("a/song.mp3")).unwrap();
-    {
-        let mut conn = repo.conn.lock().unwrap();
-        let mut w = Writer::begin(&mut conn, None).unwrap();
-        w.set_field(uuid, "mfr_partial_hash", Value::String(partial)).unwrap();
-        w.set_field(uuid, "mfr_full_hash", Value::String(full)).unwrap();
-        w.commit().unwrap();
-    }
-
-    // Both halves in the same batch, deletion first (its own group).
-    std::fs::create_dir_all(root.join("b")).unwrap();
-    std::fs::rename(root.join("a/song.mp3"), root.join("b/song.mp3")).unwrap();
-    enqueue(
-        &repo,
-        &[
-            FsEvent::Remove("/a/song.mp3".into()),
-            FsEvent::Create("/b".into()),
-            FsEvent::RenameTo("/b/song.mp3".into()),
-        ],
-    );
-    executor::flush_pending(&repo).unwrap();
-
-    assert_eq!(
-        resolve(&repo, "/b/song.mp3"),
-        Some(uuid),
-        "an orphan produced earlier in the same flush must still be matchable"
+        field_value(&repo, uuid, "mfr_path"),
+        Some(Value::Nothing),
+        "the orphan is left for `orphan relink` to re-home"
     );
 
     std::fs::remove_dir_all(root).unwrap();
@@ -1282,114 +1248,50 @@ fn test_applying_an_event_announces_its_steps_and_its_cost() {
     );
 }
 
-/// A batch of renames must index the repository's orphans **once**.
+/// A flush never reads the repository's orphans.
 ///
-/// The index is what spares each arriving file its own orphan question, and it
-/// is built by a scan of every orphan in the repository. Dropping it whenever
-/// the batch orphans something turns a rename-heavy batch into one full scan
-/// per event — and a build tree is exactly such a batch: the compiler renames
-/// fresh artifacts over the ones it is replacing, all day long. A freshly
-/// orphaned record belongs *in* the index, so it is added to it.
+/// It used to, once per arriving file, through an index built by a scan of
+/// every orphan — and that scan was rebuilt whenever the batch orphaned
+/// something, which a rename over a tracked destination does. A build tree
+/// renames a fresh artifact over the one it replaces hundreds of times in a
+/// row, so a few hundred buffered events became a few hundred full scans. The
+/// whole question left the flush with `orphan relink`; this pins that it does
+/// not come back.
 #[test]
-fn test_a_batch_of_renames_indexes_the_orphans_once() {
-    let (repo, root, _) = setup("orphan-index-once");
+fn test_a_flush_never_scans_the_repository_for_orphans() {
+    let (repo, root, _) = setup("no-orphan-scan");
     write_file(&root, "a.txt", b"aaa");
     write_file(&root, "t1.txt", b"ttt");
     enqueue(&repo, &[FsEvent::Create("/a.txt".into()), FsEvent::Create("/t1.txt".into())]);
     executor::flush_pending(&repo).unwrap();
-    assert!(resolve(&repo, "/t1.txt").is_some(), "t1.txt is tracked");
 
-    // On disk: a.txt renamed over the tracked t1.txt, and two files arriving
-    // from outside the repository (their sources were never tracked).
+    // A rename over a tracked destination (which orphans the record that held
+    // it) and two arrivals from outside — the shape that used to rebuild the
+    // orphan index per event.
     std::fs::rename(root.join("a.txt"), root.join("t1.txt")).unwrap();
     write_file(&root, "n1.txt", b"n1");
     write_file(&root, "n2.txt", b"n2");
     enqueue(
         &repo,
         &[
-            // Unknown source, untracked destination: an orphan search.
             FsEvent::Rename("/s1.txt".into(), "/n1.txt".into()),
-            // Tracked source over a tracked destination: the destination's
-            // metarecord is orphaned right in the middle of the group.
             FsEvent::Rename("/a.txt".into(), "/t1.txt".into()),
-            // And another orphan search behind it.
             FsEvent::Rename("/s2.txt".into(), "/n2.txt".into()),
         ],
     );
 
     let seen = record_flush(&repo);
-
-    let builds = seen.iter().filter(|l| l.contains("index the repository's orphans")).count();
-    assert_eq!(
-        builds, 1,
-        "the orphan index is rebuilt per event, which is a full repository scan each time: {seen:?}"
-    );
-}
-
-// ── The buffer lives in memory ────────────────────────────────────────────────
-
-/// Buffered filesystem events never reach the database.
-///
-/// They used to: the watcher wrote each one into `pending_operation` so a crash
-/// would lose none. But a daemon that is down misses every event anyway, and
-/// closing *that* gap needs a reconcile — which also closes this one. The
-/// persistence bought no coherence, cost a transaction per batch on the
-/// watcher's hot path, and created a failure mode of its own (a batch the
-/// executor cannot apply, retried for ever across restarts, because the buffer
-/// was replayed at load).
-#[test]
-fn test_buffered_events_never_reach_the_database() {
-    let (repo, root, _) = setup("ram-buffer");
-    write_file(&root, "a.txt", b"hello");
-    enqueue(&repo, &[FsEvent::Create("/a.txt".into()), FsEvent::ModifyData("/a.txt".into())]);
-
-    assert_eq!(executor::pending_count(&repo), 2, "the events are buffered in memory");
-    assert_eq!(
-        count(&repo, "SELECT COUNT(*) FROM pending_operation"),
-        0,
-        "no filesystem event is written to the database"
-    );
-
-    executor::flush_pending(&repo).unwrap();
-    assert_eq!(executor::pending_count(&repo), 0, "the flush consumed the buffer");
-    assert!(resolve(&repo, "/a.txt").is_some());
-}
-
-/// A repository opened with filesystem events left in `pending_operation` by an
-/// older daemon drops them: they can no longer be replayed, and a reconcile is
-/// what recovers what a stopped daemon missed. The `restore_*` rows in the same
-/// table belong to the log and must survive.
-#[test]
-fn test_opening_drops_filesystem_events_left_by_an_older_daemon() {
-    let (repo, root, _) = setup("legacy-buffer");
-    {
-        let conn = repo.conn.lock().unwrap();
-        conn.execute(
-            "INSERT INTO pending_operation (op_type, path) VALUES ('fs_create', '/stale.txt')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO pending_operation (op_type, path) VALUES ('restore_clear_path', '/kept')",
-            [],
-        )
-        .unwrap();
+    // The *write* side stays: orphaning the record whose file was overwritten
+    // is what a rename over a tracked destination means. What must not come
+    // back is the repository-wide *read* the arrival used to do.
+    for forbidden in ["index the repository's orphans", "fingerprint search among orphans"] {
+        assert!(
+            !seen.iter().any(|l| l.contains(forbidden)),
+            "the flush still does '{forbidden}': {seen:?}"
+        );
     }
-    let db_path = repo.internal_dir().join(repo::DB_FILE);
-    drop(repo); // releases the exclusive lock
-
-    let conn = db::open_database(&db_path, "legacy").unwrap();
-    let by_prefix = |prefix: &str| -> i64 {
-        conn.query_row(
-            &format!("SELECT COUNT(*) FROM pending_operation WHERE op_type LIKE '{prefix}%'"),
-            [],
-            |r| r.get(0),
-        )
-        .unwrap()
-    };
-    assert_eq!(by_prefix("fs_"), 0, "the stale filesystem events are gone");
-    assert_eq!(by_prefix("restore_"), 1, "the log's restoration ops are untouched");
-
-    drop(conn);
-    std::fs::remove_dir_all(root).unwrap();
+    assert!(
+        seen.iter().any(|l| l.contains("orphan cascade")),
+        "the overwritten destination must still be orphaned: {seen:?}"
+    );
 }

@@ -31,7 +31,9 @@ A task is one observable unit of work on a single repository. It has:
 - a *kind*: =reconcile=, =duplicates= (the duplicate scan, see
   [[file:spec-duplicates.org][spec-duplicates.org]]), =query=, =flush= (the watcher's executor flush;
   see [[file:spec-file-tracking.org][spec-file-tracking.org]] "Event
-  batching"), =load= (warming a freshly loaded repository — populating the
+  batching"), =relink= (re-homing orphans onto the files that carry their
+  content, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
+  "Relinking orphans"), =load= (warming a freshly loaded repository — populating the
   tree cache and building the query index; reported so the GUI shows a load
   progress bar, phases =tree cache= then =index=), =prune= (log pruning,
   =POST /log/prune=) or =rollback= (a one-shot atomic rollback,
@@ -393,8 +395,10 @@ Requests cancellation of the task. The mechanism depends on the kind:
   none, until ingestion is resumed explicitly
   (=POST …/watch/resume=, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
   "Pausing ingestion"). Without that pause the next event would immediately
-  restart the flush the user just stopped. A cancelled flush does not count
-  against the executor's failure budget: it is a decision, not a failure.
+  restart the flush the user just stopped. The batch goes back into the buffer
+  and is applied from the start on resume.
+- *relink* — *cancellable*, like the duplicate scan and for the same reason:
+  it hashes candidate files, and each pairing it has already committed is kept.
 - *load* — *not cancellable* (a partial warmup just falls back to the DB, so
   there is nothing to roll back). → =400=.
 - *prune* / *rollback* — *not cancellable* (each is a single atomic

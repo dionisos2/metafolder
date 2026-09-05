@@ -405,22 +405,47 @@ while a volume was away are therefore picked up only by an explicit
 =mf reconcile --metarecord <mount>=, which the client is expected to offer
 rather than run behind the user's back.
 
+*** Relinking orphans
+
+A metarecord orphaned by a file that left keeps its fingerprints, so the file
+can be recognised if it comes back. Confirming that means *hashing the
+candidate*, and =mf orphan relink= is where it happens: a command the user runs,
+observable and cancellable like the duplicate scan (see
+[[file:spec-tasks.org][spec-tasks.org]]).
+
+It used to happen inline, on every arriving file. That could not be right. One
+filesystem event can carry a whole subtree — a directory pasted in arrives as a
+single =Create= — so the flush could be made to hash an arbitrary amount of
+data, on the path that is supposed to keep the repository in step with the disk.
+And it almost never paid: only the duplicate scan stores the fingerprints the
+search needs, so on a repository where it has never run there is nothing to
+find, and the search was pure cost.
+
+The consequence is deliberate and worth stating plainly: *metadata no longer
+follows a file by itself across a move the watcher could not observe*. The file
+is tracked afresh and the metadata waits on the orphan until a relink is run.
+
+Pairing rules:
+
+- An orphan is a candidate only if it carries *both* fingerprints — nothing else
+  confirms identity.
+- A tracked file is a candidate only if its metarecord carries no field outside
+  the =mfr_*= namespace. One the user has annotated is reported as a *conflict*
+  and left alone: absorbing it would delete what was attached to it.
+- On a confirmed match the *orphan takes the tracked position* and the
+  metarecord that held it is deleted — that way round, because the orphan's uuid
+  is what references elsewhere point at, and preserving it is the whole reason
+  to re-home rather than track afresh.
+
 *** Cost of the orphan search
 
-The fingerprint search an arrival runs (=Rename(To)=, and the children of a
-directory that arrives whole) is served from an index of the repository's
-matchable orphans, built once per event group. It must be *maintained*, never
-dropped: a group that orphans a metarecord and then takes an arrival — which is
-what a rename over a tracked destination does, and what a compiler writing into
-a build tree does hundreds of times in a row — would otherwise rebuild it from a
-full scan of every orphan in the repository, once per event. A record the group
-has just orphaned is added to the index instead, which is the one read it costs.
-
-The scan that *builds* the index joins =field= to itself on =metarecord_uuid=,
-and must seek those rows rather than scan them — see the =INDEXED BY= invariant
-in [[file:spec-main.org][spec-main.org]]. Unguarded it is quadratic in the
-repository, which on a build tree (where most metarecords are orphans of deleted
-artifacts) is the difference between milliseconds and never finishing.
+The fingerprint pairing [[*Relinking orphans]] performs reads the repository's
+orphans in one query, and that query joins =field= to itself on
+=metarecord_uuid=: it must *seek* those rows rather than scan them — see the
+=INDEXED BY= invariant in [[file:spec-main.org][spec-main.org]]. Unguarded it is
+quadratic in the repository, which on a build tree (where most metarecords are
+orphans of deleted artifacts) is the difference between milliseconds and never
+finishing.
 
 *** Mass-orphan circuit breaker
 
@@ -719,7 +744,7 @@ setting — the durable way to stop tracking a subtree is =mf_watch=.
 | =Remove=           | Snapshot the current path into =mfr_path_old= (see "Orphan origin" below), then set =mfr_path= to =Nothing= (metarecord preserved) and delete =mfr_duplicate_group= (the hashes are deliberately *kept* — re-homing a re-appearing file needs them); if a directory, cascade both to all descendants in the same transaction. *Skipped when the path exists again on disk at flush time* — the deletion was undone within the batching window (a recreate, or a =mf trash -f= → =mf trash restore= round-trip), so the still-linked metarecord is left alone and the paired arrival in the same batch refreshes it (see the note below) |
 | =Rename(Both)=     | Update =mfr_path= TreeRef: =value_name= (rename in place) or =value_uuid= (move to different parent) — O(1); children of a renamed directory are unaffected (they reference the parent by UUID). If the destination path is *itself tracked*, the rename destroyed the file that was there: that metarecord is orphaned first (as for =Remove=), then the moved one takes the position — one metarecord may hold a given tree position |
 | =Rename(From)=     | File left the watched scope: snapshot =mfr_path_old= then set =mfr_path= to =Nothing= (as for =Remove=); if a directory, cascade both to all descendants in the same transaction. *Not applied when the same batch finds the file again* inside a directory created in it (see "Moves into a new directory" below) — the two halves are re-paired into a move |
-| =Rename(To)=       | File arrived from outside: compute =mfr_size= + =mfr_partial_hash= from disk; search orphaned metarecords (=mfr_path = Nothing=) for a fingerprint match — if =mfr_full_hash= confirms identity → update =mfr_path= TreeRef and refresh =mfr_*= fields; otherwise → create new metarecord |
+| =Rename(To)=       | File arrived from outside: create a new metarecord with its =mfr_*= fields. The orphans are *not* searched for a fingerprint match — that is [[*Relinking orphans]], a command the user runs. The one identity recovered here is the other half of a move the watcher only half saw, matched on =(type, size, mtime)= among the paths this same batch renamed away — no file is read |
 | =Modify(Data)=     | Content changed: refresh =mfr_size=, =mfr_mtime= from =stat=; delete =mfr_partial_hash=, =mfr_full_hash=, their stamp (=mfr_hash_mtime=, =mfr_hash_size=) and =mfr_duplicate_group= — the content that made it a duplicate is gone (see [[file:spec-duplicates.org][spec-duplicates.org]]) |
 | =Modify(Metadata)= | Attributes changed: refresh =mfr_permissions=, =mfr_uid=, =mfr_gid=, =mfr_mtime= from =stat=; hashes remain valid |
 
@@ -1214,7 +1239,7 @@ With =--relative=, prints the repo-root-relative path instead, starting
 with =/= (the root metarecord itself is =/=). Fails with exit code 1 when the
 metarecord has no =mfr_path= TreeRef (untracked or deleted file).
 
-** =mf orphan {list, clear}=
+** =mf orphan {list, clear, relink}=
 
 Diagnoses and cleans up metarecords whose file is gone (see [[*Orphan scan]]).
 =list= (the default) calls =POST /orphans/scan= and prints =uuid <TAB>
@@ -1223,6 +1248,12 @@ records to stderr, prompts for confirmation (skipped with =-y=), then calls
 =POST /orphans/clear= with the scanned uuids and prints =cleared N=. It is kept
 separate from =mf reconcile= on purpose: detection needs a disk scan, but the
 intent (diagnose / clean up missing files) is not reconcile's sync semantics.
+
+=relink [--json] [--no-wait] [--poll-interval MS]= re-homes orphans onto files
+that carry their content (see [[*Relinking orphans]]). It calls
+=POST /orphans/relink=, which answers =202= with a task id, and polls it exactly
+as =mf reconcile= and =mf duplicate scan= do. It prints
+=relinked: N  conflicts: N  skipped: N=.
 
 ** =mf mount {list, forget}=
 

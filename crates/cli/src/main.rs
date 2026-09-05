@@ -621,6 +621,18 @@ enum OrphanCommand {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
+    /// Re-home orphans onto files that carry their content (hashes candidates)
+    Relink {
+        /// Print raw JSON instead of the summary
+        #[arg(long)]
+        json: bool,
+        /// Print the task id and return instead of waiting
+        #[arg(long = "no-wait")]
+        no_wait: bool,
+        /// Milliseconds between task polls
+        #[arg(long = "poll-interval", value_name = "MS")]
+        poll_interval: Option<u64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -978,6 +990,9 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
         Command::Orphan { command } => match command.unwrap_or(OrphanCommand::List) {
             OrphanCommand::List => commands::orphan_list(ctx),
             OrphanCommand::Clear { yes } => commands::orphan_clear(ctx, yes),
+            OrphanCommand::Relink { json, no_wait, poll_interval } => {
+                commands::orphan_relink(ctx, json, no_wait, poll_interval)
+            }
         },
         Command::Metarecord { query, id, eq, simplified, verb } => {
             dispatch_metarecord(ctx, query, id, eq, simplified, verb)

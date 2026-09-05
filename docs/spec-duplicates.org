@@ -196,7 +196,8 @@ duplicate". Three writers maintain it:
   and their stamp: a file whose content changed is no longer a known duplicate;
 - the *orphaning* path (watcher =Remove=, =mf orphan clear=), which clears it
   when =mfr_path= becomes =Nothing=. The hashes are deliberately *not* cleared
-  there — a re-appearing file is re-homed by fingerprint match, which needs them.
+  there — =mf orphan relink= re-homes a re-appearing file by fingerprint match,
+  which needs them (spec-file-tracking "Relinking orphans").
 
 A group left with fewer than two live members is stale but harmless; it is
 removed by the next complete scan.

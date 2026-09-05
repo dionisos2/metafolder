@@ -28,7 +28,6 @@ use metafolder_core::sync::MutexExt;
 
 use crate::db;
 use crate::eligibility;
-use crate::fingerprint;
 use crate::fs_meta;
 use crate::log::{OpType, Writer};
 use crate::relpath::RelPath;
@@ -462,7 +461,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 orphan_limit: repo.orphan_cascade_limit,
                 departed_index: None,
                 elig: &mut elig,
-                orphan_index: None,
                 cancel: &cancel,
             };
             for ev in group {
@@ -636,12 +634,6 @@ struct Apply<'a, 'c> {
     /// [`eligibility::EligibilityCache`]). Nothing the executor writes changes
     /// those two fields, so no entry of it can go stale mid-flush.
     elig: &'a mut eligibility::EligibilityCache,
-    /// The matchable orphans (`mfr_path` = Nothing, both hashes stored) indexed
-    /// by size, built on first use and dropped whenever this group orphans a
-    /// metarecord (a new orphan belongs in it) or re-homes one (it no longer
-    /// does). Without it each arriving file asks the database its own
-    /// orphan question, which costs a walk over every tracked file.
-    orphan_index: Option<HashMap<i64, Vec<db::OrphanCandidate>>>,
     /// Cooperative stop probe (the flush task's cancellation flag). Read at
     /// every event, and inside the loops that can run long on a single event.
     cancel: &'a dyn Fn() -> bool,
@@ -819,35 +811,11 @@ impl Apply<'_, '_> {
             self.refresh_data(existing, rel)?;
             return Ok(true);
         }
-        let abs = self.abs(rel);
-        // lstat: a symlink is `is_file() == false`, so the fingerprint-based
-        // orphan search below is skipped and the target is never read.
-        let Ok(meta) = std::fs::symlink_metadata(&abs) else {
-            return Ok(true); // Vanished before the flush.
-        };
-        if meta.is_file() {
-            if let Some(orphan) = self.find_orphan_match(&abs, meta.len() as i64)? {
-                let parent = self.ensure_parents(rel)?;
-                let name = rel.name().cloned().unwrap_or_default();
-                self.writer.set_field_as(
-                    OpType::FileMoved,
-                    orphan,
-                    "mfr_path",
-                    Value::TreeRef { parent: Some(parent), name: name.clone() },
-                )?;
-                self.cache.apply_insert("mfr_path", Some(parent), &name, orphan);
-                // Refresh the stat-derived fields at the new location.
-                for field in fs_meta::stat_fields_in(self.root, &abs)? {
-                    self.writer.set_field_as(
-                        OpType::FileModified,
-                        orphan,
-                        &field.name,
-                        field.value,
-                    )?;
-                }
-                return Ok(true);
-            }
-        }
+        // A file that arrives is tracked afresh. Re-homing an orphan that holds
+        // its content is `orphan relink` (spec-file-tracking "Relinking
+        // orphans"): confirming that identity means hashing the arriving file,
+        // and one event can carry a whole subtree, so it belongs to a command
+        // the user runs and not to the event path.
         // The other half of a move whose destination the watcher could not see
         // (a directory created in this same batch): re-pair it rather than let
         // the file arrive as a stranger. Tried after the fingerprint search — an
@@ -958,51 +926,8 @@ impl Apply<'_, '_> {
             // when the file reappears is exactly what they are for
             // (spec-duplicates "Invariant").
             self.writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
-            // It is an orphan now, and a later arrival in this same group may
-            // legitimately match it.
-            self.remember_orphan(u)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
-        Ok(())
-    }
-
-    /// Adds a freshly orphaned metarecord to the orphan index.
-    ///
-    /// A record this cascade just orphaned is a legitimate match for a later
-    /// arrival in the same group, so the index must account for it. It used to
-    /// be *dropped* for that, which is correct and quadratic: rebuilding it
-    /// scans every orphan in the repository, and a group that orphans and
-    /// arrives in turn pays that scan per event. A build tree is exactly such a
-    /// group — the compiler renames each fresh artifact over the one it
-    /// replaces — so a few hundred buffered events became a few hundred full
-    /// scans, minutes of CPU with nothing to show. Adding the one record costs
-    /// a single read instead, and only for records this batch actually orphans.
-    ///
-    /// A record with no size or no stored hashes is not matchable and is left
-    /// out, exactly as [`db::hashed_orphans`] would have left it out. Nothing to
-    /// do when the index has not been built: the build will see this record's
-    /// own write, which is in the same transaction.
-    fn remember_orphan(&mut self, uuid: Uuid) -> Result<()> {
-        if self.orphan_index.is_none() {
-            return Ok(());
-        }
-        let Some(record) = db::get_metarecord(self.writer.connection(), uuid)? else {
-            return Ok(());
-        };
-        let (Some(Value::Int(size)), Some(Value::String(partial)), Some(Value::String(full))) =
-            (record.get("mfr_size"), record.get("mfr_partial_hash"), record.get("mfr_full_hash"))
-        else {
-            return Ok(());
-        };
-        let candidate = db::OrphanCandidate {
-            uuid,
-            size: *size,
-            partial_hash: partial.clone(),
-            full_hash: full.clone(),
-        };
-        if let Some(index) = self.orphan_index.as_mut() {
-            index.entry(candidate.size).or_default().push(candidate);
-        }
         Ok(())
     }
 
@@ -1127,61 +1052,6 @@ impl Apply<'_, '_> {
         }
         self.departed_index = Some(index);
         Ok(())
-    }
-
-    /// Fingerprint search among orphaned metarecords (`mfr_path` = Nothing):
-    /// size pre-filter, then partial hash, then a stored full hash must
-    /// confirm identity (spec watcher `Rename(To)` semantics).
-    fn find_orphan_match(&mut self, abs: &Path, size: i64) -> Result<Option<Uuid>> {
-        self.step("fingerprint search among orphans");
-        self.index_orphans()?;
-        let candidates = match self.orphan_index.as_ref().and_then(|m| m.get(&size)) {
-            Some(candidates) if !candidates.is_empty() => candidates.clone(),
-            _ => return Ok(None),
-        };
-        let partial = fingerprint::partial_hash(abs)?;
-        let mut full: Option<String> = None;
-        for candidate in candidates {
-            if candidate.partial_hash != partial {
-                continue;
-            }
-            if full.is_none() {
-                full = Some(fingerprint::full_hash(abs)?);
-            }
-            if full.as_deref() == Some(candidate.full_hash.as_str()) {
-                // It is about to get a path again: no later arrival of this
-                // flush may claim it too.
-                self.forget_orphan(candidate.uuid);
-                return Ok(Some(candidate.uuid));
-            }
-        }
-        Ok(None)
-    }
-
-    /// Builds [`Apply::orphan_index`] once per group: every matchable orphan of
-    /// the repository, indexed by size. One query, against one per arriving
-    /// file.
-    fn index_orphans(&mut self) -> Result<()> {
-        if self.orphan_index.is_some() {
-            return Ok(());
-        }
-        self.step("index the repository's orphans");
-        let mut index: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
-        for candidate in db::hashed_orphans(self.writer.connection())? {
-            index.entry(candidate.size).or_default().push(candidate);
-        }
-        self.orphan_index = Some(index);
-        Ok(())
-    }
-
-    /// Drops a metarecord from the orphan index: it has just been re-homed, so
-    /// it is no longer an orphan.
-    fn forget_orphan(&mut self, uuid: Uuid) {
-        if let Some(index) = self.orphan_index.as_mut() {
-            for candidates in index.values_mut() {
-                candidates.retain(|c| c.uuid != uuid);
-            }
-        }
     }
 
     /// `Modify(Data)`: refresh size and mtime, invalidate the hashes.

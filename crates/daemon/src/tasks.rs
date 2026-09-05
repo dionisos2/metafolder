@@ -77,6 +77,11 @@ pub enum TaskKind {
     /// load progress bar; not cancellable (a partial warmup just falls back to
     /// the DB, so there is nothing to roll back or refuse an unload for).
     Load,
+    /// Re-homing orphaned metarecords onto files that carry their content
+    /// (`POST /orphans/relink`, spec-file-tracking "Relinking orphans"). Hashes
+    /// candidate files, so it is cancellable like the duplicate scan — and for
+    /// the same reason: the work already committed is kept.
+    Relink,
     /// Log pruning (`POST /log/prune`). Observation-only, like `query`: the
     /// result travels with the request response. Registered because it holds the
     /// connection lock synchronously (potentially long on a large log), so other

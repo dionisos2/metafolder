@@ -159,3 +159,154 @@ fn is_definitely_gone(root: &Path, rel: &str, cache: &mut HashMap<PathBuf, DirSt
     }
     false
 }
+
+// ── Relinking orphans by fingerprint (spec-file-tracking "Relinking orphans") ─
+
+/// What a relink did.
+#[derive(Debug, Default, serde::Serialize, PartialEq, Eq)]
+pub struct RelinkResult {
+    /// Orphans re-homed onto the file that carries their content.
+    pub relinked: usize,
+    /// Matches left alone because the tracked metarecord holding the file
+    /// carries fields of its own — absorbing it would delete them.
+    pub conflicts: usize,
+    /// Candidates that could not be read (permissions, an offline volume).
+    pub skipped: usize,
+}
+
+/// Re-homes orphaned metarecords onto files that carry their content.
+///
+/// This is the operation the watcher's arrival path used to attempt inline. It
+/// cannot be done without hashing the candidate files, and one filesystem event
+/// can carry a whole subtree, so it belongs to a command the user runs rather
+/// than to the event path — where it also almost never paid off, since only the
+/// duplicate scan stores the hashes it needs.
+///
+/// An orphan is a candidate only if it carries both fingerprints (nothing else
+/// can confirm identity). A tracked file is a candidate only if it carries no
+/// field of its own beyond the `mfr_*` the daemon maintains: absorbing one that
+/// the user has annotated would destroy that annotation, so it is reported as a
+/// conflict and left alone.
+///
+/// On a match the *orphan* takes the tracked position and the metarecord that
+/// held it is deleted — that way round, because the orphan's uuid is what
+/// references elsewhere point at, and preserving it is the whole reason to
+/// re-home rather than track afresh.
+pub fn relink(repo: &RepoState) -> Result<RelinkResult, ApiError> {
+    relink_reported(repo, &crate::tasks::Reporter::silent())
+}
+
+/// [`relink`], reporting progress and observing cancellation (spec-tasks).
+pub fn relink_reported(
+    repo: &RepoState,
+    reporter: &crate::tasks::Reporter,
+) -> Result<RelinkResult, ApiError> {
+    let mut conn = repo.conn.lock_recover();
+    let root = repo.config.root.clone();
+    let mut result = RelinkResult::default();
+
+    // The orphans that can be confirmed at all, indexed by size: the size is
+    // the only thing comparable without reading a file, so it is what keeps the
+    // hashing down to the candidates that could possibly match.
+    reporter.progress("orphans", None, None);
+    let mut by_size: HashMap<i64, Vec<db::OrphanCandidate>> = HashMap::new();
+    for candidate in db::hashed_orphans(&conn)? {
+        by_size.entry(candidate.size).or_default().push(candidate);
+    }
+    if by_size.is_empty() {
+        return Ok(result);
+    }
+
+    // Tracked files whose size matches one of them.
+    let tracked: Vec<(Uuid, i64)> = db::tracked_files_with_size(&conn)?
+        .into_iter()
+        .filter(|(_, size)| by_size.contains_key(size))
+        .collect();
+
+    let total = tracked.len() as u64;
+    reporter.progress("relink", Some(0), Some(total));
+    let mut cache = repo.lock_cache();
+    for (done, (uuid, size)) in tracked.into_iter().enumerate() {
+        if reporter.is_cancelled() {
+            return Err(ApiError::conflict("relink cancelled"));
+        }
+        reporter.progress("relink", Some(done as u64), Some(total));
+
+        let Some(rel) = cache.path_of(&conn, "mfr_path", uuid)? else { continue };
+        let abs = crate::relpath::RelPath::from_display(&rel).to_abs(&root);
+        let Some(orphan) = confirm(&abs, by_size.get(&size).map_or(&[][..], |v| v)) else {
+            continue;
+        };
+        // The file's own metarecord must be one the daemon alone wrote.
+        if annotated(&conn, uuid)? {
+            result.conflicts += 1;
+            continue;
+        }
+        adopt(&mut conn, &mut cache, &root, orphan, uuid, &rel)?;
+        // Each orphan re-homes once.
+        if let Some(list) = by_size.get_mut(&size) {
+            list.retain(|c| c.uuid != orphan);
+        }
+        result.relinked += 1;
+    }
+    reporter.progress("relink", Some(total), Some(total));
+    Ok(result)
+}
+
+/// The orphan whose stored full hash `abs` matches, if any. Hashes lazily: the
+/// partial hash first, the full one only once a partial has matched.
+fn confirm(abs: &Path, candidates: &[db::OrphanCandidate]) -> Option<Uuid> {
+    if candidates.is_empty() {
+        return None;
+    }
+    let partial = crate::fingerprint::partial_hash(abs).ok()?;
+    let mut full: Option<String> = None;
+    for candidate in candidates {
+        if candidate.partial_hash != partial {
+            continue;
+        }
+        if full.is_none() {
+            full = Some(crate::fingerprint::full_hash(abs).ok()?);
+        }
+        if full.as_deref() == Some(candidate.full_hash.as_str()) {
+            return Some(candidate.uuid);
+        }
+    }
+    None
+}
+
+/// Whether the metarecord carries anything the daemon did not put there. The
+/// `mfr_*` namespace is the daemon's (spec-data-model "Reserved fields"), so
+/// anything outside it is the user's and must not be deleted.
+fn annotated(conn: &rusqlite::Connection, uuid: Uuid) -> Result<bool, ApiError> {
+    let record = db::get_metarecord(conn, uuid)?;
+    Ok(record.is_some_and(|r| r.fields.iter().any(|f| !f.name.starts_with("mfr_"))))
+}
+
+/// Moves `orphan` onto the position `holder` occupies, then deletes `holder`.
+fn adopt(
+    conn: &mut rusqlite::Connection,
+    cache: &mut crate::tree_cache::TreeCache,
+    root: &Path,
+    orphan: Uuid,
+    holder: Uuid,
+    rel: &str,
+) -> Result<(), ApiError> {
+    let mut writer = Writer::begin(conn, None)?;
+    // The holder leaves the position first: one metarecord holds a given tree
+    // position, so the orphan cannot take it while the holder is still there.
+    writer.delete_metarecord(holder)?;
+    cache.apply_remove("mfr_path", holder);
+    let path = crate::relpath::RelPath::from_display(rel);
+    let parent = crate::executor::ensure_parent_metarecords(&mut writer, cache, root, &path, &[])?;
+    let name = path.name().cloned().unwrap_or_default();
+    writer.set_field_as(
+        OpType::FileMoved,
+        orphan,
+        "mfr_path",
+        Value::TreeRef { parent: Some(parent), name: name.clone() },
+    )?;
+    cache.apply_insert("mfr_path", Some(parent), &name, orphan);
+    writer.commit()?;
+    Ok(())
+}

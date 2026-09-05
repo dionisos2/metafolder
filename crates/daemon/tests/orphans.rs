@@ -239,3 +239,100 @@ fn clear_orphans_also_clears_the_duplicate_group_link() {
     assert_eq!(field_value(&repo, gone, "mfr_duplicate_group"), None);
     assert_eq!(field_value(&repo, gone, "mfr_full_hash"), Some(Value::String("bbbb".into())));
 }
+
+// ── Relinking orphans by fingerprint ──────────────────────────────────────────
+
+/// Stores the two fingerprints on `uuid`, as the duplicate scan would.
+fn store_hashes(repo: &RepoState, uuid: Uuid, abs: &Path) {
+    let partial = metafolder_daemon::fingerprint::partial_hash(abs).unwrap();
+    let full = metafolder_daemon::fingerprint::full_hash(abs).unwrap();
+    let mut conn = repo.conn.lock().unwrap();
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(uuid, "mfr_partial_hash", Value::String(partial)).unwrap();
+    w.set_field(uuid, "mfr_full_hash", Value::String(full)).unwrap();
+    w.commit().unwrap();
+}
+
+fn path_of(repo: &RepoState, rel: &str) -> Option<Uuid> {
+    let conn = repo.conn.lock().unwrap();
+    let mut cache = repo.cache.lock().unwrap();
+    cache.resolve_path(&conn, "mfr_path", rel).unwrap()
+}
+
+/// The metadata an orphan holds follows its file when the file turns up again
+/// under a new name — but only when the user asks for it, since confirming the
+/// identity means hashing the candidate.
+///
+/// The orphan keeps its uuid: that is the whole point of re-homing rather than
+/// tracking afresh, since references elsewhere point at it.
+#[test]
+fn test_relink_re_homes_an_orphan_onto_its_reappeared_file() {
+    let (repo, root) = setup("relink");
+    write_file(&root, "song.mp3", b"some audio content");
+    reconcile::reconcile(&repo).unwrap();
+    let original = path_of(&repo, "/song.mp3").expect("tracked");
+    store_hashes(&repo, original, &root.join("song.mp3"));
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(original, "rating", Value::Int(5)).unwrap();
+        w.commit().unwrap();
+    }
+
+    // The file is renamed while nothing was watching, then reconcile records
+    // the new name as a metarecord of its own and leaves the old one orphaned.
+    std::fs::rename(root.join("song.mp3"), root.join("renamed.mp3")).unwrap();
+    orphans::clear_orphans(&repo, &[original]).unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let fresh = path_of(&repo, "/renamed.mp3").expect("the new name is tracked");
+    assert_ne!(fresh, original, "reconcile tracked it afresh");
+
+    let result = orphans::relink(&repo).unwrap();
+    assert_eq!(result.relinked, 1, "the orphan is re-homed onto its file");
+
+    assert_eq!(
+        path_of(&repo, "/renamed.mp3"),
+        Some(original),
+        "the orphan took the position, keeping its uuid and its metadata"
+    );
+    let conn = repo.conn.lock().unwrap();
+    assert_eq!(
+        db::get_metarecord(&conn, original).unwrap().unwrap().get("rating"),
+        Some(&Value::Int(5)),
+        "the metadata came back with it"
+    );
+    assert!(
+        db::get_metarecord(&conn, fresh).unwrap().is_none(),
+        "the freshly tracked duplicate is gone"
+    );
+}
+
+/// A candidate the user has already annotated is *not* absorbed: re-homing the
+/// orphan onto it would delete whatever was attached to it in the meantime.
+/// Reported instead, and left alone.
+#[test]
+fn test_relink_refuses_to_absorb_an_annotated_metarecord() {
+    let (repo, root) = setup("relink-conflict");
+    write_file(&root, "song.mp3", b"some audio content");
+    reconcile::reconcile(&repo).unwrap();
+    let original = path_of(&repo, "/song.mp3").expect("tracked");
+    store_hashes(&repo, original, &root.join("song.mp3"));
+
+    std::fs::rename(root.join("song.mp3"), root.join("renamed.mp3")).unwrap();
+    orphans::clear_orphans(&repo, &[original]).unwrap();
+    reconcile::reconcile(&repo).unwrap();
+    let fresh = path_of(&repo, "/renamed.mp3").expect("the new name is tracked");
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(fresh, "note", Value::String("mine".into())).unwrap();
+        w.commit().unwrap();
+    }
+
+    let result = orphans::relink(&repo).unwrap();
+    assert_eq!(result.relinked, 0);
+    assert_eq!(result.conflicts, 1, "the annotated metarecord is reported, not absorbed");
+    assert_eq!(path_of(&repo, "/renamed.mp3"), Some(fresh), "it kept its position");
+    let conn = repo.conn.lock().unwrap();
+    assert!(db::get_metarecord(&conn, fresh).unwrap().is_some(), "and it still exists");
+}
