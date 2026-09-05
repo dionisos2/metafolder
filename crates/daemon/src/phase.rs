@@ -35,6 +35,11 @@ pub struct Phase {
 }
 
 impl Phase {
+    /// The cadence a phase's own progress lines are held to.
+    pub fn progress_throttle() -> Throttle {
+        Throttle::new(Duration::from_secs(1))
+    }
+
     /// Announces `what` for repository `who`, and starts timing it.
     pub fn begin(who: &str, what: impl Into<String>) -> Self {
         let what = what.into();
@@ -54,6 +59,38 @@ impl Drop for Phase {
         if let Some(line) = completion_line(&self.who, &self.what, self.start.elapsed()) {
             eprintln!("{line}");
         }
+    }
+}
+
+/// Rate-limits a progress line to at most one per interval.
+///
+/// A phase reports far more often than a human can read — per event, per
+/// scanned directory entry — because the reporter cannot know which report is
+/// the interesting one. Deciding what reaches the terminal is this side's job:
+/// the point of the line is "it is still moving, and here is where", which one
+/// line a second conveys as well as ten thousand.
+pub struct Throttle {
+    every: Duration,
+    last: Option<Instant>,
+}
+
+impl Throttle {
+    pub fn new(every: Duration) -> Self {
+        Throttle { every, last: None }
+    }
+
+    /// Whether a line may be printed at `now`, remembering it if so. The first
+    /// call always passes: a phase must say something as soon as it starts.
+    pub fn ready_at(&mut self, now: Instant) -> bool {
+        let ready = self.last.is_none_or(|last| now.duration_since(last) >= self.every);
+        if ready {
+            self.last = Some(now);
+        }
+        ready
+    }
+
+    pub fn ready(&mut self) -> bool {
+        self.ready_at(Instant::now())
     }
 }
 
@@ -80,5 +117,25 @@ mod tests {
     #[test]
     fn test_the_threshold_is_inclusive() {
         assert!(completion_line("repo", "step", REPORT_ABOVE).is_some());
+    }
+
+    #[test]
+    fn test_the_first_line_always_gets_through() {
+        // A phase that reports nothing until the interval has elapsed looks
+        // exactly like a phase that has hung.
+        let mut t = Throttle::new(Duration::from_secs(1));
+        assert!(t.ready_at(Instant::now()));
+    }
+
+    #[test]
+    fn test_lines_inside_the_interval_are_dropped_and_the_next_one_passes() {
+        let mut t = Throttle::new(Duration::from_secs(1));
+        let start = Instant::now();
+        assert!(t.ready_at(start));
+        assert!(!t.ready_at(start + Duration::from_millis(999)));
+        assert!(t.ready_at(start + Duration::from_secs(1)));
+        // The clock restarts from the line that got through, not from the start.
+        assert!(!t.ready_at(start + Duration::from_millis(1500)));
+        assert!(t.ready_at(start + Duration::from_secs(2)));
     }
 }

@@ -155,6 +155,26 @@ metafolder = "/ssd/meta/music/.metafolder"
   repository, not to the code: a single phase can run for minutes at full CPU on
   a large repository, and without this the operator can see the daemon is busy
   but has no way to tell which phase to look at.
+- The replay of buffered filesystem events reports *inside* itself, because it
+  is the phase whose cost is least predictable: it says how many events it read,
+  how many compaction left, and then names each event as it applies it. A
+  per-event counter is not enough on its own — one event can hide an
+  arbitrarily large subtree, since a directory pasted or moved in whole arrives
+  as a single =Create= and everything already inside it is ingested by that one
+  event's scan — so the scan reports the entries it has ingested as it goes:
+
+  #+BEGIN_SRC
+  [load photos]   1 event(s) buffered
+  [load photos]   1 event(s) after compaction
+  [load photos]   event 1/1: arrived /photos
+  [load photos]     scanning /photos: 2326 entries ingested
+  #+END_SRC
+
+  These lines are rate-limited to one per second: the reporting side cannot
+  know which report matters, so it reports everything and the printing side
+  decides. The first and last event always get a line — a batch that finishes
+  inside the interval must not go by in silence, which is the case that is
+  indistinguishable from a hang.
 
 ** Health
 

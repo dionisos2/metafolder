@@ -411,6 +411,10 @@ impl AppState {
             // The backlog is whatever the filesystem did while the daemon was
             // down: it is the one phase whose size is unknowable from outside,
             // so it reports its own.
+            // The replay reports per event *and* per scanned directory entry;
+            // one line a second is what a person can read, and is enough to
+            // tell "still moving, here" from "stuck, here".
+            let throttle = std::cell::RefCell::new(Phase::progress_throttle());
             let stats =
                 crate::executor::flush_pending_reported(&repo_state, &|progress| match progress {
                     FlushProgress::Buffered(n) => {
@@ -419,8 +423,24 @@ impl AppState {
                     FlushProgress::Compacted(n) => {
                         eprintln!("[load {who}]   {n} event(s) after compaction")
                     }
-                    FlushProgress::Applied { done, total } => {
-                        eprintln!("[load {who}]   applied {done}/{total}")
+                    // The first and the last event always get a line: without
+                    // them a batch shorter than the interval says nothing at
+                    // all — which is exactly the case that looked like a hang.
+                    FlushProgress::Applying { index, total, event } => {
+                        if index == 1 || index == total || throttle.borrow_mut().ready() {
+                            eprintln!(
+                                "[load {who}]   event {index}/{total}: {}",
+                                crate::executor::describe(event)
+                            );
+                        }
+                    }
+                    FlushProgress::Scanning { dir, ingested } => {
+                        if throttle.borrow_mut().ready() {
+                            eprintln!(
+                                "[load {who}]     scanning {}: {ingested} entries ingested",
+                                dir.display()
+                            );
+                        }
                     }
                 })?;
             p.detail(format!("{} events, {} revisions", stats.events, stats.revisions));

@@ -431,23 +431,41 @@ fn discard_pending(repo: &RepoState) -> Result<usize> {
 }
 
 /// What a flush is doing, for whoever is watching it happen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FlushProgress {
+///
+/// Borrowed rather than owned: a report fires per event *and per scanned
+/// directory entry*, and the sink usually throttles them away — formatting a
+/// path that is about to be dropped would cost more than the reporting is
+/// worth. Deciding what to print, and how often, is the sink's job.
+#[derive(Debug)]
+pub enum FlushProgress<'a> {
     /// The buffer as read from the database, before compaction.
     Buffered(usize),
     /// What compaction left to apply.
     Compacted(usize),
-    /// Events applied so far, out of the compacted total.
-    Applied { done: usize, total: usize },
+    /// About to apply event `index` (1-based) of `total`.
+    Applying { index: usize, total: usize, event: &'a FsEvent },
+    /// Entries ingested so far under a directory that arrived whole. One event
+    /// can hide an arbitrarily large subtree — a pasted or moved-in directory
+    /// arrives as a single `Create` and its whole content rides on it — so the
+    /// event counter alone can sit still for minutes.
+    Scanning { dir: &'a RelPath, ingested: usize },
 }
 
 /// Where a flush reports its progress.
-pub type FlushReport<'a> = &'a dyn Fn(FlushProgress);
+pub type FlushReport<'a> = &'a dyn Fn(FlushProgress<'_>);
 
-/// How many events pass between two `Applied` reports. A backlog worth
-/// reporting at all is large enough that a line per event would be the slowest
-/// part of the flush.
-const REPORT_EVERY: usize = 500;
+/// A one-line description of an event, for a progress line.
+pub fn describe(ev: &FsEvent) -> String {
+    match ev {
+        FsEvent::Create(p) => format!("create {}", p.display()),
+        FsEvent::Remove(p) => format!("remove {}", p.display()),
+        FsEvent::Rename(a, b) => format!("rename {} -> {}", a.display(), b.display()),
+        FsEvent::RenameFrom(p) => format!("moved away {}", p.display()),
+        FsEvent::RenameTo(p) => format!("arrived {}", p.display()),
+        FsEvent::ModifyData(p) => format!("modified {}", p.display()),
+        FsEvent::ModifyMeta(p) => format!("touched {}", p.display()),
+    }
+}
 
 fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStats> {
     // While a coordinated rollback holds the lock, pending operations (watcher
@@ -532,6 +550,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         for (_, group) in groups {
             let writer = Writer::begin(&mut conn, None)?;
             let mut apply = Apply {
+                report,
                 writer,
                 cache: &mut cache,
                 root: &repo.config.root,
@@ -545,11 +564,9 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             };
             for ev in group {
                 apply.check_cancelled()?;
-                apply.apply(ev)?;
                 applied += 1;
-                if applied.is_multiple_of(REPORT_EVERY) {
-                    report(FlushProgress::Applied { done: applied, total: n_events });
-                }
+                report(FlushProgress::Applying { index: applied, total: n_events, event: &ev });
+                apply.apply(ev)?;
             }
             let wrote = apply.writer.op_count() > 0;
             apply.writer.commit()?;
@@ -558,10 +575,6 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
             }
         }
 
-        // The closing report always lands, whatever the batch size: without it
-        // a backlog under `REPORT_EVERY` would announce its size and then say
-        // nothing more.
-        report(FlushProgress::Applied { done: applied, total: n_events });
         conn.execute(
             "DELETE FROM pending_operation WHERE id <= ?1 AND op_type LIKE 'fs_%'",
             params![max_id],
@@ -687,6 +700,9 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
 
 /// Application context for one revision (one group of events).
 struct Apply<'a, 'c> {
+    /// Where the subtree scan reports its progress: one event can hide an
+    /// arbitrarily large tree, and the per-event counter cannot show it.
+    report: FlushReport<'a>,
     writer: Writer<'c>,
     cache: &'a mut TreeCache,
     root: &'a Path,
@@ -828,6 +844,7 @@ impl Apply<'_, '_> {
     /// duplicating them. Idempotent with any child events that did fire.
     fn scan_dir(&mut self, rel: &RelPath) -> Result<()> {
         let mut stack = vec![rel.clone()];
+        let mut ingested = 0usize;
         while let Some(dir) = stack.pop() {
             let entries = match std::fs::read_dir(self.abs(&dir)) {
                 Ok(entries) => entries,
@@ -836,8 +853,11 @@ impl Apply<'_, '_> {
             for entry in entries.flatten() {
                 // A pasted tree can be arbitrarily large, and it all rides on
                 // one event: the stop is honoured here too, not only between
-                // events.
+                // events — and so is the progress report, or this one event
+                // would look like a hang.
                 self.check_cancelled()?;
+                ingested += 1;
+                (self.report)(FlushProgress::Scanning { dir: rel, ingested });
                 // A POSIX name is a byte string; such a file is ingested like
                 // any other (spec-data-model "Tree names").
                 let child = dir.child(TreeName::from_bytes(crate::relpath::file_name_bytes(

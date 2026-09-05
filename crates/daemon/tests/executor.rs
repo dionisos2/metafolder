@@ -1242,12 +1242,34 @@ fn test_stopping_a_flush_pauses_ingestion_and_loses_nothing() {
 
 // ── Reported flush ────────────────────────────────────────────────────────────
 
+/// Records every progress report as an owned summary, so a test can assert on
+/// what a watcher would have seen.
+fn record_flush(repo: &RepoState) -> Vec<String> {
+    let seen = std::sync::Mutex::new(Vec::new());
+    executor::flush_pending_reported(repo, &|p| {
+        let line = match p {
+            executor::FlushProgress::Buffered(n) => format!("buffered {n}"),
+            executor::FlushProgress::Compacted(n) => format!("compacted {n}"),
+            executor::FlushProgress::Applying { index, total, event } => {
+                format!("applying {index}/{total} {}", executor::describe(event))
+            }
+            executor::FlushProgress::Scanning { dir, ingested } => {
+                format!("scanning {} {ingested}", dir.display())
+            }
+        };
+        seen.lock().unwrap().push(line);
+    })
+    .unwrap();
+    seen.into_inner().unwrap()
+}
+
 /// A load's replay of the buffered events can be the longest part of a startup
 /// — the backlog is whatever the filesystem did while the daemon was down — and
 /// it is the one phase whose size is not visible from outside. It must say how
-/// much it has to do, and how far along it is.
+/// much it has to do, and *which* event it is on: the cost per event is not
+/// uniform, so a count alone does not say where the time goes.
 #[test]
-fn test_a_reported_flush_says_how_much_it_has_and_how_far_it_got() {
+fn test_a_reported_flush_names_every_event_as_it_applies_it() {
     let (repo, root, _) = setup("reported");
     for i in 0..5 {
         write_file(&root, &format!("f{i}.txt"), b"x");
@@ -1258,37 +1280,42 @@ fn test_a_reported_flush_says_how_much_it_has_and_how_far_it_got() {
     events.push(FsEvent::ModifyData("/f0.txt".into()));
     enqueue(&repo, &events);
 
-    let seen = std::sync::Mutex::new(Vec::new());
-    executor::flush_pending_reported(&repo, &|p| seen.lock().unwrap().push(p)).unwrap();
-    let seen = seen.into_inner().unwrap();
+    let seen = record_flush(&repo);
 
-    let buffered = seen
-        .iter()
-        .find_map(|p| match p {
-            executor::FlushProgress::Buffered(n) => Some(*n),
-            _ => None,
-        })
-        .expect("the backlog size is reported before any work");
-    assert_eq!(buffered, 6, "the buffer is reported as read, before compaction");
+    assert_eq!(seen[0], "buffered 6", "the backlog is reported as read: {seen:?}");
+    assert_eq!(seen[1], "compacted 5", "the redundant modify is absorbed: {seen:?}");
+    let applying: Vec<&String> = seen.iter().filter(|l| l.starts_with("applying")).collect();
+    assert_eq!(applying.len(), 5, "one report per event, whatever the batch size: {seen:?}");
+    assert!(applying[0].starts_with("applying 1/5 "), "{applying:?}");
+    assert!(applying[4].starts_with("applying 5/5 "), "{applying:?}");
+    assert!(applying[0].contains("f0.txt"), "the event names its path: {applying:?}");
+}
 
-    let compacted = seen
-        .iter()
-        .find_map(|p| match p {
-            executor::FlushProgress::Compacted(n) => Some(*n),
-            _ => None,
-        })
-        .expect("what compaction left is reported");
-    assert_eq!(compacted, 5, "the redundant modify is absorbed by the create");
+/// One event can hide an arbitrarily large subtree: a directory pasted in
+/// arrives as a single `Create`, and everything already inside it is ingested
+/// by that one event's scan. A per-event count would sit on "3/426" for
+/// minutes, so the scan reports its own progress.
+#[test]
+fn test_a_directory_arriving_whole_reports_its_scan() {
+    let (repo, root, _) = setup("reported-scan");
+    for i in 0..12 {
+        write_file(&root, &format!("sub/f{i}.txt"), b"x");
+    }
+    enqueue(&repo, &[FsEvent::Create("/sub".into())]);
 
-    let last_applied = seen
-        .iter()
-        .filter_map(|p| match p {
-            executor::FlushProgress::Applied { done, total } => Some((*done, *total)),
-            _ => None,
-        })
-        .next_back()
-        .expect("progress through the events is reported");
-    assert_eq!(last_applied, (5, 5), "the last report accounts for every event");
+    let seen = record_flush(&repo);
+
+    let scans: Vec<&String> = seen.iter().filter(|l| l.starts_with("scanning /sub")).collect();
+    assert!(!scans.is_empty(), "the subtree scan reports nothing: {seen:?}");
+    assert!(
+        scans.last().unwrap().ends_with(" 12"),
+        "the scan accounts for every entry it ingested: {scans:?}"
+    );
+    assert_eq!(
+        seen.iter().filter(|l| l.starts_with("applying")).count(),
+        1,
+        "still one event: the subtree rides on it"
+    );
 }
 
 /// A flush with nothing buffered reports nothing: the load report must not
@@ -1296,8 +1323,6 @@ fn test_a_reported_flush_says_how_much_it_has_and_how_far_it_got() {
 #[test]
 fn test_an_empty_flush_reports_nothing() {
     let (repo, root, _) = setup("reported-empty");
-    let seen = std::sync::Mutex::new(Vec::new());
-    executor::flush_pending_reported(&repo, &|p| seen.lock().unwrap().push(p)).unwrap();
-    assert!(seen.into_inner().unwrap().is_empty(), "an empty flush has nothing to say");
+    assert!(record_flush(&repo).is_empty(), "an empty flush has nothing to say");
     std::fs::remove_dir_all(root).unwrap();
 }
