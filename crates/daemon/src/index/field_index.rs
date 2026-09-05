@@ -92,7 +92,7 @@ impl FieldIndex {
             FieldIndex::Bsi(b) => Ok(b.compare(op, value)),
             FieldIndex::Reverse(r) => r.compare(op, value),
             FieldIndex::Unimplemented(family) => {
-                Err(Unsupported(format!("comparison on a '{family}' field")))
+                Err(super::unsupported(format!("comparison on a '{family}' field")))
             }
         }
     }
@@ -472,7 +472,7 @@ impl CategoricalIndex {
                 }
                 Ok(out)
             }
-            Value::Bool(_) => Err(Unsupported("ordered comparison on bool".into())),
+            Value::Bool(_) => Err(super::unsupported("ordered comparison on bool")),
             _ => Ok(RoaringBitmap::new()),
         }
     }
@@ -961,7 +961,7 @@ impl ReverseIndex {
             | Value::RefBase(_)
             | Value::TreeRef { .. }
             | Value::ExternalRef { .. } => {
-                Err(Unsupported("ordered comparison on a reference".into()))
+                Err(super::unsupported("ordered comparison on a reference"))
             }
             // Any other operand finds no matching rows in a reference field.
             _ => Ok(RoaringBitmap::new()),

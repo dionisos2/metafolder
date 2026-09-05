@@ -158,7 +158,7 @@ fn test_populate_from_forest_matches_db_populate() {
     let mut forest = Vec::new();
     RepoIndex::build_reported_collecting(&conn, &mut forest, &|_, _| {}, &|| false).unwrap();
     let mut from_scan = TreeCache::new(false);
-    assert!(from_scan.populate_from_forest(forest), "forest within budget");
+    from_scan.populate_from_forest(forest);
 
     for uuid in [root, music, jazz, file, rock, top, m.uuid] {
         for field in ["mfr_path", "path"] {
@@ -347,19 +347,6 @@ fn test_populate_then_mutations_stay_complete_and_correct() {
     assert_eq!(cache.misses(), 0, "maintenance keeps reads in memory");
 }
 
-#[test]
-fn test_populate_skipped_when_forest_exceeds_budget() {
-    // A forest larger than the node budget stays in lazy mode (DB fallback).
-    let mut conn = test_conn();
-    let _ = build_tree(&mut conn); // 4 nodes
-    let mut cache = TreeCache::with_limit(false, 2);
-    cache.populate(&conn).unwrap();
-    assert!(!cache.is_complete(), "over-budget forest must not claim completeness");
-    // Reads still work via the DB fallback.
-    assert!(cache.resolve_path(&conn, "mfr_path", "/music").unwrap().is_some());
-    assert!(cache.misses() > 0);
-}
-
 // ── Mutations ─────────────────────────────────────────────────────────────────
 
 #[test]
@@ -441,75 +428,6 @@ fn test_apply_insert_makes_child_resolvable_without_db_miss() {
     let misses = cache.misses();
     assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/blues").unwrap(), Some(blues));
     assert_eq!(cache.misses(), misses);
-}
-
-// ── Eviction ──────────────────────────────────────────────────────────────────
-
-#[test]
-fn test_eviction_respects_limit_and_keeps_correctness() {
-    let mut conn = test_conn();
-    let root = tree_entry(&mut conn, "mfr_path", None, "");
-    let mut dirs = Vec::new();
-    for i in 0..10 {
-        dirs.push(tree_entry(&mut conn, "mfr_path", Some(root), &format!("d{i}")));
-    }
-    let mut cache = TreeCache::with_limit(false, 4);
-
-    for (i, dir) in dirs.iter().enumerate() {
-        let got = cache.resolve_path(&conn, "mfr_path", &format!("/d{i}")).unwrap();
-        assert_eq!(got, Some(*dir), "resolution must stay correct under eviction");
-        assert!(cache.len() <= 4, "cache size {} exceeds limit", cache.len());
-    }
-}
-
-#[test]
-fn test_eviction_drains_internal_directories_not_just_leaves() {
-    // Eviction only frees leaves, but a directory becomes an evictable leaf
-    // once its last child is evicted, so a deep chain drains bottom-up and the
-    // node limit holds even for internal-directory-heavy trees (refutes the
-    // "internal dirs are un-evictable" concern). All in-memory via apply_insert.
-    let f = "mfr_path";
-    let mut cache = TreeCache::with_limit(false, 3);
-    let root = Uuid::new_v4();
-    let a = Uuid::new_v4();
-    let b = Uuid::new_v4();
-    cache.apply_insert(f, None, &TreeName::from(""), root);
-    cache.apply_insert(f, Some(root), &TreeName::from("a"), a); // root -> a
-    cache.apply_insert(f, Some(a), &TreeName::from("b"), b); // root -> a -> b   (live = 3, at limit)
-    assert_eq!(cache.len(), 3);
-
-    // Add fresh leaves under root. Eight distinct nodes have now been inserted
-    // under a limit of 3; root must stay (it parents the new leaves), so the
-    // only way the limit can hold is by evicting the internal directories `a`
-    // and `b` — which requires the bottom-up parent re-push to work.
-    for i in 0..5 {
-        let leaf = Uuid::new_v4();
-        cache.apply_insert(f, Some(root), &TreeName::from(format!("leaf{i}")), leaf);
-        assert!(cache.len() <= 3, "node limit breached at i={i}: {}", cache.len());
-    }
-}
-
-#[test]
-fn test_eviction_prefers_least_recently_used() {
-    let mut conn = test_conn();
-    let root = tree_entry(&mut conn, "mfr_path", None, "");
-    for name in ["a", "b", "c"] {
-        tree_entry(&mut conn, "mfr_path", Some(root), name);
-    }
-    // Limit 3: root + two leaves fit.
-    let mut cache = TreeCache::with_limit(false, 3);
-    cache.resolve_path(&conn, "mfr_path", "/a").unwrap();
-    cache.resolve_path(&conn, "mfr_path", "/b").unwrap();
-    // Touch /a again so /b is the LRU leaf.
-    cache.resolve_path(&conn, "mfr_path", "/a").unwrap();
-    // Inserting /c evicts /b, not /a.
-    cache.resolve_path(&conn, "mfr_path", "/c").unwrap();
-
-    let misses = cache.misses();
-    cache.resolve_path(&conn, "mfr_path", "/a").unwrap();
-    assert_eq!(cache.misses(), misses, "/a must still be cached");
-    cache.resolve_path(&conn, "mfr_path", "/b").unwrap();
-    assert!(cache.misses() > misses, "/b must have been evicted");
 }
 
 // ── Case sensitivity ──────────────────────────────────────────────────────────

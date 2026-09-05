@@ -1,12 +1,12 @@
 //! In-memory tree cache (spec-file-tracking "Tree Cache"): resolves path
 //! strings to metarecord UUIDs without recursive SQL. One cache per repository,
 //! shared across all TreeRef field names (the field name is the first level).
-//! Starts empty and populates lazily; a min-heap of leaves drives LRU
-//! eviction when the node limit is exceeded.
+//! Populated whole at repository load and kept in step by the `apply_*`
+//! maintenance; the forest is resident, with no node budget — the same memory
+//! policy as the query index it is built alongside.
 
 use std::cell::RefCell;
-use std::cmp::Reverse;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -18,10 +18,6 @@ use metafolder_core::query::OsmProgress;
 
 use crate::db;
 use crate::log::MAX_TREE_DEPTH;
-
-/// Default node limit, sized so that the cache stays around the spec's
-/// 100 MB default (~200 bytes per node).
-pub const DEFAULT_MAX_NODES: usize = 500_000;
 
 /// Separator joining the components of a *sort key* — the form a `tree_ref`
 /// value takes when a query sorts on it (spec-data-model "Sort specification").
@@ -36,7 +32,6 @@ pub const DEFAULT_MAX_NODES: usize = 500_000;
 pub const PATH_KEY_SEP: char = '\u{1}';
 
 struct Node {
-    field: String,
     /// The name's exact bytes — what identifies the node (spec-data-model
     /// "Tree names"). The children/roots maps are keyed by its *normalized*
     /// bytes, which fold case when the filesystem does but never merge two
@@ -89,38 +84,26 @@ pub struct TreeCache {
     arena: Vec<Option<Node>>,
     free: Vec<usize>,
     fields: HashMap<String, FieldTree>,
-    /// Lazy LRU heap of (last_used, node) candidates; stale metarecords are
-    /// discarded or re-pushed at pop time.
-    heap: BinaryHeap<Reverse<(u64, usize)>>,
     clock: u64,
     live: usize,
-    max_nodes: usize,
     case_insensitive: bool,
     misses: u64,
-    /// True when the entire TreeRef forest is resident in memory — eagerly
-    /// loaded by [`Self::populate`] at repository load and kept in sync by the
-    /// `apply_*` maintenance since. While complete, every read-side navigation
-    /// (resolution, descendants, path reconstruction) is answered purely from
-    /// memory; it drops back to `false` if eviction or a drop-and-reload
-    /// shortcut ever removes a node we cannot prove is gone from the tree, in
-    /// which case the DB fallbacks resume (correctness over speed).
+    /// Whether the forest has been loaded ([`Self::populate`]). A repository
+    /// serves nothing until it has (spec-main "POST /repos/load"), so through
+    /// the API this is always true; it is false only on a cache built directly,
+    /// as unit tests do, where the DB fallbacks below still apply. Nothing
+    /// clears it any more: there is no eviction to lose a node to.
     complete: bool,
 }
 
 impl TreeCache {
     pub fn new(case_insensitive: bool) -> Self {
-        Self::with_limit(case_insensitive, DEFAULT_MAX_NODES)
-    }
-
-    pub fn with_limit(case_insensitive: bool, max_nodes: usize) -> Self {
         Self {
             arena: Vec::new(),
             free: Vec::new(),
             fields: HashMap::new(),
-            heap: BinaryHeap::new(),
             clock: 0,
             live: 0,
-            max_nodes,
             case_insensitive,
             misses: 0,
             complete: false,
@@ -134,9 +117,7 @@ impl TreeCache {
 
     /// Eagerly loads the entire TreeRef forest (all field names) into memory in
     /// a single DB scan, so that subsequent read-side navigation is served
-    /// without per-node queries. A forest larger than the node budget is left
-    /// in lazy mode (`is_complete()` stays `false`) and the DB fallbacks remain
-    /// in use. Replaces any current contents.
+    /// without per-node queries. Replaces any current contents.
     pub fn populate(&mut self, conn: &Connection) -> Result<()> {
         // Timed in two parts (logged when non-trivial): the `load_tree_forest`
         // SQL scan+sort, and the in-memory node linking — a persistent load
@@ -146,9 +127,9 @@ impl TreeCache {
         let scan = t_scan.elapsed();
         let n = rows.len();
         let t_link = std::time::Instant::now();
-        let linked = self.populate_from_forest(rows);
+        self.populate_from_forest(rows);
         let link = t_link.elapsed();
-        if linked && (scan + link).as_millis() >= 200 {
+        if (scan + link).as_millis() >= 200 {
             eprintln!("[tree cache] {n} nodes: scan {scan:?}, link {link:?}");
         }
         Ok(())
@@ -157,14 +138,10 @@ impl TreeCache {
     /// Populates the cache from a forest already read out of the `field` table
     /// (`db::TreeRow`s in `field.id` order), skipping the DB scan `populate`
     /// does — used at load, where the index build's single pass over `field`
-    /// collects them (see `RepoIndex::build_reported_collecting`). Returns
-    /// whether the forest fit the node budget (else the cache stays lazy).
-    /// Replaces any current contents.
-    pub fn populate_from_forest(&mut self, rows: Vec<db::TreeRow>) -> bool {
+    /// collects them (see `RepoIndex::build_reported_collecting`). Replaces any
+    /// current contents.
+    pub fn populate_from_forest(&mut self, rows: Vec<db::TreeRow>) {
         self.clear();
-        if rows.len() > self.max_nodes {
-            return false; // Over budget: stay lazy, DB fallbacks apply.
-        }
         self.clock += 1;
         // Pass 1: create one detached node per position, registered by uuid so
         // pass 2 can resolve each child's parent to an arena index. Rows are
@@ -172,7 +149,6 @@ impl TreeCache {
         let mut created: Vec<(usize, Option<Uuid>, String)> = Vec::with_capacity(rows.len());
         for row in &rows {
             let node = Node {
-                field: row.field_name.clone(),
                 name: TreeName::from(row.name.clone()),
                 uuid: row.uuid,
                 parent: None,
@@ -197,7 +173,6 @@ impl TreeCache {
                 .entry(row.uuid)
                 .or_default()
                 .push(idx);
-            self.heap.push(Reverse((self.clock, idx)));
             created.push((idx, row.parent, row.field_name.clone()));
         }
         // Pass 2: link each node under its parent's first position (directories
@@ -232,7 +207,6 @@ impl TreeCache {
             }
         }
         self.complete = true;
-        true
     }
 
     /// Number of cached nodes.
@@ -310,7 +284,6 @@ impl TreeCache {
                     let Some((uuid, name)) =
                         self.db_child(conn, field, Some(parent_uuid), comp, form)?
                     else {
-                        self.evict_to_limit();
                         return Ok(None);
                     };
                     self.insert_node(field, Some(cur), &name, uuid)
@@ -320,7 +293,6 @@ impl TreeCache {
         }
 
         let uuid = self.node(cur).uuid;
-        self.evict_to_limit();
         Ok(Some(uuid))
     }
 
@@ -558,7 +530,6 @@ impl TreeCache {
                 }
             }
         }
-        self.evict_to_limit();
     }
 
     /// Notifies the cache that a metarecord was renamed and/or moved. The cached
@@ -632,7 +603,6 @@ impl TreeCache {
         self.arena.clear();
         self.free.clear();
         self.fields.clear();
-        self.heap.clear();
         self.live = 0;
         self.complete = false;
     }
@@ -763,7 +733,6 @@ impl TreeCache {
                         )?
                     };
                     let Some(uuid) = found else {
-                        self.evict_to_limit();
                         return Ok(None);
                     };
                     self.insert_node(field, Some(cur), name, uuid)
@@ -772,7 +741,6 @@ impl TreeCache {
             self.touch(cur);
         }
         let uuid = self.node(cur).uuid;
-        self.evict_to_limit();
         Ok(Some(uuid))
     }
 
@@ -966,7 +934,6 @@ impl TreeCache {
         uuid: Uuid,
     ) -> usize {
         let node = Node {
-            field: field.to_string(),
             name: name.clone(),
             uuid,
             parent,
@@ -1001,7 +968,6 @@ impl TreeCache {
             .entry(uuid)
             .or_default()
             .push(idx);
-        self.heap.push(Reverse((self.clock, idx)));
         idx
     }
 
@@ -1020,9 +986,7 @@ impl TreeCache {
             Some(pi) => {
                 self.node_mut(pi).children.remove(&norm);
                 let parent_node = self.node(pi);
-                if parent_node.children.is_empty() {
-                    self.heap.push(Reverse((parent_node.last_used, pi)));
-                }
+                if parent_node.children.is_empty() {}
             }
         }
     }
@@ -1051,36 +1015,6 @@ impl TreeCache {
             self.free.push(i);
             self.live -= 1;
         }
-    }
-
-    fn evict_to_limit(&mut self) {
-        while self.live > self.max_nodes && self.evict_one() {}
-    }
-
-    /// Pops the least-recently-used leaf and frees it. Stale heap metarecords
-    /// (touched since push, no longer a leaf, already freed) are skipped;
-    /// touched leaves are re-pushed with their current timestamp.
-    fn evict_one(&mut self) -> bool {
-        while let Some(Reverse((t, idx))) = self.heap.pop() {
-            let Some(node) = self.arena[idx].as_ref() else {
-                continue;
-            };
-            if !node.children.is_empty() {
-                continue;
-            }
-            if node.last_used != t {
-                self.heap.push(Reverse((node.last_used, idx)));
-                continue;
-            }
-            let field = node.field.clone();
-            self.detach(&field, idx);
-            self.remove_subtree_detached(&field, idx);
-            // The forest no longer fits: we can no longer answer reads purely
-            // from memory, so resume the DB fallbacks.
-            self.complete = false;
-            return true;
-        }
-        false
     }
 }
 

@@ -53,7 +53,9 @@ operation — the daemon first collects the descendant UUID set iteratively via
 the tree cache, then injects it as an =IN= clause into the surrounding SQL query
 rather than emitting a CTE.
 
-This describes the *SQL engine*, which is the fallback. The common queries —
+This describes the *SQL engine*, which is the fallback — and only for the
+index's *coverage* gaps, never for its state (see
+[[file:spec-indexing.org][spec-indexing.org]] "Two kinds of gap"). The common queries —
 including =Path=-target =Follows=/=FollowsTransitive= such as
 =mfr_path ->* "/dir"= with a sort — are served entirely in memory by the bitmap
 index (the path is resolved to a root through the tree cache, the descendants

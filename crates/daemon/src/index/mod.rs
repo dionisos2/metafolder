@@ -215,14 +215,54 @@ fn is_text_predicate(q: &Query) -> bool {
 /// position rather than at an absolute offset — stable under concurrent edits.
 type SortEntry = (Vec<Option<SortRep>>, Uuid);
 
-/// A query shape (or operand type) the bitmap path does not accelerate in this
-/// increment (e.g. `Matches`, a `Path`-target `Follows`). The caller may fall
-/// back to the SQL engine; the oracle battery simply excludes these shapes.
-#[derive(Debug)]
-pub struct Unsupported(pub String);
+/// Why the bitmap path declined a query, and what the caller may do about it.
+///
+/// The two reasons used to be one, and both led to the SQL engine. They are not
+/// the same thing at all: one is work the index has not been taught yet, the
+/// other is the index not being in the state it is supposed to be in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gap {
+    /// A query shape the index does not accelerate *yet* (`Matches`, a
+    /// `Path`-target `Follows`, a multi-term `Osm` path, …). The SQL engine
+    /// answers it, and the oracle battery excludes these shapes. Closing them
+    /// is index work; until then this is coverage debt, named as such.
+    Coverage,
+    /// The index or the forest is not in the state the engine requires. Through
+    /// the API this cannot happen: a repository serves no data until it is warm
+    /// (spec-main "POST /repos/load"), so reaching this is a bug in the daemon,
+    /// not a query the user asked wrong — and it is reported as one instead of
+    /// being absorbed by a silent fall back to SQL.
+    State,
+}
 
-fn unsupported(what: impl Into<String>) -> Unsupported {
-    Unsupported(what.into())
+/// A query the bitmap path declined. See [`Gap`].
+#[derive(Debug)]
+pub struct Unsupported {
+    pub what: String,
+    pub gap: Gap,
+}
+
+impl Unsupported {
+    /// Whether the SQL engine should be asked instead.
+    pub fn is_coverage(&self) -> bool {
+        self.gap == Gap::Coverage
+    }
+}
+
+impl std::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.what)
+    }
+}
+
+/// A shape the index does not implement yet.
+pub(crate) fn unsupported(what: impl Into<String>) -> Unsupported {
+    Unsupported { what: what.into(), gap: Gap::Coverage }
+}
+
+/// An accelerator that is not in the state the engine requires.
+fn not_ready(what: impl Into<String>) -> Unsupported {
+    Unsupported { what: what.into(), gap: Gap::State }
 }
 
 /// Whether a value lands in a BSI encoding (Int / Float / DateTime) — whose
@@ -762,13 +802,13 @@ impl RepoIndex {
         sort.iter()
             .map(|k| {
                 let tree = if self.types.get(k.field.as_str()) == Some(&"tree_ref") {
-                    // A tree sort needs the whole forest in memory to rebuild
-                    // the paths; without it the SQL engine (which reconstructs
-                    // them in SQL) is the only engine that can answer.
+                    // A tree sort rebuilds the paths from the resident forest.
+                    // The forest is always resident on a repository that
+                    // serves at all, so this is an invariant, not a fallback.
                     let keys = roots
                         .and_then(|r| r.keys)
                         .filter(|keys| keys.is_resident())
-                        .ok_or_else(|| unsupported("tree_ref sort without a resident forest"))?;
+                        .ok_or_else(|| not_ready("tree_ref sort without a resident forest"))?;
                     Some((k.field.as_str(), keys))
                 } else {
                     None

@@ -511,21 +511,25 @@ Each node stores:
 - =children=: map of name → child node
 - =uuid=: the metarecord UUID at this position (=None= for the virtual root and field-name nodes)
 - =last_used=: logical clock updated on every traversal of this node
-- =heap_handle=: reference into the LRU heap (leaf nodes only)
 
-*** Eviction
+*** No node budget
 
-A *min-heap of leaf nodes* (nodes with no children), keyed by =last_used=,
-drives eviction when the cache exceeds its configured size limit (default: 100 MB).
+The forest is *fully resident*, with no size limit and no eviction.
 
-On eviction of a leaf:
-1. Remove the leaf node from the tree and the heap.
-2. If its parent has no remaining children, the parent becomes a new leaf —
-   insert it into the heap with its own =last_used=.
+It used to have both: a node budget (=tree-cache-max-nodes=, ~100 MB by
+default) beyond which leaves were evicted LRU and navigation fell back to
+database walks. That was one memory policy too many. The query index, built
+from the same repository at the same moment and at least as large, has never
+had a budget — so the daemon refused to hold the forest while holding the index
+unconditionally, and the only thing the budget bought was a second, slower code
+path that had to stay correct. Path reconstruction for a =tree_ref= sort needs
+the forest in memory (the index holds the forest inverted — name → ids, parent →
+children — which cannot walk *up* from a node), so exceeding the budget also
+silently degraded sorting to the SQL engine.
 
-Only leaves are evicted; internal nodes are kept as long as they have children.
-Because every traversal updates =last_used= on all nodes along the path, a newly
-promoted leaf always carries the correct recency timestamp.
+One policy, then: both accelerators are resident, or the repository does not
+serve (spec-main "POST /repos/load"). The setting is retired; a configuration
+still carrying it is not malformed, the key is ignored.
 
 *** Operations
 
@@ -535,7 +539,6 @@ promoted leaf always carries the correct recency timestamp.
 | Path → UUID (miss)     | O(depth × log n) | Iterative indexed DB queries; populate tree on the way      |
 | Rename (same parent)   | O(1)             | Update label of one node                                     |
 | Move (different parent)| O(1)             | Detach node, reattach under new parent; descendants follow   |
-| Evict leaf             | O(log k)         | Heap pop; k = number of leaves in cache                     |
 
 *** Startup
 
@@ -543,11 +546,12 @@ The whole TreeRef forest is loaded into the cache at repository load, in a
 single scan of the =tree_ref= rows, so that read-side navigation (path
 resolution, descendant collection, path reconstruction) is served entirely from
 memory rather than walking the database node by node — the dominant cost of a
-first =FollowsTransitive= query on a large repository. The lazy, DB-backed path
-(populate-on-miss, descendant walk) is kept as a fallback for the case where the
-forest exceeds the in-memory node budget (it then no longer fits, and the cache
-reports itself incomplete). Manual API writes that change a TreeRef field rebuild
-the cache; the watcher and reconcile keep it in sync incrementally.
+first =FollowsTransitive= query on a large repository. The load builds it before
+the repository serves anything, so through the API the forest is always
+resident. The lazy, DB-backed path (populate-on-miss, descendant walk) survives
+only for a cache built directly, as unit tests do. Manual API writes that change
+a TreeRef field rebuild the cache; the watcher and reconcile keep it in sync
+incrementally.
 
 ** File Watcher
 

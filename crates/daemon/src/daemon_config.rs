@@ -32,10 +32,6 @@ pub struct DaemonSettings {
     /// aggressively (fewer revisions, more latency); useful on slow/network
     /// filesystems that emit bursts of events.
     pub watch_quiet_period_ms: u64,
-    /// Node budget of the per-repo TreeRef path cache. Beyond it, leaves are
-    /// evicted (LRU) and navigation falls back to DB walks. Trades memory
-    /// (~200 bytes/node) for read speed on large forests.
-    pub tree_cache_max_nodes: usize,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
     /// would null thousands of paths is a filesystem going away, not a
@@ -47,7 +43,6 @@ impl Default for DaemonSettings {
     fn default() -> Self {
         DaemonSettings {
             watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
-            tree_cache_max_nodes: crate::tree_cache::DEFAULT_MAX_NODES,
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
         }
     }
@@ -207,7 +202,6 @@ mod tests {
         let empty: DaemonSettings = toml::from_str("").unwrap();
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
         assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
-        assert_eq!(empty.tree_cache_max_nodes, crate::tree_cache::DEFAULT_MAX_NODES);
         assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
     }
@@ -220,8 +214,20 @@ mod tests {
         );
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
-        assert_eq!(config.settings.tree_cache_max_nodes, 42);
         assert_eq!(config.settings.orphan_cascade_limit, 7);
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn test_a_retired_setting_is_ignored_rather_than_fatal() {
+        // `tree-cache-max-nodes` was the TreeRef cache's node budget. The forest
+        // is now always resident — one memory policy with the query index,
+        // which never had a budget — so the key is gone. A malformed daemon
+        // config aborts startup, so an existing config still carrying it must
+        // not be malformed: the key is simply ignored.
+        let path = write_config("[settings]\ntree-cache-max-nodes = 42\n");
+        let config = read_config(&path).expect("a retired key must not abort startup");
+        assert_eq!(config.settings, DaemonSettings::default());
         std::fs::remove_file(&path).unwrap();
     }
 
@@ -230,7 +236,7 @@ mod tests {
         let parsed: DaemonSettings = toml::from_str("watch-quiet-period-ms = 250\n").unwrap();
         assert_eq!(parsed.watch_quiet_period_ms, 250);
         // The unspecified key keeps its default.
-        assert_eq!(parsed.tree_cache_max_nodes, crate::tree_cache::DEFAULT_MAX_NODES);
+        assert_eq!(parsed.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
     }
 
     #[test]

@@ -131,12 +131,14 @@ metafolder = "/ssd/meta/music/.metafolder"
   same shape as a =POST /repos/load= body: exactly one of =root= or
   =metafolder=.
 - =[settings]= (optional): UX/performance knobs, each independently optional —
-  =watch-quiet-period-ms= (default 500, the executor's flush quiet period),
-  =tree-cache-max-nodes= (default 500 000, the TreeRef path cache budget) and
+  =watch-quiet-period-ms= (default 500, the executor's flush quiet period) and
   =orphan-cascade-limit= (default 10 000, =0= to disable: the largest cascade of
   =mfr_path = Nothing= a single watcher batch may apply — see
   [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mass-orphan circuit
-  breaker").
+  breaker"). A key the daemon no longer knows is *ignored*, not fatal: a
+  setting can be retired without breaking every configuration that carries it
+  (=tree-cache-max-nodes= was, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
+  "No node budget").
 - A missing configuration file is equivalent to an empty one.
 - A malformed configuration file (invalid TOML, unknown keys, a metarecord with
   both or neither of =root=/=metafolder=) aborts daemon startup with an

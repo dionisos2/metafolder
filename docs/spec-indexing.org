@@ -283,9 +283,29 @@ the path of its entire subtree while touching one field row — so a stored
 representative would go stale behind the incremental refresh. The index instead
 rebuilds each matched metarecord's key from the resident tree cache
 (=tree_cache::SortKeys=, memoising ancestors so a directory's path is assembled
-once per query), and reports =Unsupported= when the forest is not fully
-resident, deferring to the SQL engine's recursive CTE. It costs nothing in
+once per query). The forest is always resident on a repository that serves at
+all (spec-file-tracking "No node budget"), so a non-resident forest is an
+invariant violation, reported as such — a =State= gap — and not a reason to fall
+back. It costs nothing in
 steady-state memory and is paid only by the queries that sort on a tree field.
+
+** Two kinds of gap (implemented)
+
+The bitmap engine declines a query for one of two reasons, and they are not
+interchangeable:
+
+- *Coverage* — a query shape the index does not accelerate yet: =Matches=, a
+  =Path=-target =Follows=, an =Osm= path that is multi-term or on a non-tree_ref
+  field, a comparison with =Nothing=, an exact-node =tree_ref= path equality, a
+  text scan on a field with no indexed values, a foreign or malformed cursor.
+  The SQL engine answers these, and the oracle battery excludes them. This is
+  *debt*, named so it can be paid down; the fallback exists for it alone.
+- *State* — an accelerator is not in the state the engine requires (no index, a
+  non-resident forest). This cannot be reached through the API: a repository
+  serves no data until both are built (spec-main "POST /repos/load"). Reaching
+  it is a daemon bug, and it is reported as =500= rather than absorbed by an
+  engine that would answer anyway — a silent fall back here is exactly how a
+  performance collapse hides.
 
 ** Counts are exact (implemented)
 

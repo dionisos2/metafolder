@@ -326,19 +326,16 @@ async fn list_fields(
         // `run_query_filter` performs. This matters because the GUI re-warms the
         // catalog on every change it sees, right after a write when the index is
         // one op stale: serving that from the O(rows) `SELECT DISTINCT` table
-        // scan is a multi-second stall on a large repository. Only when the
-        // index is *cold* (absent — e.g. before warmup finishes) do we fall back
-        // to the DB scan, rather than building the whole index synchronously here
-        // just to enumerate field names.
+        // scan is a multi-second stall on a large repository. There is no cold
+        // case left to fall back for: the index is built before the repository
+        // serves anything (spec-main "POST /repos/load").
         let data = {
             let mut index_guard = repo_state.index.lock_recover();
-            match index_guard.as_mut() {
-                Some(index) => {
-                    index.refresh(&conn, &|| false)?;
-                    index.field_catalog(None)
-                }
-                None => db::distinct_field_names(&conn, None)?,
-            }
+            let index = index_guard.as_mut().ok_or_else(|| {
+                ApiError::internal("the query index is missing on a ready repository")
+            })?;
+            index.refresh(&conn, &|| false)?;
+            index.field_catalog(None)
         };
         // Merge in the schema (schema-priority, schema-only fields added), then
         // apply the `?type=` filter (so a schema-only field of that type shows).
@@ -2204,14 +2201,16 @@ fn ensure_index<'g>(
     guard: &'g mut Option<crate::index::RepoIndex>,
     cancel: &dyn Fn() -> bool,
 ) -> Result<&'g crate::index::RepoIndex, ApiError> {
-    match guard.as_mut() {
-        // Already built: bring it up to the current HEAD (incrementally when the
-        // delta is a forward extension, else an internal full rebuild). A full
-        // rebuild polls `cancel` so a Stop on a query that triggered it works.
-        Some(index) => index.refresh(conn, cancel)?,
-        None => *guard = Some(crate::index::RepoIndex::build_reported(conn, &|_, _| {}, cancel)?),
-    }
-    Ok(guard.as_ref().expect("index built above"))
+    // Built by the load, before the repository serves anything (spec-main
+    // "POST /repos/load"): here it is only brought up to the current HEAD —
+    // incrementally when the delta is a forward extension, else an internal
+    // full rebuild, which polls `cancel` so a Stop on the query that triggered
+    // it works.
+    let index = guard
+        .as_mut()
+        .ok_or_else(|| ApiError::internal("the query index is missing on a ready repository"))?;
+    index.refresh(conn, cancel)?;
+    Ok(index)
 }
 
 /// Resolves a query's index seeds and rewrites its index-unsupported text leaves
@@ -2275,7 +2274,10 @@ fn resolve_query_uuids(
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     match index.evaluate_page_with_roots(&indexed, &[], None, None, &roots) {
         Ok((uuids, _)) => Ok(uuids),
-        Err(_unsupported) => Ok(query_exec::execute(conn, cache, query, &[], None, None)?.0),
+        Err(gap) if !gap.is_coverage() => {
+            Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
+        }
+        Err(_coverage) => Ok(query_exec::execute(conn, cache, query, &[], None, None)?.0),
     }
 }
 
@@ -2345,7 +2347,13 @@ fn run_query_filter(
     };
     match paged {
         Ok(page) => Ok(page),
-        Err(_unsupported) => {
+        // Only a *coverage* gap defers to SQL. A state gap means an accelerator
+        // is not in the state a serving repository guarantees — a daemon bug,
+        // reported rather than papered over by an engine that answers anyway.
+        Err(gap) if !gap.is_coverage() => {
+            Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
+        }
+        Err(_coverage) => {
             let (uuids, next_cursor) = query_exec::execute(
                 conn,
                 cache,

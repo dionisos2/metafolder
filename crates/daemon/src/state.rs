@@ -113,10 +113,7 @@ impl RepoState {
         let name = Mutex::new(opened.config.name.clone());
         Self {
             conn: Mutex::new(opened.conn),
-            cache: Mutex::new(TreeCache::with_limit(
-                opened.case_insensitive,
-                settings.tree_cache_max_nodes,
-            )),
+            cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
             config: opened.config,
             name,
             metafolder_dir: opened.metafolder_dir,
