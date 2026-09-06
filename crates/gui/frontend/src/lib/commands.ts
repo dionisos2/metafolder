@@ -11,6 +11,7 @@ import { invoke } from './ipc';
 import { type ExpandDeps, expandShellPlaceholders } from './placeholders';
 import { recentLine } from './recent';
 import { focusedWs, store, workspaceById } from './store.svelte';
+import { daemonWork } from './working';
 import type { CommandDef, LayoutView } from './types';
 
 export type ParsedInvocation = { name: string; args: string[] } | { shell: string } | null;
@@ -209,7 +210,10 @@ const recentChoices = new Map<string, string>();
 
 /** A daemon round-trip through the proxy, throwing the daemon's error on >=400. */
 async function daemonJson(method: string, path: string, body: unknown = null): Promise<unknown> {
-  const res = await invoke<{ status: number; body: unknown }>('daemon_request', { method, path, body });
+  const res = await daemonWork.track(
+    invoke<{ status: number; body: unknown }>('daemon_request', { method, path, body }),
+    `${method} ${path.split('?')[0]}`,
+  );
   if (res.status >= 400) {
     const err = (res.body as { error?: string })?.error;
     throw new Error(err ?? `daemon ${method} ${path} failed (HTTP ${res.status})`);

@@ -9,6 +9,7 @@ import { createPathResolver } from '../../../../panel-shim/resolve.js';
 import { showMenu } from '../../../../panel-shim/menu.js';
 import { type ArgSpec, registerArgs } from '../commands';
 import { invoke as ipcInvoke } from '../ipc';
+import { daemonWork } from '../working';
 import { createCache, type DaemonResponse, type RawFetcher } from './cache';
 
 /** The shared daemon-data cache — one per realm, read by every panel. */
@@ -137,9 +138,12 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
   // Performs a real (bench-instrumented) daemon round-trip — the cache's miss
   // path. Cache hits never reach here, so they cost nothing and record nothing.
   const rawFetch: RawFetcher = (m, p, b) =>
-    benchMeasure(daemonLabel(m, p), () =>
-      invoke('daemon_request', { method: m, path: p, body: b }),
-    ) as Promise<DaemonResponse>;
+    daemonWork.track(
+      benchMeasure(daemonLabel(m, p), () =>
+        invoke('daemon_request', { method: m, path: p, body: b }),
+      ) as Promise<DaemonResponse>,
+      `${m} ${p.split('?')[0]}`,
+    );
 
   function daemonRequest(method: string, path: string, body: unknown = null): Promise<DaemonResponse> {
     return sharedCache.request(method, path, body, rawFetch);

@@ -8,6 +8,7 @@
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
   import { ownedByVisible, scriptIndicator, store, visibleWorkspaces } from '../lib/store.svelte';
+  import { daemonWork, type WorkingState } from '../lib/working';
 
   interface Task {
     id: string;
@@ -38,10 +39,18 @@
     }
   }
 
+  // A daemon call the user is waiting on that is not an observable task — a
+  // write, a query. Nothing shows for the ordinary fast ones; see lib/working.
+  let working = $state<WorkingState | null>(null);
+
   onMount(() => {
     void poll();
     const timer = setInterval(poll, POLL_MS);
-    return () => clearInterval(timer);
+    const stopWatching = daemonWork.subscribe((state) => (working = state));
+    return () => {
+      clearInterval(timer);
+      stopWatching();
+    };
   });
 
   function label(t: Task): string {
@@ -56,8 +65,17 @@
   );
 </script>
 
-{#if tasks.length > 0 || scripts.length > 0}
+{#if tasks.length > 0 || scripts.length > 0 || working !== null}
   <div class="task-bar" data-help-topic="task-bar">
+    {#if working !== null}
+      <div class="task">
+        <span class="label">{working.label}</span>
+        <span class="spinner"></span>
+        {#if working.count > 1}
+          <span class="counts">+{working.count - 1}</span>
+        {/if}
+      </div>
+    {/if}
     {#each scripts as s (s.task)}
       {@const ind = scriptIndicator(s)}
       <div class="task" class:waiting={s.waiting}>

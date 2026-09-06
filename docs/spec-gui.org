@@ -957,6 +957,23 @@ and =mf gui workspace new= all read so a script addresses its own entry
 regardless of the focused workspace; outside the GUI the variable is unset and
 the call is a harmless no-op.
 
+*** A daemon call the user is waiting on
+
+Not every wait is a task. An ordinary daemon call — a write, a query — is
+answered in milliseconds and shows nothing; a few are not, and while one runs it
+holds the repository's connection, so *every other action queues behind it*.
+With nothing on screen for it, the GUI does not read as busy but as broken: the
+keys do nothing, the panels do not move, and there is no way to tell that from a
+crash.
+
+So the bar also shows one entry for the foreground daemon calls in flight,
+labelled =<METHOD> <path>=, spinning, with =+N= when others are queued behind
+the one named. It appears only once a call has outlasted a short grace period
+(300 ms), so the fast majority never make it strobe, and it names the *oldest*
+call still running — the one actually being waited on. Only calls made on the
+user's behalf are counted: the background polls (the cache's change feed, this
+bar's own task list) have nobody waiting on them and stay silent.
+
 ** Command input
 
 Always visible: a prompt character and a text field above the status
