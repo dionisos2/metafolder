@@ -473,7 +473,7 @@ where
     with_repo(state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         ensure_version(writer.connection(), uuid, expected_version)?;
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
@@ -2004,7 +2004,7 @@ async fn watch_exceeded_set(
         };
         {
             let mut conn = repo_state.conn.lock_recover();
-            let mut writer = crate::log::Writer::begin(&mut conn, None)?;
+            let mut writer = repo_state.writer(&mut conn, None)?;
             if body.exceeded {
                 writer.set_field(
                     uuid,
@@ -2208,7 +2208,7 @@ async fn track(
             return Ok(Json(json!({"uuid": hex(existing)})));
         }
         let untracked = [Field::new("mf_watch", Value::Bool(false))];
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         let uuid = crate::reconcile::create_record_for(
             &mut writer,
             &mut cache,
@@ -2577,7 +2577,7 @@ async fn batch_set(
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         for uuid in &uuids {
             writer.set_field_multi(*uuid, &body.name, rows.clone())?;
             validate_schema(
@@ -2620,7 +2620,7 @@ async fn batch_append(
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         for uuid in &uuids {
             writer.append_field(*uuid, &body.name, value.clone())?;
             validate_schema(
@@ -2664,7 +2664,7 @@ async fn batch_remove(
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         let mut changed = 0usize;
         for uuid in &uuids {
             if writer.delete_fields_valued(*uuid, &body.name, &value)? > 0 {
@@ -2718,7 +2718,7 @@ async fn batch_unset(
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         let mut changed = 0usize;
         for uuid in &uuids {
             if writer.delete_fields_named(*uuid, &body.name)? > 0 {
@@ -2778,7 +2778,7 @@ async fn retype_field(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         let mut conn = repo_state.conn.lock_recover();
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         let summary = writer.retype_field(&name, to)?;
         let tree_touched = writer.touched_tree();
         let watch_touched = writer.touched_watch();
@@ -2820,7 +2820,7 @@ async fn delete_by_query(
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;
         }
@@ -2868,7 +2868,7 @@ async fn create_record_endpoint(
         }
         let mut conn = repo_state.conn.lock_recover();
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         let created = match supplied {
             Some(uuid) => {
                 if db::get_version(writer.connection(), uuid)?.is_some() {
@@ -2919,7 +2919,7 @@ async fn delete_record_endpoint(
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         ensure_version(writer.connection(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let tree_touched = writer.touched_tree();
@@ -3129,7 +3129,7 @@ async fn patch_field_by_id(
         check_writable(&old.name, body.force)?;
         check_writable(&new_name, body.force)?;
 
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         writer.rename_field(uuid, id, &new_name, new_value)?;
         validate_schema(
             repo_state,
@@ -3166,7 +3166,7 @@ async fn delete_field_by_id(
         let row = db::get_field_row_by_id(&conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         check_writable(&row.name, force)?;
-        let mut writer = Writer::begin(&mut conn, None)?;
+        let mut writer = repo_state.writer(&mut conn, None)?;
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
         let tree_touched = writer.touched_tree();
@@ -3406,7 +3406,7 @@ async fn sync_delete_link(
             repo.ensure_writable()?;
             let mut conn = repo.conn.lock_recover();
             if db::get_version(&conn, record)?.is_some() {
-                let mut writer = Writer::begin(&mut conn, None)?;
+                let mut writer = repo.writer(&mut conn, None)?;
                 writer.delete_metarecord(record)?;
                 let tree_touched = writer.touched_tree();
                 writer.commit()?;

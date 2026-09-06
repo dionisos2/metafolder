@@ -450,7 +450,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         let mut revisions = 0;
         let mut applied = 0usize;
         for (_, group) in groups {
-            let writer = Writer::begin(&mut conn, None)?;
+            let writer = repo.writer(&mut conn, None)?;
             let mut apply = Apply {
                 report,
                 writer,

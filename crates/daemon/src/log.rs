@@ -1034,6 +1034,162 @@ struct PendingOp {
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
 const FLUSH_THRESHOLD: usize = 4096;
 
+// ── Automatic retention (spec-event-log "Automatic retention") ────────────────
+
+/// How much history the log keeps behind HEAD. Applied by [`Writer::commit`],
+/// inside the write's own transaction: a trim is a range delete over the
+/// oldest operations, which costs less than the append that triggered it and
+/// adds no `fsync` of its own.
+///
+/// Deliberately *not* a [`prune`]: no `VACUUM`. In a steady state the freed
+/// pages are what the next appends write into, so the database settles on a
+/// plateau instead of being rewritten whole at every trim.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retention {
+    /// Revisions to keep. `0` = unlimited: nothing is ever dropped.
+    pub revisions: u64,
+    /// Never trim past a labelled revision: a named checkpoint is a floor, and
+    /// the log grows past the limit rather than losing it.
+    pub keep_labels: bool,
+}
+
+impl Default for Retention {
+    fn default() -> Self {
+        Self::UNLIMITED
+    }
+}
+
+impl Retention {
+    /// Keep everything — the behaviour of a log with no configured limit.
+    pub const UNLIMITED: Self = Self { revisions: 0, keep_labels: false };
+
+    /// How far past the limit the log is allowed to drift before a trim runs.
+    /// Hysteresis, not sloppiness: trimming one revision per write would dirty
+    /// the oldest (cold) pages of the log at every single commit, where one
+    /// trim per `slack` revisions costs the same work spread over `slack`
+    /// transactions that were going to write anyway.
+    pub fn slack(revisions: u64) -> u64 {
+        (revisions / 10).max(1)
+    }
+
+    fn enabled(&self) -> bool {
+        self.revisions > 0
+    }
+}
+
+/// Drops the revisions that fall outside `retention`, oldest first. Returns the
+/// number of operations removed.
+///
+/// The log is a tree, so "the oldest" is not an id range: a branch rooted below
+/// the cut loses its ancestry and must go with it. The doomed set is therefore
+/// the operations older than the cutoff *plus their descendants*, and the
+/// cutoff is severed from its parent first so that the surviving history is not
+/// itself reachable from the set.
+fn trim(tx: &Transaction<'_>, retention: Retention, head: i64) -> Result<usize> {
+    if !retention.enabled() {
+        return Ok(0);
+    }
+    let kept: u64 =
+        tx.query_row("SELECT COUNT(*) FROM revision", [], |r| r.get::<_, i64>(0))? as u64;
+    if kept <= retention.revisions + Retention::slack(retention.revisions) {
+        return Ok(0);
+    }
+
+    // The oldest revision to keep: the `revisions`-th newest.
+    let mut keep_from: i64 = tx.query_row(
+        "SELECT id FROM revision ORDER BY id DESC LIMIT 1 OFFSET ?1",
+        params![retention.revisions as i64 - 1],
+        |r| r.get(0),
+    )?;
+    if retention.keep_labels {
+        let oldest_label: Option<i64> =
+            tx.query_row("SELECT MIN(id) FROM revision WHERE label IS NOT NULL", [], |r| r.get(0))?;
+        if let Some(label) = oldest_label {
+            keep_from = keep_from.min(label);
+        }
+    }
+    // First operation of that revision: the cutoff, and the log's new root.
+    let cutoff: Option<i64> =
+        tx.query_row("SELECT MIN(id) FROM operation WHERE rev_id = ?1", params![keep_from], |r| {
+            r.get(0)
+        })?;
+    let Some(cutoff) = cutoff else { return Ok(0) };
+    let oldest: Option<i64> = tx.query_row("SELECT MIN(id) FROM operation", [], |r| r.get(0))?;
+    if oldest == Some(cutoff) {
+        return Ok(0);
+    }
+
+    let savepoint = "log_trim";
+    tx.execute_batch(&format!("SAVEPOINT {savepoint}"))?;
+    let outcome = trim_at(tx, cutoff, head);
+    match outcome {
+        Ok(Some(pruned)) => {
+            tx.execute_batch(&format!("RELEASE {savepoint}"))?;
+            Ok(pruned)
+        }
+        Ok(None) => {
+            // The cutoff is not on HEAD's line of history — the newest
+            // revisions sit on a branch abandoned by a rollback. Cutting there
+            // would delete the history HEAD stands on, so decline: retention
+            // resumes on its own once the current line is again the newest.
+            tx.execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"))?;
+            Ok(0)
+        }
+        Err(e) => {
+            let _ = tx.execute_batch(&format!("ROLLBACK TO {savepoint}; RELEASE {savepoint}"));
+            Err(e)
+        }
+    }
+}
+
+/// Makes `cutoff` the new root and deletes everything that no longer hangs off
+/// it. `Ok(None)` when `cutoff` is not an ancestor of `head` (nothing done).
+fn trim_at(tx: &Transaction<'_>, cutoff: i64, head: i64) -> Result<Option<usize>> {
+    // Sever the cutoff first: the walk below descends from the operations older
+    // than it, and would otherwise reach the whole surviving history through it.
+    tx.execute("UPDATE operation SET parent_id = NULL WHERE id = ?1", params![cutoff])?;
+    if !ancestry(tx, head)?.contains(&cutoff) {
+        return Ok(None);
+    }
+
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS log_trim_doomed (id INTEGER PRIMARY KEY);
+         DELETE FROM log_trim_doomed;",
+    )?;
+    tx.execute(
+        "INSERT INTO log_trim_doomed (id)
+         WITH RECURSIVE doomed(id) AS (
+             SELECT id FROM operation WHERE id < ?1
+             UNION
+             SELECT o.id FROM operation o JOIN doomed d ON o.parent_id = d.id)
+         SELECT id FROM doomed",
+        params![cutoff],
+    )?;
+    // Revisions to reconsider afterwards: collected before the operations that
+    // name them are gone.
+    tx.execute_batch(
+        "CREATE TEMP TABLE IF NOT EXISTS log_trim_revs (id INTEGER PRIMARY KEY);
+         DELETE FROM log_trim_revs;",
+    )?;
+    tx.execute(
+        "INSERT INTO log_trim_revs (id) SELECT DISTINCT rev_id FROM operation \
+         WHERE id IN (SELECT id FROM log_trim_doomed)",
+        [],
+    )?;
+    // One statement, so SQLite checks the self-referencing foreign key once at
+    // its end rather than per row — a parent and its child may go together.
+    // `op_snapshot` follows by cascade.
+    let pruned =
+        tx.execute("DELETE FROM operation WHERE id IN (SELECT id FROM log_trim_doomed)", [])?;
+    tx.execute(
+        "DELETE FROM revision WHERE id IN (SELECT id FROM log_trim_revs) \
+         AND NOT EXISTS (SELECT 1 FROM operation WHERE rev_id = revision.id)",
+        [],
+    )?;
+    tx.execute_batch("DELETE FROM log_trim_doomed; DELETE FROM log_trim_revs;")?;
+    Ok(Some(pruned))
+}
+
 /// A single logged write transaction. All changes made through one Writer
 /// form one revision; commit is atomic. Dropping a Writer without committing
 /// rolls everything back. After any method returns an error, the Writer must
@@ -1056,11 +1212,26 @@ pub struct Writer<'c> {
     /// per-write type probe to one DB seek per field name (a bulk reconcile/watcher
     /// revision writes the same ~8 reserved names across thousands of records).
     field_types: HashMap<String, String>,
+    /// How much history to keep behind HEAD; applied on commit.
+    retention: Retention,
 }
 
 impl<'c> Writer<'c> {
-    /// Opens a transaction and creates the revision row.
+    /// Opens a transaction and creates the revision row, keeping the whole
+    /// history. Every write of a *loaded* repository goes through
+    /// [`crate::state::RepoState::writer`] instead, which applies the
+    /// repository's configured retention.
     pub fn begin(conn: &'c mut rusqlite::Connection, label: Option<String>) -> Result<Self> {
+        Self::begin_with_retention(conn, label, Retention::UNLIMITED)
+    }
+
+    /// Opens a transaction and creates the revision row, dropping the history
+    /// that falls outside `retention` when the revision is committed.
+    pub fn begin_with_retention(
+        conn: &'c mut rusqlite::Connection,
+        label: Option<String>,
+        retention: Retention,
+    ) -> Result<Self> {
         let tx = conn.transaction()?;
         let head: Option<i64> =
             tx.query_row("SELECT op_id FROM log_head WHERE singleton = 1", [], |r| r.get(0))?;
@@ -1076,6 +1247,7 @@ impl<'c> Writer<'c> {
             flushed: 0,
             pending: Vec::new(),
             field_types: HashMap::new(),
+            retention,
         })
     }
 
@@ -1473,6 +1645,11 @@ impl<'c> Writer<'c> {
                 "UPDATE log_head SET op_id = ?1 WHERE singleton = 1",
                 params![self.chain_head],
             )?;
+            if let Some(head) = self.chain_head {
+                // In this transaction, deliberately: the trim then rides the
+                // commit the write was going to pay for anyway.
+                trim(&self.tx, self.retention, head)?;
+            }
         }
         self.tx.commit().context("Failed to commit write transaction")
     }

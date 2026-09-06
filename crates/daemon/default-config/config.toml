@@ -44,3 +44,20 @@ watch-budget-share = 50
 # untouched (confirm a genuinely huge deletion with `mf orphan clear`, which
 # re-checks every path against the disk). 0 disables the check. Default: 10000.
 orphan-cascade-limit = 10000
+
+# How many revisions of history the event log keeps behind HEAD. Every write
+# records a revision, so a repository under an active watcher accumulates them
+# for ever; past this many, the oldest fall off at the next write (the trim runs
+# inside that write's own transaction — it costs less than the append that
+# triggered it). What is kept is the *newest* history, so a rollback can still
+# walk back this many revisions. Two things it does not do: it never touches the
+# revision HEAD stands on, and it reclaims no disk space to the filesystem —
+# the freed pages are reused by the next writes, so the database settles on a
+# plateau instead of growing (use `mf log prune` for an actual VACUUM).
+# 0 = unlimited, keep everything. Default: 0.
+log-retention-revisions = 0
+
+# Whether a labelled revision (a checkpoint you named) stops the trim above:
+# with true, nothing older than the oldest label is ever dropped and the log
+# grows past the limit rather than losing the checkpoint. Default: false.
+log-retention-keep-labels = false

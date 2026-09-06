@@ -135,10 +135,15 @@ metafolder = "/ssd/meta/music/.metafolder"
   =watch-budget-share= (default 50, the percentage of
   =fs.inotify.max_user_watches= one daemon will spend — see
   [[file:spec-file-tracking.org][spec-file-tracking.org]] "The watch budget")
-  and =orphan-cascade-limit= (default 10 000, =0= to disable: the largest cascade of
+  =orphan-cascade-limit= (default 10 000, =0= to disable: the largest cascade of
   =mfr_path = Nothing= a single watcher batch may apply — see
   [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mass-orphan circuit
-  breaker"). A key the daemon no longer knows is *ignored*, not fatal: a
+  breaker"), and =log-retention-revisions= / =log-retention-keep-labels=
+  (defaults =0= — unlimited — and false: how many revisions of history the event
+  log keeps behind HEAD, and whether a labelled revision stops the trim; a
+  repository overrides both in its own =config.json= — see
+  [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"). A key
+  the daemon no longer knows is *ignored*, not fatal: a
   setting can be retired without breaking every configuration that carries it
   (=tree-cache-max-nodes= was, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
   "No node budget").

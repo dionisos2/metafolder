@@ -31,6 +31,8 @@ family is moved into =internal/=).
 | =version=   | string | Config schema version                  |
 | =root=      | path   | Absolute path to the watched directory |
 | =schema=    | path   | Optional path to the user schema file, relative to =.metafolder/= (or absolute); default =.metafolder/schema.json= (see [[file:spec-schema.org][spec-schema.org]]) |
+| =log_retention_revisions= | u64 | Optional: revisions of history the event log keeps behind HEAD, overriding the daemon's =[settings]=; =0= keeps everything (see [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention") |
+| =log_retention_keep_labels= | bool | Optional: whether a labelled revision stops the trim, overriding the daemon's =[settings]= |
 
 ** Metarecord
 

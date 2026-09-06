@@ -21,6 +21,11 @@ pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
 /// files still have somewhere to go.
 pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 
+/// Default log retention: `0` — unlimited, nothing is ever dropped. Retention
+/// is opt-in because losing history silently is exactly what the event log
+/// promises not to do (spec-event-log "Automatic retention").
+pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 0;
+
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
 /// "Mass-orphan circuit breaker"). `0` disables the check.
@@ -42,6 +47,13 @@ pub struct DaemonSettings {
     /// so other programs keep some, not a reservation — nothing can be
     /// reserved, and the kernel never says what is still free.
     pub watch_budget_share: u8,
+    /// Revisions of history the event log keeps behind HEAD; the oldest fall
+    /// off as new ones arrive. `0` (the default) keeps everything. A repository
+    /// may override it in its own `config.json`.
+    pub log_retention_revisions: u64,
+    /// Never trim past a labelled revision: a named checkpoint holds the log
+    /// open rather than being dropped by the limit above.
+    pub log_retention_keep_labels: bool,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
     /// would null thousands of paths is a filesystem going away, not a
@@ -55,6 +67,8 @@ impl Default for DaemonSettings {
             watch_quiet_period_ms: DEFAULT_WATCH_QUIET_PERIOD_MS,
             watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
+            log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
+            log_retention_keep_labels: false,
         }
     }
 }
@@ -63,6 +77,14 @@ impl DaemonSettings {
     /// The watcher quiet period as a [`Duration`].
     pub fn watch_quiet_period(&self) -> Duration {
         Duration::from_millis(self.watch_quiet_period_ms)
+    }
+
+    /// The log-retention policy these settings describe.
+    pub fn log_retention(&self) -> crate::log::Retention {
+        crate::log::Retention {
+            revisions: self.log_retention_revisions,
+            keep_labels: self.log_retention_keep_labels,
+        }
     }
 }
 
@@ -214,6 +236,7 @@ mod tests {
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
         assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
         assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
+        assert_eq!(empty.log_retention(), crate::log::Retention::UNLIMITED);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
     }
 
@@ -221,11 +244,16 @@ mod tests {
     fn test_read_config_parses_the_settings_table() {
         let path = write_config(
             "[settings]\nwatch-quiet-period-ms = 1500\ntree-cache-max-nodes = 42\n\
-             orphan-cascade-limit = 7\n",
+             orphan-cascade-limit = 7\nlog-retention-revisions = 500\n\
+             log-retention-keep-labels = true\n",
         );
         let config = read_config(&path).unwrap();
         assert_eq!(config.settings.watch_quiet_period_ms, 1500);
         assert_eq!(config.settings.orphan_cascade_limit, 7);
+        assert_eq!(
+            config.settings.log_retention(),
+            crate::log::Retention { revisions: 500, keep_labels: true }
+        );
         std::fs::remove_file(&path).unwrap();
     }
 

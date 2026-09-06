@@ -70,7 +70,7 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
     let root = repo.config.root.clone();
     let mut dirs: HashMap<PathBuf, DirState> = HashMap::new();
     let offline = crate::mount::offline(&conn, &mut cache, &root)?;
-    let mut writer = Writer::begin(&mut conn, None)?;
+    let mut writer = repo.writer(&mut conn, None)?;
     let mut cleared = 0;
 
     for &uuid in uuids {

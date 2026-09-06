@@ -59,7 +59,9 @@ op_1 ← op_2 ← op_3   ← branch (still reachable)
      └─ op_4           ← HEAD
 #+END_SRC
 
-No history is ever lost unless explicitly pruned (see [[*Log pruning]]).
+No history is ever lost except where the user asked for it: an explicit prune
+(see [[*Log pruning]]) or a configured retention limit (see
+[[*Automatic retention]]), which is off by default.
 
 ** HEAD pointer
 
@@ -398,6 +400,66 @@ log replay.
 X must be an ancestor of HEAD. Deletes all branch operations that diverge from
 the HEAD path between the root and X. After this, the segment root→X is a
 straight line.
+
+** Automatic retention
+
+Pruning above is a command the user runs. Retention is the same idea as a
+standing policy: a repository under an active watcher writes a revision per
+batch of filesystem events and accumulates them for ever, and most of that
+history is of no interest — one would rarely walk back a thousand revisions,
+but one might well want to walk back a few large ones.
+
+Two settings, resolved per repository (its own =config.json= where set, the
+daemon's =[settings]= otherwise):
+
+- =log-retention-revisions= — how many revisions to keep behind HEAD. =0=, the
+  default, keeps everything: silently losing history is precisely what this log
+  promises not to do, so the limit is opt-in.
+- =log-retention-keep-labels= — when true, a labelled revision is a floor:
+  nothing older than the oldest label is dropped, and the log grows past the
+  limit rather than losing a named checkpoint. Default false.
+
+*** What a trim does
+
+A trim is a [[*Prune-before(X)]] with =X= chosen by the limit — the first
+operation of the oldest revision to keep — so the same rules and the same
+/weak root/ limitation apply, permanently: with retention on, the database at
+the surviving root cannot be reconstructed from the log alone. Disaster
+recovery is a filesystem-level backup, not a replay.
+
+It runs *inside the transaction of the write that triggered it*, after HEAD is
+updated. That is what makes it affordable: the deletion is a range delete over
+the oldest operations (their snapshots follow by foreign-key cascade), which
+costs less than the append that triggered it, and it rides a commit that was
+going to be paid for anyway rather than adding an =fsync= of its own.
+
+Two things it deliberately does not do:
+
+- *No =VACUUM=.* In a steady state the pages a trim frees are the pages the next
+  appends write into, so the database settles on a plateau. Returning them to
+  the filesystem at every trim would rewrite the whole file — the =field= table
+  and the FTS5 index included — to reach the same steady state. =mf log prune=
+  keeps its compaction for when the space is actually wanted back.
+- *No trim per write.* The log is allowed to drift one tenth of the limit past
+  it (at least one revision) before a trim runs. Hysteresis, not sloppiness:
+  trimming one revision per write dirties the oldest, coldest pages of the log
+  at every single commit, where one trim per slack revisions does the same work
+  spread over the transactions that were going to write anyway.
+
+*** When a trim declines
+
+The cutoff must be an ancestor of HEAD, exactly as for an explicit prune. After
+a rollback it may not be: the newest revisions by id sit on the branch the
+rollback abandoned, and cutting there would delete the history HEAD stands on.
+The trim then does nothing and the log grows past the limit — deliberately, and
+temporarily: as the current line of history becomes the newest again, the cutoff
+lands on it and the trim resumes, collecting the abandoned branch with
+everything else below the cut (a branch rooted before the cutoff loses its
+ancestry, so it goes with it rather than becoming unreachable).
+
+A trim also only happens on a write that goes through the repository's writer —
+which is every write of a loaded repository. A repository that is not being
+written to keeps whatever it has.
 
 ** Coordinated navigation
 Coordinated navigation handles =file_moved= operations by coupling each

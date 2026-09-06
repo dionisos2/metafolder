@@ -87,6 +87,10 @@ pub struct RepoState {
     /// coherence, cost a transaction on the watcher's hot path, and made a batch
     /// the executor could not apply outlive a restart.
     pub pending: Mutex<Vec<(crate::executor::FsEvent, Option<i64>)>>,
+    /// How much history this repository's event log keeps behind HEAD: its own
+    /// `config.json` override where set, the daemon's `[settings]` otherwise.
+    /// Applied by every writer built through [`Self::writer`].
+    log_retention: crate::log::Retention,
     /// Mass-orphan circuit breaker (`[settings] orphan-cascade-limit`), read by
     /// the executor before applying a cascade.
     pub orphan_cascade_limit: usize,
@@ -122,6 +126,7 @@ impl RepoState {
     pub fn from_opened_with(opened: OpenedRepo, settings: &DaemonSettings) -> Self {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
+        let log_retention = opened.config.log_retention(settings.log_retention());
         Self {
             conn: Mutex::new(opened.conn),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
@@ -145,8 +150,26 @@ impl RepoState {
             watch_quiet_period: settings.watch_quiet_period(),
             pending: Mutex::new(Vec::new()),
             orphan_cascade_limit: settings.orphan_cascade_limit,
+            log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Opens a logged write on this repository. The only way a loaded
+    /// repository is written: it is what applies the configured log retention,
+    /// so a path that reaches for [`crate::log::Writer::begin`] directly keeps
+    /// the whole history whatever the configuration says.
+    pub fn writer<'c>(
+        &self,
+        conn: &'c mut Connection,
+        label: Option<String>,
+    ) -> anyhow::Result<crate::log::Writer<'c>> {
+        crate::log::Writer::begin_with_retention(conn, label, self.log_retention)
+    }
+
+    /// This repository's effective log retention.
+    pub fn log_retention(&self) -> crate::log::Retention {
+        self.log_retention
     }
 
     /// The repository's current (mutable) display name.
@@ -264,7 +287,9 @@ impl RepoState {
     pub fn record_watch_frontier(&self, frontier: &[String]) {
         let mut conn = self.conn.lock_recover();
         let mut cache = self.lock_cache();
-        if let Err(err) = write_watch_frontier(&mut conn, &mut cache, &self.config.root, frontier) {
+        if let Err(err) =
+            write_watch_frontier(self, &mut conn, &mut cache, &self.config.root, frontier)
+        {
             crate::diagnostics::warn(
                 "watcher",
                 format!("could not record the watch frontier: {err:#}"),
@@ -528,12 +553,13 @@ impl RepoState {
 /// Writes `mfr_watch_exceeded = true` on each subtree root of `frontier`,
 /// creating the directory's metarecord when it has none yet.
 fn write_watch_frontier(
+    repo: &RepoState,
     conn: &mut Connection,
     cache: &mut TreeCache,
     root: &Path,
     frontier: &[String],
 ) -> anyhow::Result<()> {
-    let mut writer = crate::log::Writer::begin(conn, None)?;
+    let mut writer = repo.writer(conn, None)?;
     for rel in frontier {
         let path = crate::relpath::RelPath::from_display(rel);
         let uuid = match cache.resolve_path(writer.connection(), "mfr_path", rel)? {
