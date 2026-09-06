@@ -648,3 +648,273 @@ fn test_resolving_by_exact_bytes_never_consults_the_other_reading() {
     let rel = RelPath::root().child(TreeName::from_bytes(b"caf\xe9.mp4".to_vec()));
     assert_eq!(cache.resolve_rel(&conn, "mfr_path", &rel).unwrap(), Some(escaped));
 }
+
+// ── Incremental upkeep after a manual write ──────────────────────────────────
+//
+// A manual API write used to rebuild the whole forest (one full scan of the
+// `field` table per write). `apply_cell` reconciles just the cell that changed,
+// and reports whether it could: the oracle below is that a cache maintained
+// this way is indistinguishable from one freshly populated.
+
+/// Panics unless `cache` reports exactly what a fresh `populate` would: same
+/// residency, same node count, and, for every TreeRef position in the database,
+/// the same paths, children and descendants.
+fn assert_matches_fresh(conn: &Connection, cache: &mut TreeCache) {
+    let mut fresh = TreeCache::new(false);
+    fresh.populate(conn).unwrap();
+    assert_eq!(cache.is_complete(), fresh.is_complete(), "residency");
+    assert_eq!(cache.len(), fresh.len(), "node count");
+    for row in db::load_tree_forest(conn).unwrap() {
+        let (field, uuid) = (row.field_name.as_str(), row.uuid);
+        assert_eq!(
+            cache.paths_of(conn, field, uuid).unwrap(),
+            fresh.paths_of(conn, field, uuid).unwrap(),
+            "paths of {uuid} in {field}"
+        );
+        let (mut got, mut want) = (
+            cache.children_of(conn, field, uuid).unwrap(),
+            fresh.children_of(conn, field, uuid).unwrap(),
+        );
+        got.sort();
+        want.sort();
+        assert_eq!(got, want, "children of {uuid} in {field}");
+        let (mut got, mut want) = (
+            cache.descendants(conn, field, uuid).unwrap(),
+            fresh.descendants(conn, field, uuid).unwrap(),
+        );
+        got.sort();
+        want.sort();
+        assert_eq!(got, want, "descendants of {uuid} in {field}");
+    }
+}
+
+/// Sets one TreeRef field of `uuid` through a `Writer` (a manual API write) and
+/// brings `cache` back in step the way the routes do. Returns what `apply_cell`
+/// reported: false means it declined, and the caller must rebuild.
+fn manual_set(
+    conn: &mut Connection,
+    cache: &mut TreeCache,
+    uuid: Uuid,
+    field: &str,
+    value: Value,
+) -> bool {
+    let mut w = Writer::begin(conn, None).unwrap();
+    w.set_field(uuid, field, value).unwrap();
+    w.commit().unwrap();
+    cache.apply_cell(conn, field, uuid).unwrap()
+}
+
+/// A populated cache over the standard filesystem tree.
+fn warm_tree(conn: &mut Connection) -> (TreeCache, Uuid, Uuid, Uuid, Uuid) {
+    let (root, music, jazz, file) = build_tree(conn);
+    let mut cache = TreeCache::new(false);
+    cache.populate(conn).unwrap();
+    (cache, root, music, jazz, file)
+}
+
+#[test]
+fn test_manual_write_adds_a_child_without_a_rebuild() {
+    let mut conn = test_conn();
+    let (mut cache, _root, music, _jazz, _file) = warm_tree(&mut conn);
+
+    // A brand-new metarecord given its position by a manual write.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let rock = w.create_metarecord(vec![]).unwrap().uuid;
+    w.commit().unwrap();
+    let value = Value::TreeRef { parent: Some(music), name: "rock".into() };
+    assert!(manual_set(&mut conn, &mut cache, rock, "mfr_path", value));
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/rock").unwrap(), Some(rock));
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+#[test]
+fn test_manual_write_adds_a_root_without_a_rebuild() {
+    let mut conn = test_conn();
+    let (mut cache, ..) = warm_tree(&mut conn);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let tag = w.create_metarecord(vec![]).unwrap().uuid;
+    w.commit().unwrap();
+    let value = Value::TreeRef { parent: None, name: "animals".into() };
+    assert!(manual_set(&mut conn, &mut cache, tag, "tag", value));
+
+    assert_eq!(cache.resolve_path(&conn, "tag", "animals").unwrap(), Some(tag));
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+#[test]
+fn test_manual_rename_keeps_the_subtree() {
+    let mut conn = test_conn();
+    let (mut cache, root, music, jazz, file) = warm_tree(&mut conn);
+
+    let value = Value::TreeRef { parent: Some(root), name: "sound".into() };
+    assert!(manual_set(&mut conn, &mut cache, music, "mfr_path", value));
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/sound/jazz").unwrap(), Some(jazz));
+    assert_eq!(
+        cache.path_of(&conn, "mfr_path", file).unwrap(),
+        Some("/sound/jazz/file.mp3".to_string()),
+        "the whole subtree follows its directory"
+    );
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+#[test]
+fn test_manual_move_to_another_parent_keeps_the_subtree() {
+    let mut conn = test_conn();
+    let (mut cache, root, _music, jazz, _file) = warm_tree(&mut conn);
+
+    let value = Value::TreeRef { parent: Some(root), name: "jazz".into() };
+    assert!(manual_set(&mut conn, &mut cache, jazz, "mfr_path", value));
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/jazz").unwrap(), Some(jazz));
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz").unwrap(), None);
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+#[test]
+fn test_manual_unset_of_a_leaf_drops_its_node() {
+    let mut conn = test_conn();
+    let (mut cache, _root, _music, _jazz, file) = warm_tree(&mut conn);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_fields_named(file, "mfr_path").unwrap();
+    w.commit().unwrap();
+    assert!(cache.apply_cell(&conn, "mfr_path", file).unwrap());
+
+    assert_eq!(cache.resolve_path(&conn, "mfr_path", "/music/jazz/file.mp3").unwrap(), None);
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+#[test]
+fn test_a_write_that_changes_no_position_is_a_no_op() {
+    let mut conn = test_conn();
+    let (mut cache, _root, music, ..) = warm_tree(&mut conn);
+    let before = cache.len();
+
+    let value = Value::TreeRef { parent: cache_parent(&conn, music), name: "music".into() };
+    assert!(manual_set(&mut conn, &mut cache, music, "mfr_path", value));
+    assert_eq!(cache.len(), before);
+    assert_matches_fresh(&conn, &mut cache);
+}
+
+/// The parent uuid of `uuid`'s `mfr_path` position, read from the database.
+fn cache_parent(conn: &Connection, uuid: Uuid) -> Option<Uuid> {
+    db::get_field_rows_named(conn, uuid, "mfr_path")
+        .unwrap()
+        .into_iter()
+        .find_map(|r| match r.value {
+            Value::TreeRef { parent, .. } => Some(parent),
+            _ => None,
+        })
+        .flatten()
+}
+
+#[test]
+fn test_a_cell_it_cannot_reproduce_asks_for_a_rebuild() {
+    let mut conn = test_conn();
+    let (mut cache, _root, music, jazz, _file) = warm_tree(&mut conn);
+
+    // Taking the position away from a node that has children is not a subtree
+    // drop: a fresh populate would leave those children detached, which the
+    // incremental path does not reproduce. It must say so rather than guess.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_fields_named(music, "mfr_path").unwrap();
+    w.commit().unwrap();
+    assert!(!cache.apply_cell(&conn, "mfr_path", music).unwrap(), "declines a detaching removal");
+
+    // The caller's fallback is what keeps the cache honest.
+    cache.populate(&conn).unwrap();
+    assert_matches_fresh(&conn, &mut cache);
+    let _ = jazz;
+}
+
+#[test]
+fn test_a_parent_written_in_the_same_batch_asks_for_a_rebuild() {
+    let mut conn = test_conn();
+    let (mut cache, root, ..) = warm_tree(&mut conn);
+
+    // Parent and child created by one revision: settling the child first finds
+    // no parent node to hang it on.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let parent = w.create_metarecord(vec![]).unwrap().uuid;
+    let child = w.create_metarecord(vec![]).unwrap().uuid;
+    w.set_field(parent, "mfr_path", Value::TreeRef { parent: Some(root), name: "docs".into() })
+        .unwrap();
+    w.set_field(child, "mfr_path", Value::TreeRef { parent: Some(parent), name: "a.txt".into() })
+        .unwrap();
+    w.commit().unwrap();
+
+    assert!(!cache.apply_cell(&conn, "mfr_path", child).unwrap(), "the parent is not cached yet");
+}
+
+#[test]
+fn test_an_incomplete_cache_asks_for_a_rebuild() {
+    let mut conn = test_conn();
+    let (root, ..) = build_tree(&mut conn);
+    let mut cache = TreeCache::new(false);
+    // Never populated: what it holds is not the whole forest, so the cell it is
+    // asked about tells it nothing about the rest.
+    assert!(!cache.apply_cell(&conn, "mfr_path", root).unwrap());
+}
+
+#[test]
+fn test_populating_keeps_a_name_s_exact_bytes() {
+    // The forest scan used to read back the *displayed* name, so a node named
+    // with an undecodable byte was cached under the bytes of its own escape —
+    // and then answered to neither reading of its path.
+    let mut conn = test_conn();
+    let root = tree_entry(&mut conn, "mfr_path", None, "");
+    let escaped = tree_entry_bytes(&mut conn, "mfr_path", Some(root), b"caf\xe9.mp4");
+    let literal = tree_entry(&mut conn, "mfr_path", Some(root), "caf%E9.mp4");
+
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+    let p = "/caf%E9.mp4";
+    assert_eq!(
+        cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Escaped).unwrap(),
+        Some(escaped)
+    );
+    assert_eq!(
+        cache.resolve_path_as(&conn, "mfr_path", p, PathForm::Verbatim).unwrap(),
+        Some(literal)
+    );
+}
+
+#[test]
+fn test_a_detached_node_asks_for_a_rebuild() {
+    // A child whose parent lost its own TreeRef row is left *detached* by a
+    // populate: in the arena, reachable by uuid, but under no parent and in no
+    // roots map. Editing that cell in place would either miss the re-link a
+    // populate does, or — on a removal — unhook whatever root happens to share
+    // its name. It is a rebuild's job.
+    let mut conn = test_conn();
+    let (root, music, jazz, _file) = build_tree(&mut conn);
+
+    // "jazz" keeps naming "music" as its parent, but "music" leaves the tree.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_fields_named(music, "mfr_path").unwrap();
+    w.commit().unwrap();
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+    assert_eq!(
+        cache.resolve_path(&conn, "mfr_path", "/jazz").unwrap(),
+        None,
+        "detached, not a root"
+    );
+
+    // Renaming it in place, and removing it, are both refused.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(music), name: "bop".into() })
+        .unwrap_err();
+    drop(w);
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(jazz, "mfr_path", Value::TreeRef { parent: Some(root), name: "bop".into() })
+        .unwrap();
+    w.commit().unwrap();
+    assert!(!cache.apply_cell(&conn, "mfr_path", jazz).unwrap(), "declines a detached node");
+
+    cache.populate(&conn).unwrap();
+    assert_matches_fresh(&conn, &mut cache);
+}

@@ -549,9 +549,37 @@ memory rather than walking the database node by node — the dominant cost of a
 first =FollowsTransitive= query on a large repository. The load builds it before
 the repository serves anything, so through the API the forest is always
 resident. The lazy, DB-backed path (populate-on-miss, descendant walk) survives
-only for a cache built directly, as unit tests do. Manual API writes that change
-a TreeRef field rebuild the cache; the watcher and reconcile keep it in sync
-incrementally.
+only for a cache built directly, as unit tests do.
+
+*** Upkeep after a write
+
+The watcher and reconcile keep the cache in step as they go. A *manual API
+write* does not pass through them, so after committing a revision the daemon
+settles the cache against what that revision changed: one =(field name,
+metarecord)= TreeRef *cell* at a time, in write order, so that a parent written
+before its child is linked first.
+
+A cell is settled by re-reading its rows and applying the difference —
+an insertion, a move or rename (the subtree follows), a removal. Some shapes
+cannot be reproduced in place, and the daemon *rebuilds the whole forest*
+instead, which is always correct:
+
+- a cache that is not resident, which says nothing about the rest of the forest;
+- a cell holding several positions at once (multi-map =TreeRef=);
+- a position lost by a node that still has children, or gained by one whose
+  children are in the database — a full load leaves a parentless child
+  *detached* and re-links it when its parent comes back, which is neither a
+  subtree drop nor a plain insertion;
+- a destination whose parent is not cached yet (parent and child written by the
+  same revision, child settled first), or whose name is already taken;
+- a revision changing more cells than the rebuild costs (a few thousand): past
+  that point, one scan is cheaper than reconciling them one by one.
+
+Rebuilding on *every* TreeRef write is what this replaced. It cost one full scan
+of the =field= table per write — seconds on a large repository — with the
+repository connection held throughout, so setting a single field also blocked
+every read of that repository for as long as it took, with nothing on screen to
+say why.
 
 ** File Watcher
 

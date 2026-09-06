@@ -477,19 +477,9 @@ where
         ensure_version(writer.connection(), uuid, expected_version)?;
         let touched = write(&mut writer)?;
         validate_schema(repo_state, writer.connection(), uuid, &touched)?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        // Manual TreeRef writes bypass the watcher's incremental cache upkeep;
-        // rebuild the complete cache so reads stay correct (no-op if absent).
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        // A change to mf_watch/mf_ignore may have grown or shrunk the watched
-        // scope; re-place the inotify watches accordingly.
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         metarecord_response(&conn, uuid)
     })
     .await
@@ -2587,15 +2577,9 @@ async fn batch_set(
                 std::slice::from_ref(&body.name),
             )?;
         }
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": uuids.len()})))
     })
     .await
@@ -2630,15 +2614,9 @@ async fn batch_append(
                 std::slice::from_ref(&body.name),
             )?;
         }
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": uuids.len()})))
     })
     .await
@@ -2677,15 +2655,9 @@ async fn batch_remove(
                 )?;
             }
         }
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": changed})))
     })
     .await
@@ -2731,15 +2703,9 @@ async fn batch_unset(
                 )?;
             }
         }
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": changed})))
     })
     .await
@@ -2780,15 +2746,9 @@ async fn retype_field(
         let mut conn = repo_state.conn.lock_recover();
         let mut writer = repo_state.writer(&mut conn, None)?;
         let summary = writer.retype_field(&name, to)?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({
             "converted": summary.converted,
             "fallback_count": summary.fallback_uuids.len(),
@@ -2824,19 +2784,9 @@ async fn delete_by_query(
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;
         }
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        // Deleting a metarecord with a TreeRef removes tree nodes: rebuild the
-        // complete cache so reads stay correct (no-op if absent).
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        // Deleting a record that carried mf_watch/mf_ignore can shrink the
-        // watched scope; re-place the inotify watches accordingly.
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"deleted": uuids.len()})))
     })
     .await
@@ -2879,15 +2829,9 @@ async fn create_record_endpoint(
             None => writer.create_metarecord(body.fields)?,
         };
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(Json(created))
     })
     .await
@@ -2922,15 +2866,9 @@ async fn delete_record_endpoint(
         let mut writer = repo_state.writer(&mut conn, None)?;
         ensure_version(writer.connection(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -3137,15 +3075,9 @@ async fn patch_field_by_id(
             uuid,
             &[old.name.clone(), new_name.clone()],
         )?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         metarecord_response(&conn, uuid).map(Json)
     })
     .await
@@ -3169,15 +3101,9 @@ async fn delete_field_by_id(
         let mut writer = repo_state.writer(&mut conn, None)?;
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
-        let tree_touched = writer.touched_tree();
-        let watch_touched = writer.touched_watch();
+        let effects = writer.effects();
         writer.commit()?;
-        if tree_touched {
-            repo_state.lock_cache().populate(&conn)?;
-        }
-        if watch_touched {
-            repo_state.refresh_watches(&conn);
-        }
+        repo_state.settle(&conn, &effects)?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -3408,11 +3334,9 @@ async fn sync_delete_link(
             if db::get_version(&conn, record)?.is_some() {
                 let mut writer = repo.writer(&mut conn, None)?;
                 writer.delete_metarecord(record)?;
-                let tree_touched = writer.touched_tree();
+                let effects = writer.effects();
                 writer.commit()?;
-                if tree_touched {
-                    repo.lock_cache().populate(&conn)?;
-                }
+                repo.settle(&conn, &effects)?;
             }
         }
         sync::delete_link(&db.conn, link_uuid)?;

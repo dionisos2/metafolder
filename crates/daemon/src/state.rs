@@ -251,6 +251,48 @@ impl RepoState {
         }
     }
 
+    /// Brings this repository's in-memory state back in step with a revision
+    /// that has just been committed on `conn` — the tree cache and, when the
+    /// write changed the watched scope, the inotify watch set.
+    ///
+    /// The tree cache is reconciled *cell by cell*
+    /// ([`TreeCache::apply_cell`]). It used to be rebuilt outright after any
+    /// write that touched a `tree_ref` row, which meant one full scan of the
+    /// `field` table — seconds on a large repository, with the connection held
+    /// throughout, so nothing else could be read while a single field was
+    /// being set. A rebuild remains the fallback: it is what a cell the
+    /// incremental path declines, or a revision with too many of them, falls
+    /// back to, and it is always correct.
+    pub fn settle(
+        &self,
+        conn: &Connection,
+        effects: &crate::log::WriteEffects,
+    ) -> anyhow::Result<()> {
+        if effects.touches_tree() {
+            let mut cache = self.lock_cache();
+            let settled = match effects.tree_cells() {
+                None => false,
+                Some(cells) => {
+                    let mut all = true;
+                    for (field, uuid) in cells {
+                        if !cache.apply_cell(conn, field, *uuid)? {
+                            all = false;
+                            break;
+                        }
+                    }
+                    all
+                }
+            };
+            if !settled {
+                cache.populate(conn)?;
+            }
+        }
+        if effects.touches_watch() {
+            self.refresh_watches(conn);
+        }
+        Ok(())
+    }
+
     /// Recomputes the watcher's eligible-directory set after a manual write that
     /// changed `mf_watch`/`mf_ignore` (spec-file-tracking "Watch and Ignore"),
     /// so a subtree just made eligible starts being watched immediately (and one

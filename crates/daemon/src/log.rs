@@ -1032,7 +1032,50 @@ struct PendingOp {
 
 /// Buffered operations are flushed to the database once this many accumulate,
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
-const FLUSH_THRESHOLD: usize = 4096;
+pub const FLUSH_THRESHOLD: usize = 4096;
+
+/// Above this many distinct `(field name, metarecord)` TreeRef cells changed by
+/// one revision, [`WriteEffects`] stops listing them and asks for a full
+/// rebuild instead: reconciling each cell costs a couple of indexed reads, and
+/// past a few thousand that is more than the single scan a rebuild is.
+pub const TREE_CELL_CAP: usize = 4096;
+
+/// What a committed revision obliges its caller to bring back in step — the
+/// in-memory state a transaction cannot update itself (see
+/// `RepoState::settle`). Read off the writer *before* `commit` consumes it.
+#[derive(Debug, Default, Clone)]
+pub struct WriteEffects {
+    /// The TreeRef cells the revision changed, each once, in write order — so a
+    /// parent written before its child is settled first. `None` when there were
+    /// more than [`TREE_CELL_CAP`] of them: rebuild the forest instead.
+    tree: Option<Vec<(String, Uuid)>>,
+    /// Whether the revision wrote a field that decides which directories are
+    /// watched.
+    watch: bool,
+}
+
+impl WriteEffects {
+    /// True if any `tree_ref` field row was created or removed. Manual API
+    /// writes do not go through the watcher's incremental tree-cache upkeep, so
+    /// a caller holding a complete cache must settle it after such a write.
+    pub fn touches_tree(&self) -> bool {
+        self.tree.as_ref().is_none_or(|cells| !cells.is_empty())
+    }
+
+    /// The changed cells to reconcile one by one, or `None` when the caller
+    /// should rebuild the whole forest (see [`TREE_CELL_CAP`]).
+    pub fn tree_cells(&self) -> Option<&[(String, Uuid)]> {
+        self.tree.as_deref()
+    }
+
+    /// True if the revision wrote `mf_watch` / `mf_ignore` (eligibility) or
+    /// `mfr_watch_exceeded` (the watch budget). A caller that keeps a live
+    /// inotify watch set must refresh it: the set of watched directories may
+    /// have changed.
+    pub fn touches_watch(&self) -> bool {
+        self.watch
+    }
+}
 
 // ── Automatic retention (spec-event-log "Automatic retention") ────────────────
 
@@ -1211,6 +1254,15 @@ pub struct Writer<'c> {
     field_types: HashMap<String, String>,
     /// How much history to keep behind HEAD; applied on commit.
     retention: Retention,
+    /// What this revision will oblige its caller to refresh, accumulated as the
+    /// operations are recorded rather than read back off `pending` — which the
+    /// flush above empties, so a long revision used to forget its early writes.
+    effects: WriteEffects,
+    /// The cells already listed in `effects`, for the "each once" rule. A set
+    /// rather than a scan of the list: a watcher flush writes one `mfr_path` op
+    /// per file, and asking the list each time made a batch quadratic in itself.
+    /// Keyed by field name so the membership test allocates nothing.
+    tree_seen: HashMap<String, HashSet<Uuid>>,
 }
 
 impl<'c> Writer<'c> {
@@ -1245,6 +1297,8 @@ impl<'c> Writer<'c> {
             pending: Vec::new(),
             field_types: HashMap::new(),
             retention,
+            effects: WriteEffects { tree: Some(Vec::new()), watch: false },
+            tree_seen: HashMap::new(),
         })
     }
 
@@ -1263,33 +1317,37 @@ impl<'c> Writer<'c> {
         self.flushed + self.pending.len() as i64
     }
 
-    /// True if this revision created or removed any `tree_ref` field row.
-    /// Manual API writes do not go through the watcher's incremental tree-cache
-    /// maintenance (`apply_*`), so a caller that keeps a complete cache must
-    /// rebuild it after such a write; this is the cheap signal that it needs to.
-    pub fn touched_tree(&self) -> bool {
-        self.pending.iter().any(|op| {
-            op.before
-                .iter()
-                .chain(op.after.iter())
-                .any(|f| matches!(f.value, Value::TreeRef { .. }))
-        })
+    /// What this revision obliges its caller to bring back in step (tree cache,
+    /// watch set). Read it before [`Self::commit`], which consumes the writer.
+    pub fn effects(&self) -> WriteEffects {
+        self.effects.clone()
     }
 
-    /// True if this revision wrote a field that decides which directories are
-    /// watched: `mf_watch` / `mf_ignore` (eligibility), or `mfr_watch_exceeded`
-    /// (the watch budget). A caller that keeps a live inotify watch set (the
-    /// watcher) must refresh it after such a write, since the set of watched
-    /// directories may have changed.
-    pub fn touched_watch(&self) -> bool {
+    /// Records what one operation's before/after rows imply for [`WriteEffects`].
+    fn observe_effects(&mut self, rows: &[FieldRow], entity: Uuid) {
         const DECIDES_WATCHES: &[&str] =
             &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
-        self.pending.iter().any(|op| {
-            op.before
-                .iter()
-                .chain(op.after.iter())
-                .any(|f| DECIDES_WATCHES.contains(&f.name.as_str()))
-        })
+        for row in rows {
+            if DECIDES_WATCHES.contains(&row.name.as_str()) {
+                self.effects.watch = true;
+            }
+            if self.effects.tree.is_none() || !matches!(row.value, Value::TreeRef { .. }) {
+                continue;
+            }
+            if self.tree_seen.get(row.name.as_str()).is_some_and(|seen| seen.contains(&entity)) {
+                continue;
+            }
+            let cells = self.effects.tree.as_mut().expect("checked just above");
+            if cells.len() >= TREE_CELL_CAP {
+                // Past the cap the caller rebuilds the forest; neither the list
+                // nor its index is of any further use.
+                self.effects.tree = None;
+                self.tree_seen = HashMap::new();
+                continue;
+            }
+            cells.push((row.name.clone(), entity));
+            self.tree_seen.entry(row.name.clone()).or_default().insert(entity);
+        }
     }
 
     /// Removes every row of `(uuid, name)`, leaving the field unknown.
@@ -1694,6 +1752,8 @@ impl<'c> Writer<'c> {
         // this op assigned; redo restores it exactly. `None` when the op removed
         // the metarecord (delete): there is no forward version to restore.
         let version_after = db::get_version(&self.tx, entity)?;
+        self.observe_effects(&before, entity);
+        self.observe_effects(&after, entity);
         self.pending.push(PendingOp {
             op_type,
             entity,

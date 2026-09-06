@@ -387,7 +387,7 @@ impl RepoIndex {
                     field_name: row.name.clone(),
                     uuid,
                     parent: *parent,
-                    name: name.display().into_owned(),
+                    name: name.clone(),
                 });
             }
             match row.value {

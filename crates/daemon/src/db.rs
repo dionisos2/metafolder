@@ -1435,36 +1435,53 @@ pub struct TreeRow {
     pub field_name: String,
     pub uuid: Uuid,
     pub parent: Option<Uuid>,
-    pub name: String,
+    /// The name's exact bytes — what identifies the node. Reading back the
+    /// *displayed* name here would give a node named with an undecodable byte
+    /// the bytes of its own escape (`caf%E9.mp4`), and it would then answer to
+    /// neither reading (spec-data-model "Tree names").
+    pub name: TreeName,
 }
 
 /// Every TreeRef position in the database, across all field names, ordered so
 /// that a metarecord's positions are grouped and stable (`metarecord_uuid`,
 /// then `id`). Used to populate the tree cache in a single scan at load time
 /// instead of walking the forest node by node.
+pub const FOREST_SQL: &str = "SELECT field_name, metarecord_uuid, value_uuid, \
+     value_name, value_name_bytes FROM field INDEXED BY idx_field_tree \
+     WHERE value_type = 'tree_ref' ORDER BY field_name, metarecord_uuid, id";
+
+/// See [`FOREST_SQL`]. `INDEXED BY` because the forest is a *slice* of the EAV
+/// table — one row in ten — and `idx_field_tree` is the only index that holds
+/// just those rows; left to choose, SQLite walks `idx_field_name` and fetches
+/// every field row of the repository to keep the tree ones (measured on a 440
+/// k-row table: 0.69 s against 0.09 s). The cache is rebuilt from here whenever
+/// an incremental settle declines, so it is on the write path, not only the
+/// load.
 pub fn load_tree_forest(conn: &Connection) -> Result<Vec<TreeRow>> {
-    let mut stmt = conn.prepare(
-        "SELECT field_name, metarecord_uuid, value_uuid, value_name FROM field
-         WHERE value_type = 'tree_ref'
-         ORDER BY field_name, metarecord_uuid, id",
-    )?;
+    let mut stmt = conn.prepare(FOREST_SQL)?;
     let rows = stmt.query_map([], |r| {
         Ok((
             r.get::<_, String>(0)?,
             r.get::<_, Vec<u8>>(1)?,
             r.get::<_, Vec<u8>>(2)?,
-            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(3)?,
+            r.get::<_, Option<Vec<u8>>>(4)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (field_name, uuid, parent, name) = row?;
+        let (field_name, uuid, parent, name, name_bytes) = row?;
         let parent = bytes_to_uuid(parent)?;
         out.push(TreeRow {
             field_name,
             uuid: bytes_to_uuid(uuid)?,
             parent: if parent == ZERO_UUID { None } else { Some(parent) },
-            name,
+            // The bytes are authoritative; the text is the fallback for a row
+            // written before the column existed (see `decode_value`).
+            name: match name_bytes {
+                Some(bytes) => TreeName::from_bytes(bytes),
+                None => TreeName::from(name.context("value_name missing")?),
+            },
         });
     }
     Ok(out)

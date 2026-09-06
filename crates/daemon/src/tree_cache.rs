@@ -13,7 +13,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use metafolder_core::metarecord::TreeName;
+use metafolder_core::metarecord::{TreeName, Value};
 use metafolder_core::query::OsmProgress;
 
 use crate::db;
@@ -149,7 +149,7 @@ impl TreeCache {
         let mut created: Vec<(usize, Option<Uuid>, String)> = Vec::with_capacity(rows.len());
         for row in &rows {
             let node = Node {
-                name: TreeName::from(row.name.clone()),
+                name: row.name.clone(),
                 uuid: row.uuid,
                 parent: None,
                 children: HashMap::new(),
@@ -596,6 +596,128 @@ impl TreeCache {
         for idx in nodes.unwrap_or_default() {
             self.remove_subtree(field, idx);
         }
+    }
+
+    /// Brings the cache back in step with the database after a *manual* API
+    /// write to one `(field, uuid)` TreeRef cell, without rereading the forest.
+    ///
+    /// Manual writes bypass the incremental upkeep the watcher does, so the
+    /// cache used to be rebuilt by a full [`Self::populate`] after every one of
+    /// them: a single-row field write — setting a tag's `path`, say — paid one
+    /// scan of the whole `field` table, seconds on a large repository, with the
+    /// repository connection held for the duration so nothing else could be
+    /// read meanwhile.
+    ///
+    /// Returns `false` when the change's shape is one this path cannot
+    /// reproduce *exactly* as a populate would; the caller must then rebuild,
+    /// which is always correct. It decides before touching anything, so a
+    /// declined cell leaves the cache untouched rather than half-updated.
+    ///
+    /// The shapes it declines, all rare next to "a node was added, moved or
+    /// removed":
+    /// - a cache that is not complete — a partial one says nothing about the
+    ///   rest of the forest, and only a populate restores the residency reads
+    ///   depend on;
+    /// - a cell holding several positions, whose linking order a populate fixes
+    ///   and an in-place edit would have to guess;
+    /// - a position *lost* by a node that still has cached children, or *gained*
+    ///   by one that has children in the database: a populate leaves a
+    ///   parentless child detached and re-attaches it when its parent comes
+    ///   back, neither of which is a subtree drop or a plain insert;
+    /// - a destination whose parent is not cached yet (both written by the same
+    ///   revision, settled child first) or whose name is already taken by
+    ///   another node.
+    pub fn apply_cell(&mut self, conn: &Connection, field: &str, uuid: Uuid) -> Result<bool> {
+        if !self.complete {
+            return Ok(false);
+        }
+        let after: Vec<(Option<Uuid>, TreeName)> = db::get_field_rows_named(conn, uuid, field)?
+            .into_iter()
+            .filter_map(|row| match row.value {
+                Value::TreeRef { parent, name } => Some((parent, name)),
+                _ => None,
+            })
+            .collect();
+        let before: Vec<usize> = self
+            .fields
+            .get(field)
+            .and_then(|ft| ft.by_uuid.get(&uuid))
+            .cloned()
+            .unwrap_or_default();
+        if before.len() > 1 || after.len() > 1 {
+            return Ok(false);
+        }
+        // A node a populate left *detached* — its parent has no TreeRef row of
+        // its own — is under no parent and in no roots map. Editing it in place
+        // would miss the re-link a populate does, and removing it would unhook
+        // whatever root happens to share its name.
+        if before.first().is_some_and(|&idx| !self.is_linked(field, idx)) {
+            return Ok(false);
+        }
+        match (before.first().copied(), after.into_iter().next()) {
+            (None, None) => Ok(true),
+            (Some(idx), None) => {
+                if !self.node(idx).children.is_empty() {
+                    return Ok(false);
+                }
+                self.remove_subtree(field, idx);
+                Ok(true)
+            }
+            (None, Some((parent, name))) => {
+                if !db::tree_children(conn, field, uuid)?.is_empty() {
+                    return Ok(false);
+                }
+                if !self.can_hold(field, parent, &name, None) {
+                    return Ok(false);
+                }
+                self.apply_insert(field, parent, &name, uuid);
+                Ok(true)
+            }
+            (Some(idx), Some((parent, name))) => {
+                let current_parent = self.node(idx).parent.map(|pi| self.node(pi).uuid);
+                if current_parent == parent && self.node(idx).name == name {
+                    return Ok(true);
+                }
+                if !self.can_hold(field, parent, &name, Some(idx)) {
+                    return Ok(false);
+                }
+                self.apply_rename(field, uuid, parent, &name);
+                Ok(true)
+            }
+        }
+    }
+
+    /// Whether a node is where its own name says it is — under its parent, or in
+    /// its field's roots map. False for one a populate left detached.
+    fn is_linked(&self, field: &str, idx: usize) -> bool {
+        let norm = self.normalize(&self.node(idx).name);
+        match self.node(idx).parent {
+            Some(pi) => self.node(pi).children.get(&norm) == Some(&idx),
+            None => self.fields.get(field).and_then(|ft| ft.roots.get(&norm)) == Some(&idx),
+        }
+    }
+
+    /// Whether `(parent, name)` is a position [`Self::apply_cell`] can link a
+    /// node into: the parent itself is cached, and the name it would take there
+    /// is free (or already held by `mover`, the node being moved).
+    fn can_hold(
+        &self,
+        field: &str,
+        parent: Option<Uuid>,
+        name: &TreeName,
+        mover: Option<usize>,
+    ) -> bool {
+        let norm = self.normalize(name);
+        let occupant = match parent {
+            None => self.fields.get(field).and_then(|ft| ft.roots.get(&norm)).copied(),
+            Some(p) => {
+                let Some(parent_idx) = self.first_node_of(field, p) else {
+                    return false;
+                };
+                self.node(parent_idx).children.get(&norm).copied()
+            }
+        };
+        occupant.is_none() || occupant == mover
     }
 
     /// Drops every cached node.

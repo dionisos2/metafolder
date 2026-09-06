@@ -390,6 +390,40 @@ fn bench_index_build_and_folder_query() {
     }
     drop(cache);
 
+    // ── #8: settling the tree cache after a manual TreeRef write ────────────
+    // Any field write touching a `tree_ref` row used to rebuild the whole
+    // forest, holding the connection while it did — so setting one tag's
+    // `path` also blocked every read of the repository for as long as the scan
+    // took, with nothing on screen to say why.
     drop(conn);
+    {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let uuid = w.create_metarecord(vec![]).unwrap().uuid;
+        w.set_field(uuid, "bench_tree", Value::TreeRef { parent: None, name: "bench-node".into() })
+            .unwrap();
+        let effects = w.effects();
+        w.commit().unwrap();
+
+        let mut cache = repo.cache.lock().unwrap();
+        let t = Instant::now();
+        cache.populate(&conn).unwrap();
+        let old = t.elapsed();
+
+        let t = Instant::now();
+        let settled = cache.apply_cell(&conn, "bench_tree", uuid).unwrap();
+        let new = t.elapsed();
+        assert!(settled, "a plain insertion must settle incrementally");
+        assert_eq!(effects.tree_cells().map(<[_]>::len), Some(1), "one changed cell");
+
+        eprintln!("\n#8 tree cache after one manual TreeRef write:");
+        eprintln!("   OLD  rebuild the whole forest : {old:?}");
+        eprintln!("   NEW  settle the changed cell  : {new:?}");
+        eprintln!(
+            "   speedup                       : {:.0}x",
+            old.as_secs_f64() / new.as_secs_f64()
+        );
+    }
+
     let _ = std::fs::remove_dir_all(&meta);
 }

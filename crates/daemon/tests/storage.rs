@@ -1633,3 +1633,118 @@ fn test_the_repository_wide_reads_seek_their_correlated_rows() {
         assert_eq!(plan.matches("SCAN").count(), 0, "{what}: a scan crept in: {plan}");
     }
 }
+
+// ── What a revision obliges its caller to refresh ─────────────────────────────
+
+/// A `Writer` that has recorded `n` operations touching nothing of interest.
+fn pad_operations(w: &mut Writer, uuid: Uuid, n: usize) {
+    for i in 0..n {
+        w.set_field(uuid, "pad", Value::Int(i as i64)).unwrap();
+    }
+}
+
+#[test]
+fn test_a_revision_reports_the_tree_cells_it_changed_in_write_order() {
+    let mut conn = test_conn();
+    let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
+    let a = create(&mut conn, vec![]).uuid;
+    let b = create(&mut conn, vec![]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(a, "p", tree_ref(Some(root), "a")).unwrap();
+    w.set_field(b, "p", tree_ref(Some(root), "b")).unwrap();
+    w.set_field(a, "note", Value::String("x".into())).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+
+    assert!(effects.touches_tree());
+    assert!(!effects.touches_watch());
+    assert_eq!(
+        effects.tree_cells(),
+        Some(&[("p".to_string(), a), ("p".to_string(), b)][..]),
+        "each changed cell once, in the order it was written"
+    );
+}
+
+#[test]
+fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
+    // The buffered operations are written out in batches, and the effects used
+    // to be read off that buffer: a revision long enough to flush forgot every
+    // tree write that preceded the flush, and left the cache stale.
+    let mut conn = test_conn();
+    let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
+    let a = create(&mut conn, vec![]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(a, "p", tree_ref(Some(root), "a")).unwrap();
+    pad_operations(&mut w, a, metafolder_daemon::log::FLUSH_THRESHOLD + 1);
+    let effects = w.effects();
+    w.commit().unwrap();
+
+    assert_eq!(effects.tree_cells(), Some(&[("p".to_string(), a)][..]));
+}
+
+#[test]
+fn test_a_revision_reports_a_change_to_the_watched_scope() {
+    let mut conn = test_conn();
+    let a = create(&mut conn, vec![]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(a, "mf_watch", Value::Bool(true)).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+
+    assert!(effects.touches_watch());
+    assert!(!effects.touches_tree());
+}
+
+#[test]
+fn test_a_revision_touching_neither_asks_for_no_refresh() {
+    let mut conn = test_conn();
+    let a = create(&mut conn, vec![]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(a, "note", Value::String("x".into())).unwrap();
+    let effects = w.effects();
+    w.commit().unwrap();
+
+    assert!(!effects.touches_tree());
+    assert!(!effects.touches_watch());
+    assert_eq!(effects.tree_cells(), Some(&[][..]));
+}
+
+#[test]
+fn test_too_many_changed_cells_ask_for_a_rebuild_instead() {
+    // Past a point, reconciling the cells one by one costs more than the one
+    // scan a rebuild is; the writer stops listing them and says so.
+    let mut conn = test_conn();
+    let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    for i in 0..=metafolder_daemon::log::TREE_CELL_CAP {
+        let uuid = w.create_metarecord(vec![]).unwrap().uuid;
+        w.set_field(uuid, "p", tree_ref(Some(root), &format!("n{i}"))).unwrap();
+    }
+    let effects = w.effects();
+    w.commit().unwrap();
+
+    assert!(effects.touches_tree());
+    assert_eq!(effects.tree_cells(), None, "no cell list: rebuild the whole forest");
+}
+
+/// A `tree_ref` value, spelled once for the tests above.
+fn tree_ref(parent: Option<Uuid>, name: &str) -> Value {
+    Value::TreeRef { parent, name: name.into() }
+}
+
+#[test]
+fn test_the_forest_scan_seeks_the_tree_index() {
+    // The tree cache is rebuilt from this scan — at load, and again whenever an
+    // incremental settle declines. Left to choose, SQLite walks the whole EAV
+    // table to keep the one row in ten that is a tree_ref; only the partial
+    // index holds exactly those.
+    let conn = test_conn();
+    let plan = query_plan(&conn, db::FOREST_SQL);
+    assert!(plan.contains("idx_field_tree"), "the forest scan should seek the tree index: {plan}");
+    assert!(!plan.contains("idx_field_name "), "it must not walk the whole field table: {plan}");
+}
