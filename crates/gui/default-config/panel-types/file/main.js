@@ -71,6 +71,35 @@ function positiveNumber(configured, fallback) {
     : fallback;
 }
 
+/** The directory holding `path` ("/" for a top-level entry, and for "/").
+ *  @param {string} path */
+function parentDir(path) {
+  const index = path.lastIndexOf('/');
+  return index <= 0 ? '/' : path.slice(0, index);
+}
+
+/**
+ * Where "up one level" lands (spec-gui "file panel type"): out of a drilled-in
+ * listing, or — when the panel is following the selection — into the folder
+ * holding the previewed file, so Backspace browses upwards the way it does in
+ * the file manager rather than being a dead end.
+ *
+ * `move: false` = nowhere to go (nothing shown, or already at "/");
+ * `path: null` = the walk reached the selected path, so follow the selection
+ * again instead of holding a drill-in of our own.
+ *
+ * @param {string|null} local the drill-in path, or null while following
+ * @param {string|undefined} selectedPath the followed selection's path
+ * @returns {{move: false} | {move: true, path: string|null}}
+ */
+export function backTarget(local, selectedPath) {
+  const current = local ?? selectedPath;
+  if (!current) return { move: false };
+  const parent = parentDir(current);
+  if (parent === current) return { move: false }; // at the filesystem root
+  return { move: true, path: parent === selectedPath ? null : parent };
+}
+
 /**
  * The metarecord the selection points at, as metarecord-list publishes it.
  * @typedef {{uuid: string, repo: string}} Selected
@@ -423,12 +452,6 @@ export async function mount(root, metafolder) {
     activeMedia = null;
   }
 
-  /** @param {string} path */
-  function parentDir(path) {
-    const index = path.lastIndexOf('/');
-    return index <= 0 ? '/' : path.slice(0, index);
-  }
-
   // The path currently shown: the local drill-in target, or the selection.
   /** @returns {string|undefined} */
   function viewedPath() {
@@ -442,12 +465,13 @@ export async function mount(root, metafolder) {
     rerender();
   }
 
-  // Step back out of the drill-in: up one level, returning to following the
-  // selection once we reach the originally selected path.
+  // Up one level: out of the drill-in, or into the folder holding the followed
+  // file — returning to following the selection once we reach the originally
+  // selected path.
   function navigateBack() {
-    if (localPath === null) return;
-    const parent = parentDir(localPath);
-    localPath = parent === paths[activeIndex] ? null : parent;
+    const target = backTarget(localPath, paths[activeIndex]);
+    if (!target.move) return;
+    localPath = target.path;
     rerender();
   }
 
@@ -896,6 +920,10 @@ export async function mount(root, metafolder) {
   void commands.register('file:speed-down', {
     label: 'File: play slower',
     handler: () => withMedia((media) => applySpeed(nextSpeed(media.playbackRate, -1))),
+  });
+  void commands.register('file:back', {
+    label: 'File: go up one level (out of a listing, or to the containing folder)',
+    handler: navigateBack,
   });
   void commands.register('file:speed-reset', {
     label: 'File: play at normal speed',

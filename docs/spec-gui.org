@@ -1081,6 +1081,7 @@ Behaviours:
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 | =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
 | =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; the entry name is collected in the command input, completing over the listing) |
+| =file:back=               | Up one level in the =file= panel: out of a drilled-in listing, or to the folder holding the previewed file (default =backspace=) |
 | =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
@@ -1091,7 +1092,7 @@ Behaviours:
 | =file:seek-forward-long= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
 | =file:restart=            | Play the previewed media from the start                       |
 | =file:speed-up= / =-down= | Step the playback rate up/down the ladder (default =]= / =[=) |
-| =file:speed-reset=        | Back to normal speed (default =backspace=)                    |
+| =file:speed-reset=        | Back to normal speed (default =shift+backspace=)              |
 | =file:volume-up= / =-down= | Step the volume ±10 % (default =shift+up= / =shift+down=)    |
 | =file:mute=               | Mute/unmute the previewed media (default =ctrl+m=)            |
 | =metarecord:back=         | Return to the previously shown metarecord (=metarecord-detail=, default =backspace= / =left=) |
@@ -2035,6 +2036,15 @@ freezes on open nor holds every thumbnail at once; a footer shows =shown/total=.
 subdirectory's listing, or a file's inline preview — and a back button in the
 header steps back out, returning to the selection once the originally selected
 path is reached.
+
+=file:back= (default =Backspace=, the key that goes up in every other panel)
+is that same step, and it also applies while the panel is merely *following the
+selection*: it then shows the folder holding the previewed file, so the panel
+browses upwards instead of being a dead end — the way =Backspace= does in
+=file-manager=. The selection is followed again as soon as it changes (or as
+soon as the walk back reaches the selected path). At the filesystem root, and
+with nothing shown, it does nothing. Since plain =Backspace= is taken, mpv's
+"back to normal speed" (=file:speed-reset=) keeps the key with shift.
 
 Before creating an =<audio>= / =<video>= element, the panel queries
 =GET /__media-support= on the GUI server and, when the required GStreamer

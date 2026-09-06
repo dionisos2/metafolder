@@ -247,7 +247,10 @@
   { command = "treeref:parent", when = "treeref" },
   { command = "file-manager:parent", when = "file-manager" },
   { command = "metarecord:back", when = "metarecord-detail" },
-  { command = "file:speed-reset", when = "file" },
+  # Going up is what backspace means in every other panel; the `file` panel
+  # browses folders too, so it means the same there. mpv's "back to normal
+  # speed" keeps the key with shift (see the transport section below).
+  { command = "file:back", when = "file" },
 ]
 
 # Refresh the current view.
@@ -399,6 +402,9 @@
 "shift+down" = { command = "file:volume-down", when = "file" }
 # Plain "m" starts the metarecord-edit key sequence, so mute takes ctrl+m.
 "ctrl+m" = { command = "file:mute", when = "file" }
+# mpv resets the speed with backspace; here plain backspace goes up a level
+# (above), so the reset keeps the key with shift.
+"shift+backspace" = { command = "file:speed-reset", when = "file" }
 
 # Find in panel (spec-gui "Find in panel"): the browser's Ctrl-F over the text
 # the focused panel currently renders. `text-input = true` so it also works

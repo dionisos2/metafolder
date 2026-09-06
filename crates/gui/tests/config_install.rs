@@ -224,3 +224,25 @@ fn test_file_manager_root_and_hidden_keybindings() {
     assert_eq!(in_fm(&["/"]).as_deref(), Some("file-manager:goto-root"));
     assert_eq!(in_fm(&["ctrl+h"]).as_deref(), Some("file-manager:toggle-hidden"));
 }
+
+// The `file` panel's Backspace: it steps up a level (like the file manager's),
+// and mpv's "back to normal speed" keeps the same key with shift.
+#[test]
+fn test_file_panel_back_keybinding() {
+    let (_guard, config) = temp_config();
+    common::install_defaults(&config);
+    let compiled = config.load_keybindings().unwrap().compiled();
+
+    let in_file = |keys: &[&str]| -> Option<String> {
+        compiled
+            .iter()
+            .find(|b| {
+                b.keys.iter().map(String::as_str).eq(keys.iter().copied())
+                    && b.when.as_deref() == Some("file")
+            })
+            .map(|b| b.invocation.clone())
+    };
+
+    assert_eq!(in_file(&["backspace"]).as_deref(), Some("file:back"));
+    assert_eq!(in_file(&["shift+backspace"]).as_deref(), Some("file:speed-reset"));
+}
