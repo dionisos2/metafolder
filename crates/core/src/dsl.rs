@@ -812,10 +812,7 @@ mod tests {
     fn test_follows_empty_path_is_the_forest_root() {
         assert_eq!(
             ok(r#"mfr_path -> """#),
-            Query::Follows {
-                field: "mfr_path".into(),
-                target: FollowTarget::Path(String::new()),
-            }
+            Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path(String::new()) }
         );
     }
 
