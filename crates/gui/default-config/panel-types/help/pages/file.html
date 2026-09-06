@@ -17,11 +17,18 @@
 
 <h2>Media preview</h2>
 <p>
-  Images, video and audio play inline when the required codecs are present. The
-  panel <strong>probes support first</strong> (sinks and per-file decoders) and
-  falls back to a type glyph rather than risk crashing the WebView on a missing
-  codec; when a decoder is missing it says so instead of playing. Video and GIF
-  tiles show a still poster when <code>ffmpeg</code> is available.
+  Images show inline. A video or an audio file shows its <strong>poster
+  frame</strong> instead, and the player is built only when you ask for it —
+  <code>space</code>, or a click on the poster. Loading a player makes the
+  WebView build a decoding pipeline, and one that stalls (a machine with no GPU,
+  a heavy stream) freezes the whole window, so nothing decodes until you say so.
+  Posters come from <code>ffmpeg</code>, out of process and cached; audio, with
+  no frame to extract, shows its type glyph.
+</p>
+<p>
+  When you do ask for playback the panel <strong>probes support first</strong>
+  (sinks and per-file decoders) and says which decoder is missing instead of
+  playing — never risking the WebView on a codec that is not there.
 </p>
 
 <h2>Zoom</h2>
@@ -41,7 +48,8 @@
 <h2>Playing audio and video</h2>
 <p>
   The transport keys are a media player's (mpv's), and do nothing when the
-  preview is not showing audio or video. Each has a command, so they are
+  preview is not showing audio or video. <code>space</code> in front of a poster
+  is what loads the player and starts it. Each has a command, so they are
   rebindable like everything else.
 </p>
 <table>

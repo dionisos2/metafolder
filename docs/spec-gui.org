@@ -1088,7 +1088,7 @@ Behaviours:
 | =file:zoom-fit=           | Fit the previewed image/video to the panel (default ~=~)     |
 | =file:zoom-reset=         | Show the previewed image/video at original size (default =0=) |
 | =file:toggle-gif-animation= | Toggle the "animate" checkbox of the =file= GIF preview    |
-| =file:play-pause=         | Play/pause the previewed media (default =space=)             |
+| =file:play-pause=         | Load the player behind the poster, then play/pause it (default =space=) |
 | =file:seek-forward= / =-backward= | Seek the previewed media ±10 s (default =right= / =left=) |
 | =file:seek-forward-long= / =-backward-long= | Seek ±60 s (default =shift+right= / =shift+left=) |
 | =file:restart=            | Play the previewed media from the start                       |
@@ -2058,14 +2058,26 @@ soon as the walk back reaches the selected path). At the filesystem root, and
 with nothing shown, it does nothing. Since plain =Backspace= is taken, mpv's
 "back to normal speed" (=file:speed-reset=) keeps the key with shift.
 
-Before creating an =<audio>= / =<video>= element, the panel queries
-=GET /__media-support= on the GUI server and, when the required GStreamer
-elements are missing, shows an explanatory message instead of attempting
-playback (see [[*Media codec support]]). It then probes the file itself with
-=GET /__media-probe=: a missing decoder replaces the preview with a message
-naming it, while a decoder that is merely *too slow* for the stream raises a
-warning bar above the viewer and plays the file anyway (see
-[[*Slow decoders]]).
+An audio or video file is *not played on sight*: the preview shows its poster
+frame (=GET /thumbnail= for a video, the type glyph for audio, which has no
+frame to extract) with a hint, and the =<audio>= / =<video>= element is created
+only when playback is asked for — =file:play-pause= (default =space=) or a
+click on the poster. Mounting the element makes WebKit's web process build a
+GStreamer pipeline; one that stalls — a software decoder on a machine with no
+GPU, a 4K AV1 stream — freezes the whole window, repaint and keys included,
+until it is killed, and an interactive walk that shows one file per question
+(the tagging scripts) meets that reliably. The poster costs an out-of-process,
+cached =ffmpeg= extraction instead, and nothing is decoded in the web process
+until the viewer asks for it. Same bargain as the GIF stills above.
+
+The decoder checks therefore happen at that moment, not on display: the panel
+queries =GET /__media-support= on the GUI server and, when the required
+GStreamer elements are missing, shows an explanatory message instead of
+attempting playback (see [[*Media codec support]]). It then probes the file
+itself with =GET /__media-probe=: a missing decoder replaces the preview with a
+message naming it, while a decoder that is merely *too slow* for the stream
+raises a warning bar above the viewer and plays the file anyway (see
+[[*Slow decoders]]). Showing a media file costs neither probe.
 
 When an image or video is previewed, a toolbar offers zoom controls, mirrored
 by commands and default keybindings (active only while the =file= panel is
@@ -2108,7 +2120,8 @@ drilling into a directory listing, where the panel holds a path but no
 metarecord: the position follows =selected_metarecord=, which every panel
 publishing =selected_paths= sets alongside them.
 
-On open, a stored position is seeked to and shown in the media toolbar
+When the player is loaded, a stored position is seeked to and shown in the
+media toolbar
 (=↩ 12:34=). It is read *before the media element is created*, and the seek is
 armed before the element is given its source: the seek then happens the moment
 the duration is known, so the opening frame of the file is never shown. (Doing
@@ -2143,7 +2156,9 @@ the command input.
 
 Every one of them is a *no-op when the preview holds no media* — an image, a
 text file, a directory listing — so binding them inside the =file= panel is
-harmless. Seeks are clamped to the media (never before its start nor past its
+harmless. The exception is =file:play-pause= in front of a media poster, where
+there is no element *yet*: it is then the gesture that loads the player and
+starts it. Seeks are clamped to the media (never before its start nor past its
 end), the rate walks a fixed ladder rather than scaling freely, and raising the
 volume also unmutes (the natural way to undo a mute).
 

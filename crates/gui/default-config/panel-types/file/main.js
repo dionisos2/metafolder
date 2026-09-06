@@ -322,6 +322,11 @@ export async function mount(root, metafolder) {
   // releases it immediately.
   /** @type {HTMLMediaElement|null} */
   let activeMedia = null;
+  // The media file shown as a poster, waiting for playback to be asked for
+  // before its element is built (see `renderMedia`), or null when none is (or
+  // when it has already been mounted).
+  /** @type {{kind: 'audio'|'video', path: string, url: string, generation: number}|null} */
+  let pendingMedia = null;
 
   // --- Playback position ------------------------------------------------
   //
@@ -437,6 +442,7 @@ export async function mount(root, metafolder) {
 
   function teardownMedia() {
     teardownPlayback();
+    pendingMedia = null;
     if (!activeMedia) return;
     try {
       activeMedia.pause();
@@ -545,18 +551,49 @@ export async function mount(root, metafolder) {
     return null;
   }
 
-  // Render an <audio>/<video>. The probe runs *before* the element is created:
-  // in a GPU-less / minimal environment, building a GStreamer pipeline for a
-  // file whose codec or demuxer is missing crashes the whole WebKit web
-  // process (freezing the app for several seconds), so a reactive "create then
-  // diagnose on error" would be too late — we must not create the element at
-  // all in that case. gst-discoverer is safe; it reports the missing plugins
-  // without ever building the decode pipeline that crashes WebKit.
+  // A media file is NEVER mounted on sight. Creating an <audio>/<video> makes
+  // WebKit's web process build a GStreamer pipeline, and a pipeline that stalls
+  // — a software decoder on a machine with no GPU, a 4K AV1 stream — takes the
+  // whole window with it: no repaint, no keys, nothing to do but kill it. An
+  // interactive walk that shows one file per question (the tagging scripts) hits
+  // that reliably. So a preview shows the poster frame instead — rendered by
+  // ffmpeg out of process and cached — and the element is built only once
+  // playback is actually asked for. Same bargain as the GIF stills above.
+  // Show the poster standing in for a media file: its first frame for a video,
+  // the type glyph for audio (nothing to extract a frame from). Clicking it —
+  // like `file:play-pause` — is what loads the player.
   /**
    * @param {'audio'|'video'} kind @param {string} path @param {string} url
    * @param {number} generation
    */
-  async function renderMedia(kind, path, url, generation) {
+  function renderMedia(kind, path, url, generation) {
+    pendingMedia = { kind, path, url, generation };
+    viewer.replaceChildren(
+      el(
+        'button',
+        {
+          class: 'media-poster',
+          title: 'Load the player and play this file',
+          onclick: () => void mountMedia(true),
+        },
+        thumbnail(metafolder.guiServer, path, {
+          glyphClass: 'glyph',
+          token: metafolder.sessionToken,
+        }),
+        el('span', { class: 'hint' }, '\u25b6 play (space) \u2014 the player loads on demand'),
+      ),
+    );
+  }
+
+  // Build the element for the media waiting behind its poster, and start it when
+  // asked. Everything the old eager path did happens here instead, once, at the
+  // user's request: the decoder probe (gst-discoverer, which reports the missing
+  // plugins without ever building the pipeline that crashes WebKit), the stored
+  // playback position, the zoom target.
+  /** @param {boolean} play @returns {Promise<void>} */
+  async function mountMedia(play) {
+    if (!pendingMedia) return;
+    const { kind, path, url, generation } = pendingMedia;
     const current = () => generation === renderGeneration;
     const support = await mediaSupport();
     if (!current()) return;
@@ -586,10 +623,11 @@ export async function mount(root, metafolder) {
     // the first frame depends on is already known when loading starts.
     const stored = kind === 'video' ? await loadResume() : null;
     if (!current()) return; // the view moved on while we read
-    // `preload="metadata"`: a preview does not autoplay, so fetch only enough
-    // for the first frame and duration — never buffer/decode the whole stream.
+    // `preload="metadata"`: fetch only enough for the first frame and duration
+    // — never buffer/decode the whole stream ahead of the viewer.
     const media = el(kind, { controls: true, preload: 'metadata' });
     activeMedia = media;
+    pendingMedia = null; // mounted: play/pause is a transport control again
     // The probe found nothing missing, but keep a light fallback for other
     // runtime failures (a corrupt stream, an unreadable file).
     media.addEventListener('error', () => {
@@ -605,6 +643,7 @@ export async function mount(root, metafolder) {
     // The source goes on last, once every listener — the resume seek included —
     // is armed: nothing can load, and therefore be shown, before them.
     media.src = url;
+    if (play) void media.play().catch(() => {});
   }
 
   // Directory view: a thumbnail grid of the folder's entries, rendered in
@@ -775,7 +814,7 @@ export async function mount(root, metafolder) {
       viewer.replaceChildren(img);
       setZoomTarget(img);
     } else if (audio.has(extension) || video.has(extension)) {
-      await renderMedia(video.has(extension) ? 'video' : 'audio', path, url, generation);
+      renderMedia(video.has(extension) ? 'video' : 'audio', path, url, generation);
     } else if (text.has(extension)) {
       // A known text extension: render as text unconditionally.
       await renderText(url, generation, true);
@@ -869,13 +908,20 @@ export async function mount(root, metafolder) {
 
   void commands.register('file:play-pause', {
     label: 'File: play / pause the media',
-    handler: () =>
+    handler: async () => {
+      // Nothing mounted yet: the poster is showing, so this is the gesture that
+      // loads the player rather than a transport control.
+      if (pendingMedia) {
+        await mountMedia(true);
+        return;
+      }
       withMedia((media) => {
         // play() rejects when the browser refuses to start (autoplay policy, a
         // decode failure): the media element reports that on its own.
         if (media.paused) void media.play().catch(() => {});
         else media.pause();
-      }),
+      });
+    },
   });
 
   /** @param {number} delta seconds, negative to go back */
