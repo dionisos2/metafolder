@@ -217,6 +217,25 @@ export interface ScriptTask {
   waiting?: boolean;
 }
 
+/** What a running script's task-bar entry shows (spec-gui "Working vs. awaiting
+ *  an answer"). *Motion* is what tells the two states apart, so a working script
+ *  spins whether or not it reports counts: a determinate bar that only advances
+ *  when the user answers stands as still as a blocked one, and the entry then
+ *  reads as idle for the whole time the script works. A script awaiting an
+ *  answer says so and shows nothing moving — neither spinner nor bar. Counts,
+ *  when both bounds are known, are shown in either state. Pure, so it is
+ *  unit-tested. */
+export function scriptIndicator(task: Pick<ScriptTask, 'waiting' | 'done' | 'total'>): {
+  awaiting: boolean;
+  spinner: boolean;
+  bar: boolean;
+  counts: boolean;
+} {
+  const awaiting = task.waiting ?? false;
+  const counts = task.done != null && task.total != null;
+  return { awaiting, spinner: !awaiting, bar: counts && !awaiting, counts };
+}
+
 /** Normalizes a `script-task-changed` payload to the running-scripts list. Pure,
  *  so it is unit-tested. */
 export function scriptTasksState(payload: { tasks?: ScriptTask[] }): ScriptTask[] {

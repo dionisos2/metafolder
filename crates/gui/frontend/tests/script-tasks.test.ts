@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ownedByVisible, scriptTasksState } from '../src/lib/store.svelte';
+import { ownedByVisible, scriptIndicator, scriptTasksState } from '../src/lib/store.svelte';
 
 // The running-scripts loading indicator (spec-gui "Scripting"): the shell emits
 // `script-task-changed` with the set of scripts still running; the task bar
@@ -82,5 +82,55 @@ describe('scriptTasksState waiting flag', () => {
       tasks: [{ task: 'script-1', workspace_id: 'ws-1', label: 'x.sh' }],
     });
     expect(tasks[0].waiting ?? false).toBe(false);
+  });
+});
+
+// What the entry actually shows (spec-gui "Working vs. awaiting an answer").
+// The two states are told apart by *motion*: reporting done/total used to
+// replace the spinner with a determinate bar, and a bar that only advances
+// when the user answers is exactly as still as a blocked one — so a working
+// script looked idle. A working script spins, counts or no counts.
+describe('scriptIndicator', () => {
+  it('spins while the script works without counts', () => {
+    expect(scriptIndicator({})).toEqual({
+      awaiting: false,
+      spinner: true,
+      bar: false,
+      counts: false,
+    });
+  });
+
+  it('still spins while it works with counts, next to the determinate bar', () => {
+    expect(scriptIndicator({ done: 3, total: 10 })).toEqual({
+      awaiting: false,
+      spinner: true,
+      bar: true,
+      counts: true,
+    });
+  });
+
+  it('stops moving and says so while an answer is awaited', () => {
+    expect(scriptIndicator({ waiting: true, done: 3, total: 10 })).toEqual({
+      awaiting: true,
+      spinner: false,
+      bar: false,
+      counts: true,
+    });
+  });
+
+  it('awaits with no counts to show when the script reported none', () => {
+    expect(scriptIndicator({ waiting: true })).toEqual({
+      awaiting: true,
+      spinner: false,
+      bar: false,
+      counts: false,
+    });
+  });
+
+  it('needs both bounds before it shows a bar', () => {
+    expect(scriptIndicator({ done: 3 }).bar).toBe(false);
+    expect(scriptIndicator({ total: 10 }).bar).toBe(false);
+    // A first tick at zero is a real count, not a missing one.
+    expect(scriptIndicator({ done: 0, total: 10 }).bar).toBe(true);
   });
 });

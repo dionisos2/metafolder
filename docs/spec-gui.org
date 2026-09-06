@@ -573,9 +573,13 @@ escape does not stop a script whose question is off screen.
 
 The task-bar entry distinguishes the two states, because a script alternates
 between long daemon round-trips and questions and the user must know when it is
-their turn: it *spins* (or shows its determinate bar) while the script works,
-and while the script blocks on =POST /gui/input= / =POST /gui/prompt= it stops
-moving and says the answer is awaited.
+their turn: it *spins* while the script works — next to its determinate bar when
+it reports one, not instead of it — and while the script blocks on
+=POST /gui/input= / =POST /gui/prompt= it stops moving and says the answer is
+awaited. *Motion* is the signal, so a script that reports =done=/=total= must
+still spin: a bar that only advances between questions stands as still as a
+blocked one, and the entry then reads as idle for the whole time the script
+works.
 
 *** Answer keys
 
@@ -938,12 +942,14 @@ Running *shell scripts* (a =!= command, or the =script:run= builtin) also
 appear here as a loading indicator for the whole time the subprocess runs, so a
 slow script never looks frozen. These are GUI-side, not daemon tasks: the GUI
 tracks them itself (=script-task-changed=) rather than polling =GET /tasks=.
-The entry is labelled by the script's base name; it is a spinner by default and
-becomes a *determinate progress bar* when the script reports =done=/=total= via
-=mf gui progress= (which also sets a =phase= label for the current step, e.g.
-the file being processed). While the script is blocked on a user answer it
-neither spins nor advances: it says the answer is awaited, so "still working" and
-"your turn" are never confused. Unlike a daemon task, a script's entry is scoped
+The entry is labelled by the script's base name; it spins while the script
+works, and *gains a determinate progress bar* when the script reports
+=done=/=total= via =mf gui progress= (which also sets a =phase= label for the
+current step, e.g. the file being processed) — the spinner stays, since it is
+the motion that says "working" (see [[*Working vs. awaiting an answer]]). While
+the script is blocked on a user answer it neither spins nor advances: the bar
+goes away, the counts stay, and it says the answer is awaited, so "still
+working" and "your turn" are never confused. Unlike a daemon task, a script's entry is scoped
 to the workspaces that script owns (see [[*Script session]]) and is hidden with
 them. When the GUI launches a script it injects a per-run id as
 =METAFOLDER_GUI_TASK=, which =mf gui progress=, =mf gui input=, =mf gui prompt=

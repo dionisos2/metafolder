@@ -7,7 +7,7 @@
   // ones) is the point.
   import { onMount } from 'svelte';
   import { invoke } from '../lib/ipc';
-  import { ownedByVisible, store, visibleWorkspaces } from '../lib/store.svelte';
+  import { ownedByVisible, scriptIndicator, store, visibleWorkspaces } from '../lib/store.svelte';
 
   interface Task {
     id: string;
@@ -59,21 +59,24 @@
 {#if tasks.length > 0 || scripts.length > 0}
   <div class="task-bar" data-help-topic="task-bar">
     {#each scripts as s (s.task)}
+      {@const ind = scriptIndicator(s)}
       <div class="task" class:waiting={s.waiting}>
         <span class="label">{s.label}{s.phase ? ` · ${s.phase}` : ''}</span>
         <!-- Blocked on an answer: the script is NOT working, and the difference
              is the whole point — the spinner is how one tells "the queries are
-             still running" from "it is your turn". -->
-        {#if s.waiting}
+             still running" from "it is your turn". It therefore keeps spinning
+             next to the determinate bar, which only moves between questions and
+             would otherwise leave a working script looking idle. -->
+        {#if ind.awaiting}
           <span class="awaiting">⏎ your answer</span>
-          {#if s.done != null && s.total != null}
-            <span class="counts">{s.done}/{s.total}</span>
-          {/if}
-        {:else if s.done != null && s.total != null}
-          <progress class="bar" value={s.done} max={s.total}></progress>
-          <span class="counts">{s.done}/{s.total}</span>
         {:else}
           <span class="spinner"></span>
+        {/if}
+        {#if ind.bar}
+          <progress class="bar" value={s.done} max={s.total}></progress>
+        {/if}
+        {#if ind.counts}
+          <span class="counts">{s.done}/{s.total}</span>
         {/if}
       </div>
     {/each}
