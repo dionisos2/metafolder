@@ -1037,6 +1037,7 @@ Behaviours:
 | =metarecord-list:orphans-clear= | Orphan the scanned records (=POST /orphans/clear=: =mfr_path_old= snapshotted, =mfr_path= → =Nothing=, cascading), after a confirmation naming the count; scans first when the view is not open, and re-scans afterwards (leaving the view when nothing remains). The banner's "Clear all" button |
 | =metarecord-list:orphans-exit= | Leave the orphan view and restore the editor-driven query. The banner's "Exit" button |
 | =file-manager:reveal-folder= | Open the selected metarecord's folder in the file manager, replacing the focused panel (directory → itself, file → containing folder with the file highlighted) — see [[*Cross-panel selection]] |
+| =metarecord-list:list-folder= | List the selected metarecord's folder in =metarecord-list=, replacing the focused panel (directory → itself, file → its containing folder): the query =mfr_path -> "<folder>"= lands in the DSL zone, frozen, so it stays visible and editable — see [[*Cross-panel selection]] |
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =metarecord-list:duplicates= | Set the query to the selected metarecord's byte-identical twins — =same(mfr_duplicate_group, <uuid>)= — in the DSL zone, so it stays visible and editable |
@@ -1930,6 +1931,17 @@ can be set by scripts:
 | =metarecord-list:normal-frozen= | whether zone B is frozen (decoupled, authoritative)                        |
 | =metarecord-list:normal-query=  | zone B text — authoritative while frozen, otherwise a cache of =expand(A)= |
 
+*List a folder*: the panel also honours a =metarecord-list:folder-query=
+workspace variable (={ dsl, nonce }=), set by =metarecord-list:list-folder= from
+another panel — it puts the DSL in zone B, *shown and frozen*, and runs it. A
+query the GUI wrote is a starting point, not a mode: frozen zone B leaves it
+visible, hand-editable and composable (the same choice
+=metarecord-list:duplicates= makes, as against the orphan view's hidden
+=uuid_in= override). The request is honoured both when the panel mounts and
+while it is already mounted, the =nonce= making an identical repeated request
+re-trigger while the same request acts only once. See
+[[*Cross-panel selection]].
+
 *** =metarecord-detail= panel type
 
 When =selected_metarecord= is =null=, displays a centred "No metarecord selected"
@@ -2365,6 +2377,27 @@ switches the focused slot to =file-manager=; the =file-manager= panel stats the
 path to tell a directory from a file and navigates there (honouring the request
 both when it mounts and while already mounted, the =nonce= guaranteeing an
 identical repeated request re-triggers while the same request acts only once).
+
+*List folder*: the builtin command =metarecord-list:list-folder= (and the
+right-click menu item "Open folder in metarecord-list", offered by every panel
+showing metarecords — the file manager included, where "and now show me these as
+metarecords" is exactly the question) is the mirror image: it shows the same
+folder's *metarecords* instead of its disk entries, *replacing the focused
+panel*. The folder is resolved selection-first — the selected metarecord's own
+directory (itself when =mfr_type= is =dir=, its parent otherwise, via
+=resolve-tree=), else the selected path's (statted, since an untracked row has no
+metarecord to ask), else the file manager's current directory, else the
+repository root. A selection outside the repository is refused with a status
+message rather than silently answering for the root. Note the opposite priority
+from the =ignore:*= commands' target directory, where the file manager's
+directory is the subject and the selection only a fallback: here the clicked row
+is the subject. The folder becomes the DSL =mfr_path -> "<folder>"= (=Follows=:
+the metarecords whose =mfr_path= parent is that node — its files *and* its
+subdirectories, the contents a file manager shows), published as the workspace
+variable =metarecord-list:folder-query= (={ dsl, nonce }=) before the focused
+slot switches to =metarecord-list=. Repository-relative paths follow the
+=mfr_path= convention throughout: =""= is the repository root, a descendant is
+leading-"/"-rooted.
 
 ** Message view
 

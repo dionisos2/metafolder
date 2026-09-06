@@ -111,6 +111,11 @@ fn register_builtins(registry: &CommandRegistry) {
             "Open the selected metarecord's folder in the file manager (focused panel)",
             true,
         ),
+        (
+            "metarecord-list:list-folder",
+            "List the selected metarecord's folder in the metarecord list (focused panel)",
+            true,
+        ),
         ("recent", "Open a recently-viewed metarecord", true),
         ("file:open-with", "Open the selected file or folder with an external program", true),
         ("script:run", "Run an installed helper script", true),

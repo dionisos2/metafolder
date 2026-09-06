@@ -3,6 +3,7 @@
 // tested; dispatch routes to Tauri commands and panel iframes.
 
 import { osmMatch } from '../../../panel-shim/finder.js';
+import { folderContentsQuery, selectionFolder } from './folder';
 import { setHelpCursor } from './cursor';
 import { closeFind, openFind, stepFind } from './find';
 import { ignorePresetCandidates, ignoreTarget, resolvePresetName, targetDir } from './ignore';
@@ -415,6 +416,49 @@ async function defaultTargetDir(repo: string): Promise<string> {
     fmDir: typeof fmDir === 'string' ? fmDir : null,
     selected: selected?.uuid ? { uuid: selected.uuid } : null,
   });
+}
+
+// ── List a folder in the metarecord list (the `metarecord-list:list-folder`
+// builtin) ─────────────────────────────────────────────────────────────────
+// The mirror image of `file-manager:reveal-folder`: instead of showing a
+// metarecord's folder on the disk, it shows the folder's *metarecords* — the
+// query `mfr_path -> "<folder>"`, written into the list's normal DSL zone so it
+// stays visible, editable and composable (spec-gui "Cross-panel selection").
+
+/** Lists the selected metarecord's folder in `metarecord-list`, replacing the
+ *  focused panel. */
+async function listFolder(ws: string): Promise<void> {
+  const repo = focusedRepo();
+  if (!repo) {
+    await status('no active repository');
+    return;
+  }
+  const wsVar = <T>(key: string) => invoke<T | null>('ws_get_var', { wsId: ws, key });
+  const [selected, paths, fmDir] = await Promise.all([
+    wsVar<{ uuid: string }>('selected_metarecord'),
+    wsVar<unknown[]>('selected_paths'),
+    wsVar<string>('file-manager:dir'),
+  ]);
+  const folder = await selectionFolder({
+    call: daemonJson,
+    repo,
+    repoRoot: await repoRoot(repo),
+    selected: selected?.uuid ? { uuid: selected.uuid } : null,
+    selectedPath: Array.isArray(paths) ? (paths.find((p) => typeof p === 'string') as string) ?? null : null,
+    fmDir: typeof fmDir === 'string' ? fmDir : null,
+    isDir: async (path) => !!(await invoke<{ is_dir?: boolean }>('fs_stat', { path }))?.is_dir,
+  });
+  if (folder === null) {
+    await status('the selection lies outside the repository');
+    return;
+  }
+  await invoke('ws_set_var', {
+    wsId: ws,
+    key: 'metarecord-list:folder-query',
+    value: { dsl: folderContentsQuery(folder), nonce: Date.now() },
+  });
+  await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });
+  await status(`Listing ${folder || '/'}`);
 }
 
 /** Applies one preset to the context directory with the given mode, reporting
@@ -1102,6 +1146,12 @@ async function runCommand(name: string, args: string[], ws: string | null): Prom
         value: { path, nonce: Date.now() },
       });
       await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'file-manager' });
+      return true;
+    }
+    case 'metarecord-list:list-folder': {
+      // The metarecord-list counterpart of `file-manager:reveal-folder`: show
+      // the metarecords of the selection's folder, replacing the focused panel.
+      if (ws) await listFolder(ws);
       return true;
     }
     case 'recent':

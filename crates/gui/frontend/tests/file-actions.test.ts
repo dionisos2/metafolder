@@ -298,6 +298,7 @@ describe('metarecordMenuItems', () => {
       'Open in panel metarecord-detail',
       'Open in panel file',
       'Open folder in file manager',
+      'Open folder in metarecord-list',
       'Copy UUID',
     ]);
     item(items, 'Open in panel metarecord-detail').action!();
@@ -306,6 +307,8 @@ describe('metarecordMenuItems', () => {
     expect(commands.invoke).toHaveBeenCalledWith('panel:reveal-other file');
     item(items, 'Open folder in file manager').action!();
     expect(commands.invoke).toHaveBeenCalledWith('file-manager:reveal-folder');
+    item(items, 'Open folder in metarecord-list').action!();
+    expect(commands.invoke).toHaveBeenCalledWith('metarecord-list:list-folder');
   });
 
   test('a metarecord with no file offers only detail and Copy UUID', () => {
@@ -317,9 +320,12 @@ describe('metarecordMenuItems', () => {
   test('revealFolder:false drops the file-manager item (the panel IS the file manager)', () => {
     const { metafolder } = mockMf();
     const items = metarecordMenuItems({ metafolder, uuid: 'abc', hasFile: true, revealFolder: false });
+    // The metarecord-list listing stays: the file manager is exactly where
+    // "show me this folder as metarecords" is asked.
     expect(labels(items)).toEqual([
       'Open in panel metarecord-detail',
       'Open in panel file',
+      'Open folder in metarecord-list',
       'Copy UUID',
     ]);
   });

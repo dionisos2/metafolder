@@ -13,6 +13,10 @@ export {
   patternForPath,
 } from '../../../panel-shim/ignore.js';
 
+// The repo-root-relative path helpers live with the folder listing that also
+// needs them (see folder.ts) — one convention, one implementation.
+import { relativeToRoot } from './folder';
+
 /** One installed preset, already expanded by the backend. */
 export interface PresetInfo {
   name: string;
@@ -80,14 +84,6 @@ export interface TargetDirOptions {
   fmDir: string | null;
   /** The workspace's selected metarecord, when any. */
   selected: { uuid: string } | null;
-}
-
-/** Strips `repoRoot` off an absolute path, yielding the repo-root-relative form
- *  (`""` for the root itself). Null when the path is outside the repository. */
-function relativeToRoot(repoRoot: string, abs: string): string | null {
-  const root = repoRoot.replace(/\/+$/, '');
-  if (abs === root) return '';
-  return abs.startsWith(`${root}/`) ? abs.slice(root.length) : null;
 }
 
 /** The directory an `ignore:*` command targets (spec-gui "Ignore patterns"):

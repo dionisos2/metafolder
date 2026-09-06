@@ -311,8 +311,9 @@ export function fileMenuItems({ metafolder, repo, path, name, isDir, onChanged }
 
 /**
  * The "Metarecord" section any panel showing metarecords can offer on the record
- * under the cursor: open it in the detail panel, in the file panel and reveal
- * its folder (both only when it is backed by a file), and copy its UUID — the
+ * under the cursor: open it in the detail panel, in the file panel, reveal its
+ * folder in the file manager and list that folder's metarecords (all only when
+ * it is backed by a file), and copy its UUID — the
  * same items the metarecord list has always shown. The reveal commands read the
  * `selected_metarecord` / `selected_paths` workspace vars, so the caller must
  * have made the clicked record the selection before a menu action fires (every
@@ -354,6 +355,13 @@ export function metarecordMenuItems({
         action: () => void commands.invoke('file-manager:reveal-folder'),
       });
     }
+    // The metarecord-list counterpart: the folder's *metarecords* rather than
+    // its disk entries. Offered by every panel — the file manager included,
+    // which is precisely where "and now show me these as metarecords" is asked.
+    items.push({
+      label: 'Open folder in metarecord-list',
+      action: () => void commands.invoke('metarecord-list:list-folder'),
+    });
   }
   items.push({ label: 'Copy UUID', action: () => void copyText(uuid) });
   return items;
