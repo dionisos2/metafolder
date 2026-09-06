@@ -200,12 +200,17 @@ fn test_a_repository_writes_with_its_configured_retention() {
     let root = TempDir::new("log_retention_repo");
     let mut opened = repo::init_repository(&root, None, None, false).unwrap();
     opened.config.log_retention_revisions = Some(4);
-    let settings = DaemonSettings { log_retention_revisions: 900, ..DaemonSettings::default() };
+    let settings = DaemonSettings {
+        log_retention_revisions: 900,
+        log_retention_keep_labels: true,
+        ..DaemonSettings::default()
+    };
     let state = RepoState::from_opened_with(opened, &settings);
     assert_eq!(
         state.log_retention(),
-        Retention { revisions: 4, keep_labels: false },
-        "the repository's own override wins over the daemon default"
+        Retention { revisions: 4, keep_labels: true },
+        "each key resolves on its own: the repository overrides the count, \
+         the daemon still decides about labels"
     );
 
     for _ in 0..30 {

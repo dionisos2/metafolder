@@ -21,10 +21,14 @@ pub const DEFAULT_WATCH_QUIET_PERIOD_MS: u64 = 500;
 /// files still have somewhere to go.
 pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 
-/// Default log retention: `0` — unlimited, nothing is ever dropped. Retention
-/// is opt-in because losing history silently is exactly what the event log
-/// promises not to do (spec-event-log "Automatic retention").
-pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 0;
+/// Default log retention: 200 revisions. A revision is an *event* — a batch of
+/// filesystem changes, a command — not an operation, so 200 of them is already
+/// more history than anyone walks back through, and it keeps the database of a
+/// default installation from growing without bound. Labelled revisions are kept
+/// regardless (see `log_retention_keep_labels`), so the one kind of history a
+/// user deliberately named is the one the limit cannot take
+/// (spec-event-log "Automatic retention").
+pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 200;
 
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
@@ -48,11 +52,12 @@ pub struct DaemonSettings {
     /// reserved, and the kernel never says what is still free.
     pub watch_budget_share: u8,
     /// Revisions of history the event log keeps behind HEAD; the oldest fall
-    /// off as new ones arrive. `0` (the default) keeps everything. A repository
-    /// may override it in its own `config.json`.
+    /// off as new ones arrive. `0` keeps everything. A repository may override
+    /// it in its own `config.json`.
     pub log_retention_revisions: u64,
     /// Never trim past a labelled revision: a named checkpoint holds the log
-    /// open rather than being dropped by the limit above.
+    /// open rather than being dropped by the limit above. Default true — the
+    /// limit is on by default, so the escape hatch from it is too.
     pub log_retention_keep_labels: bool,
     /// Largest number of metarecords one watcher-driven cascade may orphan.
     /// Beyond it the cascade is skipped and a warning logged: a batch that
@@ -68,7 +73,7 @@ impl Default for DaemonSettings {
             watch_budget_share: DEFAULT_WATCH_BUDGET_SHARE,
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
             log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
-            log_retention_keep_labels: false,
+            log_retention_keep_labels: true,
         }
     }
 }
@@ -236,7 +241,12 @@ mod tests {
         assert_eq!(empty.watch_quiet_period_ms, DEFAULT_WATCH_QUIET_PERIOD_MS);
         assert_eq!(empty.watch_quiet_period(), Duration::from_millis(500));
         assert_eq!(empty.orphan_cascade_limit, DEFAULT_ORPHAN_CASCADE_LIMIT);
-        assert_eq!(empty.log_retention(), crate::log::Retention::UNLIMITED);
+        assert_eq!(
+            empty.log_retention(),
+            crate::log::Retention { revisions: DEFAULT_LOG_RETENTION_REVISIONS, keep_labels: true },
+            "history is bounded out of the box, and a named checkpoint holds it open"
+        );
+        assert_eq!(DEFAULT_LOG_RETENTION_REVISIONS, 200);
         assert_eq!(DaemonConfig::default().settings, DaemonSettings::default());
     }
 

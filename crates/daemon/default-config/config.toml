@@ -54,10 +54,13 @@ orphan-cascade-limit = 10000
 # revision HEAD stands on, and it reclaims no disk space to the filesystem —
 # the freed pages are reused by the next writes, so the database settles on a
 # plateau instead of growing (use `mf log prune` for an actual VACUUM).
-# 0 = unlimited, keep everything. Default: 0.
-log-retention-revisions = 0
+# A revision is an event — a batch of filesystem changes, a command — not an
+# operation, so the default is already far more history than one walks back
+# through. 0 = unlimited, keep everything. Default: 200.
+log-retention-revisions = 200
 
 # Whether a labelled revision (a checkpoint you named) stops the trim above:
 # with true, nothing older than the oldest label is ever dropped and the log
-# grows past the limit rather than losing the checkpoint. Default: false.
-log-retention-keep-labels = false
+# grows past the limit rather than losing the checkpoint — the escape hatch from
+# a limit that is on by default. Default: true.
+log-retention-keep-labels = true

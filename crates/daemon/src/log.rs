@@ -1053,14 +1053,11 @@ pub struct Retention {
     pub keep_labels: bool,
 }
 
-impl Default for Retention {
-    fn default() -> Self {
-        Self::UNLIMITED
-    }
-}
-
 impl Retention {
-    /// Keep everything — the behaviour of a log with no configured limit.
+    /// Keep everything. Deliberately not a `Default` impl: the default a
+    /// repository actually writes with is the configured one
+    /// (`DEFAULT_LOG_RETENTION_REVISIONS`), and a silent `Retention::default()`
+    /// meaning "unlimited" would read as agreeing with it.
     pub const UNLIMITED: Self = Self { revisions: 0, keep_labels: false };
 
     /// How far past the limit the log is allowed to drift before a trim runs.

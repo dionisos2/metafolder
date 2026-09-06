@@ -139,9 +139,9 @@ metafolder = "/ssd/meta/music/.metafolder"
   =mfr_path = Nothing= a single watcher batch may apply — see
   [[file:spec-file-tracking.org][spec-file-tracking.org]] "Mass-orphan circuit
   breaker"), and =log-retention-revisions= / =log-retention-keep-labels=
-  (defaults =0= — unlimited — and false: how many revisions of history the event
-  log keeps behind HEAD, and whether a labelled revision stops the trim; a
-  repository overrides both in its own =config.json= — see
+  (defaults 200 and true: how many revisions of history the event log keeps
+  behind HEAD — =0= for unlimited — and whether a labelled revision stops the
+  trim; a repository overrides both in its own =config.json= — see
   [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"). A key
   the daemon no longer knows is *ignored*, not fatal: a
   setting can be retired without breaking every configuration that carries it

@@ -59,9 +59,10 @@ op_1 ← op_2 ← op_3   ← branch (still reachable)
      └─ op_4           ← HEAD
 #+END_SRC
 
-No history is ever lost except where the user asked for it: an explicit prune
-(see [[*Log pruning]]) or a configured retention limit (see
-[[*Automatic retention]]), which is off by default.
+History is lost in exactly two ways, both configured: an explicit prune (see
+[[*Log pruning]]) and the retention limit (see [[*Automatic retention]]), which
+keeps the last 200 revisions out of the box. Nothing else drops an operation —
+a rollback abandons a branch, it does not delete it.
 
 ** HEAD pointer
 
@@ -412,12 +413,25 @@ but one might well want to walk back a few large ones.
 Two settings, resolved per repository (its own =config.json= where set, the
 daemon's =[settings]= otherwise):
 
-- =log-retention-revisions= — how many revisions to keep behind HEAD. =0=, the
-  default, keeps everything: silently losing history is precisely what this log
-  promises not to do, so the limit is opt-in.
+- =log-retention-revisions= — how many revisions to keep behind HEAD. Default
+  200; =0= keeps everything. The unit matters: a revision is an *event* — a
+  batch of filesystem changes, one command — not an operation, and one event
+  routinely carries thousands of operations. 200 events is therefore far more
+  history than anyone walks back through, while bounding what a default
+  installation accumulates.
 - =log-retention-keep-labels= — when true, a labelled revision is a floor:
   nothing older than the oldest label is dropped, and the log grows past the
-  limit rather than losing a named checkpoint. Default false.
+  limit rather than losing a named checkpoint. Default true, because the limit
+  is on by default: the history a user deliberately named is the one kind the
+  limit must not be allowed to take, and =mf log mark-checkpoint= is how one
+  says "keep everything from here".
+
+A limit that is on by default means an existing repository is trimmed on its
+first write after the upgrade, permanently and without asking. That is the
+intent — an unbounded log is what the default is protecting against — but it is
+a one-way door: a repository whose whole history matters wants
+=log-retention-revisions = 0=, or a label at the point worth keeping, *before*
+the daemon writes again.
 
 *** What a trim does
 
