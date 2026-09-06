@@ -15,6 +15,14 @@
 #
 # The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip.
 #
+# Resumable: an entry whose answer is already recorded is not asked again. The
+# record carries the tag (`tag`, exactly or through a more specific tag), carries
+# its negation (`negative_tag`, exactly or through a more general one), or is a
+# `mixed_tag` folder — which is descended into straight away, no question. So a
+# run interrupted halfway (skip, stop, Escape) is continued by re-running the
+# same command, and only the open questions come back. `--redo` asks everything
+# again, decided or not — the way to revise a wrong answer over a subtree.
+#
 # `mf tag` owns the tag model: it creates the entry if the vocabulary lacks it,
 # adds the ref idempotently, and applies the subsumption/exclusivity rewrites
 # (add drops the more general ancestor tags, deny drops the more specific
@@ -28,15 +36,27 @@
 # completion (the tag over the vocabulary, the folder over the repository's
 # tracked directories).
 #
-# Usage: gui-tag-folder.sh [<tag> [<folder>]]
+# Usage: gui-tag-folder.sh [--redo] [<tag> [<folder>]]
 
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=lib/mf-gui.sh
 source "$HERE/lib/mf-gui.sh"
+# Reuse the pure hierarchy helpers (in_set / has_ancestor_in / has_descendant_in)
+# that decide whether a recorded tag already answers our question; its `main`
+# guard keeps the selector itself inert when sourced.
+# shellcheck source=gui-tag-next.sh
+source "$HERE/gui-tag-next.sh"
 
-[ $# -le 2 ] || mf_die "usage: $0 [<tag> [<folder>]]"
+# `--redo`: ask every entry again, ignoring the answers already recorded.
+# (`&&` here would end the script under `set -e` whenever the flag is absent.)
+REDO=0
+if [ "${1:-}" = "--redo" ]; then
+    REDO=1
+    shift
+fi
+[ $# -le 2 ] || mf_die "usage: $0 [--redo] [<tag> [<folder>]]"
 TAG=${1:-}
 FOLDER=${2:-}
 
@@ -66,6 +86,27 @@ FOLDER_ABS=$(mf path "$FOLDER_UUID" 2>/dev/null || true)
 
 mf_gui_session_open metarecord-detail
 
+TMP=$(mf_gui_tmpdir)
+POS="$TMP/pos"
+NEG="$TMP/neg"
+MIX="$TMP/mix"
+
+# The answer already recorded for TAG on a metarecord, or nothing when the
+# question is still open. Subsumption is the one `mf tag` applies when writing:
+# a more specific positive implies TAG, a more general negative denies it.
+# One round-trip per field, stopping at the first hit — so an entry that is
+# already tagged costs a single call.
+decided() { # <uuid> -> y | n | m | ""
+    [ "$REDO" = 0 ] || return 0
+    mf metarecord -i "$1" field get tag --resolve path >"$POS"
+    if in_set "$TAG" "$POS" || has_descendant_in "$TAG" "$POS"; then printf y; return 0; fi
+    mf metarecord -i "$1" field get negative_tag --resolve path >"$NEG"
+    if in_set "$TAG" "$NEG" || has_ancestor_in "$TAG" "$NEG"; then printf n; return 0; fi
+    mf metarecord -i "$1" field get mixed_tag --resolve path >"$MIX"
+    if in_set "$TAG" "$MIX"; then printf m; fi
+    return 0
+}
+
 # Apply T over a node and its whole subtree (self + descendants). One `mf tag`
 # call per scope; the subsumption is handled server-side across the whole set.
 apply_tree() { # <uuid> <treepath> <verb: add|deny>
@@ -81,12 +122,23 @@ apply_tree() { # <uuid> <treepath> <verb: add|deny>
 # session"). Now a failed tag op aborts loudly with its own message.
 STOP=""
 SKIPPED=0
+ALREADY=0
 QUEUE=()
 
 # Ask about one entry and apply the answer. For a folder, yes/no cover the whole
 # subtree, mixed descends, skip leaves the subtree untouched.
 handle() { # <uuid> <treepath> <abs> <dir|file>
-    local uuid=$1 tp=$2 abs=$3 kind=$4 answer
+    local uuid=$1 tp=$2 abs=$3 kind=$4 answer prior
+    # Already answered in an earlier run: no question, no tag op. A mixed folder
+    # is still descended into — that is where its remaining questions live.
+    prior=$(decided "$uuid")
+    case $prior in
+        y | n) ALREADY=$((ALREADY + 1)); return 0 ;;
+        m)
+            ALREADY=$((ALREADY + 1))
+            [ "$kind" = dir ] && QUEUE+=("$uuid")
+            return 0 ;;
+    esac
     mf_gui_show_file "$abs"
     mf_gui_progress --phase "$tp"
     if [ "$kind" = dir ]; then
@@ -146,7 +198,7 @@ while [ -z "$STOP" ] && [ ${#QUEUE[@]} -gt 0 ]; do
 done
 
 case $STOP in
-    "")   mf_gui_finish "done tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped)." ;;
-    user) mf_gui_finish "stopped tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped)." ;;
+    "")   mf_gui_finish "done tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped, $ALREADY already decided)." ;;
+    user) mf_gui_finish "stopped tagging '$TAG' under $FOLDER_TP ($SKIPPED skipped, $ALREADY already decided)." ;;
     *)    mf_gui_finish "tagging '$TAG' aborted: $STOP"; exit 1 ;;
 esac

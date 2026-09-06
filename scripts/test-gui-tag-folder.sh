@@ -194,4 +194,72 @@ err=$(cat "$MF_MOCK_DIR/err")
 assert_contains "unanswerable: explains itself" "$err" "could not be answered"
 assert "unanswerable: no tag op" [ "$(mock_count 'tag -i *')" -eq 0 ]
 
+# How many times the walk asked about one entry (its question message).
+asked() { mock_count "gui message '$1' has tag*"; }
+
+# ── Case 12: an entry that already carries the tag is not asked again ────────
+# Re-running over a partly classified folder must resume, not re-ask: the top
+# folder is already `mixed_tag = music`, so the walk descends into it without a
+# question; the child that already has `tag = music` is left alone; only the
+# undecided one is asked.
+mock_reset
+setup_top
+mock_respond 'metarecord -i dir-top field get mixed_tag*'  'music'
+mock_respond 'metarecord -q mfr_path -> "/top" get'        $'file-a\nfile-b'
+mock_respond 'metarecord -i file-a field get mfr_type'     'file'
+mock_respond 'metarecord -i file-b field get mfr_type'     'file'
+mock_respond 'metarecord -i file-a field get tag*'         'music'
+mock_respond 'path --relative file-a'                      '/top/a.txt'
+mock_respond 'path --relative file-b'                      '/top/b.txt'
+mock_prompt '/top'
+mock_input y                     # answers file-b, the only question left
+out=$(bash "$SCRIPT" music); code=$?
+assert "resume: exits 0" [ "$code" -eq 0 ]
+assert "resume: the already-mixed folder is not asked" [ "$(asked /top)" -eq 0 ]
+assert "resume: no redundant mixed op on it" [ "$(mock_count 'tag -i dir-top mixed music')" -eq 0 ]
+assert "resume: it is descended into all the same" \
+    [ "$(mock_count 'metarecord -q mfr_path -> "/top" get')" -eq 1 ]
+assert "resume: the tagged child is not asked" [ "$(asked /top/a.txt)" -eq 0 ]
+assert "resume: nor re-tagged" [ "$(mock_count 'tag -i file-a *')" -eq 0 ]
+assert "resume: the undecided child is asked" [ "$(asked /top/b.txt)" -eq 1 ]
+assert "resume: and answered" [ "$(mock_count 'tag -i file-b add music')" -eq 1 ]
+assert_contains "resume: the summary counts the decided entries" "$out" "2 already"
+
+# ── Case 13: a decision that subsumes the asked tag counts as decided ────────
+# `tag = music/jazz` implies music (a specific positive implies its ancestors),
+# and `negative_tag = music` blocks music/jazz and its whole subtree.
+mock_reset
+setup_top
+mock_respond 'metarecord -i dir-top field get mixed_tag*'  'music'
+mock_respond 'metarecord -q mfr_path -> "/top" get'        $'file-a\nfile-b\nfile-c'
+mock_respond 'metarecord -i file-* field get mfr_type'     'file'
+mock_respond 'metarecord -i file-a field get tag*'         'music/jazz'
+mock_respond 'metarecord -i file-b field get negative_tag*' 'music'
+mock_respond 'path --relative file-a'                      '/top/a.txt'
+mock_respond 'path --relative file-b'                      '/top/b.txt'
+mock_respond 'path --relative file-c'                      '/top/c.txt'
+mock_prompt '/top'
+mock_input y
+out=$(bash "$SCRIPT" music); code=$?
+assert "subsume: exits 0" [ "$code" -eq 0 ]
+assert "subsume: a more specific positive answers the question" [ "$(asked /top/a.txt)" -eq 0 ]
+assert "subsume: an exact negative answers it too" [ "$(asked /top/b.txt)" -eq 0 ]
+assert "subsume: the undecided child is still asked" [ "$(asked /top/c.txt)" -eq 1 ]
+
+# ── Case 14: --redo asks everything again, decided or not ───────────────────
+mock_reset
+setup_top
+mock_respond 'metarecord -i dir-top field get mixed_tag*'  'music'
+mock_respond 'metarecord -q mfr_path -> "/top" get'        $'file-a'
+mock_respond 'metarecord -i file-a field get mfr_type'     'file'
+mock_respond 'metarecord -i file-a field get tag*'         'music'
+mock_respond 'path --relative file-a'                      '/top/a.txt'
+mock_prompt '/top'
+mock_input m y                   # the top folder again, then the tagged child
+out=$(bash "$SCRIPT" --redo music); code=$?
+assert "redo: exits 0" [ "$code" -eq 0 ]
+assert "redo: the decided folder is asked again" [ "$(asked /top)" -eq 1 ]
+assert "redo: the decided child is asked again" [ "$(asked /top/a.txt)" -eq 1 ]
+assert "redo: and answered" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+
 assert_summary
