@@ -92,7 +92,7 @@
 "t e" = { command = "panel:set-type ref-list" }
 "t b" = { command = "panel:set-type trash" }
 "t y" = { command = "panel:set-type sync" }
-"t p" = { command = "panel:set-type help" }
+"t h" = { command = "panel:set-type help" }
 "t v" = { command = "panel:set-type recent" }
 "t u" = { command = "panel:set-type duplicates" }
 

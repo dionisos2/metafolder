@@ -357,6 +357,46 @@ async fn test_renamed_directory_keeps_being_watched() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Renaming a directory re-watches its *whole* subtree, not just the top of it.
+///
+/// notify removes the watch on a departing directory recursively (it acts on
+/// inotify's `MOVED_FROM`), so every descendant loses its watch too; only the
+/// arrival of the new name re-places them, by walking the subtree. Miss that
+/// walk and the rename looks fine while everything below the second level has
+/// quietly stopped being watched.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_renaming_a_directory_keeps_its_whole_subtree_watched() {
+    let (app, repo, root) = watched_repo("deeprename").await;
+
+    std::fs::create_dir_all(root.join("A/x/y")).unwrap();
+    std::fs::write(root.join("A/x/y/one.txt"), b"1").unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_paths(&app, &repo, &["", "A", "A/x", "A/x/y", "A/x/y/one.txt"]),
+    )
+    .await
+    .expect("the nested subtree is tracked");
+
+    std::fs::rename(root.join("A"), root.join("B")).unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_paths(&app, &repo, &["", "B", "B/x", "B/x/y", "B/x/y/one.txt"]),
+    )
+    .await
+    .expect("the whole subtree is recorded under the new name");
+
+    // The deepest directory must still be watched under its new path.
+    std::fs::write(root.join("B/x/y/two.txt"), b"2").unwrap();
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        wait_for_paths(&app, &repo, &["", "B", "B/x", "B/x/y", "B/x/y/one.txt", "B/x/y/two.txt"]),
+    )
+    .await
+    .expect("a file created deep inside the renamed directory must still be seen");
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// A file moved between two watched directories keeps its metarecord and lands
 /// at the new path (one revision, not delete + create).
 #[tokio::test(flavor = "multi_thread")]

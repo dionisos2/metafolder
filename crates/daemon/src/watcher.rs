@@ -88,8 +88,13 @@ impl WatcherInner {
     }
 
     /// Forgets `dir` and every descendant from the watched set *without*
-    /// calling unwatch — used when the kernel already dropped the watches
-    /// because the directory was deleted or moved away.
+    /// calling unwatch — the watches are already gone by the time a departure
+    /// is seen. For a deletion the kernel drops them itself; for a move it does
+    /// **not** (an inotify watch follows the inode, not the path), but notify
+    /// removes the whole subtree's watches when it translates the `MOVED_FROM`.
+    /// Either way what remains here is bookkeeping. Guarded by
+    /// `tests/watch_leak.rs`, which counts the process's inotify watches: a
+    /// notify that stopped doing this would leak one per departed directory.
     fn forget_subtree(&self, dir: &Path) {
         self.watched.lock_recover().retain(|p| !p.starts_with(dir));
     }
