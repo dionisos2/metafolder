@@ -242,7 +242,7 @@ pub fn relink_reported(
             result.conflicts += 1;
             continue;
         }
-        adopt(&mut conn, &mut cache, &root, orphan, uuid, &rel)?;
+        adopt(&mut conn, &mut cache, &root, orphan, uuid, &rel, repo.log_retention())?;
         // Each orphan re-homes once.
         if let Some(list) = by_size.get_mut(&size) {
             list.retain(|c| c.uuid != orphan);
@@ -291,8 +291,9 @@ fn adopt(
     orphan: Uuid,
     holder: Uuid,
     rel: &str,
+    retention: crate::log::Retention,
 ) -> Result<(), ApiError> {
-    let mut writer = Writer::begin(conn, None)?;
+    let mut writer = Writer::begin_with_retention(conn, None, retention)?;
     // The holder leaves the position first: one metarecord holds a given tree
     // position, so the orphan cannot take it while the holder is still there.
     writer.delete_metarecord(holder)?;

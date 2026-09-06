@@ -199,7 +199,7 @@ pub fn scan_reported(
             if done.is_multiple_of(PROGRESS_STEP as u64) {
                 reporter.progress("partial", Some(done), Some(total));
                 if reporter.is_cancelled() {
-                    flush(&mut conn, &mut pending)?;
+                    flush(repo.log_retention(), &mut conn, &mut pending)?;
                     return Err(cancelled());
                 }
             }
@@ -214,14 +214,14 @@ pub fn scan_reported(
                 Err(_) => result.skipped += 1,
             }
             if pending.len() >= BATCH_RECORDS {
-                flush(&mut conn, &mut pending)?;
+                flush(repo.log_retention(), &mut conn, &mut pending)?;
             }
         }
         // Within a size class, a partial hash occurring once eliminates its
         // file: nothing else can be identical to it.
         retain_shared(members, |m| m.partial.clone());
     }
-    flush(&mut conn, &mut pending)?;
+    flush(repo.log_retention(), &mut conn, &mut pending)?;
     classes.retain(|(_, members)| members.len() > 1);
 
     // ── Phase 3: full hashes, and the groups ────────────────────────────────
@@ -242,7 +242,7 @@ pub fn scan_reported(
                 Some(total_bytes.max(0) as u64),
             );
             if reporter.is_cancelled() {
-                flush(&mut conn, &mut pending)?;
+                flush(repo.log_retention(), &mut conn, &mut pending)?;
                 return Err(cancelled());
             }
             match hash_step(&root, member, &stored, opts, Fingerprint::Full) {
@@ -256,14 +256,15 @@ pub fn scan_reported(
                 Err(_) => result.skipped += 1,
             }
             if pending.len() >= BATCH_RECORDS {
-                flush(&mut conn, &mut pending)?;
+                flush(repo.log_retention(), &mut conn, &mut pending)?;
             }
         }
-        flush(&mut conn, &mut pending)?;
+        flush(repo.log_retention(), &mut conn, &mut pending)?;
         retain_shared(members, |m| m.full.clone());
 
         // This class's groups are written as it completes, not at the end.
         write_class_groups(
+            repo.log_retention(),
             &mut conn,
             *size,
             members,
@@ -278,7 +279,16 @@ pub fn scan_reported(
     // ── Phase 4: prune what no longer holds ─────────────────────────────────
     // Only reached when the phases above completed: a cancelled scan leaves
     // stale groups for the next complete run rather than a half-pruned state.
-    prune(&mut conn, &existing, &mut links, &grouped, &touched, scope.as_ref(), reporter)?;
+    prune(
+        repo.log_retention(),
+        &mut conn,
+        &existing,
+        &mut links,
+        &grouped,
+        &touched,
+        scope.as_ref(),
+        reporter,
+    )?;
 
     Ok(result)
 }
@@ -353,13 +363,14 @@ fn push_hash(
 
 /// Commits one batch of field writes as a single revision.
 fn flush(
+    retention: crate::log::Retention,
     conn: &mut rusqlite::Connection,
     pending: &mut Vec<(Uuid, Field)>,
 ) -> Result<(), ApiError> {
     if pending.is_empty() {
         return Ok(());
     }
-    let mut writer = Writer::begin(conn, None).map_err(ApiError::from)?;
+    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
     for (uuid, field) in pending.drain(..) {
         writer
             .set_field_as(OpType::FileModified, uuid, &field.name, field.value)
@@ -405,6 +416,7 @@ fn reclaimable_of(size: i64, members: &[Candidate]) -> i64 {
 /// at it.
 #[allow(clippy::too_many_arguments)]
 fn write_class_groups(
+    retention: crate::log::Retention,
     conn: &mut rusqlite::Connection,
     size: i64,
     members: &[Candidate],
@@ -425,7 +437,7 @@ fn write_class_groups(
         return Ok(());
     }
 
-    let mut writer = Writer::begin(conn, None).map_err(ApiError::from)?;
+    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
     for (hash, group_members) in by_hash {
         let owned: Vec<Candidate> = group_members
             .iter()
@@ -507,7 +519,9 @@ fn write_class_groups(
 
 /// Removes what the scan disproved: the group link of a record the scan did not
 /// place in a group, and every group left with fewer than two members.
+#[allow(clippy::too_many_arguments)]
 fn prune(
+    retention: crate::log::Retention,
     conn: &mut rusqlite::Connection,
     existing: &HashMap<(i64, String), db::DuplicateGroup>,
     links: &mut HashMap<Uuid, Uuid>,
@@ -518,7 +532,7 @@ fn prune(
 ) -> Result<(), ApiError> {
     let total = existing.len() as u64;
     reporter.progress("prune", Some(0), Some(total));
-    let mut writer = Writer::begin(conn, None).map_err(ApiError::from)?;
+    let mut writer = Writer::begin_with_retention(conn, None, retention).map_err(ApiError::from)?;
 
     // Driven by the records that *currently carry a link* — the map loaded at
     // the start and kept current by the writes above, so this asks the database

@@ -457,9 +457,10 @@ lands on it and the trim resumes, collecting the abandoned branch with
 everything else below the cut (a branch rooted before the cutoff loses its
 ancestry, so it goes with it rather than becoming unreachable).
 
-A trim also only happens on a write that goes through the repository's writer —
-which is every write of a loaded repository. A repository that is not being
-written to keeps whatever it has.
+A trim only happens on a write, and every write of a loaded repository carries
+the repository's retention — the exception is the root metarecord written when a
+repository is created, which has no history to trim. A repository that is not
+being written to keeps whatever it has.
 
 ** Coordinated navigation
 Coordinated navigation handles =file_moved= operations by coupling each

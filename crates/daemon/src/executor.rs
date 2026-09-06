@@ -384,7 +384,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.
     let mut revisions_from_restore = 0;
-    revisions_from_restore += flush_restorations(&mut conn, &mut cache)?;
+    revisions_from_restore += flush_restorations(&mut conn, &mut cache, repo.log_retention())?;
 
     // Taken whole: whatever the watcher buffers while this flush runs lands in
     // the now-empty buffer and is picked up by the next round. On any path that
@@ -545,7 +545,11 @@ fn resync_cache(conn: &Connection, cache: &mut TreeCache) {
 /// Replays restoration ops left by skipped coordinated-rollback steps as a
 /// single revision (spec-event-log "skip"), then deletes them. The tree cache
 /// is cleared afterwards because `mfr_path` restorations move tree positions.
-fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<usize> {
+fn flush_restorations(
+    conn: &mut Connection,
+    cache: &mut TreeCache,
+    retention: crate::log::Retention,
+) -> Result<usize> {
     let mut stmt = conn.prepare(
         "SELECT id, op_type, path, from_path, to_path FROM pending_operation
          WHERE op_type LIKE 'restore_%' ORDER BY id",
@@ -565,7 +569,7 @@ fn flush_restorations(conn: &mut Connection, cache: &mut TreeCache) -> Result<us
         Uuid::parse_str(s).with_context(|| format!("invalid uuid in restoration op: {s}"))
     };
 
-    let mut writer = Writer::begin(conn, None)?;
+    let mut writer = Writer::begin_with_retention(conn, None, retention)?;
     for (_, op_type, path, from_path, to_path) in &rows {
         let entity = parse_uuid(path.as_deref().context("restoration op missing entity")?)?;
         match op_type.as_str() {

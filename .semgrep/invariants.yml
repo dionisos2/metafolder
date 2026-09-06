@@ -31,6 +31,26 @@ rules:
           metavariable: $SQL
           regex: (?i).*((insert\s+into|update|delete\s+from)\s+(field|metarecord|metarecord_db|operation|op_snapshot|log_head)|(insert\s+into|delete\s+from)\s+revision)\b.*
 
+  - id: mf-writer-bypasses-retention
+    languages: [rust]
+    severity: ERROR
+    message: >-
+      `Writer::begin` keeps the whole history whatever the configuration says.
+      A write on a loaded repository must go through `RepoState::writer` (or
+      carry a `Retention` explicitly), or the repository's configured log
+      retention silently does not apply to it — spec-event-log "Automatic
+      retention". `repo.rs` is the one exception: it writes the root metarecord
+      of a repository that does not exist yet.
+    paths:
+      include:
+        - crates/daemon/src/**
+      exclude:
+        - crates/daemon/src/repo.rs
+        - crates/daemon/src/log.rs
+    patterns:
+      - pattern: Writer::begin($C, $L)
+      - pattern-not-inside: mod tests { ... }
+
   - id: mf-mfr-path-nothing-outside-watcher
     languages: [rust]
     severity: ERROR
