@@ -42,7 +42,7 @@
   <tbody>
     <tr><td><code>l</code> list · <code>d</code> detail · <code>f</code> file · <code>m</code> file-manager · <code>o</code> log · <code>r</code> repos</td><td></td></tr>
     <tr><td><code>g</code> message · <code>w</code> workspace-info · <code>t</code> treeref · <code>e</code> ref-list · <code>v</code> recent</td><td></td></tr>
-    <tr><td><code>b</code> trash · <code>y</code> sync · <code>p</code> help</td><td></td></tr>
+    <tr><td><code>b</code> trash · <code>y</code> sync · <code>p</code> help · <code>u</code> duplicates</td><td></td></tr>
   </tbody>
 </table>
 
@@ -98,6 +98,20 @@
     <tr><td><code>Shift+↑</code> / <code>Shift+↓</code> / <code>Ctrl+m</code></td><td>louder / quieter / mute</td></tr>
   </tbody>
 </table>
+
+<h2>Duplicates</h2>
+<table>
+  <tbody>
+    <tr><td><code>Enter</code></td><td>expand a group into its copies (again on a copy: collapse)</td></tr>
+    <tr><td><code>Shift+k</code></td><td>keep the copy under the cursor — the group's other copies go to the
+      <a data-help-page="trash">trash</a> (confirmed, and it lists them first)</td></tr>
+    <tr><td><code>Delete</code></td><td>trash the copy under the cursor, and only it</td></tr>
+  </tbody>
+</table>
+<p>A group whose copies are down to one is dropped from the list: a lone file is
+  not a duplicate of anything. <code>+</code> in front of a copy means it shares
+  an inode with another copy in the same group — removing that name frees no
+  space.</p>
 
 <h2>Global &amp; editing</h2>
 <table>

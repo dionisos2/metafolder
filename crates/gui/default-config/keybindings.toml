@@ -261,6 +261,7 @@
   { command = "trash:refresh", when = "trash" },
   { command = "recent:refresh", when = "recent" },
   { command = "repos:refresh", when = "repos" },
+  { command = "duplicates:refresh", when = "duplicates" },
 ]
 
 # Delete: send the selected metarecord's file to the trash (spec-trash.org),
@@ -276,7 +277,15 @@
   { command = "metarecord:trash", when = "treeref" },
   { command = "metarecord:trash", when = "ref-list" },
   { command = "trash:delete", when = "trash" },
+  # In the duplicates panel it is the copy under the cursor that goes, and the
+  # panel re-counts the group it left (spec-duplicates "GUI") — which
+  # `metarecord:trash` on the shared selection could not do.
+  { command = "duplicates:trash", when = "duplicates" },
 ]
+
+# duplicates: keep the copy under the cursor and trash the group's others. Plain
+# "k" is vim-up everywhere, so the choice of survivor takes the shifted key.
+"shift+k" = { command = "duplicates:keep", when = "duplicates" }
 
 # file-manager: filesystem operations (clipboard, rename, duplicate, create).
 # All scoped to the panel; it has no text-input focus, so these plain

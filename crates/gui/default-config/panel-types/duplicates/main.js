@@ -3,11 +3,20 @@
 // expands one into its members' paths, `+` marking a member that shares an
 // inode with another — removing that name frees nothing.
 //
-// The panel holds no deletion logic of its own: highlighting a member row
-// publishes it as `selected_metarecord`, so `metarecord:trash` and the shared
-// file actions already apply, with their existing confirmations. There is
-// deliberately no "remove all but one": choosing which copy survives is the
-// user's, and this panel's job is to make that choice informed.
+// Highlighting a row publishes it as `selected_metarecord` — a member, or the
+// group itself on a header row, so the detail panel can show what the row
+// summarises. The shared file actions therefore apply to a member as they do
+// anywhere else.
+//
+// On top of them the panel owns one deletion action, `duplicates:keep`: trash
+// every OTHER copy of the group under the cursor. The survivor is still the
+// user's explicit choice — it is the row the cursor sits on — which is what the
+// spec's "no remove all but one" was protecting; what it cost was making the
+// obvious next step (five copies, keep this one) five separate confirmations.
+// Both it and `duplicates:trash` re-count the group they emptied, and drop it
+// when a single copy is left, the way the daemon does (spec-duplicates "Leaving
+// a group") — a stale count is worst exactly here, where it is the number the
+// deletion decision is made on.
 
 import { byId, el, field, formatValue } from '/__ui.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
@@ -45,15 +54,34 @@ function text(rec, name) {
   return f ? formatValue(f.value) : '';
 }
 
+/** Bytes freed by reducing a group to a single file: its size times the number
+ *  of distinct inodes minus one. Names sharing an inode are one file under
+ *  several names, and removing one frees nothing (spec-duplicates "Hard
+ *  links"); a member with no `mfr_inode` has a single name, so it counts as its
+ *  own inode. The daemon's `reclaimable_of`, in JS: the panel recomputes the
+ *  number itself after a trash rather than waiting a watcher flush to read it
+ *  back, so the two must agree.
+ *  @param {number} size @param {{ inode?: string }[]} members */
+export function reclaimableOf(size, members) {
+  const distinct = new Set();
+  let singles = 0;
+  for (const member of members) {
+    if (member.inode) distinct.add(member.inode);
+    else singles += 1;
+  }
+  return size * Math.max(0, distinct.size + singles - 1);
+}
+
 /**
- * @typedef {{ uuid: string, path: string, absPath: string, linked: boolean }} Member
+ * @typedef {{ uuid: string, path: string, absPath: string, inode: string }} Member
  * @typedef {{ uuid: string, hash: string, size: number, count: number,
  *   reclaimable: number, expanded: boolean, members: Member[] | null }} Group
  *
  * @param {ShadowRoot} root @param {MetafolderApi} metafolder
  */
 export function mount(root, metafolder) {
-  const { daemon, workspace, commands, statusBar } = metafolder;
+  const { daemon, workspace, commands, statusBar, trash } = metafolder;
+  const statusMessageMs = metafolder.settings?.statusMessageMs ?? 5000;
 
   /** @type {string|null} */
   let repo = null;
@@ -66,6 +94,11 @@ export function mount(root, metafolder) {
    *  @type {{ group: Group, member: Member | null }[]} */
   let rows = [];
   let cursorIndex = -1;
+  /** The value of the last `metarecords:dirty` we published ourselves, so the
+   *  reload it triggers everywhere else does not undo our own local update. */
+  let ownNudge = 0;
+  /** @type {ReturnType<typeof setTimeout>[]} */
+  let catchupTimers = [];
 
   const entriesList = byId(root, 'entries');
   const placeholder = byId(root, 'placeholder');
@@ -117,10 +150,11 @@ export function mount(root, metafolder) {
                   : {}),
               },
               [
-                el('span', { class: 'linked' }, row.member.linked ? '+' : ' '),
+                el('span', { class: 'linked' }, row.member.inode ? '+' : ' '),
                 el('span', { class: 'path' }, row.member.path),
               ],
             );
+      li.dataset.mfRow = String(i);
       li.addEventListener('click', () => void select(i));
       li.addEventListener('dblclick', () => void activate());
       entriesList.appendChild(li);
@@ -138,10 +172,12 @@ export function mount(root, metafolder) {
     cursorIndex = Math.max(0, Math.min(index, rows.length - 1));
     render();
     // A member row is an ordinary metarecord selection, which is what makes the
-    // shared file actions apply without this panel implementing any of them.
+    // shared file actions apply without this panel implementing any of them. A
+    // group row publishes the *group* metarecord — it is one too (hash, size,
+    // counters), and the detail panel is where its fields can be read.
     const row = rows[cursorIndex];
-    if (row?.member && repo !== null) {
-      await workspace.set('selected_metarecord', { uuid: row.member.uuid, repo });
+    if (row && repo !== null) {
+      await workspace.set('selected_metarecord', { uuid: row.member?.uuid ?? row.group.uuid, repo });
     }
   }
 
@@ -187,13 +223,118 @@ export function mount(root, metafolder) {
           uuid: rec.uuid,
           path: rel === '' ? '(no path)' : rel,
           absPath: rel === '' || repoRoot === null ? '' : `${repoRoot}${rel}`,
-          linked: text(rec, 'mfr_inode') !== '',
+          // The inode identity itself, not just "is hard-linked": it is what
+          // `reclaimableOf` counts once when a copy leaves the group.
+          inode: text(rec, 'mfr_inode'),
         };
       });
     } catch (error) {
       await statusBar.error(error);
       group.members = [];
     }
+  }
+
+  /** The member under the cursor, or `null` with a status line explaining what
+   *  the cursor should be on instead. */
+  async function memberUnderCursor() {
+    const row = rows[cursorIndex];
+    if (!row || row.member === null) {
+      await statusBar.message(
+        'Expand a group (Enter) and put the cursor on a copy first',
+        statusMessageMs,
+      );
+      return null;
+    }
+    return row;
+  }
+
+  /** `duplicates:keep` — keep the copy under the cursor, trash the group's
+   *  others. The confirmation names them all: this is the one action here that
+   *  touches more than one file. */
+  async function keepThisOne() {
+    const row = await memberUnderCursor();
+    if (!row || row.member === null) return;
+    const others = (row.group.members ?? []).filter((m) => m !== row.member);
+    if (others.length === 0) return;
+    const list = others.map((m) => `  ${m.path}`).join('\n');
+    const freed = humanSize(row.group.reclaimable);
+    if (
+      !confirm(
+        `Keep ${row.member.path}\n\nand send its ${others.length} other ` +
+          `cop${others.length === 1 ? 'y' : 'ies'} to the trash?\n\n${list}\n\n` +
+          `Up to ${freed} is reclaimed once the trash is pruned.`,
+      )
+    ) {
+      return;
+    }
+    await trashMembers(row.group, others);
+  }
+
+  /** `duplicates:trash` — the copy under the cursor, and only it. */
+  async function trashThisOne() {
+    const row = await memberUnderCursor();
+    if (!row || row.member === null) return;
+    const left = (row.group.members ?? []).length - 1;
+    const consequence =
+      left < 2 ? 'Its group then holds a single copy, and goes.' : `Its group keeps ${left} copies.`;
+    if (!confirm(`Send ${row.member.path} to the trash?\n\n${consequence}`)) return;
+    await trashMembers(row.group, [row.member]);
+  }
+
+  /** Trashes `victims` one by one, then re-counts what is left of their group.
+   *  A failure stops the run — the ones already trashed still left the group.
+   *  @param {Group} group @param {Member[]} victims */
+  async function trashMembers(group, victims) {
+    const r = repo;
+    if (r === null) return;
+    /** @type {Member[]} */
+    const gone = [];
+    for (const victim of victims) {
+      if (victim.absPath === '') {
+        await statusBar.error(`no filesystem path for ${victim.path}`);
+        continue;
+      }
+      try {
+        await trash.trashPath(r, victim.absPath);
+        gone.push(victim);
+      } catch (error) {
+        await statusBar.error(error);
+        break;
+      }
+    }
+    if (gone.length === 0) return;
+    applyDeparture(group, gone);
+    await statusBar.message(
+      `Trashed ${gone.length} cop${gone.length === 1 ? 'y' : 'ies'} — restore from the trash panel`,
+      statusMessageMs,
+    );
+    await notifyChanged();
+  }
+
+  /** Tells the other panels the repository changed, and schedules our own
+   *  reloads for after the watcher has recorded it (the 7 s background poll is
+   *  the backstop; the metarecord list schedules its catch-up the same way). */
+  async function notifyChanged() {
+    for (const timer of catchupTimers) clearTimeout(timer);
+    catchupTimers = [900, 2500].map((delay) => setTimeout(() => void load(), delay));
+    ownNudge = Date.now();
+    await workspace.set('metarecords:dirty', ownNudge);
+  }
+
+  /** The daemon re-counts the group the moment the watcher records the removal
+   *  (spec-duplicates "Leaving a group"); that lands ~500 ms later, so the same
+   *  arithmetic runs here at once and the reload below confirms it.
+   *  @param {Group} group @param {Member[]} gone */
+  function applyDeparture(group, gone) {
+    const left = (group.members ?? []).filter((m) => !gone.includes(m));
+    if (left.length < 2) {
+      groups = groups.filter((g) => g !== group); // dissolved, as in the daemon
+    } else {
+      group.members = left;
+      group.count = left.length;
+      group.reclaimable = reclaimableOf(group.size, left);
+    }
+    render();
   }
 
   async function load() {
@@ -217,20 +358,44 @@ export function mount(root, metafolder) {
           limit: PAGE,
         })
       );
+      // A reload is not a reset: a scan finishing, or the watcher catching up
+      // with a trash, must not fold the group the user is working inside.
+      const open = new Set(groups.filter((g) => g.expanded).map((g) => g.uuid));
+      const at = rows[cursorIndex];
       groups = (page.results ?? []).map((rec) => ({
         uuid: rec.uuid,
         hash: text(rec, 'mfr_content_hash'),
         size: num(rec, 'mfr_content_size'),
         count: num(rec, 'mfr_duplicate_count'),
         reclaimable: num(rec, 'mfr_duplicate_reclaimable'),
-        expanded: false,
+        expanded: open.has(rec.uuid),
         members: null,
       }));
+      for (const group of groups) {
+        if (group.expanded) await loadMembers(group);
+      }
+      restoreCursor(at);
     } catch (error) {
       await statusBar.error(error);
       return;
     }
     render();
+  }
+
+  /** Puts the cursor back on the row it was on before a reload, by identity
+   *  rather than by index: rows come and go under it.
+   *  @param {{ group: Group, member: Member | null } | undefined} at */
+  function restoreCursor(at) {
+    if (!at) return;
+    flatten();
+    const found = rows.findIndex(
+      (row) =>
+        row.group.uuid === at.group.uuid &&
+        (at.member === null ? row.member === null : row.member?.uuid === at.member.uuid),
+    );
+    // The row itself may be gone (its copy was trashed): fall back to its group.
+    cursorIndex =
+      found >= 0 ? found : rows.findIndex((row) => row.group.uuid === at.group.uuid);
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
@@ -252,9 +417,40 @@ export function mount(root, metafolder) {
     label: 'Duplicates: expand or collapse the group under the cursor',
     handler: () => activate(),
   });
+  void commands.register('duplicates:keep', {
+    label: 'Duplicates: keep the copy under the cursor, trash the others',
+    handler: () => keepThisOne(),
+  });
+  void commands.register('duplicates:trash', {
+    label: 'Duplicates: send the copy under the cursor to the trash',
+    handler: () => trashThisOne(),
+  });
 
-  // Right-click a member row: the shared metarecord and file actions.
-  metafolder.contextMenu.addDefaultItems(rowActionsProvider(metafolder, () => repo));
+  // Right-click a member row: this panel's own choice of survivor first (it is
+  // what one comes here for), then the shared metarecord and file actions the
+  // row provider already offers. The click moves the cursor, so the items act
+  // on the row under the pointer and not on wherever the keyboard left off.
+  const rowActions = rowActionsProvider(metafolder, () => repo);
+  metafolder.contextMenu.addDefaultItems((event) => {
+    const shared = rowActions(event);
+    const clicked = event
+      .composedPath()
+      .find((node) => /** @type {HTMLElement} */ (node)?.dataset?.mfRow !== undefined);
+    if (!clicked) return shared;
+    const index = Number(/** @type {HTMLElement} */ (clicked).dataset.mfRow);
+    void select(index);
+    const row = rows[index];
+    if (!row?.member) return shared;
+    const others = (row.group.members ?? []).length - 1;
+    return [
+      {
+        label: `Keep this copy, trash the other ${others}`,
+        action: () => void keepThisOne(),
+      },
+      '-',
+      ...shared,
+    ];
+  });
 
   async function start() {
     repo = /** @type {string|null} */ ((await workspace.get('active_repo')) ?? null);
@@ -265,9 +461,18 @@ export function mount(root, metafolder) {
   const deferredStart = () => void start();
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
   // A scan writes group metarecords, so the ordinary dirty flag is the signal
-  // to reload — no special coupling to the scan command.
-  workspace.onChange('metarecords:dirty', () => {
+  // to reload — no special coupling to the scan command. Our own nudge is the
+  // exception: the trash we just did reaches the daemon only after the
+  // watcher's ~500 ms quiet period, so reloading on it would paint the numbers
+  // we have just corrected back to their stale values. The catch-up timers read
+  // the settled truth instead.
+  workspace.onChange('metarecords:dirty', (value) => {
+    if (value === ownNudge) return;
     if (repo !== null) void load();
   });
   metafolder.whenVisible(deferredStart);
+
+  return () => {
+    for (const timer of catchupTimers) clearTimeout(timer);
+  };
 }

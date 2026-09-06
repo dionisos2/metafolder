@@ -2490,12 +2490,19 @@ The *duplicates panel* (=panel:set-type duplicates=, suggested default =t u=)
 lists the groups — reclaimable space, size, member count, hash — worst first,
 each expanding to its members' paths with a marker on those sharing an inode
 with another member. It is an ordinary query view over
-=mf_schema = "duplicate_group"= sorted on =mfr_duplicate_reclaimable=, and its
-members are an ordinary metarecord selection, so it needs *no deletion logic of
-its own*: =metarecord:trash= and the shared file actions already apply, with
-their existing confirmations. Nothing in this panel deletes a file implicitly,
-and there is deliberately no "remove all but one" action — choosing which copy
-survives is the user's, and the panel's job is to make that choice informed.
+=mf_schema = "duplicate_group"= sorted on =mfr_duplicate_reclaimable=. Every
+row is a metarecord selection — a member, or the group metarecord on a header
+row — so =metarecord:trash= and the shared file actions apply as they do
+anywhere else, and the detail panel can show a group's own fields.
+
+Deleting duplicates is what one opens this panel for, so it owns two actions of
+its own, detailed in [[file:spec-duplicates.org][spec-duplicates.org]] "GUI":
+=duplicates:keep= (=shift+k=) trashes every copy of the group *except* the row
+under the cursor, and =duplicates:trash= (=Delete=) trashes that row alone. Both
+confirm first, both name what they touch, and both re-count the group they
+emptied (dropping it when one copy is left) as the daemon does. Nothing deletes
+a file implicitly and nothing picks a survivor for you — the surviving copy is
+always the row the cursor is on.
 
 =metarecord-list:duplicates= works from the other direction: it sets the
 panel's DSL query to =same(mfr_duplicate_group, <selected uuid>)=
