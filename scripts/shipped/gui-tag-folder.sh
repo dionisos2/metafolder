@@ -15,6 +15,13 @@
 #
 # The arrow keys answer as well: → yes, ← no, ↑ mixed, ↓ skip.
 #
+# Every question carries what is left to answer ("— 7 left, 2 folders to open")
+# and the GUI task bar shows the same as a bar. Neither is a total known in
+# advance: the walk discovers a folder's contents only when a "mixed" answer
+# opens it, so the count is the entries left in the folder being walked plus one
+# per mixed folder still to open — a lower bound that rises as the walk goes
+# deeper and lands on the real figure at the end.
+#
 # Resumable: an entry whose answer is already recorded is not asked again. The
 # record carries the tag (`tag`, exactly or through a more specific tag), carries
 # its negation (`negative_tag`, exactly or through a more general one), or is a
@@ -125,10 +132,26 @@ SKIPPED=0
 ALREADY=0
 QUEUE=()
 
+# How far the walk has got. A folder's whole subtree is discovered one listing at
+# a time (a "mixed" answer is what reveals the next one), so there is no total to
+# know up front: DONE counts the entries visited, LEFT_HERE the ones still to
+# visit in the listing being walked (the current one included), and each mixed
+# folder waiting in QUEUE stands for at least one more entry. DONE + LEFT_HERE -
+# 1 + |QUEUE| is therefore a *lower bound* on the work — the bar's total grows
+# whenever a mixed answer opens a new folder, and lands exactly on DONE at the
+# end.
+DONE=0
+LEFT_HERE=1
+
 # Ask about one entry and apply the answer. For a folder, yes/no cover the whole
 # subtree, mixed descends, skip leaves the subtree untouched.
 handle() { # <uuid> <treepath> <abs> <dir|file>
-    local uuid=$1 tp=$2 abs=$3 kind=$4 answer prior
+    local uuid=$1 tp=$2 abs=$3 kind=$4 answer prior left counter
+    left=$((LEFT_HERE + ${#QUEUE[@]}))
+    DONE=$((DONE + 1))
+    # Report progress before the decision, so a resume scanning past entries it
+    # has already answered still moves the bar instead of looking frozen.
+    mf_gui_progress --done "$DONE" --total "$((DONE + left - 1))" --phase "$tp"
     # Already answered in an earlier run: no question, no tag op. A mixed folder
     # is still descended into — that is where its remaining questions live.
     prior=$(decided "$uuid")
@@ -140,14 +163,22 @@ handle() { # <uuid> <treepath> <abs> <dir|file>
             return 0 ;;
     esac
     mf_gui_show_file "$abs"
-    mf_gui_progress --phase "$tp"
+    # What is left to answer, spelled out next to the question: the entries of
+    # this folder, then the mixed folders still to open (each one a listing of
+    # its own, so its children cannot be counted yet).
+    counter="$LEFT_HERE left"
+    case ${#QUEUE[@]} in
+        0) ;;
+        1) counter="$counter, 1 folder to open" ;;
+        *) counter="$counter, ${#QUEUE[@]} folders to open" ;;
+    esac
     if [ "$kind" = dir ]; then
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop" \
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [m ↑] mixed   [s ↓] skip   [q] stop   — $counter" \
             y n m s q)
     else
         answer=$(mf_gui_ask_answer \
-            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop" \
+            "'$tp' has tag '$TAG'?   [y →] oui   [n ←] non   [s ↓] skip   [q] stop   — $counter" \
             y n s q)
     fi
     case $answer in
@@ -175,14 +206,21 @@ handle() { # <uuid> <treepath> <abs> <dir|file>
 }
 
 # Ask about the top folder; recurse into mixed folders breadth-first.
+LEFT_HERE=1
 handle "$FOLDER_UUID" "$FOLDER_TP" "$FOLDER_ABS" dir
 
 while [ -z "$STOP" ] && [ ${#QUEUE[@]} -gt 0 ]; do
     parent=${QUEUE[0]}; QUEUE=("${QUEUE[@]:1}")
     parent_tp=$(mf path --relative "$parent")
-    while IFS= read -r child || [ -n "$child" ]; do
+    # The whole listing up front, so the walk knows how many entries this folder
+    # still owes an answer (`mapfile`, like gui-tag-pair.sh's worklist).
+    mapfile -t children < <(mf metarecord -q "mfr_path -> \"$(mf_gui_query_path "$parent_tp")\"" get)
+    seen=0
+    for child in ${children+"${children[@]}"}; do
         [ -n "$child" ] || continue
         [ -z "$STOP" ] || break
+        seen=$((seen + 1))
+        LEFT_HERE=$((${#children[@]} - seen + 1))
         # No `| head -n1` here: with `pipefail`, head closing the pipe early can
         # fail the whole read and kill the run.
         ctype=$(mf metarecord -i "$child" field get mfr_type)
@@ -194,7 +232,7 @@ while [ -z "$STOP" ] && [ ${#QUEUE[@]} -gt 0 ]; do
         else
             handle "$child" "$ctp" "$cabs" file
         fi
-    done < <(mf metarecord -q "mfr_path -> \"$(mf_gui_query_path "$parent_tp")\"" get)
+    done
 done
 
 case $STOP in

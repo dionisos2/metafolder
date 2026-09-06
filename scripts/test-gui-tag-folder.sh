@@ -220,6 +220,8 @@ assert "resume: no redundant mixed op on it" [ "$(mock_count 'tag -i dir-top mix
 assert "resume: it is descended into all the same" \
     [ "$(mock_count 'metarecord -q mfr_path -> "/top" get')" -eq 1 ]
 assert "resume: the tagged child is not asked" [ "$(asked /top/a.txt)" -eq 0 ]
+assert "resume: but the progress bar still walks past it" \
+    [ "$(mock_count 'gui progress*--phase /top/a.txt')" -eq 1 ]
 assert "resume: nor re-tagged" [ "$(mock_count 'tag -i file-a *')" -eq 0 ]
 assert "resume: the undecided child is asked" [ "$(asked /top/b.txt)" -eq 1 ]
 assert "resume: and answered" [ "$(mock_count 'tag -i file-b add music')" -eq 1 ]
@@ -261,5 +263,34 @@ assert "redo: exits 0" [ "$code" -eq 0 ]
 assert "redo: the decided folder is asked again" [ "$(asked /top)" -eq 1 ]
 assert "redo: the decided child is asked again" [ "$(asked /top/a.txt)" -eq 1 ]
 assert "redo: and answered" [ "$(mock_count 'tag -i file-a add music')" -eq 1 ]
+
+# ── Case 15: the remaining count is reported, on the bar and in the question ──
+# The walk cannot know its total up front (a "mixed" answer adds children), so
+# the count is what is *known* to be left: the entries still to visit in the
+# folder being walked, plus one per mixed folder queued for a later descent.
+mock_reset
+setup_top
+mock_respond 'metarecord -q mfr_path -> "/top" get'     $'file-a\ndir-sub\nfile-b'
+mock_respond 'metarecord -i file-a field get mfr_type'  'file'
+mock_respond 'metarecord -i dir-sub field get mfr_type' 'dir'
+mock_respond 'metarecord -i file-b field get mfr_type'  'file'
+mock_respond 'path --relative file-a'                   '/top/a.txt'
+mock_respond 'path --relative dir-sub'                  '/top/sub'
+mock_respond 'path --relative file-b'                   '/top/b.txt'
+mock_prompt '/top'
+#   top=m  a.txt=y  sub=m (queued)  b.txt=y ; then sub is opened and is empty
+mock_input m y m y
+out=$(bash "$SCRIPT" music); code=$?
+assert "count: exits 0" [ "$code" -eq 0 ]
+assert "count: the top folder is 1 of 1 known" \
+    [ "$(mock_count 'gui progress --done 1 --total 1 --phase /top')" -eq 1 ]
+assert "count: its three children raise the total" \
+    [ "$(mock_count 'gui progress --done 2 --total 4 --phase /top/a.txt')" -eq 1 ]
+assert "count: the question says how many are left here" \
+    [ "$(mock_count "gui message*3 left*")" -eq 1 ]
+assert "count: a queued mixed folder adds to the total" \
+    [ "$(mock_count 'gui progress --done 4 --total 5 --phase /top/b.txt')" -eq 1 ]
+assert "count: and is named in the question" \
+    [ "$(mock_count "gui message*1 left, 1 folder to open*")" -eq 1 ]
 
 assert_summary
