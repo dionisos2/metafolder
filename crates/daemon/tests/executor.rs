@@ -479,6 +479,16 @@ fn test_modify_data_invalidates_the_whole_content_derived_family() {
         w.set_field(uuid, "mfr_hash_mtime", Value::DateTime(1_700_000_000_000)).unwrap();
         w.set_field(uuid, "mfr_hash_size", Value::Int(2)).unwrap();
         w.set_field(uuid, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        // Two other members, so the departure below leaves a group that still
+        // holds a pair: what is under test here is the invalidation, not the
+        // dissolution.
+        for other in ["/o1.txt", "/o2.txt"] {
+            let o = w
+                .create_metarecord(vec![Field::new("mf_name", Value::String(other.into()))])
+                .unwrap()
+                .uuid;
+            w.set_field(o, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        }
         w.commit().unwrap();
         group
     };
@@ -490,8 +500,10 @@ fn test_modify_data_invalidates_the_whole_content_derived_family() {
     for name in metafolder_daemon::fingerprint::CONTENT_DERIVED_FIELDS {
         assert_eq!(field_value(&repo, uuid, name), None, "{name} should be invalidated");
     }
-    // The group metarecord itself survives — pruning it is the scan's job.
+    // The group itself still has two members, so it survives — with its count
+    // brought down to what is left of it (spec-duplicates "Leaving a group").
     assert!(field_value(&repo, group, "mf_schema").is_some());
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
 
     std::fs::remove_dir_all(root).unwrap();
 }
@@ -588,6 +600,59 @@ fn test_remove_clears_the_duplicate_group_but_keeps_the_hashes() {
         Some(Value::String("bbbb".into())),
         "the hashes must survive an orphaning — they re-home the file"
     );
+
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn test_removing_a_member_dissolves_a_pair_and_updates_a_bigger_group() {
+    // The path the GUI's trash action takes: the file moves away, the watcher
+    // orphans its metarecord, and the group it left must stop claiming it
+    // (spec-duplicates "Leaving a group").
+    let (repo, root, _) = setup("removecounters");
+    for name in ["a.txt", "b.txt", "c.txt"] {
+        write_file(&root, name, b"same bytes");
+        enqueue(&repo, &[FsEvent::Create(format!("/{name}").as_str().into())]);
+    }
+    executor::flush_pending(&repo).unwrap();
+    let members: Vec<Uuid> =
+        ["/a.txt", "/b.txt", "/c.txt"].iter().map(|p| resolve(&repo, p).unwrap()).collect();
+    let group = {
+        let mut conn = repo.conn.lock().unwrap();
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let group = w
+            .create_metarecord(vec![
+                Field::new("mf_schema", Value::String("duplicate_group".into())),
+                Field::new("mfr_content_size", Value::Int(10)),
+                Field::new("mfr_duplicate_count", Value::Int(3)),
+                Field::new("mfr_duplicate_reclaimable", Value::Int(20)),
+            ])
+            .unwrap()
+            .uuid;
+        for &m in &members {
+            w.set_field(m, "mfr_duplicate_group", Value::Ref(group)).unwrap();
+        }
+        w.commit().unwrap();
+        group
+    };
+
+    std::fs::remove_file(root.join("c.txt")).unwrap();
+    enqueue(&repo, &[FsEvent::Remove("/c.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(10)));
+
+    // Down to one member: the group is gone, and so is the survivor's link.
+    std::fs::remove_file(root.join("b.txt")).unwrap();
+    enqueue(&repo, &[FsEvent::Remove("/b.txt".into())]);
+    executor::flush_pending(&repo).unwrap();
+
+    {
+        let conn = repo.conn.lock().unwrap();
+        assert!(db::get_metarecord(&conn, group).unwrap().is_none(), "the group is deleted");
+    }
+    assert_eq!(field_value(&repo, members[0], "mfr_duplicate_group"), None);
 
     std::fs::remove_dir_all(root).unwrap();
 }

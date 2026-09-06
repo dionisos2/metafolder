@@ -24,7 +24,7 @@ pub const CONTENT_DERIVED_FIELDS: &[&str] = &[
     "mfr_full_hash",
     "mfr_hash_mtime",
     "mfr_hash_size",
-    "mfr_duplicate_group",
+    crate::duplicates::GROUP_FIELD,
 ];
 
 /// Hex xxHash3 of the first and last 4 KiB of the file (the chunks overlap

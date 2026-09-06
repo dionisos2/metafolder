@@ -1136,6 +1136,35 @@ pub fn duplicate_groups(conn: &Connection) -> Result<HashMap<(i64, String), Dupl
     Ok(out)
 }
 
+/// The metarecords currently pointing at `group` through `mfr_duplicate_group`.
+///
+/// One indexed lookup, not a walk of the field: `idx_field_reverse` is keyed on
+/// `(field_name, value_uuid)`, which is exactly this question. It is a *partial*
+/// index (`value_type IN ('ref', 'externalref')`), and SQLite only uses one when
+/// the query's `WHERE` visibly implies that predicate — `value_type = 'ref'`
+/// does not qualify, so the `IN` is spelled out here and the `ref` rows are kept
+/// in Rust. Without it this is the quadratic pattern documented on
+/// [`hashed_orphans`]: one whole-field scan per departing member.
+pub const DUPLICATE_GROUP_MEMBERS_SQL: &str = "\
+SELECT metarecord_uuid, value_type FROM field INDEXED BY idx_field_reverse
+         WHERE field_name = 'mfr_duplicate_group' AND value_uuid = ?1
+           AND value_type IN ('ref', 'externalref')";
+
+pub fn duplicate_group_members(conn: &Connection, group: Uuid) -> Result<Vec<Uuid>> {
+    let mut stmt = conn.prepare_cached(DUPLICATE_GROUP_MEMBERS_SQL)?;
+    let rows = stmt.query_map(params![uuid_to_bytes(group)], |r| {
+        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, String>(1)?))
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (owner, value_type) = row?;
+        if value_type == "ref" {
+            out.push(bytes_to_uuid(owner)?);
+        }
+    }
+    Ok(out)
+}
+
 /// A `duplicate_group` metarecord as stored: its uuid and the counters the last
 /// scan wrote, so a re-scan can tell an unchanged counter from a changed one
 /// without asking the database again.

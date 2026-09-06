@@ -10,7 +10,7 @@ use metafolder_daemon::duplicates::{self, ScanOptions, ScanResult, GROUP_SCHEMA}
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
 use metafolder_daemon::tasks::Reporter;
-use metafolder_daemon::{db, reconcile, repo};
+use metafolder_daemon::{db, orphans, reconcile, repo};
 use uuid::Uuid;
 
 mod common;
@@ -399,4 +399,75 @@ fn a_cancelled_scan_keeps_the_hashes_it_computed() {
     // A later, uncancelled scan reaches the same answer.
     let result = duplicates::scan(&repo, &ScanOptions::default()).unwrap();
     assert_eq!(result.groups, 1);
+}
+
+// ── Leaving a group ──────────────────────────────────────────────────────────
+
+#[test]
+fn orphaning_a_member_updates_the_group_counters() {
+    // Deleting one copy makes the stored counters wrong the moment it happens;
+    // they are recomputed there and then, not at the next scan
+    // (spec-duplicates "Leaving a group").
+    let (repo, root) = setup("leave");
+    for name in ["x", "y", "z"] {
+        write_file(&root, &format!("{name}.bin"), b"triplicate");
+    }
+    populate_and_scan(&repo);
+    let x = resolve(&repo, "/x.bin");
+    let z = resolve(&repo, "/z.bin");
+    let group = group_of(&repo, x).unwrap();
+
+    std::fs::remove_file(root.join("z.bin")).unwrap();
+    assert_eq!(orphans::clear_orphans(&repo, &[z]).unwrap(), 1);
+
+    assert_eq!(group_of(&repo, z), None, "the orphan left the group");
+    assert_eq!(group_of(&repo, x), Some(group), "the survivors keep it");
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
+    assert_eq!(
+        field_value(&repo, group, "mfr_duplicate_reclaimable"),
+        Some(Value::Int(10)),
+        "one of the two remaining copies is still recoverable"
+    );
+}
+
+#[test]
+fn a_group_left_with_one_member_is_dissolved_at_once() {
+    // A single file is not a duplicate of anything: the group goes, and the
+    // survivor's own link with it — without waiting for a complete scan.
+    let (repo, root) = setup("dissolve");
+    write_file(&root, "a.txt", b"pair of two");
+    write_file(&root, "b.txt", b"pair of two");
+    populate_and_scan(&repo);
+    let a = resolve(&repo, "/a.txt");
+    let b = resolve(&repo, "/b.txt");
+    let group = group_of(&repo, a).unwrap();
+
+    std::fs::remove_file(root.join("b.txt")).unwrap();
+    orphans::clear_orphans(&repo, &[b]).unwrap();
+
+    assert_eq!(group_of(&repo, a), None, "the survivor is no longer a duplicate");
+    assert_eq!(group_of(&repo, b), None);
+    let conn = repo.conn.lock().unwrap();
+    assert!(db::get_metarecord(&conn, group).unwrap().is_none(), "the group is deleted");
+}
+
+#[test]
+fn losing_one_of_two_hard_linked_names_frees_nothing_more() {
+    // The count drops with the name, but the bytes were already counted once
+    // for the inode the two names share, so the reclaimable space does not move
+    // (spec-duplicates "Hard links").
+    let (repo, root) = setup("leavelink");
+    write_file(&root, "orig", b"linked content!!");
+    std::fs::hard_link(root.join("orig"), root.join("link")).unwrap();
+    write_file(&root, "copy", b"linked content!!");
+    populate_and_scan(&repo);
+    let link = resolve(&repo, "/link");
+    let group = group_of(&repo, resolve(&repo, "/orig")).unwrap();
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(16)));
+
+    std::fs::remove_file(root.join("link")).unwrap();
+    orphans::clear_orphans(&repo, &[link]).unwrap();
+
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_count"), Some(Value::Int(2)));
+    assert_eq!(field_value(&repo, group, "mfr_duplicate_reclaimable"), Some(Value::Int(16)));
 }

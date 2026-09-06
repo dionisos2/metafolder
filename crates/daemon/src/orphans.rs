@@ -100,8 +100,9 @@ pub fn clear_orphans(repo: &RepoState, uuids: &[Uuid]) -> Result<usize, ApiError
             }
             writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
             // Same transition as the watcher's, so it carries the same consequence:
-            // an orphan is no longer a live duplicate (spec-duplicates "Invariant").
-            writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
+            // an orphan is no longer a live duplicate, and the group it leaves is
+            // re-counted (spec-duplicates "Leaving a group").
+            crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, u)?;
         }
         cache.apply_remove("mfr_path", uuid);
         cleared += 1;

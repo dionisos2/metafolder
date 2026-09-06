@@ -199,8 +199,37 @@ duplicate". Three writers maintain it:
   there — =mf orphan relink= re-homes a re-appearing file by fingerprint match,
   which needs them (spec-file-tracking "Relinking orphans").
 
-A group left with fewer than two live members is stale but harmless; it is
-removed by the next complete scan.
+*** Leaving a group
+
+Clearing =mfr_duplicate_group= is never a bare field clear: the group the member
+leaves is *re-counted in the same transaction* (=duplicates::leave_group=), so
+=mfr_duplicate_count= and =mfr_duplicate_reclaimable= are recomputed over the
+members that remain — the count from their number, the reclaimable space by the
+distinct-inode rule of "Hard links", read back from the survivors' =mfr_inode=.
+Only what actually changed is written: dropping one of two hard-linked names
+lowers the count and frees nothing, and a redundant write would be a redundant
+operation in the log.
+
+*A group left with fewer than two members is dissolved at once* — the group
+metarecord is deleted and the survivor's own =mfr_duplicate_group= goes with it,
+since a file with no twin is not a duplicate. Waiting for the next complete scan
+(the earlier rule) was wrong for a reason worth recording: these counters are
+*displayed*, by =mf duplicate list= and by the GUI panel, to someone deciding
+which copy to delete. A number that is stale is not harmless when it is the
+number the decision is made on — "2 remaining" against a group that holds one
+file invites a deletion that frees nothing and loses the last copy.
+
+Who leaves, and when: the watcher's =Remove= (which is the path the GUI's trash
+action takes) and its content =Modify=, =mf orphan clear=, and a rollback that
+clears a path. The reverse lookup — the members still pointing at a group — seeks
+=idx_field_reverse=; asking it by walking the field's rows would make every
+departure cost the repository (=db::duplicate_group_members=).
+
+*What still needs a scan* is the opposite direction: a file that *becomes* a
+duplicate. Nothing outside the scan ever sets =mfr_duplicate_group=, so a group
+never grows between scans, and one whose members' content changed under a
+same-second, same-size rewrite stays wrong until the next one — the same limit
+the hash stamp has.
 
 * Daemon
 

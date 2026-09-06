@@ -28,6 +28,10 @@ use crate::tasks::Reporter;
 /// The `mf_schema` value marking a group metarecord.
 pub const GROUP_SCHEMA: &str = "duplicate_group";
 
+/// The field a member points at its group with. One spelling, because leaving a
+/// group is never a bare field clear: see [`leave_group`].
+pub const GROUP_FIELD: &str = "mfr_duplicate_group";
+
 /// Records per revision when writing the hash cache. A transaction per file
 /// would cost one `fsync` each (spec-event-log); one transaction for the whole
 /// scan would throw away every hash computed so far when the scan is cancelled
@@ -398,17 +402,99 @@ fn retain_shared(members: &mut Vec<Candidate>, key: impl Fn(&Candidate) -> Optio
 /// links"). A member with no `mfr_inode` has a single name, so it counts as its
 /// own inode.
 fn reclaimable_of(size: i64, members: &[Candidate]) -> i64 {
+    reclaimable_from_inodes(size, members.iter().map(|m| m.inode.as_deref()))
+}
+
+/// [`reclaimable_of`] over bare inode identities, so the incremental update
+/// (which reads them back from the database) counts exactly as the scan does.
+fn reclaimable_from_inodes<'a>(size: i64, inodes: impl Iterator<Item = Option<&'a str>>) -> i64 {
     let mut distinct: HashSet<&str> = HashSet::new();
     let mut singles = 0i64;
-    for member in members {
-        match &member.inode {
+    for inode in inodes {
+        match inode {
             Some(inode) => {
-                distinct.insert(inode.as_str());
+                distinct.insert(inode);
             }
             None => singles += 1,
         }
     }
     size * (distinct.len() as i64 + singles - 1).max(0)
+}
+
+/// Takes `uuid` out of the duplicate group it belongs to, if any, and leaves the
+/// group's stored counters true (spec-duplicates "Leaving a group").
+///
+/// Every way of ceasing to be a live duplicate goes through here — the watcher's
+/// removals and content changes, `mf orphan clear`, a rollback's path clearing —
+/// so a group never outlives its members' departure by a whole scan. Writing
+/// only the link and letting the numbers rot was the old rule; a count the
+/// interfaces display is not an internal detail, and "stale but harmless" is
+/// false the moment it is shown to someone deciding what to delete.
+pub fn leave_group(writer: &mut Writer, op: OpType, uuid: Uuid) -> anyhow::Result<()> {
+    let group = db::get_field_rows_named(writer.connection(), uuid, GROUP_FIELD)?
+        .into_iter()
+        .find_map(|row| match row.value {
+            Value::Ref(group) => Some(group),
+            _ => None,
+        });
+    writer.clear_field_as(op, uuid, GROUP_FIELD)?;
+    match group {
+        Some(group) => refresh_group(writer, op, group),
+        None => Ok(()),
+    }
+}
+
+/// Recomputes one group's counters from the members that still point at it, and
+/// dissolves it when fewer than two remain: a file with no twin is not a
+/// duplicate, so the survivor's own link goes with the group metarecord
+/// (spec-duplicates "Invariant").
+pub fn refresh_group(writer: &mut Writer, op: OpType, group: Uuid) -> anyhow::Result<()> {
+    let members = db::duplicate_group_members(writer.connection(), group)?;
+    if members.len() < 2 {
+        for member in members {
+            writer.clear_field_as(op, member, GROUP_FIELD)?;
+        }
+        // The group may already be gone (two members of one group departing in
+        // the same flush); deleting it twice is an error, not a no-op.
+        if db::get_version(writer.connection(), group)?.is_some() {
+            writer.delete_metarecord(group)?;
+        }
+        return Ok(());
+    }
+    let size = int_field(writer.connection(), group, "mfr_content_size")?.unwrap_or(0);
+    let mut inodes = Vec::with_capacity(members.len());
+    for &member in &members {
+        inodes.push(
+            db::get_field_rows_named(writer.connection(), member, "mfr_inode")?
+                .into_iter()
+                .find_map(|row| match row.value {
+                    Value::String(inode) => Some(inode),
+                    _ => None,
+                }),
+        );
+    }
+    let count = members.len() as i64;
+    let reclaimable = reclaimable_from_inodes(size, inodes.iter().map(|i| i.as_deref()));
+    // Only what changed: removing one of two hard-linked names drops the count
+    // without freeing a byte, and a redundant write would be a redundant
+    // operation in the log.
+    let stored_count = int_field(writer.connection(), group, "mfr_duplicate_count")?;
+    let stored_reclaimable = int_field(writer.connection(), group, "mfr_duplicate_reclaimable")?;
+    if stored_count != Some(count) {
+        writer.set_field_as(op, group, "mfr_duplicate_count", Value::Int(count))?;
+    }
+    if stored_reclaimable != Some(reclaimable) {
+        writer.set_field_as(op, group, "mfr_duplicate_reclaimable", Value::Int(reclaimable))?;
+    }
+    Ok(())
+}
+
+/// The first `Int` value of `name` on `uuid`, if it has one.
+fn int_field(conn: &rusqlite::Connection, uuid: Uuid, name: &str) -> anyhow::Result<Option<i64>> {
+    Ok(db::get_field_rows_named(conn, uuid, name)?.into_iter().find_map(|row| match row.value {
+        Value::Int(v) => Some(v),
+        _ => None,
+    }))
 }
 
 /// Writes one size class's groups, in one revision: find-or-create each group

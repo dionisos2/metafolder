@@ -1588,6 +1588,27 @@ fn test_reopening_a_migrated_database_runs_no_ddl() {
 /// pins the join order but says nothing about the index, which is why each of
 /// these carries `INDEXED BY`.
 #[test]
+fn test_a_groups_members_are_a_reverse_index_lookup() {
+    // "Who points at this group?" is asked once per departing member
+    // (spec-duplicates "Leaving a group"), so it must seek `idx_field_reverse`
+    // and not walk every `mfr_duplicate_group` row in the repository. SQLite
+    // only uses that *partial* index when the query's WHERE implies its
+    // predicate, which `value_type = 'ref'` alone does not.
+    let conn = test_conn();
+    // This one takes a parameter, so it cannot go through `query_plan`.
+    let sql = format!("EXPLAIN QUERY PLAN {}", db::DUPLICATE_GROUP_MEMBERS_SQL);
+    let mut stmt = conn.prepare(&sql).unwrap();
+    let plan: String = stmt
+        .query_map(rusqlite::params![vec![0u8; 16]], |r| r.get::<_, String>(3))
+        .unwrap()
+        .collect::<Result<Vec<String>, _>>()
+        .unwrap()
+        .join(" | ");
+    assert!(plan.contains("idx_field_reverse"), "the reverse index is not used: {plan}");
+    assert_eq!(plan.matches("SCAN").count(), 0, "a scan crept in: {plan}");
+}
+
+#[test]
 fn test_the_repository_wide_reads_seek_their_correlated_rows() {
     let conn = test_conn();
     for (what, sql) in [

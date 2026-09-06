@@ -588,12 +588,16 @@ fn flush_restorations(
             }
             "restore_clear_path" => {
                 writer.set_field_as(OpType::FileDeleted, entity, "mfr_path", Value::Nothing)?;
-                writer.clear_field_as(OpType::FileDeleted, entity, "mfr_duplicate_group")?;
+                crate::duplicates::leave_group(&mut writer, OpType::FileDeleted, entity)?;
             }
             "restore_clear_hashes" => {
                 for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
+                    if *name == crate::duplicates::GROUP_FIELD {
+                        continue;
+                    }
                     writer.clear_field_as(OpType::FileModified, entity, name)?;
                 }
+                crate::duplicates::leave_group(&mut writer, OpType::FileModified, entity)?;
             }
             other => anyhow::bail!("unknown restoration op_type '{other}'"),
         }
@@ -926,10 +930,11 @@ impl Apply<'_, '_> {
                 )?;
             }
             self.writer.set_field_as(OpType::FileDeleted, u, "mfr_path", Value::Nothing)?;
-            // No file, no duplicate. The *hashes* stay: re-homing this record
-            // when the file reappears is exactly what they are for
-            // (spec-duplicates "Invariant").
-            self.writer.clear_field_as(OpType::FileDeleted, u, "mfr_duplicate_group")?;
+            // No file, no duplicate — and the group it leaves is re-counted on
+            // the spot. The *hashes* stay: re-homing this record when the file
+            // reappears is exactly what they are for (spec-duplicates
+            // "Invariant", "Leaving a group").
+            crate::duplicates::leave_group(&mut self.writer, OpType::FileDeleted, u)?;
         }
         self.cache.apply_remove("mfr_path", uuid);
         Ok(())
@@ -1117,10 +1122,16 @@ impl Apply<'_, '_> {
         }
         clear_absent_conditional_stat_fields(&mut self.writer, uuid, &stat)?;
         // The content changed, so everything derived from it is stale — the
-        // hashes, their stamp, and the duplicate group they justified.
+        // hashes, their stamp, and the duplicate group they justified. The group
+        // link is the one that is never a bare clear: `leave_group` also
+        // re-counts the group this file has just stopped belonging to.
         for name in crate::fingerprint::CONTENT_DERIVED_FIELDS {
+            if *name == crate::duplicates::GROUP_FIELD {
+                continue;
+            }
             self.writer.clear_field_as(OpType::FileModified, uuid, name)?;
         }
+        crate::duplicates::leave_group(&mut self.writer, OpType::FileModified, uuid)?;
         Ok(())
     }
 
