@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use metafolder_core::metarecord::{Field, MetaRecord, Value, ZERO_UUID};
-use metafolder_core::query::{FollowTarget, OsmMode, Query};
+use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 
 use crate::db;
 use crate::error::ApiError;
@@ -621,6 +621,16 @@ pub fn osm_name_nodes(conn: &Connection, field: &str, term: &str) -> Result<Vec<
 
 /// Every metarecord with a `tree_ref` value in `field` (the unpruned candidate
 /// set for an all-short-terms or empty OSM path query).
+/// The DSL spelling of an aspect, for error messages.
+fn aspect_name(aspect: Aspect) -> &'static str {
+    match aspect {
+        Aspect::Raw => "raw",
+        Aspect::Value => "value",
+        Aspect::Parent => "parent",
+        Aspect::Path => "path",
+    }
+}
+
 fn all_tree_ref_nodes(conn: &Connection, field: &str) -> Result<Vec<Uuid>, ApiError> {
     let mut stmt = conn
         .prepare(
@@ -777,6 +787,7 @@ fn float_from_cursor(key: &serde_json::Value) -> Result<f64, ApiError> {
 
 // ── Compiler ──────────────────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CmpOp {
     Eq,
     Lt,
@@ -798,6 +809,35 @@ impl CmpOp {
 
     fn is_ordered(&self) -> bool {
         !matches!(self, CmpOp::Eq)
+    }
+}
+
+/// What a predicate does with the value it reads. The aspect rules turn on
+/// this and on the field's type (spec-query "Field aspects"): on a `TreeRef`,
+/// `raw` is the `(parent, name)` couple, which can be compared for equality but
+/// neither ordered nor regex-matched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReadKind {
+    Equality,
+    Ordered,
+    Regex,
+}
+
+impl ReadKind {
+    fn of(op: CmpOp) -> Self {
+        if op.is_ordered() {
+            ReadKind::Ordered
+        } else {
+            ReadKind::Equality
+        }
+    }
+
+    fn describe(self) -> &'static str {
+        match self {
+            ReadKind::Equality => "equality",
+            ReadKind::Ordered => "ordered comparison",
+            ReadKind::Regex => "MATCHES",
+        }
     }
 }
 
@@ -864,22 +904,8 @@ impl<'a> Compiler<'a> {
 
     fn compile_node(&mut self, q: &Query) -> Result<String, ApiError> {
         match q {
-            Query::IsPresent { field } => {
-                self.push_text(field);
-                Ok(self.add(
-                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND value_type != 'nothing'"
-                        .to_string(),
-                ))
-            }
-            Query::IsAbsent { field } => {
-                self.push_text(field);
-                Ok(self.add(
-                    "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
-                     WHERE field_name = ? AND value_type = 'nothing'"
-                        .to_string(),
-                ))
-            }
+            Query::IsPresent { field, aspect } => self.presence(field, *aspect, true),
+            Query::IsAbsent { field, aspect } => self.presence(field, *aspect, false),
             Query::IsUnknown { field } => {
                 self.push_text(field);
                 Ok(self.add(
@@ -889,16 +915,30 @@ impl<'a> Compiler<'a> {
                 ))
             }
 
-            Query::Eq { field, value } => self.comparison(field, value, CmpOp::Eq),
-            Query::Lt { field, value } => self.comparison(field, value, CmpOp::Lt),
-            Query::Lte { field, value } => self.comparison(field, value, CmpOp::Lte),
-            Query::Gt { field, value } => self.comparison(field, value, CmpOp::Gt),
-            Query::Gte { field, value } => self.comparison(field, value, CmpOp::Gte),
-            Query::Neq { field, value } => {
+            Query::Eq { field, value, aspect } => self.comparison(field, value, CmpOp::Eq, *aspect),
+            Query::Lt { field, value, aspect } => self.comparison(field, value, CmpOp::Lt, *aspect),
+            Query::Lte { field, value, aspect } => {
+                self.comparison(field, value, CmpOp::Lte, *aspect)
+            }
+            Query::Gt { field, value, aspect } => self.comparison(field, value, CmpOp::Gt, *aspect),
+            Query::Gte { field, value, aspect } => {
+                self.comparison(field, value, CmpOp::Gte, *aspect)
+            }
+            Query::Neq { field, value, aspect } => {
                 // At least one non-Nothing occurrence differing from `value`
                 // (a different value type counts as differing).
+                self.check_aspect(field, *aspect, ReadKind::Equality)?;
+                if *aspect == Aspect::Path {
+                    // The path is assembled outside SQL, so the negation is
+                    // taken there too. Like every `Neq`, it asks for at least
+                    // one *differing* occurrence — not the complement of `Eq`:
+                    // a multi-valued node holding one matching and one differing
+                    // path satisfies both.
+                    let matched = self.path_comparison_differs(field, value)?;
+                    return self.inline_uuids(matched);
+                }
                 self.push_text(field);
-                let pred = self.scalar_predicate(field, value, CmpOp::Eq)?;
+                let pred = self.scalar_predicate(field, value, CmpOp::Eq, *aspect)?;
                 Ok(self.add(format!(
                     "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
                      WHERE field_name = ? AND value_type != 'nothing' AND NOT ({pred})"
@@ -912,9 +952,19 @@ impl<'a> Compiler<'a> {
                 Ok(self.add(format!("SELECT uuid FROM _repo EXCEPT SELECT uuid FROM {sub}")))
             }
 
-            Query::Matches { field, pattern } => {
+            Query::Matches { field, pattern, aspect } => {
                 crate::regexp::compile(pattern)
                     .map_err(|e| ApiError::bad_request(format!("invalid regex pattern: {e}")))?;
+                self.check_aspect(field, *aspect, ReadKind::Regex)?;
+                if *aspect == Aspect::Path {
+                    // Hybrid, like osm path mode: the assembled paths are built
+                    // through the tree cache and the matching uuids inlined.
+                    let re = crate::regexp::compile(pattern).map_err(|e| {
+                        ApiError::bad_request(format!("invalid regex pattern: {e}"))
+                    })?;
+                    let matched = self.path_matches(field, &|path: &str| re.is_match(path))?;
+                    return self.inline_uuids(matched);
+                }
                 // Trigram pre-filter (spec-query "MATCHES via FTS5"): when every
                 // match must contain a literal substring (≥ 3 chars), restrict
                 // the REGEXP scan to the rows the FTS index reports containing it
@@ -1152,9 +1202,143 @@ impl<'a> Compiler<'a> {
             .map_err(anyhow::Error::from)?)
     }
 
-    fn comparison(&mut self, field: &str, value: &Value, op: CmpOp) -> Result<String, ApiError> {
+    /// Rejects an aspect the field's type cannot serve, and the `raw` readings
+    /// that have no meaning on a `TreeRef` (spec-query "Field aspects"). The
+    /// check needs the field's value type, so it lives in the engine rather
+    /// than in `validate_query` — the index makes the same one.
+    fn check_aspect(&self, field: &str, aspect: Aspect, kind: ReadKind) -> Result<(), ApiError> {
+        let is_tree = self.field_is_tree_ref(field)?;
+        match aspect {
+            Aspect::Parent | Aspect::Path if !is_tree => {
+                // A field with no data at all is vacuously fine: the query
+                // simply matches nothing, as every other predicate would.
+                if let Some(other) = non_tree_ref_type(self.conn, field)? {
+                    return Err(ApiError::bad_request(format!(
+                        "the ':{}' aspect needs a tree_ref field, but '{field}' holds {other} values",
+                        aspect_name(aspect)
+                    )));
+                }
+                Ok(())
+            }
+            Aspect::Raw if is_tree && kind != ReadKind::Equality => {
+                Err(ApiError::bad_request(format!(
+                    "{} on the tree_ref field '{field}' needs an explicit aspect: \
+                     ':value' reads the name component, ':path' the assembled path",
+                    kind.describe()
+                )))
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// `IsPresent` / `IsAbsent`, aspect-aware. Under `parent` the question is
+    /// whether the node has a real parent: a forest root's parent is the root
+    /// sentinel, so `field:parent IS ABSENT` is the predicate form of "is a
+    /// root" — the one the `Follows` arrow cannot express.
+    fn presence(&mut self, field: &str, aspect: Aspect, present: bool) -> Result<String, ApiError> {
+        self.check_aspect(field, aspect, ReadKind::Equality)?;
+        if aspect == Aspect::Parent {
+            self.push_text(field);
+            self.params.push(SqlValue::Blob(db::uuid_to_bytes(Uuid::nil())));
+            let sym = if present { "!=" } else { "=" };
+            return Ok(self.add(format!(
+                "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+                 WHERE field_name = ? AND value_type = 'tree_ref' AND value_uuid {sym} ?"
+            )));
+        }
         self.push_text(field);
-        let pred = self.scalar_predicate(field, value, op)?;
+        let sym = if present { "!=" } else { "=" };
+        Ok(self.add(format!(
+            "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
+             WHERE field_name = ? AND value_type {sym} 'nothing'"
+        )))
+    }
+
+    /// Wraps a computed UUID set as a `VALUES` CTE (the hybrid shape shared
+    /// with `osm_path` and `FollowsTransitive`).
+    fn inline_uuids(&mut self, uuids: Vec<Uuid>) -> Result<String, ApiError> {
+        if uuids.is_empty() {
+            return Ok(self.empty());
+        }
+        let literals: Vec<String> =
+            uuids.iter().map(|u| format!("(x'{}')", hex_encode(u.as_bytes()))).collect();
+        Ok(self.add(format!("SELECT column1 AS uuid FROM (VALUES {})", literals.join(","))))
+    }
+
+    /// The field's tree nodes whose *assembled path* satisfies `pred`. Hybrid,
+    /// like osm path mode: the paths come from the tree cache, never from SQL.
+    /// A multi-valued node matches when any of its paths does.
+    fn path_matches(
+        &mut self,
+        field: &str,
+        pred: &dyn Fn(&str) -> bool,
+    ) -> Result<Vec<Uuid>, ApiError> {
+        let mut matched = Vec::new();
+        for uuid in all_tree_ref_nodes(self.conn, field)? {
+            for path in self.cache.paths_of(self.conn, field, uuid)? {
+                if pred(&path) {
+                    matched.push(uuid);
+                    break;
+                }
+            }
+        }
+        Ok(matched)
+    }
+
+    /// `path_matches` for a comparison against a string operand.
+    fn path_comparison_matches(
+        &mut self,
+        field: &str,
+        value: &Value,
+        op: CmpOp,
+    ) -> Result<Vec<Uuid>, ApiError> {
+        let Value::String(operand) = value else {
+            return Err(ApiError::bad_request(format!(
+                "the ':path' aspect compares against a string, got {}",
+                db::encode_value(value).value_type
+            )));
+        };
+        let operand = operand.clone();
+        self.path_matches(field, &move |path: &str| match op {
+            CmpOp::Eq => path == operand,
+            CmpOp::Lt => path < operand.as_str(),
+            CmpOp::Lte => path <= operand.as_str(),
+            CmpOp::Gt => path > operand.as_str(),
+            CmpOp::Gte => path >= operand.as_str(),
+        })
+    }
+
+    /// The `Neq` counterpart of [`Self::path_comparison_matches`]: the nodes
+    /// holding at least one path *different* from the operand.
+    fn path_comparison_differs(
+        &mut self,
+        field: &str,
+        value: &Value,
+    ) -> Result<Vec<Uuid>, ApiError> {
+        let Value::String(operand) = value else {
+            return Err(ApiError::bad_request(format!(
+                "the ':path' aspect compares against a string, got {}",
+                db::encode_value(value).value_type
+            )));
+        };
+        let operand = operand.clone();
+        self.path_matches(field, &move |path: &str| path != operand)
+    }
+
+    fn comparison(
+        &mut self,
+        field: &str,
+        value: &Value,
+        op: CmpOp,
+        aspect: Aspect,
+    ) -> Result<String, ApiError> {
+        self.check_aspect(field, aspect, ReadKind::of(op))?;
+        if aspect == Aspect::Path {
+            let matched = self.path_comparison_matches(field, value, op)?;
+            return self.inline_uuids(matched);
+        }
+        self.push_text(field);
+        let pred = self.scalar_predicate(field, value, op, aspect)?;
         Ok(self.add(format!(
             "SELECT DISTINCT metarecord_uuid AS uuid FROM field \
              WHERE field_name = ? AND ({pred})"
@@ -1187,6 +1371,7 @@ impl<'a> Compiler<'a> {
         field: &str,
         value: &Value,
         op: CmpOp,
+        aspect: Aspect,
     ) -> Result<String, ApiError> {
         let sym = op.symbol();
         let ordered_only_eq = |type_name: &str| {
@@ -1213,20 +1398,32 @@ impl<'a> Compiler<'a> {
                      COALESCE(CAST(value_int AS REAL), value_real) {sym} ?"
                 ))
             }
-            Value::String(s) => {
-                // Exact-node path (spec-query "Exact-node equality"): on a
-                // tree_ref field, an Eq/Neq string operand containing the path
-                // separator '/' is resolved through the tree cache to the single
-                // node at that path, and identity (metarecord_uuid) is compared —
-                // not value_name. A value_name never contains '/', so this only
-                // repurposes an operand that matched nothing before; on a string
-                // field the path never resolves, leaving plain literal equality.
-                // Neq compiles as a negated Eq, so `op` is Eq here; ordered ops
-                // keep the lexicographic value_name comparison.
-                if matches!(op, CmpOp::Eq) && s.contains('/') {
+            Value::String(text) => {
+                // The `parent` aspect compares the TreeRef parent, addressed by
+                // the path of the node it must be (spec-query "Field aspects").
+                // The same set as `field -> "<path>"`, spelled as a comparison.
+                if aspect == Aspect::Parent {
                     let conn = self.conn;
-                    let node = self.cache.resolve_path(conn, field, s)?;
-                    self.push_text(s); // the string-field literal branch
+                    let node = self.cache.resolve_path(conn, field, text)?;
+                    return Ok(match node {
+                        Some(u) => {
+                            self.params.push(SqlValue::Blob(db::uuid_to_bytes(u)));
+                            "value_type = 'tree_ref' AND value_uuid = ?".to_string()
+                        }
+                        None => "0".to_string(),
+                    });
+                }
+                // Default (`raw`) equality on a tree_ref field is the *exact
+                // node*: the operand is a path, resolved through the tree cache,
+                // and identity (metarecord_uuid) is compared — at every depth,
+                // a forest root included. On a string field the path never
+                // resolves, leaving plain literal equality. Neq compiles as a
+                // negated Eq, so `op` is Eq here; `check_aspect` has already
+                // refused a bare ordered comparison on a tree_ref.
+                if aspect == Aspect::Raw && matches!(op, CmpOp::Eq) {
+                    let conn = self.conn;
+                    let node = self.cache.resolve_path(conn, field, text)?;
+                    self.push_text(text); // the string-field literal branch
                     return Ok(match node {
                         Some(u) => {
                             self.params.push(SqlValue::Blob(db::uuid_to_bytes(u)));
@@ -1237,10 +1434,10 @@ impl<'a> Compiler<'a> {
                         None => "value_type = 'string' AND value_text = ?".to_string(),
                     });
                 }
-                // Same convention as Matches and sorting: on a tree_ref row,
-                // a string operand compares against the name component.
-                self.push_text(s);
-                self.push_text(s);
+                // The `value` aspect: the row's own text — `value_text`, or
+                // `value_name` (the leaf name) on a tree_ref row.
+                self.push_text(text);
+                self.push_text(text);
                 Ok(format!(
                     "(value_type = 'string' AND value_text {sym} ?) OR \
                      (value_type = 'tree_ref' AND value_name {sym} ?)"
@@ -1332,7 +1529,7 @@ mod tests {
 
     #[test]
     fn query_node_count_and_size_limit() {
-        let leaf = || Query::IsPresent { field: "x".into() };
+        let leaf = || Query::IsPresent { field: "x".into(), aspect: Aspect::Raw };
         assert_eq!(node_count(&leaf()), 1);
 
         // 1 (Or) + 5 leaves; nesting and follow conditions also count.

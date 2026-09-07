@@ -3,9 +3,9 @@
 //   &uuid / &version      metarecord metadata
 //   field                 raw field value(s)
 //   field:mode            projection of a tree_ref value:
-//                           :name (leaf) · :uuid (parent) · :path (full path) · :raw
+//                           :value (leaf) · :parent (parent uuid) · :path (full path) · :raw
 //   field>sub             follow a Ref/RefBase -> the target's `sub` field
-//   field>sub:mode        ...then project (e.g. tag>path:name)
+//   field>sub:mode        ...then project (e.g. tag>path:value)
 //   a | b                 fallback: the first alternative that has a value
 
 import { describe, expect, test } from 'vitest';
@@ -67,38 +67,38 @@ describe('parseColumns', () => {
     expect(fieldCol('mfr_path:path').alternatives).toEqual([
       { field: 'mfr_path', follow: null, mode: 'path' },
     ]);
-    expect(fieldCol('mfr_path:name').alternatives[0].mode).toBe('name');
-    expect(fieldCol('mfr_path:uuid').alternatives[0].mode).toBe('uuid');
+    expect(fieldCol('mfr_path:value').alternatives[0].mode).toBe('value');
+    expect(fieldCol('mfr_path:parent').alternatives[0].mode).toBe('parent');
   });
 
   test('>sub follows a reference to the target field', () => {
     expect(fieldCol('tag>label').alternatives).toEqual([
       { field: 'tag', follow: 'label', mode: 'raw' },
     ]);
-    expect(fieldCol('tag>path:name').alternatives).toEqual([
-      { field: 'tag', follow: 'path', mode: 'name' },
+    expect(fieldCol('tag>path:value').alternatives).toEqual([
+      { field: 'tag', follow: 'path', mode: 'value' },
     ]);
   });
 
   test('| builds a fallback chain; the sort field is the first alternative', () => {
-    const col = fieldCol('tag>label | tag>path:name');
+    const col = fieldCol('tag>label | tag>path:value');
     expect(col.name).toBe('tag');
     expect(col.alternatives).toEqual([
       { field: 'tag', follow: 'label', mode: 'raw' },
-      { field: 'tag', follow: 'path', mode: 'name' },
+      { field: 'tag', follow: 'path', mode: 'value' },
     ]);
   });
 
   test('parentheses around a fallback group are optional and stripped', () => {
-    const col = fieldCol('(label | path:name)');
+    const col = fieldCol('(label | path:value)');
     expect(col.kind).toBe('field');
     expect(col.name).toBe('label');
     expect(col.alternatives).toEqual([
       { field: 'label', follow: null, mode: 'raw' },
-      { field: 'path', follow: null, mode: 'name' },
+      { field: 'path', follow: null, mode: 'value' },
     ]);
     // A grouped column stays a single token among space-separated columns.
-    expect(parseColumns('(label | path:name) rating').map((c: { name: string }) => c.name)).toEqual(
+    expect(parseColumns('(label | path:value) rating').map((c: { name: string }) => c.name)).toEqual(
       ['label', 'rating'],
     );
   });
@@ -153,10 +153,10 @@ describe('cellQuickText (synchronous placeholder)', () => {
     expect(cellQuickText(parseColumns('mfr_path')[0], e)).toBe('bbbb / take5.mp3');
   });
 
-  test(':name / :uuid project the tree_ref value (no resolution needed)', () => {
+  test(':value / :parent project the tree_ref value (no resolution needed)', () => {
     const e = entry([{ name: 'mfr_path', value: treeRef('bbbb', 'take5.mp3') }]);
-    expect(cellQuickText(parseColumns('mfr_path:name')[0], e)).toBe('take5.mp3');
-    expect(cellQuickText(parseColumns('mfr_path:uuid')[0], e)).toBe('bbbb');
+    expect(cellQuickText(parseColumns('mfr_path:value')[0], e)).toBe('take5.mp3');
+    expect(cellQuickText(parseColumns('mfr_path:parent')[0], e)).toBe('bbbb');
   });
 
   test(':path shows the leaf name until resolution', () => {
@@ -179,7 +179,7 @@ describe('cellQuickText (synchronous placeholder)', () => {
 describe('what to resolve', () => {
   test('treeRefFields lists the :path fields read on the metarecord itself', () => {
     expect(
-      treeRefFields(parseColumns('mfr_path:path rating tag>path:name mfr_path:path cat:path')),
+      treeRefFields(parseColumns('mfr_path:path rating tag>path:value mfr_path:path cat:path')),
     ).toEqual(['mfr_path', 'cat']);
   });
 
@@ -197,7 +197,7 @@ describe('what to resolve', () => {
       'path',
       'p',
     ]);
-    expect(followedTreeFields(parseColumns('tag>path:name'))).toEqual([]); // :name needs no resolution
+    expect(followedTreeFields(parseColumns('tag>path:value'))).toEqual([]); // :value needs no resolution
   });
 });
 
@@ -248,10 +248,10 @@ describe('fillColumns + cellText (resolved display)', () => {
     expect(applied('tag>label', e, { targets })).toBe('jazz');
   });
 
-  test('follow + :name projects the target tree_ref leaf, no resolution needed', () => {
+  test('follow + :value projects the target tree_ref leaf, no resolution needed', () => {
     const e = entry([{ name: 'tag', value: ref('1111') }]);
     const targets = { '1111': entry([{ name: 'path', value: treeRef('p', 'cats') }]) };
-    expect(applied('tag>path:name', e, { targets })).toBe('cats');
+    expect(applied('tag>path:value', e, { targets })).toBe('cats');
   });
 
   test('follow + :path resolves the target tree path', () => {
@@ -266,11 +266,11 @@ describe('fillColumns + cellText (resolved display)', () => {
   test('fallback: label when present, else the path leaf name', () => {
     const targets1 = { '1111': entry([{ name: 'label', value: str('Jazz') }]) };
     const e1 = entry([{ name: 'tag', value: ref('1111') }]);
-    expect(applied('tag>label | tag>path:name', e1, { targets: targets1 })).toBe('Jazz');
+    expect(applied('tag>label | tag>path:value', e1, { targets: targets1 })).toBe('Jazz');
 
     const targets2 = { '1111': entry([{ name: 'path', value: treeRef('p', 'jazz') }]) };
     const e2 = entry([{ name: 'tag', value: ref('1111') }]);
-    expect(applied('tag>label | tag>path:name', e2, { targets: targets2 })).toBe('jazz');
+    expect(applied('tag>label | tag>path:value', e2, { targets: targets2 })).toBe('jazz');
   });
 
   test('a missing target falls back to the raw uuid', () => {
@@ -278,9 +278,9 @@ describe('fillColumns + cellText (resolved display)', () => {
     expect(applied('tag>label', e, { targets: {} })).toBe('1111');
   });
 
-  test('modes on non-tree_ref values fall back to the raw display', () => {
+  test('aspects on non-tree_ref values fall back to the raw display', () => {
     const e = entry([{ name: 'x', value: str('plain') }]);
-    expect(applied('x:name', e)).toBe('plain');
+    expect(applied('x:value', e)).toBe('plain');
     expect(applied('x:path', e)).toBe('plain');
   });
 });

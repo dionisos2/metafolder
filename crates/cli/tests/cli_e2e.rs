@@ -1860,7 +1860,7 @@ fn test_trash_restore_relinks_a_directory_subtree() {
         &repo,
         "metarecord",
         "-q",
-        "mfr_path = \"folder\"",
+        "mfr_path:value = \"folder\"",
         "field",
         "unset",
         "mfr_path",
@@ -1947,7 +1947,7 @@ fn poll(tries: u32, f: impl Fn() -> bool) -> bool {
 /// The uuids tracking repo-relative top-level `name`, one per line of
 /// `metarecord -q 'mfr_path = "name"' get`.
 fn uuids_at(repo: &str, name: &str) -> Vec<String> {
-    let out = mf(&["-u", repo, "metarecord", "-q", &format!("mfr_path = {name:?}"), "get"]);
+    let out = mf(&["-u", repo, "metarecord", "-q", &format!("mfr_path:value = {name:?}"), "get"]);
     out.stdout.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect()
 }
 
@@ -2065,8 +2065,10 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
     std::fs::write(dir.join("B.txt"), b"b").unwrap();
     let b =
         mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
-    let a =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
+    let a = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"A\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&b) && is_hex_uuid(&a));
 
     // Trash the file (captures ancestor A while live), then orphan B and delete
@@ -2116,8 +2118,10 @@ fn test_trash_restore_relinks_ancestors_of_a_nested_file() {
     // Track B (ensures the A and B metarecords).
     let b_uuid =
         mf(&["-u", &repo, "track", dir.join("B.txt").to_str().unwrap()]).stdout.trim().to_string();
-    let a_uuid =
-        mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
+    let a_uuid = mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"A\"", "get"])
+        .stdout
+        .trim()
+        .to_string();
     assert!(is_hex_uuid(&b_uuid) && is_hex_uuid(&a_uuid));
 
     // Trash the file (captures its ancestor A while A is still live), then the
@@ -2334,12 +2338,16 @@ fn test_rollback_auto_restores_from_trash() {
     // Create a file and wait for the watcher to track it.
     let file = root.join("doc.txt");
     std::fs::write(&file, b"precious").unwrap();
-    let uuid =
-        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], is_hex_uuid);
+    let uuid = poll_mf(
+        &["-u", &repo, "metarecord", "-q", "mfr_path:value = \"doc.txt\"", "get"],
+        is_hex_uuid,
+    );
 
     // Trash it; wait for the watcher to record the deletion (mfr_path → Nothing).
     assert_ok(&mf(&["-u", &repo, "trash", "-f", file.to_str().unwrap()]));
-    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], |s| s.is_empty());
+    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"doc.txt\"", "get"], |s| {
+        s.is_empty()
+    });
     assert!(!file.exists(), "the file is in the trash");
 
     // Roll back the deletion → the file is auto-restored from the trash.
@@ -2348,7 +2356,9 @@ fn test_rollback_auto_restores_from_trash() {
     assert_eq!(std::fs::read(&file).unwrap(), b"precious", "the file is back");
     // The metadata is restored too: the metarecord is at doc.txt again.
     let back =
-        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"doc.txt\"", "get"], |s| s == uuid);
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"doc.txt\"", "get"], |s| {
+            s == uuid
+        });
     assert_eq!(back, uuid);
     // The trash entry was consumed.
     assert!(repo_trash(&root).entries().unwrap().is_empty(), "the entry is consumed");
@@ -2377,14 +2387,18 @@ fn test_rollback_restores_a_trashed_directory_subtree() {
     let dir = root.join("A");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("B.txt"), b"bee").unwrap();
-    let b_uuid =
-        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], is_hex_uuid);
+    let b_uuid = poll_mf(
+        &["-u", &repo, "metarecord", "-q", "mfr_path:value = \"B.txt\"", "get"],
+        is_hex_uuid,
+    );
     let a_uuid =
-        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"], is_hex_uuid);
+        poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"A\"", "get"], is_hex_uuid);
 
     // Trash the directory; wait for the watcher to cascade the deletion.
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.to_str().unwrap()]));
-    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"B.txt\"", "get"], |s| s.is_empty());
+    poll_mf(&["-u", &repo, "metarecord", "-q", "mfr_path:value = \"B.txt\"", "get"], |s| {
+        s.is_empty()
+    });
     assert!(!dir.exists(), "the directory is in the trash");
 
     // Roll back the deletion.
@@ -2578,8 +2592,8 @@ fn test_sync_plan_exact_match_writes_create_link() {
     // be by TreeRef identity (path), never by content.
     let (a, _adir) = tracked_repo("plan_ex_a", &[("song.mp3", b"aaa")]);
     let (b, _bdir) = tracked_repo("plan_ex_b", &[("song.mp3", b"bbb")]);
-    let rec_a = query_one(&a, "mfr_path = \"song.mp3\"");
-    let rec_b = query_one(&b, "mfr_path = \"song.mp3\"");
+    let rec_a = query_one(&a, "mfr_path:value = \"song.mp3\"");
+    let rec_b = query_one(&b, "mfr_path:value = \"song.mp3\"");
 
     let intents = write_intents(
         "plan_ex",
@@ -2633,7 +2647,7 @@ fn test_sync_plan_no_match_allocates_bare_record() {
     // In scope in A, with no counterpart at the same path in B → bare record.
     let (a, _adir) = tracked_repo("plan_bare_a", &[("lonely.mp3", b"x")]);
     let (b, _bdir) = tracked_repo("plan_bare_b", &[]);
-    let rec_a = query_one(&a, "mfr_path = \"lonely.mp3\"");
+    let rec_a = query_one(&a, "mfr_path:value = \"lonely.mp3\"");
     let intents = write_intents(
         "plan_bare",
         &format!("[[intents]]\nrepo = '{a}'\nquery = 'mfr_type = \"file\"'\n"),
@@ -2712,7 +2726,7 @@ fn test_sync_plan_closes_over_no_identity_ref_target() {
     // A file X (in scope) refs an abstract, out-of-scope, identity-less record.
     let (a, _adir) = tracked_repo("clos_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("clos_b", &[("doc.txt", b"y")]);
-    let x = query_one(&a, "mfr_path = \"doc.txt\"");
+    let x = query_one(&a, "mfr_path:value = \"doc.txt\"");
     let person = create_metarecord(&a, &["name:string=alice"]); // no tree_ref → no identity
     assert_ok(&mf(&[
         "-u",
@@ -2837,7 +2851,7 @@ fn test_sync_plan_writes_sync_op_on_field_diff() {
     // op propagates it, alongside the create-link.
     let (a, _adir) = tracked_repo("syncop_a", &[("doc.txt", b"same")]);
     let (b, _bdir) = tracked_repo("syncop_b", &[("doc.txt", b"same")]);
-    let x = query_one(&a, "mfr_path = \"doc.txt\"");
+    let x = query_one(&a, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &x, "field", "add", "tag:string=jazz"]));
 
     let intents = write_intents(
@@ -2882,8 +2896,8 @@ fn test_sync_plan_conflict_resolved_by_on_conflict() {
     // resolved non-interactively by --on-conflict prefer:<repo_a>.
     let (a, _adir) = tracked_repo("conf_a", &[("doc.txt", b"same")]);
     let (b, _bdir) = tracked_repo("conf_b", &[("doc.txt", b"same")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
 
@@ -2942,8 +2956,8 @@ fn test_sync_plan_resyncs_existing_link() {
     // A pre-existing link (as if from a prior sync) is re-synced, not recreated.
     let (a, _adir) = tracked_repo("resync_a", &[("doc.txt", b"same")]);
     let (b, _bdir) = tracked_repo("resync_b", &[("doc.txt", b"same")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
     // A user field appears on A only since the link was made.
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=x"]));
@@ -2975,8 +2989,8 @@ fn test_sync_plan_keeps_out_of_scope_link() {
     // untouched (persistent state) — never dropped.
     let (a, _adir) = tracked_repo("keep_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("keep_b", &[("doc.txt", b"x")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     let out = mf(&["sync", "link", &a, &b, &xa, &xb]);
     assert_ok(&out);
     let link = out.stdout.trim().to_string();
@@ -3003,8 +3017,8 @@ fn test_sync_plan_move_op_on_diverged_path() {
     // is the state after a rename on one side, or a manual cross-path link.
     let (a, _adir) = tracked_repo("move_a", &[("a.txt", b"content")]);
     let (b, _bdir) = tracked_repo("move_b", &[("b.txt", b"content")]);
-    let xa = query_one(&a, "mfr_path = \"a.txt\"");
-    let xb = query_one(&b, "mfr_path = \"b.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"a.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
 
     let intents = write_intents(
@@ -3028,8 +3042,8 @@ fn test_sync_plan_delete_op_on_deleted_endpoint() {
     // A linked record deleted on side A → a delete op removing the surviving B.
     let (a, _adir) = tracked_repo("del_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("del_b", &[("doc.txt", b"x")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
     // Delete A's metarecord.
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
@@ -3063,8 +3077,8 @@ fn test_sync_plan_conflict_query_scoped_rule() {
     // conflict without --on-conflict.
     let (a, _adir) = tracked_repo("cq_a", &[("doc.txt", b"same")]);
     let (b, _bdir) = tracked_repo("cq_b", &[("doc.txt", b"same")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
 
@@ -3106,7 +3120,7 @@ fn test_sync_run_creates_file_in_target() {
     assert_ok(&out);
 
     // B now has a metarecord at hello.txt …
-    let rec_b = query_one(&b, "mfr_path = \"hello.txt\"");
+    let rec_b = query_one(&b, "mfr_path:value = \"hello.txt\"");
     assert!(is_hex_uuid(&rec_b), "B has a record at hello.txt: {rec_b}");
     // … and the file on disk with the right content.
     let root_b = repo_root_of(&b);
@@ -3142,8 +3156,8 @@ fn test_sync_run_propagates_deletion() {
     // and the link. Nothing is destroyed (the file lands in B's trash).
     let (a, _adir) = tracked_repo("rundel_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("rundel_b", &[("doc.txt", b"x")]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "delete"]));
 
@@ -3182,13 +3196,13 @@ fn test_sync_run_resync_propagates_field() {
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
     // Add a field on A, re-plan, re-run.
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
     // B's record now carries tag=jazz.
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     let got = mf(&["-u", &b, "metarecord", "-i", &xb, "get", "--select", "*"]);
     assert_ok(&got);
     let m: serde_json::Value = serde_json::from_str(&got.stdout).unwrap();
@@ -3227,8 +3241,8 @@ fn test_sync_run_applies_conflict_resolution() {
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=jazz"]));
     assert_ok(&mf(&["-u", &b, "metarecord", "-i", &xb, "field", "add", "tag:string=rock"]));
 
@@ -3280,7 +3294,7 @@ fn test_sync_run_external_divergence_reported() {
     assert!(out.stderr.contains("external divergences"), "reported: {}", out.stderr);
     assert!(!repo_root_of(&b).join("doc.txt").exists(), "external file not created by metafolder");
     // … but the metadata record was placed (metadata syncs normally).
-    let rec_b = query_one(&b, "mfr_path = \"doc.txt\"");
+    let rec_b = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert!(is_hex_uuid(&rec_b), "record placed in B: {rec_b}");
 }
 
@@ -3290,7 +3304,7 @@ fn test_sync_run_translates_ref() {
     // is translated to person_B (the linked counterpart), not left dangling.
     let (a, _adir) = tracked_repo("tref_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("tref_b", &[]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
     let person_a = create_metarecord(&a, &["name:string=alice"]);
     assert_ok(&mf(&[
         "-u",
@@ -3312,7 +3326,7 @@ fn test_sync_run_translates_ref() {
 
     // B has person (name=alice) and X_B whose author ref points to it.
     let person_b = query_one(&b, r#"name = "alice""#);
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     let author = field_value_of(&b, &xb, "author");
     assert_eq!(author.as_deref(), Some(person_b.as_str()), "author ref translated to person_b");
     assert_ne!(person_b, person_a, "distinct local uuids");
@@ -3436,7 +3450,7 @@ fn test_duplicate_same_query_reaches_the_twins() {
         &[("a.txt", b"twin content"), ("b.txt", b"twin content"), ("c.txt", b"other conten")],
     );
     assert_ok(&mf(&["-u", &repo, "duplicate", "scan"]));
-    let a = query_one(&repo, "mfr_path = \"a.txt\"");
+    let a = query_one(&repo, "mfr_path:value = \"a.txt\"");
 
     let peers =
         mf(&["-u", &repo, "metarecord", "-q", &format!("same(mfr_duplicate_group, {a})"), "get"]);
@@ -3464,7 +3478,7 @@ fn test_sync_does_not_materialise_a_duplicate_group() {
     // record in B for no purpose (spec-duplicates "Cross-repo sync").
     let (a, _adir) = tracked_repo("dupclosure_a", &[("doc.txt", b"x")]);
     let (b, _bdir) = tracked_repo("dupclosure_b", &[]);
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
     let group_a = create_metarecord(&a, &["mf_schema:string=duplicate_group"]);
     assert_ok(&mf(&[
         "-u",
@@ -3485,7 +3499,7 @@ fn test_sync_does_not_materialise_a_duplicate_group() {
     assert_ok(&mf(&["sync", "plan", &a, &b, "--intents", intents.to_str().unwrap()]));
     assert_ok(&mf(&["sync", "run", &a, &b, "--yes"]));
 
-    let xb = query_one(&b, "mfr_path = \"doc.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"doc.txt\"");
     assert!(is_hex_uuid(&xb), "the file itself still syncs: {xb}");
     assert_eq!(
         field_value_of(&b, &xb, "mfr_duplicate_group"),
@@ -3508,8 +3522,8 @@ fn test_sync_run_moves_diverged_file() {
     // the canonical-A path. Nothing is destroyed.
     let (a, _adir) = tracked_repo("mvrun_a", &[("a.txt", b"content")]);
     let (b, _bdir) = tracked_repo("mvrun_b", &[("b.txt", b"content")]);
-    let xa = query_one(&a, "mfr_path = \"a.txt\"");
-    let xb = query_one(&b, "mfr_path = \"b.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"a.txt\"");
+    let xb = query_one(&b, "mfr_path:value = \"b.txt\"");
     assert_ok(&mf(&["sync", "link", &a, &b, &xa, &xb]));
 
     let intents = write_intents(
@@ -3521,8 +3535,12 @@ fn test_sync_run_moves_diverged_file() {
 
     // The winner is the canonical-A record's path; both records/files converge there.
     let winner = if a < b { "a.txt" } else { "b.txt" };
-    assert_eq!(query_one(&a, &format!("mfr_path = \"{winner}\"")), xa, "A at winner path");
-    assert_eq!(query_one(&b, &format!("mfr_path = \"{winner}\"")), xb, "B moved to winner path");
+    assert_eq!(query_one(&a, &format!("mfr_path:value = \"{winner}\"")), xa, "A at winner path");
+    assert_eq!(
+        query_one(&b, &format!("mfr_path:value = \"{winner}\"")),
+        xb,
+        "B moved to winner path"
+    );
     assert!(repo_root_of(&a).join(winner).exists(), "A file at winner path");
     assert!(repo_root_of(&b).join(winner).exists(), "B file at winner path");
 }
@@ -3556,7 +3574,7 @@ fn test_sync_show_renders_plan_status() {
     assert!(def.stdout.contains("all operations will run"), "all green: {}", def.stdout);
 
     // Change the source record → its ops turn red.
-    let xa = query_one(&a, "mfr_path = \"doc.txt\"");
+    let xa = query_one(&a, "mfr_path:value = \"doc.txt\"");
     assert_ok(&mf(&["-u", &a, "metarecord", "-i", &xa, "field", "add", "tag:string=z"]));
     let red = mf(&["sync", "show", &a, &b]);
     assert_ok(&red);

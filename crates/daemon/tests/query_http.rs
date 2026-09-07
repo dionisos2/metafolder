@@ -227,17 +227,20 @@ async fn test_exact_node_path_query_is_served_by_the_index() {
 
     assert_eq!(ask("/music/jazz").await, json!([jazz]));
     assert_eq!(ask("/music/rock").await, json!([]));
-    // A separator-free operand keeps the value_name convention: both "jazz" nodes.
+    // A separator-free operand is a path too — here it resolves to nothing,
+    // `mfr_path` being "/"-rooted. The name convention is the `value` aspect,
+    // which still reaches both "jazz" nodes (spec-query "Field aspects").
+    assert_eq!(ask("jazz").await, json!([]));
     let (status, body) = request(
         &app,
         "POST",
         &format!("/repos/{repo}/query"),
-        Some(json!({"query": {"type": "eq", "field": "mfr_path",
+        Some(json!({"query": {"type": "eq", "field": "mfr_path", "aspect": "value",
                               "value": {"type": "string", "value": "jazz"}}})),
     )
     .await;
     assert_eq!(status, StatusCode::OK, "query failed: {body}");
-    assert_eq!(body.as_array().unwrap().len(), 2, "value_name match: {body}");
+    assert_eq!(body.as_array().unwrap().len(), 2, "value aspect match: {body}");
 
     std::fs::remove_dir_all(root).unwrap();
 }

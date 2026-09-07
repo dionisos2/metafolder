@@ -615,7 +615,7 @@ mod tests {
         assert_eq!(list["columns"], serde_json::json!("mfr_path:path mfr_type &version"));
         assert_eq!(
             list["finder-fields"],
-            serde_json::json!(["mfr_path:path", "label:direct", "name:direct"])
+            serde_json::json!(["mfr_path:path", "label:value", "name:value"])
         );
         assert_eq!(list["grid-name-column"], serde_json::json!("mfr_path:path"));
         assert_eq!(

@@ -16,7 +16,7 @@ describe('finderTargets', () => {
     // Explicit modes never depend on the (async) field catalog — the robust
     // default so mfr_path is always path mode even before the catalog loads.
     const typeOf = () => 'string'; // would say "direct" for mfr_path
-    expect(finderTargets(['mfr_path:path', 'label:direct'], typeOf)).toEqual([
+    expect(finderTargets(['mfr_path:path', 'label:value'], typeOf)).toEqual([
       { field: 'mfr_path', mode: 'path' },
       { field: 'label', mode: 'direct' },
     ]);

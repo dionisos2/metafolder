@@ -216,7 +216,7 @@ async fn lookup_record_by_path(state: &ServerState, ws_id: &str, path: &str) -> 
     let Some(relative) = path.strip_prefix(root).map(|p| p.trim_start_matches('/')) else {
         return Value::Null;
     };
-    // Query in the daemon's tree convention (spec-query "Exact-node equality"):
+    // Query in the daemon's tree convention (spec-query "Field aspects"):
     // the repository root is the EMPTY string and every descendant keeps a
     // single leading slash. `mfr_path = "<path>"` on a tree_ref field resolves
     // that exact node — the root's empty name matches "", a "/…" operand is

@@ -4,12 +4,12 @@
 
 use metafolder_core::dsl::parse_query;
 use metafolder_core::metarecord::Value;
-use metafolder_core::query::Query;
+use metafolder_core::query::{Aspect, Query};
 
 #[test]
 fn test_parse_query_is_exposed_by_core() {
     assert_eq!(
         parse_query("rating > 3").unwrap(),
-        Query::Gt { field: "rating".into(), value: Value::Int(3) }
+        Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }
     );
 }

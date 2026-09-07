@@ -931,19 +931,17 @@ pub fn metarecord_at_path(
     rel: &str,
 ) -> Result<Option<String>, DaemonError> {
     let comps = path_components(rel);
-    let Some(name) = comps.last().copied() else { return Ok(None) };
-    let parent = if comps.len() == 1 {
-        String::new() // the forest root
-    } else {
-        format!("/{}", comps[..comps.len() - 1].join("/"))
-    };
-    let query = json!({
-        "type": "and",
-        "operands": [
-            {"type": "follows", "field": "mfr_path", "target": parent},
-            {"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": name}},
-        ],
-    });
+    if comps.is_empty() {
+        return Ok(None);
+    }
+    // Exact-node equality: on a TreeRef field an `Eq` string operand is the path
+    // of the one node sitting there (spec-query "Field aspects"), resolved
+    // through the daemon's tree cache. `mfr_path` is "/"-rooted. This replaces
+    // the "direct child of the parent *and* named like the leaf" intersection
+    // the separator-gated equality used to force.
+    let path = format!("/{}", comps.join("/"));
+    let query =
+        json!({"type": "eq", "field": "mfr_path", "value": {"type": "string", "value": path}});
     let resp =
         client.post(&format!("/repos/{repo}/query"), &json!({"query": query, "limit": 1}))?;
     Ok(resp["results"].as_array().and_then(|a| a.first()).and_then(Json::as_str).map(str::to_owned))

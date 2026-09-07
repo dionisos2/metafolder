@@ -8,7 +8,7 @@
 //! "incremental == SQL".
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
@@ -78,10 +78,10 @@ fn i(n: i64) -> Value {
     Value::Int(n)
 }
 fn present(f: &str) -> Query {
-    Query::IsPresent { field: f.into() }
+    Query::IsPresent { field: f.into(), aspect: Aspect::Raw }
 }
 fn eq(f: &str, v: Value) -> Query {
-    Query::Eq { field: f.into(), value: v }
+    Query::Eq { field: f.into(), value: v, aspect: Aspect::Raw }
 }
 fn follows(f: &str, cond: Query) -> Query {
     Query::Follows { field: f.into(), target: FollowTarget::Condition(Box::new(cond)) }
@@ -90,21 +90,24 @@ fn follows(f: &str, cond: Query) -> Query {
 fn battery() -> Vec<Query> {
     vec![
         present("rate"),
-        Query::IsAbsent { field: "rate".into() },
+        Query::IsAbsent { field: "rate".into(), aspect: Aspect::Raw },
         Query::IsUnknown { field: "rate".into() },
         eq("rate", i(5)),
-        Query::Neq { field: "rate".into(), value: i(5) },
-        Query::Gte { field: "rate".into(), value: i(5) },
-        Query::Lt { field: "rate".into(), value: i(5) },
+        Query::Neq { field: "rate".into(), value: i(5), aspect: Aspect::Raw },
+        Query::Gte { field: "rate".into(), value: i(5), aspect: Aspect::Raw },
+        Query::Lt { field: "rate".into(), value: i(5), aspect: Aspect::Raw },
         present("kind"),
         eq("kind", s("file")),
-        Query::Neq { field: "kind".into(), value: s("file") },
+        Query::Neq { field: "kind".into(), value: s("file"), aspect: Aspect::Raw },
         present("note"),
         eq("note", s("hi")),
         present("loc"),
         follows("loc", eq("tag", s("root"))),
         Query::And {
-            operands: vec![eq("kind", s("file")), Query::Gte { field: "rate".into(), value: i(3) }],
+            operands: vec![
+                eq("kind", s("file")),
+                Query::Gte { field: "rate".into(), value: i(3), aspect: Aspect::Raw },
+            ],
         },
         Query::Not { operand: Box::new(eq("kind", s("file"))) },
     ]

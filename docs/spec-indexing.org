@@ -422,7 +422,7 @@ the second fetched every row of the field to read its =value_type= — 81 ms on 
 =run_query_filter= resolves each path to its root metarecord through the
 (eagerly populated) tree cache and passes the roots in as =PathRoots=, so the
 bitmap expansion seeds from the resolved root — =mfr_path ->* "/dir"= + sort is
-served fully in memory. *Exact-node equality* (=mfr_path = "/a/b.txt"=, see
+served fully in memory. *Exact-node equality* (=mfr_path = "/a/b.txt"=, the default =raw= aspect, see
 [[file:spec-query.org][spec-query.org]]) is supported the same way: the caller
 resolves the operand to its node through the tree cache and passes it in as
 =NodeRoots=, and the index answers from that single interned id. The =Option=

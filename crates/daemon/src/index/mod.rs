@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use base64::Engine;
 use metafolder_core::metarecord::Value;
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, Query};
 use roaring::RoaringBitmap;
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -112,11 +112,9 @@ pub fn collect_path_targets(q: &Query, out: &mut Vec<(String, String)>) {
 /// index's type check never consults the entry.
 pub fn collect_node_paths(q: &Query, out: &mut Vec<(String, String)>) {
     match q {
-        Query::Eq { field, value: Value::String(s) }
-        | Query::Neq { field, value: Value::String(s) } => {
-            if s.contains('/') {
-                out.push((field.clone(), s.clone()));
-            }
+        Query::Eq { field, value: Value::String(s), aspect: Aspect::Raw }
+        | Query::Neq { field, value: Value::String(s), aspect: Aspect::Raw } => {
+            out.push((field.clone(), s.clone()));
         }
         Query::And { operands } | Query::Or { operands } => {
             operands.iter().for_each(|o| collect_node_paths(o, out));
@@ -858,8 +856,18 @@ impl RepoIndex {
         restrict: Option<&RoaringBitmap>,
     ) -> Result<RoaringBitmap, Unsupported> {
         match q {
-            Query::IsPresent { field } => Ok(self.present_of(field)),
-            Query::IsAbsent { field } => Ok(self.absent_of(field)),
+            // The `parent`/`path` aspects read a component the bitmaps do not
+            // hold (the parent uuid, the assembled path), so they go to the SQL
+            // engine — which is also what raises the 400 for an aspect the
+            // field's type cannot serve, keeping one answer per query.
+            Query::IsPresent { field, aspect } => {
+                Self::index_servable_aspect(*aspect)?;
+                Ok(self.present_of(field))
+            }
+            Query::IsAbsent { field, aspect } => {
+                Self::index_servable_aspect(*aspect)?;
+                Ok(self.absent_of(field))
+            }
             Query::IsUnknown { field } => {
                 // universe − {records with any row of `field`} (present ∪ absent),
                 // matching the SQL `_repo WHERE uuid NOT IN (any field row)`.
@@ -869,12 +877,24 @@ impl RepoIndex {
                 Ok(r)
             }
 
-            Query::Eq { field, value } => self.compare(field, CmpOp::Eq, value, roots),
-            Query::Neq { field, value } => self.compare(field, CmpOp::Neq, value, roots),
-            Query::Lt { field, value } => self.compare(field, CmpOp::Lt, value, roots),
-            Query::Lte { field, value } => self.compare(field, CmpOp::Lte, value, roots),
-            Query::Gt { field, value } => self.compare(field, CmpOp::Gt, value, roots),
-            Query::Gte { field, value } => self.compare(field, CmpOp::Gte, value, roots),
+            Query::Eq { field, value, aspect } => {
+                self.compare(field, CmpOp::Eq, value, roots, *aspect)
+            }
+            Query::Neq { field, value, aspect } => {
+                self.compare(field, CmpOp::Neq, value, roots, *aspect)
+            }
+            Query::Lt { field, value, aspect } => {
+                self.compare(field, CmpOp::Lt, value, roots, *aspect)
+            }
+            Query::Lte { field, value, aspect } => {
+                self.compare(field, CmpOp::Lte, value, roots, *aspect)
+            }
+            Query::Gt { field, value, aspect } => {
+                self.compare(field, CmpOp::Gt, value, roots, *aspect)
+            }
+            Query::Gte { field, value, aspect } => {
+                self.compare(field, CmpOp::Gte, value, roots, *aspect)
+            }
 
             Query::And { operands } => self.intersect(operands, roots, restrict),
             Query::Or { operands } => {
@@ -929,7 +949,16 @@ impl RepoIndex {
                 Ok(r)
             }
 
-            Query::Matches { field, pattern } => self.text_scan(field, pattern, restrict),
+            Query::Matches { field, pattern, aspect } => {
+                Self::index_servable_aspect(*aspect)?;
+                // `raw` on a tree_ref is an error, not a name match: leave it to
+                // the SQL engine, which rejects it (spec-query "Field aspects").
+                // Under `value` the scan is the ordinary name scan.
+                if *aspect == Aspect::Raw && self.types.get(field) == Some(&"tree_ref") {
+                    return Err(unsupported("MATCHES on a tree_ref field needs an aspect"));
+                }
+                self.text_scan(field, pattern, restrict)
+            }
             // OSM `Direct` matches the row's own text with the very regex the
             // SQL engine hands its `REGEXP` UDF, so the two cannot drift — in
             // particular over `.`, which does not cross a newline.
@@ -1147,27 +1176,49 @@ impl RepoIndex {
     /// Dispatches a comparison to the field's encoding. A field with no
     /// non-`Nothing` rows has no encoding, so the comparison is empty — exactly
     /// the SQL result (the `value_type` filter excludes every `Nothing` row).
+    /// The aspects the bitmaps can answer: `raw` and `value` read the row's own
+    /// data, which the per-field index holds. `parent` and `path` read the tree
+    /// structure, which lives in the tree cache — those defer to SQL (spec-query
+    /// "Field aspects").
+    fn index_servable_aspect(aspect: Aspect) -> Result<(), Unsupported> {
+        match aspect {
+            Aspect::Raw | Aspect::Value => Ok(()),
+            Aspect::Parent => Err(unsupported("the ':parent' aspect")),
+            Aspect::Path => Err(unsupported("the ':path' aspect")),
+        }
+    }
+
     fn compare(
         &self,
         field: &str,
         op: CmpOp,
         value: &Value,
         roots: Option<&QueryRoots>,
+        aspect: Aspect,
     ) -> Result<RoaringBitmap, Unsupported> {
         if matches!(value, Value::Nothing) {
             return Err(unsupported("comparison with 'nothing'"));
         }
-        // Exact-node path (spec-query "Exact-node equality"): on a tree_ref field
-        // an Eq/Neq string operand containing '/' is a path-resolved node match,
-        // not a value_name compare. The resolution lives in the tree cache, not
+        Self::index_servable_aspect(aspect)?;
+        // A bare ordered comparison on a tree_ref is an error rather than a
+        // name compare: hand it to the SQL engine, which says so.
+        if aspect == Aspect::Raw
+            && !matches!(op, CmpOp::Eq | CmpOp::Neq)
+            && self.types.get(field) == Some(&"tree_ref")
+        {
+            return Err(unsupported("ordered comparison on a tree_ref field needs an aspect"));
+        }
+        // Exact-node path (spec-query "Field aspects"): under the default `raw`
+        // aspect, an Eq/Neq string operand on a tree_ref field is a path-resolved
+        // node match. The resolution lives in the tree cache, not
         // the index, so `Eq` is served only from a caller-supplied [`NodeRoots`]
         // entry; without one — and for `Neq`, whose multi-map negation the
         // rewrite does not cover — defer to the SQL engine rather than answer
         // with the (wrong, value_name-based) bitmap. A string field keeps literal
         // equality (the index handles it).
-        if matches!(op, CmpOp::Eq | CmpOp::Neq) {
+        if matches!(op, CmpOp::Eq | CmpOp::Neq) && aspect == Aspect::Raw {
             if let Value::String(s) = value {
-                if s.contains('/') && self.types.get(field) == Some(&"tree_ref") {
+                if self.types.get(field) == Some(&"tree_ref") {
                     // A missing entry means nobody resolved this path: defer.
                     let resolved = roots.and_then(|r| r.node.get(&(field.to_string(), s.clone())));
                     let Some(node) = resolved else {

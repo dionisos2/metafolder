@@ -2,7 +2,7 @@
 //! traversal, sorting and keyset pagination (spec-query, spec-data-model).
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec::{self, SortKey, SortOrder};
@@ -35,11 +35,23 @@ impl Fixture {
         uuids
     }
 
+    /// The error message of a query the engine must refuse.
+    fn run_err(&mut self, query: &Query) -> String {
+        match query_exec::execute(&self.conn, &mut self.cache, query, &[], None, None) {
+            Ok(_) => panic!("query should have been rejected"),
+            Err(e) => format!("{e:?}"),
+        }
+    }
+
     fn run_sorted(&mut self, query: &Query, sort: &[SortKey]) -> Vec<Uuid> {
         let (uuids, _) =
             query_exec::execute(&self.conn, &mut self.cache, query, sort, None, None).unwrap();
         uuids
     }
+}
+
+fn eq_aspect(field: &str, value: Value, aspect: Aspect) -> Query {
+    Query::Eq { field: field.into(), value, aspect }
 }
 
 fn s(v: &str) -> Value {
@@ -73,8 +85,14 @@ fn test_present_absent_unknown() {
     let absent = f.create(vec![Field::new("rating", Value::Nothing)]);
     let unknown = f.create(vec![Field::new("other", Value::Int(1))]);
 
-    assert_same_set(f.run(&Query::IsPresent { field: "rating".into() }), vec![present]);
-    assert_same_set(f.run(&Query::IsAbsent { field: "rating".into() }), vec![absent]);
+    assert_same_set(
+        f.run(&Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw }),
+        vec![present],
+    );
+    assert_same_set(
+        f.run(&Query::IsAbsent { field: "rating".into(), aspect: Aspect::Raw }),
+        vec![absent],
+    );
     assert_same_set(f.run(&Query::IsUnknown { field: "rating".into() }), vec![unknown]);
 }
 
@@ -86,10 +104,21 @@ fn test_eq_and_multimap_semantics() {
     let jazz = f.create(vec![Field::new("tag", s("jazz")), Field::new("tag", s("live"))]);
     let blues = f.create(vec![Field::new("tag", s("blues"))]);
 
-    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("jazz") }), vec![jazz]);
-    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("live") }), vec![jazz]);
-    assert_same_set(f.run(&Query::Eq { field: "tag".into(), value: s("blues") }), vec![blues]);
-    assert!(f.run(&Query::Eq { field: "tag".into(), value: s("rock") }).is_empty());
+    assert_same_set(
+        f.run(&Query::Eq { field: "tag".into(), value: s("jazz"), aspect: Aspect::Raw }),
+        vec![jazz],
+    );
+    assert_same_set(
+        f.run(&Query::Eq { field: "tag".into(), value: s("live"), aspect: Aspect::Raw }),
+        vec![jazz],
+    );
+    assert_same_set(
+        f.run(&Query::Eq { field: "tag".into(), value: s("blues"), aspect: Aspect::Raw }),
+        vec![blues],
+    );
+    assert!(f
+        .run(&Query::Eq { field: "tag".into(), value: s("rock"), aspect: Aspect::Raw })
+        .is_empty());
 }
 
 #[test]
@@ -102,20 +131,30 @@ fn test_eq_other_types() {
     let e_dt = f.create(vec![Field::new("added", dt("2024-01-01T00:00:00Z"))]);
 
     assert_same_set(
-        f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(true) }),
+        f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(true), aspect: Aspect::Raw }),
         vec![e_bool],
     );
-    assert!(f.run(&Query::Eq { field: "seen".into(), value: Value::Bool(false) }).is_empty());
+    assert!(f
+        .run(&Query::Eq { field: "seen".into(), value: Value::Bool(false), aspect: Aspect::Raw })
+        .is_empty());
     assert_same_set(
-        f.run(&Query::Eq { field: "score".into(), value: Value::Float(2.5) }),
+        f.run(&Query::Eq { field: "score".into(), value: Value::Float(2.5), aspect: Aspect::Raw }),
         vec![e_float],
     );
     assert_same_set(
-        f.run(&Query::Eq { field: "author".into(), value: Value::Ref(target) }),
+        f.run(&Query::Eq {
+            field: "author".into(),
+            value: Value::Ref(target),
+            aspect: Aspect::Raw,
+        }),
         vec![e_ref],
     );
     assert_same_set(
-        f.run(&Query::Eq { field: "added".into(), value: dt("2024-01-01T00:00:00Z") }),
+        f.run(&Query::Eq {
+            field: "added".into(),
+            value: dt("2024-01-01T00:00:00Z"),
+            aspect: Aspect::Raw,
+        }),
         vec![e_dt],
     );
 }
@@ -129,12 +168,18 @@ fn test_neq_requires_a_differing_occurrence() {
     let _unknown = f.create(vec![Field::new("x", Value::Int(1))]);
 
     // `both` has an occurrence ≠ jazz; `jazz` does not.
-    assert_same_set(f.run(&Query::Neq { field: "tag".into(), value: s("jazz") }), vec![both]);
-    assert_same_set(f.run(&Query::Neq { field: "tag".into(), value: s("rock") }), vec![jazz, both]);
+    assert_same_set(
+        f.run(&Query::Neq { field: "tag".into(), value: s("jazz"), aspect: Aspect::Raw }),
+        vec![both],
+    );
+    assert_same_set(
+        f.run(&Query::Neq { field: "tag".into(), value: s("rock"), aspect: Aspect::Raw }),
+        vec![jazz, both],
+    );
 }
 
 #[test]
-fn test_eq_string_on_tree_ref_compares_the_name() {
+fn test_eq_with_the_value_aspect_on_tree_ref_compares_the_name() {
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -147,22 +192,28 @@ fn test_eq_string_on_tree_ref_compares_the_name() {
         Value::TreeRef { parent: Some(root), name: "2022".into() },
     )]);
 
-    // A string operand compares against the TreeRef name component.
-    assert_same_set(f.run(&Query::Eq { field: "mfr_path".into(), value: s("2021") }), vec![y2021]);
+    // The `value` aspect compares against the TreeRef name component.
+    assert_same_set(f.run(&eq_aspect("mfr_path", s("2021"), Aspect::Value)), vec![y2021]);
     // Exact name equality, not a substring match.
-    assert!(f.run(&Query::Eq { field: "mfr_path".into(), value: s("202") }).is_empty());
+    assert!(f.run(&eq_aspect("mfr_path", s("202"), Aspect::Value)).is_empty());
+    // Bare equality is the exact node instead: mfr_path is "/"-rooted, so a
+    // bare "2021" resolves to no node at all (spec-query "Field aspects").
+    assert!(f
+        .run(&Query::Eq { field: "mfr_path".into(), value: s("2021"), aspect: Aspect::Raw })
+        .is_empty());
     // Strict (parent, name) equality via a TreeRef operand still works.
     assert_same_set(
         f.run(&Query::Eq {
             field: "mfr_path".into(),
             value: Value::TreeRef { parent: Some(root), name: "2021".into() },
+            aspect: Aspect::Raw,
         }),
         vec![y2021],
     );
 }
 
 #[test]
-fn test_neq_string_on_tree_ref_compares_the_name() {
+fn test_neq_with_the_value_aspect_on_tree_ref_compares_the_name() {
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -178,13 +229,13 @@ fn test_neq_string_on_tree_ref_compares_the_name() {
     // A TreeRef named "2021" is *equal* to the string "2021": it must not
     // count as a differing occurrence. root (named "") and 2022 do differ.
     assert_same_set(
-        f.run(&Query::Neq { field: "mfr_path".into(), value: s("2021") }),
+        f.run(&Query::Neq { field: "mfr_path".into(), value: s("2021"), aspect: Aspect::Value }),
         vec![root, y2022],
     );
 }
 
 #[test]
-fn test_ordered_string_comparison_on_tree_ref_name() {
+fn test_ordered_comparison_on_a_tree_ref_needs_an_aspect() {
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -197,13 +248,19 @@ fn test_ordered_string_comparison_on_tree_ref_name() {
         Value::TreeRef { parent: Some(root), name: "2022".into() },
     )]);
 
-    // A string *predicate* on a tree_ref row compares the name (sorting is the
-    // exception — it uses the whole path). root's name is "" and so also
+    // An ordered comparison reads the name under the `value` aspect (sorting is
+    // the exception — it uses the whole path). root's name is "" and so also
     // compares before "2022".
     assert_same_set(
-        f.run(&Query::Lt { field: "mfr_path".into(), value: s("2022") }),
+        f.run(&Query::Lt { field: "mfr_path".into(), value: s("2022"), aspect: Aspect::Value }),
         vec![root, y2021],
     );
+    // Bare, it is refused: ordering a (parent, name) couple means nothing, and
+    // reading the name implicitly is exactly what the aspect removed.
+    let e =
+        f.run_err(&Query::Lt { field: "mfr_path".into(), value: s("2022"), aspect: Aspect::Raw });
+    assert!(e.contains("aspect"), "{e}");
+    assert!(e.contains(":value") && e.contains(":path"), "{e}");
 }
 
 #[test]
@@ -217,19 +274,23 @@ fn test_ordered_comparisons_numeric() {
     let five = f.create(vec![Field::new("rating", Value::Float(5.0))]);
 
     assert_same_set(
-        f.run(&Query::Gt { field: "rating".into(), value: Value::Int(3) }),
+        f.run(&Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }),
         vec![four_half, five],
     );
     assert_same_set(
-        f.run(&Query::Gte { field: "rating".into(), value: Value::Float(4.5) }),
+        f.run(&Query::Gte {
+            field: "rating".into(),
+            value: Value::Float(4.5),
+            aspect: Aspect::Raw,
+        }),
         vec![four_half, five],
     );
     assert_same_set(
-        f.run(&Query::Lt { field: "rating".into(), value: Value::Int(4) }),
+        f.run(&Query::Lt { field: "rating".into(), value: Value::Int(4), aspect: Aspect::Raw }),
         vec![three],
     );
     assert_same_set(
-        f.run(&Query::Lte { field: "rating".into(), value: Value::Int(3) }),
+        f.run(&Query::Lte { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }),
         vec![three],
     );
 }
@@ -243,15 +304,29 @@ fn test_ordered_comparisons_datetime_and_string() {
     let z = f.create(vec![Field::new("title", s("zulu"))]);
 
     assert_same_set(
-        f.run(&Query::Gt { field: "added".into(), value: dt("2023-12-31T00:00:00Z") }),
+        f.run(&Query::Gt {
+            field: "added".into(),
+            value: dt("2023-12-31T00:00:00Z"),
+            aspect: Aspect::Raw,
+        }),
         vec![new],
     );
     assert_same_set(
-        f.run(&Query::Lte { field: "added".into(), value: dt("2023-01-01T00:00:00Z") }),
+        f.run(&Query::Lte {
+            field: "added".into(),
+            value: dt("2023-01-01T00:00:00Z"),
+            aspect: Aspect::Raw,
+        }),
         vec![old],
     );
-    assert_same_set(f.run(&Query::Lt { field: "title".into(), value: s("beta") }), vec![a]);
-    assert_same_set(f.run(&Query::Gt { field: "title".into(), value: s("beta") }), vec![z]);
+    assert_same_set(
+        f.run(&Query::Lt { field: "title".into(), value: s("beta"), aspect: Aspect::Raw }),
+        vec![a],
+    );
+    assert_same_set(
+        f.run(&Query::Gt { field: "title".into(), value: s("beta"), aspect: Aspect::Raw }),
+        vec![z],
+    );
 }
 
 #[test]
@@ -261,7 +336,7 @@ fn test_comparison_with_nothing_is_rejected() {
     let err = query_exec::execute(
         &f.conn,
         &mut f.cache,
-        &Query::Eq { field: "rating".into(), value: Value::Nothing },
+        &Query::Eq { field: "rating".into(), value: Value::Nothing, aspect: Aspect::Raw },
         &[],
         None,
         None,
@@ -279,10 +354,18 @@ fn test_validate_query_rejects_meaningless_comparisons() {
     let f = "x".to_string();
     let nope = [Value::Nothing];
     for v in nope {
-        assert!(
-            query_exec::validate_query(&Query::Eq { field: f.clone(), value: v.clone() }).is_err()
-        );
-        assert!(query_exec::validate_query(&Query::Lt { field: f.clone(), value: v }).is_err());
+        assert!(query_exec::validate_query(&Query::Eq {
+            field: f.clone(),
+            value: v.clone(),
+            aspect: Aspect::Raw
+        })
+        .is_err());
+        assert!(query_exec::validate_query(&Query::Lt {
+            field: f.clone(),
+            value: v,
+            aspect: Aspect::Raw
+        })
+        .is_err());
     }
     let unordered = [
         Value::Bool(true),
@@ -292,30 +375,55 @@ fn test_validate_query_rejects_meaningless_comparisons() {
         Value::ExternalRef { repo: Uuid::new_v4(), metarecord: Uuid::new_v4() },
     ];
     for v in unordered {
-        let err = query_exec::validate_query(&Query::Gt { field: f.clone(), value: v.clone() })
-            .unwrap_err();
+        let err = query_exec::validate_query(&Query::Gt {
+            field: f.clone(),
+            value: v.clone(),
+            aspect: Aspect::Raw,
+        })
+        .unwrap_err();
         assert!(err.message.contains("ordered comparison"), "got: {}", err.message);
         // Equality is still fine on the same value.
-        assert!(query_exec::validate_query(&Query::Eq { field: f.clone(), value: v }).is_ok());
+        assert!(query_exec::validate_query(&Query::Eq {
+            field: f.clone(),
+            value: v,
+            aspect: Aspect::Raw
+        })
+        .is_ok());
     }
     // Ordered comparison on naturally-ordered types is allowed.
-    assert!(
-        query_exec::validate_query(&Query::Lt { field: f.clone(), value: Value::Int(1) }).is_ok()
-    );
-    assert!(query_exec::validate_query(&Query::Gte { field: f.clone(), value: s("a") }).is_ok());
-    assert!(query_exec::validate_query(&Query::Gt { field: f.clone(), value: Value::DateTime(0) })
-        .is_ok());
+    assert!(query_exec::validate_query(&Query::Lt {
+        field: f.clone(),
+        value: Value::Int(1),
+        aspect: Aspect::Raw
+    })
+    .is_ok());
+    assert!(query_exec::validate_query(&Query::Gte {
+        field: f.clone(),
+        value: s("a"),
+        aspect: Aspect::Raw
+    })
+    .is_ok());
+    assert!(query_exec::validate_query(&Query::Gt {
+        field: f.clone(),
+        value: Value::DateTime(0),
+        aspect: Aspect::Raw
+    })
+    .is_ok());
     // The rejection surfaces through combinators and follows-conditions.
     let nested = Query::And {
         operands: vec![
-            Query::IsPresent { field: "k".into() },
-            Query::Gt { field: f.clone(), value: Value::Bool(false) },
+            Query::IsPresent { field: "k".into(), aspect: Aspect::Raw },
+            Query::Gt { field: f.clone(), value: Value::Bool(false), aspect: Aspect::Raw },
         ],
     };
     assert!(query_exec::validate_query(&nested).is_err());
     let in_follows = Query::FollowsTransitive {
         field: "loc".into(),
-        target: FollowTarget::Condition(Box::new(Query::Lt { field: f, value: Value::Nothing })),
+        target: FollowTarget::Condition(Box::new(Query::Lt {
+            field: f,
+            value: Value::Nothing,
+            aspect: Aspect::Raw,
+        })),
         inclusive: false,
     };
     assert!(query_exec::validate_query(&in_follows).is_err());
@@ -329,7 +437,7 @@ fn test_oversized_query_is_rejected() {
     // (our check runs before any SQL is built).
     let huge = Query::Or {
         operands: (0..=query_exec::MAX_QUERY_NODES)
-            .map(|_| Query::IsPresent { field: "rating".into() })
+            .map(|_| Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw })
             .collect(),
     };
     let err = query_exec::execute(&f.conn, &mut f.cache, &huge, &[], None, None).unwrap_err();
@@ -337,8 +445,8 @@ fn test_oversized_query_is_rejected() {
     // A normal small query is unaffected.
     let ok = Query::Or {
         operands: vec![
-            Query::IsPresent { field: "rating".into() },
-            Query::IsAbsent { field: "rating".into() },
+            Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw },
+            Query::IsAbsent { field: "rating".into(), aspect: Aspect::Raw },
         ],
     };
     assert!(query_exec::execute(&f.conn, &mut f.cache, &ok, &[], None, None).is_ok());
@@ -348,7 +456,7 @@ fn test_oversized_query_is_rejected() {
 fn test_wide_combinator_is_rejected_with_clear_message() {
     let mut f = Fixture::new();
     f.create(vec![Field::new("rating", Value::Int(1))]);
-    let leaf = || Query::IsPresent { field: "rating".into() };
+    let leaf = || Query::IsPresent { field: "rating".into(), aspect: Aspect::Raw };
 
     // One past SQLite's compound-select limit: our clear message, not SQLite's
     // opaque "too many terms in compound SELECT". (Node count stays well under
@@ -373,8 +481,8 @@ fn test_and_or_not() {
     let b = f.create(vec![Field::new("tag", s("jazz")), Field::new("rating", Value::Int(2))]);
     let c = f.create(vec![Field::new("tag", s("rock")), Field::new("rating", Value::Int(5))]);
 
-    let jazz = Query::Eq { field: "tag".into(), value: s("jazz") };
-    let top = Query::Gte { field: "rating".into(), value: Value::Int(4) };
+    let jazz = Query::Eq { field: "tag".into(), value: s("jazz"), aspect: Aspect::Raw };
+    let top = Query::Gte { field: "rating".into(), value: Value::Int(4), aspect: Aspect::Raw };
 
     assert_same_set(f.run(&Query::And { operands: vec![jazz.clone(), top.clone()] }), vec![a]);
     assert_same_set(f.run(&Query::Or { operands: vec![jazz.clone(), top.clone()] }), vec![a, b, c]);
@@ -398,11 +506,29 @@ fn test_matches_on_string_and_tree_ref() {
     )]);
 
     assert_same_set(
-        f.run(&Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() }),
+        f.run(&Query::Matches {
+            field: "title".into(),
+            pattern: "[Ll]ive".into(),
+            aspect: Aspect::Raw,
+        }),
         vec![live],
     );
+    // On a tree_ref the regex needs to say what it reads: the leaf name here.
     assert_same_set(
-        f.run(&Query::Matches { field: "mfr_path".into(), pattern: "^live.*mp3$".into() }),
+        f.run(&Query::Matches {
+            field: "mfr_path".into(),
+            pattern: "^live.*mp3$".into(),
+            aspect: Aspect::Value,
+        }),
+        vec![song],
+    );
+    // The assembled path is the other reading, and is anchored differently.
+    assert_same_set(
+        f.run(&Query::Matches {
+            field: "mfr_path".into(),
+            pattern: "^/live.*mp3$".into(),
+            aspect: Aspect::Path,
+        }),
         vec![song],
     );
 }
@@ -414,7 +540,7 @@ fn test_matches_invalid_regex_is_rejected() {
     let res = query_exec::execute(
         &f.conn,
         &mut f.cache,
-        &Query::Matches { field: "title".into(), pattern: "[unclosed".into() },
+        &Query::Matches { field: "title".into(), pattern: "[unclosed".into(), aspect: Aspect::Raw },
         &[],
         None,
         None,
@@ -437,6 +563,7 @@ fn test_follows_ref_condition() {
         target: FollowTarget::Condition(Box::new(Query::Eq {
             field: "name".into(),
             value: s("Coltrane"),
+            aspect: Aspect::Raw,
         })),
     };
     assert_same_set(f.run(&q), vec![a]);
@@ -537,6 +664,7 @@ fn test_follows_condition_on_tree_ref_matches_children_of_matching_parents() {
         target: FollowTarget::Condition(Box::new(Query::Eq {
             field: "mfr_path".into(),
             value: s("2021"),
+            aspect: Aspect::Value,
         })),
     };
     assert_same_set(f.run(&q), vec![file_a, file_b]);
@@ -545,9 +673,9 @@ fn test_follows_condition_on_tree_ref_matches_children_of_matching_parents() {
 #[test]
 fn test_directory_entry_lookup_by_path() {
     // The file-manager panel resolves the displayed directory's own entry
-    // ("." row) with Matches on the TreeRef name: the root entry is the
-    // only one with an empty name, and a subdirectory is pinned down by
-    // Follows(parent) AND Matches(^name$).
+    // ("." row) with Matches on the TreeRef *name* — the `value` aspect: the
+    // root entry is the only one with an empty name, and a subdirectory is
+    // pinned down by Follows(parent) AND Matches(^name$).
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -564,13 +692,18 @@ fn test_directory_entry_lookup_by_path() {
         Value::TreeRef { parent: Some(music), name: "music".into() },
     )]);
 
-    let q = Query::Matches { field: "mfr_path".into(), pattern: "^$".into() };
+    let q =
+        Query::Matches { field: "mfr_path".into(), pattern: "^$".into(), aspect: Aspect::Value };
     assert_same_set(f.run(&q), vec![root]);
 
     let q = Query::And {
         operands: vec![
             Query::Follows { field: "mfr_path".into(), target: FollowTarget::Path("".into()) },
-            Query::Matches { field: "mfr_path".into(), pattern: "^music$".into() },
+            Query::Matches {
+                field: "mfr_path".into(),
+                pattern: "^music$".into(),
+                aspect: Aspect::Value,
+            },
         ],
     };
     assert_same_set(f.run(&q), vec![music]);
@@ -668,6 +801,7 @@ fn test_follows_transitive_inclusive_condition_roots() {
         target: FollowTarget::Condition(Box::new(Query::Eq {
             field: "mfr_path".into(),
             value: s("2021"),
+            aspect: Aspect::Value,
         })),
         inclusive: true,
     };
@@ -678,7 +812,7 @@ fn test_follows_transitive_inclusive_condition_roots() {
 fn test_exact_node_path_equality() {
     // A string operand containing '/' is an exact-node match, not a value_name
     // compare — even when two nodes share the same leaf name in different
-    // subtrees (spec-query "Exact-node equality").
+    // subtrees (spec-query "Field aspects").
     let mut f = Fixture::new();
     let root =
         f.create(vec![Field::new("mfr_path", Value::TreeRef { parent: None, name: "".into() })]);
@@ -699,23 +833,148 @@ fn test_exact_node_path_equality() {
         Value::TreeRef { parent: Some(dance), name: "jazz".into() },
     )]);
 
-    // Leaf-name equality (no '/') still matches both "jazz" nodes.
-    assert_same_set(
-        f.run(&Query::Eq { field: "mfr_path".into(), value: s("jazz") }),
-        vec![jazz, jazz2],
-    );
+    // Leaf-name equality is the `value` aspect, and matches both "jazz" nodes.
+    assert_same_set(f.run(&eq_aspect("mfr_path", s("jazz"), Aspect::Value)), vec![jazz, jazz2]);
     // Exact path pins the one under /music.
     assert_same_set(
-        f.run(&Query::Eq { field: "mfr_path".into(), value: s("/music/jazz") }),
+        f.run(&Query::Eq {
+            field: "mfr_path".into(),
+            value: s("/music/jazz"),
+            aspect: Aspect::Raw,
+        }),
         vec![jazz],
     );
     // Neq exact path: every metarecord whose mfr_path is not that node.
     assert_same_set(
-        f.run(&Query::Neq { field: "mfr_path".into(), value: s("/music/jazz") }),
+        f.run(&Query::Neq {
+            field: "mfr_path".into(),
+            value: s("/music/jazz"),
+            aspect: Aspect::Raw,
+        }),
         vec![root, music, dance, jazz2],
     );
     // A path that resolves to nothing matches nothing (Eq).
-    assert!(f.run(&Query::Eq { field: "mfr_path".into(), value: s("/music/rock") }).is_empty());
+    assert!(f
+        .run(&Query::Eq { field: "mfr_path".into(), value: s("/music/rock"), aspect: Aspect::Raw })
+        .is_empty());
+}
+
+/// A tag-shaped forest: a named root, so its own path carries no separator.
+/// This is the shape the old `/`-gated equality could not pin at all.
+fn tag_forest(f: &mut Fixture) -> (Uuid, Uuid, Uuid) {
+    let music =
+        f.create(vec![Field::new("path", Value::TreeRef { parent: None, name: "music".into() })]);
+    let jazz = f.create(vec![Field::new(
+        "path",
+        Value::TreeRef { parent: Some(music), name: "jazz".into() },
+    )]);
+    // A second, deeper node also named "music" — what a bare name match would
+    // wrongly pick up alongside the root.
+    let art =
+        f.create(vec![Field::new("path", Value::TreeRef { parent: None, name: "art".into() })]);
+    let art_music = f.create(vec![Field::new(
+        "path",
+        Value::TreeRef { parent: Some(art), name: "music".into() },
+    )]);
+    let _ = art;
+    (music, jazz, art_music)
+}
+
+#[test]
+fn test_equality_pins_a_forest_root() {
+    // The case the separator rule made unreachable: a root's path is its bare
+    // name, so the old convention fell back to a name compare and dragged in
+    // every same-named node deeper in the forest.
+    let mut f = Fixture::new();
+    let (music, _jazz, art_music) = tag_forest(&mut f);
+
+    assert_same_set(f.run(&eq_aspect("path", s("music"), Aspect::Raw)), vec![music]);
+    // The name compare — now spelled out — is the one that matches both.
+    assert_same_set(f.run(&eq_aspect("path", s("music"), Aspect::Value)), vec![music, art_music]);
+    // A deeper node is pinned by its full path, as before.
+    assert_same_set(f.run(&eq_aspect("path", s("art/music"), Aspect::Raw)), vec![art_music]);
+}
+
+#[test]
+fn test_parent_aspect_gives_the_forest_roots() {
+    // `field:parent IS ABSENT` is the only predicate form for the roots:
+    // Follows cannot address the root sentinel, which is why they have their
+    // own endpoint (spec-query "Field aspects").
+    let mut f = Fixture::new();
+    let (music, jazz, art_music) = tag_forest(&mut f);
+    let art = f.run(&eq_aspect("path", s("art"), Aspect::Raw))[0];
+
+    assert_same_set(
+        f.run(&Query::IsAbsent { field: "path".into(), aspect: Aspect::Parent }),
+        vec![music, art],
+    );
+    // Its complement over the field's rows: every non-root node.
+    assert_same_set(
+        f.run(&Query::IsPresent { field: "path".into(), aspect: Aspect::Parent }),
+        vec![jazz, art_music],
+    );
+}
+
+#[test]
+fn test_parent_aspect_equality_is_the_follows_arrow() {
+    // `field:parent = "<path>"` and `field -> "<path>"` name the same set,
+    // spelled as a comparison rather than as an arrow.
+    let mut f = Fixture::new();
+    let (_music, jazz, _art_music) = tag_forest(&mut f);
+
+    assert_same_set(f.run(&eq_aspect("path", s("music"), Aspect::Parent)), vec![jazz]);
+    assert_same_set(
+        f.run(&Query::Follows { field: "path".into(), target: FollowTarget::Path("music".into()) }),
+        vec![jazz],
+    );
+}
+
+#[test]
+fn test_matches_on_a_tree_ref_needs_an_aspect() {
+    let mut f = Fixture::new();
+    let (_music, jazz, art_music) = tag_forest(&mut f);
+
+    // The leaf name…
+    assert_same_set(
+        f.run(&Query::Matches {
+            field: "path".into(),
+            pattern: "^music$".into(),
+            aspect: Aspect::Value,
+        }),
+        vec![_music, art_music],
+    );
+    // …and the assembled path are now distinct, explicit questions.
+    assert_same_set(
+        f.run(&Query::Matches {
+            field: "path".into(),
+            pattern: "^music/".into(),
+            aspect: Aspect::Path,
+        }),
+        vec![jazz],
+    );
+    // Bare is refused rather than silently reading the name.
+    let e = f.run_err(&Query::Matches {
+        field: "path".into(),
+        pattern: "music".into(),
+        aspect: Aspect::Raw,
+    });
+    assert!(e.contains("aspect"), "{e}");
+}
+
+#[test]
+fn test_tree_only_aspects_are_rejected_on_other_field_types() {
+    let mut f = Fixture::new();
+    f.create(vec![Field::new("title", s("hello"))]);
+
+    for aspect in [Aspect::Parent, Aspect::Path] {
+        let e = f.run_err(&eq_aspect("title", s("hello"), aspect));
+        assert!(e.contains("tree_ref"), "{aspect:?}: {e}");
+    }
+    // `value` and `raw` coincide on a non-tree_ref field.
+    assert_eq!(
+        f.run(&eq_aspect("title", s("hello"), Aspect::Value)),
+        f.run(&eq_aspect("title", s("hello"), Aspect::Raw)),
+    );
 }
 
 #[test]
@@ -760,6 +1019,7 @@ fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
         target: FollowTarget::Condition(Box::new(Query::Eq {
             field: "mfr_path".into(),
             value: s("2021"),
+            aspect: Aspect::Value,
         })),
         inclusive: false,
     };
@@ -772,6 +1032,7 @@ fn test_follows_transitive_condition_collects_descendants_of_matching_roots() {
         target: FollowTarget::Condition(Box::new(Query::Eq {
             field: "mfr_path".into(),
             value: s("nope"),
+            aspect: Aspect::Raw,
         })),
         inclusive: false,
     };
@@ -788,7 +1049,7 @@ fn test_sort_asc_desc_with_unknown_last() {
     let unknown = f.create(vec![Field::new("k", s("x"))]);
     let nothing = f.create(vec![Field::new("rating", Value::Nothing), Field::new("k", s("x"))]);
 
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     let asc = f.run_sorted(&all, &[sort_asc("rating")]);
     assert_eq!(&asc[..2], &[two, five]);
     let mut tail = asc[2..].to_vec();
@@ -903,7 +1164,7 @@ fn test_sort_multimap_uses_min_for_asc_and_max_for_desc() {
     ]);
     let b = f.create(vec![Field::new("n", Value::Int(5)), Field::new("k", s("x"))]);
 
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     assert_eq!(f.run_sorted(&all, &[sort_asc("n")]), vec![a, b], "asc: min(a)=1 < 5");
     assert_eq!(f.run_sorted(&all, &[sort_desc("n")]), vec![a, b], "desc: max(a)=9 > 5");
 }
@@ -927,14 +1188,14 @@ fn test_sort_secondary_key_and_uuid_tiebreak() {
             Field::new("k", s("x")),
         ]));
     }
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     let got = f.run_sorted(&all, &[sort_asc("g"), sort_asc("n")]);
     assert_eq!(got, vec![uuids[1], uuids[0], uuids[2]]);
 
     // Equal on every key: ordered by UUID.
     let t1 = f.create(vec![Field::new("k", s("tie"))]);
     let t2 = f.create(vec![Field::new("k", s("tie"))]);
-    let tie = Query::Eq { field: "k".into(), value: s("tie") };
+    let tie = Query::Eq { field: "k".into(), value: s("tie"), aspect: Aspect::Raw };
     let got = f.run_sorted(&tie, &[sort_asc("g")]);
     let mut expected = vec![t1, t2];
     expected.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
@@ -949,7 +1210,7 @@ fn test_pagination_with_sort_covers_all_without_duplicates() {
     for i in 0..23 {
         f.create(vec![Field::new("n", Value::Int((i * 7) % 23)), Field::new("k", s("x"))]);
     }
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     let sort = vec![sort_desc("n")];
     let reference = f.run_sorted(&all, &sort);
 
@@ -974,7 +1235,7 @@ fn test_cursor_is_rejected_for_different_query_or_sort() {
     for i in 0..3 {
         f.create(vec![Field::new("n", Value::Int(i)), Field::new("k", s("x"))]);
     }
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     let (_, cursor) =
         query_exec::execute(&f.conn, &mut f.cache, &all, &[sort_asc("n")], Some(2), None).unwrap();
     let cursor = cursor.unwrap();
@@ -1016,7 +1277,7 @@ fn tree_fixture(f: &mut Fixture) -> Vec<Uuid> {
 fn test_sort_tree_ref_orders_by_full_path() {
     let mut f = Fixture::new();
     let expected = tree_fixture(&mut f);
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
 
     assert_eq!(
         f.run_sorted(&all, &[sort_asc("mfr_path")]),
@@ -1049,7 +1310,7 @@ fn test_sort_tree_ref_multimap_uses_min_path_for_asc() {
         Field::new("k", s("x")),
     ]);
 
-    let all = Query::Eq { field: "k".into(), value: s("x") };
+    let all = Query::Eq { field: "k".into(), value: s("x"), aspect: Aspect::Raw };
     assert_eq!(f.run_sorted(&all, &[sort_asc("loc")]), vec![a, both, m], "asc: min = /a/x");
     assert_eq!(f.run_sorted(&all, &[sort_desc("loc")]), vec![both, m, a], "desc: max = /m/x");
 }

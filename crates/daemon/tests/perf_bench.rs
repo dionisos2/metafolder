@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use metafolder_core::metarecord::Value;
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::index::{QueryRoots, RepoIndex};
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::state::RepoState;
@@ -184,6 +184,7 @@ fn bench_index_build_and_folder_query() {
                     "^({})$",
                     names.iter().map(|n| escape_regex(n)).collect::<Vec<_>>().join("|")
                 ),
+                aspect: Aspect::Raw,
             },
         ],
     };
@@ -299,8 +300,11 @@ fn bench_index_build_and_folder_query() {
             .unwrap();
         cache.path_of(&conn, "mfr_path", uuid).unwrap().unwrap()
     };
-    let node_query =
-        Query::Eq { field: "mfr_path".into(), value: Value::String(file_path.clone()) };
+    let node_query = Query::Eq {
+        field: "mfr_path".into(),
+        value: Value::String(file_path.clone()),
+        aspect: Aspect::Raw,
+    };
     eprintln!("#5 exact-node path query, {file_path:?}:");
 
     // OLD: Unsupported by the index → the SQL engine scans every mfr_path row.
@@ -369,11 +373,19 @@ fn bench_index_build_and_folder_query() {
     for (label, q) in [
         (
             "matches, strong literal",
-            Query::Matches { field: "mfr_path".into(), pattern: "sample_1".into() },
+            Query::Matches {
+                field: "mfr_path".into(),
+                pattern: "sample_1".into(),
+                aspect: Aspect::Raw,
+            },
         ),
         (
             "matches, no literal",
-            Query::Matches { field: "mfr_type".into(), pattern: "^f.$".into() },
+            Query::Matches {
+                field: "mfr_type".into(),
+                pattern: "^f.$".into(),
+                aspect: Aspect::Raw,
+            },
         ),
         (
             "osm direct",

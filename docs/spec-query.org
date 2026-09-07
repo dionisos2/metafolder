@@ -70,7 +70,7 @@ by bitmap expansion); see [[file:spec-indexing.org][spec-indexing.org]].
 side. With a condition, it matches metarecords whose =value_uuid= (the =Ref=
 referent, or the =TreeRef= direct parent) points to a metarecord satisfying
 that condition; this works on both =Ref= and =TreeRef= fields, e.g.
-=mfr_path -> (mfr_path = "2021")= matches the direct children of every
+=mfr_path -> (mfr_path:value = "2021")= matches the direct children of every
 directory named =2021=. With a path string (e.g. ="/music/jazz"=, =TreeRef=
 semantics only), the path is resolved to a UUID via the tree cache and the
 query matches metarecords whose direct parent (=value_uuid=) is that metarecord.
@@ -80,7 +80,7 @@ DSL syntax: =field -> "path"= / =field -> (predicate)=.
 field is rejected with =400=. The right-hand side is either a path string
 (e.g. ="/projects"=) that is resolved to a UUID via the tree cache, or a
 condition (sub-query, executed on its own and repo-filtered) whose matches
-form the root set — e.g. =mfr_path ->* (mfr_path = "2021")= matches
+form the root set — e.g. =mfr_path ->* (mfr_path:value = "2021")= matches
 everything inside any directory named =2021=. All descendants of the root(s)
 are then collected iteratively via the tree cache (fetching missing nodes
 from the DB step by step, deduplicating across overlapping roots), and the
@@ -615,7 +615,7 @@ mfr_path IS ABSENT
 NOT (seen = true OR rating IS UNKNOWN)
 mfr_path ->* "/music/jazz" AND title MATCHES "[Ll]ive"
 author -> (name = "Coltrane")
-mfr_type = "file" AND mfr_path -> (mfr_path = "2021")
+mfr_type = "file" AND mfr_path -> (mfr_path:value = "2021")
 mfr_path = "/music/jazz"                     # the one metarecord at this exact path
 tag -> (path = "music/jazz")                 # records carrying exactly this tag
 tag -> (path =>* "music/jazz")               # ... this tag or any tag beneath it

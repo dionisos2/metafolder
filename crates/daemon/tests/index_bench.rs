@@ -9,7 +9,7 @@
 use std::time::Instant;
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, Query};
+use metafolder_core::query::{Aspect, FollowTarget, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::index::{RepoIndex, SortBy};
 use metafolder_daemon::log::Writer;
@@ -78,10 +78,11 @@ fn follows_t(field: &str, cond: Query) -> Query {
 }
 
 fn battery() -> Vec<(&'static str, Query)> {
-    let gte = |f: &str, n: i64| Query::Gte { field: f.into(), value: Value::Int(n) };
-    let eq = |f: &str, v: Value| Query::Eq { field: f.into(), value: v };
+    let gte =
+        |f: &str, n: i64| Query::Gte { field: f.into(), value: Value::Int(n), aspect: Aspect::Raw };
+    let eq = |f: &str, v: Value| Query::Eq { field: f.into(), value: v, aspect: Aspect::Raw };
     vec![
-        ("present(rate)", Query::IsPresent { field: "rate".into() }),
+        ("present(rate)", Query::IsPresent { field: "rate".into(), aspect: Aspect::Raw }),
         ("rate>=90 (selective)", gte("rate", 90)),
         ("rate>=10 (broad)", gte("rate", 10)),
         (
@@ -93,6 +94,7 @@ fn battery() -> Vec<(&'static str, Query)> {
             Query::Lt {
                 field: "added".into(),
                 value: Value::DateTime(1_700_000_000_000 + 25_000_000),
+                aspect: Aspect::Raw,
             },
         ),
         ("descendants(root)", follows_t("loc", eq("tag", s("root")))),
@@ -162,9 +164,24 @@ fn run_scale(dirs: usize, files: usize, compare_sql_sort: bool) {
     // runs only at the small scale; the big scale times the index alone.
     println!("-- sorted, LIMIT 100 --");
     let sorted: Vec<(&str, Query, &str, bool)> = vec![
-        ("latest by added", Query::IsPresent { field: "added".into() }, "added", false),
-        ("films by rate desc", Query::Eq { field: "kind".into(), value: s("file") }, "rate", false),
-        ("by size asc", Query::IsPresent { field: "size".into() }, "size", true),
+        (
+            "latest by added",
+            Query::IsPresent { field: "added".into(), aspect: Aspect::Raw },
+            "added",
+            false,
+        ),
+        (
+            "films by rate desc",
+            Query::Eq { field: "kind".into(), value: s("file"), aspect: Aspect::Raw },
+            "rate",
+            false,
+        ),
+        (
+            "by size asc",
+            Query::IsPresent { field: "size".into(), aspect: Aspect::Raw },
+            "size",
+            true,
+        ),
     ];
     for (name, q, field, asc) in sorted {
         let idx_keys = [SortBy { field: field.into(), ascending: asc }];

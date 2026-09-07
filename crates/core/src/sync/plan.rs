@@ -861,8 +861,15 @@ fn ref_targets(ctx: &Ctx, repo: Uuid, record: Uuid) -> Result<Vec<Uuid>, CliErro
 }
 
 /// The record occupying position `path` in `repo`'s `field` forest, via the
-/// exact-path query idiom (=field -> "/parent" AND field = "name"=). The root
-/// (empty path) is resolved through the forest-roots endpoint.
+/// parent-and-name idiom (=field -> "/parent" AND field:value = "name"=). The
+/// root (empty path) is resolved through the forest-roots endpoint.
+///
+/// The leaf comparison names the `value` aspect explicitly (spec-query "Field
+/// aspects"): a bare `=` on a TreeRef is the *exact node* at a path, which is
+/// not what this half of the intersection asks. The idiom is kept rather than
+/// replaced by that single exact-node lookup because the function serves any
+/// forest, whatever its root convention, while a path operand must follow the
+/// one belonging to its field.
 pub(crate) fn record_at_path(
     ctx: &Ctx,
     repo: Uuid,
@@ -887,7 +894,8 @@ pub(crate) fn record_at_path(
     };
     let query = json!({"type": "and", "operands": [
         {"type": "follows", "field": field, "target": parent},
-        {"type": "eq", "field": field, "value": {"type": "string", "value": name}},
+        {"type": "eq", "field": field, "value": {"type": "string", "value": name},
+         "aspect": "value"},
     ]});
     let resp = ctx.client.post(
         &format!("/repos/{}/query", repo.as_simple()),

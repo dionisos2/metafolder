@@ -9,7 +9,7 @@
 //! SQL `REGEXP` UDF, so the only thing under test is the pre-filter.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::Query;
+use metafolder_core::query::{Aspect, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec;
@@ -37,7 +37,14 @@ impl Fixture {
     }
 
     fn matches(&mut self, field: &str, pattern: &str) -> Vec<Uuid> {
-        let q = Query::Matches { field: field.into(), pattern: pattern.into() };
+        self.matches_as(field, pattern, Aspect::Raw)
+    }
+
+    /// The trigram pre-filter backs the *name* scan, so a tree_ref field is
+    /// probed through the `value` aspect — `raw` on one is not a regex question
+    /// at all (spec-query "Field aspects").
+    fn matches_as(&mut self, field: &str, pattern: &str, aspect: Aspect) -> Vec<Uuid> {
+        let q = Query::Matches { field: field.into(), pattern: pattern.into(), aspect };
         let (mut uuids, _) =
             query_exec::execute(&self.conn, &mut self.cache, &q, &[], None, None).unwrap();
         uuids.sort();
@@ -156,7 +163,7 @@ fn fts_prefilter_matches_full_scan_on_tree_names() {
         let mut expected: Vec<Uuid> =
             ids.iter().filter(|(_, n)| re.is_match(n)).map(|(u, _)| *u).collect();
         expected.sort();
-        let got = f.matches("loc", pat);
+        let got = f.matches_as("loc", pat, Aspect::Value);
         assert_eq!(got, expected, "tree-name MATCHES /{pat}/ diverged from full scan");
     }
 }
@@ -201,7 +208,7 @@ fn fts_index_is_backfilled_for_old_repositories() {
 
     // The rebuilt index serves MATCHES exactly again.
     assert_eq!(f.matches("txt", "report"), vec![m]);
-    assert_eq!(f.matches("loc", "annual").len(), 1);
+    assert_eq!(f.matches_as("loc", "annual", Aspect::Value).len(), 1);
 }
 
 #[test]

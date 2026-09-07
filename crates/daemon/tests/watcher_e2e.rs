@@ -88,7 +88,7 @@ async fn tracked_paths(app: &Router, repo: &str) -> Vec<String> {
 
 /// Polls until the single metarecord tracking `pattern` is `uuid`.
 async fn wait_for_uuid_at(app: &Router, repo: &str, pattern: &str, uuid: &str) {
-    let query = json!({"type": "matches", "field": "mfr_path", "pattern": format!("^{pattern}$")});
+    let query = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": format!("^{pattern}$")});
     let mut last = Vec::new();
     for _ in 0..100 {
         let (_, body) =
@@ -180,13 +180,13 @@ async fn test_watcher_tracks_create_rename_delete() {
 
     // Create.
     std::fs::write(root.join("track_me.txt"), b"hello watcher").unwrap();
-    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^track_me\\.txt$"});
+    let by_name = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^track_me\\.txt$"});
     let hits = wait_for_match(&app, &repo, by_name, 1).await;
     let metarecord_uuid = hits[0].clone();
 
     // Rename.
     std::fs::rename(root.join("track_me.txt"), root.join("renamed.txt")).unwrap();
-    let renamed = json!({"type": "matches", "field": "mfr_path", "pattern": "^renamed\\.txt$"});
+    let renamed = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^renamed\\.txt$"});
     let hits = wait_for_match(&app, &repo, renamed, 1).await;
     assert_eq!(hits[0], metarecord_uuid, "the entry must survive the rename");
 
@@ -251,7 +251,7 @@ async fn test_load_succeeds_with_symlink_to_unreadable_dir() {
     // A real file created in the root is still detected: the refresh placed a
     // watch on the (eligible) root directory.
     std::fs::write(root.join("real.txt"), b"hello").unwrap();
-    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^real\\.txt$"});
+    let by_name = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^real\\.txt$"});
     wait_for_match(&app, &repo, by_name, 1).await;
 
     // Cleanup: restore permissions so the trees can be removed.
@@ -300,7 +300,8 @@ async fn test_new_directory_does_not_wedge_the_daemon() {
     // test run that never ends.
     std::fs::create_dir(root.join("A")).unwrap();
     std::fs::write(root.join("A/B.txt"), b"bee").unwrap();
-    let nested = json!({"type": "matches", "field": "mfr_path", "pattern": "^B\\.txt$"});
+    let nested =
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^B\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, nested, 1))
         .await
         .expect("the daemon must stay responsive after a directory is created");
@@ -308,7 +309,8 @@ async fn test_new_directory_does_not_wedge_the_daemon() {
     // The new directory got its own watch: a file created in it *after* the
     // arrival was processed is tracked too (nothing rescans it later).
     std::fs::write(root.join("A/C.txt"), b"cee").unwrap();
-    let later = json!({"type": "matches", "field": "mfr_path", "pattern": "^C\\.txt$"});
+    let later =
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^C\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, later, 1))
         .await
         .expect("the new directory must be watched for its own future events");
@@ -327,7 +329,7 @@ async fn test_renamed_directory_keeps_being_watched() {
 
     std::fs::create_dir(root.join("A")).unwrap();
     std::fs::write(root.join("A/one.txt"), b"1").unwrap();
-    let one = json!({"type": "matches", "field": "mfr_path", "pattern": "^one\\.txt$"});
+    let one = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^one\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, one, 1))
         .await
         .expect("the nested file is tracked");
@@ -342,7 +344,7 @@ async fn test_renamed_directory_keeps_being_watched() {
     .expect("the rename is recorded for the directory and its child");
 
     std::fs::write(root.join("B/two.txt"), b"2").unwrap();
-    let two = json!({"type": "matches", "field": "mfr_path", "pattern": "^two\\.txt$"});
+    let two = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^two\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, two, 1))
         .await
         .expect("a file created in the renamed directory must still be seen");
@@ -406,7 +408,8 @@ async fn test_file_moved_between_directories_keeps_its_metarecord() {
     std::fs::create_dir(root.join("src")).unwrap();
     std::fs::create_dir(root.join("dst")).unwrap();
     std::fs::write(root.join("src/x.txt"), b"x").unwrap();
-    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^x\\.txt$"});
+    let by_name =
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^x\\.txt$"});
     let hits = tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_match(&app, &repo, by_name.clone(), 1),
@@ -452,7 +455,7 @@ async fn test_nested_subtree_created_at_once_is_ingested() {
 
     // The deepest directory is watched too: a file added later is picked up.
     std::fs::write(root.join("a/b/c/later.txt"), b"later").unwrap();
-    let later = json!({"type": "matches", "field": "mfr_path", "pattern": "^later\\.txt$"});
+    let later = json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^later\\.txt$"});
     tokio::time::timeout(Duration::from_secs(20), wait_for_match(&app, &repo, later, 1))
         .await
         .expect("the deepest new directory must be watched for its own events");
@@ -503,7 +506,8 @@ async fn test_move_into_a_brand_new_directory_keeps_the_metarecord() {
     let (app, repo, root) = watched_repo("newdirmove").await;
 
     std::fs::write(root.join("x.txt"), b"x").unwrap();
-    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^x\\.txt$"});
+    let by_name =
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^x\\.txt$"});
     let hits = tokio::time::timeout(
         Duration::from_secs(20),
         wait_for_match(&app, &repo, by_name.clone(), 1),
@@ -558,7 +562,8 @@ async fn test_move_a_directory_into_a_brand_new_directory_keeps_the_subtree() {
     )
     .await
     .expect("tracked before the move");
-    let by_name = json!({"type": "matches", "field": "mfr_path", "pattern": "^x\\.jpg$"});
+    let by_name =
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^x\\.jpg$"});
     let hits = wait_for_match(&app, &repo, by_name.clone(), 1).await;
     let child = hits[0].clone();
 
@@ -611,7 +616,7 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive() {
     let a = wait_for_match(
         &app,
         &repo,
-        json!({"type": "matches", "field": "mfr_path", "pattern": "^a\\.txt$"}),
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^a\\.txt$"}),
         1,
     )
     .await[0]
@@ -628,7 +633,7 @@ async fn test_overwriting_a_tracked_file_keeps_the_watcher_alive() {
     let at_b = wait_for_match(
         &app,
         &repo,
-        json!({"type": "matches", "field": "mfr_path", "pattern": "^b\\.txt$"}),
+        json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": "^b\\.txt$"}),
         1,
     )
     .await;
@@ -676,7 +681,7 @@ async fn test_swapping_two_tracked_files_keeps_both_metarecords() {
     )
     .await
     .expect("both tracked");
-    let at = |name: &str| json!({"type": "matches", "field": "mfr_path", "pattern": format!("^{name}$")});
+    let at = |name: &str| json!({"type": "matches", "field": "mfr_path", "aspect": "value", "pattern": format!("^{name}$")});
     let a = wait_for_match(&app, &repo, at("a\\.txt"), 1).await[0].clone();
     let b = wait_for_match(&app, &repo, at("b\\.txt"), 1).await[0].clone();
 

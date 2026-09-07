@@ -110,6 +110,34 @@ NOT (seen = true OR rating IS UNKNOWN)</pre>
 <pre>mfr_path -&gt;* "/music/jazz"
 author -&gt; (name = "Coltrane")</pre>
 
+<h2>Aspects — which part of a value you read</h2>
+<p>
+  A field name may carry an <strong>aspect</strong>, <code>field:aspect</code>,
+  saying which component of the value the predicate reads. It matters on a
+  TreeRef, whose value is a <em>(parent, name)</em> couple rather than a plain
+  string. The same four names are used by the list's columns and by the finder.
+</p>
+<table>
+  <thead><tr><th>Aspect</th><th>Reads</th></tr></thead>
+  <tbody>
+    <tr><td><code>:raw</code></td><td>the value itself — on a TreeRef, the node (the default, so you rarely type it)</td></tr>
+    <tr><td><code>:value</code></td><td>the leaf name alone, wherever it sits in the tree</td></tr>
+    <tr><td><code>:parent</code></td><td>the parent node</td></tr>
+    <tr><td><code>:path</code></td><td>the whole path from the root, <code>a/b/c</code></td></tr>
+  </tbody>
+</table>
+<pre>mfr_path = "/music/jazz"        the one node at that path
+mfr_path:value = "jazz"         every node named jazz, anywhere
+mfr_path:path MATCHES "^/mu"    a regex over the assembled path
+path:parent IS ABSENT           the roots of the tag hierarchy</pre>
+<p>
+  Ordering or regex-matching a TreeRef needs one of them spelled out
+  (<code>:value</code> or <code>:path</code>): there is no sensible ordering of a
+  <em>(parent, name)</em> couple, and guessing which one you meant is exactly
+  what the aspect removes. <code>:parent</code> and <code>:path</code> only apply
+  to a TreeRef field.
+</p>
+
 <h2>Tags</h2>
 <p>
   A tag is a metarecord marked <code>mf_schema = "tag"</code>; its place in the tag
@@ -124,9 +152,10 @@ author -&gt; (name = "Coltrane")</pre>
 <p>Records carrying one specific tag — the node <code>jazz</code> under <code>music</code>:</p>
 <pre>tag -&gt; (path = "music/jazz")</pre>
 <p>
-  On a TreeRef field, an <code>=</code> operand that contains a <code>/</code> is
-  an <strong>exact-path</strong> match (the one node at that path), not a
-  leaf-name compare — so this pins that single tag.
+  On a TreeRef field, <code>=</code> is an <strong>exact-node</strong> match: the
+  operand is a path, resolved to the one node sitting there — so this pins that
+  single tag. It works at every depth, a root of the hierarchy included
+  (<code>tag -&gt; (path = "music")</code>).
 </p>
 <p>
   Records carrying that tag <strong>or any tag below it</strong> in the hierarchy
@@ -185,8 +214,9 @@ author -&gt; (name = "Coltrane")</pre>
 
 <h2>Examples</h2>
 <pre>mfr_path IS ABSENT
-mfr_type = "file" AND mfr_path -&gt; (mfr_path = "2021")
+mfr_type = "file" AND mfr_path -&gt; (mfr_path:value = "2021")
 mfr_path -&gt;* "/music/jazz" AND title MATCHES "[Ll]ive"
+mfr_path:value MATCHES "\.flac$"
 tag -&gt; (path = "music/jazz")
 mf_schema = "tag" AND (osm(path, "musi jaz") OR osmd(label, "jazz"))
 8f3a2b1c4d5e6f708192a3b4c5d6e7f8 AND rating &gt; 3

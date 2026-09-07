@@ -35,12 +35,12 @@ const DEFAULT_PAGE_SIZE_FALLBACK = 100;
 // per-workspace `metarecord-list:columns` variable; this is only the fallback.
 const DEFAULT_COLUMNS = 'mfr_path:path mfr_type &version';
 // Fields the finder (quick OSM filter) searches by default, each with an
-// explicit mode (`field:path` for the tree_ref path, `field:direct` for a plain
+// explicit aspect (`field:path` for the tree_ref path, `field:value` for a plain
 // value) so it never depends on the async field catalog. A bare `field` (no
 // mode) auto-detects from the catalog. Missing fields contribute nothing.
 // Configured by `[panel-defaults.metarecord-list].finder-fields`, overridable
 // per workspace via `metarecord-list:finder-fields`.
-const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:direct', 'name:direct'];
+const DEFAULT_FINDER_FIELDS = ['mfr_path:path', 'label:value', 'name:value'];
 // Idle delay before the finder re-runs the query, so a burst of typing sends
 // one request rather than one per keystroke.
 const FINDER_DEBOUNCE_MS = 500;

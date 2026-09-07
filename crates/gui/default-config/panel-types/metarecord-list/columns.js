@@ -4,15 +4,18 @@
 // spaces around `|` are tolerated). Two orthogonal operators plus a fallback:
 //   &uuid | &version    metarecord metadata (not a field, not sortable)
 //   field               raw field value(s)
-//   field:mode          projection of a tree_ref value:
-//                         :name (leaf) · :uuid (parent) · :path (full path from
-//                         the root) · :raw (the parent/name couple, the default)
+//   field:aspect        projection of a tree_ref value:
+//                         :value (the leaf name) · :parent (the parent's uuid) ·
+//                         :path (full path from the root) · :raw (the
+//                         parent/name couple, the default)
+//                       The same four aspect names the query DSL and the finder
+//                       use (spec-query "Field aspects").
 //   field>sub           follow a Ref/RefBase to the target metarecord's `sub`
-//   field>sub:mode      ...then project (e.g. tag>path:name)
+//   field>sub:aspect    ...then project (e.g. tag>path:value)
 //   a | b               fallback: the first alternative that yields a value
 //   (a | b)             optional parentheses group a fallback into one column
 // A single `>` only (no deep chains). Modes that don't apply to a value's type
-// (e.g. :name on a string) fall back to the raw display. Projections never
+// (e.g. :value on a string) fall back to the raw display. Projections never
 // change the sort field (the daemon sorts raw values; sort uses the first
 // alternative's base field).
 //
@@ -43,7 +46,7 @@ import { fields, formatValue } from '/__ui.js';
  */
 
 const META_COLUMNS = ['uuid', 'version'];
-const MODES = ['raw', 'name', 'uuid', 'path'];
+const MODES = ['raw', 'value', 'parent', 'path'];
 
 // Resolved display text per metarecord, keyed by column spec. Filled by
 // fillColumns, read by cellText. The WeakMap drops entries with the metarecord.
@@ -118,7 +121,7 @@ function parseAlternative(text, spec) {
     nav = nav.slice(0, colon);
     if (!MODES.includes(mode)) {
       throw new Error(
-        `invalid column "${spec}" (unknown mode ":${mode}", expected :name/:uuid/:path/:raw)`,
+        `invalid column "${spec}" (unknown aspect ":${mode}", expected :value/:parent/:path/:raw)`,
       );
     }
   }
@@ -147,16 +150,16 @@ export function isSortable(column) {
 }
 
 /**
- * Projects a value through a display mode. `resolvedPaths` feeds `:path`.
+ * Projects a value through a display aspect. `resolvedPaths` feeds `:path`.
  * @param {Metafolder.Value} value @param {string} mode
  * @param {string[]|undefined} resolvedPaths
  */
 function projectValue(value, mode, resolvedPaths) {
   if (value.type === 'tree_ref') {
     switch (mode) {
-      case 'name':
+      case 'value':
         return value.value.name || '(root)';
-      case 'uuid':
+      case 'parent':
         return value.value.parent ?? '(root)';
       case 'path':
         if (resolvedPaths && resolvedPaths.length > 0) {
@@ -167,7 +170,7 @@ function projectValue(value, mode, resolvedPaths) {
         return formatValue(value);
     }
   }
-  return formatValue(value); // modes don't apply to non-tree_ref values
+  return formatValue(value); // aspects don't apply to non-tree_ref values
 }
 
 /**
@@ -202,7 +205,7 @@ function altText(alt, metarecord, data) {
     }
     const resolved = data?.followedPathsByField?.[alt.follow]?.[target.uuid];
     // Present target whose `follow` field is absent contributes nothing,
-    // so a fallback (e.g. tag>label | tag>path:name) can take over.
+    // so a fallback (e.g. tag>label | tag>path:value) can take over.
     for (const ff of fields(target, alt.follow)) {
       out.push(projectValue(ff.value, alt.mode, resolved));
     }

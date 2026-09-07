@@ -26,10 +26,14 @@ pub enum Query {
     /// The field exists with a non-Nothing value.
     IsPresent {
         field: String,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     /// The field exists with the value Nothing.
     IsAbsent {
         field: String,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     /// The field does not exist on this metarecord.
     IsUnknown {
@@ -40,26 +44,38 @@ pub enum Query {
     Eq {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     Neq {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     Lt {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     Lte {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     Gt {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
     Gte {
         field: String,
         value: Value,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
 
     // --- Graph traversal ---
@@ -89,6 +105,8 @@ pub enum Query {
     Matches {
         field: String,
         pattern: String,
+        #[serde(default, skip_serializing_if = "Aspect::is_raw")]
+        aspect: Aspect,
     },
 
     // --- Ordered substring matching (OSM) ---
@@ -201,6 +219,37 @@ pub fn split_terms(input: &str) -> Vec<String> {
     input.split_whitespace().map(str::to_string).collect()
 }
 
+/// Which component of a field's value a predicate reads (spec-query "Field
+/// aspects"). The DSL spells it `field:aspect`; JSON omits the key for the
+/// default `Raw`, so bodies written before aspects existed parse unchanged.
+///
+/// `Parent` and `Path` are `TreeRef`-only — the daemon rejects them on any
+/// other field type, since only it knows the field's value type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Aspect {
+    /// The value itself: for a `TreeRef`, the `(parent, name)` couple — so an
+    /// equality is the *exact node* at a path, not a name comparison.
+    #[default]
+    Raw,
+    /// The row's own text: `value_text`, or `value_name` (the leaf name) for a
+    /// `TreeRef`. On a non-`TreeRef` field it coincides with `Raw`.
+    Value,
+    /// The `TreeRef` parent's UUID (`value_uuid`). Absent on a forest root,
+    /// whose parent is the root sentinel — so `field:parent IS ABSENT` is the
+    /// predicate form of "is a root".
+    Parent,
+    /// The assembled path from the forest root, `seg1/.../segN`.
+    Path,
+}
+
+impl Aspect {
+    /// serde `skip_serializing_if`: the default aspect is not written out.
+    fn is_raw(&self) -> bool {
+        matches!(self, Aspect::Raw)
+    }
+}
+
 /// serde `skip_serializing_if` for the `FollowsTransitive::inclusive` flag,
 /// so the common (strict) form serializes without an `inclusive` key.
 fn is_false(b: &bool) -> bool {
@@ -230,17 +279,80 @@ mod tests {
 
     #[test]
     fn test_is_present_json_format() {
-        let q = Query::IsPresent { field: "path".into() };
+        let q = Query::IsPresent { field: "path".into(), aspect: Aspect::Raw };
         assert_eq!(serde_json::to_string(&q).unwrap(), r#"{"type":"is_present","field":"path"}"#);
     }
 
     #[test]
     fn test_eq_json_format() {
-        let q = Query::Eq { field: "rating".into(), value: Value::Int(5) };
+        let q = Query::Eq { field: "rating".into(), value: Value::Int(5), aspect: Aspect::Raw };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"eq","field":"rating","value":{"type":"int","value":5}}"#
         );
+    }
+
+    #[test]
+    fn test_default_aspect_is_omitted_from_json() {
+        // The default `raw` aspect keeps the historical JSON shape, so bodies
+        // written before aspects existed serialize and parse unchanged.
+        let q = Query::Eq { field: "rating".into(), value: Value::Int(5), aspect: Aspect::Raw };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"eq","field":"rating","value":{"type":"int","value":5}}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+        // A body with no `aspect` key parses as `raw`.
+        let parsed: Query = serde_json::from_str(
+            r#"{"type":"eq","field":"rating","value":{"type":"int","value":5}}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed, q);
+    }
+
+    #[test]
+    fn test_non_default_aspect_is_emitted_and_roundtrips() {
+        let q = Query::Eq {
+            field: "path".into(),
+            value: Value::String("jazz".into()),
+            aspect: Aspect::Value,
+        };
+        assert_eq!(
+            serde_json::to_string(&q).unwrap(),
+            r#"{"type":"eq","field":"path","value":{"type":"string","value":"jazz"},"aspect":"value"}"#
+        );
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_every_value_reading_predicate_carries_an_aspect() {
+        // The presence trio (minus IsUnknown, which reads no component), the
+        // six comparisons and Matches all take one.
+        let q = Query::And {
+            operands: vec![
+                Query::IsPresent { field: "path".into(), aspect: Aspect::Parent },
+                Query::IsAbsent { field: "path".into(), aspect: Aspect::Parent },
+                Query::Neq { field: "p".into(), value: Value::Int(1), aspect: Aspect::Value },
+                Query::Lt { field: "p".into(), value: Value::Int(1), aspect: Aspect::Value },
+                Query::Lte { field: "p".into(), value: Value::Int(1), aspect: Aspect::Value },
+                Query::Gt { field: "p".into(), value: Value::Int(1), aspect: Aspect::Value },
+                Query::Gte { field: "p".into(), value: Value::Int(1), aspect: Aspect::Value },
+                Query::Matches { field: "p".into(), pattern: "x".into(), aspect: Aspect::Path },
+            ],
+        };
+        assert_eq!(roundtrip(&q), q);
+    }
+
+    #[test]
+    fn test_aspect_json_names() {
+        for (aspect, name) in [
+            (Aspect::Raw, "raw"),
+            (Aspect::Value, "value"),
+            (Aspect::Parent, "parent"),
+            (Aspect::Path, "path"),
+        ] {
+            assert_eq!(serde_json::to_string(&aspect).unwrap(), format!("\"{name}\""));
+        }
     }
 
     #[test]
@@ -274,6 +386,7 @@ mod tests {
             target: FollowTarget::Condition(Box::new(Query::Eq {
                 field: "mfr_path".into(),
                 value: Value::String("2021".into()),
+                aspect: Aspect::Raw,
             })),
             inclusive: false,
         };
@@ -331,6 +444,7 @@ mod tests {
             target: FollowTarget::Condition(Box::new(Query::Eq {
                 field: "name".into(),
                 value: Value::String("Coltrane".into()),
+                aspect: Aspect::Raw,
             })),
         };
         assert_eq!(
@@ -360,6 +474,7 @@ mod tests {
             target: Box::new(Query::Eq {
                 field: "mfr_path".into(),
                 value: Value::String("/a/b.txt".into()),
+                aspect: Aspect::Raw,
             }),
         };
         assert_eq!(
@@ -389,7 +504,11 @@ mod tests {
 
     #[test]
     fn test_matches_json_format() {
-        let q = Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() };
+        let q = Query::Matches {
+            field: "title".into(),
+            pattern: "[Ll]ive".into(),
+            aspect: Aspect::Raw,
+        };
         assert_eq!(
             serde_json::to_string(&q).unwrap(),
             r#"{"type":"matches","field":"title","pattern":"[Ll]ive"}"#
@@ -404,12 +523,20 @@ mod tests {
             operands: vec![
                 Query::Or {
                     operands: vec![
-                        Query::Eq { field: "tag".into(), value: Value::String("jazz".into()) },
-                        Query::Eq { field: "tag".into(), value: Value::String("blues".into()) },
+                        Query::Eq {
+                            field: "tag".into(),
+                            value: Value::String("jazz".into()),
+                            aspect: Aspect::Raw,
+                        },
+                        Query::Eq {
+                            field: "tag".into(),
+                            value: Value::String("blues".into()),
+                            aspect: Aspect::Raw,
+                        },
                     ],
                 },
                 Query::Not { operand: Box::new(Query::IsUnknown { field: "rating".into() }) },
-                Query::Gte { field: "rating".into(), value: Value::Int(4) },
+                Query::Gte { field: "rating".into(), value: Value::Int(4), aspect: Aspect::Raw },
             ],
         };
         assert_eq!(roundtrip(&q), q);
@@ -424,6 +551,7 @@ mod tests {
                     target: FollowTarget::Condition(Box::new(Query::Eq {
                         field: "label".into(),
                         value: Value::String("jazz".into()),
+                        aspect: Aspect::Raw,
                     })),
                 },
                 Query::Follows {
@@ -435,7 +563,11 @@ mod tests {
                     target: FollowTarget::Path("/music".into()),
                     inclusive: false,
                 },
-                Query::Matches { field: "title".into(), pattern: "^Live".into() },
+                Query::Matches {
+                    field: "title".into(),
+                    pattern: "^Live".into(),
+                    aspect: Aspect::Raw,
+                },
             ],
         };
         assert_eq!(roundtrip(&q), q);
@@ -444,18 +576,19 @@ mod tests {
     #[test]
     fn test_comparison_roundtrips() {
         let cases = vec![
-            Query::IsPresent { field: "a".into() },
-            Query::IsAbsent { field: "a".into() },
+            Query::IsPresent { field: "a".into(), aspect: Aspect::Raw },
+            Query::IsAbsent { field: "a".into(), aspect: Aspect::Raw },
             Query::IsUnknown { field: "a".into() },
-            Query::Eq { field: "a".into(), value: Value::Bool(true) },
-            Query::Neq { field: "a".into(), value: Value::Float(1.5) },
-            Query::Lt { field: "a".into(), value: Value::Int(1) },
-            Query::Lte { field: "a".into(), value: Value::Int(2) },
+            Query::Eq { field: "a".into(), value: Value::Bool(true), aspect: Aspect::Raw },
+            Query::Neq { field: "a".into(), value: Value::Float(1.5), aspect: Aspect::Raw },
+            Query::Lt { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw },
+            Query::Lte { field: "a".into(), value: Value::Int(2), aspect: Aspect::Raw },
             Query::Gt {
                 field: "a".into(),
                 value: Value::DateTime(crate::date::iso_to_ms("2024-01-01T00:00:00Z").unwrap()),
+                aspect: Aspect::Raw,
             },
-            Query::Gte { field: "a".into(), value: Value::String("x".into()) },
+            Query::Gte { field: "a".into(), value: Value::String("x".into()), aspect: Aspect::Raw },
         ];
         for q in cases {
             assert_eq!(roundtrip(&q), q, "roundtrip failed for {q:?}");

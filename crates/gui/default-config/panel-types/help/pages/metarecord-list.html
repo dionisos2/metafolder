@@ -18,9 +18,9 @@
   so you keep a structural query (e.g. <code>mf_schema=tag</code>) while typing to
   find within it. Change the searched fields with the
   <code>metarecord-list:finder-fields</code> workspace variable — a list of
-  <code>field:path</code> / <code>field:direct</code> entries (a bare
+  <code>field:path</code> / <code>field:value</code> entries (a bare
   <code>field</code> auto-detects its mode); the default is
-  <code>mfr_path:path label:direct name:direct</code>.
+  <code>mfr_path:path label:value name:value</code>.
 </p>
 
 <h2>Query box</h2>
@@ -41,18 +41,19 @@
 <ul>
   <li><code>field</code> — the raw value.</li>
   <li>
-    <code>field:mode</code> — project a TreeRef value: <code>:name</code> (leaf),
-    <code>:uuid</code> (parent), <code>:path</code> (full path from the root),
+    <code>field:aspect</code> — project a TreeRef value: <code>:value</code>
+    (the leaf name), <code>:parent</code> (the parent's uuid),
+    <code>:path</code> (full path from the root),
     <code>:raw</code> (the default parent/name couple).
   </li>
   <li>
     <code>field&gt;sub</code> — follow a Ref to the target's <code>sub</code> field
-    (e.g. <code>tag&gt;label</code>, or <code>tag&gt;path:name</code> to project it).
+    (e.g. <code>tag&gt;label</code>, or <code>tag&gt;path:value</code> to project it).
   </li>
   <li>
     <code>a | b</code> — fallback: show the first alternative that has a value
-    (e.g. <code>tag&gt;label | tag&gt;path:name</code>). Optional parentheses
-    group it into one column: <code>(label | path:name)</code>.
+    (e.g. <code>tag&gt;label | tag&gt;path:value</code>). Optional parentheses
+    group it into one column: <code>(label | path:value)</code>.
   </li>
   <li><code>&amp;uuid</code> / <code>&amp;version</code> — metarecord metadata.</li>
 </ul>

@@ -8,7 +8,7 @@
 //! roots.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::{FollowTarget, OsmMode, Query};
+use metafolder_core::query::{Aspect, FollowTarget, OsmMode, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::index::{
     collect_node_paths, collect_path_targets, QueryRoots, RepoIndex, SortBy,
@@ -215,23 +215,28 @@ fn s(v: &str) -> Value {
 fn dt(iso: &str) -> Value {
     Value::DateTime(metafolder_core::date::iso_to_ms(iso).unwrap())
 }
+/// A comparison reading an explicit aspect (spec-query "Field aspects").
+fn eq_as(field: &str, value: Value, aspect: Aspect) -> Query {
+    Query::Eq { field: field.into(), value, aspect }
+}
+
 fn eq(field: &str, value: Value) -> Query {
-    Query::Eq { field: field.into(), value }
+    Query::Eq { field: field.into(), value, aspect: Aspect::Raw }
 }
 fn neq(field: &str, value: Value) -> Query {
-    Query::Neq { field: field.into(), value }
+    Query::Neq { field: field.into(), value, aspect: Aspect::Raw }
 }
 fn lt(field: &str, value: Value) -> Query {
-    Query::Lt { field: field.into(), value }
+    Query::Lt { field: field.into(), value, aspect: Aspect::Raw }
 }
 fn lte(field: &str, value: Value) -> Query {
-    Query::Lte { field: field.into(), value }
+    Query::Lte { field: field.into(), value, aspect: Aspect::Raw }
 }
 fn gt(field: &str, value: Value) -> Query {
-    Query::Gt { field: field.into(), value }
+    Query::Gt { field: field.into(), value, aspect: Aspect::Raw }
 }
 fn gte(field: &str, value: Value) -> Query {
-    Query::Gte { field: field.into(), value }
+    Query::Gte { field: field.into(), value, aspect: Aspect::Raw }
 }
 
 fn tref(field: &str, parent: Option<Uuid>, name: &str) -> Field {
@@ -266,10 +271,10 @@ fn not(operand: Query) -> Query {
 }
 
 fn present(field: &str) -> Query {
-    Query::IsPresent { field: field.into() }
+    Query::IsPresent { field: field.into(), aspect: Aspect::Raw }
 }
 fn absent(field: &str) -> Query {
-    Query::IsAbsent { field: field.into() }
+    Query::IsAbsent { field: field.into(), aspect: Aspect::Raw }
 }
 fn unknown(field: &str) -> Query {
     Query::IsUnknown { field: field.into() }
@@ -623,10 +628,11 @@ fn reverse_tree_eq_by_value_and_by_name() {
     // Full TreeRef equality (parent + name).
     o.check(&eq("loc", Value::TreeRef { parent: Some(root), name: "b".into() }));
     o.check(&eq("loc", Value::TreeRef { parent: None, name: "root".into() }));
-    // String operand compares the name component (any parent).
-    o.check(&eq("loc", s("b")));
-    o.check(&eq("loc", s("root")));
-    o.check(&neq("loc", s("b")));
+    // The `value` aspect compares the name component (any parent); the bare
+    // form is the exact node and is covered by the exact-node tests.
+    o.check(&eq_as("loc", s("b"), Aspect::Value));
+    o.check(&eq_as("loc", s("root"), Aspect::Value));
+    o.check(&Query::Neq { field: "loc".into(), value: s("b"), aspect: Aspect::Value });
     // Mismatched: an int operand on a tree_ref field.
     o.check(&eq("loc", i(0)));
     o.check(&neq("loc", i(0)));
@@ -654,16 +660,21 @@ fn reverse_tree_follows_transitive() {
 
 #[test]
 fn exact_node_path_equality_defers_to_sql_without_roots() {
-    // On a tree_ref field, an Eq/Neq string operand containing '/' is an
-    // exact-node match resolved through the tree cache — outside the index. With
+    // On a tree_ref field, an Eq/Neq string operand is an exact-node match
+    // resolved through the tree cache — outside the index. With
     // no caller-resolved node it must report Unsupported so the route falls back
     // to SQL (rather than answer with the wrong value_name-based bitmap).
     let (o, _) = forest();
     let index = RepoIndex::build(&o.conn).unwrap();
     assert!(index.evaluate(&eq("loc", s("root/b"))).is_err());
-    assert!(index.evaluate(&Query::Neq { field: "loc".into(), value: s("root/b") }).is_err());
-    // A separator-free operand stays a value_name compare (index handles it).
-    assert!(index.evaluate(&eq("loc", s("b"))).is_ok());
+    assert!(index
+        .evaluate(&Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Raw })
+        .is_err());
+    // A separator-free operand is a node path too now — a forest root's path
+    // carries no separator — so it defers just the same.
+    assert!(index.evaluate(&eq("loc", s("b"))).is_err());
+    // The name compare is the `value` aspect, which the index still serves.
+    assert!(index.evaluate(&eq_as("loc", s("b"), Aspect::Value)).is_ok());
     // On a plain string field, '/' is literal equality — still the index's job.
     assert!(index.evaluate(&eq("tag", s("a/b"))).is_ok());
 }
@@ -723,10 +734,10 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
 
     for path in ["root/b", "root/b/c", "root/nope"] {
         for q in [
-            Query::Neq { field: "loc".into(), value: s(path) },
+            Query::Neq { field: "loc".into(), value: s(path), aspect: Aspect::Raw },
             Query::And {
                 operands: vec![
-                    Query::Neq { field: "loc".into(), value: s(path) },
+                    Query::Neq { field: "loc".into(), value: s(path), aspect: Aspect::Raw },
                     eq("kind", s("file")),
                 ],
             },
@@ -757,7 +768,9 @@ fn exact_node_path_inequality_matches_sql_with_node_roots() {
     }
     // Without a resolved node it still defers to SQL.
     let index = RepoIndex::build(&o.conn).unwrap();
-    assert!(index.evaluate(&Query::Neq { field: "loc".into(), value: s("root/b") }).is_err());
+    assert!(index
+        .evaluate(&Query::Neq { field: "loc".into(), value: s("root/b"), aspect: Aspect::Raw })
+        .is_err());
 }
 
 #[test]
@@ -855,9 +868,13 @@ fn matches_and_osm_direct_are_served_by_the_index() {
     // hand-rolled ordered-substring check would diverge here.
     let _multiline = o.create(vec![Field::new("label", s("sci\nfi"))]);
 
+    // `raw` MATCHES on a tree_ref is refused by both engines, so the oracle
+    // probes the name component explicitly.
+    let aspect_of = |field: &str| if field == "loc" { Aspect::Value } else { Aspect::Raw };
     let matches = |field: &str, pattern: &str| Query::Matches {
         field: field.into(),
         pattern: pattern.into(),
+        aspect: aspect_of(field),
     };
     let osmd = |field: &str, terms: &[&str]| Query::Osm {
         field: field.into(),
@@ -890,14 +907,14 @@ fn matches_and_osm_direct_are_served_by_the_index() {
         Query::And { operands: vec![matches("label", "sci"), matches("label", "fi")] },
         Query::And {
             operands: vec![
-                follows_t("loc", eq("loc", s("root"))),
+                follows_t("loc", eq_as("loc", s("root"), Aspect::Value)),
                 Query::Or { operands: vec![matches("loc", "ep"), osmd("label", &["sci"])] },
             ],
         },
         Query::And {
             operands: vec![
                 Query::Not { operand: Box::new(matches("label", "sci")) },
-                Query::IsPresent { field: "label".into() },
+                Query::IsPresent { field: "label".into(), aspect: Aspect::Raw },
             ],
         },
         Query::And {
@@ -952,8 +969,11 @@ fn osm_path_empty_terms_matches_sql() {
     );
     // It is exactly `is_present` on the field.
     assert_eq!(got, {
-        let mut p =
-            index.to_uuids(&index.evaluate(&Query::IsPresent { field: "loc".into() }).unwrap());
+        let mut p = index.to_uuids(
+            &index
+                .evaluate(&Query::IsPresent { field: "loc".into(), aspect: Aspect::Raw })
+                .unwrap(),
+        );
         p.sort();
         p
     });
@@ -1285,7 +1305,8 @@ fn tree_sorted() -> Oracle {
 #[test]
 fn tree_ref_sort_matches_sql_engine() {
     let mut o = tree_sorted();
-    let all = Query::Eq { field: "k".into(), value: Value::String("x".into()) };
+    let all =
+        Query::Eq { field: "k".into(), value: Value::String("x".into()), aspect: Aspect::Raw };
     for limit in [1, 3, 4, 100] {
         o.check_paginated_with_roots(&all, &[("mfr_path", true)], limit);
         o.check_paginated_with_roots(&all, &[("mfr_path", false)], limit);
@@ -1300,7 +1321,8 @@ fn tree_ref_sort_without_a_resident_forest_is_unsupported() {
     // caller falls back to the SQL engine, which rebuilds the paths in SQL.
     let o = tree_sorted();
     let index = RepoIndex::build(&o.conn).unwrap();
-    let all = Query::Eq { field: "k".into(), value: Value::String("x".into()) };
+    let all =
+        Query::Eq { field: "k".into(), value: Value::String("x".into()), aspect: Aspect::Raw };
     let by = [SortBy { field: "mfr_path".into(), ascending: true }];
     assert!(index.evaluate_sorted(&all, &by, None).is_err(), "no resolver at all");
 
@@ -1435,7 +1457,10 @@ fn same_as_is_served_by_the_index() {
         // "the others", the spec's spelling
         and(vec![same("artist", this(a)), Query::Not { operand: Box::new(this(a)) }]),
         // a text predicate and a traversal inside the target
-        same("artist", Query::Matches { field: "artist".into(), pattern: "^Col".into() }),
+        same(
+            "artist",
+            Query::Matches { field: "artist".into(), pattern: "^Col".into(), aspect: Aspect::Raw },
+        ),
         same("rate", follows("loc", eq("kind", s("group")))),
         // and `same` itself as a traversal target
         follows("grp", same("kind", this(group))),

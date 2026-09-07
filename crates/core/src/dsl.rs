@@ -3,7 +3,7 @@
 //! "* CLI", "Query DSL").
 
 use crate::metarecord::Value;
-use crate::query::{split_terms, FollowTarget, OsmMode, Query};
+use crate::query::{split_terms, Aspect, FollowTarget, OsmMode, Query};
 
 /// Parses a DSL predicate string into a `Query`.
 pub fn parse_query(input: &str) -> Result<Query, String> {
@@ -23,6 +23,9 @@ enum Tok {
     LParen,
     RParen,
     Comma,
+    /// Separates a field name from its aspect (`path:value`). Only ever valid
+    /// there, so the parser reports it as part of a field reference.
+    Colon,
     Arrow,        // ->
     ArrowStar,    // ->*
     FatArrowStar, // =>*  (inclusive transitive: self ∪ descendants)
@@ -59,6 +62,7 @@ fn describe(tok: &Tok) -> String {
         Tok::LParen => "'('".into(),
         Tok::RParen => "')'".into(),
         Tok::Comma => "','".into(),
+        Tok::Colon => "':'".into(),
         Tok::Arrow => "'->'".into(),
         Tok::ArrowStar => "'->*'".into(),
         Tok::FatArrowStar => "'=>*'".into(),
@@ -112,6 +116,10 @@ fn lex(input: &str) -> Result<Vec<Tok>, String> {
             }
             ',' => {
                 tokens.push(Tok::Comma);
+                i += 1;
+            }
+            ':' => {
+                tokens.push(Tok::Colon);
                 i += 1;
             }
             '=' => {
@@ -378,6 +386,21 @@ fn is_operator(tok: &Tok) -> bool {
     )
 }
 
+/// The four aspect names, as the DSL spells them (spec-query "Field aspects").
+fn aspect_from_name(name: &str) -> Option<Aspect> {
+    match name {
+        "raw" => Some(Aspect::Raw),
+        "value" => Some(Aspect::Value),
+        "parent" => Some(Aspect::Parent),
+        "path" => Some(Aspect::Path),
+        _ => None,
+    }
+}
+
+fn unknown_aspect_error(name: &str) -> String {
+    format!("unknown aspect ':{name}' (expected :raw, :value, :parent or :path)")
+}
+
 impl Parser {
     fn peek(&self) -> Option<&Tok> {
         self.tokens.get(self.pos)
@@ -517,6 +540,28 @@ impl Parser {
 
     /// `("osm" | "osmd") "(" field "," string ")"` — the term string is split
     /// on whitespace into the OSM terms.
+    /// Consumes the optional `":" aspect` that may follow a field name
+    /// (spec-query "Field aspects"). Absent, the aspect is `Raw`.
+    fn aspect(&mut self) -> Result<Aspect, String> {
+        if self.peek() != Some(&Tok::Colon) {
+            return Ok(Aspect::Raw);
+        }
+        self.next(); // ':'
+        match self.next() {
+            // An aspect name lexes as an identifier — except `path`, which the
+            // lexer may hand back as anything a word can be; all four are plain
+            // words, so only the Ident branch can match.
+            Some(Tok::Ident(name)) => {
+                aspect_from_name(&name).ok_or_else(|| unknown_aspect_error(&name))
+            }
+            Some(tok) => Err(format!(
+                "expected an aspect name after ':', got {} (expected :raw, :value, :parent or :path)",
+                describe(&tok)
+            )),
+            None => Err("expected an aspect name after ':'".into()),
+        }
+    }
+
     fn osm_call(&mut self, mode: OsmMode) -> Result<Query, String> {
         let kw = if mode == OsmMode::Path { "osm" } else { "osmd" };
         self.next(); // the osm/osmd identifier
@@ -529,6 +574,28 @@ impl Parser {
             }
             None => return Err(format!("expected a field name in {kw}(...)")),
         };
+        // `osm(field:path, …)` / `osmd(field:value, …)` are accepted spellings
+        // of the same call: the aspect fills `mode`, which the IR keeps. An
+        // aspect that contradicts the operator is an error rather than a silent
+        // override (spec-query "Query DSL").
+        let wanted = if mode == OsmMode::Path { Aspect::Path } else { Aspect::Value };
+        match self.aspect()? {
+            Aspect::Raw => {}
+            given if given == wanted => {}
+            given => {
+                let name = match given {
+                    Aspect::Value => "value",
+                    Aspect::Parent => "parent",
+                    Aspect::Path => "path",
+                    Aspect::Raw => unreachable!("handled above"),
+                };
+                return Err(format!(
+                    "{kw}(...) reads the {} aspect; drop ':{name}' or use {}",
+                    if mode == OsmMode::Path { "path" } else { "value" },
+                    if mode == OsmMode::Path { "osmd" } else { "osm" }
+                ));
+            }
+        }
         self.expect(Tok::Comma)?;
         let terms = match self.next() {
             Some(Tok::Str(s)) => split_terms(&s),
@@ -564,10 +631,18 @@ impl Parser {
             Some(tok) => return Err(format!("expected a field name, got {}", describe(&tok))),
             None => return Err("expected a field name, got end of input".into()),
         };
+        let aspect = self.aspect()?;
         match self.next() {
             Some(Tok::Is) => match self.next() {
-                Some(Tok::Present) => Ok(Query::IsPresent { field }),
-                Some(Tok::Absent) => Ok(Query::IsAbsent { field }),
+                Some(Tok::Present) => Ok(Query::IsPresent { field, aspect }),
+                Some(Tok::Absent) => Ok(Query::IsAbsent { field, aspect }),
+                // `IS UNKNOWN` asks whether the field row exists at all, so
+                // there is no component for an aspect to read (spec-query
+                // "Field aspects").
+                Some(Tok::Unknown) if aspect != Aspect::Raw => {
+                    Err("IS UNKNOWN takes no aspect: it asks whether the field exists at all"
+                        .into())
+                }
                 Some(Tok::Unknown) => Ok(Query::IsUnknown { field }),
                 Some(tok) => Err(format!(
                     "expected PRESENT, ABSENT or UNKNOWN after IS, got {}",
@@ -575,19 +650,27 @@ impl Parser {
                 )),
                 None => Err("expected PRESENT, ABSENT or UNKNOWN after IS".into()),
             },
-            Some(Tok::Eq) => Ok(Query::Eq { field, value: self.literal()? }),
-            Some(Tok::Neq) => Ok(Query::Neq { field, value: self.literal()? }),
-            Some(Tok::Lt) => Ok(Query::Lt { field, value: self.literal()? }),
-            Some(Tok::Lte) => Ok(Query::Lte { field, value: self.literal()? }),
-            Some(Tok::Gt) => Ok(Query::Gt { field, value: self.literal()? }),
-            Some(Tok::Gte) => Ok(Query::Gte { field, value: self.literal()? }),
+            Some(Tok::Eq) => Ok(Query::Eq { field, value: self.literal()?, aspect }),
+            Some(Tok::Neq) => Ok(Query::Neq { field, value: self.literal()?, aspect }),
+            Some(Tok::Lt) => Ok(Query::Lt { field, value: self.literal()?, aspect }),
+            Some(Tok::Lte) => Ok(Query::Lte { field, value: self.literal()?, aspect }),
+            Some(Tok::Gt) => Ok(Query::Gt { field, value: self.literal()?, aspect }),
+            Some(Tok::Gte) => Ok(Query::Gte { field, value: self.literal()?, aspect }),
             Some(Tok::Matches) => match self.next() {
-                Some(Tok::Str(pattern)) => Ok(Query::Matches { field, pattern }),
+                Some(Tok::Str(pattern)) => Ok(Query::Matches { field, pattern, aspect }),
                 Some(tok) => {
                     Err(format!("expected a string after MATCHES, got {}", describe(&tok)))
                 }
                 None => Err("expected a string after MATCHES".into()),
             },
+            // The traversal arrows read the reference itself, not a component
+            // of the value, so an aspect has nothing to qualify there
+            // (spec-query "Field aspects").
+            Some(tok @ (Tok::Arrow | Tok::ArrowStar | Tok::FatArrowStar))
+                if aspect != Aspect::Raw =>
+            {
+                Err(format!("{} takes no aspect on its left-hand field", describe(&tok)))
+            }
             Some(Tok::Arrow) => match self.next() {
                 Some(Tok::Str(path)) => {
                     Ok(Query::Follows { field, target: FollowTarget::Path(path) })
@@ -661,7 +744,7 @@ impl Parser {
 mod tests {
     use super::*;
     use crate::metarecord::Value;
-    use crate::query::FollowTarget;
+    use crate::query::{Aspect, FollowTarget};
 
     fn ok(input: &str) -> Query {
         parse_query(input).unwrap_or_else(|e| panic!("'{input}' should parse: {e}"))
@@ -672,39 +755,61 @@ mod tests {
     }
 
     fn eq_int(field: &str, n: i64) -> Query {
-        Query::Eq { field: field.into(), value: Value::Int(n) }
+        Query::Eq { field: field.into(), value: Value::Int(n), aspect: Aspect::Raw }
     }
 
     // ── comparisons ──────────────────────────────────────────────────────────
 
     #[test]
     fn test_gt_int() {
-        assert_eq!(ok("rating > 3"), Query::Gt { field: "rating".into(), value: Value::Int(3) });
+        assert_eq!(
+            ok("rating > 3"),
+            Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }
+        );
     }
 
     #[test]
     fn test_eq_string() {
         assert_eq!(
             ok(r#"genre = "jazz""#),
-            Query::Eq { field: "genre".into(), value: Value::String("jazz".into()) }
+            Query::Eq {
+                field: "genre".into(),
+                value: Value::String("jazz".into()),
+                aspect: Aspect::Raw
+            }
         );
     }
 
     #[test]
     fn test_all_comparison_operators() {
         assert_eq!(ok("a = 1"), eq_int("a", 1));
-        assert_eq!(ok("a != 1"), Query::Neq { field: "a".into(), value: Value::Int(1) });
-        assert_eq!(ok("a < 1"), Query::Lt { field: "a".into(), value: Value::Int(1) });
-        assert_eq!(ok("a <= 1"), Query::Lte { field: "a".into(), value: Value::Int(1) });
-        assert_eq!(ok("a > 1"), Query::Gt { field: "a".into(), value: Value::Int(1) });
-        assert_eq!(ok("a >= 1"), Query::Gte { field: "a".into(), value: Value::Int(1) });
+        assert_eq!(
+            ok("a != 1"),
+            Query::Neq { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw }
+        );
+        assert_eq!(
+            ok("a < 1"),
+            Query::Lt { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw }
+        );
+        assert_eq!(
+            ok("a <= 1"),
+            Query::Lte { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw }
+        );
+        assert_eq!(
+            ok("a > 1"),
+            Query::Gt { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw }
+        );
+        assert_eq!(
+            ok("a >= 1"),
+            Query::Gte { field: "a".into(), value: Value::Int(1), aspect: Aspect::Raw }
+        );
     }
 
     #[test]
     fn test_float_literal() {
         assert_eq!(
             ok("score >= 3.5"),
-            Query::Gte { field: "score".into(), value: Value::Float(3.5) }
+            Query::Gte { field: "score".into(), value: Value::Float(3.5), aspect: Aspect::Raw }
         );
     }
 
@@ -713,7 +818,11 @@ mod tests {
         let ms = crate::date::iso_to_ms("2024-01-01").unwrap();
         assert_eq!(
             ok(r#"mfr_mtime > @"2024-01-01""#),
-            Query::Gt { field: "mfr_mtime".into(), value: Value::DateTime(ms) }
+            Query::Gt {
+                field: "mfr_mtime".into(),
+                value: Value::DateTime(ms),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -722,7 +831,11 @@ mod tests {
         let ms = crate::date::iso_to_ms("2024-01-01 12:30:00").unwrap();
         assert_eq!(
             ok(r#"mfr_mtime <= @"2024-01-01 12:30:00""#),
-            Query::Lte { field: "mfr_mtime".into(), value: Value::DateTime(ms) }
+            Query::Lte {
+                field: "mfr_mtime".into(),
+                value: Value::DateTime(ms),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -730,7 +843,11 @@ mod tests {
     fn test_datetime_literal_raw_millis() {
         assert_eq!(
             ok("mfr_mtime >= @1704067200000"),
-            Query::Gte { field: "mfr_mtime".into(), value: Value::DateTime(1_704_067_200_000) }
+            Query::Gte {
+                field: "mfr_mtime".into(),
+                value: Value::DateTime(1_704_067_200_000),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -739,7 +856,11 @@ mod tests {
         // Pre-epoch instants are valid; relative-date macros can compute them.
         assert_eq!(
             ok("mfr_mtime > @-1000"),
-            Query::Gt { field: "mfr_mtime".into(), value: Value::DateTime(-1000) }
+            Query::Gt {
+                field: "mfr_mtime".into(),
+                value: Value::DateTime(-1000),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -756,15 +877,21 @@ mod tests {
 
     #[test]
     fn test_negative_int_literal() {
-        assert_eq!(ok("delta < -2"), Query::Lt { field: "delta".into(), value: Value::Int(-2) });
+        assert_eq!(
+            ok("delta < -2"),
+            Query::Lt { field: "delta".into(), value: Value::Int(-2), aspect: Aspect::Raw }
+        );
     }
 
     #[test]
     fn test_bool_literals_lowercase() {
-        assert_eq!(ok("seen = true"), Query::Eq { field: "seen".into(), value: Value::Bool(true) });
+        assert_eq!(
+            ok("seen = true"),
+            Query::Eq { field: "seen".into(), value: Value::Bool(true), aspect: Aspect::Raw }
+        );
         assert_eq!(
             ok("seen != false"),
-            Query::Neq { field: "seen".into(), value: Value::Bool(false) }
+            Query::Neq { field: "seen".into(), value: Value::Bool(false), aspect: Aspect::Raw }
         );
     }
 
@@ -772,8 +899,14 @@ mod tests {
 
     #[test]
     fn test_is_present_absent_unknown() {
-        assert_eq!(ok("tag IS PRESENT"), Query::IsPresent { field: "tag".into() });
-        assert_eq!(ok("mfr_path IS ABSENT"), Query::IsAbsent { field: "mfr_path".into() });
+        assert_eq!(
+            ok("tag IS PRESENT"),
+            Query::IsPresent { field: "tag".into(), aspect: Aspect::Raw }
+        );
+        assert_eq!(
+            ok("mfr_path IS ABSENT"),
+            Query::IsAbsent { field: "mfr_path".into(), aspect: Aspect::Raw }
+        );
         assert_eq!(ok("rating IS UNKNOWN"), Query::IsUnknown { field: "rating".into() });
     }
 
@@ -783,7 +916,11 @@ mod tests {
     fn test_matches() {
         assert_eq!(
             ok(r#"title MATCHES "[Ll]ive""#),
-            Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() }
+            Query::Matches {
+                field: "title".into(),
+                pattern: "[Ll]ive".into(),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -825,6 +962,7 @@ mod tests {
                 target: FollowTarget::Condition(Box::new(Query::Eq {
                     field: "name".into(),
                     value: Value::String("Coltrane".into()),
+                    aspect: Aspect::Raw
                 })),
             }
         );
@@ -851,6 +989,7 @@ mod tests {
                 target: FollowTarget::Condition(Box::new(Query::Eq {
                     field: "mfr_path".into(),
                     value: Value::String("2021".into()),
+                    aspect: Aspect::Raw
                 })),
                 inclusive: false,
             }
@@ -879,6 +1018,7 @@ mod tests {
                 target: FollowTarget::Condition(Box::new(Query::Eq {
                     field: "name".into(),
                     value: Value::String("jazz".into()),
+                    aspect: Aspect::Raw
                 })),
                 inclusive: true,
             }
@@ -896,7 +1036,7 @@ mod tests {
         err("path => 5");
         assert_eq!(
             ok(r#"a = "b""#),
-            Query::Eq { field: "a".into(), value: Value::String("b".into()) }
+            Query::Eq { field: "a".into(), value: Value::String("b".into()), aspect: Aspect::Raw }
         );
     }
 
@@ -968,7 +1108,11 @@ mod tests {
         // a field literally named `osm` remains usable as a predicate.
         assert_eq!(
             ok(r#"osm = "x""#),
-            Query::Eq { field: "osm".into(), value: Value::String("x".into()) }
+            Query::Eq {
+                field: "osm".into(),
+                value: Value::String("x".into()),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -992,7 +1136,11 @@ mod tests {
             ok(r#"same(mfr_duplicate_group, mfr_path = "/a/b.txt")"#),
             same(
                 "mfr_duplicate_group",
-                Query::Eq { field: "mfr_path".into(), value: Value::String("/a/b.txt".into()) }
+                Query::Eq {
+                    field: "mfr_path".into(),
+                    value: Value::String("/a/b.txt".into()),
+                    aspect: Aspect::Raw
+                }
             )
         );
     }
@@ -1007,8 +1155,16 @@ mod tests {
                 "artist",
                 Query::Or {
                     operands: vec![
-                        Query::Gt { field: "rating".into(), value: Value::Int(3) },
-                        Query::Eq { field: "seen".into(), value: Value::Bool(true) },
+                        Query::Gt {
+                            field: "rating".into(),
+                            value: Value::Int(3),
+                            aspect: Aspect::Raw
+                        },
+                        Query::Eq {
+                            field: "seen".into(),
+                            value: Value::Bool(true),
+                            aspect: Aspect::Raw
+                        },
                     ]
                 }
             )
@@ -1044,7 +1200,11 @@ mod tests {
         // literally named `same` remains usable as a predicate.
         assert_eq!(
             ok(r#"same = "x""#),
-            Query::Eq { field: "same".into(), value: Value::String("x".into()) }
+            Query::Eq {
+                field: "same".into(),
+                value: Value::String("x".into()),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -1101,7 +1261,11 @@ mod tests {
             Query::Not {
                 operand: Box::new(Query::Or {
                     operands: vec![
-                        Query::Eq { field: "seen".into(), value: Value::Bool(true) },
+                        Query::Eq {
+                            field: "seen".into(),
+                            value: Value::Bool(true),
+                            aspect: Aspect::Raw
+                        },
                         Query::IsUnknown { field: "rating".into() },
                     ],
                 }),
@@ -1120,7 +1284,11 @@ mod tests {
                         target: FollowTarget::Path("/music/jazz".into()),
                         inclusive: false,
                     },
-                    Query::Matches { field: "title".into(), pattern: "[Ll]ive".into() },
+                    Query::Matches {
+                        field: "title".into(),
+                        pattern: "[Ll]ive".into(),
+                        aspect: Aspect::Raw
+                    },
                 ],
             }
         );
@@ -1140,7 +1308,11 @@ mod tests {
     fn test_string_escapes() {
         assert_eq!(
             ok(r#"name = "a\"b\\c""#),
-            Query::Eq { field: "name".into(), value: Value::String(r#"a"b\c"#.into()) }
+            Query::Eq {
+                field: "name".into(),
+                value: Value::String(r#"a"b\c"#.into()),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -1151,17 +1323,25 @@ mod tests {
         // escape. Unknown escapes keep their backslash verbatim.
         assert_eq!(
             ok(r#"name MATCHES "\.config""#),
-            Query::Matches { field: "name".into(), pattern: r#"\.config"#.into() }
+            Query::Matches {
+                field: "name".into(),
+                pattern: r#"\.config"#.into(),
+                aspect: Aspect::Raw
+            }
         );
         // Other regex escapes (`\d`, `\w`, `\s`, …) pass through the same way.
         assert_eq!(
             ok(r#"name MATCHES "\d+""#),
-            Query::Matches { field: "name".into(), pattern: r#"\d+"#.into() }
+            Query::Matches { field: "name".into(), pattern: r#"\d+"#.into(), aspect: Aspect::Raw }
         );
         // The two DSL-recognized escapes still decode.
         assert_eq!(
             ok(r#"name MATCHES "a\"b\\c""#),
-            Query::Matches { field: "name".into(), pattern: r#"a"b\c"#.into() }
+            Query::Matches {
+                field: "name".into(),
+                pattern: r#"a"b\c"#.into(),
+                aspect: Aspect::Raw
+            }
         );
     }
 
@@ -1245,7 +1425,7 @@ mod tests {
             Query::And {
                 operands: vec![
                     uuid_in(&[U1]),
-                    Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                    Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }
                 ]
             }
         );
@@ -1257,10 +1437,18 @@ mod tests {
                     Query::Or {
                         operands: vec![
                             uuid_in(&[U1]),
-                            Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                            Query::Gt {
+                                field: "rating".into(),
+                                value: Value::Int(3),
+                                aspect: Aspect::Raw
+                            }
                         ]
                     },
-                    Query::Eq { field: "seen".into(), value: Value::Bool(true) },
+                    Query::Eq {
+                        field: "seen".into(),
+                        value: Value::Bool(true),
+                        aspect: Aspect::Raw
+                    },
                 ]
             }
         );
@@ -1276,7 +1464,7 @@ mod tests {
             Query::Or {
                 operands: vec![
                     uuid_in(&[U1]),
-                    Query::Gt { field: "rating".into(), value: Value::Int(3) }
+                    Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw }
                 ]
             }
         );
@@ -1301,7 +1489,10 @@ mod tests {
         // it is a field, not a UUID (one-token lookahead).
         let name = "abcdefabcdefabcdefabcdefabcdefab";
         assert_eq!(ok(&format!("{name} = 3")), eq_int(name, 3));
-        assert_eq!(ok(&format!("{name} IS PRESENT")), Query::IsPresent { field: name.into() });
+        assert_eq!(
+            ok(&format!("{name} IS PRESENT")),
+            Query::IsPresent { field: name.into(), aspect: Aspect::Raw }
+        );
         assert_eq!(
             ok(&format!("{name} -> (rating = 3)")),
             Query::Follows {
@@ -1359,6 +1550,72 @@ mod tests {
     }
 
     #[test]
+    fn test_field_reference_parses_an_aspect() {
+        assert_eq!(
+            ok(r#"path:value = "jazz""#),
+            Query::Eq {
+                field: "path".into(),
+                value: Value::String("jazz".into()),
+                aspect: Aspect::Value,
+            }
+        );
+        assert_eq!(
+            ok(r#"path:path MATCHES "^music/""#),
+            Query::Matches {
+                field: "path".into(),
+                pattern: "^music/".into(),
+                aspect: Aspect::Path,
+            }
+        );
+        assert_eq!(
+            ok("path:parent IS ABSENT"),
+            Query::IsAbsent { field: "path".into(), aspect: Aspect::Parent }
+        );
+        assert_eq!(
+            ok("path:parent IS PRESENT"),
+            Query::IsPresent { field: "path".into(), aspect: Aspect::Parent }
+        );
+        // The explicit default is accepted and is the bare form.
+        assert_eq!(ok(r#"path:raw = "music/jazz""#), ok(r#"path = "music/jazz""#));
+        // Every ordered operator takes one too.
+        assert_eq!(
+            ok(r#"path:value < "m""#),
+            Query::Lt {
+                field: "path".into(),
+                value: Value::String("m".into()),
+                aspect: Aspect::Value,
+            }
+        );
+    }
+
+    #[test]
+    fn test_unknown_or_misplaced_aspect_is_rejected() {
+        // An unknown aspect names the four candidates rather than being read as
+        // a field named "path:leaf".
+        let e = err("path:leaf = 3");
+        assert!(e.contains("leaf"), "{e}");
+        assert!(e.contains("raw") && e.contains("value") && e.contains("parent"), "{e}");
+        // IS UNKNOWN reads no component, so an aspect on it is meaningless.
+        let e = err("path:value IS UNKNOWN");
+        assert!(e.contains("UNKNOWN"), "{e}");
+        // An aspect belongs to a field reference, not to an arrow's path.
+        err("path:value -> \"music\"");
+        // A dangling colon is an error, not a bare field.
+        err("path: = 3");
+    }
+
+    #[test]
+    fn test_osm_accepts_the_aspect_spelling() {
+        // Surface sugar: the aspect fills `mode`, the IR keeps `mode`.
+        assert_eq!(ok(r#"osm(path:path, "a b")"#), ok(r#"osm(path, "a b")"#));
+        assert_eq!(ok(r#"osmd(path:value, "a b")"#), ok(r#"osmd(path, "a b")"#));
+        // Contradicting the operator is a parse error, not a silent override.
+        err(r#"osmd(path:path, "a b")"#);
+        err(r#"osm(path:value, "a b")"#);
+        err(r#"osm(path:parent, "a b")"#);
+    }
+
+    #[test]
     fn test_uuid_in_operand_position_points_at_the_follows_form() {
         // There is no `Ref` value literal: the error names the form that works.
         let msg = err(&format!("tag = {U1}"));
@@ -1385,6 +1642,7 @@ mod tests {
                 target: FollowTarget::Condition(Box::new(Query::Eq {
                     field: "path".into(),
                     value: Value::String("music/jazz".into()),
+                    aspect: Aspect::Raw
                 })),
             }
         );

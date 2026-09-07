@@ -3,7 +3,7 @@
 //! matching the sub-query, without the caller naming the value.
 
 use metafolder_core::metarecord::{Field, Value};
-use metafolder_core::query::Query;
+use metafolder_core::query::{Aspect, Query};
 use metafolder_daemon::db;
 use metafolder_daemon::log::Writer;
 use metafolder_daemon::query_exec;
@@ -235,7 +235,8 @@ fn same_takes_an_arbitrary_sub_query_as_target() {
     let a = f.create(vec![Field::new("artist", s("Coltrane")), Field::new("title", s("Naima"))]);
     let b = f.create(vec![Field::new("artist", s("Coltrane"))]);
     let _c = f.create(vec![Field::new("artist", s("Davis"))]);
-    let q = same("artist", Query::Eq { field: "title".into(), value: s("Naima") });
+    let q =
+        same("artist", Query::Eq { field: "title".into(), value: s("Naima"), aspect: Aspect::Raw });
     assert_same_set(f.run(&q), vec![a, b]);
 }
 
@@ -253,7 +254,7 @@ fn same_composes_inside_and_or_not() {
         f.run(&Query::And {
             operands: vec![
                 peers.clone(),
-                Query::Gt { field: "rating".into(), value: Value::Int(3) },
+                Query::Gt { field: "rating".into(), value: Value::Int(3), aspect: Aspect::Raw },
             ],
         }),
         vec![a],
