@@ -2069,11 +2069,13 @@ fn test_trash_restore_tolerates_an_unavailable_ancestor() {
         mf(&["-u", &repo, "metarecord", "-q", "mfr_path = \"A\"", "get"]).stdout.trim().to_string();
     assert!(is_hex_uuid(&b) && is_hex_uuid(&a));
 
-    // Trash the file (captures ancestor A while live), then delete A's
-    // metarecord and orphan B — as sweeping orphans would.
+    // Trash the file (captures ancestor A while live), then orphan B and delete
+    // A's metarecord — as sweeping orphans would. B first: a position may not be
+    // removed while something is still placed under it (spec-data-model
+    // "Referential integrity of a forest").
     assert_ok(&mf(&["-u", &repo, "trash", "-f", dir.join("B.txt").to_str().unwrap()]));
-    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a, "delete"]));
     assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &b, "field", "unset", "mfr_path", "--force"]));
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &a, "delete"]));
 
     let id = repo_trash(&root).entries().unwrap()[0].id.clone();
     let out = mf(&["-u", &repo, "trash", "restore", &id]);

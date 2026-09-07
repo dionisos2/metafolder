@@ -50,6 +50,18 @@ impl OpType {
         }
     }
 
+    /// Whether the operation is a *manual* write — something a client asked
+    /// for — as opposed to one the watcher records on the filesystem's behalf.
+    ///
+    /// The filesystem is authoritative for `mfr_path`: a directory that is gone
+    /// is gone, and the watcher nulls its whole subtree (spec-file-tracking
+    /// "Cascading removal"). A manual write has no such story, so it is held to
+    /// the forest's referential integrity instead (see
+    /// `Writer::check_forest_integrity`).
+    pub fn is_manual(self) -> bool {
+        !matches!(self, OpType::FileDeleted | OpType::FileMoved | OpType::FileModified)
+    }
+
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s {
             "create_metarecord" => OpType::CreateRecord,
@@ -1034,21 +1046,16 @@ struct PendingOp {
 /// keeping the Writer's memory bounded on huge revisions (e.g. reconcile).
 pub const FLUSH_THRESHOLD: usize = 4096;
 
-/// Above this many distinct `(field name, metarecord)` TreeRef cells changed by
-/// one revision, [`WriteEffects`] stops listing them and asks for a full
-/// rebuild instead: reconciling each cell costs a couple of indexed reads, and
-/// past a few thousand that is more than the single scan a rebuild is.
-pub const TREE_CELL_CAP: usize = 4096;
-
 /// What a committed revision obliges its caller to bring back in step — the
 /// in-memory state a transaction cannot update itself (see
 /// `RepoState::settle`). Read off the writer *before* `commit` consumes it.
 #[derive(Debug, Default, Clone)]
 pub struct WriteEffects {
     /// The TreeRef cells the revision changed, each once, in write order — so a
-    /// parent written before its child is settled first. `None` when there were
-    /// more than [`TREE_CELL_CAP`] of them: rebuild the forest instead.
-    tree: Option<Vec<(String, Uuid)>>,
+    /// parent written before its child is settled first. Never truncated: the
+    /// cache settles a batch of any size, and a revision that changed the whole
+    /// forest is exactly the one whose cache upkeep must not be guessed at.
+    tree: Vec<(String, Uuid)>,
     /// Whether the revision wrote a field that decides which directories are
     /// watched.
     watch: bool,
@@ -1059,13 +1066,12 @@ impl WriteEffects {
     /// writes do not go through the watcher's incremental tree-cache upkeep, so
     /// a caller holding a complete cache must settle it after such a write.
     pub fn touches_tree(&self) -> bool {
-        self.tree.as_ref().is_none_or(|cells| !cells.is_empty())
+        !self.tree.is_empty()
     }
 
-    /// The changed cells to reconcile one by one, or `None` when the caller
-    /// should rebuild the whole forest (see [`TREE_CELL_CAP`]).
-    pub fn tree_cells(&self) -> Option<&[(String, Uuid)]> {
-        self.tree.as_deref()
+    /// The changed cells, in write order.
+    pub fn tree_cells(&self) -> &[(String, Uuid)] {
+        &self.tree
     }
 
     /// True if the revision wrote `mf_watch` / `mf_ignore` (eligibility) or
@@ -1263,6 +1269,12 @@ pub struct Writer<'c> {
     /// per file, and asking the list each time made a batch quadratic in itself.
     /// Keyed by field name so the membership test allocates nothing.
     tree_seen: HashMap<String, HashSet<Uuid>>,
+    /// The cells a *manual* operation took a `tree_ref` row from, checked once
+    /// at commit (see [`Self::check_forest_integrity`]). Deduplicated through
+    /// `tree_seen`'s sibling index; the list itself keeps write order for a
+    /// stable error.
+    tree_lost: Vec<(String, Uuid)>,
+    tree_lost_seen: HashMap<String, HashSet<Uuid>>,
 }
 
 impl<'c> Writer<'c> {
@@ -1297,8 +1309,10 @@ impl<'c> Writer<'c> {
             pending: Vec::new(),
             field_types: HashMap::new(),
             retention,
-            effects: WriteEffects { tree: Some(Vec::new()), watch: false },
+            effects: WriteEffects::default(),
             tree_seen: HashMap::new(),
+            tree_lost: Vec::new(),
+            tree_lost_seen: HashMap::new(),
         })
     }
 
@@ -1323,31 +1337,85 @@ impl<'c> Writer<'c> {
         self.effects.clone()
     }
 
-    /// Records what one operation's before/after rows imply for [`WriteEffects`].
-    fn observe_effects(&mut self, rows: &[FieldRow], entity: Uuid) {
+    /// Records what one operation implies: what its caller will have to bring
+    /// back in step ([`WriteEffects`]), and which cells lost a `tree_ref` row
+    /// and must therefore be checked at commit.
+    fn observe_effects(
+        &mut self,
+        op_type: OpType,
+        before: &[FieldRow],
+        after: &[FieldRow],
+        entity: Uuid,
+    ) {
+        for row in before {
+            if op_type.is_manual()
+                && matches!(row.value, Value::TreeRef { .. })
+                && !self
+                    .tree_lost_seen
+                    .get(row.name.as_str())
+                    .is_some_and(|seen| seen.contains(&entity))
+            {
+                self.tree_lost.push((row.name.clone(), entity));
+                self.tree_lost_seen.entry(row.name.clone()).or_default().insert(entity);
+            }
+        }
+        for row in before.iter().chain(after) {
+            self.note_effect(row, entity);
+        }
+    }
+
+    /// One row's contribution to [`WriteEffects`].
+    fn note_effect(&mut self, row: &FieldRow, entity: Uuid) {
         const DECIDES_WATCHES: &[&str] =
             &["mf_watch", "mf_ignore", crate::eligibility::WATCH_EXCEEDED];
-        for row in rows {
-            if DECIDES_WATCHES.contains(&row.name.as_str()) {
-                self.effects.watch = true;
-            }
-            if self.effects.tree.is_none() || !matches!(row.value, Value::TreeRef { .. }) {
-                continue;
-            }
-            if self.tree_seen.get(row.name.as_str()).is_some_and(|seen| seen.contains(&entity)) {
-                continue;
-            }
-            let cells = self.effects.tree.as_mut().expect("checked just above");
-            if cells.len() >= TREE_CELL_CAP {
-                // Past the cap the caller rebuilds the forest; neither the list
-                // nor its index is of any further use.
-                self.effects.tree = None;
-                self.tree_seen = HashMap::new();
-                continue;
-            }
-            cells.push((row.name.clone(), entity));
-            self.tree_seen.entry(row.name.clone()).or_default().insert(entity);
+        if DECIDES_WATCHES.contains(&row.name.as_str()) {
+            self.effects.watch = true;
         }
+        if !matches!(row.value, Value::TreeRef { .. })
+            || self.tree_seen.get(row.name.as_str()).is_some_and(|seen| seen.contains(&entity))
+        {
+            return;
+        }
+        self.effects.tree.push((row.name.clone(), entity));
+        self.tree_seen.entry(row.name.clone()).or_default().insert(entity);
+    }
+
+    /// The other half of [`Self::validate_tree_ref`]: a `tree_ref` reference is
+    /// refused when it *names* a parent carrying no position of its own, so a
+    /// position may not be *removed* while metarecords are placed under it.
+    ///
+    /// Checked once, on the state the revision is about to commit, rather than
+    /// per operation — deleting a whole subtree is legitimate even though the
+    /// parent goes first, and only the committed state has to be a forest.
+    ///
+    /// Without it the children stayed, naming a node that no longer existed:
+    /// *detached*, reachable by uuid but under no parent and in no roots map, so
+    /// `GET /tree/roots` and path reconstruction disagreed about them ever after.
+    fn check_forest_integrity(&self) -> Result<()> {
+        for (field_name, uuid) in &self.tree_lost {
+            // Cheapest question first, and the one that is almost always "none":
+            // a cell nobody is placed under has nothing to keep.
+            let children = db::tree_children(&self.tx, field_name, *uuid)?;
+            if children.is_empty() {
+                continue;
+            }
+            if db::tree_position(&self.tx, field_name, *uuid)?.is_some() {
+                continue;
+            }
+            let mut named: Vec<String> =
+                children.iter().take(3).map(|(_, name)| format!("{name:?}")).collect();
+            if children.len() > named.len() {
+                named.push(format!("and {} more", children.len() - named.len()));
+            }
+            return Err(DomainError::BadRequest(format!(
+                "cannot remove the last '{field_name}' position of {uuid}: {} metarecord(s) \
+                 are placed under it ({}); move or delete them first",
+                children.len(),
+                named.join(", ")
+            ))
+            .into());
+        }
+        Ok(())
     }
 
     /// Removes every row of `(uuid, name)`, leaving the field unknown.
@@ -1691,6 +1759,7 @@ impl<'c> Writer<'c> {
     /// Flushes the remaining buffered operations, writes the final HEAD and
     /// commits the transaction.
     pub fn commit(mut self) -> Result<()> {
+        self.check_forest_integrity()?;
         if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the empty revision, leave HEAD alone.
             self.tx.execute("DELETE FROM revision WHERE id = ?1", params![self.rev_id])?;
@@ -1752,8 +1821,7 @@ impl<'c> Writer<'c> {
         // this op assigned; redo restores it exactly. `None` when the op removed
         // the metarecord (delete): there is no forward version to restore.
         let version_after = db::get_version(&self.tx, entity)?;
-        self.observe_effects(&before, entity);
-        self.observe_effects(&after, entity);
+        self.observe_effects(op_type, &before, &after, entity);
         self.pending.push(PendingOp {
             op_type,
             entity,

@@ -84,6 +84,55 @@ kept in the =value_uuid= and =value_name= columns of the =field= table
 Multiple independent trees can coexist within the same repository by using different
 field names (e.g. =mfr_path= for the filesystem tree, =parent= for a tag hierarchy).
 
+*** Referential integrity of a forest
+
+A =TreeRef= names its parent by UUID, and the daemon holds *both* ends of that
+reference on every manual write:
+
+- **Creating** one: the parent must be a metarecord that itself carries a
+  =TreeRef= row *for the same field name*. A parent that does not exist, or that
+  exists in another forest only, is rejected with =400= — together with the
+  cycle and depth checks (spec-main "Key invariants").
+- **Removing** one: a metarecord's last =TreeRef= position for a field name may
+  not be removed while other metarecords are placed under it. The write is
+  rejected with =400= naming the children. This covers every manual shape that
+  can take a position away: =unset=, deleting the field row, setting the field
+  to =Nothing= or to something else, a whole-record overwrite, and deleting the
+  metarecord.
+
+The second check runs **once, against the state the revision is about to
+commit**, not per operation: deleting a whole subtree in one revision is
+legitimate even though the parent goes first, and only the committed state has
+to be a forest.
+
+*Deliberately neither cascade nor silence.* Cascading — "removing a directory
+removes everything under it" — is what the *watcher* does for =mfr_path=, where
+the filesystem is authoritative and a vanished directory really is gone
+(see [[file:spec-file-tracking.org][spec-file-tracking.org]], and the
+=orphan-cascade-limit= circuit breaker that guards it). A manual write has no
+such authority, so it is refused rather than allowed to erase a subtree the
+caller did not name. Watcher-originated operations (=file_deleted=, =file_moved=,
+=file_modified=) are therefore exempt, and so is log navigation, which restores
+rows directly and moves through intermediate states on its way to a state that
+was valid when it was written.
+
+Until this check existed, taking a parent's position away left its children
+naming a node that no longer existed — *detached*: reachable by uuid, but under
+no parent and in no roots map, so =GET /tree/roots= and path reconstruction
+disagreed about them ever after. Repositories written before it may still hold
+one; the query engines agree about them (=tests/index_oracle.rs=), and this
+lists them:
+
+#+BEGIN_SRC sql
+SELECT c.field_name, hex(c.metarecord_uuid), c.value_name, hex(c.value_uuid)
+FROM field c INDEXED BY idx_field_tree
+WHERE c.value_type = 'tree_ref'
+  AND c.value_uuid != x'00000000000000000000000000000000'
+  AND NOT EXISTS (SELECT 1 FROM field p INDEXED BY idx_field_metarecord
+                  WHERE p.metarecord_uuid = c.value_uuid AND p.field_name = c.field_name
+                    AND p.value_type = 'tree_ref');
+#+END_SRC
+
 *** Tree names
 
 A POSIX file name is a *byte string* — any sequence but =/= and NUL — and is not

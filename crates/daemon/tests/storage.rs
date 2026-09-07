@@ -1661,7 +1661,7 @@ fn test_a_revision_reports_the_tree_cells_it_changed_in_write_order() {
     assert!(!effects.touches_watch());
     assert_eq!(
         effects.tree_cells(),
-        Some(&[("p".to_string(), a), ("p".to_string(), b)][..]),
+        [("p".to_string(), a), ("p".to_string(), b)],
         "each changed cell once, in the order it was written"
     );
 }
@@ -1681,7 +1681,7 @@ fn test_a_tree_cell_survives_a_flush_of_the_operation_buffer() {
     let effects = w.effects();
     w.commit().unwrap();
 
-    assert_eq!(effects.tree_cells(), Some(&[("p".to_string(), a)][..]));
+    assert_eq!(effects.tree_cells(), [("p".to_string(), a)]);
 }
 
 #[test]
@@ -1710,18 +1710,21 @@ fn test_a_revision_touching_neither_asks_for_no_refresh() {
 
     assert!(!effects.touches_tree());
     assert!(!effects.touches_watch());
-    assert_eq!(effects.tree_cells(), Some(&[][..]));
+    assert!(effects.tree_cells().is_empty());
 }
 
 #[test]
-fn test_too_many_changed_cells_ask_for_a_rebuild_instead() {
-    // Past a point, reconciling the cells one by one costs more than the one
-    // scan a rebuild is; the writer stops listing them and says so.
+fn test_a_large_revision_lists_every_cell_it_changed() {
+    // The list used to be dropped past a cap, and the caller rebuilt the whole
+    // forest instead. A revision that changes thousands of positions is exactly
+    // the one whose cache upkeep must not be guessed at, so it is never
+    // truncated — the cache settles a batch of any size.
     let mut conn = test_conn();
     let root = create(&mut conn, vec![Field::new("p", tree_ref(None, "r"))]).uuid;
 
+    const N: usize = 5000;
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    for i in 0..=metafolder_daemon::log::TREE_CELL_CAP {
+    for i in 0..N {
         let uuid = w.create_metarecord(vec![]).unwrap().uuid;
         w.set_field(uuid, "p", tree_ref(Some(root), &format!("n{i}"))).unwrap();
     }
@@ -1729,7 +1732,7 @@ fn test_too_many_changed_cells_ask_for_a_rebuild_instead() {
     w.commit().unwrap();
 
     assert!(effects.touches_tree());
-    assert_eq!(effects.tree_cells(), None, "no cell list: rebuild the whole forest");
+    assert_eq!(effects.tree_cells().len(), N, "every changed cell, none dropped");
 }
 
 /// A `tree_ref` value, spelled once for the tests above.
@@ -1747,4 +1750,143 @@ fn test_the_forest_scan_seeks_the_tree_index() {
     let plan = query_plan(&conn, db::FOREST_SQL);
     assert!(plan.contains("idx_field_tree"), "the forest scan should seek the tree index: {plan}");
     assert!(!plan.contains("idx_field_name "), "it must not walk the whole field table: {plan}");
+}
+
+// ── The forest's referential integrity, on removal ───────────────────────────
+//
+// A TreeRef reference is validated when it is *created* (the parent must carry a
+// position in the same forest). Nothing used to validate the other side: taking
+// the parent's position away left its children naming a node that no longer
+// existed — "detached" — reachable by uuid but under no parent and in no roots
+// map, so `tree/roots` and path reconstruction disagreed about them. The check
+// is now symmetric: a position with children cannot be removed.
+
+/// The `p` forest: a root and one child under it. Returns `(root, child)`.
+fn forest_pair(conn: &mut Connection) -> (Uuid, Uuid) {
+    let root = create(conn, vec![Field::new("p", tree_ref(None, "animals"))]).uuid;
+    let child = create(conn, vec![Field::new("p", tree_ref(Some(root), "cat"))]).uuid;
+    (root, child)
+}
+
+/// The error a committed revision refuses with, or a panic if it committed.
+fn refused(conn: &mut Connection, write: impl FnOnce(&mut Writer)) -> String {
+    let mut w = Writer::begin(conn, None).unwrap();
+    write(&mut w);
+    w.commit().expect_err("the revision should have been refused").to_string()
+}
+
+#[test]
+fn test_a_position_with_children_cannot_be_unset() {
+    let mut conn = test_conn();
+    let (root, child) = forest_pair(&mut conn);
+
+    let err = refused(&mut conn, |w| {
+        w.delete_fields_named(root, "p").unwrap();
+    });
+    assert!(err.contains("placed under it"), "unexpected error: {err}");
+    // Nothing was written: the child still resolves through its parent.
+    assert_eq!(db::get_field_rows_named(&conn, root, "p").unwrap().len(), 1);
+    let _ = child;
+}
+
+#[test]
+fn test_a_position_with_children_cannot_be_replaced_by_nothing() {
+    let mut conn = test_conn();
+    let (root, _child) = forest_pair(&mut conn);
+
+    let err = refused(&mut conn, |w| {
+        w.set_field(root, "p", Value::Nothing).unwrap();
+    });
+    assert!(err.contains("placed under it"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_a_metarecord_with_children_cannot_be_deleted() {
+    let mut conn = test_conn();
+    let (root, _child) = forest_pair(&mut conn);
+
+    let err = refused(&mut conn, |w| {
+        w.delete_metarecord(root).unwrap();
+    });
+    assert!(err.contains("placed under it"), "unexpected error: {err}");
+    assert!(db::get_metarecord(&conn, root).unwrap().is_some(), "nothing was deleted");
+}
+
+#[test]
+fn test_a_whole_record_overwrite_may_not_drop_a_position_with_children() {
+    let mut conn = test_conn();
+    let (root, _child) = forest_pair(&mut conn);
+
+    let err = refused(&mut conn, |w| {
+        w.set_record(root, vec![Field::new("label", Value::String("x".into()))]).unwrap();
+    });
+    assert!(err.contains("placed under it"), "unexpected error: {err}");
+}
+
+#[test]
+fn test_the_invariant_is_checked_at_the_end_of_the_revision_not_per_operation() {
+    // Deleting a whole subtree in one revision is legitimate even though the
+    // parent goes first: what must hold is the state the revision commits, not
+    // every intermediate one.
+    let mut conn = test_conn();
+    let (root, child) = forest_pair(&mut conn);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_metarecord(root).unwrap();
+    w.delete_metarecord(child).unwrap();
+    w.commit().expect("a subtree deleted whole is allowed");
+    assert!(db::get_metarecord(&conn, root).unwrap().is_none());
+}
+
+#[test]
+fn test_moving_a_position_keeps_its_children_and_is_allowed() {
+    let mut conn = test_conn();
+    let (root, _child) = forest_pair(&mut conn);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field(root, "p", tree_ref(None, "beasts")).unwrap();
+    w.commit().expect("a rename keeps the position, so the children keep their parent");
+}
+
+#[test]
+fn test_a_childless_position_is_removed_freely() {
+    let mut conn = test_conn();
+    let (_root, child) = forest_pair(&mut conn);
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.delete_fields_named(child, "p").unwrap();
+    w.commit().expect("a leaf has nothing depending on it");
+}
+
+#[test]
+fn test_the_watcher_still_cascades_a_vanished_directory() {
+    // The filesystem is authoritative for `mfr_path`: when a directory is gone
+    // it is gone, and the watcher nulls it and its descendants (spec-file-
+    // tracking). The restriction is on manual writes, which have no such story.
+    let mut conn = test_conn();
+    let root = create(&mut conn, vec![Field::new("mfr_path", tree_ref(None, ""))]).uuid;
+    let dir = create(&mut conn, vec![Field::new("mfr_path", tree_ref(Some(root), "d"))]).uuid;
+    let _file = create(&mut conn, vec![Field::new("mfr_path", tree_ref(Some(dir), "f"))]).uuid;
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    w.set_field_as(OpType::FileDeleted, dir, "mfr_path", Value::Nothing).unwrap();
+    w.commit().expect("the watcher's cascade is not restricted");
+}
+
+#[test]
+fn test_the_batched_cell_read_seeks_by_metarecord() {
+    // The read the tree cache settles a revision from. Its correlated column is
+    // `metarecord_uuid`, and left to choose SQLite may take
+    // `idx_field_name_type` — which does not carry the uuid — and scan a whole
+    // field name per chunk (spec-main "Key invariants").
+    let conn = test_conn();
+    let plan = query_plan(
+        &conn,
+        "SELECT metarecord_uuid, field_name, value_uuid, value_name, value_name_bytes \
+         FROM field INDEXED BY idx_field_metarecord \
+         WHERE metarecord_uuid IN (x'00', x'01') AND value_type = 'tree_ref' \
+         ORDER BY metarecord_uuid, field_name, id",
+    );
+    assert!(plan.contains("idx_field_metarecord"), "should seek by metarecord: {plan}");
+    assert!(!plan.contains("SCAN field"), "should not scan the field table: {plan}");
 }

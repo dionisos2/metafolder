@@ -106,6 +106,13 @@ reconcile, observable queries, the task registry — are part of version 1.
   maximum depth of 1000. The daemon rejects any write that would create a cycle
   or exceed this depth. The check walks the parent chain iteratively using the
   tree cache (fetching missing nodes from the DB step by step as needed).
+- That forest is *referentially closed*: a manual write may neither name a
+  parent that carries no position of its own, nor remove the last position of a
+  metarecord others are placed under (=400= either way). The watcher, which
+  cascades on the filesystem's authority, and log navigation, which restores
+  rows directly, are exempt. See
+  [[file:spec-data-model.org][spec-data-model.org]] "Referential integrity of a
+  forest".
 
 The daemon listens on =127.0.0.1:7523= by default (configurable via =--port=).
 All request and response bodies are JSON. Errors return a JSON object

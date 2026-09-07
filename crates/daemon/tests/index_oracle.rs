@@ -1339,9 +1339,14 @@ fn tree_ref_sort_with_a_multi_position_directory() {
 
 #[test]
 fn tree_ref_sort_with_a_detached_node() {
-    // A node whose parent lost its own TreeRef row (a forced write; reconcile
-    // and the watcher cascade instead). The cache leaves it detached — treated
-    // as a root — and the SQL path walk must stop there too.
+    // A node whose parent lost its own TreeRef row. A manual write can no longer
+    // produce this (spec-data-model "Referential integrity of a forest"), but a
+    // rollback restores field rows straight into the table without going through
+    // that check, and a repository written before it exists may hold one — so
+    // the state is still reachable, and the two engines must still agree about
+    // it. Built here the way those do: by touching the rows directly. The cache
+    // leaves such a node detached — treated as a root — and the SQL path walk
+    // must stop there too.
     let mut o = Oracle::new();
     let root = o.create(vec![tref("loc", None, "root")]);
     let gone = o.create(vec![tref("loc", Some(root), "gone")]);
@@ -1350,11 +1355,12 @@ fn tree_ref_sort_with_a_detached_node() {
     // opposite ends of the order.
     o.create(vec![tref("loc", Some(gone), "zzz"), Field::new("k", s("x"))]);
     o.create(vec![tref("loc", Some(root), "other"), Field::new("k", s("x"))]);
-    {
-        let mut w = Writer::begin(&mut o.conn, None).unwrap();
-        w.delete_fields_named(gone, "loc").unwrap();
-        w.commit().unwrap();
-    }
+    o.conn
+        .execute(
+            "DELETE FROM field WHERE metarecord_uuid = ?1 AND field_name = 'loc'",
+            rusqlite::params![db::uuid_to_bytes(gone)],
+        )
+        .unwrap();
     let all = eq("k", s("x"));
     o.check_paginated_with_roots(&all, &[("loc", true)], 1);
     o.check_paginated_with_roots(&all, &[("loc", false)], 1);
