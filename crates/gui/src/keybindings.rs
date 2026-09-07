@@ -573,6 +573,32 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_shipped_defaults_bind_find_per_panel_and_fullscreen() {
+        // "Find an entry" (spec-gui): every list panel with a row cursor puts
+        // its find on the same key, so the gesture is one gesture.
+        let defaults = include_str!("../default-config/keybindings.toml");
+        let table = KeybindingSet::from_sources(defaults, "").unwrap().compiled();
+        let f: Vec<_> = table.iter().filter(|b| b.keys == ["f"]).collect();
+        for panel in ["file-manager", "treeref", "trash", "recent"] {
+            assert!(
+                f.iter()
+                    .any(|b| b.when.as_deref() == Some(panel)
+                        && b.invocation == format!("{panel}:find")),
+                "`f` does not find an entry in the {panel} panel"
+            );
+        }
+        // The treeref field picker moved off `f` to make room for it.
+        assert!(table.iter().any(|b| b.keys == ["shift+f"] && b.invocation == "treeref:set-field"));
+        assert!(!f.iter().any(|b| b.invocation == "treeref:set-field"));
+
+        // Fullscreen is a builtin toggle, and now has a key of its own.
+        assert!(table.iter().any(|b| b.keys == ["z"] && b.invocation == "panel:fullscreen"));
+        let registry = crate::command_registry::CommandRegistry::default();
+        crate::register_builtins(&registry);
+        assert!(registry.list().iter().any(|c| c.name == "panel:fullscreen"));
+    }
+
     // ── Compilation ──────────────────────────────────────────────────────
 
     #[test]

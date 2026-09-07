@@ -16,7 +16,9 @@
     "file": "find.html",
     "aliases": [
       "find", "find:in-panel", "find:next", "find:prev", "find:close",
-      "ctrl-f", "ctrl+f", "search-in-page", "find-in-page"
+      "ctrl-f", "ctrl+f", "search-in-page", "find-in-page",
+      "file-manager:find", "treeref:find", "trash:find", "recent:find",
+      "find-entry", "jump-to-entry"
     ]
   },
   {

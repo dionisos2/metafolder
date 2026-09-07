@@ -51,6 +51,20 @@
   they ask the daemon, and they match records you cannot currently see.
 </p>
 
+<h2>The other find: <code>f</code></h2>
+<p>
+  <code>f</code> in a list panel moves the <strong>cursor</strong> onto a row
+  instead of painting text: type (or complete) the name of an entry in the
+  <a data-help-page="file-manager">file manager</a>, a child in the
+  <a data-help-page="treeref">tree</a>, an entry in the
+  <a data-help-page="trash">trash</a> or a
+  <a data-help-page="recent">recently-viewed</a> record, and the cursor lands on
+  it — selected, not opened, so <kbd>Enter</kbd> and the other keys then act on
+  it. The candidates are filtered by ordered substring, and each carries what
+  tells it apart (a trailing <code>/</code> for a directory, the path for a
+  trash or recent row), which the terms search too.
+</p>
+
 <h2>From a script</h2>
 <p>
   <code>find:in-panel &lt;text&gt;</code> searches <code>text</code> straight

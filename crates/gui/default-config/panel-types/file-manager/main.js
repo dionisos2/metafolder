@@ -6,7 +6,7 @@ import { byId, el, fileTypeGlyph } from '/__ui.js';
 import { copyText } from '/__menu.js';
 import { createPagedList } from '/__paged-list.js';
 import { latestOnly } from '/__coalesce.js';
-import { osmMatch, splitTerms } from '/__finder.js';
+import { registerFind } from '/__find-entry.js';
 import {
   relPath,
   loadTrackedChildren,
@@ -621,33 +621,13 @@ export async function mount(root, metafolder) {
   // only once across the two paths.
 
   /** The current listing's real entries — the synthetic "." / ".." rows are
-   *  not jump targets — as completion candidates for `file-manager:find`.
-   *  Directories carry a trailing "/" so the picker shows what each entry is
-   *  (as in a shell listing); `findEntry` strips it back off. */
-  function entryCandidates() {
-    return listing.slice(syntheticCount).map((e) => (e.is_dir ? `${e.name}/` : e.name));
-  }
-
-  /** Moves the cursor onto the entry a `file-manager:find` answer designates:
-   *  the exact name first (what accepting a completion gives), else the first
-   *  entry ordered-substring-matching the typed terms — the same OSM rule the
-   *  command input filters the candidates with, so a raw answer (Ctrl+Enter, or
-   *  terms matching several entries) lands on the first one shown.
-   *  @param {string} answer */
-  async function findEntry(answer) {
-    const text = answer.trim().replace(/\/+$/, '');
-    if (!text) return;
-    const entries = listing.slice(syntheticCount);
-    let index = entries.findIndex((e) => e.name === text);
-    if (index < 0) {
-      const terms = splitTerms(text);
-      index = entries.findIndex((e) => osmMatch(e.name, terms));
-    }
-    if (index < 0) {
-      await statusBar.error(`no entry matching "${text}"`, statusErrorMs);
-      return;
-    }
-    await select(index + syntheticCount);
+   *  not jump targets — as the rows `file-manager:find` searches. Directories
+   *  are labelled with a trailing "/" so the picker shows what each entry is
+   *  (as in a shell listing), the name itself staying what is matched. */
+  function findRows() {
+    return listing
+      .slice(syntheticCount)
+      .map((e) => ({ name: e.name, ...(e.is_dir && { label: `${e.name}/` }) }));
   }
 
   /** Highlights the entry named `name` in the current listing, if present.
@@ -953,16 +933,13 @@ export async function mount(root, metafolder) {
     label: 'File manager: move to the last entry',
     handler: () => select(listing.length - 1),
   });
-  void commands.register('file-manager:find', {
+  void registerFind(metafolder, 'file-manager:find', {
     label: 'File manager: jump to an entry by name',
-    args: [
-      {
-        name: 'entry',
-        prompt: () => 'Go to entry:',
-        complete: () => entryCandidates(),
-      },
-    ],
-    handler: findEntry,
+    prompt: 'Go to entry:',
+    entries: findRows,
+    // The rows skip the synthetic "." / ".." head of the listing, so the index
+    // the finder answers with is offset back onto the displayed list.
+    select: (index) => select(index + syntheticCount),
   });
   void commands.register('file-manager:activate', {
     label: 'File manager: open directory / confirm file',

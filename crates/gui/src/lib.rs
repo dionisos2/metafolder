@@ -97,7 +97,11 @@ fn register_builtins(registry: &CommandRegistry) {
         ("panel:focus-next", "Focus the other panel slot", true),
         ("panel:set-type", "Switch the focused slot's panel type", true),
         ("panel:swap", "Exchange the two slots' panel types", true),
-        ("panel:fullscreen", "Show only the focused panel fullscreen (escape exits)", true),
+        (
+            "panel:fullscreen",
+            "Toggle showing only the focused panel fullscreen (z; escape exits)",
+            true,
+        ),
         ("message:clear", "Clear the workspace message log", true),
         ("status:clear", "Clear the status bar message", false),
         ("config:open", "Open the settings view", true),

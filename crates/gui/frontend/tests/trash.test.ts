@@ -72,6 +72,8 @@ const ENTRIES = [
 function stub() {
   /** @type {Map<string, (...a: string[]) => unknown>} */
   const handlers = new Map<string, (...a: string[]) => unknown>();
+  type ArgSpec = { name: string; prompt: () => unknown; complete?: () => string[] | Promise<string[]> };
+  const specs = new Map<string, ArgSpec[]>();
   const trash = {
     list: vi.fn(async () => ENTRIES.slice()),
     restore: vi.fn(async (_repo: string, _id: string) => '/r/x.txt'),
@@ -87,15 +89,18 @@ function stub() {
     workspace,
     statusBar,
     commands: {
-      register: vi.fn((name: string, opts: { handler?: (...a: string[]) => unknown }) => {
-        if (opts.handler) handlers.set(name, opts.handler);
-      }),
+      register: vi.fn(
+        (name: string, opts: { handler?: (...a: string[]) => unknown; args?: ArgSpec[] }) => {
+          if (opts.handler) handlers.set(name, opts.handler);
+          if (opts.args) specs.set(name, opts.args);
+        },
+      ),
       invoke: vi.fn(),
     },
     contextMenu: Object.assign(vi.fn(), { addDefaultItems: vi.fn() }),
     whenVisible: (fn: () => void) => fn(),
   };
-  return { api, handlers, trash, workspace, statusBar };
+  return { api, handlers, specs, trash, workspace, statusBar };
 }
 
 describe('trash panel actions', () => {
@@ -140,6 +145,29 @@ describe('trash panel actions', () => {
     await handlers.get('trash:empty')!();
     expect(trash.empty).toHaveBeenCalledWith('repo-1');
     expect(statusBar.message).toHaveBeenCalled();
+  });
+
+  test('trash:find completes over the entries and moves the cursor', async () => {
+    const { api, handlers, specs, statusBar } = stub();
+    const shadow = shadowForTrash();
+    mount(shadow, api as never);
+    await new Promise((r) => setTimeout(r, 0));
+
+    // Each candidate carries its original path: two entries can share a name,
+    // and the path is what tells them apart (and is searchable too).
+    const args = specs.get('trash:find')!;
+    expect(args).toHaveLength(1);
+    expect(await args[0].complete!()).toEqual(['x.txt — /r/x.txt', 'dir — /r/dir/']);
+
+    await handlers.get('trash:find')!('dir');
+    expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('dir');
+
+    // A path term finds the entry too; no match is a status-bar error.
+    await handlers.get('trash:find')!('/r/x');
+    expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
+    await handlers.get('trash:find')!('zzz');
+    expect(shadow.querySelector('li.cursor .name')?.textContent).toBe('x.txt');
+    expect(statusBar.error).toHaveBeenCalled();
   });
 
   test('destructive actions are cancelled when unconfirmed', async () => {

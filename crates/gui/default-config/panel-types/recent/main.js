@@ -9,6 +9,7 @@
 
 import { byId, el, field, formatValue } from '/__ui.js';
 import { rowActionsProvider, baseName } from '/__file-actions.js';
+import { registerFind } from '/__find-entry.js';
 
 /** The first field named `name` on `rec` as text, or '' when absent.
  *  @param {Metafolder.Metarecord} rec @param {string} name */
@@ -157,6 +158,20 @@ export function mount(root, metafolder) {
   }
 
   byId(root, 'refresh').addEventListener('click', () => void load());
+
+  // Jump to a row by name — the shared list-panel find, on the same key as
+  // everywhere else. Several recently-viewed records can share a display name,
+  // so each candidate carries its path, which the typed terms search too.
+  void registerFind(metafolder, 'recent:find', {
+    label: 'Recent: jump to a metarecord by name',
+    prompt: 'Go to metarecord:',
+    entries: () =>
+      rows.map((row) => ({
+        name: rowName(row),
+        ...(row.relPath && { label: `${rowName(row)} — ${row.relPath}` }),
+      })),
+    select,
+  });
 
   void commands.register('recent:refresh', {
     label: 'Recent: reload the list',

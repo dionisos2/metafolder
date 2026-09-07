@@ -14,6 +14,7 @@ import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
+import { registerFind } from '/__find-entry.js';
 import { childrenQuery, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
 
 const PAGE_DEFAULT = 200;
@@ -430,11 +431,23 @@ export async function mount(root, metafolder) {
       {
         name: 'field',
         prompt: () => 'TreeRef field to explore?',
-        initial: () => field,
+        // Deliberately NOT pre-filled with the current field: the answer names
+        // another forest, so a pre-fill would only have to be erased first (the
+        // drop-down already shows which field is current).
         complete: () => treeRefFieldNames(),
       },
     ],
     handler: (name) => setField(name.trim()),
+  });
+
+  // Jump to a child by name — the shared list-panel find, on the same key as
+  // everywhere else. Only the *loaded* children are searched, as in a paged
+  // list; the search is over the displayed label, so the mfr_path root is "/".
+  void registerFind(metafolder, 'treeref:find', {
+    label: 'TreeRef explorer: jump to a child by name',
+    prompt: 'Go to child:',
+    entries: () => children.map((child) => ({ name: nodeLabel(child) })),
+    select,
   });
 
   void commands.register('treeref:list-refs', {

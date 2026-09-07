@@ -906,8 +906,10 @@ assignment is remembered either way. A *fullscreen button* (=⛶=,
 *Fullscreen*: =panel:fullscreen= toggles an immersive mode showing only the
 focused panel — the tab bar, command input, status bar, slot header and the
 other slot are all hidden, and the OS window itself goes fullscreen (like a
-video player). =Escape= leaves fullscreen (even from inside a panel text
-input); the canonical flag lives in the Rust-owned GUI state.
+video player). It is bound to =z= by default — the key that zooms a pane in a
+tmux — so the same key goes in and back out. =Escape= also leaves fullscreen
+(even from inside a panel text input); the canonical flag lives in the
+Rust-owned GUI state.
 
 ** Status bar
 
@@ -1023,7 +1025,7 @@ Behaviours:
 | =panel:focus-next=   | Move focus to the other slot                   |
 | =panel:set-type <name>= | Switch focused slot to the named panel type |
 | =panel:swap=         | Exchange the two slots' panel types            |
-| =panel:fullscreen=   | Show only the focused panel fullscreen (escape exits) |
+| =panel:fullscreen=   | Toggle showing only the focused panel fullscreen (default =z=; escape also exits) |
 | =metarecord:create=       | Create a new metarecord immediately and select it (=metarecord-detail=) |
 | =metarecord:delete=       | Delete the selected metarecord                      |
 | =metarecord:field-next= / =metarecord:field-prev= | Move the field-row cursor (=metarecord-detail=) |
@@ -1103,7 +1105,10 @@ Behaviours:
 | =file-manager:refresh=    | Reload the current directory in =file-manager=               |
 | =file-manager:toggle-root= | Toggle the "constrain to root" checkbox in =file-manager=    |
 | =file-manager:toggle-hidden= | Toggle the "hidden files" checkbox in =file-manager= (default =ctrl+h=) |
-| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; the entry name is collected in the command input, completing over the listing) |
+| =file-manager:find=       | Jump to an entry of the displayed directory by name (default =f=; see [[*Find an entry]]) |
+| =treeref:find=            | Jump to a child of the displayed node by name (default =f=)   |
+| =trash:find=              | Jump to a trash entry by name (default =f=)                   |
+| =recent:find=             | Jump to a recently-viewed metarecord by name (default =f=)    |
 | =file:back=               | Up one level in the =file= panel: out of a drilled-in listing, or to the folder holding the previewed file (default =backspace=) |
 | =file:zoom-in=            | Enlarge the previewed image/video (default =+=)              |
 | =file:zoom-out=           | Shrink the previewed image/video (default =-=)               |
@@ -1305,6 +1310,42 @@ or third-party, including the =help= pages it was first asked for.
   finder and the query editor are for (see [[*Finder (quick filter)]]).
 - =find:in-panel <text>= searches =text= directly, so a script can drive the
   find bar through =mf gui command= like any other command.
+
+** Find an entry
+
+The other find: =f= moves the *cursor* onto a row of the focused list panel,
+named in the command input. Where =Ctrl+f= paints text and selects nothing,
+this one selects a row and paints nothing — so the panel's actions (open,
+descend, restore, trash) then apply to what was found.
+
+Every panel that shows a cursor over named rows registers it, under its own
+name and on the same key: =file-manager:find= (an entry of the displayed
+directory), =treeref:find= (a child of the current node), =trash:find= (a
+trashed entry), =recent:find= (a recently-viewed metarecord). One helper
+(=/__find-entry.js=) implements all of them, so they behave identically:
+
+- The name is an *interactive command argument* (see [[*Interactive command
+  arguments (command mode)]]) completing over the rows the panel displays *now*,
+  filtered by ordered substring like every other picker. The minibuffer starts
+  empty.
+- The candidate carries what identifies the row: the file manager marks a
+  directory with a trailing =/=, and the trash and recent lists — where two rows
+  can share a name — append the path that tells them apart. The typed terms are
+  matched against that whole candidate, so the path is searchable too.
+- Accepting a completion selects that row. A *typed* answer (=Ctrl+Enter=, or
+  terms matching several rows) selects the first row it ordered-substring-
+  matches — the first one the picker was showing. An answer matching nothing is
+  a status-bar error and the cursor stays where it was; an empty answer does
+  nothing.
+- The row is *selected, not activated*: a directory is not entered, a tree node
+  is not descended into, a trashed file is not restored.
+- Only the rows the panel has *loaded* are searched, as with the find bar: a
+  paged list's unfetched pages are not, which is what the finder and the query
+  editor are for.
+
+=metarecord-list= is the exception that proves the rule: its rows come from a
+query rather than a loaded list, so =f= there edits the *finder* (see [[*Finder
+(quick filter)]]) — the same question, asked of the daemon.
 
 ** Help
 
@@ -2306,7 +2347,7 @@ space in the listing offers just =New folder…= / =New file…= / =Paste=.
 | =file-manager:cut=        | Cut the selected entry to the shared clipboard (=Ctrl+X=) |
 | =file-manager:paste=      | Paste the clipboard into the current directory (=Ctrl+V=; copy or move) |
 | =file-manager:delete=     | Delete the selected entry (=Delete=): to the repo trash when a repo is active, else permanently; confirmed |
-| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected as an interactive argument (see [[*Interactive command arguments (command mode)]]) completing over the listing — directories shown with a trailing =/=. The candidates are filtered by ordered substring, and a typed value that matches none of them exactly selects the first entry it ordered-substring-matches; no match is a status-bar error. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
+| =file-manager:find=       | Move the cursor onto an entry of the current directory (=f=), its name collected in the command input — the shared list-panel find, see [[*Find an entry]]. Only the displayed directory is searched (hidden entries only when they are shown), and a directory is selected, not entered. |
 
 *** =treeref= panel type
 
@@ -2318,9 +2359,11 @@ by the daemon. The primary use is observing a tag hierarchy.
 (=GET /repos/:repo/fields?type=tree_ref=, [[file:spec-data-model.org][spec-data-model.org]]); =mfr_path= is the
 default, configurable as =[panel-defaults.treeref].field= (see
 [[*Panel defaults]]) and overridden by a stored =treeref:field=. Changing the field resets navigation to the roots. =treeref:set-field=
-(=f=) is its keyboard equivalent: it asks for the field name in the command
-input, completing over the same list and pre-filled with the current field, and
-mirrors the pick back into the dropdown.
+(=Shift+F=) is its keyboard equivalent: it asks for the field name in the command
+input, completing over the same list, and mirrors the pick back into the
+dropdown. The minibuffer starts *empty* — the answer names another forest, not
+an edit of the current one, so a pre-fill would only have to be erased first
+(the dropdown already shows which field is current).
 
 *Navigation*: by *parent UUID*, not by path string, so a name containing =/=
 is handled correctly. The view *starts at the forest roots*, fetched from
@@ -2341,8 +2384,9 @@ so =metarecord-detail= follows) and =selected_treeref=
 (=\{repo, field, uuid, path\}=).
 
 *Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
-=Backspace=/=Left= go up; =r= refreshes; =f= picks the explored field; =l=
-lists what points at the node, =s= toggles the scope, =e= picks the Ref field.
+=Backspace=/=Left= go up; =r= refreshes; =f= jumps to a child by name (see
+[[*Find an entry]]), =Shift+F= picks the explored field; =l= lists what points at
+the node, =s= toggles the scope, =e= picks the Ref field.
 
 *Ref bar — "what points at this node?"*. The companion question a tree
 inevitably raises ("what is tagged with this?") is answered by *building a
@@ -2374,7 +2418,8 @@ mode — which is the reason a dedicated panel type is not needed for it.
 | =treeref:parent=   | Go up one level                              |
 | =treeref:root=     | Jump to the forest roots                     |
 | =treeref:refresh=  | Reload the field lists and current children  |
-| =treeref:set-field= | Explore another TreeRef field (arg: field name) |
+| =treeref:set-field= | Explore another TreeRef field (arg: field name, no pre-fill) |
+| =treeref:find=     | Jump to a loaded child by name (=f=; see [[*Find an entry]]) |
 | =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |
 | =treeref:toggle-scope= | Toggle between =exact= and =+ descendants= |
 | =treeref:set-ref-field= | Choose the Ref field to follow back (arg: field name) |

@@ -4,6 +4,7 @@
 // no daemon endpoint).
 
 import { byId, el } from '/__ui.js';
+import { registerFind } from '/__find-entry.js';
 
 /** Human-readable byte count (base 1024, one decimal above KiB).
  *  @param {number} bytes */
@@ -175,6 +176,21 @@ export function mount(root, metafolder) {
   restoreButton.addEventListener('click', () => void doRestore());
   deleteButton.addEventListener('click', () => void doDelete());
   emptyButton.addEventListener('click', () => void doEmpty());
+
+  // Jump to an entry by name — the shared list-panel find, on the same key as
+  // everywhere else. Two entries can share a name (the same file trashed
+  // twice), so each candidate carries the path it was trashed from, which the
+  // typed terms search too.
+  void registerFind(metafolder, 'trash:find', {
+    label: 'Trash: jump to an entry by name',
+    entries: () =>
+      entries.map((entry) => {
+        const name = entry.original_name || entry.id;
+        const path = entry.is_dir ? `${entry.original_path}/` : entry.original_path;
+        return { name, label: `${name} — ${path}` };
+      }),
+    select,
+  });
 
   void commands.register('trash:refresh', {
     label: 'Trash: reload the entries',

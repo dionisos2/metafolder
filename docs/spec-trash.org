@@ -261,4 +261,6 @@ there is still *no daemon trash endpoint*.
   (name, size, age, reason, path), newest first, and offers *Restore* (=Enter=;
   re-links the metarecord before moving the file back, as the CLI does),
   *Delete* one entry permanently (=Delete=), and *Empty trash* — the two
-  destructive actions confirmed. Prune by size/age is CLI-only.
+  destructive actions confirmed. =f= jumps to an entry by name, each candidate
+  carrying the path it was trashed from (spec-gui "Find an entry"). Prune by
+  size/age is CLI-only.
