@@ -411,10 +411,10 @@ fn bench_index_build_and_folder_query() {
         let old = t.elapsed();
 
         let t = Instant::now();
-        let settled = cache.apply_cell(&conn, "bench_tree", uuid).unwrap();
+        let settled = cache.apply_cells(&conn, effects.tree_cells()).unwrap();
         let new = t.elapsed();
-        assert!(settled, "a plain insertion must settle incrementally");
-        assert_eq!(effects.tree_cells().map(<[_]>::len), Some(1), "one changed cell");
+        assert!(settled, "a resident cache settles any batch");
+        assert_eq!(effects.tree_cells().len(), 1, "one changed cell");
 
         eprintln!("\n#8 tree cache after one manual TreeRef write:");
         eprintln!("   OLD  rebuild the whole forest : {old:?}");
@@ -426,4 +426,72 @@ fn bench_index_build_and_folder_query() {
     }
 
     let _ = std::fs::remove_dir_all(&meta);
+}
+
+/// Settling a *large* batch of changed cells against rebuilding the forest.
+///
+/// The cell list used to be dropped past a few thousand entries, on the theory
+/// that one scan then beats reconciling them one at a time. It is not dropped
+/// any more (spec-file-tracking "Upkeep after a write"), so this is the
+/// measurement that has to hold: a revision touching a large share of the
+/// forest must not cost more settled than rebuilt.
+///
+/// Synthetic and self-contained (in-memory database), so it needs no data
+/// folder:
+///   cargo test -p metafolder-daemon --test perf_bench --release -- --ignored --nocapture bulk
+#[test]
+#[ignore = "manual perf benchmark"]
+fn bench_bulk_settle_against_rebuild() {
+    use metafolder_daemon::tree_cache::TreeCache;
+
+    const FOREST: usize = 5_000;
+    let mut conn = db::open_in_memory().unwrap();
+    db::init_schema(&conn).unwrap();
+
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    let root = w
+        .create_metarecord(vec![metafolder_core::metarecord::Field::new(
+            "t",
+            Value::TreeRef { parent: None, name: "r".into() },
+        )])
+        .unwrap()
+        .uuid;
+    let mut leaves = Vec::with_capacity(FOREST);
+    for i in 0..FOREST {
+        let uuid = w.create_metarecord(vec![]).unwrap().uuid;
+        w.set_field(uuid, "t", Value::TreeRef { parent: Some(root), name: format!("n{i}").into() })
+            .unwrap();
+        leaves.push(uuid);
+    }
+    w.commit().unwrap();
+
+    let mut cache = TreeCache::new(false);
+    cache.populate(&conn).unwrap();
+
+    // One revision that moves every leaf: the worst realistic batch.
+    let mut w = Writer::begin(&mut conn, None).unwrap();
+    for (i, uuid) in leaves.iter().enumerate() {
+        w.set_field(
+            *uuid,
+            "t",
+            Value::TreeRef { parent: Some(root), name: format!("m{i}").into() },
+        )
+        .unwrap();
+    }
+    let effects = w.effects();
+    w.commit().unwrap();
+    let cells = effects.tree_cells().to_vec();
+    assert_eq!(cells.len(), FOREST);
+
+    let t = Instant::now();
+    cache.populate(&conn).unwrap();
+    let rebuilt = t.elapsed();
+
+    let t = Instant::now();
+    assert!(cache.apply_cells(&conn, &cells).unwrap());
+    let settled = t.elapsed();
+
+    eprintln!("\n#9 a revision changing all {FOREST} cells of a {FOREST}-node forest:");
+    eprintln!("   rebuild the forest : {rebuilt:?}");
+    eprintln!("   settle the cells   : {settled:?}");
 }

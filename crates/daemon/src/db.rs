@@ -685,6 +685,55 @@ pub fn field_rows_for(
     Ok(out)
 }
 
+/// One metarecord's positions in one forest: `(parent, name)` in row-id order,
+/// the order a load links them in (the first is the one children hang under).
+pub type TreePositions = Vec<(Option<Uuid>, TreeName)>;
+
+/// The `tree_ref` positions of several metarecords, keyed by `(uuid, field
+/// name)` and in `id` order within each cell — the batched form of the per-cell
+/// read the tree cache settles from (`TreeCache::apply_cells`).
+///
+/// One query per 500 metarecords instead of one per cell: a revision that moves
+/// thousands of positions is settled from a handful of seeks rather than
+/// thousands, which is what lets the cache be settled at any batch size instead
+/// of being rebuilt past a threshold. Only the tree rows are read, so the map
+/// stays about one entry per metarecord however many other fields it carries.
+///
+/// `INDEXED BY`: the correlated column is `metarecord_uuid`, and left to choose
+/// SQLite may take `idx_field_name_type` — which does not carry the uuid — and
+/// scan a whole field name per chunk (see the invariant in spec-main).
+pub fn tree_positions_for(
+    conn: &Connection,
+    uuids: &[Uuid],
+) -> Result<std::collections::HashMap<(Uuid, String), TreePositions>> {
+    let mut out: std::collections::HashMap<(Uuid, String), TreePositions> =
+        std::collections::HashMap::new();
+    for chunk in uuids.chunks(IN_CHUNK) {
+        let placeholders = vec!["?"; chunk.len()].join(",");
+        let mut stmt = conn.prepare(&format!(
+            "SELECT metarecord_uuid, field_name, value_uuid, value_name, value_name_bytes \
+             FROM field INDEXED BY idx_field_metarecord \
+             WHERE metarecord_uuid IN ({placeholders}) AND value_type = 'tree_ref' \
+             ORDER BY metarecord_uuid, field_name, id"
+        ))?;
+        let params: Vec<Vec<u8>> = chunk.iter().map(|u| uuid_to_bytes(*u)).collect();
+        let mut rows = stmt.query(rusqlite::params_from_iter(params.iter()))?;
+        while let Some(row) = rows.next()? {
+            let uuid = bytes_to_uuid(row.get::<_, Vec<u8>>(0)?)?;
+            let field_name: String = row.get(1)?;
+            let parent = bytes_to_uuid(row.get::<_, Vec<u8>>(2)?)?;
+            let name = match row.get::<_, Option<Vec<u8>>>(4)? {
+                Some(bytes) => TreeName::from_bytes(bytes),
+                None => TreeName::from(row.get::<_, String>(3)?),
+            };
+            out.entry((uuid, field_name))
+                .or_default()
+                .push((if parent == ZERO_UUID { None } else { Some(parent) }, name));
+        }
+    }
+    Ok(out)
+}
+
 /// Versions of several metarecords in chunked `IN (…)` queries — the batched
 /// form of [`get_version`]. An unknown uuid is absent from the map.
 pub fn versions_for(

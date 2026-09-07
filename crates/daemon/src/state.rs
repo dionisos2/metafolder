@@ -256,13 +256,14 @@ impl RepoState {
     /// write changed the watched scope, the inotify watch set.
     ///
     /// The tree cache is reconciled *cell by cell*
-    /// ([`TreeCache::apply_cell`]). It used to be rebuilt outright after any
+    /// ([`TreeCache::apply_cells`]). It used to be rebuilt outright after any
     /// write that touched a `tree_ref` row, which meant one full scan of the
     /// `field` table — seconds on a large repository, with the connection held
     /// throughout, so nothing else could be read while a single field was
-    /// being set. A rebuild remains the fallback: it is what a cell the
-    /// incremental path declines, or a revision with too many of them, falls
-    /// back to, and it is always correct.
+    /// being set. Nothing rebuilds it here any more, whatever the write: the
+    /// only rebuilds left are the initial load, an explicit one, and the paths
+    /// that rewrite history wholesale (rollback, the restore replay, the
+    /// resync after an abandoned flush).
     pub fn settle(
         &self,
         conn: &Connection,
@@ -270,20 +271,10 @@ impl RepoState {
     ) -> anyhow::Result<()> {
         if effects.touches_tree() {
             let mut cache = self.lock_cache();
-            let settled = match effects.tree_cells() {
-                None => false,
-                Some(cells) => {
-                    let mut all = true;
-                    for (field, uuid) in cells {
-                        if !cache.apply_cell(conn, field, *uuid)? {
-                            all = false;
-                            break;
-                        }
-                    }
-                    all
-                }
-            };
-            if !settled {
+            if !cache.apply_cells(conn, effects.tree_cells())? {
+                // Only before the repository's initial load, which through the
+                // API cannot happen: it serves nothing until the forest is
+                // resident (spec-main "POST /repos/load").
                 cache.populate(conn)?;
             }
         }

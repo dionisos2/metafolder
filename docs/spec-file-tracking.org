@@ -555,25 +555,36 @@ only for a cache built directly, as unit tests do.
 
 The watcher and reconcile keep the cache in step as they go. A *manual API
 write* does not pass through them, so after committing a revision the daemon
-settles the cache against what that revision changed: one =(field name,
-metarecord)= TreeRef *cell* at a time, in write order, so that a parent written
-before its child is linked first.
+settles the cache against what that revision changed: the =(field name,
+metarecord)= TreeRef **cells** it touched, listed in write order and never
+truncated.
 
-A cell is settled by re-reading its rows and applying the difference —
-an insertion, a move or rename (the subtree follows), a removal. Some shapes
-cannot be reproduced in place, and the daemon *rebuilds the whole forest*
-instead, which is always correct:
+Settling is in two phases, which together are what make it able to reproduce any
+write rather than most of them:
 
-- a cache that is not resident, which says nothing about the rest of the forest;
-- a cell holding several positions at once (multi-map =TreeRef=);
-- a position lost by a node that still has children, or gained by one whose
-  children are in the database — a full load leaves a parentless child
-  *detached* and re-links it when its parent comes back, which is neither a
-  subtree drop nor a plain insertion;
-- a destination whose parent is not cached yet (parent and child written by the
-  same revision, child settled first), or whose name is already taken;
-- a revision changing more cells than the rebuild costs (a few thousand): past
-  that point, one scan is cheaper than reconciling them one by one.
+1. *Unlink* every cell being settled, keeping the nodes and the subtrees hanging
+   off them. Emptying all of the name slots before filling any is what makes the
+   order the names are taken and released in irrelevant — two siblings that swap
+   names have no valid one-at-a-time order.
+2. *Place* each cell at the positions the database now holds for it, waiting for
+   any parent that is itself part of the batch (until it is placed, the node its
+   children must hang from is not settled). The parent relation is acyclic, so
+   the pass closes.
+
+A metarecord's nodes are reused *in order*, so the first one — the one a full
+load hangs its children under — keeps its subtree through a rename, a move, or a
+change in how many positions there are. Positions left over are freed; they
+carry no children, because a load places children under the first position only,
+and because a position with children cannot be removed at all
+(see [[file:spec-data-model.org][spec-data-model.org]] "Referential integrity of
+a forest" — that check is what makes half of these cases unreachable rather than
+merely handled).
+
+*The cache is never rebuilt by a write.* It is built once at load, and rebuilt
+only where history is rewritten wholesale and there is nothing incremental to
+say: a rollback or a coordinated navigation step, the replay of a skipped
+restoration, and the resync after a flush that was abandoned mid-way (the writes
+roll back, the in-memory cache does not).
 
 Rebuilding on *every* TreeRef write is what this replaced. It cost one full scan
 of the =field= table per write — seconds on a large repository — with the
