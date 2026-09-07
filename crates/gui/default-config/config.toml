@@ -25,13 +25,12 @@ open-with = ["xdg-open"]
 # "loaded/total"). Smallest for metarecord-list (each row needs several daemon
 # round-trips and parsing), largest for file-manager (a plain text row is the
 # cheapest to build); file sits in between (each tile is a lazy <img>).
-# treeref/ref-list are keyed by their panel-type name too.
+# treeref is keyed by its panel-type name too.
 [page-size]
 metarecord-list = 100
 file = 150
 file-manager = 200
 treeref = 200
-ref-list = 100
 
 # Miscellaneous runtime settings. Every key is optional: omit the table (or any
 # key) to keep the default shown below.
@@ -134,6 +133,9 @@ grid-name-column = "mfr_path:path"
 [panel-defaults.treeref]
 # The tree_ref field whose forest the panel opens on.
 field = "mfr_path"
+# The Ref field the "what points at this node?" query follows back into the
+# forest (`treeref:list-refs`). Tags are by far the common case.
+ref-field = "tag"
 
 [panel-defaults.file]
 # Extensions previewed as an image / played as audio / played as video. These

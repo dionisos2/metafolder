@@ -1,5 +1,5 @@
 // metarecord-list "list a folder" flow (spec-gui "Cross-panel selection"): the
-// panel honours a `metarecord-list:folder-query` workspace variable — set by the
+// panel honours a `metarecord-list:query-request` workspace variable — set by the
 // `metarecord-list:list-folder` command from another panel — by putting the DSL
 // in the normal zone (visible, frozen, editable) and running it, both when it
 // mounts and while already mounted, guarded by the request nonce.
@@ -147,7 +147,7 @@ describe('metarecord-list folder listing', () => {
 
   test('a request pending at mount is honoured on the first display', async () => {
     const p = await mountPanel({
-      'metarecord-list:folder-query': { dsl: 'mfr_path -> "/live"', nonce: 1 },
+      'metarecord-list:query-request': { dsl: 'mfr_path -> "/live"', nonce: 1 },
     });
     expect(p.normalInput.value).toBe('mfr_path -> "/live"');
     expect(p.normalEditor.hidden).toBe(false); // visible…
@@ -158,18 +158,18 @@ describe('metarecord-list folder listing', () => {
   test('a request arriving while mounted is applied and run', async () => {
     const p = await mountPanel({});
     p.calls.length = 0;
-    await p.push('metarecord-list:folder-query', { dsl: 'mfr_path -> "/live/2024"', nonce: 2 });
+    await p.push('metarecord-list:query-request', { dsl: 'mfr_path -> "/live/2024"', nonce: 2 });
     expect(p.normalInput.value).toBe('mfr_path -> "/live/2024"');
     expect(ranQueries(p.calls)).toContain('mfr_path -> "/live/2024"');
   });
 
   test('the same request re-pushed acts only once; a new nonce re-triggers', async () => {
     const p = await mountPanel({});
-    await p.push('metarecord-list:folder-query', { dsl: 'mfr_path -> ""', nonce: 3 });
+    await p.push('metarecord-list:query-request', { dsl: 'mfr_path -> ""', nonce: 3 });
     p.calls.length = 0;
-    await p.push('metarecord-list:folder-query', { dsl: 'mfr_path -> ""', nonce: 3 });
+    await p.push('metarecord-list:query-request', { dsl: 'mfr_path -> ""', nonce: 3 });
     expect(ranQueries(p.calls)).toEqual([]);
-    await p.push('metarecord-list:folder-query', { dsl: 'mfr_path -> ""', nonce: 4 });
+    await p.push('metarecord-list:query-request', { dsl: 'mfr_path -> ""', nonce: 4 });
     expect(ranQueries(p.calls)).toContain('mfr_path -> ""');
   });
 });

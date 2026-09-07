@@ -17,8 +17,30 @@
   </tbody>
 </table>
 <p>
-  Which forest it shows is chosen by its field (default <code>mfr_path</code>).
-  Selecting a node publishes it, so it can drive a companion
-  <a data-help-page="ref-list">reference list</a> — the metarecords pointing at
-  the selected node.
+  Which forest it shows is chosen by its field (default <code>mfr_path</code>);
+  <code>f</code> picks another one without leaving the keyboard.
 </p>
+
+<h2>What points at this node?</h2>
+<p>
+  The ref bar answers the companion question — which metarecords <em>reference</em>
+  the node under the cursor. Pick the <strong>Ref field</strong> to follow back
+  (<code>tag</code> by default, the common case) and the <strong>scope</strong>,
+  and the bar shows the query it will run:
+</p>
+<pre>tag -&gt; (path = "music/jazz")      the node itself
+tag -&gt; (path =&gt;* "music/jazz")    the node and every tag below it</pre>
+<p>
+  <code>l</code> (or <em>List what tag points at here</em> in the right-click
+  menu) runs it in a <a data-help-page="metarecord-list">metarecord list</a>
+  opened in the other slot, with the query left visible and editable in its
+  normal-DSL zone — so it can be narrowed further, or composed with anything
+  else, instead of being locked into a fixed view.
+</p>
+<table>
+  <tbody>
+    <tr><td><code>l</code></td><td>list what the Ref field points at here</td></tr>
+    <tr><td><code>s</code></td><td>toggle the scope (exact ⇄ + descendants)</td></tr>
+    <tr><td><code>e</code></td><td>choose the Ref field to follow back</td></tr>
+  </tbody>
+</table>

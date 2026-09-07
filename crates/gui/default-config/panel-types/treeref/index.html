@@ -55,6 +55,23 @@
         color: var(--mf-fg, #d8d8e0);
         text-decoration: underline;
       }
+      #ref-bar {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        padding: 3px 8px;
+        border-bottom: 1px solid var(--mf-bg-raised, #26262e);
+        flex-wrap: wrap;
+      }
+      #query-preview {
+        flex: 1;
+        font-family: var(--mf-font-mono, monospace);
+        font-size: 0.85em;
+        color: var(--mf-fg-dim, #8a8a96);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       #listing {
         flex: 1;
         overflow-y: auto;
@@ -109,6 +126,11 @@
       <button id="up">↑ up</button>
       <button id="refresh">⟳ refresh</button>
       <span id="breadcrumb"></span>
+    </div>
+    <div id="ref-bar">
+      <label>ref <button id="ref-field" type="button"></button></label>
+      <label>scope <button id="scope" type="button"></button></label>
+      <code id="query-preview"></code>
     </div>
     <div id="listing">
       <p class="placeholder" id="placeholder">Loading…</p>

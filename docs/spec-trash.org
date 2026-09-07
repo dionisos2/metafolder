@@ -243,7 +243,7 @@ there is still *no daemon trash endpoint*.
   the workspace's =selected_metarecord='s file to the trash (=reason=manual=,
   recording the metarecord and its current =version=, exactly like =mf trash
   -f=). It is bound to =Delete= in the panels that carry a metarecord selection
-  (=metarecord-list=, =metarecord-detail=, =treeref=, =ref-list=) and offered as
+  (=metarecord-list=, =metarecord-detail=, =treeref=) and offered as
   a *Trash file* context-menu item in the metarecord panels. Because =Delete= is
   a bare key, the action is *confirmed* even though it is reversible. The
   metadata update is still the watcher's job (as for =mf trash -f=): the file's

@@ -822,7 +822,7 @@ export async function mount(root, metafolder) {
 
   // Another panel asks the list to show a folder's contents (the metarecords
   // whose `mfr_path` parent is that folder). The request travels through the
-  // workspace variable `metarecord-list:folder-query` = { dsl, nonce },
+  // workspace variable `metarecord-list:query-request` = { dsl, nonce },
   // honoured both when the panel mounts (`start`) and while it is already
   // mounted (`onChange`). The `nonce` guard makes an identical repeated request
   // re-trigger, yet the same request act only once across the two paths.
@@ -830,10 +830,10 @@ export async function mount(root, metafolder) {
   /** @type {unknown} the nonce of the last honoured folder request */
   let folderQueryNonce = null;
 
-  /** Applies a fresh `metarecord-list:folder-query` request, marking its nonce
+  /** Applies a fresh `metarecord-list:query-request` request, marking its nonce
    *  handled. @returns {Promise<boolean>} whether one ran (it fetched itself) */
   async function consumeFolderQuery() {
-    const req = await workspace.get('metarecord-list:folder-query');
+    const req = await workspace.get('metarecord-list:query-request');
     if (!req || typeof req !== 'object') return false;
     const { dsl, nonce } = /** @type {{dsl?: unknown, nonce?: unknown}} */ (req);
     if (typeof dsl !== 'string' || dsl === '' || nonce === folderQueryNonce) return false;
@@ -1527,7 +1527,7 @@ export async function mount(root, metafolder) {
     scheduleCatchupSync();
   });
   workspace.onChange('active_repo', () => metafolder.whenVisible(deferredStart));
-  workspace.onChange('metarecord-list:folder-query', () =>
+  workspace.onChange('metarecord-list:query-request', () =>
     metafolder.whenVisible(() => void consumeFolderQuery()),
   );
 

@@ -471,7 +471,6 @@ mod tests {
         assert_eq!(json["file-manager"], 200);
         // The keys must match the panel directory names exactly.
         assert_eq!(json["treeref"], 200);
-        assert_eq!(json["ref-list"], 100);
     }
 
     #[test]

@@ -167,12 +167,6 @@
     "aliases": ["tree"]
   },
   {
-    "id": "ref-list",
-    "title": "Reference list panel",
-    "file": "ref-list.html",
-    "aliases": ["refs"]
-  },
-  {
     "id": "workspace-info",
     "title": "Workspace info panel",
     "file": "workspace-info.html",

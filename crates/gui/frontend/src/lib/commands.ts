@@ -458,7 +458,7 @@ async function listFolder(ws: string): Promise<void> {
   }
   await invoke('ws_set_var', {
     wsId: ws,
-    key: 'metarecord-list:folder-query',
+    key: 'metarecord-list:query-request',
     value: { dsl: folderContentsQuery(folder), nonce: Date.now() },
   });
   await invoke('panel_set_type', { slot: store.layout.focused, panelType: 'metarecord-list' });

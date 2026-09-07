@@ -686,8 +686,8 @@ absence is not a usable value). An optional =?type=<value_type>= query
 parameter restricts the result to one value type (=tree_ref=, =ref=, =string=,
 …). The isolation matches a query's universe — only metarecords owned
 exclusively by this repository. The GUI uses it to populate field pickers (e.g.
-the TreeRef-field selector of the tree-explorer panel and the Ref-field
-selector of the ref-list panel, see [[file:spec-gui.org][spec-gui.org]]).
+the TreeRef-field and Ref-field selectors of the tree-explorer panel, see
+[[file:spec-gui.org][spec-gui.org]]).
 
 *** =GET /repos/:repo_uuid/tree/roots=
 

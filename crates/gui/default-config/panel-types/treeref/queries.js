@@ -18,7 +18,7 @@ export function childrenQuery(field, parentUuid) {
 // path leading-"/"-rooted ("/a/b", the root itself "/"); a named-root forest
 // (e.g. tags) has no leading slash ("domaine", "domaine/sub"). An empty list is
 // the empty string (no node selected). This is why the treeref breadcrumb and
-// ref-list target line never prefix a slash of their own — doing so
+// ref bar preview never prefix a slash of their own — doing so
 // double-slashed the filesystem forest ("///projets") and wrongly slashed a
 // named root ("/domaine").
 /** @param {string[]} names @returns {string} */
@@ -39,4 +39,38 @@ export function treeNameOf(metarecord, field) {
     if (f.name === field && f.value.type === 'tree_ref') return f.value.value.name;
   }
   return null;
+}
+
+// The DSL string literal for `text`: the parser decodes `\"` and `\\` inside a
+// quoted string and passes every other backslash escape through verbatim, so
+// those two are the only characters that need escaping.
+/** @param {string} text @returns {string} */
+function dslString(text) {
+  return `"${text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+// The DSL selecting the metarecords whose `refField` (a Ref field) points into
+// the tree node at `path` in `treeField`'s forest — the query the `treeref`
+// panel hands to `metarecord-list` (spec-gui "treeref panel type").
+//
+//   - scope 'exact'   : `tag -> (path = "music/jazz")`, the node itself. On a
+//     TreeRef field `=` is the exact node at that path (spec-query "Field
+//     aspects"), so this pins one node at every depth — a forest root included.
+//   - scope 'subtree' : `tag -> (path =>* "music/jazz")`, the node *and* its
+//     descendants — classic tag inheritance, where selecting "music" also
+//     surfaces things tagged "music/rock".
+//
+// `path` is null when no node is selected: the shape alone is returned, which
+// is what the panel shows as a preview of the query the command will run.
+/**
+ * `scope` is a plain string: it reaches here from a workspace variable, and
+ * anything but 'subtree' means 'exact'.
+ *
+ * @param {{refField: string, treeField: string, path: string|null, scope: string}} spec
+ * @returns {string}
+ */
+export function refQueryDsl({ refField, treeField, path, scope }) {
+  const arrow = scope === 'subtree' ? '=>*' : '=';
+  const operand = path === null ? '…' : dslString(path);
+  return `${refField} -> (${treeField} ${arrow} ${operand})`;
 }

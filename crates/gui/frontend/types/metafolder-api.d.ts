@@ -78,12 +78,14 @@ declare namespace Metafolder {
   interface Defaults {
     /** metarecord-list: initial table columns (columns-input syntax). */
     columns?: string;
-    /** metarecord-list: fields the finder searches (`field[:mode]`). */
+    /** metarecord-list: fields the finder searches (`field[:aspect]`). */
     finderFields?: string[];
     /** metarecord-list: the column shown as a tile's name in grid mode. */
     gridNameColumn?: string;
     /** treeref: the tree_ref field whose forest the panel opens on. */
     field?: string;
+    /** treeref: the Ref field `treeref:list-refs` follows back into the forest. */
+    refField?: string;
     /** file: extensions previewed as an image. */
     imageExtensions?: string[];
     /** file: extensions played as audio. */

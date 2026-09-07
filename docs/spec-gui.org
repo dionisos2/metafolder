@@ -80,7 +80,6 @@ Built-in panel types:
 | =log=            | Event log (revisions and operations)                         |
 | =repos=          | Repository list, init, load, unload, per-repo running tasks, tracking notices |
 | =treeref=        | TreeRef forest explorer; pick a TreeRef field, navigate roots→leaves |
-| =ref-list=       | Metarecords whose chosen Ref field points to the =treeref= selection |
 | =trash=          | Repository trash-bin: list, restore, delete, empty (see [[file:spec-trash.org][spec-trash.org]] "GUI") |
 | =duplicates=     | Groups of byte-identical files, worst reclaimable space first (see [[file:spec-duplicates.org][spec-duplicates.org]] "GUI") |
 | =help=           | In-app help: static pages with a grep search box (see [[*Help]]) |
@@ -157,7 +156,7 @@ Standard variables:
 | =selected_paths=   | =string[]=                    | Absolute paths of the highlighted filesystem metarecord (usually one; multiple if the metarecord has several =mfr_path= values) |
 | =selected_metarecord=   | =\{uuid, repo\} \vert null=   | Metadata metarecord for the highlighted path (null if untracked) |
 | =selected_metarecords= | =string[]=                    | UUIDs of all selected metarecords      |
-| =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel (consumed by =ref-list=) |
+| =selected_treeref= | =\{repo, field, uuid, path\} \vert null= | TreeRef node selected in the =treeref= panel |
 | =pick_request=     | =\{caller_ws, token, picker_slot, restore\} \vert null= | Set on a *picker* workspace at creation; marks it as a value picker linked back to =caller_ws=, with the slot to restore on close (see [[*Value picker]]) |
 | =pick_result=      | =\{token, uuid\} \vert \{token, path\} \vert \{token, cancelled\} \vert null= | Delivered to the *calling* workspace when a picker confirms (=uuid= or =path=, per the request's =result= kind) or cancels; the requesting form matches =token= and consumes it |
 
@@ -1356,7 +1355,7 @@ Panels backed by files prepend the shared *file actions* — Open with…, Cut,
 Copy, Paste, Rename, Duplicate, Copy full path (the entry's absolute OS path,
 to the text clipboard) and Move to trash — for the right-clicked metarecord's
 file
-(the file-manager, metarecord-list, metarecord-detail, file, recent, ref-list
+(the file-manager, metarecord-list, metarecord-detail, file, recent
 and the =mfr_path= treeref). They come from =/__file-actions.js=, whose
 clipboard is one realm-wide singleton, so a Cut/Copy in any of them pastes in
 another (the file manager included). List panels tag each file row with
@@ -1958,9 +1957,11 @@ can be set by scripts:
 | =metarecord-list:normal-frozen= | whether zone B is frozen (decoupled, authoritative)                        |
 | =metarecord-list:normal-query=  | zone B text — authoritative while frozen, otherwise a cache of =expand(A)= |
 
-*List a folder*: the panel also honours a =metarecord-list:folder-query=
-workspace variable (={ dsl, nonce }=), set by =metarecord-list:list-folder= from
-another panel — it puts the DSL in zone B, *shown and frozen*, and runs it. A
+*Run a query from another panel*: the panel also honours a
+=metarecord-list:query-request= workspace variable (={ dsl, nonce }=), set by
+=metarecord-list:list-folder= (a folder's contents) or by =treeref:list-refs=
+(what points at a tree node) — it puts the DSL in zone B, *shown and frozen*,
+and runs it. A
 query the GUI wrote is a starting point, not a mode: frozen zone B leaves it
 visible, hand-editable and composable (the same choice
 =metarecord-list:duplicates= makes, as against the orphan view's hidden
@@ -2337,49 +2338,46 @@ default 200) with more on scroll; the (few) roots are fetched in one call.
 
 *Selection*: highlighting a node sets =selected_metarecord= (=\{uuid, repo\}=,
 so =metarecord-detail= follows) and =selected_treeref=
-(=\{repo, field, uuid, path\}=, consumed by =ref-list=).
+(=\{repo, field, uuid, path\}=).
 
 *Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
-=Backspace=/=Left= go up; =r= refreshes; =f= picks the explored field.
+=Backspace=/=Left= go up; =r= refreshes; =f= picks the explored field; =l=
+lists what points at the node, =s= toggles the scope, =e= picks the Ref field.
+
+*Ref bar — "what points at this node?"*. The companion question a tree
+inevitably raises ("what is tagged with this?") is answered by *building a
+query*, not by a second panel type. A second toolbar row carries a *Ref field*
+picker (=GET /repos/:repo/fields?type=ref=; default =tag=, the common case,
+configurable as =[panel-defaults.treeref].ref-field= and overridden by a stored
+=treeref:ref-field=), a *scope* selector (=exact= / =+ descendants=, stored as
+=treeref:scope=), and a read-only preview of the DSL those two produce for the
+node under the cursor — so the bar says what the command will *do*, not merely
+which field it reads:
+
+- =exact= — =\<ref\> -> (\<tree\> = "<path>")=: the node itself. On a TreeRef
+  field =\=​= is the exact node at that path ([[file:spec-query.org][spec-query.org]]
+  "Field aspects"), so this pins one node at every depth, a forest root included.
+- =+ descendants= — =\<ref\> -> (\<tree\> =>* "<path>")=: the node *and* every
+  descendant — classic tag inheritance, where selecting =music= also surfaces
+  things tagged =music/rock=.
+
+=treeref:list-refs= (=l=, and the right-click item /List what <ref> points at
+here/) publishes that DSL as =metarecord-list:query-request= and opens
+=metarecord-list= *in the other slot*, so the tree stays visible and the next
+node can be asked about straight away. The query lands in the list's normal-DSL
+zone, *shown and frozen*: it is a starting point, editable and composable, not a
+mode — which is the reason a dedicated panel type is not needed for it.
 
 | Command            | Description                                  |
 |--------------------+----------------------------------------------|
 | =treeref:descend=  | Descend into the selected node               |
 | =treeref:parent=   | Go up one level                              |
 | =treeref:root=     | Jump to the forest roots                     |
-| =treeref:refresh=  | Reload the field list and current children   |
+| =treeref:refresh=  | Reload the field lists and current children  |
 | =treeref:set-field= | Explore another TreeRef field (arg: field name) |
-
-*** =ref-list= panel type
-
-Lists the metarecords whose chosen *Ref field* points to the TreeRef node
-currently selected in a =treeref= panel — the companion view that answers "what
-is tagged with this?". It reacts to =selected_treeref=.
-
-*Field picker*: a dropdown of the repo's Ref field names
-(=GET /repos/:repo/fields?type=ref=). A *scope* selector chooses how the
-selected node is matched:
-
-- =exact= — the Ref referent is the node itself:
-  =Follows\{refField, target: \{uuid_in: [node]\}\}=.
-- =+ descendants= — the referent is the node *or any descendant* of it in the
-  TreeRef field's forest (classic tag inheritance — selecting =music= also
-  surfaces things tagged =music/rock=). The target is
-  =Or(uuid_in[node], FollowsTransitive\{treeField, uuid_in[node]\})= (the tree
-  field comes from =selected_treeref.field=; =FollowsTransitive= excludes its
-  own roots, so the node itself is OR-ed back in).
-
-*Display*: one row per referencing metarecord, labelled by its =mfr_path=
-basename (resolved from the cache) or a short UUID when it has no path.
-Selecting a row sets =selected_metarecord= / =selected_paths=; =Enter= reveals
-it in the other slot (=file= when it has a path, else =metarecord-detail=).
-Paged on scroll (=[page-size].ref-list=, default 100).
-
-| Command               | Description                                   |
-|-----------------------+-----------------------------------------------|
-| =ref-list:open=       | Reveal the selection in the other slot        |
-| =ref-list:toggle-scope= | Toggle between =exact= and =+ descendants=  |
-| =ref-list:refresh=    | Reload the field list and results             |
+| =treeref:list-refs= | List the metarecords whose Ref field points at the selected node |
+| =treeref:toggle-scope= | Toggle between =exact= and =+ descendants= |
+| =treeref:set-ref-field= | Choose the Ref field to follow back (arg: field name) |
 
 *** =workspace-info= panel type
 
@@ -2436,7 +2434,7 @@ directory is the subject and the selection only a fallback: here the clicked row
 is the subject. The folder becomes the DSL =mfr_path -> "<folder>"= (=Follows=:
 the metarecords whose =mfr_path= parent is that node — its files *and* its
 subdirectories, the contents a file manager shows), published as the workspace
-variable =metarecord-list:folder-query= (={ dsl, nonce }=) before the focused
+variable =metarecord-list:query-request= (={ dsl, nonce }=) before the focused
 slot switches to =metarecord-list=. Repository-relative paths follow the
 =mfr_path= convention throughout: =""= is the repository root, a descendant is
 leading-"/"-rooted.
@@ -2471,7 +2469,7 @@ any file row) asks for the program in the command input and runs it on the
 current selection.
 
 - *Target*: =selected_paths= — so it works from whichever panel carries the
-  selection (list, detail, file, file-manager, recent, ref-list, treeref). The
+  selection (list, detail, file, file-manager, recent, treeref). The
   menu item publishes the right-clicked row as the selection first, exactly
   like the reveal commands do. With nothing selected it reports "no file or
   folder is selected" and does nothing.

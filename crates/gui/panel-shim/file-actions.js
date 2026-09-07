@@ -14,7 +14,7 @@
 // It also owns the "Metarecord" section every panel showing metarecords offers
 // on the record under the cursor (open it in the detail / file panels, reveal
 // its folder, copy its UUID — the actions the metarecord list has always had),
-// so file-manager, recent, ref-list and the tree panels all present the same
+// so file-manager, recent and the tree panels all present the same
 // menu the list does.
 
 import { copyText } from '/__menu.js';

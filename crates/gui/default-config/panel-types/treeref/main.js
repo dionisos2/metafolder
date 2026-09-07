@@ -1,20 +1,30 @@
 // treeref panel: explore a TreeRef field's forest like a file explorer. Pick a
 // TreeRef field name (e.g. mfr_path, or a tag tree), then descend from the
-// roots to the leaves. Selecting a node publishes `selected_treeref` (consumed
-// by the ref-list panel) and `selected_metarecord` (consumed by the detail /
-// file panels). Spec-gui "treeref panel type".
+// roots to the leaves. Selecting a node publishes `selected_treeref` and
+// `selected_metarecord` (consumed by the detail / file panels).
+//
+// It also answers "what points at this node?" — `treeref:list-refs` builds the
+// query `<ref field> -> (<tree field> = "<path>")` and opens it in
+// metarecord-list, the ref bar showing which query the command will run. That
+// replaces the former `ref-list` panel: the answer is an ordinary list with a
+// visible, editable query rather than a second panel type with its own display.
+// Spec-gui "treeref panel type".
 
 import { byId, el } from '/__ui.js';
 import { createPagedList } from '/__paged-list.js';
 import { createSelect } from '/__select.js';
 import { fileActionsProvider, metarecordMenuItems } from '/__file-actions.js';
-import { childrenQuery, treeNameOf, treeRefPath } from './queries.js';
+import { childrenQuery, refQueryDsl, treeNameOf, treeRefPath } from './queries.js';
 
 const PAGE_DEFAULT = 200;
 // The tree_ref field the panel opens on. The effective value comes from the
 // GUI config (`[panel-defaults.treeref].field`), overridden by the stored
 // `treeref:field` workspace variable; this is only the fallback.
 const DEFAULT_FIELD = 'mfr_path';
+// The Ref field `treeref:list-refs` follows back into the forest. Tags are by
+// far the common case, so that is the default; `[panel-defaults.treeref]
+// .ref-field` and the stored `treeref:ref-field` variable override it.
+const DEFAULT_REF_FIELD = 'tag';
 
 /**
  * A node of the forest, as this panel handles it: the roots endpoint and a
@@ -27,6 +37,7 @@ export async function mount(root, metafolder) {
   const { daemon, workspace, commands, statusBar, cache } = metafolder;
   const PAGE = metafolder.pageSize ?? PAGE_DEFAULT;
   const defaultField = metafolder.defaults.field ?? DEFAULT_FIELD;
+  const defaultRefField = metafolder.defaults.refField ?? DEFAULT_REF_FIELD;
 
   /** @type {string|null} */
   let repo = null;
@@ -40,6 +51,10 @@ export async function mount(root, metafolder) {
   let cursorIndex = -1;
   let loading = false;
   let picking = false; // true while this panel is open as a tree_ref value picker
+  /** @type {string} the Ref field `treeref:list-refs` follows */
+  let refField = defaultRefField;
+  /** @type {'exact'|'subtree'} how much of the selected node the query covers */
+  let scope = 'exact';
   // The active repo's root path, cached for building absolute file paths for the
   // right-click file menu (only meaningful for the mfr_path forest).
   /** @type {string|null} */
@@ -53,6 +68,24 @@ export async function mount(root, metafolder) {
     options: [{ value: field }],
     onChange: (v) => void setField(v),
   });
+  const refFieldSelect = createSelect(byId(root, 'ref-field'), {
+    value: refField,
+    options: [{ value: refField }],
+    onChange: (v) => void setRefField(v),
+  });
+  const scopeSelect = createSelect(byId(root, 'scope'), {
+    value: scope,
+    options: [
+      { value: 'exact', label: 'exact' },
+      { value: 'subtree', label: '+ descendants' },
+    ],
+    onChange: (v) => {
+      scope = v === 'subtree' ? 'subtree' : 'exact';
+      void workspace.set('treeref:scope', scope);
+      renderQueryPreview();
+    },
+  });
+  const queryPreview = byId(root, 'query-preview');
   const entriesList = byId(root, 'entries');
   const placeholderElement = byId(root, 'placeholder');
   const breadcrumb = byId(root, 'breadcrumb');
@@ -89,6 +122,7 @@ export async function mount(root, metafolder) {
     field = name;
     stack = [];
     fieldSelect.setValue(name); // mirror the command into the drop-down
+    renderQueryPreview();
     await fetchChildren(true);
   }
 
@@ -98,6 +132,74 @@ export async function mount(root, metafolder) {
       names.map((name) => ({ value: name })),
       field,
     );
+  }
+
+
+  // ── "What points here?" ───────────────────────────────────────────────────
+
+  /** The repo's Ref field names, the current one always among them. */
+  async function refFieldNames() {
+    /** @type {{name: string}[]} */
+    let list = [];
+    try {
+      list = /** @type {{name: string}[]} */ (
+        (await daemon.call('GET', `/repos/${repo}/fields?type=ref`)) ?? []
+      );
+    } catch (error) {
+      await statusBar.error(error);
+    }
+    const names = list.map((f) => f.name);
+    if (!names.includes(refField)) names.unshift(refField);
+    return names;
+  }
+
+  /** @param {string} name */
+  async function setRefField(name) {
+    if (name === refField) return;
+    refField = name;
+    refFieldSelect.setValue(name);
+    await workspace.set('treeref:ref-field', name);
+    renderQueryPreview();
+  }
+
+  async function loadRefFields() {
+    const names = await refFieldNames();
+    refFieldSelect.setOptions(
+      names.map((name) => ({ value: name })),
+      refField,
+    );
+  }
+
+  /** The path of the node under the cursor, or null when nothing is selected. */
+  function selectedPath() {
+    const child = children[cursorIndex];
+    if (!child) return null;
+    return treeRefPath([...stack.map((c) => c.name), child.name]);
+  }
+
+  /** The DSL `treeref:list-refs` would run right now — shown so the ref bar
+   *  says what the command produces, not merely which field it uses. */
+  function currentQueryDsl() {
+    return refQueryDsl({ refField, treeField: field, path: selectedPath(), scope });
+  }
+
+  function renderQueryPreview() {
+    queryPreview.textContent = currentQueryDsl();
+  }
+
+  /** Runs the query in metarecord-list, in the *other* slot: the tree stays
+   *  visible so the next node can be asked about straight away — the pairing
+   *  the ref-list panel used to provide. */
+  async function listRefs() {
+    if (selectedPath() === null) {
+      await statusBar.message('select a node first');
+      return;
+    }
+    await workspace.set('metarecord-list:query-request', {
+      dsl: currentQueryDsl(),
+      nonce: Date.now(),
+    });
+    await commands.invoke('panel:reveal-other metarecord-list');
   }
 
   // ── Navigation ──────────────────────────────────────────────────────────
@@ -202,6 +304,7 @@ export async function mount(root, metafolder) {
     const path = treeRefPath([...stack.map((c) => c.name), child.name]);
     await workspace.set('selected_metarecord', { uuid: child.uuid, repo });
     await workspace.set('selected_treeref', { repo, field, uuid: child.uuid, path });
+    renderQueryPreview();
   }
 
   // ── Rendering ─────────────────────────────────────────────────────────────
@@ -264,6 +367,7 @@ export async function mount(root, metafolder) {
       `${children.length}${nextCursor ? '+' : ''} ` +
       `child${children.length === 1 ? '' : 'ren'}` +
       (nextCursor ? ' (more — scroll down)' : '');
+    renderQueryPreview();
   }
 
   // ── Wiring ──────────────────────────────────────────────────────────────
@@ -282,6 +386,7 @@ export async function mount(root, metafolder) {
 
   async function refresh() {
     await loadFields();
+    await loadRefFields();
     await fetchChildren(true);
   }
 
@@ -332,6 +437,32 @@ export async function mount(root, metafolder) {
     handler: (name) => setField(name.trim()),
   });
 
+  void commands.register('treeref:list-refs', {
+    label: 'TreeRef explorer: list the metarecords pointing at the selected node',
+    handler: listRefs,
+  });
+  void commands.register('treeref:toggle-scope', {
+    label: 'TreeRef explorer: toggle between the exact node and its whole subtree',
+    handler: () => {
+      scope = scope === 'subtree' ? 'exact' : 'subtree';
+      scopeSelect.setValue(scope);
+      void workspace.set('treeref:scope', scope);
+      renderQueryPreview();
+    },
+  });
+  void commands.register('treeref:set-ref-field', {
+    label: 'TreeRef explorer: choose the Ref field to follow back',
+    args: [
+      {
+        name: 'field',
+        prompt: () => 'Ref field to follow back into the tree?',
+        initial: () => refField,
+        complete: () => refFieldNames(),
+      },
+    ],
+    handler: (name) => setRefField(name.trim()),
+  });
+
   // Keybindings for this panel live in keybindings.toml (when = "treeref").
 
   /** The index in `entriesList` of the node `li` under a context-menu event, or
@@ -370,14 +501,21 @@ export async function mount(root, metafolder) {
       // No "Open in panel file"/"reveal folder" here: this panel does not
       // publish `selected_paths`, which those commands need. The file actions
       // (cut/copy/…) still come from `fileActions` via the row's data-mf-path.
+      const listLabel =
+        scope === 'subtree'
+          ? `List what ${refField} points at here or below`
+          : `List what ${refField} points at here`;
       items.push(
         ...metarecordMenuItems({
           metafolder,
           uuid: node.uuid,
           hasFile: false,
-          leading: picking
-            ? [{ label: pickLabel, action: () => void commands.invoke('pick:confirm') }]
-            : [],
+          leading: [
+            ...(picking
+              ? [{ label: pickLabel, action: () => void commands.invoke('pick:confirm') }]
+              : []),
+            { label: listLabel, action: () => void listRefs() },
+          ],
         }),
       );
     }
@@ -391,6 +529,7 @@ export async function mount(root, metafolder) {
       placeholderElement.hidden = false;
       placeholderElement.textContent = 'No active repository.';
       fieldSelect.element.toggleAttribute('disabled', true);
+      renderQueryPreview();
       return;
     }
     fieldSelect.element.toggleAttribute('disabled', false);
@@ -399,7 +538,13 @@ export async function mount(root, metafolder) {
     picking = !!(await workspace.get('pick_request'));
     const seedField = await workspace.get('treeref:field');
     if (typeof seedField === 'string' && seedField) field = seedField;
+    const seedRefField = await workspace.get('treeref:ref-field');
+    if (typeof seedRefField === 'string' && seedRefField) refField = seedRefField;
+    const seedScope = await workspace.get('treeref:scope');
+    scope = seedScope === 'subtree' ? 'subtree' : 'exact';
+    scopeSelect.setValue(scope);
     await loadFields();
+    await loadRefFields();
     stack = [];
     await fetchChildren(true);
   }
