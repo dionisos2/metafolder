@@ -32,6 +32,11 @@ CLI provides a DSL that compiles to this representation.
 | SameAs              | =same_as=             | The field shares at least one value with a metarecord matching the sub-query |
 | UuidIn              | =uuid_in=             | Metarecord UUID is in an explicit list (=uuids=, 32-hex)        |
 
+Every predicate that reads a value — the presence trio, the comparisons and
+=Matches= — also carries an optional =aspect= key (=value=, =parent= or =path=;
+omitted for the default =raw=) naming *which component* of the value it reads.
+See "Field aspects" under [[*Compilation]].
+
 =UuidIn= is the bridge between the resource layer (a single thing at its URL)
 and the set layer: it lets the =/query/*= operations target an *explicit set of
 UUIDs* instead of a predicate. JSON: ={"type": "uuid_in", "uuids": ["<32hex>", ...]}=
@@ -91,43 +96,80 @@ string or a sub-query, both are =TreeRef=-only. The subtree form is the natural
 way to select a metarecord together with everything under it — e.g. a tag and
 all of its narrower tags (=tag -> (path =>* "music/jazz")=).
 
-String *predicates* on a =TreeRef= row apply to =value_name= (the single name
-component) — the same convention for all of them: comparisons (=Eq=/=Neq= and
-the ordered operators) with a string operand, and =Matches=. So
-=mfr_path = "2021"= matches every metarecord whose =mfr_path= name is exactly
-=2021=, wherever it sits in the tree.
+*** Field aspects
 
-*Sorting is the exception*: a =TreeRef= sort key orders on the *whole path*, not
-on the name (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.org]]). A predicate
-selects, and selecting by name — anywhere in the tree — is a useful thing to
-ask; an order by name alone is not, it just interleaves every directory. The
-path-shaped predicates are the =/=-bearing operand and =->*= below.
+A field reference in a predicate names a *field* and, optionally, an *aspect*:
+which component of the field's value the predicate reads. The DSL spells it
+=field:aspect=; the IR carries it as an =aspect= key next to =field=, omitted
+when it is =raw=. The same four aspect names are used by the GUI's column and
+finder syntaxes (see [[file:spec-gui.org][spec-gui.org]]), so one vocabulary
+describes reading a value everywhere in the system.
 
-*Exact-node equality.* There is one refinement of that convention: when the
-=Eq=/=Neq= string operand contains the path separator =/=, it is not a
-=value_name= compare but an *exact-node* match — the operand is resolved through
-the tree cache to the single node at that path, and =Eq= matches exactly that
-metarecord (=Neq=, every other). This is sound because a =value_name= never
-contains =/=, so a separator-bearing operand matched nothing under the old
-convention; it is the DSL surface for the strict =(parent, name)= equality that
-otherwise required an =Eq= with a =tree_ref= JSON value. Path resolution and
-anchoring follow the =->= / =->*= path-string convention (=mfr_path= is
-=/=-rooted, so =mfr_path = "/music/jazz"=; a named-root forest like a tag tree
-has no leading =/=, so =path = "music/jazz"=). A path that resolves to nothing
-matches no rows. =Eq= is served by the bitmap index (the daemon resolves the
-node through the tree cache and hands it in — see
-[[file:spec-indexing.org][spec-indexing.org]]), so pinning one file by its path
-costs a single lookup, and so does =Neq= (which is *not* the complement of
-=Eq=: a metarecord with no value for the field satisfies neither).
-A single forest-root node (whose path has no separator) cannot
-be pinned this way — use =field -> "parent" AND field = "name"=, or accept the
-=value_name= match. The IR is unchanged (=Eq= with a =String= operand): the
-daemon disambiguates by the field's value type, since only it — not the DSL
-parser — knows the field is a =TreeRef=.
+| Aspect    | Reads                                | Applies to |
+|-----------+--------------------------------------+------------|
+| =raw=     | the value itself — for a =TreeRef=, the =(parent, name)= couple | every type (the default) |
+| =value=   | the row's own text: =value_text=, or =value_name= (the leaf name) for a =TreeRef= | every type |
+| =parent=  | the =TreeRef= parent's UUID (=value_uuid=) | =TreeRef= only |
+| =path=    | the assembled path from the forest root, =seg1/.../segN= | =TreeRef= only |
+
+Applying =parent= or =path= to a field that is not a =TreeRef= is rejected with
+=400=, as is an aspect on =IsUnknown= (the field row does not exist, so there is
+no component to read).
+
+*Equality is the exact node.* On a =TreeRef= field, an =Eq=/=Neq= with a string
+operand and the default =raw= aspect is an *exact-node* match: the operand is
+resolved through the tree cache to the single node at that path, and =Eq=
+matches exactly that metarecord (=Neq=, every other). It is the DSL surface for
+the strict =(parent, name)= equality that otherwise required an =Eq= with a
+=tree_ref= JSON value. Path resolution and anchoring follow the =->= / =->*=
+path-string convention (=mfr_path= is =/=-rooted, so =mfr_path = "/music/jazz"=;
+a named-root forest like a tag tree has no leading =/=, so
+=path = "music/jazz"=). A path that resolves to nothing matches no rows. =Eq= is
+served by the bitmap index (the daemon resolves the node through the tree cache
+and hands it in — see [[file:spec-indexing.org][spec-indexing.org]]), so pinning
+one file by its path costs a single lookup, and so does =Neq= (which is *not*
+the complement of =Eq=: a metarecord with no value for the field satisfies
+neither). A *forest root* is pinned the same way, by its bare name
+(=path = "music"=) — there is no separator rule.
+
+Selecting by leaf name wherever it sits in the tree is the =value= aspect:
+=mfr_path:value = "2021"= matches every metarecord whose =mfr_path= name
+component is exactly =2021=. On a non-=TreeRef= field =raw= and =value= coincide,
+so =title = "x"= and =title:value = "x"= are the same query.
+
+*An aspect is required where =raw= has no meaning.* On a =TreeRef= field the
+ordered operators (=lt=/=lte=/=gt=/=gte=) and =Matches= are rejected with =400=
+unless an explicit =value= or =path= aspect is given: ordering or regex-matching
+a =(parent, name)= couple means nothing, and silently reading the leaf name
+instead would be the kind of implicit rule this aspect vocabulary exists to
+remove. So =path:value < "m"= and =path:path ~ "^music/"= are the spellings;
+bare =path < "m"= and =path ~ "jazz"= are errors naming the two candidates. The
+check depends on the field's value type, so it is made by the engines (which
+know the type) rather than by the pure IR pass of "Comparison validity" below —
+but both engines make it identically, so the rejection never depends on which
+one would have run.
+
+*Forest roots.* =field:parent IS ABSENT= matches the nodes whose =TreeRef=
+parent is the root sentinel — the roots of that field's forest. This is the only
+predicate form for them: =Follows= cannot address the sentinel (it is not a
+metarecord), which is why the roots have their own endpoint
+=GET /repos/:repo/tree/roots= (see [[file:spec-data-model.org][spec-data-model.org]]).
+Note the deliberate reuse of =IS ABSENT=: on a bare field it means "the field
+exists with the value =Nothing=", and under the =parent= aspect it means "the
+component read by the aspect is absent" — the same reading applied one level
+down. =field:parent IS PRESENT= is its complement over the field's rows (every
+non-root node), and =field:parent = <path>= is the same set as
+=field -> "<path>"=, spelled as a comparison rather than as an arrow.
+
+*Sorting is not aspect-aware*: a =TreeRef= sort key always orders on the *whole
+path* (see "Sort specification" in [[file:spec-data-model.org][spec-data-model.org]]).
+A predicate selects, and selecting by name — anywhere in the tree — is a useful
+thing to ask; an order by name alone is not, it just interleaves every directory.
 
 =Matches= uses a SQLite user-defined function =REGEXP= (registered at connection
-setup) backed by the =regex= crate. On a =TreeRef= field, =MATCHES= applies the
-regex to =value_name= (the single name component).
+setup) backed by the =regex= crate. On a =TreeRef= field it requires an aspect
+(above): =field:value ~ …= applies the regex to the leaf name, =field:path ~ …=
+to the assembled path.
 
 ** Comparison typing
 
@@ -473,7 +515,8 @@ same_call := "same" "(" field "," query ")"
 cmp_op    := "=" | "!=" | "<" | "<=" | ">" | ">="
 literal   := int | float | string | "true" | "false" | datetime
 datetime  := "@" string | "@" int        # ISO-8601 string, or raw Unix ms
-field     := identifier
+field     := identifier [ ":" aspect ]
+aspect    := "raw" | "value" | "parent" | "path"
 string    := '"' ... '"'
 uuid      := 32 ASCII hexadecimal characters
 #+END_SRC
@@ -502,15 +545,26 @@ uuid      := 32 ASCII hexadecimal characters
   plus every descendant (the whole subtree). Like =->= and =->*=, ~=>*~ is a
   single token, lexed by maximal munch — never the ~=~ comparison operator
   followed by =>= and =*=.
-- On a =TreeRef= field, =field = "a/b"= / =field != "a/b"= whose string operand
-  contains the path separator =/= is an *exact-node* match (the metarecord at
-  exactly that TreeRef path), not a =value_name= compare — see the "Exact-node
-  equality" paragraph under [[*Compilation]]. A separator-free operand keeps the
-  leaf-name meaning. The compiled IR is an ordinary =Eq=/=Neq= with a =String=
-  operand; the exact-node reading is applied by the daemon, which alone knows
-  the field is a =TreeRef=.
+- A field reference may carry an *aspect*, =field:aspect=, naming which
+  component of the value the predicate reads — =raw= (the default), =value=,
+  =parent= or =path=. It compiles to the =aspect= key of the IR node (omitted
+  when =raw=). See the "Field aspects" section under [[*Compilation]] for the
+  semantics; the DSL accepts the four names on any predicate that reads a value
+  and rejects an unknown one, while the *type*-dependent rules (=parent=/=path=
+  are =TreeRef=-only, and a =TreeRef= ordered comparison or =MATCHES= requires
+  an explicit aspect) are enforced by the daemon, which alone knows the field's
+  value type.
+- On a =TreeRef= field, =field = "a/b"= / =field != "a/b"= is therefore an
+  *exact-node* match (the metarecord at exactly that TreeRef path), at every
+  depth including a forest root (=path = "music"=). The leaf-name comparison is
+  spelled =field:value = "b"=.
 - =osm(field, "terms")= / =osmd(field, "terms")= compile to =Osm= with
   =mode = path= / =direct= (see [[*Ordered substring matching (OSM, implemented)]]);
+  the aspect spellings =osm(field:path, "terms")= and =osm(field:value, "terms")=
+  are accepted as equivalents, so one vocabulary covers every value-reading
+  predicate. The aspect is a *surface* form here: it fills =mode=, and the IR
+  keeps its own =mode= key (there is no =aspect= key on =Osm=). Naming an aspect
+  that contradicts the operator (=osmd(field:path, …)=) is a parse error.
   the term string is split on whitespace. =osm=/=osmd= are function-call
   operators recognised only when immediately followed by =(=, so a field literally
   named =osm= stays usable as a predicate (=osm = "x"=). =osm= on a non-=TreeRef=

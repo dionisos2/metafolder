@@ -773,7 +773,7 @@ live in =~/.config/metafolder/gui/config.toml=, one table per panel type:
 #+BEGIN_SRC toml
 [panel-defaults.metarecord-list]
 columns       = "mfr_path:path mfr_type &version"
-finder-fields = ["mfr_path:path", "label:direct", "name:direct"]
+finder-fields = ["mfr_path:path", "label:value", "name:value"]
 
 [panel-defaults.treeref]
 field = "mfr_path"
@@ -1845,19 +1845,22 @@ and a /follow/ (=>=) — plus a fallback (=|=):
 
 - =name= — the raw field value(s). A multi-map field shows every row in
   the cell, comma-joined. =version= is an ordinary field name here.
-- =name:mode= — projects a =tree_ref= value: =:name= (leaf name), =:uuid=
-  (parent uuid), =:path= (the path from the repository root — the root
-  shows =/=; a stale/unresolved =tree_ref= falls back to its leaf name),
-  =:raw= (the parent/name couple, the default). A mode that does not apply
-  to the value's type falls back to the raw display.
+- =name:aspect= — projects a =tree_ref= value: =:value= (the leaf name),
+  =:parent= (the parent's uuid), =:path= (the path from the repository root —
+  the root shows =/=; a stale/unresolved =tree_ref= falls back to its leaf
+  name), =:raw= (the parent/name couple, the default). An aspect that does not
+  apply to the value's type falls back to the raw display. These are the *same
+  four aspect names the query DSL uses* (=field:aspect=, see
+  [[file:spec-query.org][spec-query.org]] "Field aspects"), so reading a value
+  is spelled the same way in a column, in the finder and in a predicate.
 - =name>sub= — follows a =ref=/=refbase= value to the target metarecord and
   shows its =sub= field rows (comma-joined; e.g. =tag>label=). =sub= may
-  itself be projected (=tag>path:name=, or =tag>path:path= to resolve the
+  itself be projected (=tag>path:value=, or =tag>path:path= to resolve the
   target's tree path). One =>= only — no deep chains. A missing target
   metarecord falls back to the raw uuid; a present target whose =sub= field
   is absent yields no value (so a fallback can take over).
 - =a | b= — fallback: the cell shows the first alternative that yields a
-  value (e.g. =tag>label | tag>path:name= — the label if any, else the
+  value (e.g. =tag>label | tag>path:value= — the label if any, else the
   tag's leaf name).
 - =&uuid= / =&version= — the metarecord's own uuid and version. These are
   metarecord metadata, not fields (=&= cannot appear in a field name), so a
@@ -1895,21 +1898,22 @@ debounce.
 The finder builds an OSM sub-query *OR-combined across a set of target fields*
 and *AND-ed onto the base query* (the two-zone editor below is unchanged), so a
 structural query (e.g. =mf_schema = "tag"=) and a typed fragment compose. Each target
-carries its OSM mode: =osm= (path — a =tree_ref= field's assembled path) or
-=osmd= (direct — the field's own value). The mode is *explicit* in the default
-config (=field:path= / =field:direct=), so it never depends on the async field
-catalog; a bare =field= (no mode) auto-detects from the catalog (=tree_ref= →
-path, else direct). An unknown field just contributes nothing, so a target list
+carries its aspect: =:path= (a =tree_ref= field's assembled path, compiling to
+=osm=) or =:value= (the field's own value, compiling to =osmd=) — the same
+aspect names the columns and the query DSL use. The aspect is *explicit* in the
+default config (=field:path= / =field:value=), so it never depends on the async
+field catalog; a bare =field= (no aspect) auto-detects from the catalog
+(=tree_ref= → path, else value). An unknown field just contributes nothing, so a target list
 is always safe. The bulk-edit and the result count operate on this *effective*
 (finder-filtered) query. The panel publishes it (as the query IR actually run)
 in the =metarecord-list:effective-query= workspace variable on every fetch, so
 another panel — the =metarecord-detail= bulk field-edit commands — can target
 exactly what the list shows, the live finder narrowing included.
 
-The searched fields default to =mfr_path:path label:direct name:direct=,
+The searched fields default to =mfr_path:path label:value name:value=,
 configurable as =[panel-defaults.metarecord-list].finder-fields= (see
 [[*Panel defaults]]) and overridable per workspace via the
-=metarecord-list:finder-fields= variable (a list of =field= or =field:mode=
+=metarecord-list:finder-fields= variable (a list of =field= or =field:aspect=
 entries); a value picker may seed it. The finder
 text itself persists in =metarecord-list:finder=. When the panel is opened as a
 value picker (its workspace has a =pick_request=), the finder is focused on
