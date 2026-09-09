@@ -680,6 +680,25 @@ warned about — including why a repository failed to load, which happens before
 the GUI is up. It only advances on a well-formed answer: an unreachable daemon
 or an unexpected shape re-polls the same position rather than skipping entries.
 
+** Slow daemon calls
+
+Every call the GUI makes to the daemon is timed at its single chokepoint (the
+proxy — the WebView cannot reach the daemon directly, so one place sees them
+all). A call that takes longer than =slow-operation-threshold-ms= (in
+=~/.config/metafolder/gui/config.toml=, default 2000, =0= to disable) is written
+to the repository's slow-operation log with =source: "gui"= — see
+[[file:spec-slow-log.org][spec-slow-log.org]].
+
+The point is the *pair*: the GUI records what the user waited for, the daemon
+records what it spent, and the two entries carry the same =op_id= (sent as
+=X-Metafolder-Op-Id=). A GUI entry of 4.9 s against a daemon entry of 0.2 s says
+the daemon was fine and the time went to the client — a conclusion neither log
+reaches alone. The GUI also sends =X-Metafolder-Context= with what the user
+asked for (the DSL text of a query), which the daemon cannot reconstruct from
+the query IR it receives.
+
+The log is read with =mf slow=; the GUI does not display it.
+
 ** Connection to the daemon
 
 The GUI connects to the daemon on 127.0.0.1 at the port configured by the user:

@@ -1,0 +1,235 @@
+#+TITLE: Metafolder — Slow-operation Log Specification
+#+OPTIONS: toc:2 num:t
+
+* Overview
+
+Some operations occasionally take seconds when they usually take milliseconds —
+a DSL query that only reads, a field write, a flush of buffered filesystem
+events. The cost is *intermittent*: by the time the user notices, the run that
+was slow is over and nothing recorded why. The daemon's existing timing output
+does not answer it either — the load report ([[file:spec-main.org][spec-main.org]] "The load report")
+covers repository load only, and it goes to stderr, which no GUI user ever sees.
+
+So every repository keeps a **slow-operation log**: one entry per operation that
+took longer than a threshold (2 s by default), carrying enough context to say
+*where* the time went — not that a query was slow, but that it waited three
+seconds for the database lock a watcher flush was holding, then fell back to the
+SQL engine because of a =Matches= leaf.
+
+Two properties make it a diagnosis tool rather than a metric:
+
+- It is **on by default and persistent**. A problem that shows up once a day is
+  the one worth catching; a ring in memory loses it at the next daemon restart,
+  so entries are appended to a file inside the repository.
+- It records **phases, not a total**. A total says an operation was slow, which
+  the user already knew. The breakdown is the answer.
+
+It is deliberately *not* a profiler and *not* a metrics system: no aggregates,
+no percentiles, no sampling of fast operations. Only what crossed the threshold.
+
+* What is recorded
+
+One JSON object per line (JSONL), written when the operation ends:
+
+#+BEGIN_SRC json
+  {
+  "at_ms": 1757426602000,
+  "source": "daemon",
+  "op": "POST /repos/:repo/query",
+  "ms": 4820,
+  "op_id": "9f3c1d0a4b7e4f2a",
+  "phases": [
+  {"name": "wait:conn", "ms": 3100, "count": 1, "depth": 0},
+  {"name": "prepare", "ms": 12, "count": 1, "depth": 0},
+  {"name": "index.refresh", "ms": 40, "count": 1, "depth": 0},
+  {"name": "sql.execute", "ms": 1650, "count": 1, "depth": 0}
+  ],
+  "context": {
+  "client": "mfr_path ->* \"/2024\" and rating > 3",
+  "query": "{\"type\":\"and\",\"clauses\":[…]}",
+  "engine": "sql",
+  "fallback": "index coverage gap",
+  "results": "1240"
+  }
+  }
+#+END_SRC
+
+- =at_ms= — when the operation *started* (Unix milliseconds). Sorting by it
+  puts an operation next to the ones it was waiting for, which sorting by end
+  time would not.
+- =source= — =daemon= or =gui=: which process timed it (see "The GUI side").
+- =op= — the operation's name. For an HTTP request it is the method plus the
+  *matched route pattern* (=POST /repos/:repo/query=), never the concrete URL:
+  a route is a shape one can group by, a URL is one occurrence.
+- =ms= — the total, measured end to end by the process that recorded it.
+- =op_id= — an opaque short id correlating a GUI entry with the daemon entry
+  for the same request; absent when the client did not supply one.
+- =phases= — the breakdown, see below.
+- =context= — free-form string pairs, in insertion order. Whatever the site
+  knows that a reader would ask for next: the query, the number of results, the
+  field being written, the number of events in a flush.
+
+** Phases
+
+A phase is a named span inside the operation, declared by the code that runs it.
+Durations are **inclusive**: a phase that contains another one counts the
+contained time too, and =depth= says how deeply it nested. Occurrences of the
+same name are summed and =count= says how many there were — an operation that
+validates the schema once per metarecord reports one =validate.schema= phase of
+2.4 s with =count: 900=, not nine hundred entries.
+
+Phases keep the order in which they first appeared, so reading them top to
+bottom retells the operation. The time not covered by any depth-0 phase is
+whatever =ms= exceeds their sum; it is not padded with a synthetic "other"
+phase, since a gap that matters is a missing instrumentation site, and inventing
+a name for it would hide that.
+
+The daemon's vocabulary (a stable set — a new site adds to it rather than
+inventing a synonym):
+
+| Phase              | What it covers                                             |
+|--------------------+------------------------------------------------------------|
+| =wait:conn=        | waiting for the repository's SQLite connection lock         |
+| =wait:cache=       | waiting for the tree-cache lock                             |
+| =wait:index=       | waiting for the query index lock                            |
+| =prepare=          | resolving path targets/exact nodes, rewriting text leaves   |
+| =index.refresh=    | bringing the bitmap index up to the current log HEAD        |
+| =index.evaluate=   | evaluating the page (and count) through the index           |
+| =sql.execute=      | the SQL fallback engine's CTE chain                         |
+| =sql.count=        | the fallback's second pass for a total                       |
+| =assemble=         | assembling the selected fields of a result page             |
+| =resolve.uuids=    | resolving a write's query to its whole match set            |
+| =write.fields=     | the field writes inside the transaction                     |
+| =validate.schema=  | schema delta validation                                     |
+| =commit=           | committing the transaction (the WAL fsync lands here)       |
+| =settle.tree=      | settling or rebuilding the tree cache after a write         |
+| =settle.watches=   | recomputing the watched-directory set                       |
+| =watcher.compact=  | compacting a buffered event batch before applying it        |
+| =watcher.apply=    | applying one group of compacted events                      |
+
+A =wait:*= phase is the load-bearing one: it is what distinguishes "this query
+is expensive" from "this query is fine and something else held the repository".
+
+** What is left out
+
+Operations whose slowness is expected and already reported elsewhere are *not*
+logged, or the log would be nothing but them: repository load (it has the load
+report and a =load= task), full reconcile, the duplicate scan, and the
+similarity phase. Each is an observable task already (see [[file:spec-tasks.org][spec-tasks.org]]).
+
+Only repository-scoped operations are logged, since the log lives inside a
+repository. A slow request that names no repo (=GET /health=, =POST
+/repos/load=) has nowhere to go and is not recorded.
+
+* Layout
+
+: .metafolder/internal/slow/daemon.jsonl      -- what the daemon timed
+: .metafolder/internal/slow/gui.jsonl         -- what the GUI timed
+: .metafolder/internal/slow/<source>.jsonl.old -- the previous file after a rotation
+
+One file per writing process, never a shared one: two processes appending to a
+single file would interleave partial lines, and the split costs the reader
+nothing (it merges them by =at_ms=).
+
+Like the rest of =internal/=, the directory is *excluded from tracking* — the
+log describes the repository, it is not content of it.
+
+A file is rotated once it exceeds **4 MiB**: it is renamed over =.old= (a single
+generation, so the worst case on disk is 8 MiB per source) and a fresh one
+starts. Rotation is checked before each append, and a failure to rotate — like
+any other failure to write the log — is *silent for the caller*: an operation
+must never fail, or wait, because its diagnostics could not be recorded.
+
+* Threshold and configuration
+
+Daemon, =~/.config/metafolder/daemon/config.toml=:
+
+#+BEGIN_SRC toml
+  [settings]
+  slow-operation-threshold-ms = 2000
+#+END_SRC
+
+GUI, =~/.config/metafolder/gui/config.toml=: the same key, its own value.
+
+- The default is =2000= in both.
+- =0= turns the log off entirely — nothing is timed and no file is created.
+- There is no "log everything" value; set the threshold to =1= to get one.
+
+* Correlating the GUI and the daemon
+
+A client may send two optional headers with any request; both are additive and a
+daemon ignores them when absent:
+
+: X-Metafolder-Op-Id: <=32 chars, opaque>
+: X-Metafolder-Context: <=200 chars, human-readable>
+
+=X-Metafolder-Op-Id= lands in the entry's =op_id= on both sides, so a GUI entry
+of 4.9 s and a daemon entry of 0.2 s for the same request can be lined up — and
+that pair *is* the diagnosis: the daemon was fine, the time went to the client.
+
+=X-Metafolder-Context= lands in =context.client=. It is what the *user* typed —
+the DSL text of a query, the command that ran — which the daemon cannot
+reconstruct: it receives the query IR, not the text that produced it.
+
+* =GET /repos/:repo/slow=
+
+#+BEGIN_SRC
+GET    /repos/:repo/slow?limit=<n>&since_ms=<ms>
+DELETE /repos/:repo/slow
+#+END_SRC
+
+Reads the repository's log: both sources merged, **newest first**, at most
+=limit= entries (default 50, capped at 500), keeping only those at or after
+=since_ms= when given. The daemon reads the GUI's file too; it never writes it.
+
+Response: ={"entries": [...], "truncated": <bool>}=, where =truncated= says the
+limit cut the result short. A malformed line is skipped rather than failing the
+request — the log is an aid, and a half-written last line (a daemon killed
+mid-append) must not make the whole history unreadable.
+
+=DELETE= empties the log (both sources and their =.old= files) and answers
+={"cleared": <n>}=. Starting from an empty log is the normal way to reproduce a
+slowdown deliberately.
+
+* =mf slow=
+
+#+BEGIN_SRC
+mf slow [list] [--limit <n>] [--since <duration>] [--op <substring>] [--json]
+mf slow clear
+#+END_SRC
+
+=list= is the group's default, so =mf slow= is =mf slow list=. =--since= takes
+the same durations as =mf trash prune= (=30m=, =2h=, =7d=). =--op= keeps the
+entries whose =op= contains the substring. =--json= prints the raw entries, one
+per line, for a script.
+
+Human output — one header line per entry, then its context and its phases,
+phases indented by depth:
+
+#+BEGIN_SRC
+2026-09-09 14:03:22  4.82s  daemon  POST /repos/:repo/query
+    client    mfr_path ->* "/2024" and rating > 3
+    engine    sql (fallback: index coverage gap)
+    results   1240
+    wait:conn         3.10s
+    prepare             12ms
+    index.refresh       40ms
+    sql.execute       1.65s
+#+END_SRC
+
+=mf slow clear= asks for confirmation unless =--yes= is given, like every other
+destructive CLI verb.
+
+* The GUI side
+
+The GUI times every call it makes to the daemon, at its single chokepoint
+(=daemon_proxy=): the WebView cannot reach the daemon directly, so one place
+sees them all. An entry is written when a call crosses the GUI's own threshold,
+with =source: "gui"=, the =op= it asked for, and one =http= phase.
+
+The GUI supplies =X-Metafolder-Op-Id= on every call and =X-Metafolder-Context=
+when it knows what the user asked for, so the two logs line up.
+
+The GUI does not display the log: it is read with =mf slow=. A panel would be a
+reasonable addition later, but the log's job is to survive until someone looks,
+not to be looked at continuously.

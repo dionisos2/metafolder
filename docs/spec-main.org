@@ -149,7 +149,10 @@ metafolder = "/ssd/meta/music/.metafolder"
   (defaults 200 and true: how many revisions of history the event log keeps
   behind HEAD — =0= for unlimited — and whether a labelled revision stops the
   trim; a repository overrides both in its own =config.json= — see
-  [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"). A key
+  [[file:spec-event-log.org][spec-event-log.org]] "Automatic retention"),
+  =slow-operation-threshold-ms= (default 2000, =0= to disable: how long an
+  operation must take before it is written to the repository's slow-operation
+  log — see [[file:spec-slow-log.org][spec-slow-log.org]]). A key
   the daemon no longer knows is *ignored*, not fatal: a
   setting can be retired without breaking every configuration that carries it
   (=tree-cache-max-nodes= was, see [[file:spec-file-tracking.org][spec-file-tracking.org]]
@@ -263,9 +266,13 @@ The ring holds 500 entries and a page is capped at 500. This is an operator aid,
 not a control channel: recording never fails and never blocks a write, and the
 oldest entries are dropped rather than any write being delayed.
 
-Not everything on stderr is here. Timing traces (tree-cache scans, warmup
-phases) stay stderr-only — they are for whoever is profiling the daemon, not for
-the person using it.
+Not everything on stderr is here. The load report's timing traces (tree-cache
+scans, warmup phases) stay stderr-only — they belong to a load, which the client
+already watches as a task. Timings that are *not* tied to a load — the query or
+the field write that took four seconds for no visible reason — are not
+diagnostics either: they go to the repository's slow-operation log, which
+persists across restarts and carries a phase breakdown a one-line message could
+not (see [[file:spec-slow-log.org][spec-slow-log.org]]).
 
 ** Repository management
 

@@ -14,6 +14,7 @@ pub mod query;
 pub mod repo_init;
 pub mod scripts;
 pub mod simplified;
+pub mod slowlog;
 pub mod sync;
 pub mod trash;
 
