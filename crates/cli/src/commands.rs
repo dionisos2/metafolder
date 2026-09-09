@@ -2393,7 +2393,15 @@ pub fn slow_list(
     let entries: Vec<_> =
         entries.into_iter().filter(|e| op.is_none_or(|needle| e.op.contains(needle))).collect();
     if entries.is_empty() {
-        println!("Nothing has been slow{}.", if since.is_some() { " in that window" } else { "" });
+        // Distinguish an empty log from a filter that matched nothing: "nothing
+        // has been slow" about a log full of entries would be a lie.
+        match op {
+            Some(needle) => println!("No slow operation matches '{needle}'."),
+            None => println!(
+                "Nothing has been slow{}.",
+                if since.is_some() { " in that window" } else { "" }
+            ),
+        }
         return Ok(0);
     }
     for (i, entry) in entries.iter().enumerate() {
