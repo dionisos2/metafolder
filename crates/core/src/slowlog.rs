@@ -265,7 +265,7 @@ pub fn read(dir: &Path, limit: usize, since_ms: Option<i64>) -> (Vec<Entry>, boo
                 .filter(|e| since_ms.is_none_or(|since| e.at_ms >= since)),
         );
     }
-    entries.sort_by(|a, b| b.at_ms.cmp(&a.at_ms));
+    entries.sort_by_key(|e| std::cmp::Reverse(e.at_ms));
     let truncated = entries.len() > limit;
     entries.truncate(limit);
     (entries, truncated)
