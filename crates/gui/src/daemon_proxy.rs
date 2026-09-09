@@ -50,10 +50,22 @@ pub struct DaemonProxy {
     /// the daemon already warned about — including why a repository failed to
     /// load, which happens before the GUI is up.
     diagnostics_since: Mutex<u64>,
+    /// Timing of the calls made through this proxy (spec-gui "Slow daemon
+    /// calls"): what the *user* waited for, next to what the daemon spent.
+    slow: crate::slow::SlowLog,
+    /// Repository uuid → its `internal_dir`, as the daemon reported it. Only
+    /// filled when a call was slow, so an ordinary session never asks.
+    internal_dirs: Mutex<std::collections::HashMap<String, std::path::PathBuf>>,
 }
 
 impl DaemonProxy {
+    /// A proxy that times nothing (tests, and any construction site that has no
+    /// configuration to hand).
     pub fn new(base_url: String) -> Self {
+        Self::with_slow_threshold(base_url, 0)
+    }
+
+    pub fn with_slow_threshold(base_url: String, slow_threshold_ms: u64) -> Self {
         DaemonProxy {
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
@@ -67,6 +79,8 @@ impl DaemonProxy {
             health: Mutex::new(None),
             token: Mutex::new(None),
             diagnostics_since: Mutex::new(0),
+            slow: crate::slow::SlowLog::new(slow_threshold_ms),
+            internal_dirs: Mutex::new(std::collections::HashMap::new()),
         }
     }
 
@@ -101,17 +115,79 @@ impl DaemonProxy {
         path: &str,
         body: Option<Value>,
     ) -> Result<ProxyResponse, String> {
+        self.request_with_context(method, path, body, None).await
+    }
+
+    /// The same, plus what the user asked for in their own words — the DSL text
+    /// of a query, the command that ran. The daemon receives the query IR and
+    /// cannot reconstruct it, so the client is the only side that can say it
+    /// (spec-slow-log "Correlating the GUI and the daemon").
+    pub async fn request_with_context(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        client_context: Option<&str>,
+    ) -> Result<ProxyResponse, String> {
+        let started = std::time::Instant::now();
+        let op_id = crate::slow::new_op_id();
+        let out = self.request_inner(method, path, body, Some((&op_id, client_context))).await;
+        self.observe(method, path, started.elapsed(), &op_id, client_context).await;
+        out
+    }
+
+    async fn request_inner(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<Value>,
+        timing: Option<(&str, Option<&str>)>,
+    ) -> Result<ProxyResponse, String> {
         validate_path(path)?;
-        let response = self.send(method, path, body.clone(), self.token()).await?;
+        let response = self.send(method, path, body.clone(), self.token(), timing).await?;
         // A 401 means our cached token is stale (the daemon regenerated it).
         // Drop it, re-read the file once and retry.
         if response.status == 401 {
             self.invalidate_token();
             if let Some(token) = self.token() {
-                return self.send(method, path, body, Some(token)).await;
+                return self.send(method, path, body, Some(token), timing).await;
             }
         }
         Ok(response)
+    }
+
+    /// Writes the call to the repository's slow-operation log if it was slow.
+    /// Everything expensive here — resolving the repository's directory,
+    /// touching the disk — happens *after* the threshold test, so a call that
+    /// was quick (all of them, normally) costs one comparison.
+    async fn observe(
+        &self,
+        method: &str,
+        path: &str,
+        elapsed: std::time::Duration,
+        op_id: &str,
+        client_context: Option<&str>,
+    ) {
+        let ms = elapsed.as_millis() as u64;
+        if !self.slow.worth_recording(ms) {
+            return;
+        }
+        let Some(repo) = crate::slow::repo_of(path) else { return };
+        let Some(dir) = self.internal_dir(&repo).await else { return };
+        let op = format!("{} {}", method.to_uppercase(), crate::slow::route_shape(path));
+        self.slow.record(&repo, &dir, op, ms, op_id, client_context);
+    }
+
+    /// A repository's `internal_dir`, cached. The lookup is itself untimed:
+    /// timing it would log the call made to log a call.
+    async fn internal_dir(&self, repo_uuid: &str) -> Option<std::path::PathBuf> {
+        if let Some(dir) = self.internal_dirs.lock_recover().get(repo_uuid) {
+            return Some(dir.clone());
+        }
+        let response = self.request_inner("GET", &format!("/repos/{repo_uuid}"), None, None).await;
+        let dir = crate::slow::internal_dir_of(&response.ok()?.body)?;
+        self.internal_dirs.lock_recover().insert(repo_uuid.to_string(), dir.clone());
+        Some(dir)
     }
 
     async fn send(
@@ -120,6 +196,7 @@ impl DaemonProxy {
         path: &str,
         body: Option<Value>,
         token: Option<String>,
+        timing: Option<(&str, Option<&str>)>,
     ) -> Result<ProxyResponse, String> {
         let url = format!("{}{}", self.base_url(), path);
         let method: reqwest::Method =
@@ -128,6 +205,12 @@ impl DaemonProxy {
         let mut request = self.client.request(method, &url);
         if let Some(token) = token {
             request = request.bearer_auth(token);
+        }
+        if let Some((op_id, client_context)) = timing {
+            request = request.header(crate::slow::OP_ID_HEADER, op_id);
+            if let Some(context) = client_context {
+                request = request.header(crate::slow::CONTEXT_HEADER, context);
+            }
         }
         if let Some(body) = body {
             request = request.json(&body);

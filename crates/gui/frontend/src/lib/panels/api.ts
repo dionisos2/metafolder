@@ -137,10 +137,23 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
 
   // Performs a real (bench-instrumented) daemon round-trip — the cache's miss
   // path. Cache hits never reach here, so they cost nothing and record nothing.
+  // What the user last asked this panel for, in their own words (the DSL text
+  // of a query). Sent with every call the panel makes and kept in the
+  // slow-operation log when one turns out to be slow: the daemon receives the
+  // query IR and cannot reconstruct the text (spec-slow-log). It is a hint for
+  // a human reading the log, not a precise attribution — a call made after the
+  // query carries the query's text too.
+  let clientContext: string | null = null;
+
   const rawFetch: RawFetcher = (m, p, b) =>
     daemonWork.track(
       benchMeasure(daemonLabel(m, p), () =>
-        invoke('daemon_request', { method: m, path: p, body: b }),
+        invoke('daemon_request', {
+          method: m,
+          path: p,
+          body: b,
+          ...(clientContext !== null && { context: clientContext }),
+        }),
       ) as Promise<DaemonResponse>,
       `${m} ${p.split('?')[0]}`,
     );
@@ -271,6 +284,11 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
     },
 
     daemon: {
+      // Declares what the user asked for, for the slow-operation log (see
+      // `clientContext`). Cheap and local: it sets a string, it makes no call.
+      setContext: (text: string | null) => {
+        clientContext = text === null ? null : text.slice(0, 200);
+      },
       request: (method: string, path: string, body: unknown = null) =>
         daemonRequest(method, path, body),
       call: async (method: string, path: string, body: unknown = null) => {

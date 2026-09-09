@@ -693,9 +693,15 @@ The point is the *pair*: the GUI records what the user waited for, the daemon
 records what it spent, and the two entries carry the same =op_id= (sent as
 =X-Metafolder-Op-Id=). A GUI entry of 4.9 s against a daemon entry of 0.2 s says
 the daemon was fine and the time went to the client — a conclusion neither log
-reaches alone. The GUI also sends =X-Metafolder-Context= with what the user
-asked for (the DSL text of a query), which the daemon cannot reconstruct from
-the query IR it receives.
+reaches alone.
+
+The GUI also sends =X-Metafolder-Context=: what the user asked for, which the
+daemon cannot reconstruct from the query IR it receives. A panel declares it
+with =metafolder.daemon.setContext(text)= — a local assignment, no call — and it
+rides along with that panel's calls until it is replaced; the =metarecord-list=
+panel sets it to the DSL text whenever it compiles a query. It is a hint for
+whoever reads the log, not an exact attribution: a call made just after a query
+carries that query's text too.
 
 The log is read with =mf slow=; the GUI does not display it.
 

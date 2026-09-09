@@ -54,11 +54,21 @@ pub struct Settings {
     /// list before re-querying the daemon (keeps a thumbnail grid from hitting
     /// `GET /repos` once per tile).
     pub repo_list_cache_ttl_secs: u64,
+    /// How long (milliseconds) a daemon call must take before the GUI writes it
+    /// to the repository's slow-operation log (spec-gui "Slow daemon calls").
+    /// `0` turns the GUI's side of the log off. The daemon has its own,
+    /// separate threshold.
+    pub slow_operation_threshold_ms: u64,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { daemon_health_poll_secs: 5, reconcile_poll_ms: 200, repo_list_cache_ttl_secs: 3 }
+        Settings {
+            daemon_health_poll_secs: 5,
+            reconcile_poll_ms: 200,
+            repo_list_cache_ttl_secs: 3,
+            slow_operation_threshold_ms: metafolder_core::slowlog::DEFAULT_THRESHOLD_MS,
+        }
     }
 }
 

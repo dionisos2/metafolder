@@ -710,6 +710,10 @@ export async function mount(root, metafolder) {
       }
       if (normalShown) normalInput.value = dsl; // reflect in B
     }
+    // Tell the slow-operation log what this panel is running, so an entry for a
+    // slow query names the text the user typed and not just the IR
+    // (spec-slow-log "Correlating the GUI and the daemon").
+    daemon.setContext?.(dsl === '' ? 'match all' : dsl);
     if (dsl === '') {
       queryIR = null; // empty = match all
     } else {

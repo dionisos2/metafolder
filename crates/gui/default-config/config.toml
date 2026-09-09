@@ -49,6 +49,14 @@ reconcile-poll-ms = 200
 # once per tile. Default: 3.
 repo-list-cache-ttl-secs = 3
 
+# How long (milliseconds) a call to the daemon must take before the GUI writes
+# it to the repository's slow-operation log (.metafolder/internal/slow/, read
+# with `mf slow`). This records what *you* waited for; the daemon separately
+# records what it spent, and the two entries carry the same op-id — a 5 s wait
+# against a 200 ms daemon entry says the time went to the client, not the
+# daemon. 0 turns the GUI's side of the log off. Default: 2000.
+slow-operation-threshold-ms = 2000
+
 # In-realm daemon-data cache budgets (LRU eviction beyond each cap). Larger caps
 # trade memory for fewer daemon round-trips. Every key optional.
 [cache]

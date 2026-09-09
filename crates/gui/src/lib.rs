@@ -28,6 +28,7 @@ pub mod repo_init;
 pub mod sandbox;
 pub mod server;
 pub mod shell_exec;
+pub mod slow;
 pub mod state;
 pub mod style_watcher;
 pub mod sync;
@@ -227,7 +228,10 @@ pub fn run(options: Options) {
         Some(port) => format!("http://127.0.0.1:{port}"),
         None => gui_config.daemon_base_url(),
     };
-    let daemon = Arc::new(daemon_proxy::DaemonProxy::new(daemon_url));
+    let daemon = Arc::new(daemon_proxy::DaemonProxy::with_slow_threshold(
+        daemon_url,
+        settings.slow_operation_threshold_ms,
+    ));
 
     // Session token (spec-auth): gates the GUI server's sensitive routes and
     // is handed to the WebView through the initial state.

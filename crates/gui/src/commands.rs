@@ -421,8 +421,13 @@ pub async fn daemon_request(
     method: String,
     path: String,
     body: Option<Value>,
+    // `context`: what the user asked for, in their own words (the DSL text of a
+    // query, say). Carried to the daemon and into the slow-operation log when
+    // the call turns out to be slow; the daemon receives the query IR and
+    // cannot reconstruct it (spec-slow-log).
+    context: Option<String>,
 ) -> Result<ProxyResponse, String> {
-    let result = app.daemon.request(&method, &path, body).await;
+    let result = app.daemon.request_with_context(&method, &path, body, context.as_deref()).await;
     if result.is_err() {
         // Likely a daemon outage: refresh the health state right away.
         let daemon = app.daemon.clone();
