@@ -378,8 +378,12 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     if repo.is_ingestion_paused() {
         return Ok(FlushStats::default());
     }
-    let mut conn = repo.conn.lock_recover();
-    let mut cache = repo.lock_cache();
+    // A flush is not served over HTTP, so it names itself: it is the operation
+    // most likely to be *holding* the repository when a query complains about
+    // waiting for it (spec-slow-log).
+    let _timed = metafolder_core::slowlog::begin(repo.slowlog.clone(), "watcher.flush");
+    let mut conn = metafolder_core::slowlog::timed("wait:conn", || repo.conn.lock_recover());
+    let mut cache = metafolder_core::slowlog::timed("wait:cache", || repo.lock_cache());
 
     // Restoration ops from skipped rollback steps are replayed first, as their
     // own revision, before the watcher events recorded during the lock.
@@ -394,8 +398,12 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
         return Ok(FlushStats { events: 0, revisions: revisions_from_restore, cancelled: false });
     }
     report(FlushProgress::Buffered(taken.len()));
-    let events = compact(correlate_renames(taken.clone()));
+    metafolder_core::slowlog::note("buffered", taken.len().to_string());
+    let events = metafolder_core::slowlog::timed("watcher.compact", || {
+        compact(correlate_renames(taken.clone()))
+    });
     let n_events = events.len();
+    metafolder_core::slowlog::note("events", n_events.to_string());
     report(FlushProgress::Compacted(n_events));
 
     // Paths renamed away with no matching arrival in this batch. Either the
@@ -446,6 +454,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
     // be silently ignored, which on a huge batch is a window of seconds.
     let cancel = || repo.tasks.is_cancel_requested(task) || repo.is_ingestion_paused();
 
+    let applying = metafolder_core::slowlog::phase("watcher.apply");
     let work = (|| -> Result<usize> {
         let mut revisions = 0;
         let mut applied = 0usize;
@@ -476,7 +485,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
                 });
             }
             let wrote = apply.writer.op_count() > 0;
-            apply.writer.commit()?;
+            metafolder_core::slowlog::timed("commit", || apply.writer.commit())?;
             if wrote {
                 revisions += 1;
             }
@@ -484,6 +493,7 @@ fn flush_pending_once(repo: &RepoState, report: FlushReport) -> Result<FlushStat
 
         Ok(revisions)
     })();
+    drop(applying);
 
     match work {
         Ok(revisions) => {

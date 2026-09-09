@@ -100,6 +100,10 @@ pub struct RepoState {
     /// stopping a flush, and by `POST /watch/pause`. In memory like the task
     /// registry: a reload or a restart starts ingesting again.
     pub ingestion_paused: std::sync::atomic::AtomicBool,
+    /// Where this repository's slow operations are written (spec-slow-log).
+    /// Held per repository because the log lives inside it, and shared as an
+    /// `Arc` because every instrumented path takes a clone.
+    pub slowlog: Arc<metafolder_core::slowlog::Recorder>,
 }
 
 /// State of an in-progress coordinated rollback navigation.
@@ -127,6 +131,13 @@ impl RepoState {
         let repo_uuid = opened.config.repo_uuid;
         let name = Mutex::new(opened.config.name.clone());
         let log_retention = opened.config.log_retention(settings.log_retention());
+        let slow_dir =
+            metafolder_core::slowlog::slow_dir(&opened.metafolder_dir.join(repo::INTERNAL_DIR));
+        let slowlog = Arc::new(metafolder_core::slowlog::Recorder::new(
+            Some(slow_dir),
+            "daemon",
+            settings.slow_operation_threshold_ms,
+        ));
         Self {
             conn: Mutex::new(opened.conn),
             cache: Mutex::new(TreeCache::new(opened.case_insensitive)),
@@ -152,6 +163,7 @@ impl RepoState {
             orphan_cascade_limit: settings.orphan_cascade_limit,
             log_retention,
             ingestion_paused: std::sync::atomic::AtomicBool::new(false),
+            slowlog,
         }
     }
 
@@ -270,6 +282,7 @@ impl RepoState {
         effects: &crate::log::WriteEffects,
     ) -> anyhow::Result<()> {
         if effects.touches_tree() {
+            let _phase = metafolder_core::slowlog::phase("settle.tree");
             let mut cache = self.lock_cache();
             if !cache.apply_cells(conn, effects.tree_cells())? {
                 // Only before the repository's initial load, which through the
@@ -279,6 +292,7 @@ impl RepoState {
             }
         }
         if effects.touches_watch() {
+            let _phase = metafolder_core::slowlog::phase("settle.watches");
             self.refresh_watches(conn);
         }
         Ok(())

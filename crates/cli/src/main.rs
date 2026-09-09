@@ -56,6 +56,11 @@ enum Command {
         #[command(subcommand)]
         command: Option<LogCommand>,
     },
+    /// Slow-operation log: what took seconds, and where the time went
+    Slow {
+        #[command(subcommand)]
+        command: Option<SlowCommand>,
+    },
     /// Trash-bin: safely trash a file, or restore/prune (default: list)
     Trash {
         /// Move a tracked file into the trash (errors if it has no metarecord)
@@ -543,6 +548,31 @@ enum FieldCommand {
 }
 
 #[derive(Subcommand)]
+enum SlowCommand {
+    /// List the slow operations, newest first — the default
+    List {
+        /// How many entries to show (newest first)
+        #[arg(long, default_value_t = 50)]
+        limit: usize,
+        /// Only entries from the last duration (e.g. 30m, 12h, 7d)
+        #[arg(short = 'd', long = "since")]
+        since: Option<String>,
+        /// Only entries whose operation contains this substring
+        #[arg(long = "op")]
+        op: Option<String>,
+        /// Print the raw entries, one JSON object per line
+        #[arg(long)]
+        json: bool,
+    },
+    /// Empty the log (the clean slate a reproduction starts from)
+    Clear {
+        /// Do not ask for confirmation
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum TrashCommand {
     /// List the trashed files (id, size, age, reason, original path)
     List,
@@ -998,6 +1028,7 @@ fn dispatch(ctx: &Ctx, command: Command) -> CmdResult {
             }
         }
         Command::Log { command } => dispatch_log(ctx, command),
+        Command::Slow { command } => dispatch_slow(ctx, command),
         Command::Trash { file, command } => dispatch_trash(ctx, file, command),
         Command::Watch { command } => {
             match command.unwrap_or(WatchCommand::Status { json: false }) {
@@ -1286,6 +1317,15 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 }
             }
         },
+    }
+}
+
+fn dispatch_slow(ctx: &Ctx, command: Option<SlowCommand>) -> CmdResult {
+    match command.unwrap_or(SlowCommand::List { limit: 50, since: None, op: None, json: false }) {
+        SlowCommand::List { limit, since, op, json } => {
+            commands::slow_list(ctx, limit, since.as_deref(), op.as_deref(), json)
+        }
+        SlowCommand::Clear { yes } => commands::slow_clear(ctx, yes),
     }
 }
 

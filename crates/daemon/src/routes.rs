@@ -19,6 +19,7 @@ use metafolder_core::metarecord::{Field, FieldType, MetaRecord, Value, ZERO_UUID
 use metafolder_core::sync::MutexExt;
 
 use metafolder_core::query::Query as MetaQuery;
+use metafolder_core::slowlog;
 
 use crate::db;
 use crate::error::ApiError;
@@ -101,6 +102,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/orphans/clear", post(orphans_clear))
         .route("/repos/:repo/orphans/relink", post(orphans_relink))
         .route("/repos/:repo/track", post(track))
+        .route("/repos/:repo/slow", get(slow_log).delete(clear_slow_log))
         .route("/repos/:repo/eligibility", post(eligibility_explain))
         .route("/repos/:repo/ignore/effective", get(effective_ignore))
         // ── Cross-repo sync (spec-sync) ─────────────────────────────────────
@@ -109,6 +111,7 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/sync/:a/:b/links/commit", post(sync_commit))
         .route("/sync/:a/:b/status", get(sync_status))
         .with_state(state)
+        .layer(axum::middleware::from_fn(name_operation))
 }
 
 /// The router with the session-token authentication layer (spec-auth): every
@@ -116,6 +119,66 @@ pub fn build(state: Arc<AppState>) -> Router {
 /// binary; tests drive [`build`] directly (no network, no token).
 pub fn build_authenticated(state: Arc<AppState>, token: Arc<str>) -> Router {
     build(state).layer(axum::middleware::from_fn_with_state(token, require_token))
+}
+
+/// What the request layer knows about the operation being served, carried to
+/// the blocking thread that will time it (spec-slow-log).
+///
+/// A task-local rather than an argument: the name of the operation is a
+/// property of the *request*, known only here, while the timing happens deep in
+/// a handler — and threading it through every handler signature would put
+/// diagnostics in the type of every route.
+#[derive(Clone)]
+struct RequestInfo {
+    /// Method plus matched route pattern (`POST /repos/:repo/query`).
+    op: String,
+    /// The client's correlation id, if it sent one.
+    op_id: Option<String>,
+    /// What the user asked for, in the client's own words.
+    client: Option<String>,
+}
+
+tokio::task_local! {
+    static REQUEST: RequestInfo;
+}
+
+/// Names every request for the slow-operation log. The layer only *names* it:
+/// whether anything is recorded is decided per repository, when the operation
+/// ends (see [`with_repo`]).
+async fn name_operation(
+    // Taken as an extractor rather than read out of the extensions: it is the
+    // route *pattern* (`/repos/:repo/query`), the shape a reader groups by,
+    // where the URI is one occurrence of it.
+    matched: Option<axum::extract::MatchedPath>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    // Everything borrowed from the request is read in this block and nothing
+    // borrowed outlives it: a borrow of the request held across the `await`
+    // below would make the middleware's future non-`Send` (the body is not
+    // `Sync`), which no error message says plainly.
+    let info = {
+        let route = matched
+            .as_ref()
+            .map(|p| p.as_str())
+            .unwrap_or_else(|| request.uri().path())
+            .to_string();
+        RequestInfo {
+            op: format!("{} {route}", request.method()),
+            op_id: short_header(request.headers(), "x-metafolder-op-id"),
+            client: short_header(request.headers(), "x-metafolder-context"),
+        }
+    };
+    REQUEST.scope(info, next.run(request)).await
+}
+
+/// One client-supplied header, capped: a rogue client must not be able to fill
+/// the log with a single entry.
+fn short_header(headers: &axum::http::HeaderMap, name: &str) -> Option<String> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.chars().take(slowlog::MAX_CONTEXT_CHARS).collect())
 }
 
 /// Rejects requests whose bearer token does not match (constant-time).
@@ -155,9 +218,33 @@ where
     F: FnOnce(&RepoState) -> Result<T, ApiError> + Send + 'static,
 {
     let repo = state.ready_repo(repo_uuid)?;
-    tokio::task::spawn_blocking(move || f(&repo))
-        .await
-        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
+    // The whole blocking closure is the operation, so the timing starts and
+    // ends on the one thread that runs it (spec-slow-log).
+    let info = REQUEST.try_with(|info| info.clone()).ok();
+    tokio::task::spawn_blocking(move || {
+        let _timed = info.map(|info| {
+            let guard = slowlog::begin(repo.slowlog.clone(), info.op);
+            if let Some(id) = info.op_id {
+                slowlog::set_op_id(id);
+            }
+            if let Some(client) = info.client {
+                slowlog::note("client", client);
+            }
+            guard
+        });
+        f(&repo)
+    })
+    .await
+    .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?
+}
+
+/// Records the query a slow operation ran, compactly: the daemon receives the
+/// IR, not the text that produced it, and the whole IR of a generated query can
+/// be kilobytes.
+fn note_query(query: &MetaQuery) {
+    if let Ok(json) = serde_json::to_string(query) {
+        slowlog::note("query", json.chars().take(slowlog::MAX_CONTEXT_CHARS).collect::<String>());
+    }
 }
 
 #[derive(Deserialize)]
@@ -186,8 +273,8 @@ async fn query_resolve_tree(
     let Json(body) = payload?;
     let field = body.field;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         let mut out = serde_json::Map::new();
         for uuid in uuids {
@@ -208,8 +295,8 @@ async fn resolve_record_field_tree(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let paths = cache.paths_of(&conn, &name, uuid)?;
         Ok(Json(json!({ "paths": paths })))
     })
@@ -227,8 +314,8 @@ async fn get_record_mf_sync(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let paths = cache.paths_of(&conn, "mfr_path", uuid)?;
         let mode = match paths.first() {
             // `paths_of` and `resolve_mf_sync` (eligibility) share the same
@@ -278,8 +365,8 @@ async fn resolve_tree_path(
     let repo_uuid = parse_uuid(&repo)?;
     let Json(body) = payload?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuid = cache.resolve_path_as(&conn, &body.field, &body.path, body.form)?;
         Ok(Json(json!({ "uuid": uuid.map(hex) })))
     })
@@ -312,7 +399,7 @@ async fn list_fields(
         // load, refreshed to HEAD) — its `present`/`types` maps already hold
         // every distinct field name and value type, no DB scan. Mirrors
         // `run_query_filter`'s index acquisition (conn first, then the index).
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Extract the schema's declared types into an owned Vec, releasing the
         // schema lock before taking the index lock (never hold both).
         let schema_decls = repo_state
@@ -377,7 +464,7 @@ async fn tree_roots(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Roots are stored with `value_uuid = ZERO_UUID` (the sentinel).
         let mut roots = db::tree_children(&conn, &params.field, ZERO_UUID)?;
         roots.sort_by(|a, b| a.1.cmp(&b.1));
@@ -404,8 +491,8 @@ async fn tree_children(
     let repo_uuid = parse_uuid(&repo)?;
     let parent = parse_uuid(&params.uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mut children = cache.children_of(&conn, &params.field, parent)?;
         children.sort_by(|a, b| a.0.cmp(&b.0));
         let out: Vec<serde_json::Value> = children
@@ -472,13 +559,15 @@ where
 {
     with_repo(state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut writer = repo_state.writer(&mut conn, None)?;
         ensure_version(writer.connection(), uuid, expected_version)?;
-        let touched = write(&mut writer)?;
-        validate_schema(repo_state, writer.connection(), uuid, &touched)?;
+        let touched = slowlog::timed("write.fields", || write(&mut writer))?;
+        slowlog::timed("validate.schema", || {
+            validate_schema(repo_state, writer.connection(), uuid, &touched)
+        })?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         metarecord_response(&conn, uuid)
     })
@@ -533,6 +622,50 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<serde_json::Value> {
         "api_version": metafolder_core::API_VERSION,
         "repos": state.list_repos(false).len(),
     }))
+}
+
+#[derive(Deserialize)]
+struct SlowLogParams {
+    limit: Option<usize>,
+    since_ms: Option<i64>,
+}
+
+/// `GET /repos/:repo/slow?limit=&since_ms=` — the repository's slow-operation
+/// log (spec-slow-log), both sources merged, newest first.
+async fn slow_log(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<SlowLogParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let dir = slow_log_dir(&state, repo_uuid)?;
+    let limit = params.limit.unwrap_or(slowlog::DEFAULT_READ_LIMIT).min(slowlog::MAX_READ_LIMIT);
+    let (entries, truncated) =
+        tokio::task::spawn_blocking(move || slowlog::read(&dir, limit, params.since_ms))
+            .await
+            .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?;
+    Ok(Json(json!({"entries": entries, "truncated": truncated})))
+}
+
+/// `DELETE /repos/:repo/slow` — empties the log. Starting from an empty one is
+/// how a slowdown is reproduced deliberately.
+async fn clear_slow_log(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let dir = slow_log_dir(&state, repo_uuid)?;
+    let cleared = tokio::task::spawn_blocking(move || slowlog::clear(&dir))
+        .await
+        .map_err(|e| ApiError::internal(format!("blocking task failed: {e}")))?;
+    Ok(Json(json!({"cleared": cleared})))
+}
+
+/// The log's directory for a loaded repository. Reading it does not need the
+/// repository to be *ready*: a repository still warming is exactly one whose
+/// slowness someone may be trying to explain.
+fn slow_log_dir(state: &AppState, repo_uuid: Uuid) -> Result<PathBuf, ApiError> {
+    Ok(slowlog::slow_dir(&state.repo(repo_uuid)?.internal_dir()))
 }
 
 /// `GET /diagnostics?since=&limit=` — the warnings the daemon printed to
@@ -884,7 +1017,7 @@ async fn get_log(
     let repo_uuid = parse_uuid(&repo)?;
     let entity_filter = params.metarecord_uuid.as_deref().map(parse_uuid).transpose()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let mode = params.mode.as_deref().unwrap_or("linear");
         let limit = params.limit;
@@ -1023,7 +1156,7 @@ async fn get_log_since(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let limit = params.limit.unwrap_or(SINCE_DEFAULT_LIMIT).max(0);
         let mut truncated = false;
@@ -1057,7 +1190,7 @@ async fn get_revision(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let rev_id: i64 = if rev_id == "head" {
             let head =
@@ -1111,7 +1244,7 @@ async fn patch_revision(
     let Json(body) = payload?;
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let changed = conn
             .execute(
                 "UPDATE revision SET label = ?1 WHERE id = ?2",
@@ -1172,7 +1305,7 @@ async fn rollback(
         // arbitrary state under the connection lock and rebuilds the tree cache.
         observed(repo_state, TaskKind::Rollback, "rolling back", |repo_state| {
             repo_state.ensure_writable()?;
-            let mut conn = repo_state.conn.lock_recover();
+            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&conn, &target)?;
             let result = crate::log::navigate(&mut conn, resolved)?;
             // Navigation rewrites tree positions arbitrarily: rebuild the cache
@@ -1237,7 +1370,7 @@ async fn prune_log(
         // long on a large log, so other clients see why their work is queued.
         observed(repo_state, TaskKind::Prune, "pruning", |repo_state| {
             repo_state.ensure_writable()?;
-            let mut conn = repo_state.conn.lock_recover();
+            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let resolved = crate::log::resolve_target(&conn, &target)?
                 .ok_or_else(|| ApiError::bad_request("cannot prune to the empty state"))?;
             let (ops, revisions) = crate::log::prune(&mut conn, mode, resolved)
@@ -1363,11 +1496,11 @@ async fn rollback_plan(
     let repo_uuid = parse_uuid(&repo)?;
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let path = crate::log::nav_path(&conn, head, resolved)?;
-        let mut cache = repo_state.lock_cache();
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mut ops = Vec::with_capacity(path.len());
         for (op, dir) in &path {
             ops.push(action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?);
@@ -1386,7 +1519,7 @@ async fn rollback_plan_summary(
     let repo_uuid = parse_uuid(&repo)?;
     let target = params.into_target()?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         let path = crate::log::nav_path(&conn, head, resolved)?;
@@ -1418,7 +1551,7 @@ async fn rollback_start(
         if repo_state.is_rollback_locked() {
             return Err(ApiError::conflict("a rollback navigation is already in progress"));
         }
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         let resolved = crate::log::resolve_target(&conn, &target)?;
         if resolved == head {
@@ -1427,7 +1560,7 @@ async fn rollback_start(
         }
         let path = crate::log::nav_path(&conn, head, resolved)?;
         let (op, dir) = path.first().expect("non-empty path when head != target");
-        let mut cache = repo_state.lock_cache();
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let first = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
         let remaining = path.len() - 1;
         drop(cache);
@@ -1462,14 +1595,14 @@ async fn rollback_step(
         };
 
         let done = {
-            let mut conn = repo_state.conn.lock_recover();
+            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let new_head = crate::log::coordinated_step(&mut conn, target, skip)?;
             // The step rewrote tree positions arbitrarily: rebuild the cache
             // from the new state (keeps it complete; `populate` clears first).
             repo_state.lock_cache().populate(&conn)?;
             let next = crate::log::nav_path(&conn, new_head, target)?;
             if let Some((op, dir)) = next.first() {
-                let mut cache = repo_state.lock_cache();
+                let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
                 let op_json = action_op_json(&conn, &mut cache, &repo_state.config.root, op, *dir)?;
                 let remaining = next.len() - 1;
                 return Ok(Json(json!({"op": op_json, "remaining": remaining})));
@@ -1501,7 +1634,7 @@ async fn rollback_abort(
             *guard = None;
         }
         crate::executor::flush_pending(repo_state)?;
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let head = crate::log::get_head(&conn)?;
         Ok(Json(json!({"head": head})))
     })
@@ -1564,7 +1697,7 @@ async fn check_schema(
     let body = payload.map(|Json(b)| b).unwrap_or_default();
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let guard = repo_state.schema.lock_recover();
         let mut violations: Vec<serde_json::Value> = Vec::new();
         let mut checked = 0usize;
@@ -1576,7 +1709,7 @@ async fn check_schema(
             // so the once-per-open heads-up stays cheap even at 400k records.
             let uuids = match &body.query {
                 Some(query) => {
-                    let mut cache = repo_state.lock_cache();
+                    let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
                     resolve_query_uuids(repo_state, &conn, &mut cache, query, &|| false)?
                 }
                 None => crate::schema::violation_candidates(
@@ -1675,8 +1808,8 @@ async fn mounts(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mounts = crate::mount::declared(&conn, &mut cache, &repo_state.config.root)?;
         Ok(Json(json!({ "mounts": mounts })))
     })
@@ -1944,8 +2077,8 @@ async fn watch_exceeded_list(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids =
             crate::db::metarecords_with_bool(&conn, crate::eligibility::WATCH_EXCEEDED, true)?;
         let mut paths: Vec<String> = uuids
@@ -1986,14 +2119,14 @@ async fn watch_exceeded_set(
             }
         }
         let uuid = {
-            let conn = repo_state.conn.lock_recover();
-            let mut cache = repo_state.lock_cache();
+            let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
             cache
                 .resolve_path(&conn, "mfr_path", &body.path)?
                 .ok_or_else(|| ApiError::not_found(format!("No metarecord at {}", body.path)))?
         };
         {
-            let mut conn = repo_state.conn.lock_recover();
+            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
             let mut writer = repo_state.writer(&mut conn, None)?;
             if body.exceeded {
                 writer.set_field(
@@ -2004,10 +2137,10 @@ async fn watch_exceeded_set(
             } else {
                 writer.delete_fields_named(uuid, crate::eligibility::WATCH_EXCEEDED)?;
             }
-            writer.commit()?;
+            slowlog::timed("commit", || writer.commit())?;
         }
         // The watch set follows immediately, as it does for `mf_watch`.
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let watched = repo_state.refresh_watches(&conn);
         Ok(Json(json!({ "path": body.path, "exceeded": body.exceeded, "watched_dirs": watched })))
     })
@@ -2093,8 +2226,8 @@ async fn eligibility_explain(
         }
     }
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let mut ec = crate::eligibility::EligibilityCache::default();
         let mut results = Vec::with_capacity(body.paths.len());
         for path in &body.paths {
@@ -2136,8 +2269,8 @@ async fn effective_ignore(
         )));
     }
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let e = crate::eligibility::effective_ignore(&conn, &mut cache, &params.path)?;
         Ok(Json(json!({
             "source": e.source,
@@ -2189,8 +2322,8 @@ async fn track(
             return Err(ApiError::bad_request("cannot track the repository root itself"));
         }
 
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         // Idempotent: a path already tracked returns its existing metarecord
         // uuid rather than an error, so callers can `track` without first
         // checking (spec-file-tracking "Single-metarecord track").
@@ -2207,7 +2340,7 @@ async fn track(
             &untracked,
             false,
         )?;
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         Ok(Json(json!({"uuid": hex(uuid)})))
     })
     .await
@@ -2296,7 +2429,7 @@ fn ensure_index<'g>(
     let index = guard
         .as_mut()
         .ok_or_else(|| ApiError::internal("the query index is missing on a ready repository"))?;
-    index.refresh(conn, cancel)?;
+    slowlog::timed("index.refresh", || index.refresh(conn, cancel))?;
     Ok(index)
 }
 
@@ -2316,6 +2449,7 @@ fn prepare_indexed_query<'a>(
     query: &MetaQuery,
     full_set: bool,
 ) -> Result<(crate::index::QueryRoots<'a>, MetaQuery), ApiError> {
+    let _phase = slowlog::phase("prepare");
     let mut roots = crate::index::QueryRoots::new();
     let mut path_targets = Vec::new();
     crate::index::collect_path_targets(query, &mut path_targets);
@@ -2355,16 +2489,25 @@ fn resolve_query_uuids(
     query: &MetaQuery,
     cancel: &dyn Fn() -> bool,
 ) -> Result<Vec<Uuid>, ApiError> {
+    let _phase = slowlog::phase("resolve.uuids");
     query_exec::validate_query(query)?;
     let (roots, indexed) = prepare_indexed_query(conn, cache, query, true)?;
-    let mut index_guard = repo_state.index.lock_recover();
+    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
-    match index.evaluate_page_with_roots(&indexed, &[], None, None, &roots) {
+    match slowlog::timed("index.evaluate", || {
+        index.evaluate_page_with_roots(&indexed, &[], None, None, &roots)
+    }) {
         Ok((uuids, _)) => Ok(uuids),
         Err(gap) if !gap.is_coverage() => {
             Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
         }
-        Err(_coverage) => Ok(query_exec::execute(conn, cache, query, &[], None, None)?.0),
+        Err(_coverage) => {
+            slowlog::note("engine", "sql");
+            Ok(slowlog::timed("sql.execute", || {
+                query_exec::execute(conn, cache, query, &[], None, None)
+            })?
+            .0)
+        }
     }
 }
 
@@ -2407,7 +2550,7 @@ fn run_query_filter(
     let sort_keys = crate::tree_cache::SortKeys::new(cache);
     roots.keys = Some(&sort_keys);
 
-    let mut index_guard = repo_state.index.lock_recover();
+    let mut index_guard = slowlog::timed("wait:index", || repo_state.index.lock_recover());
     let index = ensure_index(conn, &mut index_guard, cancel)?;
     // The index build/refresh above is the heavy phase on a large repo; if a
     // Stop landed during it, don't start the (also non-trivial) evaluation.
@@ -2417,45 +2560,64 @@ fn run_query_filter(
 
     // With `count` the page and the total come from a single evaluation; without
     // it, only the page is computed.
-    let paged = if body.count {
-        index
-            .page_and_count(&indexed_query, &sort_by, body.limit, body.cursor.as_deref(), &roots)
-            .map(|(uuids, next, total)| (uuids, next, Some(total as usize)))
-    } else {
-        index
-            .evaluate_page_with_roots(
-                &indexed_query,
-                &sort_by,
-                body.limit,
-                body.cursor.as_deref(),
-                &roots,
-            )
-            .map(|(uuids, next)| (uuids, next, None))
-    };
+    let paged = slowlog::timed("index.evaluate", || {
+        if body.count {
+            index
+                .page_and_count(
+                    &indexed_query,
+                    &sort_by,
+                    body.limit,
+                    body.cursor.as_deref(),
+                    &roots,
+                )
+                .map(|(uuids, next, total)| (uuids, next, Some(total as usize)))
+        } else {
+            index
+                .evaluate_page_with_roots(
+                    &indexed_query,
+                    &sort_by,
+                    body.limit,
+                    body.cursor.as_deref(),
+                    &roots,
+                )
+                .map(|(uuids, next)| (uuids, next, None))
+        }
+    });
     match paged {
-        Ok(page) => Ok(page),
+        Ok(page) => {
+            slowlog::note("engine", "index");
+            Ok(page)
+        }
         // Only a *coverage* gap defers to SQL. A state gap means an accelerator
         // is not in the state a serving repository guarantees — a daemon bug,
         // reported rather than papered over by an engine that answers anyway.
         Err(gap) if !gap.is_coverage() => {
             Err(ApiError::internal(format!("the query index is not in a usable state: {gap}")))
         }
-        Err(_coverage) => {
-            let (uuids, next_cursor) = query_exec::execute(
-                conn,
-                cache,
-                &body.query,
-                &body.sort,
-                body.limit,
-                body.cursor.as_deref(),
-            )?;
+        Err(coverage) => {
+            // Which shape the index could not serve is the answer to "why was
+            // this query slow", so it is recorded, not just the engine.
+            slowlog::note("engine", "sql");
+            slowlog::note("fallback", coverage.to_string());
+            let (uuids, next_cursor) = slowlog::timed("sql.execute", || {
+                query_exec::execute(
+                    conn,
+                    cache,
+                    &body.query,
+                    &body.sort,
+                    body.limit,
+                    body.cursor.as_deref(),
+                )
+            })?;
             // Counting here means running the whole CTE chain a second time, so
             // skip it when the page already proves the total: a first page that
             // came back short is the entire match set.
             let total = match (body.count, body.cursor.is_none() && next_cursor.is_none()) {
                 (false, _) => None,
                 (true, true) => Some(uuids.len()),
-                (true, false) => Some(query_exec::count(conn, cache, &body.query)?),
+                (true, false) => Some(slowlog::timed("sql.count", || {
+                    query_exec::count(conn, cache, &body.query)
+                })?),
             };
             Ok((uuids, next_cursor, total))
         }
@@ -2472,7 +2634,7 @@ fn run_query_inner(
             // The unwrapped (bare array) response has nowhere to carry it.
             return Err(ApiError::bad_request("'count' requires 'limit'"));
         }
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         // Register the SQLite interrupt handle so `POST …/tasks/:id/cancel` can
         // abort this query while it runs (spec-tasks "Cancellation"). The handle
         // is harmless once the query finishes (no running statement to stop).
@@ -2482,10 +2644,12 @@ fn run_query_inner(
         // a running statement, so it cannot stop the index build/evaluation or the
         // result assembly (all Rust). Those phases poll this flag instead.
         let cancel = || repo_state.tasks.is_cancel_requested(task);
-        let mut cache = repo_state.lock_cache();
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+        note_query(&body.query);
         let (uuids, next_cursor, total) =
             run_query_filter(repo_state, &conn, &mut cache, body, &cancel)?;
         drop(cache);
+        slowlog::note("results", uuids.len().to_string());
 
         let results: Vec<serde_json::Value> = match &body.select {
             None => uuids.into_iter().map(|u| json!(hex(u))).collect(),
@@ -2499,7 +2663,9 @@ fn run_query_inner(
                     }
                     SelectSpec::Fields(list) => Some(list.clone()),
                 };
-                query_exec::assemble_selected(&conn, &uuids, fields_filter.as_deref(), &cancel)?
+                slowlog::timed("assemble", || {
+                    query_exec::assemble_selected(&conn, &uuids, fields_filter.as_deref(), &cancel)
+                })?
             }
         };
 
@@ -2562,24 +2728,30 @@ async fn batch_set(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        slowlog::note("field", body.name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.fields");
         for uuid in &uuids {
             writer.set_field_multi(*uuid, &body.name, rows.clone())?;
-            validate_schema(
-                repo_state,
-                writer.connection(),
-                *uuid,
-                std::slice::from_ref(&body.name),
-            )?;
+            slowlog::timed("validate.schema", || {
+                validate_schema(
+                    repo_state,
+                    writer.connection(),
+                    *uuid,
+                    std::slice::from_ref(&body.name),
+                )
+            })?;
         }
+        drop(writing);
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
+        slowlog::note("updated", uuids.len().to_string());
         Ok(Json(json!({"updated": uuids.len()})))
     })
     .await
@@ -2599,24 +2771,30 @@ async fn batch_append(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        slowlog::note("field", body.name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.fields");
         for uuid in &uuids {
             writer.append_field(*uuid, &body.name, value.clone())?;
-            validate_schema(
-                repo_state,
-                writer.connection(),
-                *uuid,
-                std::slice::from_ref(&body.name),
-            )?;
+            slowlog::timed("validate.schema", || {
+                validate_schema(
+                    repo_state,
+                    writer.connection(),
+                    *uuid,
+                    std::slice::from_ref(&body.name),
+                )
+            })?;
         }
+        drop(writing);
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
+        slowlog::note("updated", uuids.len().to_string());
         Ok(Json(json!({"updated": uuids.len()})))
     })
     .await
@@ -2637,8 +2815,9 @@ async fn batch_remove(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        slowlog::note("field", body.name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
@@ -2656,7 +2835,7 @@ async fn batch_remove(
             }
         }
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": changed})))
     })
@@ -2685,8 +2864,9 @@ async fn batch_unset(
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
         check_writable(&body.name, body.force)?;
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        slowlog::note("field", body.name.as_str());
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
@@ -2704,7 +2884,7 @@ async fn batch_unset(
             }
         }
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"updated": changed})))
     })
@@ -2743,11 +2923,11 @@ async fn retype_field(
     })?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let mut writer = repo_state.writer(&mut conn, None)?;
         let summary = writer.retype_field(&name, to)?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({
             "converted": summary.converted,
@@ -2775,17 +2955,19 @@ async fn delete_by_query(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
-        let mut cache = repo_state.lock_cache();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
         let uuids = resolve_query_uuids(repo_state, &conn, &mut cache, &body.query, &|| false)?;
         drop(cache);
 
         let mut writer = repo_state.writer(&mut conn, None)?;
+        let writing = slowlog::phase("write.fields");
         for uuid in &uuids {
             writer.delete_metarecord(*uuid)?;
         }
+        drop(writing);
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(Json(json!({"deleted": uuids.len()})))
     })
@@ -2816,7 +2998,7 @@ async fn create_record_endpoint(
         for field in &body.fields {
             check_writable(&field.name, body.force)?;
         }
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let touched: Vec<String> = body.fields.iter().map(|f| f.name.clone()).collect();
         let mut writer = repo_state.writer(&mut conn, None)?;
         let created = match supplied {
@@ -2830,7 +3012,7 @@ async fn create_record_endpoint(
         };
         validate_schema(repo_state, writer.connection(), created.uuid, &touched)?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(Json(created))
     })
@@ -2844,7 +3026,7 @@ async fn get_record_endpoint(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         Ok(Json(metarecord_response(&conn, uuid)?))
     })
     .await
@@ -2859,7 +3041,7 @@ async fn delete_record_endpoint(
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         if db::get_version(&conn, uuid)?.is_none() {
             return Err(ApiError::not_found(format!("Metarecord not found: {uuid}")));
         }
@@ -2867,7 +3049,7 @@ async fn delete_record_endpoint(
         ensure_version(writer.connection(), uuid, ev.expected_version)?;
         writer.delete_metarecord(uuid)?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(StatusCode::NO_CONTENT)
     })
@@ -2903,7 +3085,7 @@ async fn get_record_field(
     let repo_uuid = parse_uuid(&repo)?;
     let uuid = parse_uuid(&uuid)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         ensure_exists(&conn, uuid)?;
         let rows = db::get_field_rows_named(&conn, uuid, &name)?;
         let values: Vec<&Value> = rows.iter().map(|r| &r.value).collect();
@@ -2999,6 +3181,7 @@ async fn append_field(
     let value = single_value(body.value, body.values)?;
     write_record_checked(&state, repo_uuid, uuid, ev.expected_version, move |writer| {
         check_writable(&body.name, body.force)?;
+        slowlog::note("field", body.name.as_str());
         ensure_exists(writer.connection(), uuid)?;
         writer.append_field(uuid, &body.name, value)?;
         Ok(vec![body.name])
@@ -3028,7 +3211,7 @@ async fn get_field_by_id(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
-        let conn = repo_state.conn.lock_recover();
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let row = db::get_field_row_by_id(&conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
         Ok(Json(json!({"id": row.id, "name": row.name, "value": row.value})))
@@ -3058,7 +3241,7 @@ async fn patch_field_by_id(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let uuid = field_owner(&conn, id)?;
         let old = db::get_field_row_by_id(&conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
@@ -3076,7 +3259,7 @@ async fn patch_field_by_id(
             &[old.name.clone(), new_name.clone()],
         )?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         metarecord_response(&conn, uuid).map(Json)
     })
@@ -3093,7 +3276,7 @@ async fn delete_field_by_id(
     let repo_uuid = parse_uuid(&repo)?;
     with_repo(&state, repo_uuid, move |repo_state| {
         repo_state.ensure_writable()?;
-        let mut conn = repo_state.conn.lock_recover();
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
         let uuid = field_owner(&conn, id)?;
         let row = db::get_field_row_by_id(&conn, id)?
             .ok_or_else(|| ApiError::not_found(format!("Field {id} not found")))?;
@@ -3102,7 +3285,7 @@ async fn delete_field_by_id(
         writer.delete_field(uuid, id)?;
         validate_schema(repo_state, writer.connection(), uuid, std::slice::from_ref(&row.name))?;
         let effects = writer.effects();
-        writer.commit()?;
+        slowlog::timed("commit", || writer.commit())?;
         repo_state.settle(&conn, &effects)?;
         Ok(StatusCode::NO_CONTENT)
     })
@@ -3335,7 +3518,7 @@ async fn sync_delete_link(
                 let mut writer = repo.writer(&mut conn, None)?;
                 writer.delete_metarecord(record)?;
                 let effects = writer.effects();
-                writer.commit()?;
+                slowlog::timed("commit", || writer.commit())?;
                 repo.settle(&conn, &effects)?;
             }
         }

@@ -3879,3 +3879,45 @@ fn test_mount_list_and_forget() {
     assert_ok(&out);
     assert!(out.stdout.contains("No mount points"), "stdout: {}", out.stdout);
 }
+
+// ── mf slow (spec-slow-log) ───────────────────────────────────────────────────
+
+#[test]
+fn test_slow_lists_the_log_newest_first_and_clears_it() {
+    use metafolder_core::slowlog::{self, Entry, Phase};
+
+    let (repo, root) = init_repo("slow");
+    let dir = slowlog::slow_dir(&root.join(".metafolder").join("internal"));
+    let mut slow = Entry::new("daemon", "POST /repos/:repo/query", 1_757_426_602_000, 4820);
+    slow.note("client", "rating > 3");
+    slow.phases.push(Phase { name: "wait:conn".into(), ms: 3100, count: 1, depth: 0 });
+    slowlog::Sink::new(&dir, "daemon").append(&slow);
+    slowlog::Sink::new(&dir, "gui").append(&Entry::new(
+        "gui",
+        "GET /repos/:repo/metarecords/:uuid",
+        1_757_426_600_000,
+        2500,
+    ));
+
+    let out = mf(&["-u", &repo, "slow"]);
+    assert_ok(&out);
+    let query_at = out.stdout.find("POST /repos/:repo/query").expect(&out.stdout);
+    let gui_at = out.stdout.find("GET /repos/:repo/metarecords/:uuid").expect(&out.stdout);
+    assert!(query_at < gui_at, "newest first, both sources merged:\n{}", out.stdout);
+    assert!(out.stdout.contains("4.82s"), "{}", out.stdout);
+    assert!(out.stdout.contains("wait:conn"), "the breakdown is the point:\n{}", out.stdout);
+    assert!(out.stdout.contains("rating > 3"), "{}", out.stdout);
+
+    // `--op` narrows to one shape; `--json` is the machine form.
+    let out = mf(&["-u", &repo, "slow", "list", "--op", "query", "--json"]);
+    assert_ok(&out);
+    assert_eq!(out.stdout.lines().count(), 1, "{}", out.stdout);
+    assert!(out.stdout.contains("\"op\":\"POST /repos/:repo/query\""), "{}", out.stdout);
+
+    let out = mf(&["-u", &repo, "slow", "clear", "-y"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Cleared 2"), "{}", out.stdout);
+    let out = mf(&["-u", &repo, "slow"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Nothing has been slow"), "{}", out.stdout);
+}

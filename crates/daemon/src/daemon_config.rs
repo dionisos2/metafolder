@@ -30,6 +30,12 @@ pub const DEFAULT_WATCH_BUDGET_SHARE: u8 = 50;
 /// (spec-event-log "Automatic retention").
 pub const DEFAULT_LOG_RETENTION_REVISIONS: u64 = 200;
 
+/// Default threshold for the slow-operation log (spec-slow-log): an operation
+/// past it is written to the repository's log with its phase breakdown. Two
+/// seconds is well above anything the daemon does routinely, so what lands in
+/// the log is what someone waited on.
+pub const DEFAULT_SLOW_OPERATION_THRESHOLD_MS: u64 = metafolder_core::slowlog::DEFAULT_THRESHOLD_MS;
+
 /// Default mass-orphan circuit breaker: the largest cascade of
 /// `mfr_path = Nothing` a single watcher batch may apply (spec-file-tracking
 /// "Mass-orphan circuit breaker"). `0` disables the check.
@@ -64,6 +70,9 @@ pub struct DaemonSettings {
     /// would null thousands of paths is a filesystem going away, not a
     /// deletion the user asked for. `0` disables the check.
     pub orphan_cascade_limit: usize,
+    /// How long an operation must take before it is written to the
+    /// repository's slow-operation log (spec-slow-log). `0` turns the log off.
+    pub slow_operation_threshold_ms: u64,
 }
 
 impl Default for DaemonSettings {
@@ -74,6 +83,7 @@ impl Default for DaemonSettings {
             orphan_cascade_limit: DEFAULT_ORPHAN_CASCADE_LIMIT,
             log_retention_revisions: DEFAULT_LOG_RETENTION_REVISIONS,
             log_retention_keep_labels: true,
+            slow_operation_threshold_ms: DEFAULT_SLOW_OPERATION_THRESHOLD_MS,
         }
     }
 }

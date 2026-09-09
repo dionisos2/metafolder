@@ -64,3 +64,13 @@ log-retention-revisions = 200
 # grows past the limit rather than losing the checkpoint — the escape hatch from
 # a limit that is on by default. Default: true.
 log-retention-keep-labels = true
+
+# How long an operation must take, in milliseconds, before the daemon writes it
+# to the repository's slow-operation log (.metafolder/internal/slow/, read with
+# `mf slow`). An entry carries where the time went — the wait for the database
+# lock, the index refresh, the SQL fallback, the commit, the tree-cache settle —
+# not just the total, which is the part you already knew. Queries and field
+# writes are occasionally seconds slow for reasons that are over by the time you
+# notice, and this is what is left behind to explain them. 0 turns the log off;
+# set it to 1 to record everything. Default: 2000.
+slow-operation-threshold-ms = 2000

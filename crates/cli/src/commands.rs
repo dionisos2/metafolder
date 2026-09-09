@@ -2369,6 +2369,63 @@ pub fn trash_list(ctx: &Ctx) -> Result<i32, CliError> {
     Ok(0)
 }
 
+/// `mf slow [list]` — the repository's slow-operation log (spec-slow-log),
+/// newest first. Read over HTTP: the daemon owns the file, and the endpoint
+/// merges what the GUI wrote into it too.
+pub fn slow_list(
+    ctx: &Ctx,
+    limit: usize,
+    since: Option<&str>,
+    op: Option<&str>,
+    json: bool,
+) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let mut query = vec![("limit", limit.to_string())];
+    if let Some(text) = since {
+        // The same durations `mf trash prune -d` takes (1y, 30d, 12h).
+        let ms = metafolder_core::date::now_ms() - crate::trash::parse_duration(text)?;
+        query.push(("since_ms", ms.to_string()));
+    }
+    let body = ctx.client.get(&format!("{base}/slow"), &query)?;
+    let entries: Vec<metafolder_core::slowlog::Entry> =
+        serde_json::from_value(body["entries"].clone())
+            .map_err(|e| CliError::Op(format!("unexpected slow-log response: {e}")))?;
+    let entries: Vec<_> =
+        entries.into_iter().filter(|e| op.is_none_or(|needle| e.op.contains(needle))).collect();
+    if entries.is_empty() {
+        println!("Nothing has been slow{}.", if since.is_some() { " in that window" } else { "" });
+        return Ok(0);
+    }
+    for (i, entry) in entries.iter().enumerate() {
+        if json {
+            println!("{}", serde_json::to_string(entry).unwrap_or_default());
+            continue;
+        }
+        if i > 0 {
+            println!();
+        }
+        for line in crate::slow::render(entry) {
+            println!("{line}");
+        }
+    }
+    if body["truncated"].as_bool() == Some(true) && !json {
+        println!("\n(more entries beyond --limit {limit})");
+    }
+    Ok(0)
+}
+
+/// `mf slow clear` — empties the log, so the next reproduction starts clean.
+pub fn slow_clear(ctx: &Ctx, yes: bool) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    if !yes && !confirm("Empty the slow-operation log? [y/N] ")? {
+        println!("Cancelled.");
+        return Ok(0);
+    }
+    let body = ctx.client.request("DELETE", &format!("{base}/slow"), &[], None)?;
+    println!("Cleared {} entr{}.", body["cleared"], if body["cleared"] == 1 { "y" } else { "ies" });
+    Ok(0)
+}
+
 /// `mf trash restore <id>`.
 pub fn trash_restore(ctx: &Ctx, id: &str) -> Result<i32, CliError> {
     let info = ctx.repo_info()?;
