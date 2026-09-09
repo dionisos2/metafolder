@@ -20,6 +20,7 @@
       "/__schema-template.js": ["../panel-shim/schema-template.js"],
       "/__finder.js": ["../panel-shim/finder.js"],
       "/__find-entry.js": ["../panel-shim/find-entry.js"],
+      "/__keyhints.js": ["../panel-shim/keyhints.js"],
       "/__history.js": ["../panel-shim/history.js"],
       "/__help.js": ["../panel-shim/help.js"],
       "/__coalesce.js": ["../panel-shim/coalesce.js"],

@@ -8,14 +8,16 @@
 
 <h2>Using help</h2>
 <ul>
-  <li>Run <code>help</code> (or <code>help:help</code>) to open this panel.</li>
+  <li>Press <span data-mf-key="help:help">h h</span> — or run <code>help</code> —
+    to open this panel.</li>
   <li>
     <code>help:help "topic"</code> jumps straight to a page when the text is an
     exact name (a panel type, a command, an alias); otherwise it searches.
   </li>
   <li>Prefix the search box with <code>#</code> to force a text search.</li>
   <li>
-    <code>help:help-cursor</code> turns the pointer into a <code>?</code>; click
+    <span data-mf-key="help:help-cursor">h c</span> (<code>help:help-cursor</code>)
+    turns the pointer into a <code>?</code>; click
     any part of the window to open the matching help page, or press
     <strong>Escape</strong> to cancel.
   </li>
@@ -35,7 +37,8 @@
   </li>
   <li>
     <strong><a data-help-page="command-input">Command input</a></strong> — always
-    visible; type a command (with autocomplete) or <code>!</code> to run a shell
+    visible; <span data-mf-key="command-input:activate">:</span> focuses it — type
+    a command (with autocomplete) or <span data-mf-key="bash-input:activate">!</span> to run a shell
     command (with <code>%</code> placeholders for the selection).
   </li>
   <li>
@@ -71,7 +74,8 @@
 <ul>
   <li><a data-help-page="queries">Queries</a> — how panels select metarecords.</li>
   <li><a data-help-page="tracking">Tracking files</a> — opt-in watching, <code>mf_watch</code>/<code>mf_ignore</code>, reconcile.</li>
-  <li><a data-help-page="keybindings">Keyboard shortcuts</a> — the default key map.</li>
+  <li><a data-help-page="keybindings">Keyboard shortcuts</a> — your key map, read
+    from the keybindings file itself.</li>
   <li><a data-help-page="value-picker">Value picker</a> — filling reference fields.</li>
   <li><a data-help-page="input-history">Input history</a> — recall past entries.</li>
 </ul>

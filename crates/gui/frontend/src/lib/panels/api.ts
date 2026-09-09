@@ -416,6 +416,9 @@ export function createPanelApi(deps: PanelApiDeps, ctx: PanelApiCtx): PanelApiIn
         return result;
       },
       invoke: (invocation: string) => deps.dispatch(invocation),
+      // The live keybinding table, so a panel can *show* a shortcut rather than
+      // restate it: the help pages fill their key hints from it (/__keyhints.js).
+      keybindings: () => invoke('get_compiled_keybindings') as Promise<Metafolder.Binding[]>,
     },
 
     addKeybinding(

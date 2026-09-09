@@ -4,7 +4,9 @@
   is just a shortcut that dispatches one. Bindings live in a single file,
   <code>~/.config/metafolder/gui/keybindings.toml</code> — the
   <strong>complete</strong> set, editable through <code>config:open</code>
-  (which also shows the config paths). The tables below are the shipped defaults.
+  (which also shows the config paths). The keys in the tables below are read
+  from that file as it stands right now, so they are <em>your</em> keys: rebind
+  something and this page says so.
 </p>
 
 <h2>How keys are matched</h2>
@@ -29,88 +31,104 @@
 <h2>Workspaces and panels</h2>
 <table>
   <tbody>
-    <tr><td><code>t</code> / <code>w</code></td><td>new tab / close tab</td></tr>
-    <tr><td><code>n</code> / <code>p</code></td><td>next / previous workspace (moves both slots)</td></tr>
-    <tr><td><code>1</code>…<code>9</code></td><td>go to tab N</td></tr>
-    <tr><td><code>v</code> / <code>u</code></td><td>split toggle / unsplit</td></tr>
-    <tr><td><code>o</code> / <code>x</code></td><td>focus the other slot / swap the two slots</td></tr>
-    <tr><td><code>z</code></td><td>fullscreen the focused panel, and back (<code>Escape</code> also leaves it)</td></tr>
-    <tr><td><code>s</code> then a letter</td><td>set the focused slot's panel type (see below)</td></tr>
+    <tr><td><span data-mf-key="workspace:new">Ctrl+t</span> / <span data-mf-key="workspace:close">Ctrl+w</span></td><td>new tab / close tab</td></tr>
+    <tr><td><span data-mf-key="workspace:next">n</span> / <span data-mf-key="workspace:prev">p</span></td><td>next / previous workspace (moves both slots)</td></tr>
+    <tr><td><span data-mf-key="workspace:goto 1">1</span>…<span data-mf-key="workspace:goto 9">9</span></td><td>go to tab N</td></tr>
+    <tr><td><span data-mf-key="panel:split-toggle">v</span> / <span data-mf-key="panel:unsplit">u</span></td><td>split toggle / unsplit</td></tr>
+    <tr><td><span data-mf-key="panel:focus-next">o</span> / <span data-mf-key="panel:swap">x</span></td><td>focus the other slot / swap the two slots</td></tr>
+    <tr><td><span data-mf-key="panel:fullscreen">z</span></td><td>fullscreen the focused panel, and back (<span data-mf-key="find:close, editing:unfocus">Escape</span> also leaves it)</td></tr>
   </tbody>
 </table>
-<p><strong>Panel-type keys</strong> (after <code>s</code>):</p>
+<p><strong>Panel-type keys</strong> — each sets the focused slot's panel type:</p>
 <table>
   <tbody>
-    <tr><td><code>l</code> list · <code>d</code> detail · <code>f</code> file · <code>m</code> file-manager · <code>o</code> log · <code>r</code> repos</td><td></td></tr>
-    <tr><td><code>g</code> message · <code>w</code> workspace-info · <code>t</code> treeref · <code>v</code> recent</td><td></td></tr>
-    <tr><td><code>b</code> trash · <code>y</code> sync · <code>p</code> help · <code>u</code> duplicates</td><td></td></tr>
+    <tr><td><span data-mf-key="panel:set-type metarecord-list">t l</span> list ·
+      <span data-mf-key="panel:set-type metarecord-detail">t d</span> detail ·
+      <span data-mf-key="panel:set-type file">t f</span> file ·
+      <span data-mf-key="panel:set-type file-manager">t m</span> file-manager</td><td></td></tr>
+    <tr><td><span data-mf-key="panel:set-type log">t o</span> log ·
+      <span data-mf-key="panel:set-type repos">t r</span> repos ·
+      <span data-mf-key="panel:set-type message">t g</span> message ·
+      <span data-mf-key="panel:set-type workspace-info">t w</span> workspace-info</td><td></td></tr>
+    <tr><td><span data-mf-key="panel:set-type treeref">t t</span> treeref ·
+      <span data-mf-key="panel:set-type recent">t v</span> recent ·
+      <span data-mf-key="panel:set-type trash">t b</span> trash ·
+      <span data-mf-key="panel:set-type sync">t y</span> sync ·
+      <span data-mf-key="panel:set-type help">t h</span> help ·
+      <span data-mf-key="panel:set-type duplicates">t u</span> duplicates</td><td></td></tr>
   </tbody>
 </table>
 
 <h2>Navigation (list-like panels)</h2>
 <table>
   <tbody>
-    <tr><td><code>↑</code>/<code>↓</code> or <code>k</code>/<code>j</code></td><td>move the cursor up / down</td></tr>
-    <tr><td><code>Home</code> / <code>End</code></td><td>first / last row</td></tr>
-    <tr><td><code>Enter</code></td><td>the panel's primary action (open / descend / edit / expand)</td></tr>
-    <tr><td><code>→</code> / <code>←</code></td><td>descend / go up (in the tree and list panels)</td></tr>
-    <tr><td><code>Backspace</code></td><td>parent directory / parent node (in the
+    <tr><td><span data-mf-key="metarecord-list:prev, file-manager:prev, treeref:prev, log:prev, trash:prev, recent:prev, duplicates:prev, metarecord:field-next">↑ or k</span> / <span data-mf-key="metarecord-list:next, file-manager:next, treeref:next, log:next, trash:next, recent:next, duplicates:next, metarecord:field-next">↓ or j</span></td><td>move the cursor up / down</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:first, file-manager:first, treeref:first, log:first, recent:first">Home</span> / <span data-mf-key="metarecord-list:last, file-manager:last, treeref:last, log:last, recent:last">End</span></td><td>first / last row</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:open, file-manager:activate, treeref:descend, log:toggle-ops, trash:restore, recent:open, duplicates:toggle, metarecord:field-edit">Enter</span></td><td>the panel's primary action (open / descend / edit / expand)</td></tr>
+    <tr><td><span data-mf-key="treeref:parent, file-manager:parent, metarecord:back">← or Backspace</span></td><td>go up: parent node, parent directory, previous record (in the
       <a data-help-page="file">file</a> preview too: the folder holding the file)</td></tr>
-    <tr><td><code>r</code></td><td>refresh the view</td></tr>
-    <tr><td><code>f</code></td><td>jump to a row by name — the file manager, the
+    <tr><td><span data-mf-key="treeref:refresh, file-manager:refresh, trash:refresh, recent:refresh, repos:refresh, duplicates:refresh">r</span></td><td>refresh the view</td></tr>
+    <tr><td><span data-mf-key="file-manager:find, treeref:find, trash:find, recent:find">f</span></td><td>jump to a row by name — the file manager, the
       <a data-help-page="treeref">tree</a>, the <a data-help-page="trash">trash</a>
       and the <a data-help-page="recent">recent</a> list; in the metarecord list
       the same key edits the finder</td></tr>
-    <tr><td><code>Delete</code></td><td>send the selection to the <a data-help-page="trash">trash</a> (confirmed)</td></tr>
+    <tr><td><span data-mf-key="metarecord:trash, file-manager:delete, trash:delete, duplicates:trash">Delete</span></td><td>send the selection to the <a data-help-page="trash">trash</a> (confirmed)</td></tr>
   </tbody>
 </table>
 
 <h2>The metarecord list &amp; detail</h2>
 <table>
   <tbody>
-    <tr><td><code>/</code></td><td>focus the finder (quick filter)</td></tr>
-    <tr><td><code>Ctrl+/</code></td><td>edit the query</td></tr>
-    <tr><td><code>e f</code> / <code>e s</code> / <code>e q</code></td><td>edit a search field: finder / simplified query / normal DSL</td></tr>
-    <tr><td><code>c f</code> / <code>c s</code> / <code>c q</code></td><td>clear that field first, then edit it</td></tr>
-    <tr><td><code>c a</code></td><td>clear all three search fields</td></tr>
-    <tr><td><code>Enter</code> / <code>Shift+Enter</code></td><td>apply and leave the field / apply but keep focus</td></tr>
-    <tr><td><code>Space</code> / <code>Ctrl+Space</code></td><td>toggle selection / clear selection</td></tr>
-    <tr><td><code>a</code> / <code>d</code></td><td>add / delete a field (detail)</td></tr>
-    <tr><td><code>Ctrl+n</code> / <code>Ctrl+s</code></td><td>create / save a record (detail)</td></tr>
-    <tr><td><code>Backspace</code> / <code>←</code></td><td>back to the previously shown record (detail)</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:focus-finder">/ or e f</span></td><td>focus the finder (quick filter)</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:focus-query">Ctrl+/</span></td><td>focus the query editor</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:edit-simplified">e s</span> / <span data-mf-key="metarecord-list:edit-normal">e q</span></td><td>edit the simplified query / the normal DSL</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:clear-edit-finder">c f</span> / <span data-mf-key="metarecord-list:clear-edit-simplified">c s</span> / <span data-mf-key="metarecord-list:clear-edit-normal">c q</span></td><td>clear that field first, then edit it</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:clear-queries">c a</span></td><td>clear all three search fields</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:submit-finder">Enter</span> / <span data-mf-key="metarecord-list:apply-finder">Shift+Enter</span></td><td>apply and leave the field / apply but keep focus</td></tr>
+    <tr><td><span data-mf-key="metarecord-list:select-toggle">Space</span> / <span data-mf-key="metarecord-list:select-none">Ctrl+Space</span></td><td>toggle selection / clear selection</td></tr>
+    <tr><td><span data-mf-key="metarecord:open-add-field">a</span> / <span data-mf-key="metarecord:field-delete">d</span></td><td>add / delete a field (detail)</td></tr>
+    <tr><td><span data-mf-key="metarecord:create">Ctrl+n</span></td><td>create a record (detail)</td></tr>
+    <tr><td><span data-mf-key="metarecord:back">Backspace or ←</span></td><td>back to the previously shown record (detail)</td></tr>
   </tbody>
 </table>
 <p>
   The <code>m</code> sequences edit fields from the command input, with
   completion (they work from both the list and the detail panel):
-  <code>m s</code> set · <code>m a</code> add value · <code>m v</code> edit
-  value · <code>m d</code> delete value · <code>m n</code> rename ·
-  <code>m t</code> retype. The <strong>bulk</strong> variants act on the whole
-  selection: <code>m b s</code> set · <code>m b a</code> add · <code>m b r</code>
-  remove.
+  <span data-mf-key="metarecord:set-field">m s</span> set ·
+  <span data-mf-key="metarecord:add-field-value">m a</span> add value ·
+  <span data-mf-key="metarecord:edit-field-value">m v</span> edit value ·
+  <span data-mf-key="metarecord:delete-field-value">m d</span> delete value ·
+  <span data-mf-key="metarecord:edit-field-name">m n</span> rename ·
+  <span data-mf-key="metarecord:edit-field-type">m t</span> retype. The
+  <strong>bulk</strong> variants act on the whole selection:
+  <span data-mf-key="metarecord-list:bulk-edit">m b</span> from the list (it asks
+  which operation), and from the detail panel
+  <span data-mf-key="metarecord:bulk-set-field">m m s</span> set ·
+  <span data-mf-key="metarecord:bulk-add-field-value">m m a</span> add ·
+  <span data-mf-key="metarecord:bulk-remove-field">m m r</span> remove.
 </p>
 
 <h2>File manager &amp; file preview</h2>
 <table>
   <tbody>
-    <tr><td><code>Ctrl+c</code> / <code>Ctrl+x</code> / <code>Ctrl+v</code></td><td>copy / cut / paste (file-manager)</td></tr>
-    <tr><td><code>F2</code> / <code>Ctrl+d</code></td><td>rename / duplicate</td></tr>
-    <tr><td><code>Ctrl+Shift+n</code></td><td>new folder</td></tr>
-    <tr><td><code>+</code> / <code>-</code> / <code>=</code> / <code>0</code></td><td>zoom in / out / fit / reset (<a data-help-page="file">file</a> preview)</td></tr>
-    <tr><td><code>Space</code></td><td>play / pause the previewed media</td></tr>
-    <tr><td><code>←</code> / <code>→</code> (with <code>Shift</code>)</td><td>seek 10 s (60 s)</td></tr>
-    <tr><td><code>[</code> / <code>]</code> / <code>Shift+Backspace</code></td><td>slower / faster / normal speed</td></tr>
-    <tr><td><code>Shift+↑</code> / <code>Shift+↓</code> / <code>Ctrl+m</code></td><td>louder / quieter / mute</td></tr>
+    <tr><td><span data-mf-key="file-manager:copy">Ctrl+c</span> / <span data-mf-key="file-manager:cut">Ctrl+x</span> / <span data-mf-key="file-manager:paste">Ctrl+v</span></td><td>copy / cut / paste (file-manager)</td></tr>
+    <tr><td><span data-mf-key="file-manager:rename">F2</span> / <span data-mf-key="file-manager:duplicate">Ctrl+d</span></td><td>rename / duplicate</td></tr>
+    <tr><td><span data-mf-key="file-manager:new-folder">Ctrl+Shift+n</span></td><td>new folder</td></tr>
+    <tr><td><span data-mf-key="file:zoom-in">+</span> / <span data-mf-key="file:zoom-out">-</span> / <span data-mf-key="file:zoom-fit">=</span> / <span data-mf-key="file:zoom-reset">0</span></td><td>zoom in / out / fit / reset (<a data-help-page="file">file</a> preview)</td></tr>
+    <tr><td><span data-mf-key="file:play-pause">Space</span></td><td>play / pause the previewed media</td></tr>
+    <tr><td><span data-mf-key="file:seek-backward">←</span> / <span data-mf-key="file:seek-forward">→</span> (longer: <span data-mf-key="file:seek-backward-long">Shift+←</span> / <span data-mf-key="file:seek-forward-long">Shift+→</span>)</td><td>seek 10 s (60 s)</td></tr>
+    <tr><td><span data-mf-key="file:speed-down">[</span> / <span data-mf-key="file:speed-up">]</span> / <span data-mf-key="file:speed-reset">Shift+Backspace</span></td><td>slower / faster / normal speed</td></tr>
+    <tr><td><span data-mf-key="file:volume-up">Shift+↑</span> / <span data-mf-key="file:volume-down">Shift+↓</span> / <span data-mf-key="file:mute">Ctrl+m</span></td><td>louder / quieter / mute</td></tr>
   </tbody>
 </table>
 
 <h2>Duplicates</h2>
 <table>
   <tbody>
-    <tr><td><code>Enter</code></td><td>expand a group into its copies (again on a copy: collapse)</td></tr>
-    <tr><td><code>Shift+k</code></td><td>keep the copy under the cursor — the group's other copies go to the
+    <tr><td><span data-mf-key="duplicates:toggle">Enter</span></td><td>expand a group into its copies (again on a copy: collapse)</td></tr>
+    <tr><td><span data-mf-key="duplicates:keep">Shift+k</span></td><td>keep the copy under the cursor — the group's other copies go to the
       <a data-help-page="trash">trash</a> (confirmed, and it lists them first)</td></tr>
-    <tr><td><code>Delete</code></td><td>trash the copy under the cursor, and only it</td></tr>
+    <tr><td><span data-mf-key="duplicates:trash">Delete</span></td><td>trash the copy under the cursor, and only it</td></tr>
   </tbody>
 </table>
 <p>A group whose copies are down to one is dropped from the list: a lone file is
@@ -121,16 +139,18 @@
 <h2>Global &amp; editing</h2>
 <table>
   <tbody>
-    <tr><td><code>:</code> / <code>!</code></td><td>focus the command input / the shell (<code>!</code>) input</td></tr>
-    <tr><td><code>Ctrl+z</code> / <code>Ctrl+Shift+z</code></td><td>undo / redo one revision (<a data-help-page="log">log</a>)</td></tr>
-    <tr><td><code>Ctrl+f</code></td><td><a data-help-page="find">find text</a> in the focused panel (<code>Enter</code> / <code>Shift+Enter</code> step, <code>Escape</code> closes)</td></tr>
-    <tr><td><code>g r</code></td><td>jump to a <a data-help-page="recent">recently-viewed</a> metarecord</td></tr>
-    <tr><td><code>h h</code> / <code>h c</code> / <code>F1</code></td><td>open help / arm the help-cursor / help-cursor</td></tr>
-    <tr><td><code>Escape</code></td><td>unfocus a text input (keep the draft); cancel a pending sequence</td></tr>
-    <tr><td><code>Ctrl+q</code></td><td>discard the input draft</td></tr>
-    <tr><td><code>Ctrl+a</code> / <code>Ctrl+e</code></td><td>go to line start / end</td></tr>
-    <tr><td><code>Ctrl+l</code></td><td>dismiss the transient status-bar message</td></tr>
-    <tr><td><code>Ctrl+Enter</code> / <code>Ctrl+Escape</code></td><td>confirm / cancel a <a data-help-page="value-picker">value picker</a></td></tr>
+    <tr><td><span data-mf-key="command-input:activate">:</span> / <span data-mf-key="bash-input:activate">!</span></td><td>focus the command input / the shell (<code>!</code>) input</td></tr>
+    <tr><td><span data-mf-key="log:undo">Ctrl+z</span> / <span data-mf-key="log:redo">Ctrl+Shift+z</span></td><td>undo / redo one revision (<a data-help-page="log">log</a>)</td></tr>
+    <tr><td><span data-mf-key="find:in-panel">Ctrl+f</span></td><td><a data-help-page="find">find text</a> in the focused panel (<span data-mf-key="find:next">Enter</span> / <span data-mf-key="find:prev">Shift+Enter</span> step, <span data-mf-key="find:close">Escape</span> closes)</td></tr>
+    <tr><td><span data-mf-key="recent">g r</span></td><td>jump to a <a data-help-page="recent">recently-viewed</a> metarecord</td></tr>
+    <tr><td><span data-mf-key="script:run">g s</span> / <span data-mf-key="repos:switch">g o</span> / <span data-mf-key="file:open-with">g w</span></td><td>run a <a data-help-page="scripting">script</a> / open a repository / open the selection with another program</td></tr>
+    <tr><td><span data-mf-key="help:help">h h</span> / <span data-mf-key="help:help-cursor">h c</span></td><td>open help / arm the help-cursor</td></tr>
+    <tr><td><span data-mf-key="editing:unfocus">Escape</span></td><td>unfocus a text input (keep the draft); cancel a pending sequence</td></tr>
+    <tr><td><span data-mf-key="editing:discard">Ctrl+q</span></td><td>discard the input draft</td></tr>
+    <tr><td><span data-mf-key="editing:goto-line-start">Ctrl+a</span> / <span data-mf-key="editing:goto-line-end">Ctrl+e</span></td><td>go to line start / end</td></tr>
+    <tr><td><span data-mf-key="status:clear">Ctrl+l</span></td><td>dismiss the transient status-bar message</td></tr>
+    <tr><td><span data-mf-key="pick:confirm">Ctrl+Enter</span> / <span data-mf-key="pick:cancel">Ctrl+Escape</span></td><td>confirm / cancel a <a data-help-page="value-picker">value picker</a></td></tr>
+    <tr><td><span data-mf-key="script-keys:toggle">Tab</span></td><td>hand the keys back to the panels while a <a data-help-page="scripting">script</a> is asking, and take them again</td></tr>
   </tbody>
 </table>
 <p>
@@ -146,4 +166,8 @@
   A key maps to a single binding, or to an array of per-panel bindings
   (<code>when = "&lt;panel-type&gt;"</code>); <code>text-input = true</code> lets
   it fire while typing. <code>set</code> upserts and <code>remove</code> unbinds.
+  Whatever you change, the tables above follow: they name the command and read
+  the key back from the live table, so a command you unbind reads
+  <span class="unbound">unbound</span> here rather than a key that no longer
+  works.
 </p>

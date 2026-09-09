@@ -8,14 +8,16 @@
 
 <h2>Browsing</h2>
 <p>
-  Move through revisions with the arrows / <code>j</code>/<code>k</code>;
-  <kbd>Enter</kbd> expands a revision to show its operations. Watcher, reconcile
-  and manual edits all appear here.
+  Move through revisions with <span data-mf-key="log:prev">↑ or k</span> /
+  <span data-mf-key="log:next">↓ or j</span>;
+  <span data-mf-key="log:toggle-ops">Enter</span> expands a revision to show its
+  operations. Watcher, reconcile and manual edits all appear here.
 </p>
 
 <h2>Undo / redo</h2>
 <p>
-  <code>Ctrl+z</code> (<code>log:undo</code>) and <code>Ctrl+Shift+z</code>
+  <span data-mf-key="log:undo">Ctrl+z</span> (<code>log:undo</code>) and
+  <span data-mf-key="log:redo">Ctrl+Shift+z</span>
   (<code>log:redo</code>) move HEAD one revision back / forward on the active
   repository, restoring field values <em>and</em> versions exactly. Navigation is
   atomic: it computes the shortest path between where HEAD is and where you asked

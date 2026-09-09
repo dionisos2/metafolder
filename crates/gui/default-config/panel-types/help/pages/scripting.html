@@ -30,7 +30,7 @@
   back. Unticked, every key means again what it means in the panel; the question
   stays on screen (its keys struck through) and can still be answered from the
   command input, or by ticking the box again. <code>script-keys:toggle</code>
-  (<kbd>Tab</kbd>) flips it. Your choice holds for the rest of the session, but
+  (<span data-mf-key="script-keys:toggle">Tab</span>) flips it. Your choice holds for the rest of the session, but
   every <em>new</em> run starts with its keys live.
 </p>
 
@@ -38,8 +38,9 @@
 <p>
   <kbd>Escape</kbd> stops the asking script outright — the run and every command
   it started. It always works, whatever keys the script grabbed, because no
-  script is allowed to take it: <kbd>Escape</kbd>, <kbd>Tab</kbd> and
-  <code>:</code> are <strong>reserved</strong>, and a script asking for one of
+  script is allowed to take it: <kbd>Escape</kbd>,
+  <span data-mf-key="script-keys:toggle">Tab</span> and
+  <span data-mf-key="command-input:activate">:</span> are <strong>reserved</strong>, and a script asking for one of
   them is refused. With the script keys unticked, <kbd>Escape</kbd> is an
   ordinary GUI key again and <code>script:stop</code> does the same job from the
   command input.

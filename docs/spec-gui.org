@@ -1378,6 +1378,28 @@ embeds the *current* simplified-query grammar (read at startup via the
 resolution and the grep filter are the pure functions in =/__help.js=
 (=resolvePage=, =filterPages=, =resolveClickTopic=), unit-tested in the frontend.
 
+*Key hints*: a help page never writes a key. It writes the *command*
+(=<span data-mf-key="treeref:find">f</span>=) and the panel fills the element in
+at display from the live keybinding table (=metafolder.commands.keybindings()=),
+one =<kbd>= per combo, several joined with "or". So a page shows the key the
+user *actually* has: rebinding something changes the help, and a page cannot
+drift from =keybindings.toml= the way a hand-written key did. Rules
+(=/__keyhints.js=, =formatCombo= / =keysFor= / =applyKeyHints=):
+
+- The attribute holds one invocation, or several separated by commas — the union
+  of their keys, deduplicated, in table order. Several is how a generic row is
+  written ("move the cursor down" means the =:next= command of every list panel).
+- A bare command name matches every invocation of it (so =panel:set-type= alone
+  would list all of them); a fuller one (=panel:set-type treeref=) matches only
+  itself. Same rule as the command input's shortcut display.
+- Combos are spelled as the pages spell them: modifiers capitalised
+  (=Ctrl+Shift+z=), arrows as arrows, a sequence as its combos in order (=t l=).
+- A command *nothing* is bound to reads =unbound=, rather than a key that would
+  not work. The element's shipped content is only a fallback for reading the
+  page source, and is what the grep index holds.
+- The table is re-read on every page display, so a rebinding shows on the next
+  page opened without restarting.
+
 ** Context menus
 
 The WebView's native context menu (back/forward/reload/inspect…) is
@@ -1634,6 +1656,13 @@ metafolder.addKeybinding('my-panel:change-mode list', 'ctrl+l')
 metafolder.addKeybinding('my-panel:change-mode grid', 'ctrl+g')
 metafolder.addKeybinding('my-panel:edit-text', 'ctrl+e', { textInput: true })
 metafolder.addKeybinding('editing:unfocus',    'escape', { textInput: true })
+
+// The compiled table as it stands now (a snapshot, not a subscription): what
+// the user's keybindings.toml and the panel suggestions add up to. The help
+// pages fill their key hints from it (see *Help*).
+const bindings = await metafolder.commands.keybindings()
+// [{ keys: ['ctrl+shift+z'], invocation: 'log:redo', when: null,
+//    text_input: false, focus: null }, …]
 #+END_SRC
 
 Registered commands appear in the command input autocomplete alongside
@@ -2384,7 +2413,8 @@ so =metarecord-detail= follows) and =selected_treeref=
 (=\{repo, field, uuid, path\}=).
 
 *Keyboard*: =Up=/=Down= (or =j=/=k=) move; =Enter=/=Right= descend;
-=Backspace=/=Left= go up; =r= refreshes; =f= jumps to a child by name (see
+=Backspace=/=Left= go up; =/= jumps back to the forest roots (as it jumps to the
+root in the file manager); =r= refreshes; =f= jumps to a child by name (see
 [[*Find an entry]]), =Shift+F= picks the explored field; =l= lists what points at
 the node, =s= toggles the scope, =e= picks the Ref field.
 

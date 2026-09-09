@@ -248,6 +248,20 @@ declare namespace Metafolder {
   interface Commands {
     register(name: string, options?: CommandOptions): Promise<unknown>;
     invoke(invocation: string): unknown;
+    /** The compiled keybinding table as it stands now — what the user's
+     *  `keybindings.toml` and the panel suggestions add up to. A snapshot: call
+     *  it again to see a rebinding (spec-gui "Help"). */
+    keybindings(): Promise<Binding[]>;
+  }
+
+  /** One compiled keybinding (`CompiledBinding`): a combo *sequence*, the
+   *  invocation it runs, and its scope. */
+  interface Binding {
+    keys: string[];
+    invocation: string;
+    when: string | null;
+    text_input: boolean;
+    focus: string | null;
   }
 
   interface FsEntry {

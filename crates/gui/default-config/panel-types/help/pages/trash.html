@@ -21,17 +21,18 @@
 
 <h2>The panel</h2>
 <p>
-  Lists the trashed entries. Navigate with the arrows / <code>j</code>/<code>k</code>,
+  Lists the trashed entries. Navigate with
+  <span data-mf-key="trash:prev">↑ or k</span> / <span data-mf-key="trash:next">↓ or j</span>,
   and:
 </p>
 <ul>
-  <li><strong>restore</strong> (<kbd>Enter</kbd>) — put the entry back at its original path.</li>
-  <li><strong>delete</strong> (<code>Delete</code>) — permanently remove the highlighted entry (confirmed).</li>
-  <li><strong>empty</strong> — permanently remove everything.</li>
-  <li><strong>find</strong> (<code>f</code>) — jump to an entry by name; the
+  <li><strong>restore</strong> (<span data-mf-key="trash:restore">Enter</span>) — put the entry back at its original path.</li>
+  <li><strong>delete</strong> (<span data-mf-key="trash:delete">Delete</span>) — permanently remove the highlighted entry (confirmed).</li>
+  <li><strong>empty</strong> (<code>trash:empty</code>) — permanently remove everything.</li>
+  <li><strong>find</strong> (<span data-mf-key="trash:find">f</span>) — jump to an entry by name; the
     completion shows the path each was trashed from, so two entries that share a
     name are still told apart (see <a data-help-page="find">find</a>).</li>
-  <li><code>r</code> — refresh the list.</li>
+  <li><span data-mf-key="trash:refresh">r</span> — refresh the list.</li>
 </ul>
 <p>
   Pruning by age or size is available from the CLI (<code>mf trash prune</code>).

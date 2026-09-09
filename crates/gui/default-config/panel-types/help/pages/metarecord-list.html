@@ -7,7 +7,8 @@
 <h2>Finder (quick filter)</h2>
 <p>
   The search box at the top is the <strong>finder</strong>: a fast, incremental
-  filter that narrows the list as you type. Press <code>/</code> to focus it.
+  filter that narrows the list as you type. Press
+  <span data-mf-key="metarecord-list:focus-finder">/</span> to focus it.
   Each whitespace-separated word must appear <em>as a substring, in order</em>
   (&ldquo;ordered substring&rdquo;): <code>scien fic</code> matches
   <code>science-fiction</code>, and <code>conf gui</code> matches a path
@@ -28,9 +29,12 @@
   Type a <a data-help-page="queries">simplified query</a> and press
   <strong>Enter</strong> (or <em>Apply</em>) to run it; an empty query lists
   everything. <em>Show normal DSL</em> reveals the expanded query, which you can
-  freeze to edit by hand. Focus it with <code>Ctrl+/</code>, or with
-  <code>e s</code> / <code>c s</code> (clear first), which also unfreeze the DSL
-  editor so the simplified text drives the query again.
+  freeze to edit by hand. Focus it with
+  <span data-mf-key="metarecord-list:focus-query">Ctrl+/</span>, or with
+  <span data-mf-key="metarecord-list:edit-simplified">e s</span> /
+  <span data-mf-key="metarecord-list:clear-edit-simplified">c s</span> (clear
+  first), which also unfreeze the DSL editor so the simplified text drives the
+  query again.
 </p>
 
 <h2>Columns</h2>
@@ -71,7 +75,8 @@
 
 <h2>Working with results</h2>
 <p>
-  Move the cursor with the arrow keys (or <code>j</code>/<code>k</code>); results
+  Move the cursor with <span data-mf-key="metarecord-list:prev">↑ or k</span> /
+  <span data-mf-key="metarecord-list:next">↓ or j</span>; results
   load progressively as you scroll. Bulk field edits apply to the whole result
   set through the daemon's set/append/remove operations. Pair this panel with the
   <a data-help-page="metarecord-detail">detail panel</a> to inspect one record.

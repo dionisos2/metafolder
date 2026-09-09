@@ -9,17 +9,18 @@
 <h2>Navigating</h2>
 <table>
   <tbody>
-    <tr><td><code>↑</code>/<code>↓</code> or <code>k</code>/<code>j</code></td><td>move the cursor</td></tr>
-    <tr><td><kbd>Enter</kbd> or <code>→</code></td><td>descend into the node</td></tr>
-    <tr><td><code>←</code> or <code>Backspace</code></td><td>go up to the parent</td></tr>
-    <tr><td><code>Home</code> / <code>End</code></td><td>first / last node</td></tr>
-    <tr><td><code>r</code></td><td>refresh</td></tr>
-    <tr><td><code>f</code></td><td>jump to a child by name (completes over the children shown)</td></tr>
+    <tr><td><span data-mf-key="treeref:prev">↑ or k</span> / <span data-mf-key="treeref:next">↓ or j</span></td><td>move the cursor</td></tr>
+    <tr><td><span data-mf-key="treeref:descend">Enter or →</span></td><td>descend into the node</td></tr>
+    <tr><td><span data-mf-key="treeref:parent">← or Backspace</span></td><td>go up to the parent</td></tr>
+    <tr><td><span data-mf-key="treeref:first">Home</span> / <span data-mf-key="treeref:last">End</span></td><td>first / last node</td></tr>
+    <tr><td><span data-mf-key="treeref:root">/</span></td><td>back to the forest roots</td></tr>
+    <tr><td><span data-mf-key="treeref:refresh">r</span></td><td>refresh</td></tr>
+    <tr><td><span data-mf-key="treeref:find">f</span></td><td>jump to a child by name (completes over the children shown)</td></tr>
   </tbody>
 </table>
 <p>
   Which forest it shows is chosen by its field (default <code>mfr_path</code>);
-  <code>Shift+F</code> picks another one without leaving the keyboard — the
+  <span data-mf-key="treeref:set-field">Shift+F</span> picks another one without leaving the keyboard — the
   minibuffer starts empty and completes over the repository's TreeRef fields.
 </p>
 
@@ -33,7 +34,7 @@
 <pre>tag -&gt; (path = "music/jazz")      the node itself
 tag -&gt; (path =&gt;* "music/jazz")    the node and every tag below it</pre>
 <p>
-  <code>l</code> (or <em>List what tag points at here</em> in the right-click
+  <span data-mf-key="treeref:list-refs">l</span> (or <em>List what tag points at here</em> in the right-click
   menu) runs it in a <a data-help-page="metarecord-list">metarecord list</a>
   opened in the other slot, with the query left visible and editable in its
   normal-DSL zone — so it can be narrowed further, or composed with anything
@@ -41,8 +42,8 @@ tag -&gt; (path =&gt;* "music/jazz")    the node and every tag below it</pre>
 </p>
 <table>
   <tbody>
-    <tr><td><code>l</code></td><td>list what the Ref field points at here</td></tr>
-    <tr><td><code>s</code></td><td>toggle the scope (exact ⇄ + descendants)</td></tr>
+    <tr><td><span data-mf-key="treeref:list-refs">l</span></td><td>list what the Ref field points at here</td></tr>
+    <tr><td><span data-mf-key="treeref:toggle-scope">s</span></td><td>toggle the scope (exact ⇄ + descendants)</td></tr>
     <tr><td><code>e</code></td><td>choose the Ref field to follow back</td></tr>
   </tbody>
 </table>

@@ -6,6 +6,7 @@
 
 import { byId, el } from '/__ui.js';
 import { resolvePage, filterPages } from '/__help.js';
+import { applyKeyHints } from '/__keyhints.js';
 
 /**
  * A page of the manifest (pages/index.json), as /__help.js describes it.
@@ -21,6 +22,24 @@ export async function mount(root, metafolder) {
   const content = byId(root, 'help-content');
 
   const base = `${metafolder.guiServer}/panel/help/pages`;
+
+  // The key hints of the pages (`<kbd data-mf-key="command">`) are filled in
+  // from the live keybinding table, never written into the HTML: a page states
+  // which *command* a shortcut runs, and the key shown is the one actually
+  // bound to it — the shipped default, or whatever the user rebound it to
+  // (spec-gui "Help"). Read once per mount and refreshed on every page display,
+  // so a rebinding shows on the next page opened.
+  /** @type {Metafolder.Binding[]} */
+  let keytable = [];
+  async function readKeytable() {
+    try {
+      keytable = await metafolder.commands.keybindings();
+    } catch {
+      /* no table (an old shell, a failed call): the hints read "unbound" rather
+         than claiming a key nothing checked */
+    }
+  }
+  await readKeytable();
 
   // Load the manifest and every page (raw HTML kept for display; textContent
   // built into a grep index).
@@ -57,6 +76,11 @@ export async function mount(root, metafolder) {
     results.replaceChildren();
     content.hidden = false;
     content.innerHTML = raw;
+    applyKeyHints(content, keytable);
+    // …and again with a fresh table, so a rebinding made since the panel was
+    // mounted is reflected without a restart.
+    void readKeytable().then(() => applyKeyHints(content, keytable));
+
     // Live grammar: the queries page carries a placeholder we fill at display.
     const grammar = content.querySelector('#grammar-source');
     if (grammar) {

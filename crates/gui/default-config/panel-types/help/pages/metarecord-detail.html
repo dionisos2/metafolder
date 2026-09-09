@@ -20,7 +20,7 @@
 <h2>Following references</h2>
 <p>
   Clicking a reference value opens the metarecord it points at, so a chain of
-  them is browsed like pages. <kbd>Backspace</kbd> (or <kbd>←</kbd>) goes
+  them is browsed like pages. <span data-mf-key="metarecord:back">Backspace or ←</span> goes
   <strong>back</strong> to the record shown before —
   <code>metarecord:back</code>, and it walks back through the whole trail,
   including records you reached from the list.
@@ -47,19 +47,24 @@
 </p>
 
 <h2>Editing</h2>
-<p>Move between fields with the arrows / <code>j</code>/<code>k</code>. Then:</p>
+<p>Move between fields with <span data-mf-key="metarecord:field-prev">↑ or k</span> /
+  <span data-mf-key="metarecord:field-next">↓ or j</span>. Then:</p>
 <table>
   <tbody>
-    <tr><td><kbd>Enter</kbd></td><td>edit the field value under the cursor</td></tr>
-    <tr><td><code>a</code> / <code>d</code></td><td>add a field / delete the field under the cursor</td></tr>
-    <tr><td><code>Ctrl+n</code> / <code>Ctrl+s</code></td><td>create a new record / save changes</td></tr>
+    <tr><td><span data-mf-key="metarecord:field-edit">Enter</span></td><td>edit the field value under the cursor</td></tr>
+    <tr><td><span data-mf-key="metarecord:open-add-field">a</span> / <span data-mf-key="metarecord:field-delete">d</span></td><td>add a field / delete the field under the cursor</td></tr>
+    <tr><td><span data-mf-key="metarecord:create">Ctrl+n</span></td><td>create a new record (an edit is saved as it is confirmed)</td></tr>
   </tbody>
 </table>
 <p>
   The command-input <code>m</code> family does the same from either the detail or
-  the list panel, with completion: <code>m s</code> set, <code>m a</code> add
-  value, <code>m v</code> edit value, <code>m d</code> delete value,
-  <code>m n</code> rename, <code>m t</code> retype. See the
+  the list panel, with completion:
+  <span data-mf-key="metarecord:set-field">m s</span> set,
+  <span data-mf-key="metarecord:add-field-value">m a</span> add value,
+  <span data-mf-key="metarecord:edit-field-value">m v</span> edit value,
+  <span data-mf-key="metarecord:delete-field-value">m d</span> delete value,
+  <span data-mf-key="metarecord:edit-field-name">m n</span> rename,
+  <span data-mf-key="metarecord:edit-field-type">m t</span> retype. See the
   <a data-help-page="keybindings">keyboard shortcuts</a> for the full family
   (including the <code>m b *</code> bulk edits that act on the list selection).
 </p>

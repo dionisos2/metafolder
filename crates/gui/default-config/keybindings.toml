@@ -294,6 +294,9 @@
 "/" = [
   { command = "metarecord-list:focus-finder", when = "metarecord-list" },
   { command = "file-manager:goto-root", when = "file-manager" },
+  # The tree explorer browses a forest the way the file manager browses the
+  # disk, so "/" means the same there: back to the roots.
+  { command = "treeref:root", when = "treeref" },
 ]
 # Show/hide dot-entries, on the combo the desktop file managers use.
 "ctrl+h" = { command = "file-manager:toggle-hidden", when = "file-manager" }

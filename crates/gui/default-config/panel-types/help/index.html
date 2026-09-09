@@ -91,6 +91,21 @@
         padding: 1px 4px;
         border-radius: 3px;
       }
+      /* Key hints (`<span data-mf-key>` filled in from the live keybinding
+         table): one <kbd> per combo, drawn as a key cap. */
+      #help-content kbd {
+        font-family: var(--mf-font-mono, monospace);
+        background: var(--mf-bg-raised, #26262e);
+        border: 1px solid var(--mf-border, #33333d);
+        border-bottom-width: 2px;
+        padding: 0 5px;
+        border-radius: 4px;
+        white-space: nowrap;
+      }
+      #help-content .unbound {
+        color: var(--mf-fg-dim, #8a8a96);
+        font-style: italic;
+      }
       #help-content pre {
         font-family: var(--mf-font-mono, monospace);
         background: var(--mf-bg-raised, #26262e);

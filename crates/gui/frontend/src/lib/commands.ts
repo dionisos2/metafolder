@@ -3,6 +3,7 @@
 // tested; dispatch routes to Tauri commands and panel iframes.
 
 import { osmMatch } from '../../../panel-shim/finder.js';
+import { bindingMatches } from '../../../panel-shim/keyhints.js';
 import { folderContentsQuery, selectionFolder } from './folder';
 import { setHelpCursor } from './cursor';
 import { closeFind, openFind, stepFind } from './find';
@@ -32,16 +33,15 @@ export function parseInvocation(input: string): ParsedInvocation {
 }
 
 /** Key combos bound to a command (exact or with parameters), for the
- *  autocomplete display. */
+ *  autocomplete display. Raw combos, unlike the help pages' key hints, which
+ *  spell them out (panel-shim/keyhints.js) — the matching rule is the shared
+ *  one. */
 export function shortcutsFor(
   keytable: { keys: string[]; invocation: string }[],
   commandName: string,
 ): string[] {
   return keytable
-    .filter(
-      (binding) =>
-        binding.invocation === commandName || binding.invocation.startsWith(commandName + ' '),
-    )
+    .filter((binding) => bindingMatches(binding, commandName))
     .map((binding) => binding.keys.join(' '));
 }
 
