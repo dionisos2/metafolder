@@ -182,6 +182,44 @@ fn test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation() {
     assert_eq!(values, vec![Value::String("3".into()), Value::String("5".into())]);
 }
 
+/// The contrast that explains the refusal above: a *rollback* across the same
+/// retype works. Navigation does not go through the `Writer` at all — its
+/// inverse writes rows with `db::insert_field_row` directly — so
+/// `validate_value_type` never runs, and the intermediate states it would have
+/// objected to are never examined by anything.
+#[test]
+fn test_rollback_across_a_retype_works_where_a_revert_cannot() {
+    let mut conn = test_conn();
+    let uuid = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let m = w
+            .create_metarecord(vec![
+                Field::new("rating", Value::Int(3)),
+                Field::new("rating", Value::Int(5)),
+            ])
+            .unwrap();
+        w.commit().unwrap();
+        m.uuid
+    };
+    let before = state(&conn);
+    let checkpoint = log::get_head(&conn).unwrap();
+
+    {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.retype_field("rating", metafolder_core::metarecord::FieldType::String).unwrap();
+        w.commit().unwrap();
+    }
+    assert_ne!(state(&conn), before, "the retype converted the rows");
+
+    log::navigate(&mut conn, checkpoint).unwrap();
+
+    let mut values = field_values(&conn, uuid, "rating");
+    values.sort_by_key(|v| format!("{v:?}"));
+    assert_eq!(values, vec![Value::Int(3), Value::Int(5)], "both rows are ints again");
+    // And a rollback restores the row ids exactly, so the whole state matches.
+    assert_eq!(state(&conn), before);
+}
+
 // ── Reverting a whole-record write ────────────────────────────────────────────
 
 #[test]
