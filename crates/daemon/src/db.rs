@@ -861,6 +861,21 @@ pub fn established_value_type(conn: &Connection, name: &str) -> Result<Option<St
         .optional()?)
 }
 
+/// Every distinct non-`Nothing` value type recorded under `name`, repo-wide.
+/// More than one means the "one value type per field name" invariant is broken
+/// (spec-data-model); the deferred check a revert runs at commit asks exactly
+/// this.
+pub fn distinct_value_types(conn: &Connection, name: &str) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT DISTINCT value_type FROM field \
+         WHERE field_name = ?1 AND value_type != 'nothing' ORDER BY value_type",
+    )?;
+    let types = stmt
+        .query_map(params![name], |r| r.get::<_, String>(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(types)
+}
+
 /// The current log HEAD operation id (`log_head.op_id`), or `None` before any
 /// operation. Used as the freshness marker for the in-memory query index.
 pub fn current_head(conn: &Connection) -> Result<Option<i64>> {

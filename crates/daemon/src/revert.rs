@@ -215,6 +215,9 @@ pub fn written_as(op: &OpRow) -> OpType {
 /// revert cannot. Every row a step re-creates is recorded here under the id it
 /// used to have, so a later (older) row-scoped inverse finds it again.
 pub fn apply(writer: &mut Writer, ops: &[OpRow]) -> Result<usize> {
+    // The reverse walk passes through states that need not be type-consistent
+    // even when the one it lands on is; the check moves to commit.
+    writer.defer_type_checks();
     let mut remap: HashMap<i64, i64> = HashMap::new();
     let mut done = 0usize;
     for op in ops.iter().rev() {

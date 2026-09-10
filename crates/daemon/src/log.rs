@@ -1258,6 +1258,10 @@ pub struct Writer<'c> {
     /// per-write type probe to one DB seek per field name (a bulk reconcile/watcher
     /// revision writes the same ~8 reserved names across thousands of records).
     field_types: HashMap<String, String>,
+    /// Field names whose type check this revision deferred to commit, and the
+    /// reason it may: see [`Self::defer_type_checks`]. Empty for every ordinary
+    /// write, which is checked as it happens.
+    deferred_types: Option<HashSet<String>>,
     /// How much history to keep behind HEAD; applied on commit.
     retention: Retention,
     /// What this revision will oblige its caller to refresh, accumulated as the
@@ -1308,6 +1312,7 @@ impl<'c> Writer<'c> {
             flushed: 0,
             pending: Vec::new(),
             field_types: HashMap::new(),
+            deferred_types: None,
             retention,
             effects: WriteEffects::default(),
             tree_seen: HashMap::new(),
@@ -1391,6 +1396,47 @@ impl<'c> Writer<'c> {
     /// Without it the children stayed, naming a node that no longer existed:
     /// *detached*, reachable by uuid but under no parent and in no roots map, so
     /// `GET /tree/roots` and path reconstruction disagreed about them ever after.
+    /// Defers this revision's type checks to [`Self::commit`], where they are
+    /// made against the state the revision lands on rather than against each
+    /// intermediate one.
+    ///
+    /// Only a revert needs this, and only because of how it works: it undoes a
+    /// set of operations one inverse at a time, newest to oldest, and the states
+    /// in between need not be type-consistent even when the final one is.
+    /// Undoing a `retype_field` is the case — after the last converted row's
+    /// `append_field` is undone, the cell still holds the others in the *new*
+    /// type. A rollback never meets this because navigation does not go through
+    /// a `Writer` at all (see `apply_inverse`).
+    ///
+    /// Deferring is not skipping: [`Self::check_deferred_types`] refuses a
+    /// revision that leaves two value types under one field name, which is what
+    /// the per-write check was protecting.
+    pub fn defer_type_checks(&mut self) {
+        self.deferred_types.get_or_insert_with(Default::default);
+        // The per-revision cache holds types probed under the eager rule; drop
+        // it so nothing downstream reads a type this revision is about to move.
+        self.field_types.clear();
+    }
+
+    /// The deferred check: every field name this revision wrote must carry a
+    /// single value type across the repository (spec-data-model "One value type
+    /// per field name").
+    fn check_deferred_types(&self) -> Result<()> {
+        let Some(names) = &self.deferred_types else { return Ok(()) };
+        for name in names {
+            let types = db::distinct_value_types(&self.tx, name)?;
+            if types.len() > 1 {
+                return Err(DomainError::BadRequest(format!(
+                    "field '{name}' would be left with more than one value type ({}); \
+                     the value types recorded under one field name must agree",
+                    types.join(", ")
+                ))
+                .into());
+            }
+        }
+        Ok(())
+    }
+
     fn check_forest_integrity(&self) -> Result<()> {
         for (field_name, uuid) in &self.tree_lost {
             // Cheapest question first, and the one that is almost always "none":
@@ -1775,6 +1821,7 @@ impl<'c> Writer<'c> {
     /// commits the transaction.
     pub fn commit(mut self) -> Result<()> {
         self.check_forest_integrity()?;
+        self.check_deferred_types()?;
         if self.flushed == 0 && self.pending.is_empty() {
             // Nothing was written: drop the empty revision, leave HEAD alone.
             self.tx.execute("DELETE FROM revision WHERE id = ?1", params![self.rev_id])?;
@@ -1942,6 +1989,12 @@ impl<'c> Writer<'c> {
     /// probe (or after this write establishes it).
     fn validate_value_type(&mut self, field_name: &str, value: &Value) -> Result<()> {
         if matches!(value, Value::Nothing) {
+            return Ok(());
+        }
+        if let Some(deferred) = &mut self.deferred_types {
+            // Checked once at commit instead, over the state this revision
+            // actually lands on.
+            deferred.insert(field_name.to_string());
             return Ok(());
         }
         let new_type = db::encode_value(value).value_type;

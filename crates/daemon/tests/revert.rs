@@ -138,16 +138,12 @@ fn test_revert_of_an_append_then_set_on_the_same_cell() {
 /// `delete_field` plus one `append_field` per converted row, all on one cell,
 /// with the *original* id reused by the insert.
 ///
-/// This one is *refused*, and the reason is worth pinning. Reverting a retype
-/// is legitimate — the revision being undone is the very one that changed the
-/// field's type — but the reverse walk gets there through a transient state:
-/// after undoing the last row's append, the cell still holds the *other* row as
-/// a string, so `validate_value_type` sees an established string type and
-/// refuses the int being restored. The final state would be consistent; no
-/// intermediate one is. Undoing a retype is `mf retype` back, until validation
-/// moves to commit time (spec-event-log "Open questions").
+/// Reverting it means passing through states that are not type-consistent —
+/// after undoing the last row's append, the cell still holds the others in the
+/// new type — so the revert defers type validation to its own commit and checks
+/// the state it actually lands on.
 #[test]
-fn test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation() {
+fn test_revert_of_a_retype_shaped_revision_restores_both_rows() {
     let mut conn = test_conn();
     let uuid = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -160,6 +156,7 @@ fn test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation() {
         w.commit().unwrap();
         m.uuid
     };
+    let before = state(&conn);
 
     let rev = {
         let mut w = Writer::begin(&mut conn, None).unwrap();
@@ -168,18 +165,60 @@ fn test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation() {
         w.commit().unwrap();
         rev
     };
-    let converted = state(&conn);
+    let mut converted = field_values(&conn, uuid, "rating");
+    converted.sort_by_key(|v| format!("{v:?}"));
+    assert_eq!(
+        converted,
+        vec![Value::String("3".into()), Value::String("5".into())],
+        "the retype converted both rows"
+    );
+
+    let ops = ops_of_revision(&conn, rev);
+    revert_ops(&mut conn, &ops);
+
+    let mut values = field_values(&conn, uuid, "rating");
+    values.sort_by_key(|v| format!("{v:?}"));
+    assert_eq!(values, vec![Value::Int(3), Value::Int(5)], "both rows come back, both as ints");
+    assert_eq!(state(&conn), before);
+}
+
+/// Deferring the check must not become skipping it. Here a *later* retype — one
+/// the revert is not undoing — genuinely made the field a string, so restoring
+/// an int would leave two types under one name. That is refused, at commit.
+#[test]
+fn test_a_revert_still_refuses_a_real_type_conflict() {
+    let mut conn = test_conn();
+    let (uuid, other) = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        let a = w.create_metarecord(vec![Field::new("rating", Value::Int(3))]).unwrap();
+        let b = w.create_metarecord(vec![Field::new("other", Value::Int(1))]).unwrap();
+        w.commit().unwrap();
+        (a.uuid, b.uuid)
+    };
+    // The revision to revert: it removes the only `rating` row.
+    let rev = {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.clear_field_as(OpType::SetField, uuid, "rating").unwrap();
+        let rev = w.rev_id();
+        w.commit().unwrap();
+        rev
+    };
+    // Meanwhile `rating` is established as a string elsewhere — nothing that
+    // touches the reverted cell, so no dependency blocks the revert.
+    {
+        let mut w = Writer::begin(&mut conn, None).unwrap();
+        w.set_field(other, "rating", Value::String("high".into())).unwrap();
+        w.commit().unwrap();
+    }
+    let before = state(&conn);
 
     let ops = ops_of_revision(&conn, rev);
     let mut w = Writer::begin(&mut conn, None).unwrap();
-    let err = revert::apply(&mut w, &ops).expect_err("type validation refuses the restored int");
+    revert::apply(&mut w, &ops).unwrap();
+    let err = w.commit().expect_err("two types under one field name must be refused");
     assert!(format!("{err}").contains("value type"), "unexpected error: {err}");
-    drop(w); // the transaction rolls back
 
-    assert_eq!(state(&conn), converted, "a refused revert writes nothing");
-    let mut values = field_values(&conn, uuid, "rating");
-    values.sort_by_key(|v| format!("{v:?}"));
-    assert_eq!(values, vec![Value::String("3".into()), Value::String("5".into())]);
+    assert_eq!(state(&conn), before, "a refused revert writes nothing");
 }
 
 /// The contrast that explains the refusal above: a *rollback* across the same

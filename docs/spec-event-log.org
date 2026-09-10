@@ -645,14 +645,28 @@ decide by accident.
   apply it. Adding it "for consistency" would refuse every revert of a =file_*=
   operation.
 
-- *Type validation still bites — and can refuse a revert the dependency check
-  allowed.* =Writer::validate_value_type= runs on every write, so an old value
-  is checked against the field's type as it stands /now/. A =retype= elsewhere
-  in the repository can have locked the name to another type without ever
-  writing the cell being reverted: no dependency, and yet the value no longer
-  fits. The revert is refused with the schema =400= like any other write. That
-  is a legitimate outcome and the third reason a revert can be refused, next to
-  a blocking dependency and an impossible filesystem action.
+- *Type validation moves to the revert's commit.* =Writer::validate_value_type=
+  runs on every ordinary write, but the reverse walk reaches the pre-revision
+  state through intermediate ones that need not be type-consistent even when the
+  one it lands on is. Undoing a =retype_field= is the case: once the last
+  converted row's =append_field= is undone, the cell still holds the others in
+  the *new* type, and restoring the old one reads as a conflict. So a revert
+  calls =Writer::defer_type_checks=, and the rule is enforced once at commit
+  over the state the revision actually produces — every field name it wrote must
+  carry a single value type repository-wide.
+
+  Deferring is not skipping. A =retype= the revert is *not* undoing can have
+  established another type for the name without ever writing the reverted cell:
+  no dependency blocks that, and restoring the old value would leave two types
+  under one name. That is refused with a =400= at commit, and remains the third
+  reason a revert can be refused, next to a blocking dependency and an
+  impossible filesystem action.
+
+  A rollback needs none of this. Navigation does not go through a =Writer= at
+  all — =apply_inverse= writes rows directly — so it never validates, on the
+  grounds that it restores a state the log already recorded as valid. A revert
+  cannot borrow that reasoning, because it produces a state the repository has
+  never held; so it checks the result instead of trusting the source.
 
 *** Filesystem actions
 
@@ -1730,23 +1744,6 @@ Pruned 12 operations across 4 revisions. History linearized up to op 55.
 | =--silent=  | Suppress informational output (confirmation prompt still shown)     |
 
 * Open questions
-
-** A revert cannot undo a =retype=
-
-Type validation runs per write ([[*What a revert inherits from an ordinary
-write]]), and the reverse walk reaches the pre-revision state through
-intermediate ones that need not be consistent. Undoing a =retype_field= is the
-case where that bites: after the last converted row's =append_field= is undone,
-the cell still holds the other rows in the *new* type, so restoring the old one
-is refused as a type conflict — even though the revision being undone is the
-very one that changed the type, and the state the revert would land on is
-perfectly consistent.
-
-So a =retype= is undone by another =retype=, not by a revert. Fixing it properly
-means validating the field's type once at commit, the way forest integrity
-already is, rather than at every write; that is a change to the write path as a
-whole, not to the revert, and it is not worth making blind. Pinned by
-=test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation=.
 
 ** Collapsing a revert to one operation per cell
 
