@@ -49,6 +49,7 @@ export async function mount(root, metafolder) {
   const moreBox = byId(root, 'more');
   const showMoreButton = byId(root, 'show-more', HTMLButtonElement);
   const rollbackButton = byId(root, 'rollback', HTMLButtonElement);
+  const revertButton = byId(root, 'revert', HTMLButtonElement);
   const pruneButton = byId(root, 'prune', HTMLButtonElement);
   const checkpointButton = byId(root, 'checkpoint', HTMLButtonElement);
   const graphCheckbox = byId(root, 'graph', HTMLInputElement);
@@ -228,6 +229,7 @@ export async function mount(root, metafolder) {
     if (revisions.length === 0) placeholderElement.textContent = 'Empty log.';
     table.hidden = revisions.length === 0;
     rollbackButton.disabled = selectedRev === null;
+    revertButton.disabled = selectedRev === null;
     pruneButton.disabled = selectedRev === null;
     checkpointButton.disabled = selectedRev === null;
     graphCheckbox.checked = graphMode;
@@ -290,6 +292,99 @@ export async function mount(root, metafolder) {
     }
   }
 
+  // Undoes the selected revision in place, by writing its inverse at HEAD
+  // (spec-event-log "Revert"). Unlike a rollback it does not move HEAD, so the
+  // watcher flushes that landed since are left exactly where they are.
+  async function revert() {
+    if (selectedRev === null) return;
+    const target = { rev_id: selectedRev };
+    let plan;
+    try {
+      plan = await daemon.call('GET', `/repos/${repo}/revert/plan?target_rev_id=${selectedRev}`);
+    } catch (error) {
+      await statusBar.error(error);
+      return;
+    }
+
+    // A blocked plan does not open the dialog: the useful next move is to look
+    // at what stands in the way, so select it and say so.
+    if (plan.revertable === false) {
+      const blocker = plan.blocked?.[0];
+      const extra = plan.dependents?.length ?? 0;
+      if (blocker) {
+        selectedRev = blocker.rev_id;
+        expandedRev = blocker.rev_id;
+        render();
+        const also = extra > 1 ? ` (and ${extra - 1} more)` : '';
+        void statusBar.message(
+          `Revision #${target.rev_id} is blocked by op ${blocker.op_id} in revision #${blocker.rev_id}${also}. ` +
+            `Revert that one first, or run log:revert-with-dependents to undo ${extra} more operation(s) along with it.`,
+          statusErrorMs,
+        );
+      }
+      return;
+    }
+    await runRevert(target, plan, false);
+  }
+
+  // The other exit from a blocked plan: revert the target together with
+  // everything that blocks it (the dependency closure).
+  async function revertWithDependents() {
+    if (selectedRev === null) return;
+    try {
+      const plan = await daemon.call(
+        'GET',
+        `/repos/${repo}/revert/plan?target_rev_id=${selectedRev}&with_dependents=true`,
+      );
+      await runRevert({ rev_id: selectedRev }, plan, true);
+    } catch (error) {
+      await statusBar.error(error);
+    }
+  }
+
+  /**
+   * @param {{rev_id: number}} target
+   * @param {any} plan
+   * @param {boolean} withDependents
+   */
+  async function runRevert(target, plan, withDependents) {
+    const ops = plan.operations ?? [];
+    if (ops.length === 0) {
+      void statusBar.message('Nothing to revert.', statusMessageMs);
+      return;
+    }
+    // How much history a closure pulls in is exactly what the user cannot
+    // predict from the target, so it is named before the confirmation.
+    const pulled = withDependents ? plan.dependents?.length ?? 0 : 0;
+    const also = pulled > 0 ? `, ${pulled} of them pulled in as dependents` : '';
+    if (plan.requires_lock) {
+      void statusBar.message(
+        `Revision #${target.rev_id} moves files on disk; run \`mf log revert ${target.rev_id}\` ` +
+          'so the moves are coordinated with the metadata.',
+        statusErrorMs,
+      );
+      return;
+    }
+    if (!confirm(`Revert revision #${target.rev_id} — ${ops.length} operation(s)${also}?`)) return;
+    try {
+      const result = await daemon.call('POST', `/repos/${repo}/revert`, {
+        target,
+        with_dependents: withDependents,
+      });
+      const count = result.reverted_operations?.length ?? 0;
+      void statusBar.message(
+        result.revision === null
+          ? 'Nothing was reverted.'
+          : `Reverted revision #${target.rev_id} as revision #${result.revision} (${count} operation(s)).`,
+        statusMessageMs,
+      );
+      await refresh();
+      void commands.invoke('metarecords:dirty');
+    } catch (error) {
+      await statusBar.error(error);
+    }
+  }
+
   // Sets or clears a revision's label, turning it into a named checkpoint.
   async function markCheckpoint() {
     if (selectedRev === null) return;
@@ -331,6 +426,7 @@ export async function mount(root, metafolder) {
   byId(root, 'undo').addEventListener('click', () => void commands.invoke('log:undo'));
   byId(root, 'redo').addEventListener('click', () => void commands.invoke('log:redo'));
   rollbackButton.addEventListener('click', () => void rollback());
+  revertButton.addEventListener('click', () => void revert());
   pruneButton.addEventListener('click', () => void prune());
   checkpointButton.addEventListener('click', () => void markCheckpoint());
 
@@ -338,6 +434,16 @@ export async function mount(root, metafolder) {
     label: 'Log: rollback to the selected revision',
     reveal: true,
     handler: rollback,
+  });
+  void commands.register('log:revert', {
+    label: 'Log: revert the selected revision in place',
+    reveal: true,
+    handler: revert,
+  });
+  void commands.register('log:revert-with-dependents', {
+    label: 'Log: revert the selected revision and whatever blocks it',
+    reveal: true,
+    handler: revertWithDependents,
   });
   void commands.register('log:prune', {
     label: 'Log: prune history before the selected revision',
