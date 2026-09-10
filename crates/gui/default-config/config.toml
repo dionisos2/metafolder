@@ -129,7 +129,7 @@ mixed_tag    = 'path'
 
 [panel-defaults.metarecord-list]
 # Columns of the table mode, in the columns input's own syntax.
-columns = "mfr_path:path mfr_type &version"
+columns = "mfr_path:path mfr_type &version order_position_file"
 # Fields the finder (quick OSM filter) searches, each with an explicit mode
 # (`field:path` for a tree_ref's assembled path, `field:value` for a plain
 # value); a bare `field` auto-detects from the field catalog. A missing field
