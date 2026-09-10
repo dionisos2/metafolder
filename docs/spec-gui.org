@@ -2869,9 +2869,12 @@ operations" has a visible destination.
   the moves (see [[file:spec-event-log.org][spec-event-log.org]] "Revert").
   Refreshes the panels through =metarecords:dirty=.
 
-  A blocked plan does not open the dialog: the panel selects the blocking
-  operation's revision and says which operation stands in the way, so "revert
-  that one first" is one keystroke away. This is the case rollback cannot
+  A blocked plan does not open the revert dialog. The panel selects the
+  blocking operation's revision and says which operation stands in the way, so
+  "revert that one first" is one keystroke away, and it offers the other exit —
+  reverting the blockers along with the target (=with_dependents=, see
+  [[file:spec-event-log.org][spec-event-log.org]] "Reverting the dependents
+  too") — naming how many operations that would add before it is confirmed. This is the case rollback cannot
   express — the blocking revision may be far younger and entirely unrelated —
   and it is the reason a watched repository needs a revert at all: the watcher
   writes a revision per batch of filesystem events, and rolling back past dozens

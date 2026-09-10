@@ -204,6 +204,33 @@ It is a separate axis from the filesystem reversibility of
 whether the metadata change is still meaningful, filesystem reversibility
 whether the file action that accompanies it is possible.
 
+*** Reverting the dependents too
+
+Being told what blocks a revert is often the answer: revert that first, or pick
+a narrower set. Sometimes it is not — the blocker is unwanted too, or it is a
+watcher event that only brushed the cell in passing. So a revert may be asked to
+*take the blockers with it*.
+
+What it then reverts is the /dependency closure/ of =S=: add every blocker to
+=S=, recompute, repeat until nothing new appears. One pass does not suffice,
+because an entity-scoped blocker widens the cells the set writes — a
+=delete_metarecord= dragged in makes every operation on that entity a blocker in
+turn. The iteration terminates: a blocker is always younger than the oldest
+member of =S=, so it never escapes the window between that operation and HEAD.
+
+The closure is revertable by construction, and reverting it is the same
+operation as before over more members. It need not be contiguous in the log:
+operations writing none of its cells sit between its members and are left
+alone — which is the whole point, they are independent, so undoing the closure
+does not disturb them.
+
+What it *is* worth doing is looking at how far it grew before confirming. At
+the limit, where the closure swallows everything between =S= and HEAD, a
+dependent-including revert *is* a rollback to the parent of =S='s oldest member,
+written forward as a new revision instead of by moving HEAD. Between "undo this
+one field" and "undo everything since" the mechanism is continuous, and the size
+of the closure is what tells the user where on that scale the request landed.
+
 *** Reverting a set
 
 The unit a user reverts is a revision, the same unit rollback offers; the
@@ -583,6 +610,11 @@ The ancestry is walked as it is everywhere else in this module (=ancestry=), and
 the cell test is an indexed lookup per entity on =idx_operation_entity
 (entity_uuid, id)=, so the cost is proportional to the number of operations
 recorded for the entities the set touches, not to the size of the log.
+
+The same query computes the closure when the dependents are wanted: re-run it
+with the blockers added to the set, until a run adds nothing. Each round is
+another indexed lookup over the same entities, and the set only grows, so the
+number of rounds is bounded by the operations in the window.
 
 The check runs in =GET /revert/plan=, so a client can show what is possible
 before asking for it, and again inside the transaction that writes the revert,
@@ -1158,11 +1190,16 @@ operations to undo:
 
 All members must lie on HEAD's ancestry, or the daemon answers =400=.
 
+Every endpoint also takes =with_dependents= (default =false=). When true, the
+set actually reverted is the dependency closure of the target — the operations
+asked for plus everything that blocks them (see [[*Reverting the dependents
+too]]) — and a blocked target stops being an error.
+
 *** =GET /repos/:repo_uuid/revert/plan=
 
 Describes what a revert would do, without writing anything and without taking
-the lock. Query parameters =target_rev_id= or =target_op_ids= (comma-separated),
-with the semantics above.
+the lock. Query parameters =target_rev_id= or =target_op_ids= (comma-separated)
+and =with_dependents=, with the semantics above.
 
 #+BEGIN_SRC json
 {
@@ -1184,7 +1221,8 @@ with the semantics above.
                     "op_type": "file_moved", "field_name": "mfr_path",
                     "entity_uuid": "…"}}
   ],
-  "blocked": [{"op_id": 91, "rev_id": 40, "…": "…"}]
+  "blocked": [{"op_id": 91, "rev_id": 40, "…": "…"}],
+  "dependents": [{"op_id": 91, "rev_id": 40, "…": "…"}]
 }
 #+END_SRC
 
@@ -1204,6 +1242,13 @@ with the semantics above.
 - =blocked_by= names the operation standing in the way, or =null=. =blocked= is
   the deduplicated union of them, which is what a client shows the user.
   =revertable= is true exactly when =blocked= is empty.
+- =dependents= is the dependency closure minus the operations asked for: what
+  =with_dependents= would add. It is reported whether or not =with_dependents=
+  was passed, so a client can offer "revert these N as well" without a second
+  round-trip, and it is empty exactly when =blocked= is. With
+  =with_dependents=true=, =operations= is the whole closure — each entry
+  carrying =origin: "requested"= or =origin: "dependent"= — =blocked= is empty
+  and =revertable= is true.
 
 *** =POST /repos/:repo_uuid/revert=
 
@@ -1214,6 +1259,7 @@ Request body:
 #+BEGIN_SRC json
 {"target": {"rev_id": 12},
  "label": "undo the bulk rename",
+ "with_dependents": false,
  "skip_filesystem": false}
 #+END_SRC
 
@@ -1239,7 +1285,7 @@ Errors:
 |--------+----------------------------------------------------------------------------|
 |  =400= | target not on HEAD's ancestry; an =unknown= operation has no snapshots     |
 |  =404= | no such revision or operation — pruned or trimmed away, or never existed   |
-|  =409= | blocked — the body adds =blocked=, in the plan's shape                     |
+|  =409= | blocked, and =with_dependents= not set — the body adds =blocked=          |
 |  =409= | a file action is needed and =skip_filesystem= is false                     |
 |  =423= | a rollback or revert lock is held                                          |
 
@@ -1249,11 +1295,12 @@ revision would be a log entry claiming a change that did not happen.
 
 *** =POST /repos/:repo_uuid/revert/start=
 
-The coordinated form. Enters the [[*Rollback lock]], stores the target, and
-returns the same body as =GET /revert/plan=. A blocked target is rejected with
-=409= and the lock is *not* entered.
+The coordinated form. Enters the [[*Rollback lock]], stores the target (the
+closure, when =with_dependents= is set), and returns the same body as
+=GET /revert/plan=. A blocked target is rejected with =409= and the lock is
+*not* entered.
 
-Request body: ={"target": {"rev_id": 12}}=
+Request body: ={"target": {"rev_id": 12}, "with_dependents": false}=
 
 *** =POST /repos/:repo_uuid/revert/commit=
 
@@ -1515,8 +1562,9 @@ Target forms:
 *** Behaviour
 
 1. Calls =GET /revert/plan=.
-2. If the plan is blocked, prints the blocking operations and exits =1= without
-   writing anything.
+2. If the plan is blocked and =--with-dependents= was not passed, prints the
+   blocking operations, says how many more the closure would take, and exits
+   =1= without writing anything.
 3. If no operation needs a filesystem action, calls =POST /revert= and prints
    what it wrote.
 4. Otherwise prints the plan, asks for confirmation unless =--force=, then calls
@@ -1550,7 +1598,8 @@ Cannot revert revision 12: 1 of its 2 operations is blocked.
   op 23  set_field(mfr_path)  on 5f2a1c88…
     blocked by op 91  (rev 40, 2024-01-16 08:04, file_moved mfr_path)
 
-Revert rev 40 first, or pass --op 22 to revert only what is free.
+Revert rev 40 first, or pass --op 22 to revert only what is free,
+or --with-dependents to revert those 1 operation(s) along with it.
 #+END_SRC
 
 Example of a successful revert:
@@ -1567,6 +1616,7 @@ Reverted revision 12 as revision 57 (2 operations, 1 file moved).
 | Flag                      | Description                                                    |
 |---------------------------+----------------------------------------------------------------|
 | =--op N=                  | Revert this operation only (repeatable)                        |
+| =--with-dependents=       | Also revert whatever blocks the target (the closure)           |
 | =--label L=               | Label the revision the revert creates                          |
 | =--metadata-only=         | Leave out the operations needing a file action                 |
 | =--on-move-available P=   | Policy for a =move= whose file is present; default =apply=     |
@@ -1576,13 +1626,18 @@ Reverted revision 12 as revision 57 (2 operations, 1 file moved).
 
 A metadata-only revert asks for nothing: it is itself revertable, which is the
 whole point of preferring it to a rollback. The confirmation exists only for the
-filesystem actions.
+filesystem actions — and for =--with-dependents=, which always prints the
+closure's size and asks, because how much history it pulls in is exactly what
+the user cannot predict from the target alone. =--force= skips that prompt as it
+skips the other; it does not imply =--with-dependents=, and the two are
+deliberately separate flags.
 
 *** =mf revert plan [<target>]=
 
 Calls =GET /revert/plan= and prints it — the operations, the state each would
-restore, the file actions each would need, and the blockers if any — without
-writing anything and without taking the lock.
+restore, the file actions each would need, the blockers if any, and how many
+operations =--with-dependents= would add — without writing anything and without
+taking the lock. Accepts =--with-dependents= to plan the closure itself.
 
 ** =mf prune=
 Permanently removes operations from the history. Both sub-commands are
