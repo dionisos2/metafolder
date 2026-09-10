@@ -494,19 +494,29 @@ that expresses it:
 | =create_metarecord=               | none — the entity did not exist   | =delete_metarecord=            |
 | =delete_metarecord=               | all =is_new=0= field rows         | =create_metarecord=, same UUID |
 | =set_metarecord=                  | all =is_new=0= field rows         | =set_metarecord=               |
-| =set_field=, the =file_*= types   | the =is_new=0= rows of the cell   | =set_field=, or a cleared cell |
+| =set_field=                       | the =is_new=0= rows of the cell   | =set_field=, or a cleared cell |
+| =file_deleted=, =file_moved=      | the =is_new=0= rows of the cell   | =file_moved=                   |
+| =file_modified=                   | the =is_new=0= rows of the cell   | =file_modified=                |
 | =append_field=                    | the appended row is removed       | =delete_field=                 |
 | =delete_field=                    | the =is_new=0= row, re-appended   | =append_field=                 |
 | =unknown=                         | —                                 | not revertable (no snapshots)  |
 
 Two consequences worth stating outright:
 
-- *A revert only ever writes manual operation types.* The watcher's types mean
-  "the filesystem reported this"; a revert is a deliberate write by a client,
-  and the file action that accompanies it is a consequence of the revert rather
-  than its cause. Reverting a =file_moved= therefore produces a =set_field= on
-  =mfr_path=, and is held to the forest's referential integrity like any other
-  manual write.
+- *A revert writes the type of the change it actually makes, filesystem
+  included.* =op_type= is not a note on who asked for the write: it is what
+  tells a later navigation that crossing this operation requires a file action
+  (=file_moved= is what the daemon turns into a =move_file= step, and
+  =file_deleted= / =file_modified= are what make the CLI look in the trash-bin).
+  A revert that performed the =mv= must therefore record =file_moved=, or a
+  rollback across it would rewrite =mfr_path= while leaving the file where the
+  revert put it. There is no third case: an operation whose file action could
+  not be carried out is not part of the revert at all.
+
+  =file_moved= carries this in both directions — it is already the type
+  =reconcile= writes when it relinks an orphan, whose =mfr_path= was =Nothing=
+  before the content reappeared — so reverting a =file_deleted= that the
+  trash-bin could satisfy is a =file_moved= like any other homecoming.
 - *Restoring an empty cell is not the same as writing =Nothing=.* When the
   =is_new=0= snapshot has no rows, the field did not exist before the operation
   and the revert removes it entirely (a =set_field= operation with no =is_new=1=
@@ -569,6 +579,18 @@ nothing, treat the arrival as a new file, and leave a duplicate metarecord at
 the destination — the same race a trash restore once lost a file to (see
 [[file:spec-trash.org][spec-trash.org]]). It also freezes HEAD, which is what
 lets the dependency check taken at =start= still hold at =commit=.
+
+One shape deserves naming, because a revert makes it more common than it is
+today. Reverting a =file_deleted= that the trash-bin could satisfy writes a
+=file_moved= whose =is_new=0= snapshot is =Nothing=: the file came back from
+nowhere. Navigating *back* across that operation would have to make the file go
+away again, which a =move_file= action cannot express — it has no destination.
+The daemon already answers this by omitting =from= and =to= whenever a
+=file_moved= snapshot is not a =TreeRef=; the CLI reads the missing =from= as
+"the file is unavailable" and resolves it by policy, leaving the metadata
+rewound and the file in place until a reconcile. This is a pre-existing shape —
+=reconcile= writes exactly this operation when it relinks an orphan — and the
+revert neither improves nor worsens it.
 
 A revert whose plan contains no filesystem action needs none of this: the
 single-shot =POST /revert= writes it in one transaction, no lock, no
@@ -1117,7 +1139,7 @@ with the semantics above.
      "filesystem": null,
      "blocked_by": null},
     {"id": 23, "op_type": "file_moved", "entity_uuid": "…", "field_name": "mfr_path",
-     "writes": "set_field",
+     "writes": "file_moved",
      "restores": [{"field_name": "mfr_path", "value_type": "tree_ref",
                    "value_uuid": "<parent_uuid>", "value_name": "old.mp3"}],
      "filesystem": {"action": "move",
@@ -1130,8 +1152,9 @@ with the semantics above.
 }
 #+END_SRC
 
-- =writes= is the operation type the revert would record — never a =file_*=
-  type (see [[*Revert content]]).
+- =writes= is the operation type the revert would record (see
+  [[*Revert content]]), which is a =file_*= type exactly when =filesystem= is
+  not =null=.
 - =restores= is the snapshot the revert would write back, in the =op_snapshot=
   row shape used by =GET /log/revisions/:rev_id=. An empty array means the cell
   would be removed.
@@ -1500,7 +1523,7 @@ Example of a successful revert:
 Reverted revision 12 as revision 57 (2 operations, 1 file moved).
 
   op 22  set_field(rating)    5 → 3
-  op 23  set_field(mfr_path)  music/new.mp3 → music/old.mp3   (mv)
+  op 23  file_moved(mfr_path) music/new.mp3 → music/old.mp3   (mv)
 #+END_SRC
 
 *** Options
