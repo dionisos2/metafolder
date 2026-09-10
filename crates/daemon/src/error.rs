@@ -12,11 +12,14 @@ pub struct ApiError {
     pub message: String,
     /// Schema violations, rendered as a `violations` array (spec-schema).
     pub violations: Option<Vec<serde_json::Value>>,
+    /// Extra top-level fields merged into the body — a blocked revert names
+    /// what stands in its way (spec-event-log "POST /revert").
+    pub extra: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
 impl ApiError {
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
-        Self { status, message: message.into(), violations: None }
+        Self { status, message: message.into(), violations: None, extra: None }
     }
 
     pub fn bad_request(message: impl Into<String>) -> Self {
@@ -58,6 +61,12 @@ impl ApiError {
         self.violations = Some(violations);
         self
     }
+
+    /// Adds one top-level field to the error body, next to `error`.
+    pub fn with_field(mut self, key: &str, value: serde_json::Value) -> Self {
+        self.extra.get_or_insert_with(Default::default).insert(key.to_string(), value);
+        self
+    }
 }
 
 impl IntoResponse for ApiError {
@@ -65,6 +74,11 @@ impl IntoResponse for ApiError {
         let mut body = json!({"error": self.message});
         if let Some(violations) = self.violations {
             body["violations"] = serde_json::Value::Array(violations);
+        }
+        if let Some(extra) = self.extra {
+            for (key, value) in extra {
+                body[key] = value;
+            }
         }
         (self.status, Json(body)).into_response()
     }

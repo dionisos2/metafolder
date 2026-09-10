@@ -23,6 +23,7 @@ pub mod regexp;
 pub mod relpath;
 pub mod repo;
 pub mod reserved;
+pub mod revert;
 pub mod routes;
 pub mod schema;
 pub mod similarity;

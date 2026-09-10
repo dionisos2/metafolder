@@ -1182,3 +1182,200 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
+
+// ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
+
+/// What to revert: a revision, an explicit list of operations, or — omitted —
+/// the revision HEAD sits in.
+#[derive(Clone, Default)]
+pub struct RevertTarget {
+    pub rev_id: Option<i64>,
+    pub op_ids: Vec<i64>,
+}
+
+impl RevertTarget {
+    fn query(&self, with_dependents: bool) -> Vec<(&'static str, String)> {
+        let mut q = vec![];
+        if !self.op_ids.is_empty() {
+            let ids: Vec<String> = self.op_ids.iter().map(|i| i.to_string()).collect();
+            q.push(("target_op_ids", ids.join(",")));
+        } else {
+            q.push((
+                "target_rev_id",
+                self.rev_id.map(|r| r.to_string()).unwrap_or_else(|| "head".into()),
+            ));
+        }
+        if with_dependents {
+            q.push(("with_dependents", "true".into()));
+        }
+        q
+    }
+
+    fn body(&self) -> Json {
+        if !self.op_ids.is_empty() {
+            json!({"op_ids": self.op_ids})
+        } else {
+            match self.rev_id {
+                Some(r) => json!({"rev_id": r}),
+                None => json!({"rev_id": "head"}),
+            }
+        }
+    }
+
+    fn describe(&self) -> String {
+        if !self.op_ids.is_empty() {
+            let ids: Vec<String> = self.op_ids.iter().map(|i| format!("op {i}")).collect();
+            ids.join(", ")
+        } else {
+            match self.rev_id {
+                Some(r) => format!("revision {r}"),
+                None => "the last revision".into(),
+            }
+        }
+    }
+}
+
+pub struct RevertOpts {
+    pub with_dependents: bool,
+    pub metadata_only: bool,
+    pub label: Option<String>,
+    pub force: bool,
+    pub silent: bool,
+}
+
+fn op_line(op: &Json) -> String {
+    let id = op["id"].as_i64().unwrap_or(0);
+    let op_type = op["op_type"].as_str().unwrap_or("?");
+    let field = op["field_name"].as_str().map(|f| format!("({f})")).unwrap_or_default();
+    let entity = op["entity_uuid"].as_str().unwrap_or("?");
+    let short: String = entity.chars().take(8).collect();
+    format!("op {id}  {op_type}{field}  on {short}…")
+}
+
+/// Prints the blockers of a plan and the way out, then returns the exit code.
+fn report_blocked(target: &RevertTarget, plan: &Json) -> i32 {
+    let blocked = plan["blocked"].as_array().cloned().unwrap_or_default();
+    let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
+    let total = plan["operations"].as_array().map(|a| a.len()).unwrap_or(0);
+    eprintln!(
+        "Cannot revert {}: {} of its {total} operation(s) are blocked.\n",
+        target.describe(),
+        blocked.len()
+    );
+    for b in &blocked {
+        let id = b["op_id"].as_i64().unwrap_or(0);
+        let rev = b["rev_id"].as_i64().unwrap_or(0);
+        let op_type = b["op_type"].as_str().unwrap_or("?");
+        let field = b["field_name"].as_str().map(|f| format!(" {f}")).unwrap_or_default();
+        let when = b["timestamp"].as_i64().map(fmt_minute).unwrap_or_default();
+        eprintln!("  blocked by op {id}  (rev {rev}, {when}, {op_type}{field})");
+    }
+    eprintln!(
+        "\nRevert those revisions first, or pass --with-dependents to revert \
+         {dependents} more operation(s) along with it."
+    );
+    1
+}
+
+/// `mf log revert plan [<target>]`: prints what a revert would do, writing
+/// nothing.
+pub fn revert_plan(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let plan =
+        ctx.client.get(&format!("{base}/revert/plan"), &target.query(opts.with_dependents))?;
+    let ops = plan["operations"].as_array().cloned().unwrap_or_default();
+    for op in &ops {
+        let origin = if op["origin"] == "dependent" { "  (dependent)" } else { "" };
+        println!("{}{origin}", op_line(op));
+        if let Some(action) = op["filesystem"]["action"].as_str() {
+            println!("    filesystem: {action}");
+        }
+    }
+    println!("{} operation(s).", ops.len());
+    let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
+    if plan["revertable"] == json!(false) {
+        return Ok(report_blocked(&target, &plan));
+    }
+    if dependents > 0 && !opts.with_dependents {
+        println!("--with-dependents would add {dependents} more.");
+    }
+    Ok(0)
+}
+
+/// `mf log revert [<target>]`: undoes a revision (or an operation) by writing
+/// the inverse as a new revision at HEAD.
+pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<i32, CliError> {
+    let base = ctx.repo_base()?;
+    let plan =
+        ctx.client.get(&format!("{base}/revert/plan"), &target.query(opts.with_dependents))?;
+    if plan["revertable"] == json!(false) {
+        return Ok(report_blocked(&target, &plan));
+    }
+    let ops = plan["operations"].as_array().cloned().unwrap_or_default();
+    if ops.is_empty() {
+        println!("(nothing to revert)");
+        return Ok(0);
+    }
+    let needs_fs = plan["requires_lock"] == json!(true);
+    if needs_fs && !opts.metadata_only {
+        return Err(CliError::Op(format!(
+            "{} of the operations need a filesystem action, which the coordinated revert \
+             handles; pass --metadata-only to revert only what does not",
+            ops.iter().filter(|o| !o["filesystem"].is_null()).count()
+        )));
+    }
+
+    // The size of the closure is what the user cannot predict from the target
+    // alone, so a revert that pulls dependents in always asks.
+    if opts.with_dependents && !opts.force {
+        let dependents = plan["dependents"].as_array().map(|a| a.len()).unwrap_or(0);
+        for op in &ops {
+            eprintln!("  {}", op_line(op));
+        }
+        if !confirm(&format!(
+            "Revert {} — {} operation(s), {dependents} of them pulled in as dependents?",
+            target.describe(),
+            ops.len()
+        ))? {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+
+    let mut body = json!({"target": target.body(), "with_dependents": opts.with_dependents});
+    if opts.metadata_only {
+        body["skip_filesystem"] = json!(true);
+    }
+    if let Some(label) = &opts.label {
+        body["label"] = json!(label);
+    }
+    let resp = ctx.client.post(&format!("{base}/revert"), &body)?;
+
+    let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
+    let skipped = resp["skipped_operations"].as_array().cloned().unwrap_or_default();
+    if opts.silent {
+        return Ok(0);
+    }
+    match resp["revision"].as_i64() {
+        None => println!("Nothing was reverted."),
+        Some(rev) => println!(
+            "Reverted {} as revision {rev} ({} operation(s)).",
+            target.describe(),
+            reverted.len()
+        ),
+    }
+    let by_id: std::collections::HashMap<i64, &Json> =
+        ops.iter().filter_map(|o| o["id"].as_i64().map(|id| (id, o))).collect();
+    for id in reverted.iter().filter_map(|v| v.as_i64()) {
+        if let Some(op) = by_id.get(&id) {
+            println!("  {}", op_line(op));
+        }
+    }
+    // A revert reports what it did not undo as plainly as what it did.
+    for s in &skipped {
+        let id = s["op_id"].as_i64().unwrap_or(0);
+        let reason = s["reason"].as_str().unwrap_or("?");
+        println!("  left out: op {id} ({reason})");
+    }
+    Ok(0)
+}

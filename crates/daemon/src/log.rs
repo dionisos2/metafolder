@@ -1552,6 +1552,20 @@ impl<'c> Writer<'c> {
     /// inverse/forward arms already restore *all* snapshot rows, so this needs
     /// no navigation change.
     pub fn set_field_multi(&mut self, uuid: Uuid, name: &str, values: Vec<Value>) -> Result<()> {
+        self.set_field_multi_as(OpType::SetField, uuid, name, values).map(|_| ())
+    }
+
+    /// [`Self::set_field_multi`] under a chosen op type, returning the new row
+    /// ids in insertion order. A revert needs both: the watcher types when it
+    /// undoes a file event (spec-event-log "Revert content"), and the ids to
+    /// remap the row-scoped inverses that follow it.
+    pub fn set_field_multi_as(
+        &mut self,
+        op_type: OpType,
+        uuid: Uuid,
+        name: &str,
+        values: Vec<Value>,
+    ) -> Result<Vec<i64>> {
         for value in &values {
             self.validate_tree_ref(uuid, name, value)?;
             self.validate_value_type(name, value)?;
@@ -1568,12 +1582,13 @@ impl<'c> Writer<'c> {
             let id = db::insert_field_row(&self.tx, uuid, name, &value, None)?;
             after.push(FieldRow { id, name: name.to_string(), value });
         }
-        self.log_op(OpType::SetField, uuid, Some(name), Some(version_before), before, after)?;
+        let ids = after.iter().map(|r| r.id).collect();
+        self.log_op(op_type, uuid, Some(name), Some(version_before), before, after)?;
         if cleared_to_nothing {
             // No non-Nothing row remains: the type may have unlocked.
             self.field_types.remove(name);
         }
-        Ok(())
+        Ok(ids)
     }
 
     /// Appends one row without touching existing rows of that name.

@@ -1373,7 +1373,9 @@ undid.
 * CLI
 
 The log and rollback CLI (=mf log=, =mf log show=, =mf rollback=, =mf revert=,
-=mf prune=) is implemented over the daemon endpoints described above.
+=mf prune=) is implemented over the daemon endpoints described above. They are
+all subcommands of =mf log= — =mf log rollback=, =mf log revert=, =mf log
+prune= — and named here by their verb alone for brevity.
 
 ** =mf log=
 Displays the history of revisions or operations.
@@ -1728,6 +1730,23 @@ Pruned 12 operations across 4 revisions. History linearized up to op 55.
 | =--silent=  | Suppress informational output (confirmation prompt still shown)     |
 
 * Open questions
+
+** A revert cannot undo a =retype=
+
+Type validation runs per write ([[*What a revert inherits from an ordinary
+write]]), and the reverse walk reaches the pre-revision state through
+intermediate ones that need not be consistent. Undoing a =retype_field= is the
+case where that bites: after the last converted row's =append_field= is undone,
+the cell still holds the other rows in the *new* type, so restoring the old one
+is refused as a type conflict — even though the revision being undone is the
+very one that changed the type, and the state the revert would land on is
+perfectly consistent.
+
+So a =retype= is undone by another =retype=, not by a revert. Fixing it properly
+means validating the field's type once at commit, the way forest integrity
+already is, rather than at every write; that is a change to the write path as a
+whole, not to the revert, and it is not worth making blind. Pinned by
+=test_revert_of_a_retype_shaped_revision_is_refused_by_type_validation=.
 
 ** Collapsing a revert to one operation per cell
 

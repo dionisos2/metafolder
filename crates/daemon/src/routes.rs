@@ -85,6 +85,8 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/rollback/start", post(rollback_start))
         .route("/repos/:repo/rollback/step", post(rollback_step))
         .route("/repos/:repo/rollback/abort", post(rollback_abort))
+        .route("/repos/:repo/revert", post(revert))
+        .route("/repos/:repo/revert/plan", get(revert_plan))
         .route("/repos/:repo/schema", get(get_schema))
         .route("/repos/:repo/schema/reload", post(reload_schema))
         .route("/repos/:repo/schema/check", post(check_schema))
@@ -1567,6 +1569,275 @@ async fn rollback_start(
         drop(conn);
         *repo_state.rollback_lock.lock_recover() = Some(RollbackLock { target: resolved });
         Ok(Json(json!({"op": first, "remaining": remaining})))
+    })
+    .await
+}
+
+// ── Revert (spec-event-log "Revert") ──────────────────────────────────────────
+
+/// The set of operations to revert: a revision's, or an explicit list.
+#[derive(Deserialize)]
+struct RevertTarget {
+    #[serde(default)]
+    rev_id: Option<serde_json::Value>,
+    #[serde(default)]
+    op_ids: Option<Vec<i64>>,
+}
+
+#[derive(Deserialize)]
+struct RevertBody {
+    target: RevertTarget,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    with_dependents: bool,
+    #[serde(default)]
+    skip_filesystem: bool,
+}
+
+#[derive(Deserialize)]
+struct RevertPlanParams {
+    #[serde(default)]
+    target_rev_id: Option<String>,
+    #[serde(default)]
+    target_op_ids: Option<String>,
+    #[serde(default)]
+    with_dependents: bool,
+}
+
+/// Resolves a revert target to its operations, oldest first. All of them must
+/// lie on HEAD's ancestry: an operation on a branch a past rollback abandoned
+/// is not part of the current history, so there is nothing there to undo.
+fn resolve_revert_target(
+    conn: &rusqlite::Connection,
+    head: Option<i64>,
+    target: &RevertTarget,
+) -> Result<Vec<crate::log::OpRow>, ApiError> {
+    let ops = match (&target.rev_id, &target.op_ids) {
+        (Some(rev), None) => {
+            let rev_id = match rev {
+                serde_json::Value::String(s) if s == "head" => {
+                    let head = head.ok_or_else(|| ApiError::not_found("the log is empty"))?;
+                    crate::log::get_op(conn, head)?
+                        .ok_or_else(|| ApiError::not_found("HEAD names no operation"))?
+                        .rev_id
+                }
+                serde_json::Value::Number(n) => {
+                    n.as_i64().ok_or_else(|| ApiError::bad_request("rev_id must be an integer"))?
+                }
+                _ => return Err(ApiError::bad_request("rev_id must be a number or \"head\"")),
+            };
+            let ops = crate::revert::revision_ops(conn, rev_id)?;
+            if ops.is_empty() {
+                return Err(ApiError::not_found(format!(
+                    "revision {rev_id} does not exist, or was pruned or trimmed away"
+                )));
+            }
+            ops
+        }
+        (None, Some(ids)) => {
+            if ids.is_empty() {
+                return Err(ApiError::bad_request("op_ids must not be empty"));
+            }
+            let mut ops = Vec::with_capacity(ids.len());
+            for id in ids {
+                ops.push(crate::log::get_op(conn, *id)?.ok_or_else(|| {
+                    ApiError::not_found(format!(
+                        "operation {id} does not exist, or was pruned or trimmed away"
+                    ))
+                })?);
+            }
+            ops.sort_by_key(|o| o.id);
+            ops
+        }
+        _ => return Err(ApiError::bad_request("the target needs exactly one of rev_id or op_ids")),
+    };
+    if let Some(head) = head {
+        let ancestry: std::collections::HashSet<i64> =
+            crate::log::ancestry(conn, head)?.into_iter().collect();
+        if let Some(off) = ops.iter().find(|o| !ancestry.contains(&o.id)) {
+            return Err(ApiError::bad_request(format!(
+                "operation {} is not on HEAD's ancestry: it sits on a branch a past rollback \
+                 abandoned, so there is nothing there to undo",
+                off.id
+            )));
+        }
+    }
+    Ok(ops)
+}
+
+fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
+    json!({
+        "op_id": op.id,
+        "rev_id": op.rev_id,
+        "op_type": op.op_type,
+        "entity_uuid": hex(op.entity_uuid),
+        "field_name": op.field_name,
+    })
+}
+
+fn revert_plan_json(
+    conn: &rusqlite::Connection,
+    analysis: &crate::revert::Analysis,
+    with_dependents: bool,
+) -> Result<serde_json::Value, ApiError> {
+    let effective = analysis.effective(with_dependents);
+    let requested: std::collections::HashSet<i64> =
+        analysis.requested.iter().map(|o| o.id).collect();
+    let mut operations = Vec::with_capacity(effective.len());
+    let mut requires_lock = false;
+    for op in &effective {
+        let action = crate::revert::fs_action(op);
+        requires_lock |= action.is_some();
+        let restores = snapshots_json(conn, op.id, 0)?;
+        let blocked_by = analysis
+            .blocked
+            .iter()
+            .find(|b| crate::revert::Cell::of(&b.op).intersects(&crate::revert::Cell::of(op)))
+            .filter(|_| !with_dependents && requested.contains(&op.id))
+            .map(|b| {
+                let mut v = op_brief(&b.op);
+                v["timestamp"] = json!(b.timestamp);
+                v
+            });
+        operations.push(json!({
+            "id": op.id,
+            "op_type": op.op_type,
+            "entity_uuid": hex(op.entity_uuid),
+            "field_name": op.field_name,
+            "origin": if requested.contains(&op.id) { "requested" } else { "dependent" },
+            "writes": crate::revert::written_as(op).as_str(),
+            "restores": restores,
+            "filesystem": match action {
+                None => serde_json::Value::Null,
+                Some(crate::revert::FsAction::Move) => json!({"action": "move"}),
+                Some(crate::revert::FsAction::RestoreContent) => {
+                    json!({"action": "restore_content"})
+                }
+            },
+            "blocked_by": blocked_by,
+        }));
+    }
+    let blocked: Vec<serde_json::Value> = if with_dependents {
+        vec![]
+    } else {
+        analysis
+            .blocked
+            .iter()
+            .map(|b| {
+                let mut v = op_brief(&b.op);
+                v["timestamp"] = json!(b.timestamp);
+                v
+            })
+            .collect()
+    };
+    Ok(json!({
+        "revertable": with_dependents || analysis.revertable(),
+        "requires_lock": requires_lock,
+        "operations": operations,
+        "blocked": blocked,
+        "dependents": analysis.dependents.iter().map(op_brief).collect::<Vec<_>>(),
+    }))
+}
+
+async fn revert_plan(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    Query(params): Query<RevertPlanParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    let target = RevertTarget {
+        // `head` is a legal rev_id here as it is in the body, so a plan and the
+        // revert it describes take the same target spelling.
+        rev_id: params.target_rev_id.as_ref().map(|s| match s.parse::<i64>() {
+            Ok(n) => serde_json::Value::from(n),
+            Err(_) => serde_json::Value::String(s.clone()),
+        }),
+        op_ids: params
+            .target_op_ids
+            .as_ref()
+            .map(|s| s.split(',').filter_map(|p| p.trim().parse::<i64>().ok()).collect::<Vec<_>>()),
+    };
+    let with_dependents = params.with_dependents;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let head = crate::log::get_head(&conn)?;
+        let ops = resolve_revert_target(&conn, head, &target)?;
+        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        Ok(Json(revert_plan_json(&conn, &analysis, with_dependents)?))
+    })
+    .await
+}
+
+async fn revert(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<RevertBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        repo_state.ensure_writable()?;
+        let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let head = crate::log::get_head(&conn)?;
+        let ops = resolve_revert_target(&conn, head, &body.target)?;
+        // The check runs here, inside the transaction that writes the revert,
+        // so what is written was checked against the state it is written into.
+        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        if !body.with_dependents && !analysis.revertable() {
+            let plan = revert_plan_json(&conn, &analysis, false)?;
+            return Err(ApiError::conflict(format!(
+                "the revert is blocked by {} later operation(s) on the same cells; \
+                 pass with_dependents to revert those too",
+                analysis.blocked.len()
+            ))
+            .with_field("blocked", plan["blocked"].clone()));
+        }
+
+        let mut effective = analysis.effective(body.with_dependents);
+        let mut skipped = Vec::new();
+        if body.skip_filesystem {
+            effective.retain(|op| {
+                if crate::revert::fs_action(op).is_some() {
+                    skipped.push(json!({"op_id": op.id, "reason": "requires_filesystem"}));
+                    false
+                } else {
+                    true
+                }
+            });
+        } else if let Some(op) = effective.iter().find(|o| crate::revert::fs_action(o).is_some()) {
+            return Err(ApiError::conflict(format!(
+                "operation {} needs a filesystem action; use the coordinated revert, or pass \
+                 skip_filesystem to leave it out",
+                op.id
+            )));
+        }
+
+        if effective.is_empty() {
+            // Nothing left to apply: an empty revision would be a log entry
+            // claiming a change that did not happen.
+            return Ok(Json(json!({
+                "revision": serde_json::Value::Null,
+                "head": head,
+                "reverted_operations": [],
+                "skipped_operations": skipped,
+            })));
+        }
+
+        let mut writer = repo_state.writer(&mut conn, body.label.clone())?;
+        let applied: Vec<i64> = effective.iter().map(|o| o.id).collect();
+        crate::revert::apply(&mut writer, &effective)?;
+        let rev_id = writer.rev_id();
+        let effects = writer.effects();
+        slowlog::timed("commit", || writer.commit())?;
+        repo_state.settle(&conn, &effects)?;
+        let new_head = crate::log::get_head(&conn)?;
+        Ok(Json(json!({
+            "revision": rev_id,
+            "head": new_head,
+            "reverted_operations": applied,
+            "skipped_operations": skipped,
+        })))
     })
     .await
 }

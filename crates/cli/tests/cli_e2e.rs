@@ -3921,3 +3921,82 @@ fn test_slow_lists_the_log_newest_first_and_clears_it() {
     assert_ok(&out);
     assert!(out.stdout.contains("Nothing has been slow"), "{}", out.stdout);
 }
+
+// ── `mf log revert` (spec-event-log "mf revert") ──────────────────────────────
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_log_revert_undoes_a_revision_and_reports_the_blocker() {
+    let (repo, _root) = init_repo("revert");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+
+    let out = mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]);
+    assert_ok(&out);
+    // The revision that write produced is the one HEAD sits in.
+    let out = mf(&["-u", &repo, "log", "revert", "--force"]);
+    assert_ok(&out);
+    assert!(out.stdout.contains("Reverted"), "unexpected output: {}", out.stdout);
+
+    assert_eq!(rating_of(&repo, &uuid), 3, "the revert restored the previous value");
+
+    // A revert is itself an ordinary revision, so the log kept both.
+    let out = mf(&["-u", &repo, "log"]);
+    assert_ok(&out);
+    assert!(out.stdout.lines().count() >= 3, "the log keeps the mistake and its correction");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_log_revert_names_the_blocking_operation() {
+    let (repo, _root) = init_repo("revert_blocked");
+    let uuid = create_metarecord(&repo, &["rating:int=3"]);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=5"]));
+
+    // The revision to revert, then a later write on the same cell.
+    let log = mf(&["-u", &repo, "log"]);
+    assert_ok(&log);
+    assert_ok(&mf(&["-u", &repo, "metarecord", "-i", &uuid, "field", "set", "rating:int=7"]));
+
+    // Reverting the older revision is blocked by the newer write.
+    let rev = oldest_revision_with_rating(&repo);
+    let out = mf(&["-u", &repo, "log", "revert", &rev, "--force"]);
+    assert_eq!(out.code, 1, "a blocked revert exits 1: {}{}", out.stdout, out.stderr);
+    assert!(out.stderr.contains("blocked by op"), "it names the blocker: {}", out.stderr);
+    assert!(out.stderr.contains("--with-dependents"), "and the way out: {}", out.stderr);
+
+    // Which --with-dependents takes.
+    let out = mf(&["-u", &repo, "log", "revert", &rev, "--with-dependents", "--force"]);
+    assert_ok(&out);
+    assert_eq!(rating_of(&repo, &uuid), 3);
+}
+
+/// The record's single `rating` row, read back through `metarecord get`.
+fn rating_of(repo: &str, uuid: &str) -> i64 {
+    let out = mf(&["-u", repo, "metarecord", "-i", uuid, "get"]);
+    assert_ok(&out);
+    let body: serde_json::Value = serde_json::from_str(&out.stdout).expect("get returns JSON");
+    body[0]["fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|f| f["name"] == "rating"))
+        .and_then(|f| f["value"]["value"].as_i64())
+        .unwrap_or_else(|| panic!("no rating in:\n{}", out.stdout))
+}
+
+/// The revision that set `rating` to 5: revisions are listed newest first, so
+/// it is the one below the write that now blocks reverting it.
+fn oldest_revision_with_rating(repo: &str) -> String {
+    let out = mf(&["-u", repo, "log", "list"]);
+    assert_ok(&out);
+    let revs: Vec<String> = out
+        .stdout
+        .lines()
+        .filter_map(|line| {
+            let mut it = line.split_whitespace();
+            while let Some(token) = it.next() {
+                if token == "rev" {
+                    return it.next().map(str::to_string);
+                }
+            }
+            None
+        })
+        .collect();
+    revs.get(1).cloned().unwrap_or_else(|| panic!("no second revision in:\n{}", out.stdout))
+}

@@ -403,6 +403,30 @@ enum LogCommand {
         #[arg(long)]
         silent: bool,
     },
+    /// Undo a revision (or an operation) by writing its inverse at HEAD
+    Revert {
+        /// "plan" to preview, optionally a revision id; or a revision id.
+        #[arg(num_args = 0..=2)]
+        args: Vec<String>,
+        /// Revert this operation only (repeatable)
+        #[arg(long = "op")]
+        op: Vec<i64>,
+        /// Also revert whatever blocks the target (its dependency closure)
+        #[arg(long = "with-dependents")]
+        with_dependents: bool,
+        /// Leave out the operations needing a filesystem action
+        #[arg(long = "metadata-only")]
+        metadata_only: bool,
+        /// Label the revision the revert creates
+        #[arg(long)]
+        label: Option<String>,
+        /// Skip the confirmation prompt
+        #[arg(long)]
+        force: bool,
+        /// Suppress informational output
+        #[arg(long)]
+        silent: bool,
+    },
     /// Permanently remove operations from the history (irreversible)
     Prune {
         #[command(subcommand)]
@@ -1293,6 +1317,41 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                     Ok(policies) => log::rollback_run(ctx, target, policies, silent),
                     Err(e) => Err(e),
                 }
+            }
+        }
+        Some(LogCommand::Revert {
+            args,
+            op,
+            with_dependents,
+            metadata_only,
+            label,
+            force,
+            silent,
+        }) => {
+            let (is_plan, rev) = match args.split_first() {
+                Some((first, rest)) if first == "plan" => (true, rest.first().cloned()),
+                Some((first, _)) => (false, Some(first.clone())),
+                None => (false, None),
+            };
+            let rev_id = match rev {
+                Some(r) => Some(r.parse::<i64>().map_err(|_| {
+                    metafolder_cli::client::CliError::Usage(format!(
+                        "'{r}' is not a revision id; targets are a revision number, or --op <id>"
+                    ))
+                })?),
+                None => None,
+            };
+            if rev_id.is_some() && !op.is_empty() {
+                return Err(metafolder_cli::client::CliError::Usage(
+                    "give a revision id or --op, not both".into(),
+                ));
+            }
+            let target = log::RevertTarget { rev_id, op_ids: op };
+            let opts = log::RevertOpts { with_dependents, metadata_only, label, force, silent };
+            if is_plan {
+                log::revert_plan(ctx, target, &opts)
+            } else {
+                log::revert_run(ctx, target, &opts)
             }
         }
         Some(LogCommand::Prune { command }) => match command {
