@@ -420,6 +420,12 @@ enum LogCommand {
         /// Label the revision the revert creates
         #[arg(long)]
         label: Option<String>,
+        /// Policy when the file is present: apply|skip|abort|ask (default apply)
+        #[arg(long = "on-move-available")]
+        on_move_available: Option<String>,
+        /// Policy when the file is missing: apply|skip|abort|ask (default ask)
+        #[arg(long = "on-move-unavailable")]
+        on_move_unavailable: Option<String>,
         /// Skip the confirmation prompt
         #[arg(long)]
         force: bool,
@@ -1325,6 +1331,8 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
             with_dependents,
             metadata_only,
             label,
+            on_move_available,
+            on_move_unavailable,
             force,
             silent,
         }) => {
@@ -1347,7 +1355,20 @@ fn dispatch_log(ctx: &Ctx, command: Option<LogCommand>) -> CmdResult {
                 ));
             }
             let target = log::RevertTarget { rev_id, op_ids: op };
-            let opts = log::RevertOpts { with_dependents, metadata_only, label, force, silent };
+            let policies = log::RollbackPolicies {
+                on_available: on_move_available
+                    .as_deref()
+                    .map(log::Policy::parse)
+                    .transpose()?
+                    .unwrap_or(log::Policy::Apply),
+                on_unavailable: on_move_unavailable
+                    .as_deref()
+                    .map(log::Policy::parse)
+                    .transpose()?
+                    .unwrap_or(log::Policy::Ask),
+            };
+            let opts =
+                log::RevertOpts { with_dependents, metadata_only, label, force, silent, policies };
             if is_plan {
                 log::revert_plan(ctx, target, &opts)
             } else {

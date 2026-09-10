@@ -106,10 +106,17 @@ pub struct RepoState {
     pub slowlog: Arc<metafolder_core::slowlog::Recorder>,
 }
 
-/// State of an in-progress coordinated rollback navigation.
-pub struct RollbackLock {
-    /// Resolved target operation id; `None` is the empty state.
-    pub target: Option<i64>,
+/// State of an in-progress coordinated operation. Both kinds suspend the
+/// watcher's execution and refuse writes for the same reason: a client is about
+/// to move files, and the metadata explaining those moves is not written yet
+/// (spec-event-log "Rollback lock").
+pub enum RollbackLock {
+    /// A coordinated rollback navigation: the resolved target operation id;
+    /// `None` is the empty state.
+    Navigate { target: Option<i64> },
+    /// A coordinated revert: the operations `start` fixed. `commit` may only
+    /// narrow this set, never widen it.
+    Revert { ops: Vec<i64> },
 }
 
 impl RepoState {

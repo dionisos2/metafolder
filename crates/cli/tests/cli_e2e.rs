@@ -4000,3 +4000,58 @@ fn oldest_revision_with_rating(repo: &str) -> String {
         .collect();
     revs.get(1).cloned().unwrap_or_else(|| panic!("no second revision in:\n{}", out.stdout))
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn test_log_revert_moves_the_file_back() {
+    let (repo, root) = init_repo("revert_move");
+    // Track the root so the watcher records the rename.
+    let root_uuid = {
+        let out = mf(&["-u", &repo, "metarecord", "-q", "mf_watch IS PRESENT", "get"]);
+        assert_ok(&out);
+        out.stdout.trim().lines().next().unwrap().to_string()
+    };
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        r"mf_ignore:string=\.metafolder(/.*)?$",
+    ]));
+    assert_ok(&mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-i",
+        &root_uuid,
+        "field",
+        "set",
+        "mf_watch:bool=true",
+    ]));
+
+    std::fs::write(root.join("old.txt"), b"content").unwrap();
+    assert_ok(&mf(&["-u", &repo, "reconcile"]));
+    std::fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
+
+    // Wait for the watcher's flush to record the rename.
+    let mut recorded = false;
+    for _ in 0..100 {
+        let out = mf(&["-u", &repo, "log", "list", "--ops"]);
+        assert_ok(&out);
+        if out.stdout.contains("file_moved") {
+            recorded = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(recorded, "the watcher never recorded the rename");
+    assert!(root.join("new.txt").exists());
+
+    // Reverting it moves the file back and records the move.
+    let out = mf(&["-u", &repo, "log", "revert", "--force"]);
+    assert_ok(&out);
+    assert!(root.join("old.txt").exists(), "the file moved back: {}{}", out.stdout, out.stderr);
+    assert!(!root.join("new.txt").exists());
+}

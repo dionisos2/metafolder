@@ -342,3 +342,245 @@ async fn test_unknown_revision_is_not_found() {
     let (status, _) = revert(&app, &repo, json!({"target": {"rev_id": 9999}})).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── The coordinated form ──────────────────────────────────────────────────────
+
+async fn start(app: &Router, repo: &str, body: Value) -> (StatusCode, Value) {
+    request(app, "POST", &format!("/repos/{repo}/revert/start"), Some(body)).await
+}
+
+#[tokio::test]
+async fn test_the_lock_suspends_writes_until_commit_or_abort() {
+    let (app, repo, _root) = setup("lock").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+
+    let (status, plan) = start(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK, "start failed: {plan}");
+    assert_eq!(plan["operations"].as_array().unwrap().len(), 1);
+
+    // While the lock is held the repository refuses metadata writes.
+    let (status, _) = request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{uuid}/fields/genre"),
+        Some(json!({"value": {"type": "string", "value": "jazz"}})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::LOCKED, "writes are refused under the lock");
+
+    // A second coordinated operation is refused too.
+    let (status, _) = start(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let op = plan["operations"][0]["id"].as_i64().unwrap();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert/commit"),
+        Some(json!({"apply": [op]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "commit failed: {body}");
+    assert_eq!(
+        field_of(&app, &repo, &uuid, "rating").await,
+        Some(json!({"type": "int", "value": 3}))
+    );
+
+    // And the lock is gone: writes work again.
+    set_field(&app, &repo, &uuid, "genre", json!({"type": "string", "value": "jazz"})).await;
+}
+
+#[tokio::test]
+async fn test_abort_releases_the_lock_and_writes_nothing() {
+    let (app, repo, _root) = setup("abort").await;
+    let uuid =
+        create(&app, &repo, json!([{"name": "rating", "value": {"type": "int", "value": 3}}]))
+            .await;
+    set_field(&app, &repo, &uuid, "rating", json!({"type": "int", "value": 5})).await;
+    let rev = last_revision(&app, &repo).await;
+
+    let (status, _) = start(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) =
+        request(&app, "POST", &format!("/repos/{repo}/revert/abort"), Some(json!({}))).await;
+    assert_eq!(status, StatusCode::OK, "abort failed: {body}");
+
+    assert_eq!(
+        field_of(&app, &repo, &uuid, "rating").await,
+        Some(json!({"type": "int", "value": 5})),
+        "an aborted revert writes nothing"
+    );
+    // Aborting twice is a conflict, not a silent success.
+    let (status, _) =
+        request(&app, "POST", &format!("/repos/{repo}/revert/abort"), Some(json!({}))).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn test_commit_may_narrow_the_set_but_not_widen_it() {
+    let (app, repo, _root) = setup("narrow").await;
+    let a = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
+    let b = create(&app, &repo, json!([{"name": "x", "value": {"type": "int", "value": 1}}])).await;
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query/fields/set"),
+        Some(json!({
+            "query": {"type": "uuid_in", "uuids": [a, b]},
+            "name": "x",
+            "value": {"type": "int", "value": 9}
+        })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "batch set failed: {body}");
+    let rev = last_revision(&app, &repo).await;
+
+    let (status, plan) = start(&app, &repo, json!({"target": {"rev_id": rev}})).await;
+    assert_eq!(status, StatusCode::OK, "start failed: {plan}");
+    let ops = plan["operations"].as_array().unwrap();
+    assert_eq!(ops.len(), 2);
+    let first = ops[0]["id"].as_i64().unwrap();
+
+    // An id the lock was not started for is a usage error.
+    let (status, _) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert/commit"),
+        Some(json!({"apply": [first, 999999]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "commit may only narrow");
+
+    // Narrowing to one is fine, and the other is reported as left out.
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert/commit"),
+        Some(json!({"apply": [first]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "commit failed: {body}");
+    assert_eq!(body["reverted_operations"].as_array().unwrap().len(), 1);
+    let skipped = body["skipped_operations"].as_array().unwrap();
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0]["reason"], "client_skipped");
+}
+
+/// A real file move, so the plan carries a `move` action with the two paths the
+/// client has to `mv` between.
+#[tokio::test]
+async fn test_reverting_a_file_move_plans_the_mv() {
+    let (app, repo, root) = setup("fs_move").await;
+    // Track the root, ignoring `.metafolder/` so only our file is seen.
+    let (_, roots) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/query"),
+        Some(json!({"query": {"type": "is_present", "field": "mf_watch"}})),
+    )
+    .await;
+    let root_uuid = roots[0].as_str().unwrap().to_string();
+    request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_ignore"),
+        Some(json!({"value": {"type": "string", "value": r"\.metafolder(/.*)?$"}})),
+    )
+    .await;
+    request(
+        &app,
+        "PUT",
+        &format!("/repos/{repo}/metarecords/{root_uuid}/fields/mf_watch"),
+        Some(json!({"value": {"type": "bool", "value": true}})),
+    )
+    .await;
+
+    std::fs::write(root.join("old.txt"), b"content").unwrap();
+    reconcile(&app, &repo).await;
+    // The watcher is running (mf_watch is set), so the rename reaches the log
+    // through it, after the executor's quiet period.
+    std::fs::rename(root.join("old.txt"), root.join("new.txt")).unwrap();
+    wait_for_file_moved(&app, &repo).await;
+
+    // Reverting that move must plan the mv back.
+    let (status, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let moved = log["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["op_type"] == "file_moved")
+        .unwrap_or_else(|| panic!("no file_moved in: {}", log["operations"]))
+        .clone();
+    let op_id = moved["id"].as_i64().unwrap();
+
+    let (status, plan) = start(&app, &repo, json!({"target": {"op_ids": [op_id]}})).await;
+    assert_eq!(status, StatusCode::OK, "start failed: {plan}");
+    let action = &plan["operations"][0]["filesystem"];
+    assert_eq!(action["action"], "move");
+    assert!(
+        action["from"].as_str().unwrap().ends_with("new.txt"),
+        "from is where the file is now: {action}"
+    );
+    assert!(
+        action["to"].as_str().unwrap().ends_with("old.txt"),
+        "to is where it goes back: {action}"
+    );
+
+    // The client does the mv, then commits.
+    std::fs::rename(root.join("new.txt"), root.join("old.txt")).unwrap();
+    let (status, body) = request(
+        &app,
+        "POST",
+        &format!("/repos/{repo}/revert/commit"),
+        Some(json!({"apply": [op_id]})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "commit failed: {body}");
+
+    // The metadata followed the file, and it is recorded as a move.
+    let (status, log) = request(&app, "GET", &format!("/repos/{repo}/log"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    let head = log["head"].as_i64().unwrap();
+    let written = log["operations"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["id"].as_i64() == Some(head))
+        .unwrap();
+    assert_eq!(written["op_type"], "file_moved", "not set_field: navigation keys on this");
+}
+
+/// Waits for the watcher's flush to record the rename.
+async fn wait_for_file_moved(app: &Router, repo: &str) {
+    for _ in 0..100 {
+        let (status, log) = request(app, "GET", &format!("/repos/{repo}/log"), None).await;
+        assert_eq!(status, StatusCode::OK, "log failed: {log}");
+        if log["operations"].as_array().unwrap().iter().any(|o| o["op_type"] == "file_moved") {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the watcher never recorded the rename");
+}
+
+async fn reconcile(app: &Router, repo: &str) {
+    let (status, body) = request(app, "POST", &format!("/repos/{repo}/reconcile"), None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "reconcile start failed: {body}");
+    let task_id = body["task_id"].as_str().unwrap().to_string();
+    for _ in 0..200 {
+        let (status, task) =
+            request(app, "GET", &format!("/repos/{repo}/tasks/{task_id}"), None).await;
+        assert_eq!(status, StatusCode::OK, "task fetch failed: {task}");
+        if task["status"] == "done" {
+            return;
+        }
+        assert_ne!(task["status"], "failed", "reconcile failed: {task}");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("reconcile did not finish in time");
+}

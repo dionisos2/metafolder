@@ -87,6 +87,9 @@ pub fn build(state: Arc<AppState>) -> Router {
         .route("/repos/:repo/rollback/abort", post(rollback_abort))
         .route("/repos/:repo/revert", post(revert))
         .route("/repos/:repo/revert/plan", get(revert_plan))
+        .route("/repos/:repo/revert/start", post(revert_start))
+        .route("/repos/:repo/revert/commit", post(revert_commit))
+        .route("/repos/:repo/revert/abort", post(revert_abort))
         .route("/repos/:repo/schema", get(get_schema))
         .route("/repos/:repo/schema/reload", post(reload_schema))
         .route("/repos/:repo/schema/check", post(check_schema))
@@ -1567,7 +1570,8 @@ async fn rollback_start(
         let remaining = path.len() - 1;
         drop(cache);
         drop(conn);
-        *repo_state.rollback_lock.lock_recover() = Some(RollbackLock { target: resolved });
+        *repo_state.rollback_lock.lock_recover() =
+            Some(RollbackLock::Navigate { target: resolved });
         Ok(Json(json!({"op": first, "remaining": remaining})))
     })
     .await
@@ -1676,10 +1680,14 @@ fn op_brief(op: &crate::log::OpRow) -> serde_json::Value {
     })
 }
 
+/// Builds the plan body. `fs` is given by the coordinated form only: it
+/// resolves the paths a `move` action needs, which costs a tree-cache walk per
+/// operation and is useless to a caller that will not touch the filesystem.
 fn revert_plan_json(
     conn: &rusqlite::Connection,
     analysis: &crate::revert::Analysis,
     with_dependents: bool,
+    mut fs: Option<(&mut crate::tree_cache::TreeCache, &std::path::Path)>,
 ) -> Result<serde_json::Value, ApiError> {
     let effective = analysis.effective(with_dependents);
     let requested: std::collections::HashSet<i64> =
@@ -1700,7 +1708,25 @@ fn revert_plan_json(
                 v["timestamp"] = json!(b.timestamp);
                 v
             });
-        operations.push(json!({
+        let filesystem = match &action {
+            None => serde_json::Value::Null,
+            Some(crate::revert::FsAction::Move) => {
+                let mut v = json!({"action": "move"});
+                if let Some((cache, root)) = fs.as_mut() {
+                    // Undoing a move: from where the file is recorded now
+                    // (`is_new=1`) back to where it was (`is_new=0`).
+                    let from = snapshot_abs_path(conn, cache, root, op.id, 1)?;
+                    let to = snapshot_abs_path(conn, cache, root, op.id, 0)?;
+                    if let (Some(from), Some(to)) = (from, to) {
+                        v["from"] = json!(from);
+                        v["to"] = json!(to);
+                    }
+                }
+                v
+            }
+            Some(crate::revert::FsAction::RestoreContent) => json!({"action": "restore_content"}),
+        };
+        let mut entry = json!({
             "id": op.id,
             "op_type": op.op_type,
             "entity_uuid": hex(op.entity_uuid),
@@ -1708,15 +1734,21 @@ fn revert_plan_json(
             "origin": if requested.contains(&op.id) { "requested" } else { "dependent" },
             "writes": crate::revert::written_as(op).as_str(),
             "restores": restores,
-            "filesystem": match action {
-                None => serde_json::Value::Null,
-                Some(crate::revert::FsAction::Move) => json!({"action": "move"}),
-                Some(crate::revert::FsAction::RestoreContent) => {
-                    json!({"action": "restore_content"})
-                }
-            },
+            "filesystem": filesystem,
             "blocked_by": blocked_by,
-        }));
+        });
+        if matches!(action, Some(crate::revert::FsAction::RestoreContent)) {
+            // The trash correlation key, as on a rollback step: the version the
+            // record held before the whole revision, which is the only one
+            // anything outside it observed (spec-trash "rollback auto-restore").
+            if let Some(v) = op.entity_version_before {
+                entry["entity_version_before"] = json!(v);
+            }
+            if let Some(v) = crate::log::entity_version_before_revision(conn, op)? {
+                entry["entity_version_before_revision"] = json!(v);
+            }
+        }
+        operations.push(entry);
     }
     let blocked: Vec<serde_json::Value> = if with_dependents {
         vec![]
@@ -1764,7 +1796,7 @@ async fn revert_plan(
         let head = crate::log::get_head(&conn)?;
         let ops = resolve_revert_target(&conn, head, &target)?;
         let analysis = crate::revert::analyse(&conn, head, ops)?;
-        Ok(Json(revert_plan_json(&conn, &analysis, with_dependents)?))
+        Ok(Json(revert_plan_json(&conn, &analysis, with_dependents, None)?))
     })
     .await
 }
@@ -1785,7 +1817,7 @@ async fn revert(
         // so what is written was checked against the state it is written into.
         let analysis = crate::revert::analyse(&conn, head, ops)?;
         if !body.with_dependents && !analysis.revertable() {
-            let plan = revert_plan_json(&conn, &analysis, false)?;
+            let plan = revert_plan_json(&conn, &analysis, false, None)?;
             return Err(ApiError::conflict(format!(
                 "the revert is blocked by {} later operation(s) on the same cells; \
                  pass with_dependents to revert those too",
@@ -1842,6 +1874,199 @@ async fn revert(
     .await
 }
 
+/// The set the revert actually writes, given the client's `apply` list.
+fn narrow_to_applied(
+    effective: Vec<crate::log::OpRow>,
+    apply: &[i64],
+) -> Result<(Vec<crate::log::OpRow>, Vec<serde_json::Value>), ApiError> {
+    let wanted: std::collections::HashSet<i64> = apply.iter().copied().collect();
+    if let Some(stray) = wanted.iter().find(|id| !effective.iter().any(|o| o.id == **id)) {
+        return Err(ApiError::bad_request(format!(
+            "operation {stray} is not part of the revert this lock was started for; \
+             commit may only narrow the set start fixed"
+        )));
+    }
+    let mut skipped = Vec::new();
+    let kept: Vec<crate::log::OpRow> = effective
+        .into_iter()
+        .filter(|op| {
+            if wanted.contains(&op.id) {
+                true
+            } else {
+                skipped.push(json!({"op_id": op.id, "reason": "client_skipped"}));
+                false
+            }
+        })
+        .collect();
+    Ok((kept, skipped))
+}
+
+#[derive(Deserialize)]
+struct RevertStartBody {
+    target: RevertTarget,
+    #[serde(default)]
+    with_dependents: bool,
+}
+
+/// `POST /revert/start`: enters the lock and returns the plan, with the paths
+/// each `move` action needs. A blocked target is refused and the lock is *not*
+/// entered.
+async fn revert_start(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<RevertStartBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        if repo_state.is_rollback_locked() {
+            return Err(ApiError::conflict("a coordinated operation is already in progress"));
+        }
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let head = crate::log::get_head(&conn)?;
+        let ops = resolve_revert_target(&conn, head, &body.target)?;
+        let analysis = crate::revert::analyse(&conn, head, ops)?;
+        if !body.with_dependents && !analysis.revertable() {
+            let plan = revert_plan_json(&conn, &analysis, false, None)?;
+            return Err(ApiError::conflict(format!(
+                "the revert is blocked by {} later operation(s) on the same cells; \
+                 pass with_dependents to revert those too",
+                analysis.blocked.len()
+            ))
+            .with_field("blocked", plan["blocked"].clone()));
+        }
+        let effective = analysis.effective(body.with_dependents);
+        let plan = {
+            let mut cache = slowlog::timed("wait:cache", || repo_state.lock_cache());
+            revert_plan_json(
+                &conn,
+                &analysis,
+                body.with_dependents,
+                Some((&mut cache, &repo_state.config.root)),
+            )?
+        };
+        drop(conn);
+        *repo_state.rollback_lock.lock_recover() =
+            Some(RollbackLock::Revert { ops: effective.iter().map(|o| o.id).collect() });
+        Ok(Json(plan))
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct RevertCommitBody {
+    #[serde(default)]
+    apply: Vec<i64>,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// `POST /revert/commit`: writes the revert as one revision, releases the lock
+/// and replays the watcher buffer.
+async fn revert_commit(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+    payload: Result<Json<RevertCommitBody>, JsonRejection>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Json(body) = payload?;
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        let locked: Vec<i64> = match repo_state.rollback_lock.lock_recover().as_ref() {
+            Some(RollbackLock::Revert { ops }) => ops.clone(),
+            Some(RollbackLock::Navigate { .. }) => {
+                return Err(ApiError::conflict(
+                    "a rollback navigation is in progress, not a revert",
+                ))
+            }
+            None => {
+                return Err(ApiError::conflict("no revert in progress; call revert/start first"))
+            }
+        };
+
+        let result = (|| -> Result<serde_json::Value, ApiError> {
+            let mut conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+            let head = crate::log::get_head(&conn)?;
+            let mut effective = Vec::with_capacity(locked.len());
+            for id in &locked {
+                effective.push(crate::log::get_op(&conn, *id)?.ok_or_else(|| {
+                    ApiError::not_found(format!("operation {id} vanished during the revert"))
+                })?);
+            }
+            // Re-run the check inside the writing transaction: under the lock it
+            // cannot have changed — HEAD stands still — but the guarantee is the
+            // daemon's, not a client convention.
+            let analysis = crate::revert::analyse(&conn, head, effective.clone())?;
+            if !analysis.revertable() {
+                let plan = revert_plan_json(&conn, &analysis, false, None)?;
+                return Err(ApiError::conflict("the revert became blocked")
+                    .with_field("blocked", plan["blocked"].clone()));
+            }
+            let (kept, skipped) = narrow_to_applied(effective, &body.apply)?;
+            if kept.is_empty() {
+                return Ok(json!({
+                    "revision": serde_json::Value::Null,
+                    "head": head,
+                    "reverted_operations": [],
+                    "skipped_operations": skipped,
+                }));
+            }
+            let applied: Vec<i64> = kept.iter().map(|o| o.id).collect();
+            let mut writer = repo_state.writer(&mut conn, body.label.clone())?;
+            crate::revert::apply(&mut writer, &kept)?;
+            let rev_id = writer.rev_id();
+            let effects = writer.effects();
+            slowlog::timed("commit", || writer.commit())?;
+            repo_state.settle(&conn, &effects)?;
+            let new_head = crate::log::get_head(&conn)?;
+            Ok(json!({
+                "revision": rev_id,
+                "head": new_head,
+                "reverted_operations": applied,
+                "skipped_operations": skipped,
+            }))
+        })();
+
+        // The lock is released by a *successful* commit only. A refused one
+        // leaves it standing: the client may have moved files already, and it
+        // is the one that knows whether to retry with a corrected `apply` list
+        // or to abort — exactly as a rollback step leaves the lock to `abort`.
+        let value = result?;
+        *repo_state.rollback_lock.lock_recover() = None;
+        crate::executor::flush_pending(repo_state)?;
+        Ok(Json(value))
+    })
+    .await
+}
+
+/// `POST /revert/abort`: releases the lock and replays the watcher buffer,
+/// writing nothing.
+async fn revert_abort(
+    State(state): State<Arc<AppState>>,
+    Path(repo): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let repo_uuid = parse_uuid(&repo)?;
+    with_repo(&state, repo_uuid, move |repo_state| {
+        {
+            let mut guard = repo_state.rollback_lock.lock_recover();
+            match guard.as_ref() {
+                Some(RollbackLock::Revert { .. }) => {}
+                Some(RollbackLock::Navigate { .. }) => {
+                    return Err(ApiError::conflict(
+                        "a rollback navigation is in progress; use rollback/abort",
+                    ))
+                }
+                None => return Err(ApiError::conflict("no revert in progress")),
+            }
+            *guard = None;
+        }
+        crate::executor::flush_pending(repo_state)?;
+        let conn = slowlog::timed("wait:conn", || repo_state.conn.lock_recover());
+        let head = crate::log::get_head(&conn)?;
+        Ok(Json(json!({"head": head})))
+    })
+    .await
+}
+
 #[derive(Deserialize, Default)]
 struct StepBody {
     #[serde(default)]
@@ -1859,10 +2084,20 @@ async fn rollback_step(
     with_repo(&state, repo_uuid, move |repo_state| {
         let target = {
             let guard = repo_state.rollback_lock.lock_recover();
-            let lock = guard.as_ref().ok_or_else(|| {
-                ApiError::conflict("no rollback navigation in progress; call start first")
-            })?;
-            lock.target
+            match guard.as_ref() {
+                Some(RollbackLock::Navigate { target }) => *target,
+                Some(RollbackLock::Revert { .. }) => {
+                    return Err(ApiError::conflict(
+                        "a coordinated revert is in progress; finish it with revert/commit \
+                         or revert/abort",
+                    ))
+                }
+                None => {
+                    return Err(ApiError::conflict(
+                        "no rollback navigation in progress; call start first",
+                    ))
+                }
+            }
         };
 
         let done = {

@@ -1241,6 +1241,8 @@ pub struct RevertOpts {
     pub label: Option<String>,
     pub force: bool,
     pub silent: bool,
+    /// Policies for the `move` actions, as for a rollback.
+    pub policies: RollbackPolicies,
 }
 
 fn op_line(op: &Json) -> String {
@@ -1316,14 +1318,7 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
         println!("(nothing to revert)");
         return Ok(0);
     }
-    let needs_fs = plan["requires_lock"] == json!(true);
-    if needs_fs && !opts.metadata_only {
-        return Err(CliError::Op(format!(
-            "{} of the operations need a filesystem action, which the coordinated revert \
-             handles; pass --metadata-only to revert only what does not",
-            ops.iter().filter(|o| !o["filesystem"].is_null()).count()
-        )));
-    }
+    let needs_fs = plan["requires_lock"] == json!(true) && !opts.metadata_only;
 
     // The size of the closure is what the user cannot predict from the target
     // alone, so a revert that pulls dependents in always asks.
@@ -1340,6 +1335,10 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
             println!("Aborted.");
             return Ok(0);
         }
+    }
+
+    if needs_fs {
+        return coordinated_revert(ctx, &base, &target, opts, &plan);
     }
 
     let mut body = json!({"target": target.body(), "with_dependents": opts.with_dependents});
@@ -1378,4 +1377,113 @@ pub fn revert_run(ctx: &Ctx, target: RevertTarget, opts: &RevertOpts) -> Result<
         println!("  left out: op {id} ({reason})");
     }
     Ok(0)
+}
+
+/// Drives a revert whose plan needs filesystem work: `start` takes the lock,
+/// the client does the moves and the trash restores, `commit` writes what it
+/// managed to do — or `abort` on any error, leaving the log untouched.
+fn coordinated_revert(
+    ctx: &Ctx,
+    base: &str,
+    target: &RevertTarget,
+    opts: &RevertOpts,
+    preview: &Json,
+) -> Result<i32, CliError> {
+    if !opts.force {
+        for op in preview["operations"].as_array().into_iter().flatten() {
+            eprintln!("  {}", op_line(op));
+        }
+        let moves = preview["operations"]
+            .as_array()
+            .map(|ops| ops.iter().filter(|o| o["filesystem"]["action"] == "move").count())
+            .unwrap_or(0);
+        if !confirm(&format!("Revert {} — {moves} file(s) will be moved?", target.describe()))? {
+            println!("Aborted.");
+            return Ok(0);
+        }
+    }
+
+    let start_body = json!({"target": target.body(), "with_dependents": opts.with_dependents});
+    let plan = ctx.client.post(&format!("{base}/revert/start"), &start_body)?;
+
+    // The trash-bin is what makes destroyed content recoverable at all, and it
+    // also catches anything a `move` would overwrite (spec-trash.org).
+    let trash = ctx.internal_dir()?;
+    let mut trash_entries = trash.entries().unwrap_or_default();
+    let mut restored: HashSet<String> = HashSet::new();
+
+    let outcome = (|| -> Result<Vec<i64>, CliError> {
+        let mut apply = Vec::new();
+        for op in plan["operations"].as_array().into_iter().flatten() {
+            let Some(id) = op["id"].as_i64() else { continue };
+            // `decide_move`/`decide_deleted` answer "skip?" — which for a revert
+            // means "leave this operation out", the whole thing a rollback needs
+            // a restoration operation for.
+            let leave_out = match op["filesystem"]["action"].as_str() {
+                Some("move") => {
+                    let step =
+                        json!({"from": op["filesystem"]["from"], "to": op["filesystem"]["to"]});
+                    decide_move(&step, &opts.policies, &trash, opts.silent)?
+                }
+                Some("restore_content") => {
+                    decide_deleted(op, &trash, &mut trash_entries, &mut restored, opts.silent)?
+                }
+                _ => false,
+            };
+            if !leave_out {
+                apply.push(id);
+            }
+        }
+        Ok(apply)
+    })();
+
+    let apply = match outcome {
+        Ok(apply) => apply,
+        Err(err) => {
+            let _ = ctx.client.post(&format!("{base}/revert/abort"), &json!({}));
+            return Err(err);
+        }
+    };
+
+    let mut body = json!({"apply": apply});
+    if let Some(label) = &opts.label {
+        body["label"] = json!(label);
+    }
+    let resp = match ctx.client.post(&format!("{base}/revert/commit"), &body) {
+        Ok(resp) => resp,
+        Err(err) => {
+            let _ = ctx.client.post(&format!("{base}/revert/abort"), &json!({}));
+            return Err(err);
+        }
+    };
+    if !opts.silent {
+        report_revert(target, &plan, &resp);
+    }
+    Ok(0)
+}
+
+/// Prints what a revert wrote and what it left out.
+fn report_revert(target: &RevertTarget, plan: &Json, resp: &Json) {
+    let reverted = resp["reverted_operations"].as_array().cloned().unwrap_or_default();
+    match resp["revision"].as_i64() {
+        None => println!("Nothing was reverted."),
+        Some(rev) => println!(
+            "Reverted {} as revision {rev} ({} operation(s)).",
+            target.describe(),
+            reverted.len()
+        ),
+    }
+    let ops = plan["operations"].as_array().cloned().unwrap_or_default();
+    let by_id: std::collections::HashMap<i64, &Json> =
+        ops.iter().filter_map(|o| o["id"].as_i64().map(|id| (id, o))).collect();
+    for id in reverted.iter().filter_map(|v| v.as_i64()) {
+        if let Some(op) = by_id.get(&id) {
+            println!("  {}", op_line(op));
+        }
+    }
+    for skipped in resp["skipped_operations"].as_array().into_iter().flatten() {
+        let id = skipped["op_id"].as_i64().unwrap_or(0);
+        let reason = skipped["reason"].as_str().unwrap_or("?");
+        println!("  left out: op {id} ({reason})");
+    }
 }
