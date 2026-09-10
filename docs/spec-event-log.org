@@ -628,12 +628,16 @@ lock holds HEAD still (see below).
 Being an ordinary write settles three questions that a new route would otherwise
 decide by accident.
 
-- *The cache and the watch set follow.* Every write route ends in
-  =repo_state.settle(&conn, &effects)=, which settles the tree cache and
-  refreshes the watch set from the =WriteEffects= the =Writer= accumulated. The
-  revert routes do the same. A revert of a =file_moved= on a directory changes
-  TreeRefs, and one touching =mf_watch= or =mf_ignore= changes what is watched;
-  nothing warns when this is left out, the cache simply drifts.
+- *The cache and the watch set follow, and the =Writer= notices on its own.*
+  Reverting an =mf_watch= write is an =mf_watch= write: =observe_effects=
+  accumulates it into =WriteEffects= like any other, with no revert-specific
+  logic. What is not automatic is applying those effects — =settle= lives on
+  =RepoState= because it needs the tree cache and the watcher handles, which the
+  =Writer= does not have, and it has to run after the transaction commits. So
+  the revert routes end the way the twelve other write routes do: read
+  =effects()= off the writer *before* =commit= consumes it, then call
+  =repo_state.settle(&conn, &effects)=. Nothing warns when that is left out; the
+  cache simply drifts.
 
 - *Reserved names stay writable.* =mfr_*= fields need =force= from a client, but
   that check lives in the routes, not in the =Writer=. A revert restores values
