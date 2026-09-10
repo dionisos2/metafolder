@@ -208,13 +208,28 @@ whether the file action that accompanies it is possible.
 
 The unit a user reverts is a revision, the same unit rollback offers. The
 definition above is nevertheless given on an arbitrary set, because a revision
-may write the same cell twice (a batch that sets a field and later sets it
-again) and because operation-level revert is available for the finer case.
+routinely writes the same cell more than once — =retype_field= alone emits a
+=delete_field= and an =append_field= per converted row, all on one cell — and
+because operation-level revert is available for the finer case.
 
-For each cell =C= written by =S=, the revert restores the =is_new=0= snapshot of
-the *earliest* operation in =S= that writes =C=. Later members of =S= writing
-=C= are subsumed: their "before" is an intermediate state =S= itself produced,
-and restoring that would leave behind a state nobody ever asked for.
+For each cell =C= written by =S=, the state to restore is the one =C= held
+before the earliest member of =S= touched it. It is obtained by undoing =S='s
+operations on =C= /in reverse order/: for each of them, from the last to the
+first, drop its =is_new=1= rows and put its =is_new=0= rows back. The
+composition is exact because the dependency check guarantees that nothing
+outside =S= wrote =C= in the meantime, so =C='s current content is precisely
+what =S= left there.
+
+The daemon need not walk that chain when the first step already answers. An
+operation whose =is_new=0= snapshot covers the *whole* cell — =set_field= and
+the =file_*= types, and the entity-scoped types for the whole entity — carries
+the state that preceded it, so when the earliest member of =S= on =C= is one of
+those, its =is_new=0= snapshot /is/ the answer and every later member on =C= is
+subsumed: their "before" is an intermediate state =S= itself produced, and
+restoring one of those would leave behind a state nobody ever asked for. Only
+=append_field= and =delete_field= describe a single row rather than a cell, and
+only they make the reverse walk necessary — restoring the =is_new=0= of a
+=delete_field= as if it were a cell would silently drop the cell's other rows.
 
 The target must lie on HEAD's ancestry. An operation on a branch abandoned by a
 past rollback is not part of the current history, so there is nothing there to
