@@ -1099,6 +1099,7 @@ Behaviours:
 | =ignore:remove <preset>= | Remove an ignore preset's patterns from the target directory |
 | =ignore:set <preset>= | Replace the target directory's whole ignore set with a preset's patterns |
 | =log:rollback=       | Rollback to the selected revision              |
+| =log:revert=         | Revert the selected revision (or operation) in place |
 | =log:undo=           | Undo the last revision of the active repo (default =ctrl+z=) |
 | =log:redo=           | Re-apply the revision ahead of HEAD (default =ctrl+shift+z=) |
 | =log:prune=          | Prune the event log                            |
@@ -2818,7 +2819,10 @@ existing metarecord: it only stops future tracking (spec-file-tracking
 *** Log view (=log= panel type)
 
 Displays revisions in reverse chronological order. Columns: =rev_id=,
-timestamp, operation count, =status= (HEAD marker). A =Graph= checkbox
+timestamp, operation count, =status= (HEAD marker). A revision written by a
+revert is labelled with the revision it undid, and an expanded operation
+carrying =reverts_op_id= names the operation it reverted, so a correction and
+its cause are readable from one another in both directions. A =Graph= checkbox
 (command =log:toggle-graph=) switches the presentation, refetching the log:
 
 - Unchecked (default) — calls =GET .../log?mode=active=: the active line
@@ -2857,6 +2861,22 @@ operations" has a visible destination.
   a rollback created several branches). At a tip there is nothing to
   redo. No confirmation prompt: the operation is itself undoable, that is
   the point. Refreshes the panels through =metarecords:dirty=.
+- =log:revert= → =GET .../revert/plan= for the selected revision (or, when the
+  revision is expanded and an operation is selected, for that operation alone),
+  then a dialog showing what would be restored and what would be moved on disk.
+  Confirming calls =POST .../revert= — or, when the plan needs filesystem
+  actions, the coordinated =start= / =commit= sequence with the GUI performing
+  the moves (see [[file:spec-event-log.org][spec-event-log.org]] "Revert").
+  Refreshes the panels through =metarecords:dirty=.
+
+  A blocked plan does not open the dialog: the panel selects the blocking
+  operation's revision and says which operation stands in the way, so "revert
+  that one first" is one keystroke away. This is the case rollback cannot
+  express — the blocking revision may be far younger and entirely unrelated —
+  and it is the reason a watched repository needs a revert at all: the watcher
+  writes a revision per batch of filesystem events, and rolling back past dozens
+  of them to undo one rename is not what the user meant.
+
 - =log:mark-checkpoint= → =PATCH .../log/revisions/:rev_id=.
 
 *** Prune log

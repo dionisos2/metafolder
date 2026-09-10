@@ -9,6 +9,8 @@ that enables:
 
 - *Auditing*: full history of changes to any metarecord.
 - *Rollback*: navigating the history tree to any past or future state.
+- *Revert*: undoing one past revision or operation in place, by writing the
+  state it replaced as a new revision rather than by moving HEAD.
 - *Non-destructive branching*: after rolling back, any new write creates a new
   branch — previously "future" operations are never lost.
 
@@ -27,7 +29,9 @@ A /revision/ groups all operations produced by a single API call. It is a
 grouping annotation on operations, not a tree node. It is not possible to roll
 back a single operation within a multi-operation revision via the high-level
 rollback API — the revision remains the minimum unit of user-facing rollback.
-Direct operation-level navigation is available via =op_id=.
+Direct operation-level navigation is available via =op_id=. Undoing one
+operation of a revision /in place/ is a different matter, and is what
+[[*Revert]] is for.
 
 In practice, most revisions contain a single operation (a user editing one
 field). Revisions with many operations arise from batch commands: a =batch_set=
@@ -112,6 +116,98 @@ Reversibility is assessed dynamically at rollback time, not stored statically:
   the =mv= cannot be executed and only the metadata can be restored (stale
   path).
 
+That assessment is about the filesystem, it is genuinely dynamic, and it applies
+to a rollback and to a revert alike. Whether an operation can be undone /on its
+own/ is a different question, structural and answered from the log alone — see
+[[*Operation dependencies]]. It concerns the revert only.
+
+** Revert
+
+Rollback moves HEAD: it undoes everything back to a point in time, and the
+operations it passes over are undone because they are /in the way/, not because
+anyone objected to them. That is the right tool for "take me back to how things
+were at lunchtime". It is the wrong tool for "that one rename was a mistake" —
+especially in a watched repository, where the watcher writes a revision per
+batch of filesystem events and dozens of unrelated ones may have landed since.
+
+A /revert/ answers the second question. It undoes one revision — or one
+operation — *without moving HEAD*: the daemon computes the state that operation
+replaced and writes it back as an ordinary new revision at HEAD. The log grows
+by one entry saying so. Nothing is removed from the history: the mistake and its
+correction are both on the record, which is what an audit log is for.
+
+A revert is an ordinary write in every other respect. It goes through
+[[*Normal write flow]] like any other; it can itself be reverted (restoring the
+original change); it can be rolled back across, pruned, and trimmed by
+retention. The only thing that marks it is a =reverts_op_id= column naming what
+each of its operations undid, kept for display and provenance.
+
+Not every operation can be reverted on its own: a later one may have overwritten
+what it wrote, in which case there is no meaningful "before" left to restore.
+That is what [[*Operation dependencies]] decides.
+
+** Operation dependencies
+
+Every operation writes one /cell/:
+
+- an operation carrying a =field_name= writes the cell =(entity_uuid,
+  field_name)=. That includes the watcher's =file_deleted=, =file_moved= and
+  =file_modified=: they are set-field-shaped and each names the field it wrote.
+- =create_metarecord=, =delete_metarecord= and =set_metarecord= carry no field
+  name and write the *whole entity*. Their cell is =(entity_uuid, *)=, which
+  intersects every cell of that entity.
+
+Two operations are /independent/ when their cells do not intersect. Independent
+operations commute: applying them in either order, or removing one and keeping
+the other, yields the same state. Operations sharing a cell do not commute —
+=set_field= replaces every row of its cell, so the later one erases what the
+earlier one wrote and the earlier one's "after" state survives nowhere.
+
+Hence the rule:
+
+#+BEGIN_QUOTE
+A set =S= of operations is *revertable* when no operation outside =S=, between
+the oldest member of =S= and HEAD along HEAD's ancestry, writes a cell that =S=
+writes.
+#+END_QUOTE
+
+When one does, =S= is *blocked by* it and the daemon names it, so the answer to
+"why can I not undo this?" is an operation the user can go and look at — and
+usually revert first.
+
+This check is *structural, not dynamic*. It reads the =operation= table and
+nothing else: not the filesystem, not the current field values, not even the
+snapshot contents. Two callers asking at the same HEAD get the same answer, and
+it remains the answer until HEAD moves. It is also cheap: =idx_operation_entity
+(entity_uuid, id)= is exactly the index it wants.
+
+*Rollback has no equivalent check and needs none.* It undoes operations in
+reverse order down to its target, so any operation that overwrote another has
+already been undone by the time that other one's turn comes. Ordering
+guarantees structurally what the dependency check must establish explicitly for
+a revert, which is why the check belongs to the revert alone.
+
+It is a separate axis from the filesystem reversibility of
+[[*Operation types]], and the two are evaluated independently: dependency asks
+whether the metadata change is still meaningful, filesystem reversibility
+whether the file action that accompanies it is possible.
+
+*** Reverting a set
+
+The unit a user reverts is a revision, the same unit rollback offers. The
+definition above is nevertheless given on an arbitrary set, because a revision
+may write the same cell twice (a batch that sets a field and later sets it
+again) and because operation-level revert is available for the finer case.
+
+For each cell =C= written by =S=, the revert restores the =is_new=0= snapshot of
+the *earliest* operation in =S= that writes =C=. Later members of =S= writing
+=C= are subsumed: their "before" is an intermediate state =S= itself produced,
+and restoring that would leave behind a state nobody ever asked for.
+
+The target must lie on HEAD's ancestry. An operation on a branch abandoned by a
+past rollback is not part of the current history, so there is nothing there to
+undo; the daemon rejects it with =400=.
+
 * Daemon
 
 ** SQLite Schema
@@ -134,7 +230,8 @@ CREATE TABLE operation (
     entity_uuid           BLOB    NOT NULL,    -- UUID of the affected metadata metarecord
     entity_version_before INTEGER,             -- metadata.version before this op; restored on inverse
     entity_version_after  INTEGER,             -- metadata.version after this op; restored on redo
-    field_name            TEXT                 -- for field operations; NULL otherwise
+    field_name            TEXT,                -- for field operations; NULL otherwise
+    reverts_op_id         INTEGER REFERENCES operation(id)  -- see Revert
 );
 
 -- Before/after snapshots for each operation, stored as normalized rows
@@ -188,6 +285,14 @@ CREATE TABLE pending_operation (
     value_name     TEXT
 );
 #+END_SRC
+
+=reverts_op_id= is set on each operation a [[*Revert]] writes, naming the
+operation it undid. It is informational — displays read it, nothing branches on
+it — and it is allowed to dangle: [[*Log pruning]] and a retention trim (see
+[[*Automatic retention]]) may remove the operation it points at, and neither
+goes back to clear the column. A database written before the column existed is migrated by
+adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every existing
+operation with =NULL=: no revert has happened yet.
 
 *** Snapshot rows (=op_snapshot=)
 
@@ -371,6 +476,135 @@ metadata changes. The CLI should inspect the plan first (=GET /rollback/plan=)
 and use the coordinated navigation protocol if selective per-operation
 handling is needed.
 
+** Writing a revert
+
+A revert takes a set of operations (a revision's, or an explicit list), checks it
+is revertable, computes the state its members replaced, and writes that state as
+one new revision at HEAD. It is a normal write: same =log::Writer=, same
+transaction, same retention trim, same tree-cache and watch-set follow-up.
+
+*** Revert content
+
+For each cell of the set, the daemon restores the =is_new=0= snapshot of the
+earliest operation writing it (see [[*Reverting a set]]) and writes the operation
+that expresses it:
+
+| Reverted =op_type=                | State restored                    | Operation written              |
+|-----------------------------------+-----------------------------------+--------------------------------|
+| =create_metarecord=               | none — the entity did not exist   | =delete_metarecord=            |
+| =delete_metarecord=               | all =is_new=0= field rows         | =create_metarecord=, same UUID |
+| =set_metarecord=                  | all =is_new=0= field rows         | =set_metarecord=               |
+| =set_field=, the =file_*= types   | the =is_new=0= rows of the cell   | =set_field=, or a cleared cell |
+| =append_field=                    | the appended row is removed       | =delete_field=                 |
+| =delete_field=                    | the =is_new=0= row, re-appended   | =append_field=                 |
+| =unknown=                         | —                                 | not revertable (no snapshots)  |
+
+Two consequences worth stating outright:
+
+- *A revert only ever writes manual operation types.* The watcher's types mean
+  "the filesystem reported this"; a revert is a deliberate write by a client,
+  and the file action that accompanies it is a consequence of the revert rather
+  than its cause. Reverting a =file_moved= therefore produces a =set_field= on
+  =mfr_path=, and is held to the forest's referential integrity like any other
+  manual write.
+- *Restoring an empty cell is not the same as writing =Nothing=.* When the
+  =is_new=0= snapshot has no rows, the field did not exist before the operation
+  and the revert removes it entirely (a =set_field= operation with no =is_new=1=
+  rows), rather than setting the explicit-absence sentinel. The distinction is
+  the data model's (spec-data-model "Nothing") and the revert must not blur it.
+
+A revert of a whole revision writes its operations in the reverted set's own
+order (by =id=), so the two revisions read as mirror images in =mf log --ops=.
+Intra-revision order is otherwise free: forest integrity is checked once at
+commit, not per operation, so a revert restoring a whole subtree's =mfr_path=
+passes as long as the state it leaves is consistent.
+
+An operation removed from the log — by [[*Log pruning]] or by a retention trim
+(see [[*Automatic retention]]) — cannot be reverted: it took its snapshots with
+it, and the state it replaced is no longer recorded anywhere. The daemon answers
+=404=, naming retention as the likely reason so the message does not read as a
+bug.
+
+*** The dependency query
+
+Given the set's operation ids and HEAD, the blockers are the operations on
+HEAD's ancestry, younger than the oldest member of the set, that write one of
+the set's cells and are not themselves in the set. Entity-scoped operations
+(=field_name IS NULL=) intersect every cell of their entity, on both sides of
+the comparison.
+
+The ancestry is walked as it is everywhere else in this module (=ancestry=), and
+the cell test is an indexed lookup per entity on =idx_operation_entity
+(entity_uuid, id)=, so the cost is proportional to the number of operations
+recorded for the entities the set touches, not to the size of the log.
+
+The check runs in =GET /revert/plan=, so a client can show what is possible
+before asking for it, and again inside the transaction that writes the revert,
+so what is written was checked against the state it is written into. The second
+run is what makes the rule a daemon guarantee rather than a client convention;
+in the coordinated form it cannot fail once =start= has succeeded, because the
+lock holds HEAD still (see below).
+
+*** Filesystem actions
+
+Three reverted operation types describe something that happened to a file, and
+undoing them has to happen to the file too:
+
+| Reverted operation | Filesystem action                                                           |
+|--------------------+-----------------------------------------------------------------------------|
+| =file_moved=       | =mv= the file back, from where it is recorded now to the restored location   |
+| =file_deleted=     | restore the content from the trash-bin, if the deletion passed through it    |
+| =file_modified=    | restore the content from the trash-bin, if the change passed through it      |
+
+As for rollback, the daemon neither touches the filesystem nor judges whether
+the action is possible: the client does, and then tells the daemon what it
+managed to do. The protocol is =POST /revert/start= → filesystem actions →
+=POST /revert/commit=, holding the [[*Rollback lock]] in between.
+
+The lock is not a formality here. While it is held the watcher keeps observing
+but its events are not executed, so the =mv= the client has just performed
+cannot be ingested as a genuine rename before the metadata explaining it is
+written. Without it, the watcher would resolve the moved file's old path to
+nothing, treat the arrival as a new file, and leave a duplicate metarecord at
+the destination — the same race a trash restore once lost a file to (see
+[[file:spec-trash.org][spec-trash.org]]). It also freezes HEAD, which is what
+lets the dependency check taken at =start= still hold at =commit=.
+
+A revert whose plan contains no filesystem action needs none of this: the
+single-shot =POST /revert= writes it in one transaction, no lock, no
+round-trip. That is the common case — most of a log's revertable mistakes are
+metadata.
+
+*** Skipping is free
+
+When the client cannot carry out an operation's filesystem action, it leaves
+that operation out of the commit and the daemon does not revert it. Nothing
+else is needed.
+
+This is where the revert model is simpler than navigation, and it is worth
+being explicit about why. Rollback must apply a skipped operation's metadata
+change anyway — HEAD has to reach the target, and the HEAD↔data invariant
+forbids passing an operation without applying it — which leaves the metadata
+describing a filesystem that does not match, to be corrected afterwards by a
+synthetic /restoration operation/ replayed on a new branch. A revert moves HEAD
+forward by exactly what it wrote, so "do not undo this one" is directly
+expressible, and what lands in the database is true at the moment it is written.
+There is no restoration operation in a revert, and no correcting branch.
+
+*** Field ids and versions
+
+A revert is a new write and behaves like one: the rows it inserts take fresh
+=field.id= values from the =AUTOINCREMENT= sequence, and the entities it touches
+take fresh versions from =next_version=. It does *not* restore the ids and
+versions the reverted operation held.
+
+That is deliberate, and the contrast with [[*Field ID and version stability]] is
+the point. Navigation recreates a state the log already described, so it can and
+must restore its identifiers exactly. A revert produces a state the repository
+has never been in — the reverted change is gone, everything after it is still
+there — so a new version is the truthful answer, and every cache keyed on
+=version= correctly sees a change.
+
 ** Log pruning
 
 Two pruning operations are available. Both require the target to be an
@@ -489,7 +723,9 @@ direction (unapply vs. apply).
 
 *** Rollback lock
 
-=POST /rollback/start= enters /rollback lock/ mode:
+=POST /rollback/start= — and =POST /revert/start=, which needs the same
+protection for the same reason ([[*Filesystem actions]]) — enters /rollback
+lock/ mode:
 
 - The file watcher *continues to run normally*, buffering events as usual.
 - *Execution of pending operations is suspended* — buffered events accumulate in
@@ -499,7 +735,7 @@ direction (unapply vs. apply).
 - Read-only endpoints continue to work normally.
 
 The lock is released by the final =POST /rollback/step= (when HEAD reaches the
-target) or by =POST /rollback/abort=. On release, pending operations are
+target), by =POST /revert/commit=, or by either =abort=. On release, pending operations are
 processed and committed as a new revision on the current HEAD branch (applying
 the same compaction and batching rules as the normal watcher flush; see
 [[spec-file-tracking.org]]).
@@ -537,6 +773,8 @@ GET   /repos/:repo_uuid/log/revisions/:rev_id
 PATCH /repos/:repo_uuid/log/revisions/:rev_id
 POST  /repos/:repo_uuid/log/prune
 POST  /repos/:repo_uuid/rollback
+GET   /repos/:repo_uuid/revert/plan
+POST  /repos/:repo_uuid/revert
 #+END_SRC
 
 =GET /log/since= is the change feed for client caches: it returns the current
@@ -556,6 +794,10 @@ GET  /repos/:repo_uuid/rollback/plan/summary
 POST /repos/:repo_uuid/rollback/start
 POST /repos/:repo_uuid/rollback/step
 POST /repos/:repo_uuid/rollback/abort
+
+POST /repos/:repo_uuid/revert/start
+POST /repos/:repo_uuid/revert/commit
+POST /repos/:repo_uuid/revert/abort
 #+END_SRC
 
 *** =GET /repos/:repo_uuid/log=
@@ -845,9 +1087,155 @@ The caller is responsible for reversing any =mv= commands already executed
 
 Response body: ={"head": <current_op_id>}=
 
+*** Revert target
+
+Every revert endpoint takes the same =target= object, naming the set of
+operations to undo:
+
+| Form                     | Set                                                     |
+|--------------------------+---------------------------------------------------------|
+| ={"rev_id": N}=          | every operation of revision =N=                         |
+| ={"rev_id": "head"}=     | every operation of the revision containing HEAD         |
+| ={"op_ids": [22, 23]}=   | exactly these operations                                |
+
+All members must lie on HEAD's ancestry, or the daemon answers =400=.
+
+*** =GET /repos/:repo_uuid/revert/plan=
+
+Describes what a revert would do, without writing anything and without taking
+the lock. Query parameters =target_rev_id= or =target_op_ids= (comma-separated),
+with the semantics above.
+
+#+BEGIN_SRC json
+{
+  "revertable": false,
+  "requires_lock": true,
+  "operations": [
+    {"id": 22, "op_type": "set_field", "entity_uuid": "…", "field_name": "rating",
+     "writes": "set_field",
+     "restores": [{"field_name": "rating", "value_type": "int", "value_int": 3}],
+     "filesystem": null,
+     "blocked_by": null},
+    {"id": 23, "op_type": "file_moved", "entity_uuid": "…", "field_name": "mfr_path",
+     "writes": "set_field",
+     "restores": [{"field_name": "mfr_path", "value_type": "tree_ref",
+                   "value_uuid": "<parent_uuid>", "value_name": "old.mp3"}],
+     "filesystem": {"action": "move",
+                    "from": "/repo/music/new.mp3", "to": "/repo/music/old.mp3"},
+     "blocked_by": {"op_id": 91, "rev_id": 40, "timestamp": 1700000900000,
+                    "op_type": "file_moved", "field_name": "mfr_path",
+                    "entity_uuid": "…"}}
+  ],
+  "blocked": [{"op_id": 91, "rev_id": 40, "…": "…"}]
+}
+#+END_SRC
+
+- =writes= is the operation type the revert would record — never a =file_*=
+  type (see [[*Revert content]]).
+- =restores= is the snapshot the revert would write back, in the =op_snapshot=
+  row shape used by =GET /log/revisions/:rev_id=. An empty array means the cell
+  would be removed.
+- =filesystem= is =null= when no file action is needed, and otherwise one of
+  ={"action": "move", "from": …, "to": …}= — the paths to pass to =mv=, already
+  computed, as in =POST /rollback/start= — or ={"action": "restore_content"}=,
+  meaning the content has to come back from the trash-bin. The daemon does not
+  look: whether it is there is the client's question to answer.
+  =requires_lock= is true when any operation has an action, and is the client's
+  signal to use the coordinated form.
+- =blocked_by= names the operation standing in the way, or =null=. =blocked= is
+  the deduplicated union of them, which is what a client shows the user.
+  =revertable= is true exactly when =blocked= is empty.
+
+*** =POST /repos/:repo_uuid/revert=
+
+The single-shot form: checks, writes and commits one revision in one
+transaction.
+
+Request body:
+#+BEGIN_SRC json
+{"target": {"rev_id": 12},
+ "label": "undo the bulk rename",
+ "skip_filesystem": false}
+#+END_SRC
+
+=label= is the label of the revision the revert creates, as on any other write.
+=skip_filesystem= (default =false=) decides what happens to operations that
+would need a file action: refuse the whole revert, or leave those operations
+out of it. It never means "write the metadata anyway" — a revert never records a
+change it knows to be untrue of the filesystem.
+
+Response body:
+#+BEGIN_SRC json
+{
+  "revision": 57,
+  "head": 140,
+  "reverted_operations": [22],
+  "skipped_operations": [{"op_id": 23, "reason": "requires_filesystem"}]
+}
+#+END_SRC
+
+Errors:
+
+| Status | Condition                                                                  |
+|--------+----------------------------------------------------------------------------|
+|  =400= | target not on HEAD's ancestry; an =unknown= operation has no snapshots     |
+|  =404= | no such revision or operation — pruned or trimmed away, or never existed   |
+|  =409= | blocked — the body adds =blocked=, in the plan's shape                     |
+|  =409= | a file action is needed and =skip_filesystem= is false                     |
+|  =423= | a rollback or revert lock is held                                          |
+
+A revert with nothing left to apply writes nothing: the response carries
+=revision: null= and lists everything under =skipped_operations=. An empty
+revision would be a log entry claiming a change that did not happen.
+
+*** =POST /repos/:repo_uuid/revert/start=
+
+The coordinated form. Enters the [[*Rollback lock]], stores the target, and
+returns the same body as =GET /revert/plan=. A blocked target is rejected with
+=409= and the lock is *not* entered.
+
+Request body: ={"target": {"rev_id": 12}}=
+
+*** =POST /repos/:repo_uuid/revert/commit=
+
+Writes the revert as one revision, releases the lock and replays the watcher
+buffer. The client lists the operations whose filesystem action it carried out
+successfully; the others are simply not reverted.
+
+Request body:
+#+BEGIN_SRC json
+{"apply": [22, 23], "label": "undo the bulk rename"}
+#+END_SRC
+
+Response body: as =POST /revert=, with the operations left out of =apply=
+reported in =skipped_operations= with =reason: "client_skipped"=. An id in
+=apply= that is not part of the stored target is a =400=: the set to revert was
+fixed at =start= and =commit= may only narrow it.
+
+The dependency check is re-run inside the transaction. Under the lock it cannot
+have changed — write endpoints answer =423= and the watcher's execution is
+suspended, so HEAD stands still — which is why =commit= has no conflict status:
+the check is re-run for the daemon's own guarantee, not to catch a race.
+
+*** =POST /repos/:repo_uuid/revert/abort=
+
+Releases the lock and replays the watcher buffer, writing nothing. The client is
+responsible for reversing any filesystem action it already performed (or for
+running =reconcile=), exactly as for =POST /rollback/abort=.
+
+Response body: ={"head": <current_op_id>}=
+
+*** Wire compatibility
+
+Everything the revert adds is additive — five new endpoints and one new nullable
+=reverts_op_id= field on the operations returned by =GET /log= and
+=GET /log/revisions/:rev_id= — so it does not bump =core::API_VERSION=. An older
+client keeps working; it simply cannot revert, and does not show what a revert
+undid.
+
 * CLI
 
-The log and rollback CLI (=mf log=, =mf log show=, =mf rollback=,
+The log and rollback CLI (=mf log=, =mf log show=, =mf rollback=, =mf revert=,
 =mf prune=) is implemented over the daemon endpoints described above.
 
 ** =mf log=
@@ -883,6 +1271,9 @@ With =--ops=, each revision is expanded to show its individual operations:
     op 22  set_field(genre)   on <uuid>
   rev 11  ...
 #+END_SRC
+
+A revision written by =mf revert= is tagged =(revert of rev N)=; with =--ops=,
+each of its operations names the operation it undid.
 
 With =--tree=, every branch (including those left behind by past rollbacks) is
 shown as a flat list, with off-active-line revisions tagged =(branch)=. With
@@ -954,7 +1345,8 @@ snapshot (not a fully resolved filesystem path — path resolution would require
 additional round-trips and is left to a future enhancement).
 
 For operations with no snapshot rows (=unknown= op type), a note is shown
-instead of before/after values.
+instead of before/after values. An operation carrying =reverts_op_id= is shown
+as =reverts op N=.
 
 **** Options
 
@@ -1041,6 +1433,97 @@ Flags:
 Calls =GET /rollback/plan= and displays the full ordered list of operations
 that would be processed, without executing anything. Target is optional; omitted
 defaults to the previous revision (same as =mf rollback= with no target).
+
+** =mf revert [<target>]=
+
+Undoes one revision, or one operation, by writing the state it replaced as a new
+revision at HEAD. HEAD does not move backwards and nothing leaves the history:
+=mf log= afterwards shows both the mistake and its correction.
+
+*** Synopsis
+
+#+BEGIN_SRC
+mf revert [<target>] [options]
+mf revert plan [<target>]
+#+END_SRC
+
+Target forms:
+- omitted: the revision containing HEAD (undo what was just done)
+- =<N>=: revision id — the number shown by =mf log=
+- =--op N=: a single operation, for when only part of a revision is wrong
+  (repeatable: =--op 22 --op 23=)
+
+*** Behaviour
+
+1. Calls =GET /revert/plan=.
+2. If the plan is blocked, prints the blocking operations and exits =1= without
+   writing anything.
+3. If no operation needs a filesystem action, calls =POST /revert= and prints
+   what it wrote.
+4. Otherwise prints the plan, asks for confirmation unless =--force=, then calls
+   =POST /revert/start= and, for each operation:
+   - a =move= action: checks whether the file is at =from=, applies the relevant
+     policy (the same four as =mf rollback=, see [[*Policies for move_file]]),
+     and adds the operation to the =apply= list when the =mv= succeeded. An
+     occupied destination goes to the trash-bin first, as in a rollback, so no
+     byte is lost.
+   - a =restore_content= action: if the trash-bin holds the content this
+     operation destroyed (matched by metarecord and
+     =entity_version_before_revision=, as in a rollback), moves it back and adds
+     the operation to =apply=; otherwise leaves it out, with a
+     =mf trash restore= hint if some other content of that record is trashed.
+   - every other operation is added to =apply= unconditionally.
+5. Calls =POST /revert/commit= with the =apply= list, or =POST /revert/abort= on
+   error or interrupt.
+
+With =--metadata-only=, step 4 never runs: the CLI calls =POST /revert= with
+=skip_filesystem: true=, which reverts everything that needs no file action and
+reports the rest as left out.
+
+Operations left out are named in the summary: a revert reports what it did not
+undo as plainly as what it did.
+
+Example of a blocked target:
+
+#+BEGIN_SRC
+Cannot revert revision 12: 1 of its 2 operations is blocked.
+
+  op 23  set_field(mfr_path)  on 5f2a1c88…
+    blocked by op 91  (rev 40, 2024-01-16 08:04, file_moved mfr_path)
+
+Revert rev 40 first, or pass --op 22 to revert only what is free.
+#+END_SRC
+
+Example of a successful revert:
+
+#+BEGIN_SRC
+Reverted revision 12 as revision 57 (2 operations, 1 file moved).
+
+  op 22  set_field(rating)    5 → 3
+  op 23  set_field(mfr_path)  music/new.mp3 → music/old.mp3   (mv)
+#+END_SRC
+
+*** Options
+
+| Flag                      | Description                                                    |
+|---------------------------+----------------------------------------------------------------|
+| =--op N=                  | Revert this operation only (repeatable)                        |
+| =--label L=               | Label the revision the revert creates                          |
+| =--metadata-only=         | Leave out the operations needing a file action                 |
+| =--on-move-available P=   | Policy for a =move= whose file is present; default =apply=     |
+| =--on-move-unavailable P= | Policy for a =move= whose file is gone; default =ask=          |
+| =--force=                 | Skip the confirmation prompt                                   |
+| =--silent=                | Suppress informational output; does not suppress =ask= prompts |
+
+A metadata-only revert asks for nothing: it is itself revertable, which is the
+whole point of preferring it to a rollback. The confirmation exists only for the
+filesystem actions.
+
+*** =mf revert plan [<target>]=
+
+Calls =GET /revert/plan= and prints it — the operations, the state each would
+restore, the file actions each would need, and the blockers if any — without
+writing anything and without taking the lock.
 
 ** =mf prune=
 Permanently removes operations from the history. Both sub-commands are
