@@ -212,24 +212,33 @@ routinely writes the same cell more than once — =retype_field= alone emits a
 =delete_field= and an =append_field= per converted row, all on one cell — and
 because operation-level revert is available for the finer case.
 
-For each cell =C= written by =S=, the state to restore is the one =C= held
-before the earliest member of =S= touched it. It is obtained by undoing =S='s
-operations on =C= /in reverse order/: for each of them, from the last to the
-first, drop its =is_new=1= rows and put its =is_new=0= rows back. The
-composition is exact because the dependency check guarantees that nothing
-outside =S= wrote =C= in the meantime, so =C='s current content is precisely
-what =S= left there.
+For each cell =C= written by =S=, the revert writes the state =C= held at =P=,
+the parent of the earliest member of =S=: the last state that predates
+everything =S= did to that cell. Nothing subtler is meant by "undoing =S=".
 
-The daemon need not walk that chain when the first step already answers. An
-operation whose =is_new=0= snapshot covers the *whole* cell — =set_field= and
-the =file_*= types, and the entity-scoped types for the whole entity — carries
-the state that preceded it, so when the earliest member of =S= on =C= is one of
-those, its =is_new=0= snapshot /is/ the answer and every later member on =C= is
-subsumed: their "before" is an intermediate state =S= itself produced, and
-restoring one of those would leave behind a state nobody ever asked for. Only
-=append_field= and =delete_field= describe a single row rather than a cell, and
-only they make the reverse walk necessary — restoring the =is_new=0= of a
-=delete_field= as if it were a cell would silently drop the cell's other rows.
+That state is one the log describes, and the daemon reconstructs it for that one
+cell rather than by navigating the whole database to =P=: starting from =C='s
+current rows, it walks back along HEAD's ancestry, dropping each crossed
+operation's =is_new=1= rows and putting its =is_new=0= rows back. The dependency
+check is what makes this a revert and not a rewind — it guarantees that every
+operation crossed on the way belongs to =S=, so nothing unrelated is undone in
+passing.
+
+The walk usually stops at its first step. An operation whose =is_new=0= snapshot
+covers the *whole* cell — =set_field= and the =file_*= types, and the
+entity-scoped types for the whole entity — already holds the state that preceded
+it, so when the earliest member of =S= on =C= is one of those, that snapshot is
+the answer outright. Only =append_field= and =delete_field= describe a single
+row instead of a cell, and only they oblige the daemon to keep walking: reading
+a =delete_field='s =is_new=0= as though it were a cell would silently drop the
+cell's other rows.
+
+Everything past that point is an ordinary write. The revert hands the
+reconstructed state to =log::Writer= as any client would, and the =op_snapshot=
+rows of the operations it creates are recorded by [[*Normal write flow]] — the
+revert neither computes nor supplies them. =is_new= appears in this section only
+because reading the past means reading =op_snapshot=; it plays no part in what a
+revert records.
 
 The target must lie on HEAD's ancestry. An operation on a branch abandoned by a
 past rollback is not part of the current history, so there is nothing there to
@@ -512,21 +521,20 @@ transaction, same retention trim, same tree-cache and watch-set follow-up.
 
 *** Revert content
 
-For each cell of the set, the daemon restores the =is_new=0= snapshot of the
-earliest operation writing it (see [[*Reverting a set]]) and writes the operation
-that expresses it:
+For each cell the set writes, the daemon reconstructs the state it held at =P=
+(see [[*Reverting a set]]) and writes the operation that expresses it:
 
-| Reverted =op_type=                | State restored                    | Operation written              |
-|-----------------------------------+-----------------------------------+--------------------------------|
-| =create_metarecord=               | none — the entity did not exist   | =delete_metarecord=            |
-| =delete_metarecord=               | all =is_new=0= field rows         | =create_metarecord=, same UUID |
-| =set_metarecord=                  | all =is_new=0= field rows         | =set_metarecord=               |
-| =set_field=                       | the =is_new=0= rows of the cell   | =set_field=, or a cleared cell |
-| =file_deleted=, =file_moved=      | the =is_new=0= rows of the cell   | =file_moved=                   |
-| =file_modified=                   | the =is_new=0= rows of the cell   | =file_modified=                |
-| =append_field=                    | the appended row is removed       | =delete_field=                 |
-| =delete_field=                    | the =is_new=0= row, re-appended   | =append_field=                 |
-| =unknown=                         | —                                 | not revertable (no snapshots)  |
+| Reverted =op_type=           | State written                        | Operation written              |
+|------------------------------+--------------------------------------+--------------------------------|
+| =create_metarecord=          | none — no entity at =P=              | =delete_metarecord=            |
+| =delete_metarecord=          | the entity as of =P=                 | =create_metarecord=, same UUID |
+| =set_metarecord=             | the entity as of =P=                 | =set_metarecord=               |
+| =set_field=                  | the cell as of =P=                   | =set_field=, or a cleared cell |
+| =file_deleted=, =file_moved= | the cell as of =P=                   | =file_moved=                   |
+| =file_modified=              | the cell as of =P=                   | =file_modified=                |
+| =append_field=               | the cell as of =P= — the row is gone | =delete_field=                 |
+| =delete_field=               | the cell as of =P= — the row is back | =append_field=                 |
+| =unknown=                    | —                                    | not revertable (no snapshots)  |
 
 Two consequences worth stating outright:
 
@@ -544,10 +552,10 @@ Two consequences worth stating outright:
   =reconcile= writes when it relinks an orphan, whose =mfr_path= was =Nothing=
   before the content reappeared — so reverting a =file_deleted= that the
   trash-bin could satisfy is a =file_moved= like any other homecoming.
-- *Restoring an empty cell is not the same as writing =Nothing=.* When the
-  =is_new=0= snapshot has no rows, the field did not exist before the operation
-  and the revert removes it entirely (a =set_field= operation with no =is_new=1=
-  rows), rather than setting the explicit-absence sentinel. The distinction is
+- *Restoring an empty cell is not the same as writing =Nothing=.* When the cell
+  was empty at =P=, the field did not exist before the reverted operation and
+  the revert removes it entirely — a =set_field= operation with no rows after —
+  rather than setting the explicit-absence sentinel. The distinction is
   the data model's (spec-data-model "Nothing") and the revert must not blur it.
 
 A revert of a whole revision writes its operations in the reverted set's own
@@ -1182,8 +1190,8 @@ with the semantics above.
 - =writes= is the operation type the revert would record (see
   [[*Revert content]]), which is a =file_*= type exactly when =filesystem= is
   not =null=.
-- =restores= is the snapshot the revert would write back, in the =op_snapshot=
-  row shape used by =GET /log/revisions/:rev_id=. An empty array means the cell
+- =restores= is the state the revert would write, in the =op_snapshot= row
+  shape used by =GET /log/revisions/:rev_id=. An empty array means the cell
   would be removed.
 - =filesystem= is =null= when no file action is needed, and otherwise one of
   ={"action": "move", "from": …, "to": …}= — the paths to pass to =mv=, already
