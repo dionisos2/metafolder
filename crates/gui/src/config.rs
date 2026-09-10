@@ -621,7 +621,10 @@ mod tests {
         let shipped = include_str!("../default-config/config.toml");
         let parsed: GuiConfig = toml::from_str(shipped).unwrap();
         let list = parsed.panel_defaults.get("metarecord-list").unwrap();
-        assert_eq!(list["columns"], serde_json::json!("mfr_path:path mfr_type &version"));
+        assert_eq!(
+            list["columns"],
+            serde_json::json!("mfr_path:path mfr_type &version order_file")
+        );
         assert_eq!(
             list["finder-fields"],
             serde_json::json!(["mfr_path:path", "label:value", "name:value"])

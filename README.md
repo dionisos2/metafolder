@@ -237,7 +237,7 @@ The command tree is a noun/verb hierarchy (`get`⁻¹`set`, `add`⁻¹`delete`):
 - `mf tag [selector] <add|deny|mixed|remove|list> <tag>` — hierarchical tags
   with subsumption and exclusivity (selector as for `metarecord`, plus `--eq`).
 - `mf order <folder>` — number a folder's direct children for sorting
-  (`order_position_file`/`order_position_dir`).
+  (`order_file`/`order_dir`).
 - `mf trash {list,restore,prune}` (+ `mf trash -f <path>` to trash a tracked
   file/directory) — the repository trash bin.
 - `mf log {list,show,rollback,prune}` — event log, atomic navigation, pruning.

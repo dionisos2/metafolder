@@ -2,6 +2,7 @@
 //! the logged write flow (Writer), TreeRef validation, reserved fields.
 
 use metafolder_core::metarecord::{Field, TreeName, Value};
+use metafolder_core::order;
 use metafolder_daemon::db;
 use metafolder_daemon::log::{OpType, Writer};
 use metafolder_daemon::reserved;
@@ -1889,4 +1890,160 @@ fn test_the_batched_cell_read_seeks_by_metarecord() {
     );
     assert!(plan.contains("idx_field_metarecord"), "should seek by metarecord: {plan}");
     assert!(!plan.contains("SCAN field"), "should not scan the field table: {plan}");
+}
+
+// ── The order_position_* → order_* rename (spec-file-tracking "mf order") ─────
+
+/// The field names a repository written before the rename carries.
+const LEGACY_FILE: &str = "order_position_file";
+const LEGACY_DIR: &str = "order_position_dir";
+
+/// How many rows of `table` carry `name` in their `field_name` column.
+fn named(conn: &Connection, table: &str, name: &str) -> i64 {
+    conn.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE field_name = ?1"), [name], |r| {
+        r.get(0)
+    })
+    .unwrap()
+}
+
+/// Renames the two order fields back to the names they had before the rename,
+/// in the data *and* in the log — what a repository written by an older daemon
+/// looks like on disk.
+fn downgrade_to_order_position_names(conn: &Connection) {
+    conn.execute_batch(
+        "UPDATE field SET field_name = 'order_position_file' WHERE field_name = 'order_file';
+         UPDATE field SET field_name = 'order_position_dir' WHERE field_name = 'order_dir';
+         UPDATE operation SET field_name = 'order_position_file' WHERE field_name = 'order_file';
+         UPDATE operation SET field_name = 'order_position_dir' WHERE field_name = 'order_dir';
+         UPDATE op_snapshot SET field_name = 'order_position_file' WHERE field_name = 'order_file';
+         UPDATE op_snapshot SET field_name = 'order_position_dir' WHERE field_name = 'order_dir';",
+    )
+    .unwrap();
+}
+
+/// Writes one numbered file and one numbered directory, through the log. The
+/// positions are written with `set_field` rather than at creation, so the name
+/// lands in `operation.field_name` too (a `create_metarecord` operation names no
+/// field — its snapshot rows carry the names) and the test can watch all three
+/// tables.
+fn numbered_children(conn: &mut Connection) -> (Uuid, Uuid) {
+    let file = create(conn, vec![]);
+    let dir = create(conn, vec![]);
+    let mut w = Writer::begin(conn, None).unwrap();
+    w.set_field(file.uuid, order::FIELD_FILE, Value::Int(1)).unwrap();
+    w.set_field(dir.uuid, order::FIELD_DIR, Value::Int(1)).unwrap();
+    w.commit().unwrap();
+    (file.uuid, dir.uuid)
+}
+
+#[test]
+fn test_order_position_fields_are_renamed_on_open() {
+    let dir_ = common::TempDir::new("migrate-order-names");
+    let path = dir_.path().join("db.sqlite");
+
+    // A repository written before the rename: the positions, and the log
+    // operations that wrote them, all speak the old names.
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    let (file, dir) = numbered_children(&mut conn);
+    downgrade_to_order_position_names(&conn);
+    assert_eq!(named(&conn, "field", LEGACY_FILE), 1, "the fixture is a legacy database");
+    drop(conn);
+
+    // Opening it renames both fields, in the data and in the log — a rollback
+    // across one of these revisions must not resurrect the old name.
+    let conn = db::open_database(&path, "test").unwrap();
+    for table in ["field", "operation", "op_snapshot"] {
+        assert_eq!(named(&conn, table, LEGACY_FILE), 0, "{table} still carries {LEGACY_FILE}");
+        assert_eq!(named(&conn, table, LEGACY_DIR), 0, "{table} still carries {LEGACY_DIR}");
+        assert!(named(&conn, table, order::FIELD_FILE) > 0, "{table} lost the file position");
+        assert!(named(&conn, table, order::FIELD_DIR) > 0, "{table} lost the dir position");
+    }
+
+    // The values ride along with the names.
+    let pos: i64 = conn
+        .query_row(
+            "SELECT value_int FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2",
+            rusqlite::params![file.as_bytes().as_slice(), order::FIELD_FILE],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(pos, 1);
+    assert_eq!(named(&conn, "field", order::FIELD_DIR), 1, "the directory keeps its position");
+    let _ = dir;
+}
+
+#[test]
+fn test_renaming_the_order_fields_twice_is_a_no_op() {
+    let dir_ = common::TempDir::new("migrate-order-names-idempotent");
+    let path = dir_.path().join("db.sqlite");
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    let (file, _) = numbered_children(&mut conn);
+    downgrade_to_order_position_names(&conn);
+    drop(conn);
+
+    // The first open migrates; the second must find nothing to do and leave the
+    // rows exactly as they are.
+    let conn = db::open_database(&path, "test").unwrap();
+    let id: i64 = conn
+        .query_row(
+            "SELECT id FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2",
+            rusqlite::params![file.as_bytes().as_slice(), order::FIELD_FILE],
+            |r| r.get(0),
+        )
+        .unwrap();
+    drop(conn);
+
+    let conn = db::open_database(&path, "test").unwrap();
+    assert_eq!(named(&conn, "field", order::FIELD_FILE), 1, "no row was duplicated");
+    let again: i64 = conn
+        .query_row(
+            "SELECT id FROM field WHERE metarecord_uuid = ?1 AND field_name = ?2",
+            rusqlite::params![file.as_bytes().as_slice(), order::FIELD_FILE],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(again, id, "the field row keeps its id");
+}
+
+#[test]
+fn test_the_order_rename_leaves_a_repository_that_already_uses_the_new_name_alone() {
+    let dir_ = common::TempDir::new("migrate-order-names-collision");
+    let path = dir_.path().join("db.sqlite");
+
+    // A repository where BOTH names exist: the user has a field of their own
+    // called `order_file`. Renaming into it would silently merge two different
+    // fields on the same metarecord, so the migration must decline.
+    let mut conn = db::open_database(&path, "test").unwrap();
+    db::init_schema(&conn).unwrap();
+    let m = create(
+        &mut conn,
+        vec![
+            Field::new(order::FIELD_FILE, Value::Int(7)),
+            Field::new(order::FIELD_DIR, Value::Int(9)),
+        ],
+    );
+    // Downgrade only one of them, so the database holds `order_position_file`
+    // (legacy) next to `order_file` (the user's own).
+    conn.execute(
+        "UPDATE field SET field_name = ?1 WHERE metarecord_uuid = ?2 AND field_name = ?3",
+        rusqlite::params![LEGACY_DIR, m.uuid.as_bytes().as_slice(), order::FIELD_DIR],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO field (metarecord_uuid, field_name, value_type, value_int) \
+         VALUES (?1, ?2, 'int', 3)",
+        rusqlite::params![m.uuid.as_bytes().as_slice(), LEGACY_FILE],
+    )
+    .unwrap();
+    drop(conn);
+
+    let conn = db::open_database(&path, "test").unwrap();
+    // The colliding name is left as it is — nothing is merged, nothing is lost.
+    assert_eq!(named(&conn, "field", LEGACY_FILE), 1, "the colliding rename is declined");
+    assert_eq!(named(&conn, "field", order::FIELD_FILE), 1, "the user's own field is untouched");
+    // The name that does not collide still migrates.
+    assert_eq!(named(&conn, "field", LEGACY_DIR), 0, "the free rename still happens");
+    assert_eq!(named(&conn, "field", order::FIELD_DIR), 1);
 }

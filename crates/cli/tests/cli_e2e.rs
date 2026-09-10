@@ -3630,11 +3630,11 @@ fn test_order_numbers_folder_children() {
     };
     // song0 pinned by its metadata (anchor), then the "song*.avi" name cluster,
     // then README by date; the sub-directory is numbered separately.
-    assert_eq!(pos(&song0, "order_position_file"), "1");
-    assert_eq!(pos(&song1, "order_position_file"), "2");
-    assert_eq!(pos(&song3, "order_position_file"), "4");
-    assert_eq!(pos(&readme, "order_position_file"), "5");
-    assert_eq!(pos(&extra, "order_position_dir"), "1");
+    assert_eq!(pos(&song0, "order_file"), "1");
+    assert_eq!(pos(&song1, "order_file"), "2");
+    assert_eq!(pos(&song3, "order_file"), "4");
+    assert_eq!(pos(&readme, "order_file"), "5");
+    assert_eq!(pos(&extra, "order_dir"), "1");
 
     // The folder itself is marked as numbered, so processed folders can be told
     // apart from untreated ones.
@@ -3644,7 +3644,7 @@ fn test_order_numbers_folder_children() {
     let again = mf(&["-u", &repo, "order", album.to_str().unwrap(), "--meta", "track_no"]);
     assert_ok(&again);
     assert_eq!(again.stdout.trim(), "0", "second run must write nothing");
-    assert_eq!(pos(&song0, "order_position_file"), "1");
+    assert_eq!(pos(&song0, "order_file"), "1");
     assert_eq!(pos(&album_uuid, "order_numbered"), "true", "the marker survives a re-run");
 }
 

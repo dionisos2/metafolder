@@ -34,8 +34,8 @@
 pub const DEFAULT_MAX_GAP: i64 = 1000;
 
 /// The written fields (files and directories are numbered independently).
-pub const FIELD_FILE: &str = "order_position_file";
-pub const FIELD_DIR: &str = "order_position_dir";
+pub const FIELD_FILE: &str = "order_file";
+pub const FIELD_DIR: &str = "order_dir";
 
 /// One child to be ordered.
 #[derive(Debug, Clone)]
@@ -572,10 +572,8 @@ mod orchestration_tests {
             .find(|(p, _)| p.ends_with(&format!("/metarecords/folder/fields/{FIELD_NUMBERED}")))
             .expect("the folder carries the numbered marker");
         assert_eq!(marker.1, json!({ "value": {"type": "bool", "value": true} }));
-        assert!(writes
-            .iter()
-            .any(|(p, _)| p.contains("/metarecords/a/fields/order_position_file")));
-        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/c/fields/order_position_dir")));
+        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/a/fields/order_file")));
+        assert!(writes.iter().any(|(p, _)| p.contains("/metarecords/c/fields/order_dir")));
     }
 
     #[test]

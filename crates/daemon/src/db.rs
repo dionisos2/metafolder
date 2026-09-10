@@ -159,7 +159,81 @@ const MIGRATIONS: &[(&str, fn(&Connection) -> Result<()>)] = &[
     ("performance indexes", ensure_perf_indexes),
     ("field_text trigram index", ensure_field_text),
     ("drop the persisted filesystem-event buffer", drop_persisted_fs_events),
+    ("rename the order_position_* fields", rename_order_position_fields),
 ];
+
+/// Renames the two `mf order` position fields to their current names —
+/// `order_position_file`/`order_position_dir` became `order_file`/`order_dir`
+/// (spec-file-tracking "mf order"), keeping the `order_` prefix that groups them
+/// with `order_numbered` while dropping a word that carried nothing.
+///
+/// The rename covers the *log* as well as the data, like
+/// [`migrate_legacy_table_names`] does for the operation types: an inverse
+/// applied by a rollback re-inserts the field name recorded in `op_snapshot`,
+/// so a log left in the old vocabulary would resurrect the old name years
+/// later. The whole pass is guarded by an indexed probe on `field`, because
+/// `operation` and `op_snapshot` carry no index on `field_name` and scanning
+/// them at every open is exactly the repeated work a load must not do
+/// (spec-main "Opening a repository database performs no schema work").
+///
+/// The one case this leaves behind: a repository whose position fields were all
+/// deleted *before* the upgrade has legacy names in its log and none in `field`,
+/// so the probe finds nothing and those log rows keep the old name. Rolling back
+/// to such a revision restores a field literally called `order_position_file` —
+/// inert user data, not corruption.
+///
+/// A name is renamed only when it is free: a repository that already has a field
+/// of its own called `order_file` keeps both, because merging two unrelated
+/// fields into one multi-map is worse than leaving one stale name behind.
+fn rename_order_position_fields(conn: &Connection) -> Result<()> {
+    let has_table: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'field'",
+        [],
+        |r| r.get(0),
+    )?;
+    if has_table == 0 {
+        return Ok(()); // fresh database: init_schema creates it with the new names
+    }
+    for (legacy, current) in [
+        ("order_position_file", metafolder_core::order::FIELD_FILE),
+        ("order_position_dir", metafolder_core::order::FIELD_DIR),
+    ] {
+        // Both probes are index seeks on idx_field_name that stop at the first
+        // row (EXISTS, not COUNT — the count would walk every row of the name);
+        // on an up-to-date database the first finds nothing and the pass ends.
+        let exists = |name: &str| -> Result<bool> {
+            let found: i64 = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM field WHERE field_name = ?1)",
+                [name],
+                |r| r.get(0),
+            )?;
+            Ok(found != 0)
+        };
+        if !exists(legacy)? {
+            continue;
+        }
+        if exists(current)? {
+            crate::diagnostics::warn(
+                "migration",
+                format!(
+                    "field `{legacy}` was not renamed to `{current}`: the repository already \
+                     has a field of that name. Rename one of them by hand to finish the migration."
+                ),
+            );
+            continue;
+        }
+        conn.execute_batch(&format!(
+            "BEGIN;
+             UPDATE field            SET field_name = '{current}' WHERE field_name = '{legacy}';
+             UPDATE operation        SET field_name = '{current}' WHERE field_name = '{legacy}';
+             UPDATE op_snapshot      SET field_name = '{current}' WHERE field_name = '{legacy}';
+             UPDATE pending_operation SET field_name = '{current}' WHERE field_name = '{legacy}';
+             COMMIT;",
+        ))
+        .with_context(|| format!("Failed to rename the {legacy} field to {current}"))?;
+    }
+    Ok(())
+}
 
 /// Deletes the filesystem events a daemon that persisted its watcher buffer left
 /// in `pending_operation` (spec-file-tracking "Event batching"): the buffer now

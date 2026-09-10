@@ -1090,7 +1090,7 @@ Behaviours:
 | =reconcile:run=      | Trigger reconcile on the active repo           |
 | =mf:duplicate-scan=  | Scan the active repo for byte-identical files and record the groups — the GUI half of =mf duplicate scan=; progress in the [[*Task bar]], summary in the status bar (see [[*Duplicates]]) |
 | =metarecord-list:duplicates= | Set the query to the selected metarecord's byte-identical twins — =same(mfr_duplicate_group, <uuid>)= — in the DSL zone, so it stays visible and editable |
-| =mf:order [folder]= | Number a folder's direct children (=order_position_file= / =order_position_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
+| =mf:order [folder]= | Number a folder's direct children (=order_file= / =order_dir=) and mark the folder =order_numbered= — the GUI half of =mf order=; the folder is collected in the minibuffer, pre-filled with the target directory and completing over the repository's tracked directories — see [[*Order a folder's children]] |
 | =script:run [name]=  | Run an installed helper script — completes over the scripts in =~/.config/metafolder/scripts/=, the description taken from each script's =# Summary:= header; the chosen script runs as a subprocess (output in the =message= panel) — see [[file:spec-config.org][spec-config.org]] "Shipped scripts" |
 | =metarecord:trash=   | Send the selected metarecord's file to the trash (confirmed; default =delete=) — see [[file:spec-trash.org][spec-trash.org]] "GUI" |
 | =file:open-with [program]= | Open the selected file or folder with an external program (default =g w=) — see [[*Opening a file with another program]] |
@@ -2645,7 +2645,7 @@ others", an extra predicate to narrow it.
 =mf:order= is the GUI half of =mf order= (see
 [[file:spec-file-tracking.org][spec-file-tracking.org]] "=mf order="): it numbers
 the *direct children* of one folder so a "sort by position" orders them sensibly
-— files into =order_position_file=, directories into =order_position_dir=, an
+— files into =order_file=, directories into =order_dir=, an
 existing position never overwritten — and then marks the folder itself with
 =order_numbered = true=.
 

@@ -130,7 +130,7 @@ fn register_builtins(registry: &CommandRegistry) {
             "Scan the active repository for byte-identical files (mf duplicate scan)",
             true,
         ),
-        ("mf:order", "Number a folder's direct children (order_position_*)", true),
+        ("mf:order", "Number a folder's direct children (order_file/order_dir)", true),
         ("ignore:list", "Show the ignore presets and the target directory's patterns", true),
         ("ignore:add", "Append an ignore preset's patterns to the target directory", true),
         ("ignore:remove", "Remove an ignore preset's patterns from the target directory", true),

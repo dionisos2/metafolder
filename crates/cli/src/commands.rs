@@ -1066,7 +1066,7 @@ fn field_bool(fields: &Json, name: &str) -> Option<bool> {
     field_value(fields, name)?["value"].as_bool()
 }
 
-/// `mf order <folder>` — assigns `order_position_file` / `order_position_dir` to
+/// `mf order <folder>` — assigns `order_file` / `order_dir` to
 /// the folder's direct children so that "sort by position" orders them sensibly
 /// (album tracks, series seasons, …). Files and directories are numbered
 /// independently; an already-set position is never overwritten. The heuristic
