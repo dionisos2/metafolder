@@ -339,9 +339,9 @@ CREATE TABLE pending_operation (
 operation it undid. It is informational — displays read it, nothing branches on
 it — and it is allowed to dangle: [[*Log pruning]] and a retention trim (see
 [[*Automatic retention]]) may remove the operation it points at, and neither
-goes back to clear the column. A database written before the column existed is migrated by
-adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every existing
-operation with =NULL=: no revert has happened yet.
+goes back to clear the column. A database written before the column existed is
+migrated by adding it (=ALTER TABLE operation ADD COLUMN=), which leaves every
+existing operation with =NULL=: no revert has happened yet.
 
 *** Snapshot rows (=op_snapshot=)
 
