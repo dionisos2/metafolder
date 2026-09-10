@@ -206,39 +206,25 @@ whether the file action that accompanies it is possible.
 
 *** Reverting a set
 
-The unit a user reverts is a revision, the same unit rollback offers. The
-definition above is nevertheless given on an arbitrary set, because a revision
+The unit a user reverts is a revision, the same unit rollback offers; the
+definition above is given on an arbitrary set because operation-level revert is
+available for the finer case. Order matters inside it, because a revision
 routinely writes the same cell more than once — =retype_field= alone emits a
-=delete_field= and an =append_field= per converted row, all on one cell — and
-because operation-level revert is available for the finer case.
+=delete_field= and an =append_field= per converted row, all on one cell.
 
-For each cell =C= written by =S=, the revert writes the state =C= held at =P=,
-the parent of the earliest member of =S=: the last state that predates
-everything =S= did to that cell. Nothing subtler is meant by "undoing =S=".
+A revert applies the inverse of each member of =S=, from the newest to the
+oldest. Nothing more. The inverse of an operation is the one rollback already
+computes ([[*Inverse operations]]), and undoing a set in the reverse of the
+order it was written is what makes the composition land where a rollback would
+have landed — with no reasoning about cells at all. A revision of four
+operations is reverted by a revision of four operations, its mirror image.
 
-That state is one the log describes, and the daemon reconstructs it for that one
-cell rather than by navigating the whole database to =P=: starting from =C='s
-current rows, it walks back along HEAD's ancestry, dropping each crossed
-operation's =is_new=1= rows and putting its =is_new=0= rows back. The dependency
-check is what makes this a revert and not a rewind — it guarantees that every
-operation crossed on the way belongs to =S=, so nothing unrelated is undone in
-passing.
-
-The walk usually stops at its first step. An operation whose =is_new=0= snapshot
-covers the *whole* cell — =set_field= and the =file_*= types, and the
-entity-scoped types for the whole entity — already holds the state that preceded
-it, so when the earliest member of =S= on =C= is one of those, that snapshot is
-the answer outright. Only =append_field= and =delete_field= describe a single
-row instead of a cell, and only they oblige the daemon to keep walking: reading
-a =delete_field='s =is_new=0= as though it were a cell would silently drop the
-cell's other rows.
-
-Everything past that point is an ordinary write. The revert hands the
-reconstructed state to =log::Writer= as any client would, and the =op_snapshot=
-rows of the operations it creates are recorded by [[*Normal write flow]] — the
-revert neither computes nor supplies them. =is_new= appears in this section only
-because reading the past means reading =op_snapshot=; it plays no part in what a
-revert records.
+Two things separate this from a rollback, and only two. The inverses are
+*written*, through =log::Writer=, as new operations rather than applied to the
+data tables directly, so they are logged and HEAD moves forward. And the
+dependency check stands in for the ordering that a rollback gets for free: it
+guarantees nothing outside =S= wrote those cells in the meantime, which is the
+condition under which undoing =S= alone is meaningful.
 
 The target must lie on HEAD's ancestry. An operation on a branch abandoned by a
 past rollback is not part of the current history, so there is nothing there to
@@ -521,20 +507,33 @@ transaction, same retention trim, same tree-cache and watch-set follow-up.
 
 *** Revert content
 
-For each cell the set writes, the daemon reconstructs the state it held at =P=
-(see [[*Reverting a set]]) and writes the operation that expresses it:
+The inverse of each operation is the one [[*Inverse operations]] already defines
+for a rollback. The difference is that a revert *writes* it instead of applying
+it: each inverse goes through the =log::Writer= method that expresses it, so it
+is logged, and the rows it inserts take fresh ids and versions
+([[*Field ids and versions]]).
 
-| Reverted =op_type=           | State written                        | Operation written              |
-|------------------------------+--------------------------------------+--------------------------------|
-| =create_metarecord=          | none — no entity at =P=              | =delete_metarecord=            |
-| =delete_metarecord=          | the entity as of =P=                 | =create_metarecord=, same UUID |
-| =set_metarecord=             | the entity as of =P=                 | =set_metarecord=               |
-| =set_field=                  | the cell as of =P=                   | =set_field=, or a cleared cell |
-| =file_deleted=, =file_moved= | the cell as of =P=                   | =file_moved=                   |
-| =file_modified=              | the cell as of =P=                   | =file_modified=                |
-| =append_field=               | the cell as of =P= — the row is gone | =delete_field=                 |
-| =delete_field=               | the cell as of =P= — the row is back | =append_field=                 |
-| =unknown=                    | —                                    | not revertable (no snapshots)  |
+| Reverted =op_type=           | Written as                                                               |
+|------------------------------+--------------------------------------------------------------------------|
+| =create_metarecord=          | =delete_metarecord=                                                      |
+| =delete_metarecord=          | =create_metarecord=, same UUID                                           |
+| =set_metarecord=             | =set_metarecord=                                                         |
+| =set_field=                  | =set_field= with the before rows, or a cleared cell when there were none |
+| =file_deleted=, =file_moved= | =file_moved=                                                             |
+| =file_modified=              | =file_modified=                                                          |
+| =append_field=               | =delete_field=                                                           |
+| =delete_field=               | =append_field=                                                           |
+| =unknown=                    | not revertable — no snapshots to invert                                  |
+
+*The fresh ids have one consequence to handle.* A rollback's inverse restores
+=field.id= exactly, and that is what lets it compose inverses blindly: when a
+set holds an =append_field= and a later =delete_field= of the same row, undoing
+the delete puts the row back under its original id, so undoing the append then
+finds it there. A revert's inserts get new ids, so it has to carry a map from
+the reverted operations' =field_id= to the id its own write produced, and
+resolve each row-scoped inverse through it. Only =append_field= and
+=delete_field= are concerned: every other type names a cell or an entity, never
+a row.
 
 Two consequences worth stating outright:
 
@@ -552,17 +551,19 @@ Two consequences worth stating outright:
   =reconcile= writes when it relinks an orphan, whose =mfr_path= was =Nothing=
   before the content reappeared — so reverting a =file_deleted= that the
   trash-bin could satisfy is a =file_moved= like any other homecoming.
-- *Restoring an empty cell is not the same as writing =Nothing=.* When the cell
-  was empty at =P=, the field did not exist before the reverted operation and
-  the revert removes it entirely — a =set_field= operation with no rows after —
-  rather than setting the explicit-absence sentinel. The distinction is
-  the data model's (spec-data-model "Nothing") and the revert must not blur it.
+- *Restoring an empty cell is not the same as writing =Nothing=.* When the
+  reverted operation's before-snapshot has no rows, the field did not exist
+  before it and the revert removes the cell entirely — a =set_field= operation
+  with no rows after — rather than setting the explicit-absence sentinel. The
+  distinction is the data model's (spec-data-model "Nothing"), and a revert must
+  not blur it.
 
-A revert of a whole revision writes its operations in the reverted set's own
-order (by =id=), so the two revisions read as mirror images in =mf log --ops=.
-Intra-revision order is otherwise free: forest integrity is checked once at
-commit, not per operation, so a revert restoring a whole subtree's =mfr_path=
-passes as long as the state it leaves is consistent.
+A revert of a whole revision writes one operation per reverted operation, in
+the reverse of their original order, so the two revisions read as mirror images
+in =mf log --ops=. Reverse order is required — it is what makes the composition
+correct — but it costs nothing elsewhere: forest integrity is checked once at
+commit rather than per operation, so a revert restoring a whole subtree's
+=mfr_path= passes as long as the state it leaves is consistent.
 
 An operation removed from the log — by [[*Log pruning]] or by a retention trim
 (see [[*Automatic retention]]) — cannot be reverted: it took its snapshots with
@@ -1641,3 +1642,17 @@ Pruned 12 operations across 4 revisions. History linearized up to op 55.
 | =--silent=  | Suppress informational output (confirmation prompt still shown)     |
 
 * Open questions
+
+** Collapsing a revert to one operation per cell
+
+A revert currently writes one operation per reverted operation. It could
+instead write one per *cell*: for each cell the set touches, compute the state
+it held before the set's earliest operation on that cell, and write that once.
+Reverting a =retype_field= revision of four operations would become a revision
+of one.
+
+Deferred deliberately. The gain is log volume, on revisions that are rarely
+large; the cost is a second way of computing what a revert writes, with its own
+case analysis for the entity-scoped and =file_*= types, and correctness that no
+longer follows from the rollback inverses already covered by tests. Worth
+revisiting only if batch reverts turn out to bloat the log in practice.
