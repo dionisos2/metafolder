@@ -623,6 +623,33 @@ run is what makes the rule a daemon guarantee rather than a client convention;
 in the coordinated form it cannot fail once =start= has succeeded, because the
 lock holds HEAD still (see below).
 
+*** What a revert inherits from an ordinary write
+
+Being an ordinary write settles three questions that a new route would otherwise
+decide by accident.
+
+- *The cache and the watch set follow.* Every write route ends in
+  =repo_state.settle(&conn, &effects)=, which settles the tree cache and
+  refreshes the watch set from the =WriteEffects= the =Writer= accumulated. The
+  revert routes do the same. A revert of a =file_moved= on a directory changes
+  TreeRefs, and one touching =mf_watch= or =mf_ignore= changes what is watched;
+  nothing warns when this is left out, the cache simply drifts.
+
+- *Reserved names stay writable.* =mfr_*= fields need =force= from a client, but
+  that check lives in the routes, not in the =Writer=. A revert restores values
+  the daemon itself recorded, =mfr_path= among them, so the revert routes do not
+  apply it. Adding it "for consistency" would refuse every revert of a =file_*=
+  operation.
+
+- *Type validation still bites — and can refuse a revert the dependency check
+  allowed.* =Writer::validate_value_type= runs on every write, so an old value
+  is checked against the field's type as it stands /now/. A =retype= elsewhere
+  in the repository can have locked the name to another type without ever
+  writing the cell being reverted: no dependency, and yet the value no longer
+  fits. The revert is refused with the schema =400= like any other write. That
+  is a legitimate outcome and the third reason a revert can be refused, next to
+  a blocking dependency and an impossible filesystem action.
+
 *** Filesystem actions
 
 Three reverted operation types describe something that happened to a file, and
