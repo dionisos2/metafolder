@@ -106,11 +106,23 @@ Reversibility is assessed dynamically at rollback time, not stored statically:
 
 - =create_metarecord= … =delete_field=: always fully reversible (pure metadata).
 - =file_deleted=, =file_modified=: reversible at the filesystem level *only if
-  the content is in the trash-bin* (the deletion passed through it, e.g.
-  =mf trash -f=) — the CLI then auto-restores the file and the metadata follows.
-  Otherwise the content is gone: the metadata can still be restored from the
-  snapshot rows, but that results in a stale or misleading =mfr_path=, so the
-  step is skipped instead.
+  the content is in the trash-bin* — the change passed through it, e.g. an
+  =mf trash -f= or an earlier rollback. The CLI then puts the file back and lets
+  the daemon apply the real inverse, so content and metadata come back together.
+  A trashed *directory* covers its whole subtree: restoring that one blob makes
+  every descendant's step reversible too, whatever order the cascade is
+  navigated in.
+
+  Otherwise the content is gone and the CLI passes =skip: true=, which skips the
+  *filesystem* action and nothing else. The daemon still applies the metadata
+  inverse — HEAD has to cross the operation, and the HEAD↔data invariant forbids
+  passing one without applying it — and then enqueues a /restoration operation/
+  that re-records the truth on the new branch once the navigation ends (see
+  [[*Filesystem coordination]]). So a =file_deleted= has its =mfr_path=
+  restored and set back to =Nothing= one revision later, and a =file_modified=
+  has its hashes cleared with =mfr_size= and =mfr_mtime= left stale until a
+  reconcile. The state one ends up in is truthful; it takes two revisions to
+  get there.
 - =file_moved=: reversible if and only if the file still exists at its current
   location at rollback time. If the file has since been deleted or moved again,
   the =mv= cannot be executed and only the metadata can be restored (stale
