@@ -865,8 +865,17 @@ per line (sorted, deduplicated), in a single =POST /query/fields/resolve-tree=
 round-trip (paths in the endpoint form — leading-=/=-rooted for the filesystem
 forest, so a line pastes straight into an =mfr_path -> "…"= query; the repo root
 resolves to an empty line). It needs a selector (=-q= or =-i=) and is exclusive
-with =--select=/=--values=/=--tsv=/=--sort=. This is what lets a GUI script offer
+with =--select=/=--values=/=--sort=. This is what lets a GUI script offer
 folder/file completions (=mfr_path=) without a per-record loop.
+
+With =--tsv= each line is =uuid<TAB>path= instead (one row per path, sorted by
+path, so both forms list in the same order). The endpoint answers with a
+uuid→paths map and the bare-path form throws the keys away, which is all a
+completion list needs; a script that has to *act* on the records — walk them,
+tag them — needs to know which record a path belongs to, and would otherwise
+fall back to one =mf path= call per record. This is the one place =--tsv= does
+not require =--select=; clap cannot express a conditional =requires=, so the
+rule is checked in the command and is still a usage error (exit 2).
 
 *** =mf metarecord add <spec> [<spec> ...]=
 

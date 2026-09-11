@@ -471,13 +471,16 @@ enum MetarecordVerb {
         #[arg(long, requires = "select")]
         values: bool,
         /// Print one tab-separated row per metarecord (first value of each
-        /// --select field). Requires --select with a field list.
-        #[arg(long, requires = "select", conflicts_with = "values")]
+        /// --select field). Requires --select with a field list — except with
+        /// --resolve-tree, where it prints `uuid<TAB>path` instead of bare
+        /// paths. The requirement is checked in the command (clap cannot make
+        /// it conditional), so it is still a usage error.
+        #[arg(long, conflicts_with = "values")]
         tsv: bool,
         /// Resolve this tree_ref field of each selected metarecord to its
         /// root-relative path(s), one per line (the bulk form of `mf path`).
         /// Needs a selector (-q or -i).
-        #[arg(long = "resolve-tree", conflicts_with_all = ["select", "values", "tsv", "sort"])]
+        #[arg(long = "resolve-tree", conflicts_with_all = ["select", "values", "sort"])]
         resolve_tree: Option<String>,
     },
     /// Create a metarecord with the given fields and print its UUID (no selector)

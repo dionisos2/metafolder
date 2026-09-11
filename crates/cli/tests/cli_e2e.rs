@@ -3735,6 +3735,50 @@ fn test_metarecord_get_resolve_tree_lists_paths() {
     assert_eq!(out.code, 2, "stderr: {}", out.stderr);
 }
 
+/// `--resolve-tree --tsv` keeps the uuid next to the path. Without it the
+/// endpoint's uuid→paths map is flattened to bare paths, so a script that has to
+/// act on the records — not just offer completions — cannot tell which record a
+/// path belongs to and falls back to one `mf path` call per record.
+#[test]
+fn test_metarecord_get_resolve_tree_tsv_keeps_the_uuid() {
+    let (repo, root) = init_repo("resolve_tree_tsv");
+    std::fs::create_dir_all(root.join("a/b")).unwrap();
+    assert_ok(&mf(&["-u", &repo, "track", root.join("a").to_str().unwrap()]));
+    let b = mf(&["-u", &repo, "track", root.join("a/b").to_str().unwrap()]);
+    assert_ok(&b);
+    let b_uuid = b.stdout.trim().to_string();
+
+    let out = mf(&[
+        "-u",
+        &repo,
+        "metarecord",
+        "-q",
+        "mfr_type = \"dir\"",
+        "get",
+        "--resolve-tree",
+        "mfr_path",
+        "--tsv",
+    ]);
+    assert_ok(&out);
+    let rows: Vec<(&str, &str)> =
+        out.stdout.lines().filter_map(|line| line.split_once('\t')).collect();
+    assert!(
+        rows.contains(&(b_uuid.as_str(), "/a/b")),
+        "expected {b_uuid}\t/a/b, got: {}",
+        out.stdout
+    );
+    // One row per (metarecord, path): every line carries a uuid.
+    assert!(
+        out.stdout.lines().all(|line| line.contains('\t')),
+        "every line is a uuid/path pair: {}",
+        out.stdout
+    );
+
+    // --tsv still needs a field list when it is not resolving a tree.
+    let out = mf(&["-u", &repo, "metarecord", "-q", "mfr_type = \"dir\"", "get", "--tsv"]);
+    assert_eq!(out.code, 2, "stderr: {}", out.stderr);
+}
+
 // ── mf tag (hierarchical tags: subsumption, exclusivity) ──────────────────────
 
 #[test]

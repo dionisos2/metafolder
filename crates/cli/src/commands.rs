@@ -708,7 +708,14 @@ fn parse_sort(specs: &[String]) -> Result<Json, CliError> {
 /// one path per line (sorted, deduplicated). Paths are the endpoint form (no
 /// leading slash; the repo root resolves to an empty line). This is what lets a
 /// GUI script offer folder/file completions without a per-record loop.
-fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str) -> Result<i32, CliError> {
+///
+/// With `tsv`, each line is `uuid<TAB>path` instead. The endpoint answers with
+/// a uuid→paths map and the bare-path form throws the keys away, which is all a
+/// completion list needs; a script that has to *act* on the records needs to
+/// know which record a path belongs to, and without this would fall back to one
+/// `mf path` call per record. A metarecord with several paths gets one row per
+/// path; rows are sorted by path, so both forms list in the same order.
+fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str, tsv: bool) -> Result<i32, CliError> {
     let base = ctx.repo_base()?;
     let query = match parse_target(selector)? {
         Target::Entry(uuid) => json!({"type": "uuid_in", "uuids": [uuid.as_simple().to_string()]}),
@@ -718,10 +725,28 @@ fn resolve_tree_paths(ctx: &Ctx, selector: &str, field: &str) -> Result<i32, Cli
         &format!("{base}/query/fields/resolve-tree"),
         &json!({"query": query, "field": field}),
     )?;
-    let mut paths: Vec<String> = resp
-        .as_object()
+    let resolved = resp.as_object().cloned().unwrap_or_default();
+    if tsv {
+        let mut rows: Vec<(String, String)> = resolved
+            .iter()
+            .flat_map(|(uuid, paths)| {
+                paths
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter_map(move |p| p.as_str().map(|p| (p.to_string(), uuid.clone())))
+            })
+            .collect();
+        rows.sort();
+        rows.dedup();
+        for (path, uuid) in rows {
+            println!("{uuid}\t{path}");
+        }
+        return Ok(0);
+    }
+    let mut paths: Vec<String> = resolved
         .into_iter()
-        .flatten()
         .flat_map(|(_, paths)| paths.as_array().cloned().unwrap_or_default())
         .filter_map(|p| p.as_str().map(str::to_string))
         .collect();
@@ -745,11 +770,18 @@ pub fn metarecord_get(
     tsv: bool,
     resolve_tree: Option<&str>,
 ) -> Result<i32, CliError> {
+    // `--tsv` needs a field list everywhere except with `--resolve-tree`, which
+    // has rows of its own. clap cannot express a conditional `requires`, so the
+    // rule lives here — still a usage error (exit 2), as it was when clap
+    // carried it.
+    if tsv && select.is_none() && resolve_tree.is_none() {
+        return Err(CliError::Usage("--tsv requires --select with a field list".into()));
+    }
     if let Some(field) = resolve_tree {
         let selector = selector.ok_or_else(|| {
             CliError::Usage("mf metarecord get --resolve-tree requires -q or -i".into())
         })?;
-        return resolve_tree_paths(ctx, selector, field);
+        return resolve_tree_paths(ctx, selector, field, tsv);
     }
     match selector {
         None => list(ctx, limit),
